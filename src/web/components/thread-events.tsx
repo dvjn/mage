@@ -1,8 +1,11 @@
 // How each kind of thread event looks, with a labelled fallback for kinds this client does not
-// know yet. Messages are shown as AI SDK UI messages, the shape the chat components take.
+// know yet. Messages are shown as AI SDK UI messages, the shape the chat components take, with
+// their text rendered as markdown.
 
 import type { UIMessage } from "ai";
 import type { ReactNode } from "react";
+
+import { Message, MessageContent, MessageResponse } from "@/web/components/ai-elements/message";
 
 import {
   type AnyThreadEvent,
@@ -36,16 +39,21 @@ function textOf(message: UIMessage) {
 }
 
 const renderers: Renderers = {
-  message: (event) => (
-    <article className="flex flex-col gap-1" aria-label={`Message from ${authorOf(event)}`}>
-      <span className="text-xs font-medium text-muted-foreground">{authorOf(event)}</span>
-      <div className="whitespace-pre-wrap">
-        {textOf(toUIMessage(event)).map((text, index) => (
-          <p key={index}>{text}</p>
-        ))}
-      </div>
-    </article>
-  ),
+  message: (event) => {
+    const message = toUIMessage(event);
+    return (
+      <Message from={message.role} role="article" aria-label={`Message from ${authorOf(event)}`}>
+        <span className="text-xs font-medium text-muted-foreground group-[.is-user]:ml-auto">
+          {authorOf(event)}
+        </span>
+        <MessageContent>
+          {textOf(message).map((text, index) => (
+            <MessageResponse key={index}>{text}</MessageResponse>
+          ))}
+        </MessageContent>
+      </Message>
+    );
+  },
 };
 
 function render<Type extends ThreadEventSummary["type"]>(
