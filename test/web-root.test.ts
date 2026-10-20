@@ -6,6 +6,7 @@ import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { createLogger } from "@/adapters/logger.ts";
 import { createApp } from "@/http/app.ts";
+import type { Connections } from "@/services/connections.ts";
 
 const webRoot = mkdtempSync(path.join(tmpdir(), "mage-web-"));
 mkdirSync(path.join(webRoot, "assets"));
@@ -19,6 +20,7 @@ const app = createApp({
     resolve: () => Promise.resolve(null),
     profile: () => Promise.reject(new Error("signed out")),
   },
+  connections: {} as Connections,
   logger: createLogger({ write() {} }),
   pingDatabase: () => Promise.resolve(true),
   webRoot,

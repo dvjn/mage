@@ -3,10 +3,16 @@
 import { serve } from "@hono/node-server";
 
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
+import { createCipher } from "@/adapters/cipher.ts";
+import { createConnectionStore } from "@/adapters/connections.ts";
+import { createCredentialStore } from "@/adapters/credentials.ts";
 import { openDatabase, pingDatabase } from "@/adapters/db.ts";
 import { createLogger } from "@/adapters/logger.ts";
+import { createCodexOAuth } from "@/adapters/openai-codex.ts";
+import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { loadConfig } from "@/config.ts";
 import { createApp } from "@/http/app.ts";
+import { createConnections } from "@/services/connections.ts";
 
 const config = loadConfig();
 const logger = createLogger();
@@ -20,9 +26,21 @@ const auth = createAuth({
   trustedOrigins: config.authTrustedOrigins,
 });
 
+// CREDENTIAL_KEY is key version 1.
+const cipher = createCipher({ version: 1, key: config.credentialKey });
+const codex = createCodexOAuth(fetch);
+const connections = createConnections({
+  connections: createConnectionStore(db),
+  credentials: createCredentialStore(db, cipher),
+  attempts: createSignInAttemptStore(db),
+  providers: { codex: { provider: "openai", label: "Codex", browser: codex, device: codex } },
+  logger,
+});
+
 const app = createApp({
   handleAuth: auth.handler,
   identity: createIdentity(auth, db),
+  connections,
   logger,
   pingDatabase: () => pingDatabase(db),
   webRoot: import.meta.main ? config.webRoot : undefined,

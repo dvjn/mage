@@ -185,6 +185,9 @@ importers:
       hono:
         specifier: 4.13.13
         version: 4.13.13
+      jose:
+        specifier: 6.2.12
+        version: 6.2.12
       pino:
         specifier: 10.4.0
         version: 10.4.0

@@ -3,6 +3,10 @@ import { describe, expect, it } from "vite-plus/test";
 import { createLogger } from "@/adapters/logger.ts";
 import { createApp } from "@/http/app.ts";
 import type { Identity } from "@/ports/identity.ts";
+import type { Connections } from "@/services/connections.ts";
+
+// Never called by these tests.
+const unusedConnections = {} as Connections;
 
 const handleAuth = () => Promise.resolve(new Response(null, { status: 404 }));
 const identity: Identity = {
@@ -17,6 +21,7 @@ describe("request logging", () => {
     const app = createApp({
       handleAuth,
       identity,
+      connections: unusedConnections,
       logger,
       pingDatabase: () => Promise.resolve(true),
     });

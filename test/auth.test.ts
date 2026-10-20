@@ -4,6 +4,10 @@ import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { openDatabase } from "@/adapters/db.ts";
 import { createLogger } from "@/adapters/logger.ts";
 import { createApp } from "@/http/app.ts";
+import type { Connections } from "@/services/connections.ts";
+
+// Never called by these tests.
+const unusedConnections = {} as Connections;
 
 const baseUrl = "http://localhost:4783";
 
@@ -16,6 +20,7 @@ describe("/api/auth", () => {
     const app = createApp({
       handleAuth: auth.handler,
       identity: createIdentity(auth, db),
+      connections: unusedConnections,
       logger,
       pingDatabase: () => Promise.resolve(true),
     });

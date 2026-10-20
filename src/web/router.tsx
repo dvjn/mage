@@ -1,4 +1,5 @@
-// Pages: login and signup when signed out, home when signed in; each redirects to the other side.
+// Pages: login and signup when signed out, home and settings when signed in; each redirects to the
+// other side.
 
 import type { QueryClient } from "@tanstack/react-query";
 import {
@@ -11,6 +12,7 @@ import {
 
 import { Home } from "@/web/components/home";
 import { LoginForm } from "@/web/components/login-form";
+import { Settings } from "@/web/components/settings";
 import { SignupForm } from "@/web/components/signup-form";
 import { sessionQuery } from "@/web/lib/queries";
 
@@ -28,15 +30,24 @@ async function redirectIfSignedIn({ context }: { context: { queryClient: QueryCl
   if (await context.queryClient.fetchQuery(sessionQuery)) throw redirect({ to: "/" });
 }
 
+async function requireSession({ context }: { context: { queryClient: QueryClient } }) {
+  const session = await context.queryClient.fetchQuery(sessionQuery);
+  if (!session) throw redirect({ to: "/login" });
+  return { session };
+}
+
 const homeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  beforeLoad: async ({ context }) => {
-    const session = await context.queryClient.fetchQuery(sessionQuery);
-    if (!session) throw redirect({ to: "/login" });
-    return { session };
-  },
+  beforeLoad: requireSession,
   component: Home,
+});
+
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings",
+  beforeLoad: requireSession,
+  component: Settings,
 });
 
 const loginRoute = createRoute({
@@ -55,7 +66,7 @@ const signupRoute = createRoute({
 
 export function createAppRouter(queryClient: QueryClient) {
   return createRouter({
-    routeTree: rootRoute.addChildren([homeRoute, loginRoute, signupRoute]),
+    routeTree: rootRoute.addChildren([homeRoute, settingsRoute, loginRoute, signupRoute]),
     context: { queryClient },
   });
 }

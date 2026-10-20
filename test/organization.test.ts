@@ -6,6 +6,10 @@ import { openDatabase } from "@/adapters/db.ts";
 import { createLogger } from "@/adapters/logger.ts";
 import * as schema from "@/adapters/schema.ts";
 import { createApp } from "@/http/app.ts";
+import type { Connections } from "@/services/connections.ts";
+
+// Never called by these tests.
+const unusedConnections = {} as Connections;
 
 const baseUrl = "http://localhost:4783";
 
@@ -17,6 +21,7 @@ function setup() {
   const app = createApp({
     handleAuth: auth.handler,
     identity: createIdentity(auth, db),
+    connections: unusedConnections,
     logger,
     pingDatabase: () => Promise.resolve(true),
   });

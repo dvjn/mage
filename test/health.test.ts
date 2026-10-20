@@ -4,6 +4,10 @@ import { openDatabase, pingDatabase } from "@/adapters/db.ts";
 import { createLogger } from "@/adapters/logger.ts";
 import { createApp } from "@/http/app.ts";
 import type { Identity } from "@/ports/identity.ts";
+import type { Connections } from "@/services/connections.ts";
+
+// Never called by these tests.
+const unusedConnections = {} as Connections;
 
 const handleAuth = () => Promise.resolve(new Response(null, { status: 404 }));
 const logger = createLogger({ write() {} });
@@ -18,6 +22,7 @@ describe("GET /api/health", () => {
     const res = await createApp({
       handleAuth,
       identity,
+      connections: unusedConnections,
       logger,
       pingDatabase: () => pingDatabase(db),
     }).request("/api/health");
@@ -29,6 +34,7 @@ describe("GET /api/health", () => {
     const res = await createApp({
       handleAuth,
       identity,
+      connections: unusedConnections,
       logger,
       pingDatabase: () => Promise.resolve(false),
     }).request("/api/health");

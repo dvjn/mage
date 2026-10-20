@@ -184,6 +184,20 @@ export const credential = sqliteTable("credential", {
     .notNull(),
 });
 
+// A browser sign-in a user has started and not yet finished; each is used once.
+export const signInAttempt = sqliteTable("sign_in_attempt", {
+  state: text("state").primaryKey(),
+  kind: text("kind", { enum: ["codex"] }).notNull(),
+  codeVerifier: text("code_verifier").notNull(),
+  organizationId: text("organization_id")
+    .notNull()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  userId: text("user_id")
+    .notNull()
+    .references(() => user.id, { onDelete: "cascade" }),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),
