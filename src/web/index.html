@@ -2,6 +2,18 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <!-- Applies the stored or browser theme class before first paint. -->
+    <script>
+      (function () {
+        try {
+          var theme = localStorage.getItem("mage-theme") || "system";
+          if (theme === "system") {
+            theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          }
+          document.documentElement.classList.add(theme);
+        } catch (e) {}
+      })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Mage</title>
