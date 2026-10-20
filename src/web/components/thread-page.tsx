@@ -3,7 +3,7 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
-import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { anyThreadEventSchema, threadSchema } from "@/shared/threads.ts";
 import {
@@ -12,12 +12,18 @@ import {
   ConversationEmptyState,
   ConversationScrollButton,
 } from "@/web/components/ai-elements/conversation";
+import {
+  PromptInput,
+  PromptInputBody,
+  PromptInputFooter,
+  PromptInputSubmit,
+  PromptInputTextarea,
+  PromptInputTools,
+} from "@/web/components/ai-elements/prompt-input";
 import { PageHeader } from "@/web/components/app-shell";
 import { ModelPicker } from "@/web/components/model-picker";
 import { ThreadEvent } from "@/web/components/thread-events";
-import { Button } from "@/web/components/ui/button";
 import { FieldError } from "@/web/components/ui/field";
-import { Textarea } from "@/web/components/ui/textarea";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { rememberSpace } from "@/web/lib/last-space";
@@ -48,9 +54,9 @@ export function ThreadPage() {
   }, [queryClient, spaceId]);
   useThreadEvents(threadId, detail.isSuccess, refreshList);
 
-  async function send(form: HTMLFormElement) {
-    const text = new FormData(form).get("text");
-    if (typeof text !== "string" || !text.trim()) return;
+  // Throws when the message is not posted, so the composer keeps the text.
+  async function send(text: string) {
+    if (!text.trim()) return;
     setPending(true);
     const res = await apiClient.v1.threads[":id"].messages.$post({
       param: { id: threadId },
@@ -58,11 +64,11 @@ export function ThreadPage() {
     });
     setPending(false);
     if (!res.ok) {
-      setError(await errorOf(res));
-      return;
+      const failed = await errorOf(res);
+      setError(failed);
+      throw new Error(failed);
     }
     setError(undefined);
-    form.reset();
     mergeEvents(queryClient, threadId, [anyThreadEventSchema.parse(await res.json())]);
     await queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
     refreshList();
@@ -81,13 +87,6 @@ export function ThreadPage() {
     queryClient.setQueryData(threadQuery(threadId).queryKey, (current) =>
       current ? { ...current, thread: updated } : current,
     );
-  }
-
-  function submitOnEnter(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
-      event.preventDefault();
-      event.currentTarget.form?.requestSubmit();
-    }
   }
 
   if (detail.isError) {
@@ -125,34 +124,24 @@ export function ThreadPage() {
         <ConversationScrollButton />
       </Conversation>
       <div className="mx-auto w-full max-w-3xl p-4 pt-0">
-        <form
-          className="flex flex-col gap-2 rounded-xl border bg-background p-2"
-          onSubmit={(event: FormEvent<HTMLFormElement>) => {
-            event.preventDefault();
-            void send(event.currentTarget);
-          }}
-        >
-          <Textarea
-            name="text"
-            placeholder="Write a message…"
-            aria-label="Message"
-            className="border-0 shadow-none focus-visible:ring-0"
-            onKeyDown={submitOnEnter}
-          />
-          <div className="flex items-center justify-between gap-2">
-            <ModelPicker
-              models={models.data?.models ?? []}
-              value={thread?.model ?? null}
-              onChange={(ref) => void chooseModel(ref)}
-              placeholder="Model"
-              className="w-56"
-            />
-            <Button type="submit" disabled={pending}>
-              Send
-            </Button>
-          </div>
-          <FieldError>{error}</FieldError>
-        </form>
+        <PromptInput onSubmit={(message) => send(message.text)}>
+          <PromptInputBody>
+            <PromptInputTextarea aria-label="Message" placeholder="Write a message…" />
+          </PromptInputBody>
+          <PromptInputFooter>
+            <PromptInputTools>
+              <ModelPicker
+                models={models.data?.models ?? []}
+                value={thread?.model ?? null}
+                onChange={(ref) => void chooseModel(ref)}
+                placeholder="Model"
+                className="w-56"
+              />
+            </PromptInputTools>
+            <PromptInputSubmit status={pending ? "submitted" : undefined} disabled={pending} />
+          </PromptInputFooter>
+        </PromptInput>
+        <FieldError className="mt-2">{error}</FieldError>
       </div>
     </div>
   );
