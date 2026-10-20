@@ -1,11 +1,13 @@
 // Signs in to a ChatGPT account with the Codex CLI's OAuth client: a device code, or a browser
-// authorization whose callback the user pastes back, and token refresh.
+// authorization whose callback the user pastes back, and token refresh. Lists the models the
+// account can use from the Codex backend.
 
 import { createHash, randomBytes } from "node:crypto";
 
 import { decodeJwt } from "jose";
 import * as z from "zod";
 
+import type { Catalog } from "@/ports/catalog.ts";
 import type { BrowserOAuth, DeviceOAuth, OAuthTokens } from "@/ports/oauth.ts";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -19,6 +21,9 @@ const DEVICE_VERIFICATION_URL = `${ISSUER}/codex/device`;
 const DEVICE_REDIRECT_URI = `${ISSUER}/deviceauth/callback`;
 const SCOPES = "openid profile email offline_access";
 const ORIGINATOR = "mage";
+const MODELS_URL = "https://chatgpt.com/backend-api/codex/models";
+// The Codex CLI release whose model list we ask for; the backend leaves out models it is too old for.
+const CLIENT_VERSION = "0.163.0";
 const AUTH_CLAIM = "https://api.openai.com/auth";
 const PROFILE_CLAIM = "https://api.openai.com/profile";
 
@@ -53,6 +58,20 @@ const claimsSchema = z.object({
   email: z.string().optional(),
   [AUTH_CLAIM]: authClaimSchema.optional(),
   [PROFILE_CLAIM]: z.object({ email: z.string().optional() }).optional(),
+});
+
+const modelsSchema = z.object({
+  models: z.array(
+    z.object({
+      slug: z.string().min(1),
+      display_name: z.string().min(1),
+      // "list" models are offered in the Codex model picker; the rest are hidden there.
+      visibility: z.string().optional(),
+      priority: z.number().optional(),
+      context_window: z.number().int().positive().nullish(),
+      supported_reasoning_levels: z.array(z.unknown()).optional(),
+    }),
+  ),
 });
 
 // Reads claims without checking the signature: OpenAI has just issued the token to us over TLS.
@@ -193,6 +212,38 @@ export function createCodexOAuth(fetchFn: typeof fetch = fetch): BrowserOAuth & 
         },
         signal,
       );
+    },
+  };
+}
+
+export function createCodexCatalog(fetchFn: typeof fetch = fetch): Catalog {
+  return {
+    async list(token, signal) {
+      if (!token.accountId) throw new Error("the connection has no ChatGPT account id");
+      const url = `${MODELS_URL}?${new URLSearchParams({ client_version: CLIENT_VERSION }).toString()}`;
+      const res = await fetchFn(url, {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token.access}`,
+          "ChatGPT-Account-ID": token.accountId,
+          originator: ORIGINATOR,
+        },
+        signal,
+      });
+      if (!res.ok) throw new Error(`model list failed with status ${res.status}`);
+      const body = modelsSchema.safeParse(await res.json().catch(() => null));
+      if (!body.success) throw new Error("model list response is not a list");
+      return body.data.models
+        .filter((model) => (model.visibility ?? "list") === "list")
+        .toSorted((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+        .map((model) => ({
+          id: model.slug,
+          name: model.display_name,
+          ...(model.context_window && { contextWindow: model.context_window }),
+          ...(model.supported_reasoning_levels && {
+            reasoning: model.supported_reasoning_levels.length > 0,
+          }),
+        }));
     },
   };
 }

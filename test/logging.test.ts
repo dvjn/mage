@@ -4,9 +4,11 @@ import { createLogger } from "@/adapters/logger.ts";
 import { createApp } from "@/http/app.ts";
 import type { Identity } from "@/ports/identity.ts";
 import type { Connections } from "@/services/connections.ts";
+import type { Models } from "@/services/models.ts";
 
 // Never called by these tests.
 const unusedConnections = {} as Connections;
+const unusedModels = {} as Models;
 
 const handleAuth = () => Promise.resolve(new Response(null, { status: 404 }));
 const identity: Identity = {
@@ -22,6 +24,7 @@ describe("request logging", () => {
       handleAuth,
       identity,
       connections: unusedConnections,
+      models: unusedModels,
       logger,
       pingDatabase: () => Promise.resolve(true),
     });

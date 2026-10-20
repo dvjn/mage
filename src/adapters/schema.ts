@@ -198,6 +198,22 @@ export const signInAttempt = sqliteTable("sign_in_attempt", {
   expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+// Choices an org makes for everyone in it.
+export const orgSetting = sqliteTable("org_setting", {
+  organizationId: text("organization_id")
+    .primaryKey()
+    .references(() => organization.id, { onDelete: "cascade" }),
+  // A model ref such as `codex/gpt-5`; null until the org picks one.
+  defaultModel: text("default_model"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+});
+
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),

@@ -7,9 +7,11 @@ import { createLogger } from "@/adapters/logger.ts";
 import * as schema from "@/adapters/schema.ts";
 import { createApp } from "@/http/app.ts";
 import type { Connections } from "@/services/connections.ts";
+import type { Models } from "@/services/models.ts";
 
 // Never called by these tests.
 const unusedConnections = {} as Connections;
+const unusedModels = {} as Models;
 
 const baseUrl = "http://localhost:4783";
 
@@ -22,6 +24,7 @@ function setup() {
     handleAuth: auth.handler,
     identity: createIdentity(auth, db),
     connections: unusedConnections,
+    models: unusedModels,
     logger,
     pingDatabase: () => Promise.resolve(true),
   });

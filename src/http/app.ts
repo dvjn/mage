@@ -10,12 +10,19 @@ import type { Connection } from "@/ports/connections.ts";
 import type { Identity, Principal } from "@/ports/identity.ts";
 import type { Logger } from "@/ports/logger.ts";
 import { type AttemptStatus, ConnectionError, type Connections } from "@/services/connections.ts";
+import { ServiceError } from "@/services/errors.ts";
+import type { Models } from "@/services/models.ts";
 import {
   type AttemptSummary,
   browserFinishSchema,
   type ConnectionSummary,
 } from "@/shared/connections.ts";
 import type { Me } from "@/shared/me.ts";
+import {
+  type DefaultModel,
+  type ModelListSummary,
+  setDefaultModelSchema,
+} from "@/shared/models.ts";
 
 export interface AppOptions {
   // Answers every request under /api/auth.
@@ -24,6 +31,8 @@ export interface AppOptions {
   identity: Identity;
   // The signed-in user's connections, including signing in to make one.
   connections: Connections;
+  // The models the org's connections unlock and its default model.
+  models: Models;
   logger: Logger;
   // Reports whether the database answers a query.
   pingDatabase: () => Promise<boolean>;
@@ -58,13 +67,33 @@ const browserFinish = validator("json", (value, c) => {
   return parsed.data;
 });
 
+const setDefaultModel = validator("json", (value, c) => {
+  const parsed = setDefaultModelSchema.safeParse(value);
+  if (!parsed.success) return c.json({ error: "ref is required" }, 400);
+  return parsed.data;
+});
+
+// `?refresh=1` reads the lists again instead of from the cache.
+const refreshQuery = validator("query", (value: { refresh?: string }) => ({
+  refresh: value.refresh === "1",
+}));
+
+// Owners and admins change what applies to the whole org.
+function requireAdmin(principal: Principal) {
+  if (principal.role !== "owner" && principal.role !== "admin") {
+    throw new ServiceError(403, "Only an owner or admin can change this");
+  }
+}
+
 // The typed API routes, mounted under /api.
 function createApi(options: AppOptions) {
-  const { identity, connections } = options;
+  const { identity, connections, models } = options;
   return (
     new Hono<ApiEnv>()
       .use("/v1/*", async (c, next) => {
-        c.set("principal", await identity.resolve(c.req.raw.headers));
+        const principal = await identity.resolve(c.req.raw.headers);
+        if (!principal) return c.json({ error: "unauthorized" }, 401);
+        c.set("principal", principal);
         await next();
       })
       .get("/health", async (c) => {
@@ -72,15 +101,27 @@ function createApi(options: AppOptions) {
         return c.json({ ok: database, database }, database ? 200 : 503);
       })
       .get("/v1/me", async (c) => {
-        const { principal } = c.var;
-        if (!principal) return c.json({ error: "unauthorized" }, 401);
-        return c.json((await identity.profile(principal)) satisfies Me, 200);
+        return c.json((await identity.profile(signedIn(c.var.principal))) satisfies Me, 200);
+      })
+      .get("/v1/models", refreshQuery, async (c) => {
+        const { orgId } = signedIn(c.var.principal);
+        const list = await models.resolveModels(orgId, c.req.valid("query"));
+        return c.json(list satisfies ModelListSummary, 200);
+      })
+      .get("/v1/settings/default-model", (c) => {
+        const ref = models.defaultModel(signedIn(c.var.principal).orgId);
+        return c.json({ ref } satisfies DefaultModel, 200);
+      })
+      .put("/v1/settings/default-model", setDefaultModel, async (c) => {
+        const principal = signedIn(c.var.principal);
+        requireAdmin(principal);
+        const { ref } = c.req.valid("json");
+        await models.setDefaultModel(principal.orgId, ref);
+        return c.json({ ref } satisfies DefaultModel, 200);
       })
       // Connections are for the owner of a personal org for now.
       .use("/v1/connections/*", async (c, next) => {
-        const { principal } = c.var;
-        if (!principal) return c.json({ error: "unauthorized" }, 401);
-        const { org, role } = await identity.profile(principal);
+        const { org, role } = await identity.profile(signedIn(c.var.principal));
         if (org.kind !== "personal" || role !== "owner") {
           return c.json({ error: "Only the owner of a personal org can manage connections" }, 403);
         }
@@ -147,7 +188,9 @@ export function createApp(options: AppOptions): App {
   });
   app.onError((err, c) => {
     if (err instanceof HTTPException) return err.getResponse();
-    if (err instanceof ConnectionError) return c.json({ error: err.message }, err.status);
+    if (err instanceof ConnectionError || err instanceof ServiceError) {
+      return c.json({ error: err.message }, err.status);
+    }
     logger.error({ reqId: c.var.requestId, err }, "unhandled error");
     return c.json({ error: "internal error" }, 500);
   });

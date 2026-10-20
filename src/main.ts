@@ -2,18 +2,20 @@
 
 import { serve } from "@hono/node-server";
 
-import { createClaudeOAuth } from "@/adapters/anthropic-claude.ts";
+import { createClaudeCatalog, createClaudeOAuth } from "@/adapters/anthropic-claude.ts";
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { createCipher } from "@/adapters/cipher.ts";
 import { createConnectionStore } from "@/adapters/connections.ts";
 import { createCredentialStore } from "@/adapters/credentials.ts";
 import { openDatabase, pingDatabase } from "@/adapters/db.ts";
 import { createLogger } from "@/adapters/logger.ts";
-import { createCodexOAuth } from "@/adapters/openai-codex.ts";
+import { createCodexCatalog, createCodexOAuth } from "@/adapters/openai-codex.ts";
+import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { loadConfig } from "@/config.ts";
 import { createApp } from "@/http/app.ts";
 import { createConnections } from "@/services/connections.ts";
+import { createModels } from "@/services/models.ts";
 
 const config = loadConfig();
 const logger = createLogger();
@@ -30,8 +32,9 @@ const auth = createAuth({
 // CREDENTIAL_KEY is key version 1.
 const cipher = createCipher({ version: 1, key: config.credentialKey });
 const codex = createCodexOAuth(fetch);
+const connectionStore = createConnectionStore(db);
 const connections = createConnections({
-  connections: createConnectionStore(db),
+  connections: connectionStore,
   credentials: createCredentialStore(db, cipher),
   attempts: createSignInAttemptStore(db),
   providers: {
@@ -40,11 +43,19 @@ const connections = createConnections({
   },
   logger,
 });
+const models = createModels({
+  connections: connectionStore,
+  tokens: connections,
+  catalogs: { codex: createCodexCatalog(fetch), claude: createClaudeCatalog(fetch) },
+  settings: createOrgSettingStore(db),
+  logger,
+});
 
 const app = createApp({
   handleAuth: auth.handler,
   identity: createIdentity(auth, db),
   connections,
+  models,
   logger,
   pingDatabase: () => pingDatabase(db),
   webRoot: import.meta.main ? config.webRoot : undefined,

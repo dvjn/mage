@@ -5,7 +5,13 @@ import { Button } from "@/web/components/ui/button";
 import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from "@/web/components/ui/card";
 import { Wordmark } from "@/web/components/wordmark";
 import { authClient } from "@/web/lib/auth-client";
-import { connectionsQuery, meQuery, sessionQuery } from "@/web/lib/queries";
+import {
+  connectionsQuery,
+  defaultModelQuery,
+  meQuery,
+  modelsQuery,
+  sessionQuery,
+} from "@/web/lib/queries";
 
 const homeRoute = getRouteApi("/");
 
@@ -19,6 +25,8 @@ export function Home() {
     await authClient.signOut();
     queryClient.removeQueries({ queryKey: meQuery.queryKey });
     queryClient.removeQueries({ queryKey: connectionsQuery.queryKey });
+    queryClient.removeQueries({ queryKey: modelsQuery.queryKey });
+    queryClient.removeQueries({ queryKey: defaultModelQuery.queryKey });
     await queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey });
     await navigate({ to: "/login" });
   }

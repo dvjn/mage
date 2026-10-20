@@ -1,10 +1,12 @@
 // Signs in to a Claude account with Claude Code's OAuth client: a browser authorization that ends
-// on a page showing a code the user pastes back, and token refresh.
+// on a page showing a code the user pastes back, and token refresh. Lists the models the account
+// can use from the Anthropic API.
 
 import { createHash, randomBytes } from "node:crypto";
 
 import * as z from "zod";
 
+import type { Catalog } from "@/ports/catalog.ts";
 import type { BrowserOAuth, OAuthTokens } from "@/ports/oauth.ts";
 
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -14,6 +16,29 @@ const TOKEN_URL = "https://platform.claude.com/v1/oauth/token";
 const REDIRECT_URI = "https://platform.claude.com/oauth/code/callback";
 const SCOPES =
   "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+
+const MODELS_URL = "https://api.anthropic.com/v1/models";
+// Marks the request as using an OAuth token and names Mage as the client.
+const OAUTH_HEADERS = {
+  "anthropic-version": "2023-06-01",
+  "anthropic-beta": "oauth-2025-04-20",
+  "user-agent": "mage",
+};
+
+const modelsSchema = z.object({
+  data: z.array(
+    z.object({
+      id: z.string().min(1),
+      display_name: z.string().min(1),
+      max_input_tokens: z.number().int().positive().nullish(),
+      capabilities: z
+        .object({ thinking: z.object({ supported: z.boolean() }).nullish() })
+        .nullish(),
+    }),
+  ),
+  has_more: z.boolean().optional(),
+  last_id: z.string().nullish(),
+});
 
 const tokenResponseSchema = z.object({
   access_token: z.string().min(1),
@@ -84,6 +109,37 @@ export function createClaudeOAuth(fetchFn: typeof fetch = fetch): BrowserOAuth {
 
     refresh(refreshToken) {
       return postToken({ grant_type: "refresh_token", refresh_token: refreshToken });
+    },
+  };
+}
+
+export function createClaudeCatalog(fetchFn: typeof fetch = fetch): Catalog {
+  return {
+    async list(token, signal) {
+      const models: z.infer<typeof modelsSchema>["data"] = [];
+      let after: string | null | undefined;
+      do {
+        const query = new URLSearchParams({ limit: "1000", ...(after && { after_id: after }) });
+        const res = await fetchFn(`${MODELS_URL}?${query.toString()}`, {
+          headers: {
+            Accept: "application/json",
+            Authorization: `Bearer ${token.access}`,
+            ...OAUTH_HEADERS,
+          },
+          signal,
+        });
+        if (!res.ok) throw new Error(`model list failed with status ${res.status}`);
+        const body = modelsSchema.safeParse(await res.json().catch(() => null));
+        if (!body.success) throw new Error("model list response is not a list");
+        models.push(...body.data.data);
+        after = body.data.has_more ? body.data.last_id : null;
+      } while (after);
+      return models.map((model) => ({
+        id: model.id,
+        name: model.display_name,
+        ...(model.max_input_tokens && { contextWindow: model.max_input_tokens }),
+        ...(model.capabilities?.thinking && { reasoning: model.capabilities.thinking.supported }),
+      }));
     },
   };
 }

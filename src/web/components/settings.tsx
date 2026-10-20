@@ -1,10 +1,10 @@
-// Settings: connecting the signed-in user's ChatGPT account through the Codex sign-in, with a
-// device code or in the browser, and their Claude account through the Claude sign-in; and
-// disconnecting them.
+// Settings: the org's default model, picked from what its connections unlock; connecting the
+// signed-in user's ChatGPT account through the Codex sign-in, with a device code or in the
+// browser, and their Claude account through the Claude sign-in; and disconnecting them.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, RefreshCw } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 
 import {
@@ -31,9 +31,10 @@ import {
   FieldLabel,
 } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
+import { CONNECTION_LABELS, ModelPicker } from "@/web/components/model-picker";
 import { Wordmark } from "@/web/components/wordmark";
 import { apiClient } from "@/web/lib/api-client";
-import { connectionsQuery } from "@/web/lib/queries";
+import { connectionsQuery, defaultModelQuery, fetchModels, modelsQuery } from "@/web/lib/queries";
 
 type Method = "device" | "browser";
 
@@ -167,6 +168,7 @@ function CodexSignIn() {
       const result = attemptSchema.parse(await res.json());
       if (result.status === "connected") {
         await queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+        await queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
       }
       return result;
     },
@@ -229,6 +231,7 @@ function CodexSignIn() {
     }
     reset();
     await queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+    await queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
   }
 
   async function disconnect(id: string) {
@@ -239,6 +242,7 @@ function CodexSignIn() {
     }
     reset();
     await queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+    await queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
   }
 
   return (
@@ -367,6 +371,7 @@ function ClaudeSignIn() {
     setAttemptId(undefined);
     setError(undefined);
     await queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+    await queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
   }
 
   async function disconnect(id: string) {
@@ -377,6 +382,7 @@ function ClaudeSignIn() {
     }
     setError(undefined);
     await queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+    await queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
   }
 
   return (
@@ -424,10 +430,92 @@ function ClaudeSignIn() {
   );
 }
 
+function DefaultModel() {
+  const queryClient = useQueryClient();
+  const id = useId();
+  const models = useQuery(modelsQuery);
+  const connections = useQuery(connectionsQuery);
+  const current = useQuery(defaultModelQuery);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string>();
+
+  async function refresh() {
+    setRefreshing(true);
+    try {
+      queryClient.setQueryData(modelsQuery.queryKey, await fetchModels(true));
+    } finally {
+      setRefreshing(false);
+    }
+  }
+
+  async function choose(ref: string) {
+    setError(undefined);
+    const res = await apiClient.v1.settings["default-model"].$put({ json: { ref } });
+    if (!res.ok) {
+      setError(await errorOf(res));
+      return;
+    }
+    await queryClient.invalidateQueries({ queryKey: defaultModelQuery.queryKey });
+  }
+
+  function labelOf(connectionId: string) {
+    const kind = connections.data?.find((c) => c.id === connectionId)?.authKind;
+    return kind ? CONNECTION_LABELS[kind] : "A connection";
+  }
+
+  const list = models.data?.models ?? [];
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Default model</CardTitle>
+        <CardDescription>
+          {current.data && !current.data.ref
+            ? "Pick a default model for new threads."
+            : "New threads start with this model."}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor={id}>Model</FieldLabel>
+            <div className="flex gap-2">
+              <ModelPicker
+                id={id}
+                models={list}
+                value={current.data?.ref ?? null}
+                onChange={(ref) => void choose(ref)}
+                placeholder={list.length > 0 ? "Pick a default" : "Connect an account first"}
+                disabled={list.length === 0}
+                className="flex-1"
+              />
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label="Refresh models"
+                disabled={refreshing}
+                onClick={() => void refresh()}
+              >
+                <RefreshCw />
+              </Button>
+            </div>
+          </Field>
+          {models.data?.errors.map((failed) => (
+            <FieldError key={failed.connectionId}>
+              {labelOf(failed.connectionId)}: {failed.message}
+            </FieldError>
+          ))}
+          <FieldError>{error}</FieldError>
+        </FieldGroup>
+      </CardContent>
+    </Card>
+  );
+}
+
 export function Settings() {
   return (
     <div className="flex flex-col gap-6">
       <Wordmark className="self-center" />
+      <DefaultModel />
       <CodexSignIn />
       <ClaudeSignIn />
       <Link to="/" className="self-center text-sm underline underline-offset-4">
