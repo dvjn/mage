@@ -50,35 +50,54 @@ export function SignupForm(props: React.ComponentProps<typeof Card>) {
       <Wordmark className="self-center" />
       <Card {...props}>
         <CardHeader>
-          <CardTitle>Create an account</CardTitle>
-          <CardDescription>Enter your information below to create your account</CardDescription>
+          <CardTitle>Create account</CardTitle>
+          <CardDescription>Your name, an email and a password are all Mage needs.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit}>
             <FieldGroup>
               <Field>
-                <FieldLabel htmlFor="name">Full Name</FieldLabel>
-                <Input id="name" name="name" type="text" placeholder="John Doe" required />
+                <FieldLabel htmlFor="name">Name</FieldLabel>
+                <Input id="name" name="name" type="text" autoComplete="name" required />
               </Field>
               <Field>
                 <FieldLabel htmlFor="email">Email</FieldLabel>
-                <Input id="email" name="email" type="email" placeholder="m@example.com" required />
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  required
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="password">Password</FieldLabel>
-                <Input id="password" name="password" type="password" minLength={8} required />
-                <FieldDescription>Must be at least 8 characters long.</FieldDescription>
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="new-password"
+                  minLength={8}
+                  required
+                />
+                <FieldDescription>At least 8 characters.</FieldDescription>
               </Field>
               <Field>
-                <FieldLabel htmlFor="confirm-password">Confirm Password</FieldLabel>
-                <Input id="confirm-password" name="confirm-password" type="password" required />
-                <FieldDescription>Please confirm your password.</FieldDescription>
+                <FieldLabel htmlFor="confirm-password">Confirm password</FieldLabel>
+                <Input
+                  id="confirm-password"
+                  name="confirm-password"
+                  type="password"
+                  autoComplete="new-password"
+                  required
+                />
               </Field>
               <FieldGroup>
                 <Field>
                   <FieldError>{error}</FieldError>
                   <Button type="submit" disabled={pending}>
-                    Create Account
+                    Create account
                   </Button>
                   <FieldDescription className="px-6 text-center">
                     Already have an account? <Link to="/login">Sign in</Link>

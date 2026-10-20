@@ -48,27 +48,40 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
       <Wordmark className="self-center" />
       <Card>
         <CardHeader>
-          <CardTitle>Login to your account</CardTitle>
-          <CardDescription>Enter your email below to login to your account</CardDescription>
+          <CardTitle>Sign in</CardTitle>
+          <CardDescription>Use the email and password of your Mage account.</CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit}>
             <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="email">Email</FieldLabel>
-                <Input id="email" name="email" type="email" placeholder="m@example.com" required />
+                <Input
+                  id="email"
+                  name="email"
+                  type="email"
+                  placeholder="you@example.com"
+                  autoComplete="email"
+                  required
+                />
               </Field>
               <Field>
                 <FieldLabel htmlFor="password">Password</FieldLabel>
-                <Input id="password" name="password" type="password" required />
+                <Input
+                  id="password"
+                  name="password"
+                  type="password"
+                  autoComplete="current-password"
+                  required
+                />
               </Field>
               <Field>
                 <FieldError>{error}</FieldError>
                 <Button type="submit" disabled={pending}>
-                  Login
+                  Sign in
                 </Button>
                 <FieldDescription className="text-center">
-                  Don&apos;t have an account? <Link to="/signup">Sign up</Link>
+                  New to Mage? <Link to="/signup">Create account</Link>
                 </FieldDescription>
               </Field>
             </FieldGroup>

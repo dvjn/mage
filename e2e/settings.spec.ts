@@ -5,11 +5,11 @@ test.use({ extraHTTPHeaders: { "X-Forwarded-For": "192.0.2.7" } });
 
 async function signUpToSettings(page: Page) {
   await page.goto("/signup");
-  await page.getByLabel("Full Name").fill("Ada Lovelace");
+  await page.getByLabel("Name", { exact: true }).fill("Ada Lovelace");
   await page.getByLabel("Email").fill(`${crypto.randomUUID()}@example.com`);
   await page.getByLabel("Password", { exact: true }).fill("correct horse battery");
-  await page.getByLabel("Confirm Password").fill("correct horse battery");
-  await page.getByRole("button", { name: "Create Account" }).click();
+  await page.getByLabel("Confirm password").fill("correct horse battery");
+  await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(/\/s\/[^/]+$/);
 
   await page.getByRole("button", { name: "Account menu" }).click();

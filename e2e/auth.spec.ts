@@ -10,11 +10,11 @@ function uniqueEmail() {
 
 async function signUp(page: Page, name: string, email: string) {
   await page.goto("/signup");
-  await page.getByLabel("Full Name").fill(name);
+  await page.getByLabel("Name", { exact: true }).fill(name);
   await page.getByLabel("Email").fill(email);
   await page.getByLabel("Password", { exact: true }).fill(password);
-  await page.getByLabel("Confirm Password").fill(password);
-  await page.getByRole("button", { name: "Create Account" }).click();
+  await page.getByLabel("Confirm password").fill(password);
+  await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(inASpace);
 }
 
@@ -27,7 +27,7 @@ async function signOut(page: Page) {
 test("signed out, home redirects to login, which links to signup", async ({ page }) => {
   await page.goto("/");
   await expect(page).toHaveURL("/login");
-  await page.getByRole("link", { name: "Sign up" }).click();
+  await page.getByRole("link", { name: "Create account" }).click();
   await expect(page).toHaveURL("/signup");
 });
 
@@ -67,7 +67,7 @@ test("signing in shows the server's error, then lands in a space", async ({ page
   await page.getByLabel("Password").fill("wrong password");
   const [response] = await Promise.all([
     page.waitForResponse((res) => res.request().method() === "POST"),
-    page.getByRole("button", { name: "Login" }).click(),
+    page.getByRole("button", { name: "Sign in" }).click(),
   ]);
   expect(response.ok()).toBe(false);
   const { message } = (await response.json()) as { message: string };
@@ -76,7 +76,7 @@ test("signing in shows the server's error, then lands in a space", async ({ page
   await expect(page).toHaveURL("/login");
 
   await page.getByLabel("Password").fill(password);
-  await page.getByRole("button", { name: "Login" }).click();
+  await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(inASpace);
   await expect(page.getByRole("button", { name: "Account menu" })).toContainText("Alan Turing");
 });
@@ -88,11 +88,11 @@ test("mismatched passwords are caught before any request", async ({ page }) => {
     if (req.method() === "POST") posts.push(req.url());
   });
 
-  await page.getByLabel("Full Name").fill("Edsger Dijkstra");
+  await page.getByLabel("Name", { exact: true }).fill("Edsger Dijkstra");
   await page.getByLabel("Email").fill(uniqueEmail());
   await page.getByLabel("Password", { exact: true }).fill(password);
-  await page.getByLabel("Confirm Password").fill("something else");
-  await page.getByRole("button", { name: "Create Account" }).click();
+  await page.getByLabel("Confirm password").fill("something else");
+  await page.getByRole("button", { name: "Create account" }).click();
 
   await expect(page.getByRole("alert")).toHaveText("Passwords do not match.");
   await expect(page).toHaveURL("/signup");
