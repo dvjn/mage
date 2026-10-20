@@ -9,6 +9,7 @@ import { createApp } from "@/http/app.ts";
 import type { Connections } from "@/services/connections.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
+import type { Threads } from "@/services/threads.ts";
 
 const webRoot = mkdtempSync(path.join(tmpdir(), "mage-web-"));
 mkdirSync(path.join(webRoot, "assets"));
@@ -25,6 +26,7 @@ const app = createApp({
   connections: {} as Connections,
   models: {} as Models,
   spaces: {} as Spaces,
+  threads: {} as Threads,
   logger: createLogger({ write() {} }),
   pingDatabase: () => Promise.resolve(true),
   webRoot,

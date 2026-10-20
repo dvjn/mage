@@ -13,11 +13,13 @@ import { createCodexCatalog, createCodexOAuth } from "@/adapters/openai-codex.ts
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
+import { createThreadStore } from "@/adapters/threads.ts";
 import { loadConfig } from "@/config.ts";
 import { createApp } from "@/http/app.ts";
 import { createConnections } from "@/services/connections.ts";
 import { createModels } from "@/services/models.ts";
 import { createSpaces } from "@/services/spaces.ts";
+import { createThreads } from "@/services/threads.ts";
 
 const config = loadConfig();
 const logger = createLogger();
@@ -52,13 +54,16 @@ const models = createModels({
   settings: createOrgSettingStore(db),
   logger,
 });
+const threadStore = createThreadStore(db);
+const spaces = createSpaces({ spaces: createSpaceStore(db), threads: threadStore });
 
 const app = createApp({
   handleAuth: auth.handler,
   identity: createIdentity(auth, db),
   connections,
   models,
-  spaces: createSpaces({ spaces: createSpaceStore(db) }),
+  spaces,
+  threads: createThreads({ spaces, threads: threadStore, models }),
   logger,
   pingDatabase: () => pingDatabase(db),
   webRoot: import.meta.main ? config.webRoot : undefined,

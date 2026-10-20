@@ -17,9 +17,11 @@ import type { BrowserOAuth } from "@/ports/oauth.ts";
 import { createConnections } from "@/services/connections.ts";
 import { createModels } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
+import type { Threads } from "@/services/threads.ts";
 
 // Never called by these tests.
 const unusedSpaces = {} as Spaces;
+const unusedThreads = {} as Threads;
 
 const baseUrl = "http://localhost:4783";
 const codexUrl = "https://chatgpt.com/backend-api/codex/models?client_version=0.163.0";
@@ -152,6 +154,7 @@ function setup() {
     connections,
     models,
     spaces: unusedSpaces,
+    threads: unusedThreads,
     logger,
     pingDatabase: () => Promise.resolve(true),
   });

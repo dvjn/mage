@@ -18,6 +18,7 @@ import type { BrowserOAuth } from "@/ports/oauth.ts";
 import { createConnections } from "@/services/connections.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
+import type { Threads } from "@/services/threads.ts";
 
 const baseUrl = "http://localhost:4783";
 const callbackBase = "http://localhost:1455/auth/callback";
@@ -28,6 +29,7 @@ const clientId = "app_EMoamEEZ73f0CkXaXp7hrann";
 // Never called by these tests.
 const unusedModels = {} as Models;
 const unusedSpaces = {} as Spaces;
+const unusedThreads = {} as Threads;
 const unusedClaude = {} as BrowserOAuth;
 
 function accessToken(serial: number, accountId: string | null = "acct-123") {
@@ -135,6 +137,7 @@ function setup() {
     connections,
     models: unusedModels,
     spaces: unusedSpaces,
+    threads: unusedThreads,
     logger,
     pingDatabase: () => Promise.resolve(true),
   });

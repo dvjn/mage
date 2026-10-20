@@ -1,79 +1,8 @@
-import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createAuth, createIdentity } from "@/adapters/auth.ts";
-import { openDatabase } from "@/adapters/db.ts";
-import { createLogger } from "@/adapters/logger.ts";
 import * as schema from "@/adapters/schema.ts";
-import { createSpaceStore } from "@/adapters/spaces.ts";
-import { createApp } from "@/http/app.ts";
-import type { Connections } from "@/services/connections.ts";
-import type { Models } from "@/services/models.ts";
-import { createSpaces } from "@/services/spaces.ts";
 
-// Never called by these tests.
-const unusedConnections = {} as Connections;
-const unusedModels = {} as Models;
-
-const baseUrl = "http://localhost:4783";
-
-type SpaceBody = { id: string; name: string; primary: boolean; role: string; kind: string };
-
-function setup() {
-  const db = openDatabase(":memory:");
-  const logger = createLogger({ write() {} });
-  const secret = "test-secret-that-is-long-enough-1234567890";
-  const auth = createAuth({ db, logger, secret, baseUrl, trustedOrigins: [] });
-  const store = createSpaceStore(db);
-  const spaces = createSpaces({ spaces: store });
-  const app = createApp({
-    handleAuth: auth.handler,
-    identity: createIdentity(auth, db),
-    connections: unusedConnections,
-    models: unusedModels,
-    spaces,
-    logger,
-    pingDatabase: () => Promise.resolve(true),
-  });
-
-  async function signUp(name: string, email: string) {
-    const res = await app.request("/api/auth/sign-up/email", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Origin: baseUrl },
-      body: JSON.stringify({ name, email, password: "correct horse battery" }),
-    });
-    expect(res.status).toBe(200);
-    const { user } = (await res.json()) as { user: { id: string } };
-    const cookie = res.headers
-      .getSetCookie()
-      .map((value) => value.split(";")[0])
-      .join("; ");
-    const member = db.select().from(schema.member).where(eq(schema.member.userId, user.id)).get();
-    return { userId: user.id, orgId: member?.organizationId as string, role: "owner", cookie };
-  }
-
-  function api(method: string, path: string, cookie: string, body?: object) {
-    return app.request(`/api/v1${path}`, {
-      method,
-      headers: { "Content-Type": "application/json", Cookie: cookie },
-      body: body && JSON.stringify(body),
-    });
-  }
-
-  async function listSpaces(cookie: string) {
-    const res = await api("GET", "/spaces", cookie);
-    expect(res.status).toBe(200);
-    return (await res.json()) as SpaceBody[];
-  }
-
-  async function createSpace(cookie: string, name: string) {
-    const res = await api("POST", "/spaces", cookie, { name });
-    expect(res.status).toBe(200);
-    return (await res.json()) as SpaceBody;
-  }
-
-  return { db, store, spaces, signUp, api, listSpaces, createSpace };
-}
+import { setup } from "./workspace.ts";
 
 describe("spaces", () => {
   it("starts every personal org with Your space, owned by the user", async () => {
@@ -144,6 +73,17 @@ describe("spaces", () => {
     expect((await api("DELETE", "/spaces/no-such-space", grace.cookie)).status).toBe(404);
   });
 
+  it("deletes only a space without threads", async () => {
+    const { api, signUp, createSpace, createThread } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const work = await createSpace(cookie, "Work");
+    await createThread(cookie, work.id, "Hello");
+
+    const res = await api("DELETE", `/spaces/${work.id}`, cookie);
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "Only a space without threads can be deleted" });
+  });
+
   it("is unauthorized when signed out", async () => {
     const { api } = setup();
 
@@ -154,10 +94,10 @@ describe("spaces", () => {
 
 describe("canSee", () => {
   it("is true only for members in the space's own org", async () => {
-    const { store, spaces, signUp } = setup();
+    const { spaceStore, spaces, signUp } = setup();
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const grace = await signUp("Grace Hopper", "grace@example.com");
-    const space = store.create({
+    const space = spaceStore.create({
       orgId: ada.orgId,
       kind: "personal",
       name: "Work",

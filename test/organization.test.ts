@@ -9,11 +9,13 @@ import { createApp } from "@/http/app.ts";
 import type { Connections } from "@/services/connections.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
+import type { Threads } from "@/services/threads.ts";
 
 // Never called by these tests.
 const unusedConnections = {} as Connections;
 const unusedModels = {} as Models;
 const unusedSpaces = {} as Spaces;
+const unusedThreads = {} as Threads;
 
 const baseUrl = "http://localhost:4783";
 
@@ -28,6 +30,7 @@ function setup() {
     connections: unusedConnections,
     models: unusedModels,
     spaces: unusedSpaces,
+    threads: unusedThreads,
     logger,
     pingDatabase: () => Promise.resolve(true),
   });

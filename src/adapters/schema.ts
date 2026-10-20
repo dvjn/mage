@@ -268,6 +268,55 @@ export const spaceMember = sqliteTable(
   ],
 );
 
+// A conversation in a space; its content is its event log.
+export const thread = sqliteTable(
+  "thread",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id")
+      .notNull()
+      .references(() => space.id, { onDelete: "cascade" }),
+    // Null until the first message names it or someone sets it.
+    title: text("title"),
+    // A model ref such as `codex/gpt-5`; null when there was no default to start from.
+    model: text("model"),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    parentThreadId: text("parent_thread_id"),
+    rootThreadId: text("root_thread_id"),
+    // The seq of the thread's newest event; 0 before the first.
+    lastEventSeq: integer("last_event_seq").default(0).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [index("thread_space_idx").on(table.spaceId)],
+);
+
+// What happened in a thread, numbered 1, 2, 3… per thread with no gaps.
+export const threadEvent = sqliteTable(
+  "thread_event",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    seq: integer("seq").notNull(),
+    type: text("type").notNull(),
+    actorKind: text("actor_kind", { enum: ["user", "agent"] }).notNull(),
+    // Kept after the user is gone, so their events still say who wrote them.
+    actorUserId: text("actor_user_id"),
+    data: text("data", { mode: "json" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [uniqueIndex("thread_event_thread_seq_idx").on(table.threadId, table.seq)],
+);
+
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),

@@ -50,6 +50,13 @@
       "when": 1792528079411,
       "tag": "0006_space",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1792528311871,
+      "tag": "0007_thread",
+      "breakpoints": true
     }
   ]
 }

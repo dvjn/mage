@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { requestId, type RequestIdVariables } from "hono/request-id";
 import { validator } from "hono/validator";
+import type * as z from "zod";
 
 import type { Connection } from "@/ports/connections.ts";
 import type { Space, SpaceRole } from "@/ports/spaces.ts";
@@ -14,6 +15,7 @@ import { type AttemptStatus, ConnectionError, type Connections } from "@/service
 import { ServiceError } from "@/services/errors.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
+import type { Threads } from "@/services/threads.ts";
 import {
   type AttemptSummary,
   browserFinishSchema,
@@ -26,6 +28,7 @@ import {
   setDefaultModelSchema,
 } from "@/shared/models.ts";
 import { type SpaceSummary, spaceNameSchema } from "@/shared/spaces.ts";
+import { messageInputSchema, newThreadSchema, threadUpdateSchema } from "@/shared/threads.ts";
 
 export interface AppOptions {
   // Answers every request under /api/auth.
@@ -38,6 +41,8 @@ export interface AppOptions {
   models: Models;
   // The spaces the signed-in user can see in their org.
   spaces: Spaces;
+  // Threads in those spaces and their events.
+  threads: Threads;
   logger: Logger;
   // Reports whether the database answers a query.
   pingDatabase: () => Promise<boolean>;
@@ -77,17 +82,20 @@ const browserFinish = validator("json", (value, c) => {
   return parsed.data;
 });
 
-const setDefaultModel = validator("json", (value, c) => {
-  const parsed = setDefaultModelSchema.safeParse(value);
-  if (!parsed.success) return c.json({ error: "ref is required" }, 400);
-  return parsed.data;
-});
+// A JSON body that must match the schema; otherwise 400 with the error given.
+function jsonBody<T extends z.ZodType>(schema: T, error: string) {
+  return validator("json", (value, c) => {
+    const parsed = schema.safeParse(value);
+    if (!parsed.success) return c.json({ error }, 400);
+    return parsed.data as z.output<T>;
+  });
+}
 
-const spaceName = validator("json", (value, c) => {
-  const parsed = spaceNameSchema.safeParse(value);
-  if (!parsed.success) return c.json({ error: "A name of 1 to 80 characters is required" }, 400);
-  return parsed.data;
-});
+const setDefaultModel = jsonBody(setDefaultModelSchema, "ref is required");
+const spaceName = jsonBody(spaceNameSchema, "A name of 1 to 80 characters is required");
+const newThread = jsonBody(newThreadSchema, "text must be a non-empty string");
+const threadUpdate = jsonBody(threadUpdateSchema, "Give a title or a model");
+const message = jsonBody(messageInputSchema, "text is required");
 
 // `?refresh=1` reads the lists again instead of from the cache.
 const refreshQuery = validator("query", (value: { refresh?: string }) => ({
@@ -103,7 +111,7 @@ function requireAdmin(principal: Principal) {
 
 // The typed API routes, mounted under /api.
 function createApi(options: AppOptions) {
-  const { identity, connections, models, spaces } = options;
+  const { identity, connections, models, spaces, threads } = options;
   return (
     new Hono<ApiEnv>()
       .use("/v1/*", async (c, next) => {
@@ -150,6 +158,25 @@ function createApi(options: AppOptions) {
       .delete("/v1/spaces/:id", (c) => {
         spaces.remove(signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
+      })
+      .get("/v1/spaces/:id/threads", (c) => {
+        return c.json(threads.list(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .post("/v1/spaces/:id/threads", newThread, (c) => {
+        const { text } = c.req.valid("json");
+        return c.json(threads.create(signedIn(c.var.principal), c.req.param("id"), text), 200);
+      })
+      .get("/v1/threads/:id", (c) => {
+        return c.json(threads.get(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .patch("/v1/threads/:id", threadUpdate, async (c) => {
+        const changes = c.req.valid("json");
+        const thread = await threads.update(signedIn(c.var.principal), c.req.param("id"), changes);
+        return c.json(thread, 200);
+      })
+      .post("/v1/threads/:id/messages", message, (c) => {
+        const { text } = c.req.valid("json");
+        return c.json(threads.postMessage(signedIn(c.var.principal), c.req.param("id"), text), 202);
       })
       // Connections are for the owner of a personal org for now.
       .use("/v1/connections/*", async (c, next) => {
