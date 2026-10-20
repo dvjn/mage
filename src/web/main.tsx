@@ -14,6 +14,8 @@ import {
 } from "@/web/components/ui/card";
 import { authClient } from "@/web/lib/auth-client";
 
+import { healthSchema } from "@/shared/health.ts";
+
 import "./index.css";
 
 function SignedIn({ name, onSignOut }: { name: string; onSignOut: () => void }) {
@@ -21,8 +23,8 @@ function SignedIn({ name, onSignOut }: { name: string; onSignOut: () => void }) 
 
   useEffect(() => {
     fetch("/api/health")
-      .then((res) => res.json() as Promise<{ ok: boolean }>)
-      .then((body) => setStatus(body.ok ? "ok" : "unhealthy"))
+      .then((res) => res.json())
+      .then((body) => setStatus(healthSchema.parse(body).ok ? "ok" : "unhealthy"))
       .catch(() => setStatus("unreachable"));
   }, []);
 

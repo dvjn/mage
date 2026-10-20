@@ -6,6 +6,7 @@ import { HTTPException } from "hono/http-exception";
 import { requestId, type RequestIdVariables } from "hono/request-id";
 
 import type { Logger } from "@/ports/logger.ts";
+import type { Health } from "@/shared/health.ts";
 
 export interface AppOptions {
   // Answers every request under /api/auth.
@@ -46,7 +47,7 @@ export function createApp(options: AppOptions): App {
 
   app.get("/api/health", async (c) => {
     const database = await options.pingDatabase();
-    return c.json({ ok: database, database }, database ? 200 : 503);
+    return c.json({ ok: database, database } satisfies Health, database ? 200 : 503);
   });
   app.on(["GET", "POST"], "/api/auth/*", (c) => options.handleAuth(c.req.raw));
   app.all("/api/*", (c) => c.json({ error: "not found" }, 404));
