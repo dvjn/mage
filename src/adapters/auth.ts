@@ -1,5 +1,5 @@
 // Email and password accounts with cookie sessions, served under /api/auth.
-// Every user gets a personal org at sign-up, and new sessions act in it.
+// Every user gets a personal org with its first space at sign-up, and new sessions act in it.
 
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
@@ -12,6 +12,7 @@ import type { Logger } from "@/ports/logger.ts";
 
 import type { Db } from "./db.ts";
 import * as schema from "./schema.ts";
+import { createSpaceStore } from "./spaces.ts";
 
 export interface AuthOptions {
   db: Db;
@@ -25,6 +26,7 @@ export type Auth = ReturnType<typeof createAuth>;
 
 export function createAuth(options: AuthOptions) {
   const { db } = options;
+  const spaces = createSpaceStore(db);
 
   function personalOrgOf(userId: string) {
     return db
@@ -64,6 +66,13 @@ export function createAuth(options: AuthOptions) {
           after: async (user): Promise<void> => {
             const org = await auth.api.createOrganization({
               body: { name: user.name, slug: user.id, userId: user.id },
+            });
+            spaces.create({
+              orgId: org.id,
+              kind: "personal",
+              name: "Your space",
+              primary: true,
+              createdBy: user.id,
             });
             // Sign-up opens its session before this runs, so that session is pointed at the org here.
             db.update(schema.session)

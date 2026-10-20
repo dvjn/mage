@@ -5,10 +5,12 @@ import { createApp } from "@/http/app.ts";
 import type { Identity } from "@/ports/identity.ts";
 import type { Connections } from "@/services/connections.ts";
 import type { Models } from "@/services/models.ts";
+import type { Spaces } from "@/services/spaces.ts";
 
 // Never called by these tests.
 const unusedConnections = {} as Connections;
 const unusedModels = {} as Models;
+const unusedSpaces = {} as Spaces;
 
 const handleAuth = () => Promise.resolve(new Response(null, { status: 404 }));
 const identity: Identity = {
@@ -25,6 +27,7 @@ describe("request logging", () => {
       identity,
       connections: unusedConnections,
       models: unusedModels,
+      spaces: unusedSpaces,
       logger,
       pingDatabase: () => Promise.resolve(true),
     });

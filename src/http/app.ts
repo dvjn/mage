@@ -7,11 +7,13 @@ import { requestId, type RequestIdVariables } from "hono/request-id";
 import { validator } from "hono/validator";
 
 import type { Connection } from "@/ports/connections.ts";
+import type { Space, SpaceRole } from "@/ports/spaces.ts";
 import type { Identity, Principal } from "@/ports/identity.ts";
 import type { Logger } from "@/ports/logger.ts";
 import { type AttemptStatus, ConnectionError, type Connections } from "@/services/connections.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Models } from "@/services/models.ts";
+import type { Spaces } from "@/services/spaces.ts";
 import {
   type AttemptSummary,
   browserFinishSchema,
@@ -23,6 +25,7 @@ import {
   type ModelListSummary,
   setDefaultModelSchema,
 } from "@/shared/models.ts";
+import { type SpaceSummary, spaceNameSchema } from "@/shared/spaces.ts";
 
 export interface AppOptions {
   // Answers every request under /api/auth.
@@ -33,6 +36,8 @@ export interface AppOptions {
   connections: Connections;
   // The models the org's connections unlock and its default model.
   models: Models;
+  // The spaces the signed-in user can see in their org.
+  spaces: Spaces;
   logger: Logger;
   // Reports whether the database answers a query.
   pingDatabase: () => Promise<boolean>;
@@ -55,6 +60,11 @@ function summary(connection: Connection): ConnectionSummary {
   return { id, provider, authKind, account, createdAt: createdAt.toISOString() };
 }
 
+function spaceSummary(space: Space & { role: SpaceRole }): SpaceSummary {
+  const { id, kind, name, primary, role, createdAt } = space;
+  return { id, kind, name, primary, role, createdAt: createdAt.toISOString() };
+}
+
 function attemptSummary(attempt: AttemptStatus): AttemptSummary {
   return attempt.status === "connected"
     ? { status: "connected", connection: summary(attempt.connection) }
@@ -73,6 +83,12 @@ const setDefaultModel = validator("json", (value, c) => {
   return parsed.data;
 });
 
+const spaceName = validator("json", (value, c) => {
+  const parsed = spaceNameSchema.safeParse(value);
+  if (!parsed.success) return c.json({ error: "A name of 1 to 80 characters is required" }, 400);
+  return parsed.data;
+});
+
 // `?refresh=1` reads the lists again instead of from the cache.
 const refreshQuery = validator("query", (value: { refresh?: string }) => ({
   refresh: value.refresh === "1",
@@ -87,7 +103,7 @@ function requireAdmin(principal: Principal) {
 
 // The typed API routes, mounted under /api.
 function createApi(options: AppOptions) {
-  const { identity, connections, models } = options;
+  const { identity, connections, models, spaces } = options;
   return (
     new Hono<ApiEnv>()
       .use("/v1/*", async (c, next) => {
@@ -118,6 +134,22 @@ function createApi(options: AppOptions) {
         const { ref } = c.req.valid("json");
         await models.setDefaultModel(principal.orgId, ref);
         return c.json({ ref } satisfies DefaultModel, 200);
+      })
+      .get("/v1/spaces", (c) => {
+        return c.json(spaces.list(signedIn(c.var.principal)).map(spaceSummary), 200);
+      })
+      .post("/v1/spaces", spaceName, (c) => {
+        const space = spaces.create(signedIn(c.var.principal), c.req.valid("json").name);
+        return c.json(spaceSummary(space), 200);
+      })
+      .patch("/v1/spaces/:id", spaceName, (c) => {
+        const { name } = c.req.valid("json");
+        const space = spaces.rename(signedIn(c.var.principal), c.req.param("id"), name);
+        return c.json(spaceSummary(space), 200);
+      })
+      .delete("/v1/spaces/:id", (c) => {
+        spaces.remove(signedIn(c.var.principal), c.req.param("id"));
+        return c.json({ ok: true }, 200);
       })
       // Connections are for the owner of a personal org for now.
       .use("/v1/connections/*", async (c, next) => {

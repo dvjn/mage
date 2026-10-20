@@ -12,10 +12,12 @@ import { createLogger } from "@/adapters/logger.ts";
 import { createCodexCatalog, createCodexOAuth } from "@/adapters/openai-codex.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
+import { createSpaceStore } from "@/adapters/spaces.ts";
 import { loadConfig } from "@/config.ts";
 import { createApp } from "@/http/app.ts";
 import { createConnections } from "@/services/connections.ts";
 import { createModels } from "@/services/models.ts";
+import { createSpaces } from "@/services/spaces.ts";
 
 const config = loadConfig();
 const logger = createLogger();
@@ -56,6 +58,7 @@ const app = createApp({
   identity: createIdentity(auth, db),
   connections,
   models,
+  spaces: createSpaces({ spaces: createSpaceStore(db) }),
   logger,
   pingDatabase: () => pingDatabase(db),
   webRoot: import.meta.main ? config.webRoot : undefined,

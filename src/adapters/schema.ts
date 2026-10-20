@@ -1,7 +1,15 @@
 // Database tables. Migrations are generated from these definitions.
 
 import { relations, sql } from "drizzle-orm";
-import { sqliteTable, text, integer, index, uniqueIndex, blob } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  index,
+  uniqueIndex,
+  blob,
+  primaryKey,
+} from "drizzle-orm/sqlite-core";
 
 export const user = sqliteTable("user", {
   id: text("id").primaryKey(),
@@ -213,6 +221,52 @@ export const orgSetting = sqliteTable("org_setting", {
     .$onUpdate(() => /* @__PURE__ */ new Date())
     .notNull(),
 });
+
+// Where an org's threads live; people see a space's threads by being its members.
+export const space = sqliteTable(
+  "space",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["personal", "shared"] }).notNull(),
+    name: text("name").notNull(),
+    // The space every personal org starts with; it can be renamed but not deleted.
+    primary: integer("is_primary", { mode: "boolean" }).default(false).notNull(),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [index("space_org_idx").on(table.organizationId)],
+);
+
+export const spaceMember = sqliteTable(
+  "space_member",
+  {
+    spaceId: text("space_id")
+      .notNull()
+      .references(() => space.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["owner", "member"] }).notNull(),
+    // How the user came to be a member.
+    source: text("source", { enum: ["direct"] }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.spaceId, table.userId] }),
+    index("space_member_user_idx").on(table.userId),
+  ],
+);
 
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),

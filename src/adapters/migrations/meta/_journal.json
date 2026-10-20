@@ -43,6 +43,13 @@
       "when": 1792527515115,
       "tag": "0005_org_setting",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1792528079411,
+      "tag": "0006_space",
+      "breakpoints": true
     }
   ]
 }

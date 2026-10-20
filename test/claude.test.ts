@@ -16,6 +16,7 @@ import { createApp } from "@/http/app.ts";
 import type { BrowserOAuth, DeviceOAuth } from "@/ports/oauth.ts";
 import { createConnections } from "@/services/connections.ts";
 import type { Models } from "@/services/models.ts";
+import type { Spaces } from "@/services/spaces.ts";
 
 const baseUrl = "http://localhost:4783";
 const tokenUrl = "https://platform.claude.com/v1/oauth/token";
@@ -23,6 +24,7 @@ const redirectUri = "https://platform.claude.com/oauth/code/callback";
 const clientId = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 // Never called by these tests.
 const unusedModels = {} as Models;
+const unusedSpaces = {} as Spaces;
 const unusedCodex = {} as BrowserOAuth & DeviceOAuth;
 
 type Reply = { status: number; body?: unknown };
@@ -84,6 +86,7 @@ function setup() {
     identity: createIdentity(auth, db),
     connections,
     models: unusedModels,
+    spaces: unusedSpaces,
     logger,
     pingDatabase: () => Promise.resolve(true),
   });
