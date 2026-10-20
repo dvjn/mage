@@ -14,6 +14,7 @@ writeFileSync(path.join(webRoot, "assets/app.js"), "export {};");
 afterAll(() => rmSync(webRoot, { recursive: true, force: true }));
 
 const app = createApp({
+  handleAuth: () => Promise.resolve(new Response(null, { status: 404 })),
   logger: createLogger({ write() {} }),
   pingDatabase: () => Promise.resolve(true),
   webRoot,

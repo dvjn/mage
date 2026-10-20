@@ -2,6 +2,7 @@
 
 import { serve } from "@hono/node-server";
 
+import { createAuth } from "@/adapters/auth.ts";
 import { openDatabase, pingDatabase } from "@/adapters/db.ts";
 import { createLogger } from "@/adapters/logger.ts";
 import { loadConfig } from "@/config.ts";
@@ -11,8 +12,16 @@ const config = loadConfig();
 const logger = createLogger();
 
 const db = openDatabase(config.databasePath);
+const auth = createAuth({
+  db,
+  logger,
+  secret: config.authSecret,
+  baseUrl: config.baseUrl,
+  trustedOrigins: config.authTrustedOrigins,
+});
 
 const app = createApp({
+  handleAuth: auth.handler,
   logger,
   pingDatabase: () => pingDatabase(db),
   webRoot: import.meta.main ? config.webRoot : undefined,

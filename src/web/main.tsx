@@ -1,17 +1,22 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 
+import { LoginForm } from "@/web/components/login-form";
+import { SignupForm } from "@/web/components/signup-form";
+import { Button } from "@/web/components/ui/button";
 import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/web/components/ui/card";
+import { authClient } from "@/web/lib/auth-client";
 
 import "./index.css";
 
-function App() {
+function SignedIn({ name, onSignOut }: { name: string; onSignOut: () => void }) {
   const [status, setStatus] = useState("checking…");
 
   useEffect(() => {
@@ -22,16 +27,43 @@ function App() {
   }, []);
 
   return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{name}</CardTitle>
+        <CardDescription>Signed in to Mage</CardDescription>
+      </CardHeader>
+      <CardContent>
+        API: <output>{status}</output>
+      </CardContent>
+      <CardFooter>
+        <Button variant="outline" onClick={onSignOut}>
+          Sign out
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}
+
+function App() {
+  const { data: session, isPending } = authClient.useSession();
+  const [view, setView] = useState<"login" | "signup">("login");
+
+  function signOut() {
+    setView("login");
+    void authClient.signOut();
+  }
+
+  return (
     <main className="flex min-h-svh items-center justify-center p-6">
-      <Card className="w-full max-w-sm">
-        <CardHeader>
-          <CardTitle>Mage</CardTitle>
-          <CardDescription>Server status</CardDescription>
-        </CardHeader>
-        <CardContent>
-          API: <output>{status}</output>
-        </CardContent>
-      </Card>
+      <div className="w-full max-w-sm">
+        {isPending ? null : session ? (
+          <SignedIn name={session.user.name} onSignOut={signOut} />
+        ) : view === "signup" ? (
+          <SignupForm onSignIn={() => setView("login")} />
+        ) : (
+          <LoginForm onSignUp={() => setView("signup")} />
+        )}
+      </div>
     </main>
   );
 }

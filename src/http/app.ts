@@ -8,6 +8,8 @@ import { requestId, type RequestIdVariables } from "hono/request-id";
 import type { Logger } from "@/ports/logger.ts";
 
 export interface AppOptions {
+  // Answers every request under /api/auth.
+  handleAuth: (request: Request) => Promise<Response>;
   logger: Logger;
   // Reports whether the database answers a query.
   pingDatabase: () => Promise<boolean>;
@@ -46,6 +48,7 @@ export function createApp(options: AppOptions): App {
     const database = await options.pingDatabase();
     return c.json({ ok: database, database }, database ? 200 : 503);
   });
+  app.on(["GET", "POST"], "/api/auth/*", (c) => options.handleAuth(c.req.raw));
   app.all("/api/*", (c) => c.json({ error: "not found" }, 404));
 
   if (options.webRoot) {

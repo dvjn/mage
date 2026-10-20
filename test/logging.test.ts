@@ -3,11 +3,13 @@ import { describe, expect, it } from "vite-plus/test";
 import { createLogger } from "@/adapters/logger.ts";
 import { createApp } from "@/http/app.ts";
 
+const handleAuth = () => Promise.resolve(new Response(null, { status: 404 }));
+
 describe("request logging", () => {
   it("logs each request with its request id", async () => {
     const lines: string[] = [];
     const logger = createLogger({ write: (line) => lines.push(line) });
-    const app = createApp({ logger, pingDatabase: () => Promise.resolve(true) });
+    const app = createApp({ handleAuth, logger, pingDatabase: () => Promise.resolve(true) });
 
     const res = await app.request("/api/health");
 
