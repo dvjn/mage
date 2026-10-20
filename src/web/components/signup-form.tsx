@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 
 import { Button } from "@/web/components/ui/button";
@@ -17,11 +18,13 @@ import {
 } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
 import { authClient } from "@/web/lib/auth-client";
+import { sessionQuery } from "@/web/lib/queries";
 
 export function SignupForm({
   onSignIn,
   ...props
 }: React.ComponentProps<typeof Card> & { onSignIn: () => void }) {
+  const queryClient = useQueryClient();
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
 
@@ -37,6 +40,7 @@ export function SignupForm({
     const { error } = await authClient.signUp.email({ name, email, password });
     setPending(false);
     setError(error?.message);
+    if (!error) await queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey });
   }
 
   return (

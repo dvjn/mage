@@ -1,4 +1,5 @@
-import { StrictMode, useEffect, useState } from "react";
+import { QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
+import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import { LoginForm } from "@/web/components/login-form";
@@ -12,23 +13,20 @@ import {
   CardHeader,
   CardTitle,
 } from "@/web/components/ui/card";
-import { apiClient } from "@/web/lib/api-client";
 import { authClient } from "@/web/lib/auth-client";
-
-import { healthSchema } from "@/shared/health.ts";
+import { healthQuery, sessionQuery } from "@/web/lib/queries";
 
 import "./index.css";
 
 function SignedIn({ name, onSignOut }: { name: string; onSignOut: () => void }) {
-  const [status, setStatus] = useState("checking…");
-
-  useEffect(() => {
-    apiClient.health
-      .$get()
-      .then((res) => res.json())
-      .then((body) => setStatus(healthSchema.parse(body).ok ? "ok" : "unhealthy"))
-      .catch(() => setStatus("unreachable"));
-  }, []);
+  const health = useQuery(healthQuery);
+  const status = health.isPending
+    ? "checking…"
+    : health.isError
+      ? "unreachable"
+      : health.data.ok
+        ? "ok"
+        : "unhealthy";
 
   return (
     <Card>
@@ -49,19 +47,21 @@ function SignedIn({ name, onSignOut }: { name: string; onSignOut: () => void }) 
 }
 
 function App() {
-  const { data: session, isPending } = authClient.useSession();
+  const queryClient = useQueryClient();
+  const { data: session, isPending } = useQuery(sessionQuery);
   const [view, setView] = useState<"login" | "signup">("login");
 
-  function signOut() {
+  async function signOut() {
     setView("login");
-    void authClient.signOut();
+    await authClient.signOut();
+    await queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey });
   }
 
   return (
     <main className="flex min-h-svh items-center justify-center p-6">
       <div className="w-full max-w-sm">
         {isPending ? null : session ? (
-          <SignedIn name={session.user.name} onSignOut={signOut} />
+          <SignedIn name={session.user.name} onSignOut={() => void signOut()} />
         ) : view === "signup" ? (
           <SignupForm onSignIn={() => setView("login")} />
         ) : (
@@ -74,8 +74,11 @@ function App() {
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
+const queryClient = new QueryClient();
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <QueryClientProvider client={queryClient}>
+      <App />
+    </QueryClientProvider>
   </StrictMode>,
 );
