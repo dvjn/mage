@@ -1,6 +1,16 @@
 import { StrictMode, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/web/components/ui/card";
+
+import "./index.css";
+
 function App() {
   const [status, setStatus] = useState("checking…");
 
@@ -12,11 +22,16 @@ function App() {
   }, []);
 
   return (
-    <main>
-      <h1>Mage</h1>
-      <p>
-        API: <output>{status}</output>
-      </p>
+    <main className="flex min-h-svh items-center justify-center p-6">
+      <Card className="w-full max-w-sm">
+        <CardHeader>
+          <CardTitle>Mage</CardTitle>
+          <CardDescription>Server status</CardDescription>
+        </CardHeader>
+        <CardContent>
+          API: <output>{status}</output>
+        </CardContent>
+      </Card>
     </main>
   );
 }

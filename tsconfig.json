@@ -1,4 +1,8 @@
 {
   "files": [],
-  "references": [{ "path": "./tsconfig.server.json" }, { "path": "./tsconfig.web.json" }]
+  "references": [{ "path": "./tsconfig.server.json" }, { "path": "./tsconfig.web.json" }],
+  // Read by the shadcn CLI to place components and write their imports.
+  "compilerOptions": {
+    "paths": { "@/*": ["./src/*"] }
+  }
 }

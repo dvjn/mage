@@ -2,6 +2,7 @@ import { cpSync } from "node:fs";
 import path from "node:path";
 
 import devServer, { defaultOptions } from "@hono/vite-dev-server";
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite-plus";
 
@@ -31,6 +32,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    tailwindcss(),
     {
       // The server bundle applies migrations from the folder next to it.
       name: "copy-migrations",
