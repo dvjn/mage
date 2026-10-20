@@ -18,7 +18,8 @@
     "better-sqlite3": "13.0.3",
     "drizzle-orm": "0.45.4",
     "hono": "4.13.13",
-    "pino": "10.4.0"
+    "pino": "10.4.0",
+    "ulid": "3.0.2"
   },
   "devDependencies": {
     "@base-ui/react": "1.9.0",

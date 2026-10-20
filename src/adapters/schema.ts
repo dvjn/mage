@@ -1,7 +1,7 @@
 // Database tables. Migrations are generated from these definitions.
 
 import { relations, sql } from "drizzle-orm";
-import { sqliteTable, text, integer, index } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const user = sqliteTable("user", {
   id: text("id").primaryKey(),
@@ -138,6 +138,33 @@ export const invitation = sqliteTable(
   (table) => [
     index("invitation_organizationId_idx").on(table.organizationId),
     index("invitation_email_idx").on(table.email),
+  ],
+);
+
+// A provider account an org reaches models through.
+export const connection = sqliteTable(
+  "connection",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // The user who connected it; null once that user is gone.
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    provider: text("provider", { enum: ["openai"] }).notNull(),
+    authKind: text("auth_kind", { enum: ["codex"] }).notNull(),
+    // The provider account, as shown to people.
+    account: text("account").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("connection_org_kind_idx").on(table.organizationId, table.provider, table.authKind),
   ],
 );
 
