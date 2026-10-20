@@ -2,16 +2,45 @@
 
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
+import { HTTPException } from "hono/http-exception";
+import { requestId, type RequestIdVariables } from "hono/request-id";
+
+import type { Logger } from "@/ports/logger.ts";
 
 export interface AppOptions {
+  logger: Logger;
   // Reports whether the database answers a query.
   pingDatabase: () => Promise<boolean>;
   // Directory holding the built web client. Unset in dev, where Vite serves it.
   webRoot?: string;
 }
 
-export function createApp(options: AppOptions): Hono {
-  const app = new Hono();
+export type App = Hono<{ Variables: RequestIdVariables }>;
+
+export function createApp(options: AppOptions): App {
+  const { logger } = options;
+  const app: App = new Hono();
+
+  app.use(requestId());
+  app.use(async (c, next) => {
+    const start = performance.now();
+    await next();
+    logger.info(
+      {
+        reqId: c.var.requestId,
+        method: c.req.method,
+        path: c.req.path,
+        status: c.res.status,
+        ms: Math.round(performance.now() - start),
+      },
+      "request",
+    );
+  });
+  app.onError((err, c) => {
+    if (err instanceof HTTPException) return err.getResponse();
+    logger.error({ reqId: c.var.requestId, err }, "unhandled error");
+    return c.json({ error: "internal error" }, 500);
+  });
 
   app.get("/api/health", async (c) => {
     const database = await options.pingDatabase();

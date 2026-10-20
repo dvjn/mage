@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
+import { createLogger } from "@/adapters/logger.ts";
 import { createApp } from "@/http/app.ts";
 
 const webRoot = mkdtempSync(path.join(tmpdir(), "mage-web-"));
@@ -12,7 +13,11 @@ writeFileSync(path.join(webRoot, "index.html"), "<!doctype html><title>Mage</tit
 writeFileSync(path.join(webRoot, "assets/app.js"), "export {};");
 afterAll(() => rmSync(webRoot, { recursive: true, force: true }));
 
-const app = createApp({ pingDatabase: () => Promise.resolve(true), webRoot });
+const app = createApp({
+  logger: createLogger({ write() {} }),
+  pingDatabase: () => Promise.resolve(true),
+  webRoot,
+});
 
 describe("web client", () => {
   it("serves index.html for a client route", async () => {
