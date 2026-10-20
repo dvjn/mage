@@ -34,6 +34,7 @@ export default defineConfig({
       PORT: String(port),
       BASE_URL: baseURL,
       AUTH_SECRET: "mage-browser-journeys-secret-0123456789",
+      CREDENTIAL_KEY: "WFnQPvVJ7j8limmjR6tFVpYWlTRqy8Rf8i6UJnaIaQg=",
       DATABASE_PATH: path.join(dataDir, "mage.db"),
     },
   },

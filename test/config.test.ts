@@ -5,8 +5,10 @@ import { loadConfig } from "@/config.ts";
 const valid = {
   BASE_URL: "http://localhost:4783",
   AUTH_SECRET: "test-secret-that-is-long-enough-1234567890",
+  CREDENTIAL_KEY: Buffer.alloc(32, 7).toString("base64"),
 };
 const developmentSecret = "mage-development-secret-do-not-use-in-production";
+const developmentKey = "bWFnZS1kZXZlbG9wbWVudC1vbmx5LWNyZWRlbnRpYWw=";
 
 describe("loadConfig", () => {
   it("reads a valid environment", () => {
@@ -40,6 +42,26 @@ describe("loadConfig", () => {
     expect(() =>
       loadConfig({ ...valid, AUTH_SECRET: developmentSecret, NODE_ENV: "production" }),
     ).toThrow(/AUTH_SECRET/);
+  });
+
+  it("reads CREDENTIAL_KEY as 32 bytes", () => {
+    expect(loadConfig(valid).credentialKey).toEqual(Buffer.alloc(32, 7));
+  });
+
+  it("requires CREDENTIAL_KEY", () => {
+    expect(() => loadConfig({ ...valid, CREDENTIAL_KEY: undefined })).toThrow(/CREDENTIAL_KEY/);
+  });
+
+  it("rejects a CREDENTIAL_KEY that is not 32 bytes", () => {
+    const short = Buffer.alloc(31, 7).toString("base64");
+    expect(() => loadConfig({ ...valid, CREDENTIAL_KEY: short })).toThrow(/CREDENTIAL_KEY/);
+  });
+
+  it("accepts the development CREDENTIAL_KEY outside production only", () => {
+    expect(() => loadConfig({ ...valid, CREDENTIAL_KEY: developmentKey })).not.toThrow();
+    expect(() =>
+      loadConfig({ ...valid, CREDENTIAL_KEY: developmentKey, NODE_ENV: "production" }),
+    ).toThrow(/CREDENTIAL_KEY/);
   });
 
   it("reads AUTH_TRUSTED_ORIGINS as a list of origins", () => {

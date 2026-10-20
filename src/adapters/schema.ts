@@ -1,7 +1,7 @@
 // Database tables. Migrations are generated from these definitions.
 
 import { relations, sql } from "drizzle-orm";
-import { sqliteTable, text, integer, index, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sqliteTable, text, integer, index, uniqueIndex, blob } from "drizzle-orm/sqlite-core";
 
 export const user = sqliteTable("user", {
   id: text("id").primaryKey(),
@@ -167,6 +167,22 @@ export const connection = sqliteTable(
     uniqueIndex("connection_org_kind_idx").on(table.organizationId, table.provider, table.authKind),
   ],
 );
+
+// A connection's secrets, sealed with the credential key of the recorded version.
+export const credential = sqliteTable("credential", {
+  connectionId: text("connection_id")
+    .primaryKey()
+    .references(() => connection.id, { onDelete: "cascade" }),
+  keyVersion: integer("key_version").notNull(),
+  sealed: blob("sealed", { mode: "buffer" }).notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+});
 
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
