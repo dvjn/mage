@@ -5,12 +5,15 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import { requestId, type RequestIdVariables } from "hono/request-id";
 
+import type { Identity, Principal } from "@/ports/identity.ts";
 import type { Logger } from "@/ports/logger.ts";
-import type { Health } from "@/shared/health.ts";
+import type { Me } from "@/shared/me.ts";
 
 export interface AppOptions {
   // Answers every request under /api/auth.
   handleAuth: (request: Request) => Promise<Response>;
+  // Tells who is signed in for each request under /api/v1.
+  identity: Identity;
   logger: Logger;
   // Reports whether the database answers a query.
   pingDatabase: () => Promise<boolean>;
@@ -20,12 +23,25 @@ export interface AppOptions {
 
 export type App = Hono<{ Variables: RequestIdVariables }>;
 
+type ApiEnv = { Variables: { principal: Principal | null } };
+
 // The typed API routes, mounted under /api.
 function createApi(options: AppOptions) {
-  return new Hono().get("/health", async (c) => {
-    const database = await options.pingDatabase();
-    return c.json({ ok: database, database } satisfies Health, database ? 200 : 503);
-  });
+  const { identity } = options;
+  return new Hono<ApiEnv>()
+    .use("/v1/*", async (c, next) => {
+      c.set("principal", await identity.resolve(c.req.raw.headers));
+      await next();
+    })
+    .get("/health", async (c) => {
+      const database = await options.pingDatabase();
+      return c.json({ ok: database, database }, database ? 200 : 503);
+    })
+    .get("/v1/me", async (c) => {
+      const { principal } = c.var;
+      if (!principal) return c.json({ error: "unauthorized" }, 401);
+      return c.json((await identity.profile(principal)) satisfies Me, 200);
+    });
 }
 
 export type Api = ReturnType<typeof createApi>;

@@ -2,7 +2,7 @@
 
 import { serve } from "@hono/node-server";
 
-import { createAuth } from "@/adapters/auth.ts";
+import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { openDatabase, pingDatabase } from "@/adapters/db.ts";
 import { createLogger } from "@/adapters/logger.ts";
 import { loadConfig } from "@/config.ts";
@@ -22,6 +22,7 @@ const auth = createAuth({
 
 const app = createApp({
   handleAuth: auth.handler,
+  identity: createIdentity(auth, db),
   logger,
   pingDatabase: () => pingDatabase(db),
   webRoot: import.meta.main ? config.webRoot : undefined,

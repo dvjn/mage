@@ -30,13 +30,13 @@ test("signed out, home redirects to login, which links to signup", async ({ page
 
 test("signing up lands on home and keeps the session", async ({ page }) => {
   await signUp(page, "Ada Lovelace", uniqueEmail());
-  await expect(page.getByText("Ada Lovelace")).toBeVisible();
+  await expect(page.getByText("Ada Lovelace", { exact: true })).toBeVisible();
+  await expect(page.getByText("Personal org: Ada Lovelace")).toBeVisible();
   await expect(page.getByText("Mage", { exact: true })).toBeVisible();
-  await expect(page.getByText("API: ok")).toBeVisible();
 
   await page.reload();
   await expect(page).toHaveURL("/");
-  await expect(page.getByText("Ada Lovelace")).toBeVisible();
+  await expect(page.getByText("Ada Lovelace", { exact: true })).toBeVisible();
 
   await page.goto("/login");
   await expect(page).toHaveURL("/");
@@ -71,7 +71,7 @@ test("signing in shows the server's error, then lands on home", async ({ page })
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Login" }).click();
   await expect(page).toHaveURL("/");
-  await expect(page.getByText("Alan Turing")).toBeVisible();
+  await expect(page.getByText("Alan Turing", { exact: true })).toBeVisible();
 });
 
 test("mismatched passwords are caught before any request", async ({ page }) => {

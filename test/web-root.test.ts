@@ -15,6 +15,10 @@ afterAll(() => rmSync(webRoot, { recursive: true, force: true }));
 
 const app = createApp({
   handleAuth: () => Promise.resolve(new Response(null, { status: 404 })),
+  identity: {
+    resolve: () => Promise.resolve(null),
+    profile: () => Promise.reject(new Error("signed out")),
+  },
   logger: createLogger({ write() {} }),
   pingDatabase: () => Promise.resolve(true),
   webRoot,

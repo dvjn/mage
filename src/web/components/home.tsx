@@ -2,17 +2,10 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
 
 import { Button } from "@/web/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/web/components/ui/card";
+import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from "@/web/components/ui/card";
 import { Wordmark } from "@/web/components/wordmark";
 import { authClient } from "@/web/lib/auth-client";
-import { healthQuery, sessionQuery } from "@/web/lib/queries";
+import { meQuery, sessionQuery } from "@/web/lib/queries";
 
 const homeRoute = getRouteApi("/");
 
@@ -20,17 +13,11 @@ export function Home() {
   const { session } = homeRoute.useRouteContext();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const health = useQuery(healthQuery);
-  const status = health.isPending
-    ? "checking…"
-    : health.isError
-      ? "unreachable"
-      : health.data.ok
-        ? "ok"
-        : "unhealthy";
+  const me = useQuery(meQuery);
 
   async function signOut() {
     await authClient.signOut();
+    queryClient.removeQueries({ queryKey: meQuery.queryKey });
     await queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey });
     await navigate({ to: "/login" });
   }
@@ -41,11 +28,10 @@ export function Home() {
       <Card>
         <CardHeader>
           <CardTitle>{session.user.name}</CardTitle>
-          <CardDescription>Signed in to Mage</CardDescription>
+          <CardDescription>
+            {me.data ? `Personal org: ${me.data.org.name}` : "Signed in to Mage"}
+          </CardDescription>
         </CardHeader>
-        <CardContent>
-          API: <output>{status}</output>
-        </CardContent>
         <CardFooter>
           <Button variant="outline" onClick={() => void signOut()}>
             Sign out

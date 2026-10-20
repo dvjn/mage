@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { createAuth } from "@/adapters/auth.ts";
+import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { openDatabase } from "@/adapters/db.ts";
 import { createLogger } from "@/adapters/logger.ts";
 import { createApp } from "@/http/app.ts";
@@ -15,6 +15,7 @@ describe("/api/auth", () => {
     const auth = createAuth({ db, logger, secret, baseUrl, trustedOrigins: [] });
     const app = createApp({
       handleAuth: auth.handler,
+      identity: createIdentity(auth, db),
       logger,
       pingDatabase: () => Promise.resolve(true),
     });
