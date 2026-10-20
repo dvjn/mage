@@ -12,6 +12,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/web/components/ui/card";
+import { apiClient } from "@/web/lib/api-client";
 import { authClient } from "@/web/lib/auth-client";
 
 import { healthSchema } from "@/shared/health.ts";
@@ -22,7 +23,8 @@ function SignedIn({ name, onSignOut }: { name: string; onSignOut: () => void }) 
   const [status, setStatus] = useState("checking…");
 
   useEffect(() => {
-    fetch("/api/health")
+    apiClient.health
+      .$get()
       .then((res) => res.json())
       .then((body) => setStatus(healthSchema.parse(body).ok ? "ok" : "unhealthy"))
       .catch(() => setStatus("unreachable"));

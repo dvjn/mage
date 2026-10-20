@@ -20,6 +20,16 @@ export interface AppOptions {
 
 export type App = Hono<{ Variables: RequestIdVariables }>;
 
+// The typed API routes, mounted under /api.
+function createApi(options: AppOptions) {
+  return new Hono().get("/health", async (c) => {
+    const database = await options.pingDatabase();
+    return c.json({ ok: database, database } satisfies Health, database ? 200 : 503);
+  });
+}
+
+export type Api = ReturnType<typeof createApi>;
+
 export function createApp(options: AppOptions): App {
   const { logger } = options;
   const app: App = new Hono();
@@ -45,10 +55,7 @@ export function createApp(options: AppOptions): App {
     return c.json({ error: "internal error" }, 500);
   });
 
-  app.get("/api/health", async (c) => {
-    const database = await options.pingDatabase();
-    return c.json({ ok: database, database } satisfies Health, database ? 200 : 503);
-  });
+  app.route("/api", createApi(options));
   app.on(["GET", "POST"], "/api/auth/*", (c) => options.handleAuth(c.req.raw));
   app.all("/api/*", (c) => c.json({ error: "not found" }, 404));
 
