@@ -1,0 +1,30 @@
+[tools]
+node = "26.11.1"
+pnpm = "12.14.0"
+
+[env]
+BASE_URL = "http://localhost:4783"
+
+[tasks.setup]
+description = "Install dependencies"
+run = "pnpm install"
+
+[tasks.dev]
+description = "Run API and web client with hot reload on :4783"
+run = "pnpm dev"
+
+[tasks.build]
+description = "Build the web client and the server into dist"
+run = "pnpm build"
+
+[tasks.start]
+description = "Serve the API and the built client (run build first)"
+run = "pnpm start"
+
+[tasks.check]
+description = "Lint, format check and type check"
+run = "pnpm check"
+
+[tasks.test]
+description = "Run the test suite"
+run = "pnpm test"
