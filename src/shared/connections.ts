@@ -5,8 +5,8 @@ import * as z from "zod";
 
 export const connectionSchema = z.object({
   id: z.string(),
-  provider: z.literal("openai"),
-  authKind: z.literal("codex"),
+  provider: z.enum(["openai", "anthropic"]),
+  authKind: z.enum(["codex", "claude"]),
   account: z.string(),
   createdAt: z.iso.datetime(),
 });

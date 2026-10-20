@@ -1,10 +1,11 @@
 // Settings: connecting the signed-in user's ChatGPT account through the Codex sign-in, with a
-// device code or in the browser, and disconnecting it.
+// device code or in the browser, and their Claude account through the Claude sign-in; and
+// disconnecting them.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { Check, Copy } from "lucide-react";
-import { type FormEvent, useState } from "react";
+import { type FormEvent, useId, useState } from "react";
 
 import {
   apiErrorSchema,
@@ -117,6 +118,7 @@ function PasteBack({
   description: string;
   onSubmit: (pasted: string) => Promise<void>;
 }) {
+  const id = useId();
   const [pending, setPending] = useState(false);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -131,8 +133,8 @@ function PasteBack({
     <form onSubmit={(event) => void submit(event)}>
       <FieldGroup>
         <Field>
-          <FieldLabel htmlFor="callback-url">{label}</FieldLabel>
-          <Input id="callback-url" name="callbackUrl" required autoComplete="off" />
+          <FieldLabel htmlFor={id}>{label}</FieldLabel>
+          <Input id={id} name="callbackUrl" required autoComplete="off" />
           <FieldDescription>{description}</FieldDescription>
         </Field>
         <Field>
@@ -332,11 +334,102 @@ function CodexSignIn() {
   );
 }
 
+function ClaudeSignIn() {
+  const queryClient = useQueryClient();
+  const connections = useQuery(connectionsQuery);
+  const connection = connections.data?.find((c) => c.authKind === "claude");
+  const [attemptId, setAttemptId] = useState<string>();
+  const [error, setError] = useState<string>();
+
+  async function start() {
+    setAttemptId(undefined);
+    setError(undefined);
+    await openInNewTab(async () => {
+      const res = await apiClient.v1.connections.claude.browser.$post();
+      if (!res.ok) {
+        setError(await errorOf(res));
+        return null;
+      }
+      const started = browserStartSchema.parse(await res.json());
+      setAttemptId(started.attemptId);
+      return started.authorizeUrl;
+    });
+  }
+
+  async function finish(callbackUrl: string) {
+    const res = await apiClient.v1.connections.claude.browser.finish.$post({
+      json: { attemptId, callbackUrl },
+    });
+    if (!res.ok) {
+      setError(await errorOf(res));
+      return;
+    }
+    setAttemptId(undefined);
+    setError(undefined);
+    await queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+  }
+
+  async function disconnect(id: string) {
+    const res = await apiClient.v1.connections[":id"].$delete({ param: { id } });
+    if (!res.ok) {
+      setError(await errorOf(res));
+      return;
+    }
+    setError(undefined);
+    await queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Sign in with Claude</CardTitle>
+        <CardDescription>
+          Use your Claude Pro or Max account. Usage is billed per token from Claude{" "}
+          <a
+            href="https://claude.ai/settings/usage"
+            target="_blank"
+            rel="noreferrer"
+            className="underline"
+          >
+            extra usage
+          </a>
+          , not your plan&apos;s limits.
+        </CardDescription>
+      </CardHeader>
+      {connections.isSuccess &&
+        (connection ? (
+          <Connected
+            connection={connection}
+            error={error}
+            onDisconnect={() => disconnect(connection.id)}
+          />
+        ) : (
+          <CardContent>
+            <FieldGroup>
+              <Field>
+                <Button onClick={() => void start()}>Open the Claude sign-in</Button>
+              </Field>
+              {attemptId && (
+                <PasteBack
+                  label="Code"
+                  description="After you sign in, Claude shows a code. Copy it and paste it here."
+                  onSubmit={finish}
+                />
+              )}
+            </FieldGroup>
+            <FieldError className="mt-4">{error}</FieldError>
+          </CardContent>
+        ))}
+    </Card>
+  );
+}
+
 export function Settings() {
   return (
     <div className="flex flex-col gap-6">
       <Wordmark className="self-center" />
       <CodexSignIn />
+      <ClaudeSignIn />
       <Link to="/" className="self-center text-sm underline underline-offset-4">
         Back to home
       </Link>

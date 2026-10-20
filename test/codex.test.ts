@@ -14,6 +14,7 @@ import { createCodexOAuth } from "@/adapters/openai-codex.ts";
 import * as schema from "@/adapters/schema.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { createApp } from "@/http/app.ts";
+import type { BrowserOAuth } from "@/ports/oauth.ts";
 import { createConnections } from "@/services/connections.ts";
 
 const baseUrl = "http://localhost:4783";
@@ -22,6 +23,8 @@ const tokenUrl = "https://auth.openai.com/oauth/token";
 const userCodeUrl = "https://auth.openai.com/api/accounts/deviceauth/usercode";
 const deviceTokenUrl = "https://auth.openai.com/api/accounts/deviceauth/token";
 const clientId = "app_EMoamEEZ73f0CkXaXp7hrann";
+// Never called by these tests.
+const unusedClaude = {} as BrowserOAuth;
 
 function accessToken(serial: number, accountId: string | null = "acct-123") {
   return new UnsecuredJWT({
@@ -105,7 +108,10 @@ function setup() {
     connections: createConnectionStore(db),
     credentials,
     attempts: createSignInAttemptStore(db),
-    providers: { codex: { provider: "openai", label: "Codex", browser: codex, device: codex } },
+    providers: {
+      codex: { provider: "openai", label: "Codex", browser: codex, device: codex },
+      claude: { provider: "anthropic", label: "Claude", browser: unusedClaude },
+    },
     logger,
     now: () => clock.now,
     sleep: (ms, signal) => {

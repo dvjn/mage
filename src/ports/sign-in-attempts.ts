@@ -1,6 +1,6 @@
 // Sign-ins a user has started in their browser and not yet finished; each is used once.
 
-export type SignInKind = "codex";
+export type SignInKind = "codex" | "claude";
 
 export interface SignInAttempt {
   kind: SignInKind;

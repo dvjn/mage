@@ -5,8 +5,8 @@ export interface Connection {
   orgId: string;
   // The user who connected it; null once that user is gone.
   createdBy: string | null;
-  provider: "openai";
-  authKind: "codex";
+  provider: "openai" | "anthropic";
+  authKind: "codex" | "claude";
   account: string;
   createdAt: Date;
 }

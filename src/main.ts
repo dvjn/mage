@@ -2,6 +2,7 @@
 
 import { serve } from "@hono/node-server";
 
+import { createClaudeOAuth } from "@/adapters/anthropic-claude.ts";
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { createCipher } from "@/adapters/cipher.ts";
 import { createConnectionStore } from "@/adapters/connections.ts";
@@ -33,7 +34,10 @@ const connections = createConnections({
   connections: createConnectionStore(db),
   credentials: createCredentialStore(db, cipher),
   attempts: createSignInAttemptStore(db),
-  providers: { codex: { provider: "openai", label: "Codex", browser: codex, device: codex } },
+  providers: {
+    codex: { provider: "openai", label: "Codex", browser: codex, device: codex },
+    claude: { provider: "anthropic", label: "Claude", browser: createClaudeOAuth(fetch) },
+  },
   logger,
 });
 

@@ -151,8 +151,8 @@ export const connection = sqliteTable(
       .references(() => organization.id, { onDelete: "cascade" }),
     // The user who connected it; null once that user is gone.
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
-    provider: text("provider", { enum: ["openai"] }).notNull(),
-    authKind: text("auth_kind", { enum: ["codex"] }).notNull(),
+    provider: text("provider", { enum: ["openai", "anthropic"] }).notNull(),
+    authKind: text("auth_kind", { enum: ["codex", "claude"] }).notNull(),
     // The provider account, as shown to people.
     account: text("account").notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -187,7 +187,7 @@ export const credential = sqliteTable("credential", {
 // A browser sign-in a user has started and not yet finished; each is used once.
 export const signInAttempt = sqliteTable("sign_in_attempt", {
   state: text("state").primaryKey(),
-  kind: text("kind", { enum: ["codex"] }).notNull(),
+  kind: text("kind", { enum: ["codex", "claude"] }).notNull(),
   codeVerifier: text("code_verifier").notNull(),
   organizationId: text("organization_id")
     .notNull()
