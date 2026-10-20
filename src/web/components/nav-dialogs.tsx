@@ -1,7 +1,9 @@
 // The dialogs behind the sidebar's folder and thread menus: naming a new folder, renaming a folder
-// or a thread, moving a thread to a folder or the top of the space, and deleting a folder.
+// or a thread, moving a thread to a folder or the top of the space, and deleting a folder or a
+// thread. Deleting the open thread leads back to its space.
 
 import { useQueryClient } from "@tanstack/react-query";
+import { useNavigate, useParams } from "@tanstack/react-router";
 
 import type { FolderSummary } from "@/shared/folders.ts";
 import type { ThreadSummary } from "@/shared/threads.ts";
@@ -34,7 +36,8 @@ export type NavAction =
   | { kind: "rename-folder"; folder: FolderSummary }
   | { kind: "rename-thread"; thread: ThreadSummary }
   | { kind: "move-thread"; thread: ThreadSummary }
-  | { kind: "delete-folder"; folder: FolderSummary };
+  | { kind: "delete-folder"; folder: FolderSummary }
+  | { kind: "delete-thread"; thread: ThreadSummary };
 
 export function NavDialogs({
   spaceId,
@@ -51,6 +54,8 @@ export function NavDialogs({
   onReveal: (folderId: string | null) => void;
 }) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const { threadId: openThreadId } = useParams({ strict: false });
 
   async function refresh(threadId?: string) {
     await queryClient.invalidateQueries({ queryKey: ["spaces", spaceId] });
@@ -85,6 +90,16 @@ export function NavDialogs({
   async function deleteFolder(id: string) {
     const res = await apiClient.v1.folders[":id"].$delete({ param: { id } });
     if (res.ok) await refresh();
+    onClose();
+  }
+
+  async function deleteThread(id: string) {
+    const res = await apiClient.v1.threads[":id"].$delete({ param: { id } });
+    if (res.ok) {
+      if (id === openThreadId) await navigate({ to: "/s/$spaceId", params: { spaceId } });
+      queryClient.removeQueries({ queryKey: threadQuery(id).queryKey });
+      await refresh();
+    }
     onClose();
   }
 
@@ -179,6 +194,29 @@ export function NavDialogs({
               variant="destructive"
               onClick={() => {
                 if (action?.kind === "delete-folder") void deleteFolder(action.folder.id);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog open={action?.kind === "delete-thread"} onOpenChange={closed}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete {action?.kind === "delete-thread" ? action.thread.title : "thread"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Its messages go with it. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (action?.kind === "delete-thread") void deleteThread(action.thread.id);
               }}
             >
               Delete

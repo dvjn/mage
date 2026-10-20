@@ -43,6 +43,8 @@ export interface ThreadStore {
   listInSpace(spaceId: string): Thread[];
   anyInSpace(spaceId: string): boolean;
   update(id: string, changes: { title?: string; model?: string; folderId?: string | null }): Thread;
+  // Deletes the thread with its events.
+  delete(id: string): void;
   // Adds the event with the thread's next seq in one transaction. `title` names the thread when
   // it has no title yet.
   append(threadId: string, event: NewEvent, title?: string): StoredEvent;

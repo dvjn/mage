@@ -89,6 +89,10 @@ export function createThreadStore(db: Db): ThreadStore {
         .get() as Thread;
     },
 
+    delete(id) {
+      db.delete(thread).where(eq(thread.id, id)).run();
+    },
+
     append(threadId, event, title) {
       const id = ulid();
       db.transaction((tx) => {

@@ -1,6 +1,6 @@
 // Threads in the spaces a person can see: starting them, moving them between the space's folders,
-// posting messages to their event logs, reading them back with each event's author and following
-// new events as they are appended.
+// deleting them, posting messages to their event logs, reading them back with each event's author
+// and following new events as they are appended.
 
 import type { EventBus } from "@/ports/event-bus.ts";
 import type { Principal } from "@/ports/identity.ts";
@@ -140,6 +140,12 @@ export function createThreads(options: ThreadsOptions) {
       const thread = visible(principal, id);
       if (changes.folderId !== undefined) folders.requireIn(thread.spaceId, changes.folderId);
       return threadSummary(threads.update(id, changes));
+    },
+
+    // Its events go with it.
+    remove(principal: Principal, id: string) {
+      visible(principal, id);
+      threads.delete(id);
     },
 
     postMessage(principal: Principal, id: string, text: string) {

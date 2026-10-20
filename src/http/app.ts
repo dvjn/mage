@@ -225,6 +225,10 @@ function createApi(options: AppOptions) {
         const thread = await threads.update(signedIn(c.var.principal), c.req.param("id"), changes);
         return c.json(thread, 200);
       })
+      .delete("/v1/threads/:id", (c) => {
+        threads.remove(signedIn(c.var.principal), c.req.param("id"));
+        return c.json({ ok: true }, 200);
+      })
       .get("/v1/threads/:id/events", eventCursor, (c) => {
         const principal = signedIn(c.var.principal);
         const id = c.req.param("id");

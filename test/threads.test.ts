@@ -95,6 +95,23 @@ describe("threads", () => {
     expect((await api("PATCH", `/threads/${thread.id}`, cookie, {})).status).toBe(200);
   });
 
+  it("is deleted with its events", async () => {
+    const { api, threadStore, signUp, yourSpace, createThread } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const space = await yourSpace(cookie);
+    const thread = await createThread(cookie, space.id, "Going");
+    const kept = await createThread(cookie, space.id, "Staying");
+
+    expect((await api("DELETE", `/threads/${thread.id}`, cookie)).status).toBe(200);
+
+    expect((await api("GET", `/threads/${thread.id}`, cookie)).status).toBe(404);
+    expect(threadStore.eventsAfter(thread.id, 0)).toEqual([]);
+    const res = await api("GET", `/spaces/${space.id}/threads`, cookie);
+    expect((await res.json()) as { id: string }[]).toEqual([
+      expect.objectContaining({ id: kept.id }),
+    ]);
+  });
+
   it("answers a posted message with its event and author", async () => {
     const { api, signUp, yourSpace, createThread } = setup();
     const { userId, cookie } = await signUp("Ada Lovelace", "ada@example.com");
@@ -176,9 +193,11 @@ describe("thread visibility", () => {
       api("GET", `/threads/${thread.id}`, grace.cookie),
       api("PATCH", `/threads/${thread.id}`, grace.cookie, { title: "Mine" }),
       api("POST", `/threads/${thread.id}/messages`, grace.cookie, { text: "Hi" }),
+      api("DELETE", `/threads/${thread.id}`, grace.cookie),
       api("GET", "/threads/no-such-thread", ada.cookie),
     ];
-    expect((await Promise.all(attempts)).map((res) => res.status)).toEqual(Array(6).fill(404));
+    expect((await Promise.all(attempts)).map((res) => res.status)).toEqual(Array(7).fill(404));
+    expect((await api("GET", `/threads/${thread.id}`, ada.cookie)).status).toBe(200);
   });
 
   it("is unauthorized when signed out", async () => {

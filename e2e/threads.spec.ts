@@ -1,10 +1,13 @@
 import { expect, type Page, test } from "@playwright/test";
 
-// Sign-ups are rate limited per client address; each journey counts as its own client.
+// Sign-ups are rate limited per client address; each journey counts as its own client, in every
+// worker running this file.
 let client = 10;
-test.beforeEach(async ({ context }) => {
+test.beforeEach(async ({ context }, testInfo) => {
   client += 1;
-  await context.setExtraHTTPHeaders({ "X-Forwarded-For": `192.0.2.${client}` });
+  await context.setExtraHTTPHeaders({
+    "X-Forwarded-For": `192.0.${testInfo.parallelIndex}.${client}`,
+  });
 });
 
 async function signUp(page: Page) {
@@ -80,6 +83,24 @@ test("a second space can be made, renamed and switched from the sidebar header",
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Your space");
   await expect(switcher).toContainText("Your space");
   await expect(sidebar.getByRole("link", { name: "New thread" })).toBeVisible();
+});
+
+test("deleting the open thread leads back to its space", async ({ page }) => {
+  await signUp(page);
+  const sidebar = page.locator("[data-sidebar=sidebar]");
+  await page.getByLabel("First message").fill("Short lived");
+  await page.getByRole("button", { name: "Start thread" }).click();
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+
+  await sidebar.getByRole("button", { name: "Actions for Short lived" }).click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  const confirm = page.getByRole("alertdialog");
+  await expect(confirm).toContainText("Delete Short lived?");
+  await confirm.getByRole("button", { name: "Delete" }).click();
+
+  await expect(page).toHaveURL(/\/s\/[^/]+$/);
+  await expect(sidebar.getByRole("link", { name: "Short lived" })).toHaveCount(0);
+  await expect(page.getByRole("list", { name: "Threads" })).toContainText("No threads yet.");
 });
 
 test("two tabs on a thread see each other's messages live", async ({ page, context }) => {

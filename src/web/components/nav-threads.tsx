@@ -1,6 +1,6 @@
 // The sidebar's space and threads sections: starting a thread or folder, then the active space's
 // folders with their threads, the threads at the top of the space after them, and a menu on each
-// to start, rename, move or delete things.
+// to start, rename, move or delete them.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
@@ -131,6 +131,14 @@ function ThreadItem({ thread }: { thread: ThreadSummary }) {
         <DropdownMenuItem onClick={() => nav.act({ kind: "move-thread", thread })}>
           <FolderInputIcon />
           Move to…
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          variant="destructive"
+          onClick={() => nav.act({ kind: "delete-thread", thread })}
+        >
+          <Trash2Icon />
+          Delete
         </DropdownMenuItem>
       </ItemMenu>
     </SidebarMenuItem>
