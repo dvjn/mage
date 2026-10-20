@@ -1,10 +1,17 @@
-// A thread: its events as they happen, a composer to post messages and the thread's model.
+// A thread: its events as they happen, kept scrolled to the newest, a composer to post messages
+// and the thread's model.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useState } from "react";
 
 import { anyThreadEventSchema, threadSchema } from "@/shared/threads.ts";
+import {
+  Conversation,
+  ConversationContent,
+  ConversationEmptyState,
+  ConversationScrollButton,
+} from "@/web/components/ai-elements/conversation";
 import { PageHeader } from "@/web/components/app-shell";
 import { ModelPicker } from "@/web/components/model-picker";
 import { ThreadEvent } from "@/web/components/thread-events";
@@ -93,7 +100,7 @@ export function ThreadPage() {
   }
 
   return (
-    <>
+    <div className="flex h-svh min-h-0 flex-col">
       <PageHeader
         crumbs={[
           ...(space
@@ -107,14 +114,19 @@ export function ThreadPage() {
           { label: thread?.title ?? "" },
         ]}
       />
-      <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-4 p-4">
-        <div className="flex flex-1 flex-col gap-6" aria-label="Events" role="log">
-          {detail.data?.events.map((event) => (
-            <ThreadEvent key={event.seq} event={event} />
-          ))}
-        </div>
+      <Conversation aria-label="Events" className="min-h-0">
+        <ConversationContent className="mx-auto w-full max-w-3xl">
+          {detail.data?.events.length === 0 ? (
+            <ConversationEmptyState description="Write the first message below." />
+          ) : (
+            detail.data?.events.map((event) => <ThreadEvent key={event.seq} event={event} />)
+          )}
+        </ConversationContent>
+        <ConversationScrollButton />
+      </Conversation>
+      <div className="mx-auto w-full max-w-3xl p-4 pt-0">
         <form
-          className="sticky bottom-4 flex flex-col gap-2 rounded-xl border bg-background p-2"
+          className="flex flex-col gap-2 rounded-xl border bg-background p-2"
           onSubmit={(event: FormEvent<HTMLFormElement>) => {
             event.preventDefault();
             void send(event.currentTarget);
@@ -142,6 +154,6 @@ export function ThreadPage() {
           <FieldError>{error}</FieldError>
         </form>
       </div>
-    </>
+    </div>
   );
 }
