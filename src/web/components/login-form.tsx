@@ -19,6 +19,7 @@ import {
   FieldLabel,
 } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
+import { Wordmark } from "@/web/components/wordmark";
 import { authClient } from "@/web/lib/auth-client";
 import { sessionQuery } from "@/web/lib/queries";
 
@@ -44,6 +45,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
 
   return (
     <div className={cn("flex flex-col gap-6", className)} {...props}>
+      <Wordmark className="self-center" />
       <Card>
         <CardHeader>
           <CardTitle>Login to your account</CardTitle>

@@ -18,6 +18,7 @@ import {
   FieldLabel,
 } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
+import { Wordmark } from "@/web/components/wordmark";
 import { authClient } from "@/web/lib/auth-client";
 import { sessionQuery } from "@/web/lib/queries";
 
@@ -45,46 +46,49 @@ export function SignupForm(props: React.ComponentProps<typeof Card>) {
   }
 
   return (
-    <Card {...props}>
-      <CardHeader>
-        <CardTitle>Create an account</CardTitle>
-        <CardDescription>Enter your information below to create your account</CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit}>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="name">Full Name</FieldLabel>
-              <Input id="name" name="name" type="text" placeholder="John Doe" required />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="email">Email</FieldLabel>
-              <Input id="email" name="email" type="email" placeholder="m@example.com" required />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="password">Password</FieldLabel>
-              <Input id="password" name="password" type="password" minLength={8} required />
-              <FieldDescription>Must be at least 8 characters long.</FieldDescription>
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="confirm-password">Confirm Password</FieldLabel>
-              <Input id="confirm-password" name="confirm-password" type="password" required />
-              <FieldDescription>Please confirm your password.</FieldDescription>
-            </Field>
+    <div className="flex flex-col gap-6">
+      <Wordmark className="self-center" />
+      <Card {...props}>
+        <CardHeader>
+          <CardTitle>Create an account</CardTitle>
+          <CardDescription>Enter your information below to create your account</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={handleSubmit}>
             <FieldGroup>
               <Field>
-                <FieldError>{error}</FieldError>
-                <Button type="submit" disabled={pending}>
-                  Create Account
-                </Button>
-                <FieldDescription className="px-6 text-center">
-                  Already have an account? <Link to="/login">Sign in</Link>
-                </FieldDescription>
+                <FieldLabel htmlFor="name">Full Name</FieldLabel>
+                <Input id="name" name="name" type="text" placeholder="John Doe" required />
               </Field>
+              <Field>
+                <FieldLabel htmlFor="email">Email</FieldLabel>
+                <Input id="email" name="email" type="email" placeholder="m@example.com" required />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="password">Password</FieldLabel>
+                <Input id="password" name="password" type="password" minLength={8} required />
+                <FieldDescription>Must be at least 8 characters long.</FieldDescription>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="confirm-password">Confirm Password</FieldLabel>
+                <Input id="confirm-password" name="confirm-password" type="password" required />
+                <FieldDescription>Please confirm your password.</FieldDescription>
+              </Field>
+              <FieldGroup>
+                <Field>
+                  <FieldError>{error}</FieldError>
+                  <Button type="submit" disabled={pending}>
+                    Create Account
+                  </Button>
+                  <FieldDescription className="px-6 text-center">
+                    Already have an account? <Link to="/login">Sign in</Link>
+                  </FieldDescription>
+                </Field>
+              </FieldGroup>
             </FieldGroup>
-          </FieldGroup>
-        </form>
-      </CardContent>
-    </Card>
+          </form>
+        </CardContent>
+      </Card>
+    </div>
   );
 }
