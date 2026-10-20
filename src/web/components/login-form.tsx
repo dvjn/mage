@@ -1,5 +1,6 @@
 import { cn } from "cn";
 import { useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
 import { Button } from "@/web/components/ui/button";
@@ -21,12 +22,9 @@ import { Input } from "@/web/components/ui/input";
 import { authClient } from "@/web/lib/auth-client";
 import { sessionQuery } from "@/web/lib/queries";
 
-export function LoginForm({
-  className,
-  onSignUp,
-  ...props
-}: React.ComponentProps<"div"> & { onSignUp: () => void }) {
+export function LoginForm({ className, ...props }: React.ComponentProps<"div">) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
 
@@ -39,7 +37,9 @@ export function LoginForm({
     const { error } = await authClient.signIn.email({ email, password });
     setPending(false);
     setError(error?.message);
-    if (!error) await queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey });
+    if (error) return;
+    await queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey });
+    await navigate({ to: "/" });
   }
 
   return (
@@ -66,16 +66,7 @@ export function LoginForm({
                   Login
                 </Button>
                 <FieldDescription className="text-center">
-                  Don&apos;t have an account?{" "}
-                  <a
-                    href="#signup"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      onSignUp();
-                    }}
-                  >
-                    Sign up
-                  </a>
+                  Don&apos;t have an account? <Link to="/signup">Sign up</Link>
                 </FieldDescription>
               </Field>
             </FieldGroup>

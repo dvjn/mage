@@ -25,6 +25,7 @@
     "@hono/vite-dev-server": "0.26.1",
     "@tailwindcss/vite": "4.3.3",
     "@tanstack/react-query": "5.104.4",
+    "@tanstack/react-router": "1.170.45",
     "@types/better-sqlite3": "9.6.0",
     "@types/node": "26.6.5",
     "@types/react": "19.3.0",

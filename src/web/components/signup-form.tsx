@@ -1,4 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
 import { Button } from "@/web/components/ui/button";
@@ -20,11 +21,9 @@ import { Input } from "@/web/components/ui/input";
 import { authClient } from "@/web/lib/auth-client";
 import { sessionQuery } from "@/web/lib/queries";
 
-export function SignupForm({
-  onSignIn,
-  ...props
-}: React.ComponentProps<typeof Card> & { onSignIn: () => void }) {
+export function SignupForm(props: React.ComponentProps<typeof Card>) {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
 
@@ -40,7 +39,9 @@ export function SignupForm({
     const { error } = await authClient.signUp.email({ name, email, password });
     setPending(false);
     setError(error?.message);
-    if (!error) await queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey });
+    if (error) return;
+    await queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey });
+    await navigate({ to: "/" });
   }
 
   return (
@@ -77,16 +78,7 @@ export function SignupForm({
                   Create Account
                 </Button>
                 <FieldDescription className="px-6 text-center">
-                  Already have an account?{" "}
-                  <a
-                    href="#login"
-                    onClick={(event) => {
-                      event.preventDefault();
-                      onSignIn();
-                    }}
-                  >
-                    Sign in
-                  </a>
+                  Already have an account? <Link to="/login">Sign in</Link>
                 </FieldDescription>
               </Field>
             </FieldGroup>
