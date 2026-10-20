@@ -14,6 +14,7 @@ export default defineConfig({
     alias: { "@": path.join(here, "src") },
   },
   server: { port: 4783 },
+  define: { __BUILD_ID__: JSON.stringify(new Date().toISOString()) },
   build: {
     outDir: path.join(here, "dist/web"),
     emptyOutDir: true,

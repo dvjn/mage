@@ -1,14 +1,17 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { QueryClient } from "@tanstack/react-query";
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client";
 import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { ThemeProvider } from "@/web/components/theme-provider";
+import { cacheMaxAge, cacheOptions } from "@/web/lib/query-cache";
 import { createAppRouter } from "@/web/router";
 
 import "./index.css";
 
-const queryClient = new QueryClient();
+// Cached queries stay in memory as long as the persisted cache may be restored.
+const queryClient = new QueryClient({ defaultOptions: { queries: { gcTime: cacheMaxAge } } });
 const router = createAppRouter(queryClient);
 
 const root = document.getElementById("root");
@@ -16,9 +19,9 @@ if (!root) throw new Error("missing #root");
 createRoot(root).render(
   <StrictMode>
     <ThemeProvider defaultTheme="system">
-      <QueryClientProvider client={queryClient}>
+      <PersistQueryClientProvider client={queryClient} persistOptions={cacheOptions(queryClient)}>
         <RouterProvider router={router} />
-      </QueryClientProvider>
+      </PersistQueryClientProvider>
     </ThemeProvider>
   </StrictMode>,
 );

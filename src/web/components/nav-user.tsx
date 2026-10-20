@@ -29,6 +29,7 @@ import {
 } from "@/web/components/ui/sidebar";
 import { authClient } from "@/web/lib/auth-client";
 import { initialsOf } from "@/web/lib/initials";
+import { forgetCache } from "@/web/lib/query-cache";
 
 const THEMES: { value: Theme; label: string }[] = [
   { value: "light", label: "Light" },
@@ -44,7 +45,7 @@ export function NavUser({ user }: { user: { name: string; email: string } }) {
 
   async function signOut() {
     await authClient.signOut();
-    queryClient.clear();
+    await forgetCache(queryClient);
     await navigate({ to: "/login" });
   }
 
