@@ -1,9 +1,11 @@
-// The signed-in user at the foot of the sidebar, with a menu for settings and signing out.
+// The signed-in user at the foot of the sidebar, with a menu for the theme, settings and signing
+// out.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronsUpDownIcon, LogOutIcon, Settings2Icon } from "lucide-react";
+import { ChevronsUpDownIcon, LogOutIcon, Settings2Icon, SunMoonIcon } from "lucide-react";
 
+import { type Theme, useTheme } from "@/web/components/theme-provider";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
 import {
   DropdownMenu,
@@ -11,7 +13,12 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/web/components/ui/dropdown-menu";
 import {
@@ -23,8 +30,15 @@ import {
 import { authClient } from "@/web/lib/auth-client";
 import { initialsOf } from "@/web/lib/initials";
 
+const THEMES: { value: Theme; label: string }[] = [
+  { value: "light", label: "Light" },
+  { value: "dark", label: "Dark" },
+  { value: "system", label: "System" },
+];
+
 export function NavUser({ user }: { user: { name: string; email: string } }) {
   const { isMobile } = useSidebar();
+  const { theme, setTheme } = useTheme();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
 
@@ -75,6 +89,24 @@ export function NavUser({ user }: { user: { name: string; email: string } }) {
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <SunMoonIcon />
+                  Theme
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent>
+                  <DropdownMenuRadioGroup
+                    value={theme}
+                    onValueChange={(value) => setTheme(value as Theme)}
+                  >
+                    {THEMES.map((option) => (
+                      <DropdownMenuRadioItem key={option.value} value={option.value}>
+                        {option.label}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
               <DropdownMenuItem render={<Link to="/settings" />}>
                 <Settings2Icon />
                 Settings
