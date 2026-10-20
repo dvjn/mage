@@ -1,11 +1,12 @@
 // A space: its threads, most recently active first, starting a new one, and renaming or deleting
 // the space.
 
+import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useState } from "react";
 
-import { PageHeader } from "@/web/components/app-shell";
+import { PageHeader, pageWidth } from "@/web/components/app-shell";
 import { useNewThread } from "@/web/components/nav-threads";
 import { NameDialog } from "@/web/components/name-dialog";
 import { Time } from "@/web/components/time";
@@ -85,7 +86,7 @@ export function SpacePage() {
           </Button>
         )}
       </PageHeader>
-      <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-4">
+      <div className={cn(pageWidth, "flex flex-col gap-6 p-4")}>
         <form onSubmit={(event) => void start(event)}>
           <Field>
             <Textarea

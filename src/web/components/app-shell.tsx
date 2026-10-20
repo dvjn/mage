@@ -1,5 +1,5 @@
 // The signed-in app: the sidebar beside the current page, open or collapsed as it was last left,
-// and the header each page starts with.
+// the header each page starts with, and the one column width every page's content sits in.
 
 import { Link, Outlet } from "@tanstack/react-router";
 import { Fragment } from "react";
@@ -31,6 +31,8 @@ export function AppShell() {
     </SidebarProvider>
   );
 }
+
+export const pageWidth = "mx-auto w-full max-w-2xl";
 
 export interface Crumb {
   label: string;

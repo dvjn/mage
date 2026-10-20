@@ -2,6 +2,7 @@
 // signed-in user's ChatGPT account through the Codex sign-in, with a device code or in the
 // browser, and their Claude account through the Claude sign-in; and disconnecting them.
 
+import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, Copy, RefreshCw } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
@@ -12,7 +13,7 @@ import {
   type ConnectionSummary,
   deviceStartSchema,
 } from "@/shared/connections.ts";
-import { PageHeader } from "@/web/components/app-shell";
+import { PageHeader, pageWidth } from "@/web/components/app-shell";
 import { Button } from "@/web/components/ui/button";
 import {
   Card,
@@ -509,7 +510,7 @@ export function Settings() {
   return (
     <>
       <PageHeader crumbs={[{ label: "Settings" }]} />
-      <div className="mx-auto flex w-full max-w-md flex-col gap-6 p-4">
+      <div className={cn(pageWidth, "flex flex-col gap-6 p-4")}>
         <DefaultModel />
         <CodexSignIn />
         <ClaudeSignIn />

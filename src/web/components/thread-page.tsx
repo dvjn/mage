@@ -1,6 +1,7 @@
 // A thread: its events as they happen, kept scrolled to the newest, a composer to post messages
 // and the thread's model.
 
+import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
@@ -20,7 +21,7 @@ import {
   PromptInputTextarea,
   PromptInputTools,
 } from "@/web/components/ai-elements/prompt-input";
-import { PageHeader } from "@/web/components/app-shell";
+import { PageHeader, pageWidth } from "@/web/components/app-shell";
 import { ModelPicker } from "@/web/components/model-picker";
 import { ThreadEvent } from "@/web/components/thread-events";
 import { FieldError } from "@/web/components/ui/field";
@@ -114,7 +115,7 @@ export function ThreadPage() {
         ]}
       />
       <Conversation aria-label="Events" className="min-h-0">
-        <ConversationContent className="mx-auto w-full max-w-3xl">
+        <ConversationContent className={pageWidth}>
           {detail.data?.events.length === 0 ? (
             <ConversationEmptyState description="Write the first message below." />
           ) : (
@@ -123,7 +124,7 @@ export function ThreadPage() {
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
-      <div className="mx-auto w-full max-w-3xl p-4 pt-0">
+      <div className={cn(pageWidth, "p-4 pt-0")}>
         <PromptInput onSubmit={(message) => send(message.text)}>
           <PromptInputBody>
             <PromptInputTextarea aria-label="Message" placeholder="Write a message…" />
