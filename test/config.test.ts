@@ -19,6 +19,12 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...valid, PORT: "abc" })).toThrow(/PORT/);
   });
 
+  it("defaults LOG_FORMAT to json and rejects unknown formats", () => {
+    expect(loadConfig(valid).logFormat).toBe("json");
+    expect(loadConfig({ ...valid, LOG_FORMAT: "pretty" }).logFormat).toBe("pretty");
+    expect(() => loadConfig({ ...valid, LOG_FORMAT: "text" })).toThrow(/LOG_FORMAT/);
+  });
+
   it("requires BASE_URL", () => {
     expect(() => loadConfig({})).toThrow(/BASE_URL/);
   });

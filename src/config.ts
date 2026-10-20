@@ -7,6 +7,7 @@ export interface Config {
   // AES-256 key sealing stored credentials.
   credentialKey: Buffer;
   databasePath: string;
+  logFormat: "json" | "pretty";
   port: number;
   webRoot: string;
 }
@@ -28,6 +29,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const port = Number(env.PORT ?? "4783");
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error("PORT must be a positive integer");
+  }
+  const logFormat = env.LOG_FORMAT ?? "json";
+  if (logFormat !== "json" && logFormat !== "pretty") {
+    throw new Error("LOG_FORMAT must be json or pretty");
   }
   const baseUrl = env.BASE_URL ?? "";
   if (!["http:", "https:"].includes(URL.parse(baseUrl)?.protocol ?? "")) {
@@ -64,6 +69,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     authTrustedOrigins,
     credentialKey,
     databasePath: env.DATABASE_PATH ?? "data/mage.db",
+    logFormat,
     port,
     webRoot: env.WEB_ROOT ?? "dist/web",
   };

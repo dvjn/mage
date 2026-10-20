@@ -9,7 +9,7 @@ import { createConnectionStore } from "@/adapters/connections.ts";
 import { createCredentialStore } from "@/adapters/credentials.ts";
 import { openDatabase, pingDatabase } from "@/adapters/db.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
-import { createLogger } from "@/adapters/logger.ts";
+import { createLogger, createPrettyDestination } from "@/adapters/logger.ts";
 import { createCodexCatalog, createCodexOAuth } from "@/adapters/openai-codex.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
@@ -23,7 +23,9 @@ import { createSpaces } from "@/services/spaces.ts";
 import { createThreads } from "@/services/threads.ts";
 
 const config = loadConfig();
-const logger = createLogger();
+const logger = createLogger(
+  config.logFormat === "pretty" ? await createPrettyDestination() : undefined,
+);
 
 const db = openDatabase(config.databasePath);
 const auth = createAuth({
