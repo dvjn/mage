@@ -7,8 +7,8 @@ BASE_URL = "http://localhost:4783"
 AUTH_SECRET = "mage-development-secret-do-not-use-in-production"
 
 [tasks.setup]
-description = "Install dependencies"
-run = "pnpm install"
+description = "Install dependencies and the browser for the journeys"
+run = ["pnpm install", "pnpm exec playwright install chromium"]
 
 [tasks.dev]
 description = "Run API and web client with hot reload on :4783"
@@ -29,6 +29,10 @@ run = "pnpm check"
 [tasks.test]
 description = "Run the test suite"
 run = "pnpm test"
+
+[tasks.e2e]
+description = "Run the browser journeys against a production build on :4793"
+run = "pnpm e2e"
 
 [tasks."db:generate"]
 description = "Generate a migration from schema changes"
