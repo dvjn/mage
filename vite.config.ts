@@ -1,3 +1,4 @@
+import { cpSync } from "node:fs";
 import path from "node:path";
 
 import devServer, { defaultOptions } from "@hono/vite-dev-server";
@@ -30,6 +31,15 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    {
+      // The server bundle applies migrations from the folder next to it.
+      name: "copy-migrations",
+      applyToEnvironment: (environment) => environment.name === "ssr",
+      writeBundle() {
+        const from = path.join(here, "src/adapters/migrations");
+        cpSync(from, path.join(here, "dist/server/migrations"), { recursive: true });
+      },
+    },
     devServer({
       entry: path.join(here, "src/main.ts"),
       // Hono answers /api; everything else falls through to Vite.
@@ -37,6 +47,7 @@ export default defineConfig({
       injectClientScript: false,
     }),
   ],
+  fmt: { ignorePatterns: ["src/adapters/migrations/**"] },
   lint: {
     options: {
       typeAware: true,

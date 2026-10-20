@@ -12,6 +12,8 @@ ENV NODE_ENV=production PORT=4783
 COPY --from=build /app/package.json ./
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+RUN mkdir data && chown node:node data
+VOLUME /app/data
 EXPOSE 4783
 USER node
 HEALTHCHECK CMD ["node", "-e", "fetch(`http://localhost:${process.env.PORT}/api/health`).then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]

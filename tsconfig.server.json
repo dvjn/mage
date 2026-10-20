@@ -15,6 +15,6 @@
     "noUncheckedIndexedAccess": true,
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src", "test", "vite.config.ts"],
+  "include": ["src", "test", "vite.config.ts", "drizzle.config.ts"],
   "exclude": ["src/web"]
 }

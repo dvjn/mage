@@ -1,11 +1,21 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { openDatabase, pingDatabase } from "@/adapters/db.ts";
 import { createApp } from "@/http/app.ts";
 
 describe("GET /api/health", () => {
-  it("reports ok", async () => {
-    const res = await createApp().request("/api/health");
+  it("reports ok when the database answers", async () => {
+    const db = openDatabase(":memory:");
+    const res = await createApp({ pingDatabase: () => pingDatabase(db) }).request("/api/health");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    expect(await res.json()).toEqual({ ok: true, database: true });
+  });
+
+  it("reports unavailable when the database does not answer", async () => {
+    const res = await createApp({ pingDatabase: () => Promise.resolve(false) }).request(
+      "/api/health",
+    );
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ ok: false, database: false });
   });
 });

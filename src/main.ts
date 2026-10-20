@@ -2,12 +2,18 @@
 
 import { serve } from "@hono/node-server";
 
+import { openDatabase, pingDatabase } from "@/adapters/db.ts";
 import { loadConfig } from "@/config.ts";
 import { createApp } from "@/http/app.ts";
 
 const config = loadConfig();
 
-const app = createApp({ webRoot: import.meta.main ? config.webRoot : undefined });
+const db = openDatabase(config.databasePath);
+
+const app = createApp({
+  pingDatabase: () => pingDatabase(db),
+  webRoot: import.meta.main ? config.webRoot : undefined,
+});
 
 export default app;
 

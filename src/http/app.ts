@@ -4,14 +4,19 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 
 export interface AppOptions {
+  // Reports whether the database answers a query.
+  pingDatabase: () => Promise<boolean>;
   // Directory holding the built web client. Unset in dev, where Vite serves it.
   webRoot?: string;
 }
 
-export function createApp(options: AppOptions = {}): Hono {
+export function createApp(options: AppOptions): Hono {
   const app = new Hono();
 
-  app.get("/api/health", (c) => c.json({ ok: true }));
+  app.get("/api/health", async (c) => {
+    const database = await options.pingDatabase();
+    return c.json({ ok: database, database }, database ? 200 : 503);
+  });
   app.all("/api/*", (c) => c.json({ error: "not found" }, 404));
 
   if (options.webRoot) {

@@ -28,3 +28,7 @@ run = "pnpm check"
 [tasks.test]
 description = "Run the test suite"
 run = "pnpm test"
+
+[tasks."db:generate"]
+description = "Generate a migration from schema changes"
+run = "pnpm db:generate"

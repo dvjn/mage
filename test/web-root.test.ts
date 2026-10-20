@@ -12,7 +12,7 @@ writeFileSync(path.join(webRoot, "index.html"), "<!doctype html><title>Mage</tit
 writeFileSync(path.join(webRoot, "assets/app.js"), "export {};");
 afterAll(() => rmSync(webRoot, { recursive: true, force: true }));
 
-const app = createApp({ webRoot });
+const app = createApp({ pingDatabase: () => Promise.resolve(true), webRoot });
 
 describe("web client", () => {
   it("serves index.html for a client route", async () => {

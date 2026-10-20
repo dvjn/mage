@@ -2,6 +2,7 @@
 
 export interface Config {
   baseUrl: string;
+  databasePath: string;
   port: number;
   webRoot: string;
 }
@@ -17,6 +18,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   return {
     baseUrl,
+    databasePath: env.DATABASE_PATH ?? "data/mage.db",
     port,
     webRoot: env.WEB_ROOT ?? "dist/web",
   };
