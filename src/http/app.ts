@@ -3,6 +3,7 @@
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
+import { streamSSE } from "hono/streaming";
 import { requestId, type RequestIdVariables } from "hono/request-id";
 import { validator } from "hono/validator";
 import type * as z from "zod";
@@ -44,6 +45,8 @@ export interface AppOptions {
   // Threads in those spaces and their events.
   threads: Threads;
   logger: Logger;
+  // How often a live event stream sends a comment to keep the connection open.
+  heartbeatMs?: number;
   // Reports whether the database answers a query.
   pingDatabase: () => Promise<boolean>;
   // Directory holding the built web client. Unset in dev, where Vite serves it.
@@ -109,6 +112,19 @@ function requireAdmin(principal: Principal) {
   }
 }
 
+const HEARTBEAT_MS = 15_000;
+
+// Where a live event stream resumes: after the Last-Event-ID a reconnecting browser sends, or
+// `?after=`, or from the start.
+const eventCursor = validator("query", (value: { after?: string }, c) => {
+  const raw = c.req.header("Last-Event-ID") ?? value.after ?? "0";
+  const after = Number(raw);
+  if (!Number.isSafeInteger(after) || after < 0) {
+    return c.json({ error: "The cursor must be a seq" }, 400);
+  }
+  return { after };
+});
+
 // The typed API routes, mounted under /api.
 function createApi(options: AppOptions) {
   const { identity, connections, models, spaces, threads } = options;
@@ -173,6 +189,35 @@ function createApi(options: AppOptions) {
         const changes = c.req.valid("json");
         const thread = await threads.update(signedIn(c.var.principal), c.req.param("id"), changes);
         return c.json(thread, 200);
+      })
+      .get("/v1/threads/:id/events", eventCursor, (c) => {
+        const principal = signedIn(c.var.principal);
+        const id = c.req.param("id");
+        // Answers 404 before the stream starts.
+        threads.visible(principal, id);
+        const { after } = c.req.valid("query");
+        return streamSSE(c, async (stream) => {
+          // One write at a time, in order.
+          let writing = Promise.resolve();
+          function write(send: () => Promise<void>) {
+            writing = writing.then(send, send);
+            return writing;
+          }
+          const unsubscribe = threads.follow(principal, id, after, (event) => {
+            void write(() =>
+              stream.writeSSE({
+                id: String(event.seq),
+                event: "thread-event",
+                data: JSON.stringify(event),
+              }),
+            );
+          });
+          stream.onAbort(unsubscribe);
+          while (!stream.aborted) {
+            await stream.sleep(options.heartbeatMs ?? HEARTBEAT_MS);
+            if (!stream.aborted) await write(() => stream.write(": heartbeat\n\n").then(() => {}));
+          }
+        });
       })
       .post("/v1/threads/:id/messages", message, (c) => {
         const { text } = c.req.valid("json");

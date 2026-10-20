@@ -6,6 +6,7 @@ import { expect } from "vite-plus/test";
 
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { openDatabase } from "@/adapters/db.ts";
+import { createEventBus } from "@/adapters/event-bus.ts";
 import { createLogger } from "@/adapters/logger.ts";
 import * as schema from "@/adapters/schema.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
@@ -43,7 +44,21 @@ export function setup() {
         ? Promise.resolve()
         : Promise.reject(new ServiceError(400, `${ref} is not a model this org can use.`)),
   };
-  const threads = createThreads({ spaces, threads: threadStore, models });
+  const bus = createEventBus();
+  // Subscriptions still open.
+  const listening = { count: 0 };
+  const countingBus: typeof bus = {
+    publish: (threadId, event) => bus.publish(threadId, event),
+    subscribe(threadId, listener) {
+      listening.count += 1;
+      const unsubscribe = bus.subscribe(threadId, listener);
+      return () => {
+        listening.count -= 1;
+        unsubscribe();
+      };
+    },
+  };
+  const threads = createThreads({ spaces, threads: threadStore, models, bus: countingBus });
   const app = createApp({
     handleAuth: auth.handler,
     identity: createIdentity(auth, db),
@@ -53,6 +68,7 @@ export function setup() {
     threads,
     logger,
     pingDatabase: () => Promise.resolve(true),
+    heartbeatMs: 20,
   });
 
   async function signUp(name: string, email: string) {
@@ -109,6 +125,7 @@ export function setup() {
     org,
     spaceStore,
     threadStore,
+    listening,
     spaces,
     threads,
     signUp,

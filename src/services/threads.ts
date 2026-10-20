@@ -1,6 +1,7 @@
-// Threads in the spaces a person can see: starting them, posting messages to their event logs
-// and reading them back with each event's author.
+// Threads in the spaces a person can see: starting them, posting messages to their event logs,
+// reading them back with each event's author and following new events as they are appended.
 
+import type { EventBus } from "@/ports/event-bus.ts";
 import type { Principal } from "@/ports/identity.ts";
 import type { StoredEvent, Thread, ThreadStore } from "@/ports/threads.ts";
 import { ServiceError } from "@/services/errors.ts";
@@ -12,6 +13,7 @@ export interface ThreadsOptions {
   spaces: Spaces;
   threads: ThreadStore;
   models: Pick<Models, "defaultModel" | "requireModel">;
+  bus: EventBus;
 }
 
 export type Threads = ReturnType<typeof createThreads>;
@@ -58,7 +60,7 @@ export function eventSummary(event: StoredEvent): ThreadEventSummary {
 }
 
 export function createThreads(options: ThreadsOptions) {
-  const { spaces, threads, models } = options;
+  const { spaces, threads, models, bus } = options;
 
   // The thread when the principal can see its space; otherwise it is not found.
   function visible(principal: Principal, id: string): Thread {
@@ -80,7 +82,10 @@ export function createThreads(options: ThreadsOptions) {
       // Names the thread when nothing has yet.
       titleFrom(text),
     );
-    return eventSummary(event);
+    const summary = eventSummary(event);
+    // Only once the event is stored.
+    bus.publish(thread.id, summary);
+    return summary;
   }
 
   return {
@@ -121,6 +126,34 @@ export function createThreads(options: ThreadsOptions) {
 
     postMessage(principal: Principal, id: string, text: string) {
       return post(principal, visible(principal, id), text);
+    },
+
+    // Delivers the thread's events with seq above `after` in order, then each new one as it is
+    // appended, each exactly once. Listening starts before the stored events are read, so none
+    // falls between the two. Returns the function that stops it.
+    follow(
+      principal: Principal,
+      id: string,
+      after: number,
+      deliver: (event: ThreadEventSummary) => void,
+    ): () => void {
+      visible(principal, id);
+      let last = after;
+      let replaying = true;
+      const held: ThreadEventSummary[] = [];
+      function send(event: ThreadEventSummary) {
+        if (event.seq <= last) return;
+        last = event.seq;
+        deliver(event);
+      }
+      const unsubscribe = bus.subscribe(id, (event) => {
+        if (replaying) held.push(event);
+        else send(event);
+      });
+      for (const event of threads.eventsAfter(id, after)) send(eventSummary(event));
+      replaying = false;
+      for (const event of held.toSorted((a, b) => a.seq - b.seq)) send(event);
+      return unsubscribe;
     },
   };
 }

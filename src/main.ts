@@ -8,6 +8,7 @@ import { createCipher } from "@/adapters/cipher.ts";
 import { createConnectionStore } from "@/adapters/connections.ts";
 import { createCredentialStore } from "@/adapters/credentials.ts";
 import { openDatabase, pingDatabase } from "@/adapters/db.ts";
+import { createEventBus } from "@/adapters/event-bus.ts";
 import { createLogger } from "@/adapters/logger.ts";
 import { createCodexCatalog, createCodexOAuth } from "@/adapters/openai-codex.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
@@ -63,7 +64,7 @@ const app = createApp({
   connections,
   models,
   spaces,
-  threads: createThreads({ spaces, threads: threadStore, models }),
+  threads: createThreads({ spaces, threads: threadStore, models, bus: createEventBus() }),
   logger,
   pingDatabase: () => pingDatabase(db),
   webRoot: import.meta.main ? config.webRoot : undefined,
