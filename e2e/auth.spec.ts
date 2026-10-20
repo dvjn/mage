@@ -1,6 +1,8 @@
 import { expect, type Page, test } from "@playwright/test";
 
 const password = "correct horse battery";
+// Signed-in people land in a space.
+const inASpace = /\/s\/[^/]+$/;
 
 function uniqueEmail() {
   return `${crypto.randomUUID()}@example.com`;
@@ -13,11 +15,12 @@ async function signUp(page: Page, name: string, email: string) {
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByLabel("Confirm Password").fill(password);
   await page.getByRole("button", { name: "Create Account" }).click();
-  await expect(page).toHaveURL("/");
+  await expect(page).toHaveURL(inASpace);
 }
 
 async function signOut(page: Page) {
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
   await expect(page).toHaveURL("/login");
 }
 
@@ -28,20 +31,24 @@ test("signed out, home redirects to login, which links to signup", async ({ page
   await expect(page).toHaveURL("/signup");
 });
 
-test("signing up lands on home and keeps the session", async ({ page }) => {
+test("signing up lands in Your space in the personal org and keeps the session", async ({
+  page,
+}) => {
   await signUp(page, "Ada Lovelace", uniqueEmail());
-  await expect(page.getByText("Ada Lovelace", { exact: true })).toBeVisible();
-  await expect(page.getByText("Personal org: Ada Lovelace")).toBeVisible();
-  await expect(page.getByText("Mage", { exact: true })).toBeVisible();
+  const sidebar = page.locator("[data-sidebar=sidebar]");
+  await expect(sidebar.getByText("Ada Lovelace").first()).toBeVisible();
+  await expect(page.getByRole("button", { name: "Account menu" })).toContainText("Ada Lovelace");
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Your space");
 
+  const url = page.url();
   await page.reload();
-  await expect(page).toHaveURL("/");
-  await expect(page.getByText("Ada Lovelace", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(url);
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Your space");
 
   await page.goto("/login");
-  await expect(page).toHaveURL("/");
+  await expect(page).toHaveURL(url);
   await page.goto("/signup");
-  await expect(page).toHaveURL("/");
+  await expect(page).toHaveURL(url);
 });
 
 test("signing out returns to login and guards home again", async ({ page }) => {
@@ -51,7 +58,7 @@ test("signing out returns to login and guards home again", async ({ page }) => {
   await expect(page).toHaveURL("/login");
 });
 
-test("signing in shows the server's error, then lands on home", async ({ page }) => {
+test("signing in shows the server's error, then lands in a space", async ({ page }) => {
   const email = uniqueEmail();
   await signUp(page, "Alan Turing", email);
   await signOut(page);
@@ -70,8 +77,8 @@ test("signing in shows the server's error, then lands on home", async ({ page })
 
   await page.getByLabel("Password").fill(password);
   await page.getByRole("button", { name: "Login" }).click();
-  await expect(page).toHaveURL("/");
-  await expect(page.getByText("Alan Turing", { exact: true })).toBeVisible();
+  await expect(page).toHaveURL(inASpace);
+  await expect(page.getByRole("button", { name: "Account menu" })).toContainText("Alan Turing");
 });
 
 test("mismatched passwords are caught before any request", async ({ page }) => {

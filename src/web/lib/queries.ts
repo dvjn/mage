@@ -1,11 +1,13 @@
 // Server state the web client reads: the current session, who is signed in, their connections, the
-// models the org can use and its default model.
+// models the org can use and its default model, and their spaces and threads.
 
 import { queryOptions } from "@tanstack/react-query";
 
 import { connectionListSchema } from "@/shared/connections.ts";
 import { meSchema } from "@/shared/me.ts";
 import { defaultModelSchema, modelListSchema } from "@/shared/models.ts";
+import { spaceListSchema } from "@/shared/spaces.ts";
+import { threadDetailSchema, threadListSchema } from "@/shared/threads.ts";
 import { apiClient } from "@/web/lib/api-client";
 import { authClient } from "@/web/lib/auth-client";
 
@@ -56,3 +58,35 @@ export const defaultModelQuery = queryOptions({
     return defaultModelSchema.parse(await res.json());
   },
 });
+
+export const spacesQuery = queryOptions({
+  queryKey: ["spaces"],
+  queryFn: async () => {
+    const res = await apiClient.v1.spaces.$get();
+    if (!res.ok) throw new Error("could not read your spaces");
+    return spaceListSchema.parse(await res.json());
+  },
+});
+
+export function spaceThreadsQuery(spaceId: string) {
+  return queryOptions({
+    queryKey: ["spaces", spaceId, "threads"],
+    queryFn: async () => {
+      const res = await apiClient.v1.spaces[":id"].threads.$get({ param: { id: spaceId } });
+      if (!res.ok) throw new Error("could not read the space's threads");
+      return threadListSchema.parse(await res.json());
+    },
+  });
+}
+
+// A thread with its events so far; live events are merged in as they arrive.
+export function threadQuery(threadId: string) {
+  return queryOptions({
+    queryKey: ["threads", threadId],
+    queryFn: async () => {
+      const res = await apiClient.v1.threads[":id"].$get({ param: { id: threadId } });
+      if (!res.ok) throw new Error("could not read the thread");
+      return threadDetailSchema.parse(await res.json());
+    },
+  });
+}

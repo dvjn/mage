@@ -3,17 +3,16 @@
 // browser, and their Claude account through the Claude sign-in; and disconnecting them.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
 import { Check, Copy, RefreshCw } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 
 import {
-  apiErrorSchema,
   attemptSchema,
   browserStartSchema,
   type ConnectionSummary,
   deviceStartSchema,
 } from "@/shared/connections.ts";
+import { PageHeader } from "@/web/components/app-shell";
 import { Button } from "@/web/components/ui/button";
 import {
   Card,
@@ -32,16 +31,11 @@ import {
 } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
 import { CONNECTION_LABELS, ModelPicker } from "@/web/components/model-picker";
-import { Wordmark } from "@/web/components/wordmark";
 import { apiClient } from "@/web/lib/api-client";
+import { errorOf } from "@/web/lib/api-errors";
 import { connectionsQuery, defaultModelQuery, fetchModels, modelsQuery } from "@/web/lib/queries";
 
 type Method = "device" | "browser";
-
-async function errorOf(res: { json(): Promise<unknown> }) {
-  const body = apiErrorSchema.safeParse(await res.json().catch(() => null));
-  return body.success ? body.data.error : "Something went wrong. Try again.";
-}
 
 // Opens a tab before an awaited request so the browser does not block it as a popup.
 async function openInNewTab(url: () => Promise<string | null>) {
@@ -513,14 +507,13 @@ function DefaultModel() {
 
 export function Settings() {
   return (
-    <div className="flex flex-col gap-6">
-      <Wordmark className="self-center" />
-      <DefaultModel />
-      <CodexSignIn />
-      <ClaudeSignIn />
-      <Link to="/" className="self-center text-sm underline underline-offset-4">
-        Back to home
-      </Link>
-    </div>
+    <>
+      <PageHeader crumbs={[{ label: "Settings" }]} />
+      <div className="mx-auto flex w-full max-w-md flex-col gap-6 p-4">
+        <DefaultModel />
+        <CodexSignIn />
+        <ClaudeSignIn />
+      </div>
+    </>
   );
 }

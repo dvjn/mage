@@ -10,9 +10,10 @@ async function signUpToSettings(page: Page) {
   await page.getByLabel("Password", { exact: true }).fill("correct horse battery");
   await page.getByLabel("Confirm Password").fill("correct horse battery");
   await page.getByRole("button", { name: "Create Account" }).click();
-  await expect(page).toHaveURL("/");
+  await expect(page).toHaveURL(/\/s\/[^/]+$/);
 
-  await page.getByRole("link", { name: "Settings" }).click();
+  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
   await expect(page).toHaveURL("/settings");
 }
 
