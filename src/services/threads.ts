@@ -1,16 +1,19 @@
-// Threads in the spaces a person can see: starting them, posting messages to their event logs,
-// reading them back with each event's author and following new events as they are appended.
+// Threads in the spaces a person can see: starting them, moving them between the space's folders,
+// posting messages to their event logs, reading them back with each event's author and following
+// new events as they are appended.
 
 import type { EventBus } from "@/ports/event-bus.ts";
 import type { Principal } from "@/ports/identity.ts";
 import type { StoredEvent, Thread, ThreadStore } from "@/ports/threads.ts";
 import { ServiceError } from "@/services/errors.ts";
+import type { Folders } from "@/services/folders.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { ThreadEventSummary, ThreadSummary } from "@/shared/threads.ts";
 
 export interface ThreadsOptions {
   spaces: Spaces;
+  folders: Pick<Folders, "requireIn">;
   threads: ThreadStore;
   models: Pick<Models, "defaultModel" | "requireModel">;
   bus: EventBus;
@@ -35,6 +38,7 @@ export function threadSummary(thread: Thread): ThreadSummary {
   return {
     id: thread.id,
     spaceId: thread.spaceId,
+    folderId: thread.folderId,
     title: thread.title ?? UNTITLED,
     model: thread.model,
     lastEventSeq: thread.lastEventSeq,
@@ -60,7 +64,7 @@ export function eventSummary(event: StoredEvent): ThreadEventSummary {
 }
 
 export function createThreads(options: ThreadsOptions) {
-  const { spaces, threads, models, bus } = options;
+  const { spaces, folders, threads, models, bus } = options;
 
   // The thread when the principal can see its space; otherwise it is not found.
   function visible(principal: Principal, id: string): Thread {
@@ -96,11 +100,19 @@ export function createThreads(options: ThreadsOptions) {
       return threads.listInSpace(spaceId).map(threadSummary);
     },
 
-    // Starts a thread on the org's default model, with its first message when there is one.
-    create(principal: Principal, spaceId: string, text?: string) {
+    // Starts a thread on the org's default model, in a folder or at the top of the space, with its
+    // first message when there is one.
+    create(
+      principal: Principal,
+      spaceId: string,
+      input: { text?: string; folderId?: string | null } = {},
+    ) {
+      const { text, folderId = null } = input;
       spaces.visible(principal, spaceId);
+      folders.requireIn(spaceId, folderId);
       const thread = threads.create({
         spaceId,
+        folderId,
         model: models.defaultModel(principal.orgId),
         createdBy: principal.userId,
       });
@@ -116,11 +128,17 @@ export function createThreads(options: ThreadsOptions) {
       };
     },
 
-    async update(principal: Principal, id: string, changes: { title?: string; model?: string }) {
+    // A folder it moves to must be in its space; null moves it to the top of the space.
+    async update(
+      principal: Principal,
+      id: string,
+      changes: { title?: string; model?: string; folderId?: string | null },
+    ) {
       visible(principal, id);
       if (changes.model) await models.requireModel(principal.orgId, changes.model);
       // Seen again after the model check, which waits on providers.
-      visible(principal, id);
+      const thread = visible(principal, id);
+      if (changes.folderId !== undefined) folders.requireIn(thread.spaceId, changes.folderId);
       return threadSummary(threads.update(id, changes));
     },
 

@@ -9,6 +9,7 @@ import { createConnectionStore } from "@/adapters/connections.ts";
 import { createCredentialStore } from "@/adapters/credentials.ts";
 import { openDatabase, pingDatabase } from "@/adapters/db.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
+import { createFolderStore } from "@/adapters/folders.ts";
 import { createLogger, createPrettyDestination } from "@/adapters/logger.ts";
 import { createCodexCatalog, createCodexOAuth } from "@/adapters/openai-codex.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
@@ -18,6 +19,7 @@ import { createThreadStore } from "@/adapters/threads.ts";
 import { loadConfig } from "@/config.ts";
 import { createApp } from "@/http/app.ts";
 import { createConnections } from "@/services/connections.ts";
+import { createFolders } from "@/services/folders.ts";
 import { createModels } from "@/services/models.ts";
 import { createSpaces } from "@/services/spaces.ts";
 import { createThreads } from "@/services/threads.ts";
@@ -59,6 +61,7 @@ const models = createModels({
 });
 const threadStore = createThreadStore(db);
 const spaces = createSpaces({ spaces: createSpaceStore(db), threads: threadStore });
+const folders = createFolders({ spaces, folders: createFolderStore(db) });
 
 const app = createApp({
   handleAuth: auth.handler,
@@ -66,7 +69,8 @@ const app = createApp({
   connections,
   models,
   spaces,
-  threads: createThreads({ spaces, threads: threadStore, models, bus: createEventBus() }),
+  folders,
+  threads: createThreads({ spaces, folders, threads: threadStore, models, bus: createEventBus() }),
   logger,
   pingDatabase: () => pingDatabase(db),
   webRoot: import.meta.main ? config.webRoot : undefined,

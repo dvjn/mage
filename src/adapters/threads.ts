@@ -12,6 +12,7 @@ import { thread, threadEvent, user } from "./schema.ts";
 const columns = {
   id: thread.id,
   spaceId: thread.spaceId,
+  folderId: thread.folderId,
   title: thread.title,
   model: thread.model,
   createdBy: thread.createdBy,

@@ -1,9 +1,10 @@
 // Server state the web client reads: the current session, who is signed in, their connections, the
-// models the org can use and its default model, and their spaces and threads.
+// models the org can use and its default model, and their spaces with their folders and threads.
 
 import { queryOptions } from "@tanstack/react-query";
 
 import { connectionListSchema } from "@/shared/connections.ts";
+import { folderListSchema } from "@/shared/folders.ts";
 import { meSchema } from "@/shared/me.ts";
 import { defaultModelSchema, modelListSchema } from "@/shared/models.ts";
 import { spaceListSchema } from "@/shared/spaces.ts";
@@ -67,6 +68,17 @@ export const spacesQuery = queryOptions({
     return spaceListSchema.parse(await res.json());
   },
 });
+
+export function spaceFoldersQuery(spaceId: string) {
+  return queryOptions({
+    queryKey: ["spaces", spaceId, "folders"],
+    queryFn: async () => {
+      const res = await apiClient.v1.spaces[":id"].folders.$get({ param: { id: spaceId } });
+      if (!res.ok) throw new Error("could not read the space's folders");
+      return folderListSchema.parse(await res.json());
+    },
+  });
+}
 
 export function spaceThreadsQuery(spaceId: string) {
   return queryOptions({

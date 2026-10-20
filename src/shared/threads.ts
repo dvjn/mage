@@ -6,6 +6,8 @@ import * as z from "zod";
 export const threadSchema = z.object({
   id: z.string(),
   spaceId: z.string(),
+  // The folder it is in, or null at the top of the space.
+  folderId: z.string().nullable(),
   title: z.string(),
   // A model ref, or null when the thread has none yet.
   model: z.string().nullable(),
@@ -62,9 +64,14 @@ export const threadDetailSchema = z.object({
 
 export const messageInputSchema = z.object({ text: z.string().trim().min(1).max(100_000) });
 
-export const newThreadSchema = z.object({ text: messageInputSchema.shape.text.optional() });
+export const newThreadSchema = z.object({
+  text: messageInputSchema.shape.text.optional(),
+  folderId: z.string().min(1).nullable().optional(),
+});
 
 export const threadUpdateSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   model: z.string().min(1).optional(),
+  // Null moves the thread to the top of its space.
+  folderId: z.string().min(1).nullable().optional(),
 });

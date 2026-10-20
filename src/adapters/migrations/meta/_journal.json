@@ -57,6 +57,13 @@
       "when": 1792528311871,
       "tag": "0007_thread",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1792530504948,
+      "tag": "0008_folder",
+      "breakpoints": true
     }
   ]
 }

@@ -16,6 +16,7 @@ import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { createApp } from "@/http/app.ts";
 import type { BrowserOAuth } from "@/ports/oauth.ts";
 import { createConnections } from "@/services/connections.ts";
+import type { Folders } from "@/services/folders.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
@@ -29,6 +30,7 @@ const clientId = "app_EMoamEEZ73f0CkXaXp7hrann";
 // Never called by these tests.
 const unusedModels = {} as Models;
 const unusedSpaces = {} as Spaces;
+const unusedFolders = {} as Folders;
 const unusedThreads = {} as Threads;
 const unusedClaude = {} as BrowserOAuth;
 
@@ -137,6 +139,7 @@ function setup() {
     connections,
     models: unusedModels,
     spaces: unusedSpaces,
+    folders: unusedFolders,
     threads: unusedThreads,
     logger,
     pingDatabase: () => Promise.resolve(true),

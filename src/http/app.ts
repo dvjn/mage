@@ -9,11 +9,13 @@ import { validator } from "hono/validator";
 import type * as z from "zod";
 
 import type { Connection } from "@/ports/connections.ts";
+import type { Folder } from "@/ports/folders.ts";
 import type { Space, SpaceRole } from "@/ports/spaces.ts";
 import type { Identity, Principal } from "@/ports/identity.ts";
 import type { Logger } from "@/ports/logger.ts";
 import { type AttemptStatus, ConnectionError, type Connections } from "@/services/connections.ts";
 import { ServiceError } from "@/services/errors.ts";
+import type { Folders } from "@/services/folders.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
@@ -22,6 +24,7 @@ import {
   browserFinishSchema,
   type ConnectionSummary,
 } from "@/shared/connections.ts";
+import { type FolderSummary, folderNameSchema } from "@/shared/folders.ts";
 import type { Me } from "@/shared/me.ts";
 import {
   type DefaultModel,
@@ -42,6 +45,8 @@ export interface AppOptions {
   models: Models;
   // The spaces the signed-in user can see in their org.
   spaces: Spaces;
+  // The folders that arrange those spaces' threads.
+  folders: Folders;
   // Threads in those spaces and their events.
   threads: Threads;
   logger: Logger;
@@ -73,6 +78,17 @@ function spaceSummary(space: Space & { role: SpaceRole }): SpaceSummary {
   return { id, kind, name, primary, role, createdAt: createdAt.toISOString() };
 }
 
+function folderSummary(folder: Folder): FolderSummary {
+  const { id, spaceId, name, createdAt, updatedAt } = folder;
+  return {
+    id,
+    spaceId,
+    name,
+    createdAt: createdAt.toISOString(),
+    updatedAt: updatedAt.toISOString(),
+  };
+}
+
 function attemptSummary(attempt: AttemptStatus): AttemptSummary {
   return attempt.status === "connected"
     ? { status: "connected", connection: summary(attempt.connection) }
@@ -96,8 +112,9 @@ function jsonBody<T extends z.ZodType>(schema: T, error: string) {
 
 const setDefaultModel = jsonBody(setDefaultModelSchema, "ref is required");
 const spaceName = jsonBody(spaceNameSchema, "A name of 1 to 80 characters is required");
-const newThread = jsonBody(newThreadSchema, "text must be a non-empty string");
-const threadUpdate = jsonBody(threadUpdateSchema, "Give a title or a model");
+const newThread = jsonBody(newThreadSchema, "text must be a non-empty string, folderId an id");
+const folderName = jsonBody(folderNameSchema, "A name of 1 to 80 characters is required");
+const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or a folder");
 const message = jsonBody(messageInputSchema, "text is required");
 
 // `?refresh=1` reads the lists again instead of from the cache.
@@ -127,7 +144,7 @@ const eventCursor = validator("query", (value: { after?: string }, c) => {
 
 // The typed API routes, mounted under /api.
 function createApi(options: AppOptions) {
-  const { identity, connections, models, spaces, threads } = options;
+  const { identity, connections, models, spaces, folders, threads } = options;
   return (
     new Hono<ApiEnv>()
       .use("/v1/*", async (c, next) => {
@@ -175,12 +192,30 @@ function createApi(options: AppOptions) {
         spaces.remove(signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
       })
+      .get("/v1/spaces/:id/folders", (c) => {
+        const list = folders.list(signedIn(c.var.principal), c.req.param("id"));
+        return c.json(list.map(folderSummary), 200);
+      })
+      .post("/v1/spaces/:id/folders", folderName, (c) => {
+        const { name } = c.req.valid("json");
+        const folder = folders.create(signedIn(c.var.principal), c.req.param("id"), name);
+        return c.json(folderSummary(folder), 200);
+      })
+      .patch("/v1/folders/:id", folderName, (c) => {
+        const { name } = c.req.valid("json");
+        const folder = folders.rename(signedIn(c.var.principal), c.req.param("id"), name);
+        return c.json(folderSummary(folder), 200);
+      })
+      .delete("/v1/folders/:id", (c) => {
+        folders.remove(signedIn(c.var.principal), c.req.param("id"));
+        return c.json({ ok: true }, 200);
+      })
       .get("/v1/spaces/:id/threads", (c) => {
         return c.json(threads.list(signedIn(c.var.principal), c.req.param("id")), 200);
       })
       .post("/v1/spaces/:id/threads", newThread, (c) => {
-        const { text } = c.req.valid("json");
-        return c.json(threads.create(signedIn(c.var.principal), c.req.param("id"), text), 200);
+        const input = c.req.valid("json");
+        return c.json(threads.create(signedIn(c.var.principal), c.req.param("id"), input), 200);
       })
       .get("/v1/threads/:id", (c) => {
         return c.json(threads.get(signedIn(c.var.principal), c.req.param("id")), 200);

@@ -7,6 +7,7 @@ import { afterAll, describe, expect, it } from "vite-plus/test";
 import { createLogger } from "@/adapters/logger.ts";
 import { createApp } from "@/http/app.ts";
 import type { Connections } from "@/services/connections.ts";
+import type { Folders } from "@/services/folders.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
@@ -26,6 +27,7 @@ const app = createApp({
   connections: {} as Connections,
   models: {} as Models,
   spaces: {} as Spaces,
+  folders: {} as Folders,
   threads: {} as Threads,
   logger: createLogger({ write() {} }),
   pingDatabase: () => Promise.resolve(true),

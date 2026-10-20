@@ -4,6 +4,7 @@ import { createLogger } from "@/adapters/logger.ts";
 import { createApp } from "@/http/app.ts";
 import type { Identity } from "@/ports/identity.ts";
 import type { Connections } from "@/services/connections.ts";
+import type { Folders } from "@/services/folders.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
@@ -12,6 +13,7 @@ import type { Threads } from "@/services/threads.ts";
 const unusedConnections = {} as Connections;
 const unusedModels = {} as Models;
 const unusedSpaces = {} as Spaces;
+const unusedFolders = {} as Folders;
 const unusedThreads = {} as Threads;
 
 const handleAuth = () => Promise.resolve(new Response(null, { status: 404 }));
@@ -30,6 +32,7 @@ describe("request logging", () => {
       connections: unusedConnections,
       models: unusedModels,
       spaces: unusedSpaces,
+      folders: unusedFolders,
       threads: unusedThreads,
       logger,
       pingDatabase: () => Promise.resolve(true),

@@ -15,12 +15,14 @@ import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { createApp } from "@/http/app.ts";
 import type { BrowserOAuth } from "@/ports/oauth.ts";
 import { createConnections } from "@/services/connections.ts";
+import type { Folders } from "@/services/folders.ts";
 import { createModels } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
 
 // Never called by these tests.
 const unusedSpaces = {} as Spaces;
+const unusedFolders = {} as Folders;
 const unusedThreads = {} as Threads;
 
 const baseUrl = "http://localhost:4783";
@@ -154,6 +156,7 @@ function setup() {
     connections,
     models,
     spaces: unusedSpaces,
+    folders: unusedFolders,
     threads: unusedThreads,
     logger,
     pingDatabase: () => Promise.resolve(true),

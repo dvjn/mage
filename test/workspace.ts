@@ -1,5 +1,5 @@
-// A signed-up app with real spaces and threads over an in-memory database, for the tests of
-// spaces, threads and their events.
+// A signed-up app with real spaces, folders and threads over an in-memory database, for the tests
+// of spaces, folders, threads and their events.
 
 import { eq } from "drizzle-orm";
 import { expect } from "vite-plus/test";
@@ -7,6 +7,7 @@ import { expect } from "vite-plus/test";
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { openDatabase } from "@/adapters/db.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
+import { createFolderStore } from "@/adapters/folders.ts";
 import { createLogger } from "@/adapters/logger.ts";
 import * as schema from "@/adapters/schema.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
@@ -15,6 +16,7 @@ import { createApp } from "@/http/app.ts";
 import type { Connections } from "@/services/connections.ts";
 import type { Models } from "@/services/models.ts";
 import { ServiceError } from "@/services/errors.ts";
+import { createFolders } from "@/services/folders.ts";
 import { createSpaces } from "@/services/spaces.ts";
 import { createThreads } from "@/services/threads.ts";
 
@@ -25,7 +27,19 @@ const unusedModels = {} as Models;
 const baseUrl = "http://localhost:4783";
 
 export type SpaceBody = { id: string; name: string; primary: boolean; role: string; kind: string };
-export type ThreadBody = { id: string; spaceId: string; title: string; model: string | null };
+export type FolderBody = {
+  id: string;
+  spaceId: string;
+  parentFolderId: string | null;
+  name: string;
+};
+export type ThreadBody = {
+  id: string;
+  spaceId: string;
+  folderId: string | null;
+  title: string;
+  model: string | null;
+};
 
 export function setup() {
   const db = openDatabase(":memory:");
@@ -35,6 +49,7 @@ export function setup() {
   const spaceStore = createSpaceStore(db);
   const threadStore = createThreadStore(db);
   const spaces = createSpaces({ spaces: spaceStore, threads: threadStore });
+  const folders = createFolders({ spaces, folders: createFolderStore(db) });
   // The models the org can use, and its default.
   const org = { defaultModel: null as string | null, models: ["codex/gpt-big"] };
   const models = {
@@ -58,13 +73,20 @@ export function setup() {
       };
     },
   };
-  const threads = createThreads({ spaces, threads: threadStore, models, bus: countingBus });
+  const threads = createThreads({
+    spaces,
+    folders,
+    threads: threadStore,
+    models,
+    bus: countingBus,
+  });
   const app = createApp({
     handleAuth: auth.handler,
     identity: createIdentity(auth, db),
     connections: unusedConnections,
     models: { ...unusedModels, ...models },
     spaces,
+    folders,
     threads,
     logger,
     pingDatabase: () => Promise.resolve(true),
@@ -119,6 +141,18 @@ export function setup() {
     return (await res.json()) as ThreadBody;
   }
 
+  async function createFolder(cookie: string, spaceId: string, name: string) {
+    const res = await api("POST", `/spaces/${spaceId}/folders`, cookie, { name });
+    expect(res.status).toBe(200);
+    return (await res.json()) as FolderBody;
+  }
+
+  async function listFolders(cookie: string, spaceId: string) {
+    const res = await api("GET", `/spaces/${spaceId}/folders`, cookie);
+    expect(res.status).toBe(200);
+    return (await res.json()) as FolderBody[];
+  }
+
   return {
     db,
     app,
@@ -134,5 +168,7 @@ export function setup() {
     createSpace,
     yourSpace,
     createThread,
+    createFolder,
+    listFolders,
   };
 }

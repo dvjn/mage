@@ -1,5 +1,5 @@
-// Asks for a space's name, to make a space or rename one. It opens from its trigger, or from its
-// owner when it has no trigger.
+// Asks for a name, to make or rename a space, a folder or a thread. It opens from its trigger, or
+// from its owner when it has no trigger.
 
 import { type FormEvent, type ReactElement, useId, useState } from "react";
 
@@ -15,13 +15,14 @@ import {
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
 
-export function SpaceNameDialog({
+export function NameDialog({
   trigger,
   open: openProp,
   onOpenChange,
   title,
   action,
   initialName = "",
+  maxLength = 80,
   onSubmit,
 }: {
   trigger?: ReactElement;
@@ -30,6 +31,7 @@ export function SpaceNameDialog({
   title: string;
   action: string;
   initialName?: string;
+  maxLength?: number;
   // Resolves to an error to show, or nothing when done.
   onSubmit: (name: string) => Promise<string | undefined>;
 }) {
@@ -76,7 +78,7 @@ export function SpaceNameDialog({
                 name="name"
                 defaultValue={initialName}
                 required
-                maxLength={80}
+                maxLength={maxLength}
                 autoComplete="off"
               />
               <FieldError>{error}</FieldError>

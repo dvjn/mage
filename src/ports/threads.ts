@@ -7,6 +7,8 @@ export type Actor = { kind: "user"; userId: string } | { kind: "agent" };
 export interface Thread {
   id: string;
   spaceId: string;
+  // Null when the thread is at the space's top level.
+  folderId: string | null;
   // Null until the first message names it or someone sets it.
   title: string | null;
   model: string | null;
@@ -30,12 +32,17 @@ export type StoredEvent = NewEvent & {
 };
 
 export interface ThreadStore {
-  create(thread: { spaceId: string; model: string | null; createdBy: string }): Thread;
+  create(thread: {
+    spaceId: string;
+    folderId: string | null;
+    model: string | null;
+    createdBy: string;
+  }): Thread;
   find(id: string): Thread | null;
   // Most recently active first.
   listInSpace(spaceId: string): Thread[];
   anyInSpace(spaceId: string): boolean;
-  update(id: string, changes: { title?: string; model?: string }): Thread;
+  update(id: string, changes: { title?: string; model?: string; folderId?: string | null }): Thread;
   // Adds the event with the thread's next seq in one transaction. `title` names the thread when
   // it has no title yet.
   append(threadId: string, event: NewEvent, title?: string): StoredEvent;

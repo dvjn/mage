@@ -1,5 +1,5 @@
 // The app's sidebar, inset beside the page: the active space with a switcher, the space's actions,
-// its threads, and the signed-in user.
+// its folders and threads, and the signed-in user.
 
 import { useQuery } from "@tanstack/react-query";
 import type * as React from "react";

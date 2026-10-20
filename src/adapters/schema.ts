@@ -268,6 +268,27 @@ export const spaceMember = sqliteTable(
   ],
 );
 
+// A folder in a space, holding some of its threads.
+export const folder = sqliteTable(
+  "folder",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id")
+      .notNull()
+      .references(() => space.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [index("folder_space_idx").on(table.spaceId)],
+);
+
 // A conversation in a space; its content is its event log.
 export const thread = sqliteTable(
   "thread",
@@ -276,6 +297,8 @@ export const thread = sqliteTable(
     spaceId: text("space_id")
       .notNull()
       .references(() => space.id, { onDelete: "cascade" }),
+    // Null when the thread is at the space's top level.
+    folderId: text("folder_id").references(() => folder.id),
     // Null until the first message names it or someone sets it.
     title: text("title"),
     // A model ref such as `codex/gpt-5`; null when there was no default to start from.
@@ -293,7 +316,10 @@ export const thread = sqliteTable(
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
   },
-  (table) => [index("thread_space_idx").on(table.spaceId)],
+  (table) => [
+    index("thread_space_idx").on(table.spaceId),
+    index("thread_folder_idx").on(table.folderId),
+  ],
 );
 
 // What happened in a thread, numbered 1, 2, 3… per thread with no gaps.

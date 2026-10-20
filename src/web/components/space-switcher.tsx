@@ -7,7 +7,7 @@ import { ChevronsUpDownIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { spaceSchema } from "@/shared/spaces.ts";
-import { SpaceNameDialog } from "@/web/components/space-name-dialog";
+import { NameDialog } from "@/web/components/name-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -105,7 +105,7 @@ export function SpaceSwitcher() {
             </DropdownMenuGroup>
           </DropdownMenuContent>
         </DropdownMenu>
-        <SpaceNameDialog
+        <NameDialog
           title="New space"
           action="Create"
           open={adding}

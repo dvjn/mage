@@ -7,7 +7,7 @@ import { type FormEvent, useEffect, useState } from "react";
 
 import { PageHeader } from "@/web/components/app-shell";
 import { useNewThread } from "@/web/components/nav-threads";
-import { SpaceNameDialog } from "@/web/components/space-name-dialog";
+import { NameDialog } from "@/web/components/name-dialog";
 import { Time } from "@/web/components/time";
 import { Button } from "@/web/components/ui/button";
 import { Field, FieldError } from "@/web/components/ui/field";
@@ -67,7 +67,7 @@ export function SpacePage() {
     <>
       <PageHeader crumbs={[{ label: space?.name ?? "" }]}>
         {space && (
-          <SpaceNameDialog
+          <NameDialog
             title="Rename space"
             action="Rename"
             initialName={space.name}

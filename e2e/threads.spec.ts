@@ -43,7 +43,7 @@ test("a message posted in a new thread is there after a reload", async ({ page }
   await expect(messages(page).getByText("How do engines compute?")).toBeVisible();
   await expect(messages(page).getByText("And what about looms?")).toBeVisible();
   await expect(
-    page.locator("[data-sidebar=sidebar]").getByText("How do engines compute?"),
+    page.locator("[data-sidebar=sidebar]").getByRole("link", { name: "How do engines compute?" }),
   ).toBeVisible();
 });
 
