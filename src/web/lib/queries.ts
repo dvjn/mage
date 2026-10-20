@@ -8,9 +8,10 @@ import { folderListSchema } from "@/shared/folders.ts";
 import { meSchema } from "@/shared/me.ts";
 import { defaultModelSchema, modelListSchema } from "@/shared/models.ts";
 import { spaceListSchema } from "@/shared/spaces.ts";
-import { threadDetailSchema, threadListSchema } from "@/shared/threads.ts";
+import { type ThreadDetail, threadDetailSchema, threadListSchema } from "@/shared/threads.ts";
 import { apiClient } from "@/web/lib/api-client";
 import { authClient } from "@/web/lib/auth-client";
+import { withLiveEvents } from "@/web/lib/thread-detail";
 
 export const sessionQuery = queryOptions({
   queryKey: ["session"],
@@ -91,14 +92,18 @@ export function spaceThreadsQuery(spaceId: string) {
   });
 }
 
-// A thread with its events so far; live events are merged in as they arrive.
+// A thread with its events so far; live events are merged in as they arrive, and a read keeps
+// the ones that arrived while it was on its way.
 export function threadQuery(threadId: string) {
+  const queryKey = ["threads", threadId] as const;
   return queryOptions({
-    queryKey: ["threads", threadId],
-    queryFn: async () => {
+    queryKey,
+    queryFn: async ({ client }) => {
       const res = await apiClient.v1.threads[":id"].$get({ param: { id: threadId } });
       if (!res.ok) throw new Error("could not read the thread");
-      return threadDetailSchema.parse(await res.json());
+      const fetched = threadDetailSchema.parse(await res.json());
+      const shown = client.getQueryData<ThreadDetail>(queryKey);
+      return shown ? withLiveEvents(fetched, shown) : fetched;
     },
   });
 }

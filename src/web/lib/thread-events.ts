@@ -7,18 +7,13 @@ import { useEffect } from "react";
 
 import { type AnyThreadEvent, anyThreadEventSchema } from "@/shared/threads.ts";
 import { threadQuery } from "@/web/lib/queries";
+import { withEvents } from "@/web/lib/thread-detail";
 
-// Adds the events the cache does not have yet, keeping seq order, and moves the thread's last seq.
+// Adds the events the cache does not have yet.
 export function mergeEvents(queryClient: QueryClient, threadId: string, events: AnyThreadEvent[]) {
-  queryClient.setQueryData(threadQuery(threadId).queryKey, (detail) => {
-    if (!detail) return detail;
-    const known = new Set(detail.events.map((event) => event.seq));
-    const added = events.filter((event) => !known.has(event.seq));
-    if (added.length === 0) return detail;
-    const merged = [...detail.events, ...added].toSorted((a, b) => a.seq - b.seq);
-    const lastEventSeq = Math.max(detail.thread.lastEventSeq, merged.at(-1)?.seq ?? 0);
-    return { ...detail, events: merged, thread: { ...detail.thread, lastEventSeq } };
-  });
+  queryClient.setQueryData(threadQuery(threadId).queryKey, (detail) =>
+    detail ? withEvents(detail, events) : detail,
+  );
 }
 
 export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () => void) {

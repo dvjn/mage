@@ -62,6 +62,8 @@ export const threadDetailSchema = z.object({
   events: z.array(anyThreadEventSchema),
 });
 
+export type ThreadDetail = z.infer<typeof threadDetailSchema>;
+
 export const messageInputSchema = z.object({ text: z.string().trim().min(1).max(100_000) });
 
 export const newThreadSchema = z.object({
