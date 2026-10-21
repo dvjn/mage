@@ -1,8 +1,9 @@
 // Threads in the spaces a person can see: starting them, finding them by title, moving them
 // between the space's folders, deleting them, posting messages to their event logs, reading them
-// back with each event's author and following new events as they are appended. A message posted
-// while the agent is idle wakes it at once; one posted while it is busy waits for it.
+// back with each event's author and following new events and reply pieces as they are stored. A
+// message posted while the agent is idle wakes it at once; one posted while it is busy waits.
 
+import type { DeltaStore } from "@/ports/deltas.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
 import type { Principal } from "@/ports/identity.ts";
 import type { RunStore } from "@/ports/runs.ts";
@@ -15,7 +16,7 @@ import type { SpaceAction, Spaces } from "@/services/spaces.ts";
 import { eventSummary, type ThreadLog } from "@/services/thread-log.ts";
 import {
   QUIET_PREFIX,
-  type ThreadEventSummary,
+  type ThreadFeedItem,
   type ThreadSearchResult,
   type ThreadSummary,
 } from "@/shared/threads.ts";
@@ -25,6 +26,7 @@ export interface ThreadsOptions {
   folders: Pick<Folders, "requireIn">;
   threads: ThreadStore;
   runs: Pick<RunStore, "active" | "create">;
+  deltas: Pick<DeltaStore, "inThread">;
   models: Pick<Models, "defaultModel" | "requireModel">;
   log: ThreadLog;
   bus: EventBus;
@@ -59,7 +61,7 @@ export function threadSummary(thread: Thread): ThreadSummary {
 }
 
 export function createThreads(options: ThreadsOptions) {
-  const { spaces, folders, threads, runs, models, log, bus } = options;
+  const { spaces, folders, threads, runs, deltas, models, log, bus } = options;
 
   // The thread when the principal may take the action in its space; one in a space they cannot
   // see is not found.
@@ -173,31 +175,48 @@ export function createThreads(options: ThreadsOptions) {
       return post(principal, visible(principal, id, "message"), text);
     },
 
-    // Delivers the thread's events with seq above `after` in order, then each new one as it is
-    // appended, each exactly once. Listening starts before the stored events are read, so none
-    // falls between the two. Returns the function that stops it.
+    // Delivers the thread's events with seq above `after` in order, then the pieces stored so far
+    // of the replies in progress, then each new event and piece as it is stored, each exactly
+    // once. Listening starts before the stored ones are read, so none falls between the two.
+    // Returns the function that stops it.
     follow(
       principal: Principal,
       id: string,
       after: number,
-      deliver: (event: ThreadEventSummary) => void,
+      deliver: (item: ThreadFeedItem) => void,
     ): () => void {
       visible(principal, id);
       let last = after;
+      // The next piece number to send, by reply.
+      const pieces = new Map<string, number>();
       let replaying = true;
-      const held: ThreadEventSummary[] = [];
-      function send(event: ThreadEventSummary) {
-        if (event.seq <= last) return;
-        last = event.seq;
-        deliver(event);
+      const held: ThreadFeedItem[] = [];
+      function send(item: ThreadFeedItem) {
+        if (item.kind === "event") {
+          if (item.event.seq <= last) return;
+          last = item.event.seq;
+          deliver(item);
+          return;
+        }
+        const { messageId, index, texts } = item.delta;
+        const sent = Math.max(0, (pieces.get(messageId) ?? 0) - index);
+        if (sent >= texts.length) return;
+        pieces.set(messageId, index + texts.length);
+        deliver({
+          kind: "delta",
+          delta: { messageId, index: index + sent, texts: texts.slice(sent) },
+        });
       }
-      const unsubscribe = bus.subscribe(id, (event) => {
-        if (replaying) held.push(event);
-        else send(event);
+      const unsubscribe = bus.subscribe(id, (item) => {
+        if (replaying) held.push(item);
+        else send(item);
       });
-      for (const event of threads.eventsAfter(id, after)) send(eventSummary(event));
+      for (const event of threads.eventsAfter(id, after)) {
+        send({ kind: "event", event: eventSummary(event) });
+      }
+      for (const delta of deltas.inThread(id)) send({ kind: "delta", delta });
       replaying = false;
-      for (const event of held.toSorted((a, b) => a.seq - b.seq)) send(event);
+      for (const item of held) send(item);
       return unsubscribe;
     },
   };

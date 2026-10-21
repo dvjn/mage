@@ -1,5 +1,5 @@
-// Thread events and wake-ups passed between requests and the agent worker in this process with an
-// event emitter.
+// Thread events, reply pieces and wake-ups passed between requests and the agent worker in this
+// process with an event emitter.
 
 import { EventEmitter } from "node:events";
 
@@ -13,8 +13,8 @@ export function createEventBus(): EventBus {
   // Every open thread view is a listener.
   emitter.setMaxListeners(0);
   return {
-    publish(threadId, event) {
-      emitter.emit(threadId, event);
+    publish(threadId, item) {
+      emitter.emit(threadId, item);
     },
 
     subscribe(threadId, listener) {

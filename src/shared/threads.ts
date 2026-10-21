@@ -118,6 +118,20 @@ export const anyThreadEventSchema = z.object({
 
 export type AnyThreadEvent = z.infer<typeof anyThreadEventSchema>;
 
+// Pieces of an agent reply in progress: `texts[0]` is its piece number `index`, the rest follow.
+export const deltaBatchSchema = z.object({
+  messageId: z.string(),
+  index: z.number().int().nonnegative(),
+  texts: z.array(z.string()),
+});
+
+export type DeltaBatch = z.infer<typeof deltaBatchSchema>;
+
+// What a thread's followers are told: each event appended, and each batch of reply pieces stored.
+export type ThreadFeedItem =
+  | { kind: "event"; event: ThreadEventSummary }
+  | { kind: "delta"; delta: DeltaBatch };
+
 export const threadDetailSchema = z.object({
   thread: threadSchema,
   events: z.array(anyThreadEventSchema),

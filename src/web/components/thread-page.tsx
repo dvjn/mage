@@ -44,7 +44,6 @@ export function ThreadPage() {
   const [pending, setPending] = useState(false);
   const thread = detail.data?.thread;
   const events = detail.data?.events;
-  const transcript = useMemo(() => transcriptOf(events ?? []), [events]);
   const space = spaces.data?.find((s) => s.id === thread?.spaceId);
 
   useEffect(() => {
@@ -56,7 +55,15 @@ export function ThreadPage() {
     if (spaceId)
       void queryClient.invalidateQueries({ queryKey: spaceThreadsQuery(spaceId).queryKey });
   }, [queryClient, spaceId]);
-  useThreadEvents(threadId, detail.isSuccess, refreshList);
+  const streaming = useThreadEvents(threadId, detail.isSuccess, refreshList);
+  const transcript = useMemo(
+    () =>
+      transcriptOf(
+        events ?? [],
+        new Map([...streaming].map(([messageId, { text }]) => [messageId, text])),
+      ),
+    [events, streaming],
+  );
 
   // Throws when the message is not posted, so the composer keeps the text.
   async function send(text: string) {

@@ -258,13 +258,17 @@ function createApi(options: AppOptions) {
             writing = writing.then(send, send);
             return writing;
           }
-          const unsubscribe = threads.follow(principal, id, after, (event) => {
+          // Events carry their seq as the id a reconnecting browser resumes after; reply pieces
+          // carry none, and are sent again from the start of each reply on reconnecting.
+          const unsubscribe = threads.follow(principal, id, after, (item) => {
             void write(() =>
-              stream.writeSSE({
-                id: String(event.seq),
-                event: "thread-event",
-                data: JSON.stringify(event),
-              }),
+              item.kind === "event"
+                ? stream.writeSSE({
+                    id: String(item.event.seq),
+                    event: "thread-event",
+                    data: JSON.stringify(item.event),
+                  })
+                : stream.writeSSE({ event: "message-delta", data: JSON.stringify(item.delta) }),
             );
           });
           stream.onAbort(unsubscribe);

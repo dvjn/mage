@@ -8,6 +8,7 @@ import { createCipher } from "@/adapters/cipher.ts";
 import { createConnectionStore } from "@/adapters/connections.ts";
 import { createCredentialStore } from "@/adapters/credentials.ts";
 import { createTransact, openDatabase, pingDatabase } from "@/adapters/db.ts";
+import { createDeltaStore } from "@/adapters/deltas.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
 import { createFakeGateway, FAKE_MODEL_REF } from "@/adapters/fake-gateway.ts";
 import { createFolderStore } from "@/adapters/folders.ts";
@@ -71,8 +72,10 @@ const models = createModels({
 const threadStore = createThreadStore(db);
 const spaceStore = createSpaceStore(db);
 const runStore = createRunStore(db);
+const deltas = createDeltaStore(db);
 const bus = createEventBus();
-const log = createThreadLog({ threads: threadStore, bus, transact: createTransact(db) });
+const transact = createTransact(db);
+const log = createThreadLog({ threads: threadStore, bus, transact });
 const spaces = createSpaces({ spaces: spaceStore, threads: threadStore });
 const folders = createFolders({ spaces, folders: createFolderStore(db) });
 
@@ -97,8 +100,10 @@ const worker = createRunWorker({
   threads: threadStore,
   spaceStore,
   spaces,
+  deltas,
   log,
   bus,
+  transact,
   models: runModels,
   logger,
 });
@@ -115,6 +120,7 @@ const app = createApp({
     folders,
     threads: threadStore,
     runs: runStore,
+    deltas,
     models,
     log,
     bus,

@@ -8,6 +8,7 @@ import { expect } from "vite-plus/test";
 
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { createTransact, openDatabase } from "@/adapters/db.ts";
+import { createDeltaStore } from "@/adapters/deltas.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
 import { createFolderStore } from "@/adapters/folders.ts";
 import { createLogger } from "@/adapters/logger.ts";
@@ -83,6 +84,7 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}) {
     },
   };
   const runStore = createRunStore(db);
+  const deltaStore = createDeltaStore(db);
   const transact = createTransact(db);
   const log = createThreadLog({ threads: threadStore, bus: countingBus, transact });
   const threads = createThreads({
@@ -90,6 +92,7 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}) {
     folders,
     threads: threadStore,
     runs: runStore,
+    deltas: deltaStore,
     models,
     log,
     bus: countingBus,
@@ -103,8 +106,11 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}) {
       threads: threadStore,
       spaceStore,
       spaces,
+      deltas: deltaStore,
       log,
       bus: countingBus,
+      transact,
+      flushMs: 1,
       models: { defaultModel: models.defaultModel, open: () => model.open() },
       logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
       ...workerOptions,
@@ -215,6 +221,7 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}) {
     spaceStore,
     threadStore,
     runStore,
+    deltaStore,
     transact,
     log,
     bus: countingBus,

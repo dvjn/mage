@@ -1,12 +1,13 @@
 // The agent worker: an in-process loop, woken by the event bus and by a slow poll, that claims
 // queued runs and drives each one. A run takes in the messages waiting for it, then streams the
-// model's reply, one reserved slot per model step. Every write a run makes checks its lease in the
-// same transaction, and a renewal keeps the lease while the run works. Runs left running by a
-// stopped server are failed with their partial reply kept and tried again, until the same input has
-// failed too many times.
+// model's reply, one reserved slot per model step, storing every piece as it comes. Every write a
+// run makes checks its lease in the same transaction, and a renewal keeps the lease while the run
+// works. Runs left running by a stopped server are failed with their partial reply rebuilt from its
+// stored pieces, and tried again until the same input has failed too many times.
 
 import { ulid } from "ulid";
 
+import type { DeltaStore } from "@/ports/deltas.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
 import type { Logger } from "@/ports/logger.ts";
 import type { ModelUsage } from "@/ports/model-gateway.ts";
@@ -19,7 +20,8 @@ import {
   type RunStore,
 } from "@/ports/runs.ts";
 import type { SpaceStore } from "@/ports/spaces.ts";
-import type { NewEvent, ThreadStore } from "@/ports/threads.ts";
+import type { ThreadStore } from "@/ports/threads.ts";
+import type { Transact } from "@/ports/transaction.ts";
 import { contextOf } from "@/services/context.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
@@ -32,11 +34,15 @@ export interface RunWorkerOptions {
   threads: Pick<ThreadStore, "find" | "eventsAfter">;
   spaceStore: Pick<SpaceStore, "find">;
   spaces: Pick<Spaces, "can">;
+  deltas: DeltaStore;
   log: ThreadLog;
   bus: EventBus;
+  transact: Transact;
   models: Pick<Models, "defaultModel" | "open">;
   logger: Logger;
   now?: () => Date;
+  // How long reply pieces gather before they are stored and announced together.
+  flushMs?: number;
   // How long a claim holds without renewal.
   leaseMs?: number;
   // How often the worker looks for work nobody woke it for.
@@ -92,10 +98,11 @@ function messageOf(err: unknown) {
 }
 
 export function createRunWorker(options: RunWorkerOptions) {
-  const { runs, threads, spaceStore, spaces, log, bus, models, logger } = options;
+  const { runs, threads, spaceStore, spaces, deltas, log, bus, transact, models, logger } = options;
   const now = options.now ?? (() => new Date());
   const leaseMs = options.leaseMs ?? 30_000;
   const pollMs = options.pollMs ?? 5_000;
+  const flushMs = options.flushMs ?? 75;
   const maxSteps = options.maxSteps ?? 20;
   const maxAttempts = options.maxAttempts ?? 3;
   const owner = ulid();
@@ -174,36 +181,53 @@ export function createRunWorker(options: RunWorkerOptions) {
   }
 
   // The reply slots of one run: each model step reserves one when it starts and completes it when
-  // it ends.
+  // it ends. The pieces of a reply are stored and announced in small batches as they arrive, and
+  // dropped once the completed reply holds the whole text.
   function replies(execution: Execution) {
-    const { run, lease } = execution;
-    let open: { id: string; text: string } | null = null;
+    const { run, lease, controller } = execution;
+    let open: { id: string; text: string; stored: number; buffer: string[] } | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
-    // The event completing the open reply, if any, closing it.
-    function completion(status: ReplyStatus): NewEvent | null {
-      if (!open) return null;
+    function flush() {
+      timer = undefined;
+      if (!open || open.buffer.length === 0) return;
+      const batch = { messageId: open.id, index: open.stored, texts: open.buffer };
+      open.stored += batch.texts.length;
+      open.buffer = [];
+      try {
+        transact(() => {
+          runs.hold(lease);
+          deltas.append(run.threadId, batch);
+        });
+        bus.publish(run.threadId, { kind: "delta", delta: batch });
+      } catch (err) {
+        if (!(err instanceof LeaseLost)) logger.error({ err, runId: run.id }, "reply pieces lost");
+        controller.abort({ kind: "lease" } satisfies Abort);
+      }
+    }
+
+    // Appends the open reply's completion, if any, and drops its pieces, inside a write.
+    function close(append: Append, status: ReplyStatus) {
+      clearTimeout(timer);
+      timer = undefined;
+      if (!open) return;
       const { id, text } = open;
       open = null;
-      return {
+      deltas.remove(id);
+      append({
         type: "message.completed",
         actor: AGENT,
-        data: {
-          messageId: id,
-          runId: run.id,
-          parts: text ? [{ type: "text", text }] : [],
-          status,
-        },
-      };
+        data: { messageId: id, runId: run.id, parts: text ? [{ type: "text", text }] : [], status },
+      });
     }
 
     function start() {
-      const done = completion("completed");
       const id = ulid();
       write(lease, run.threadId, (append) => {
-        if (done) append(done);
+        close(append, "completed");
         append({ type: "message.started", actor: AGENT, data: { messageId: id, runId: run.id } });
       });
-      open = { id, text: "" };
+      open = { id, text: "", stored: 0, buffer: [] };
     }
 
     return {
@@ -211,16 +235,13 @@ export function createRunWorker(options: RunWorkerOptions) {
       add(text: string) {
         if (!open) start();
         open!.text += text;
+        open!.buffer.push(text);
+        timer ??= setTimeout(flush, flushMs);
       },
       complete() {
-        const done = completion("completed");
-        if (done) write(lease, run.threadId, (append) => append(done));
+        write(lease, run.threadId, (append) => close(append, "completed"));
       },
-      // Closes the open reply, if any, inside a write.
-      close(append: Append, status: ReplyStatus) {
-        const done = completion(status);
-        if (done) append(done);
-      },
+      close,
     };
   }
 
@@ -327,15 +348,18 @@ export function createRunWorker(options: RunWorkerOptions) {
       try {
         write(lease, run.threadId, (append) => {
           for (const row of transcript(run.threadId).rows) {
-            if (row.kind !== "agent" || row.runId !== run.id || row.status !== "streaming")
+            if (row.kind !== "agent" || row.runId !== run.id || row.status !== "streaming") {
               continue;
+            }
+            const text = deltas.textOf(row.id);
+            deltas.remove(row.id);
             append({
               type: "message.completed",
               actor: AGENT,
               data: {
                 messageId: row.id,
                 runId: run.id,
-                parts: row.text ? [{ type: "text", text: row.text }] : [],
+                parts: text ? [{ type: "text", text }] : [],
                 status: "failed",
               },
             });

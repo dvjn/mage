@@ -393,6 +393,25 @@ export const run = sqliteTable(
   ],
 );
 
+// The text an agent reply has streamed so far, one row per piece the model sent, kept until the
+// reply completes.
+export const messageDelta = sqliteTable(
+  "message_delta",
+  {
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    messageId: text("message_id").notNull(),
+    // 0, 1, 2… per message, in the order the model sent them.
+    index: integer("idx").notNull(),
+    text: text("text").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.messageId, table.index] }),
+    index("message_delta_thread_idx").on(table.threadId),
+  ],
+);
+
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),

@@ -1,11 +1,18 @@
-// Keeps a thread's cached events current: follows its live event stream from the newest event
-// already cached, and merges each event in once, in seq order. The browser reconnects on its own
-// and resumes after the last event it saw.
+// Keeps a thread's cached events current and its replies in progress streaming: follows its live
+// event stream from the newest event already cached, merges each event in once, in seq order, and
+// gathers the pieces of each reply still being written. The browser reconnects on its own and
+// resumes after the last event it saw; the server sends each reply's pieces again from the start,
+// and the ones already here are skipped.
 
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
-import { type AnyThreadEvent, anyThreadEventSchema } from "@/shared/threads.ts";
+import {
+  type AnyThreadEvent,
+  anyThreadEventSchema,
+  type DeltaBatch,
+  deltaBatchSchema,
+} from "@/shared/threads.ts";
 import { threadQuery } from "@/web/lib/queries";
 import { withEvents } from "@/web/lib/thread-detail";
 
@@ -16,10 +23,36 @@ export function mergeEvents(queryClient: QueryClient, threadId: string, events: 
   );
 }
 
+// A reply's pieces so far, joined.
+export interface Streaming {
+  text: string;
+  // How many pieces the text holds.
+  pieces: number;
+}
+
+// The replies with the batch's pieces they did not have yet.
+export function withPieces(
+  streaming: ReadonlyMap<string, Streaming>,
+  { messageId, index, texts }: DeltaBatch,
+): ReadonlyMap<string, Streaming> {
+  const current = streaming.get(messageId) ?? { text: "", pieces: 0 };
+  const known = Math.max(0, current.pieces - index);
+  if (known >= texts.length) return streaming;
+  const next = new Map(streaming);
+  next.set(messageId, {
+    text: current.text + texts.slice(known).join(""),
+    pieces: index + texts.length,
+  });
+  return next;
+}
+
+// The text so far of each reply in progress, by message id.
 export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () => void) {
   const queryClient = useQueryClient();
+  const [streaming, setStreaming] = useState<ReadonlyMap<string, Streaming>>(new Map());
 
   useEffect(() => {
+    setStreaming(new Map());
     if (!ready) return;
     const after = queryClient.getQueryData(threadQuery(threadId).queryKey)?.thread.lastEventSeq;
     const source = new EventSource(`/api/v1/threads/${threadId}/events?after=${after ?? 0}`);
@@ -29,6 +62,12 @@ export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () =
       mergeEvents(queryClient, threadId, [event.data]);
       onEvent?.();
     });
+    source.addEventListener("message-delta", (message) => {
+      const batch = deltaBatchSchema.safeParse(JSON.parse(message.data as string));
+      if (batch.success) setStreaming((current) => withPieces(current, batch.data));
+    });
     return () => source.close();
   }, [queryClient, threadId, ready, onEvent]);
+
+  return streaming;
 }

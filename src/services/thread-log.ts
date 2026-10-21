@@ -51,7 +51,7 @@ export function createThreadLog(options: ThreadLogOptions) {
         }),
       );
       const events = appended.map(eventSummary);
-      for (const event of events) bus.publish(threadId, event);
+      for (const event of events) bus.publish(threadId, { kind: "event", event });
       return { result, events };
     },
   };
