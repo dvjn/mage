@@ -2,14 +2,13 @@
 // the stand-in model, which production refuses.
 
 import { rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 
 import { defineConfig, devices } from "@playwright/test";
 
+import { databasePath, dataDir } from "./e2e/database.ts";
+
 const port = 4793;
 const baseURL = `http://localhost:${port}`;
-const dataDir = path.join(tmpdir(), "mage-e2e");
 
 // Workers load this file too; only the runner, before the server starts, clears the data.
 if (!process.env.TEST_WORKER_INDEX) {
@@ -37,7 +36,7 @@ export default defineConfig({
       BASE_URL: baseURL,
       AUTH_SECRET: "mage-browser-journeys-secret-0123456789",
       CREDENTIAL_KEY: "WFnQPvVJ7j8limmjR6tFVpYWlTRqy8Rf8i6UJnaIaQg=",
-      DATABASE_PATH: path.join(dataDir, "mage.db"),
+      DATABASE_PATH: databasePath,
     },
   },
 });

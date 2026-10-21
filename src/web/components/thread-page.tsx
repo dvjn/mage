@@ -1,12 +1,13 @@
-// A thread: its events as they happen, kept scrolled to the newest, a composer to post messages
-// and the thread's model.
+// A thread: its transcript as it happens, kept scrolled to the newest, what the agent is doing and
+// the messages waiting for it, a composer to post, steer, queue, interrupt and stop, and the
+// thread's model.
 
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { anyThreadEventSchema, threadSchema } from "@/shared/threads.ts";
+import { anyThreadEventSchema, type Delivery, threadSchema } from "@/shared/threads.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 import {
   Conversation,
@@ -14,22 +15,21 @@ import {
   ConversationEmptyState,
   ConversationScrollButton,
 } from "@/web/components/ai-elements/conversation";
-import {
-  PromptInput,
-  PromptInputBody,
-  PromptInputFooter,
-  PromptInputSubmit,
-  PromptInputTextarea,
-  PromptInputTools,
-} from "@/web/components/ai-elements/prompt-input";
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
 import { ModelPicker } from "@/web/components/model-picker";
-import { TranscriptItem, WaitingMessage } from "@/web/components/thread-events";
+import { Composer, PendingTray, RunStatus } from "@/web/components/thread-composer";
+import { AgentStarting, TranscriptItem } from "@/web/components/thread-events";
 import { FieldError } from "@/web/components/ui/field";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { rememberSpace } from "@/web/lib/last-space";
-import { modelsQuery, spaceThreadsQuery, spacesQuery, threadQuery } from "@/web/lib/queries";
+import {
+  meQuery,
+  modelsQuery,
+  spaceThreadsQuery,
+  spacesQuery,
+  threadQuery,
+} from "@/web/lib/queries";
 import { mergeEvents, useThreadEvents } from "@/web/lib/thread-events";
 
 const threadRoute = getRouteApi("/_app/t/$threadId");
@@ -40,8 +40,11 @@ export function ThreadPage() {
   const detail = useQuery(threadQuery(threadId));
   const spaces = useQuery(spacesQuery);
   const models = useQuery(modelsQuery);
+  const me = useQuery(meQuery);
   const [error, setError] = useState<string>();
-  const [pending, setPending] = useState(false);
+  const [sending, setSending] = useState(false);
+  // The run someone here asked to stop.
+  const [stopped, setStopped] = useState<string>();
   const thread = detail.data?.thread;
   const events = detail.data?.events;
   const space = spaces.data?.find((s) => s.id === thread?.spaceId);
@@ -65,15 +68,17 @@ export function ThreadPage() {
     [events, streaming],
   );
 
+  const run = transcript.run;
+
   // Throws when the message is not posted, so the composer keeps the text.
-  async function send(text: string) {
+  async function send(text: string, mode: Delivery) {
     if (!text.trim()) return;
-    setPending(true);
+    setSending(true);
     const res = await apiClient.v1.threads[":id"].messages.$post({
       param: { id: threadId },
-      json: { text, mode: "steer" },
+      json: { text, mode },
     });
-    setPending(false);
+    setSending(false);
     if (!res.ok) {
       const failed = await errorOf(res);
       setError(failed);
@@ -83,6 +88,14 @@ export function ThreadPage() {
     mergeEvents(queryClient, threadId, [anyThreadEventSchema.parse(await res.json())]);
     await queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
     refreshList();
+  }
+
+  async function stop() {
+    if (!run) return;
+    setStopped(run.id);
+    const res = await apiClient.v1.threads[":id"].stop.$post({ param: { id: threadId } });
+    // A run that ended meanwhile has nothing to stop.
+    if (!res.ok && (res.status as number) !== 409) setError(await errorOf(res));
   }
 
   async function chooseModel(model: string) {
@@ -126,28 +139,30 @@ export function ThreadPage() {
       />
       <Conversation aria-label="Events" className="min-h-0">
         <ConversationContent className={cn(pageWidth, "gap-6")}>
-          {detail.data && transcript.rows.length + transcript.pending.length === 0 ? (
+          {detail.data && transcript.rows.length === 0 ? (
             <ConversationEmptyState description="Write the first message below." />
           ) : (
-            <>
-              {transcript.rows.map((row) => (
-                <TranscriptItem key={row.id} row={row} />
-              ))}
-              {transcript.pending.map((message) => (
-                <WaitingMessage key={message.id} message={message} />
-              ))}
-            </>
+            transcript.rows.map((row) => <TranscriptItem key={row.id} row={row} />)
           )}
+          {run &&
+            !transcript.rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
+              <AgentStarting at={run.createdAt} />
+            )}
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
       <div className={cn(pageWidth, "p-4 pt-0")}>
-        <PromptInput onSubmit={(message) => send(message.text)}>
-          <PromptInputBody>
-            <PromptInputTextarea aria-label="Message" placeholder="Write a message…" />
-          </PromptInputBody>
-          <PromptInputFooter>
-            <PromptInputTools>
+        <div className="flex flex-col gap-2">
+          <RunStatus stopping={!!run && run.id === stopped} />
+          <PendingTray threadId={threadId} pending={transcript.pending} me={me.data?.user.id} />
+          <Composer
+            running={!!run}
+            readOnly={space?.role === "viewer"}
+            sending={sending}
+            stopping={!!run && run.id === stopped}
+            onSend={send}
+            onStop={() => void stop()}
+            tools={
               <ModelPicker
                 models={models.data?.models ?? []}
                 value={thread?.model ?? null}
@@ -155,10 +170,9 @@ export function ThreadPage() {
                 placeholder="Model"
                 className="w-56"
               />
-            </PromptInputTools>
-            <PromptInputSubmit status={pending ? "submitted" : undefined} disabled={pending} />
-          </PromptInputFooter>
-        </PromptInput>
+            }
+          />
+        </div>
         <FieldError className="mt-2">{error}</FieldError>
       </div>
     </div>

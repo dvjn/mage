@@ -46,10 +46,11 @@ test("a thread paints from the cache while the server has not answered", async (
   await signUp(page, "Ada Lovelace");
   await startThread(page, "How do engines compute?");
   await page.getByLabel("Message", { exact: true }).fill("And what about looms?");
-  await page.getByRole("button", { name: "Submit" }).click();
+  await page.getByLabel("Message", { exact: true }).press("Enter");
   const messages = page.getByRole("log", { name: "Events" });
   await expect(messages.getByText("And what about looms?")).toBeVisible();
-  await expect.poll(() => persisted(context)).toContain("And what about looms?");
+  // The agent's answer to it, kept once everything before it is.
+  await expect.poll(() => persisted(context)).toContain("I have read 2 messages");
 
   // Reads of the API never answer; only the session check does.
   await page.route(/\/api\/v1\//, async (route) => {

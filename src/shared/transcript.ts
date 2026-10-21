@@ -78,6 +78,7 @@ export interface ActiveRun {
   // Whoever's message woke the agent, or null for a retry.
   startedBy: string | null;
   reason: RunReason | null;
+  createdAt: string;
 }
 
 export interface Transcript {
@@ -166,6 +167,7 @@ export function transcriptOf(
           id: event.data.runId,
           startedBy: event.actor.kind === "user" ? event.actor.name : null,
           reason: event.data.reason,
+          createdAt: event.createdAt,
         };
         break;
       case "run.failed":

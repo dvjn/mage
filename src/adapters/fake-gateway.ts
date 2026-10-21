@@ -13,7 +13,7 @@ const FILLER = "and so the engine turns its wheels".split(" ");
 
 function wordsFor(messages: ModelMessage[]) {
   const read = messages.filter((message) => message.role === "user");
-  const count = /slowly/i.test(read.at(-1)?.text ?? "") ? 250 : 8;
+  const count = /slowly/i.test(read.at(-1)?.text ?? "") ? 60 : 8;
   return [
     ..."I have read".split(" "),
     String(read.length),

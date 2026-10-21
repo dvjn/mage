@@ -7,7 +7,7 @@ import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
-import type { AgentRow, HumanRow, PendingMessage, TranscriptRow } from "@/shared/transcript.ts";
+import type { AgentRow, HumanRow, TranscriptRow } from "@/shared/transcript.ts";
 import { MessageResponse } from "@/web/components/ai-elements/message";
 import { Time } from "@/web/components/time";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
@@ -46,7 +46,7 @@ function TranscriptRowFrame({
   );
 }
 
-function HumanMessage({ row, waiting = false }: { row: HumanRow; waiting?: boolean }) {
+function HumanMessage({ row }: { row: HumanRow }) {
   const me = useQuery(meQuery);
   const author = row.author.name;
   const mine = row.author.userId === me.data?.user.id;
@@ -62,11 +62,7 @@ function HumanMessage({ row, waiting = false }: { row: HumanRow; waiting?: boole
       author={author}
       at={row.postedAt}
       label={`Message from ${author}`}
-      note={
-        (row.quiet || waiting) && (
-          <span className="text-xs text-muted-foreground">{waiting ? "waiting" : "aside"}</span>
-        )
-      }
+      note={row.quiet && <span className="text-xs text-muted-foreground">aside</span>}
     >
       <div className={cn("flex flex-col gap-2 text-sm", row.quiet && "text-muted-foreground")}>
         <MessageResponse>{row.text}</MessageResponse>
@@ -80,30 +76,48 @@ const ENDINGS: Partial<Record<AgentRow["status"], string>> = {
   failed: "Cut short",
 };
 
+const agentAvatar = (
+  <Avatar size="sm">
+    <AvatarFallback>{initialsOf("Agent")}</AvatarFallback>
+  </Avatar>
+);
+
+// The blinking cursor the agent writes behind.
+const caret = <span aria-hidden className="inline-block h-4 w-2 animate-pulse bg-foreground/70" />;
+
 function AgentReply({ row }: { row: AgentRow }) {
   const ending = ENDINGS[row.status];
+  const streaming = row.status === "streaming";
   return (
     <TranscriptRowFrame
-      avatar={
-        <Avatar size="sm">
-          <AvatarFallback>{initialsOf("Agent")}</AvatarFallback>
-        </Avatar>
-      }
+      avatar={agentAvatar}
       author="Agent"
       at={row.startedAt}
       label="Message from Agent"
       note={ending && <span className="text-xs text-muted-foreground">{ending}</span>}
     >
-      <div className="flex flex-col gap-2 text-sm" aria-busy={row.status === "streaming"}>
-        <MessageResponse>{row.text}</MessageResponse>
+      <div className="flex flex-col gap-2 text-sm" aria-busy={streaming}>
+        {streaming && !row.text ? (
+          caret
+        ) : (
+          <MessageResponse isAnimating={streaming} caret="block">
+            {row.text}
+          </MessageResponse>
+        )}
       </div>
     </TranscriptRowFrame>
   );
 }
 
-// A message the agent has not taken in yet, after the transcript.
-export function WaitingMessage({ message }: { message: PendingMessage }) {
-  return <HumanMessage row={{ kind: "human", ...message, quiet: false }} waiting />;
+// The agent's row while a run has started but no words have arrived yet.
+export function AgentStarting({ at }: { at: string }) {
+  return (
+    <TranscriptRowFrame avatar={agentAvatar} author="Agent" at={at} label="Message from Agent">
+      <div className="flex text-sm" aria-busy>
+        {caret}
+      </div>
+    </TranscriptRowFrame>
+  );
 }
 
 export function TranscriptItem({ row }: { row: TranscriptRow }) {

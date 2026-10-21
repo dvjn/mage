@@ -27,7 +27,7 @@ function messages(page: Page) {
 
 async function send(page: Page, text: string) {
   await page.getByLabel("Message", { exact: true }).fill(text);
-  await page.getByRole("button", { name: "Submit" }).click();
+  await page.getByLabel("Message", { exact: true }).press("Enter");
 }
 
 test("a message posted in a new thread is there after a reload", async ({ page }) => {
