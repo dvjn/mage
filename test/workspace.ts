@@ -1,6 +1,7 @@
 // A signed-up app with real spaces, folders, threads and runs over an in-memory database, for the
 // tests of spaces, folders, threads, their events and the agent's runs. The agent replies through a
-// model the test drives, once the test starts the worker.
+// model the test drives, once the test starts the worker; threads are named, when asked for, through
+// another.
 
 import { eq } from "drizzle-orm";
 import { ulid } from "ulid";
@@ -26,6 +27,7 @@ import { createRunWorker, type RunWorkerOptions } from "@/services/runs.ts";
 import { createSpaces } from "@/services/spaces.ts";
 import { createThreadLog } from "@/services/thread-log.ts";
 import { createThreads } from "@/services/threads.ts";
+import { createTitles } from "@/services/titles.ts";
 
 import { scriptedModel } from "./scripted-model.ts";
 
@@ -50,7 +52,7 @@ export type ThreadBody = {
   model: string | null;
 };
 
-export function setup(workerOptions: Partial<RunWorkerOptions> = {}) {
+export function setup(workerOptions: Partial<RunWorkerOptions> = {}, { titles = false } = {}) {
   const db = openDatabase(":memory:");
   const logger = createLogger({ write() {} });
   const secret = "test-secret-that-is-long-enough-1234567890";
@@ -60,7 +62,12 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}) {
   const spaces = createSpaces({ spaces: spaceStore, threads: threadStore });
   const folders = createFolders({ spaces, folders: createFolderStore(db) });
   // The models the org can use, and its default.
-  const org = { defaultModel: null as string | null, models: ["codex/gpt-big"] };
+  const org = {
+    defaultModel: null as string | null,
+    models: ["codex/gpt-big"],
+    titleModel: null as string | null,
+    automaticTitleModel: null as string | null,
+  };
   const models = {
     defaultModel: () => org.defaultModel,
     requireModel: (_orgId: string, ref: string) =>
@@ -87,6 +94,10 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}) {
   const deltaStore = createDeltaStore(db);
   const transact = createTransact(db);
   const log = createThreadLog({ threads: threadStore, bus: countingBus, transact });
+  const model = scriptedModel();
+  const titleModel = scriptedModel();
+  // The model refs threads were named with.
+  const titledWith: string[] = [];
   const threads = createThreads({
     spaces,
     folders,
@@ -96,8 +107,23 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}) {
     models,
     log,
     bus: countingBus,
+    ...(titles && {
+      titles: createTitles({
+        models: {
+          defaultModel: models.defaultModel,
+          chosenTitleModel: () => org.titleModel,
+          automaticTitleModel: () => Promise.resolve(org.automaticTitleModel),
+          open: (_orgId, ref) => {
+            titledWith.push(ref);
+            return titleModel.open();
+          },
+        },
+        threads: threadStore,
+        log,
+        logger,
+      }),
+    }),
   });
-  const model = scriptedModel();
   const logLines: object[] = [];
   // A worker as a server process would start it, sharing this app's stores.
   function makeWorker(options: Partial<RunWorkerOptions> = {}) {
@@ -226,6 +252,8 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}) {
     log,
     bus: countingBus,
     model,
+    titleModel,
+    titledWith,
     worker,
     makeWorker,
     logLines,

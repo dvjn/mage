@@ -1,6 +1,7 @@
 // The models an org can use: each of its connections' live lists, kept for an hour, merged under
 // refs of the form `<auth kind>/<model id>`, the org's default model chosen from them, and opening
-// a model to stream a reply from through its connection.
+// a model to stream a reply from through its connection, and the model that names threads: the
+// org's choice, or a small model of its first connection that has one.
 
 import type { Catalog, CatalogModel } from "@/ports/catalog.ts";
 import type { ConnectionStore } from "@/ports/connections.ts";
@@ -47,6 +48,12 @@ export interface OpenModel {
 export type Models = ReturnType<typeof createModels>;
 
 const CACHE_MS = 60 * 60 * 1000;
+
+// The model each kind of connection names threads with, when its list has it.
+const TITLE_MODELS: Record<AccountKind, string> = {
+  codex: "gpt-6-luna",
+  claude: "claude-haiku-5-5",
+};
 
 const LABELS: Record<AccountKind, string> = { codex: "Codex", claude: "Claude" };
 
@@ -176,6 +183,28 @@ export function createModels(options: ModelsOptions) {
     async setDefaultModel(orgId: string, ref: string) {
       await requireModel(orgId, ref);
       settings.setDefaultModel(orgId, ref);
+    },
+
+    // The org's title model, null when it chooses automatically.
+    chosenTitleModel(orgId: string): string | null {
+      return settings.get(orgId).titleModel;
+    },
+
+    // The title model for the first of the org's connections whose live list has it; null when
+    // none does, and each thread is named with its own model.
+    async automaticTitleModel(orgId: string): Promise<string | null> {
+      const { models } = await resolveModels(orgId);
+      for (const connection of connections.list(orgId)) {
+        const ref = modelRef(connection.authKind, TITLE_MODELS[connection.authKind]);
+        if (models.some((model) => model.ref === ref)) return ref;
+      }
+      return null;
+    },
+
+    // Null chooses automatically again.
+    async setTitleModel(orgId: string, ref: string | null) {
+      if (ref) await requireModel(orgId, ref);
+      settings.setTitleModel(orgId, ref);
     },
   };
 }

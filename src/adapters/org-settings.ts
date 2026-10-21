@@ -11,11 +11,11 @@ export function createOrgSettingStore(db: Db): OrgSettingStore {
   return {
     get(orgId) {
       const row = db
-        .select({ defaultModel: orgSetting.defaultModel })
+        .select({ defaultModel: orgSetting.defaultModel, titleModel: orgSetting.titleModel })
         .from(orgSetting)
         .where(eq(orgSetting.organizationId, orgId))
         .get();
-      return { defaultModel: row?.defaultModel ?? null };
+      return { defaultModel: row?.defaultModel ?? null, titleModel: row?.titleModel ?? null };
     },
 
     setDefaultModel(orgId, ref) {
@@ -24,6 +24,16 @@ export function createOrgSettingStore(db: Db): OrgSettingStore {
         .onConflictDoUpdate({
           target: orgSetting.organizationId,
           set: { defaultModel: ref, updatedAt: new Date() },
+        })
+        .run();
+    },
+
+    setTitleModel(orgId, ref) {
+      db.insert(orgSetting)
+        .values({ organizationId: orgId, titleModel: ref })
+        .onConflictDoUpdate({
+          target: orgSetting.organizationId,
+          set: { titleModel: ref, updatedAt: new Date() },
         })
         .run();
     },

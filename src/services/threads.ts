@@ -1,10 +1,10 @@
-// Threads in the spaces a person can see: starting them, finding them by title, moving them
-// between the space's folders, deleting them, posting messages to their event logs, reading them
-// back with each event's author and following new events and reply pieces as they are stored. A
-// message posted while the agent is idle wakes it at once; one posted while it is busy steers the
-// run, waits for the next one, or interrupts the run, and its author can change it until the
-// agent takes it in. Anyone who can post can stop the run, or try the last one again when it failed
-// or was stopped.
+// Threads in the spaces a person can see: starting them, naming them after their first message,
+// finding them by title, moving them between the space's folders, deleting them, posting messages
+// to their event logs, reading them back with each event's author and following new events and
+// reply pieces as they are stored. A message posted while the agent is idle wakes it at once; one
+// posted while it is busy steers the run, waits for the next one, or interrupts the run, and its
+// author can change it until the agent takes it in. Anyone who can post can stop the run, or try
+// the last one again when it failed or was stopped.
 
 import type { DeltaStore } from "@/ports/deltas.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
@@ -13,6 +13,7 @@ import type { RunStore } from "@/ports/runs.ts";
 import type { Thread, ThreadStore } from "@/ports/threads.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Folders } from "@/services/folders.ts";
+import type { Titles } from "@/services/titles.ts";
 import type { Models } from "@/services/models.ts";
 import { startRun } from "@/services/runs.ts";
 import type { SpaceAction, Spaces } from "@/services/spaces.ts";
@@ -36,6 +37,8 @@ export interface ThreadsOptions {
   models: Pick<Models, "defaultModel" | "requireModel">;
   log: ThreadLog;
   bus: EventBus;
+  // Names threads after their first message, when given.
+  titles?: Pick<Titles, "name">;
 }
 
 export type Threads = ReturnType<typeof createThreads>;
@@ -44,9 +47,21 @@ const UNTITLED = "New thread";
 const TITLE_LENGTH = 60;
 export const SEARCH_LIMIT = 50;
 
-// A thread's title from its first message: the text on one line, cut to about 60 characters.
+// Markdown as the text it shows: without code fences, heading, quote and list markers, emphasis
+// and inline code marks, and with links and images as their text.
+export function plainText(markdown: string) {
+  return markdown
+    .replace(/^\s*(```|~~~).*$/gm, "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(#{1,6}|>+|[-*+]|\d+[.)])\s+/gm, "")
+    .replace(/(\*\*|~~|\*|`+)(\S(?:.*?\S)?)\1/g, "$2")
+    .replace(/(^|\W)(__|_)(\S(?:.*?\S)?)\2(?=\W|$)/g, "$1$3");
+}
+
+// A thread's title from its first message: its text without markdown, on one line, cut to about
+// 60 characters.
 export function titleFrom(text: string) {
-  const line = text.replace(/\s+/g, " ").trim();
+  const line = plainText(text).replace(/\s+/g, " ").trim();
   if (line.length <= TITLE_LENGTH) return line;
   const cut = line.slice(0, TITLE_LENGTH - 1);
   const space = cut.lastIndexOf(" ");
@@ -68,7 +83,7 @@ export function threadSummary(thread: Thread): ThreadSummary {
 }
 
 export function createThreads(options: ThreadsOptions) {
-  const { spaces, folders, threads, runs, deltas, models, log, bus } = options;
+  const { spaces, folders, threads, runs, deltas, models, log, bus, titles } = options;
 
   // The thread when the principal may take the action in its space; one in a space they cannot
   // see is not found.
@@ -86,7 +101,9 @@ export function createThreads(options: ThreadsOptions) {
   // also asks the run under way to stop.
   function post(principal: Principal, thread: Thread, text: string, mode: Delivery) {
     const quiet = text.startsWith(QUIET_PREFIX);
+    let first = false;
     const { events } = log.write(thread.id, (append) => {
+      first = threads.find(thread.id)?.title === null;
       const message = append(
         {
           type: "message",
@@ -109,6 +126,7 @@ export function createThreads(options: ThreadsOptions) {
       }
     });
     if (!quiet) bus.wake(thread.id);
+    if (first) void titles?.name(principal.orgId, thread.id, text);
     return events[0]!;
   }
 
@@ -200,7 +218,12 @@ export function createThreads(options: ThreadsOptions) {
       // Seen again after the model check, which waits on providers.
       const thread = visible(principal, id, "message");
       if (changes.folderId !== undefined) folders.requireIn(thread.spaceId, changes.folderId);
-      return threadSummary(threads.update(id, changes));
+      return threadSummary(
+        threads.update(id, {
+          ...changes,
+          ...(changes.title !== undefined && { titleSource: "person" as const }),
+        }),
+      );
     },
 
     // Its events go with it.

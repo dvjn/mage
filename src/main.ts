@@ -36,6 +36,7 @@ import { createRunWorker, type RunWorker } from "@/services/runs.ts";
 import { createSpaces } from "@/services/spaces.ts";
 import { createThreadLog } from "@/services/thread-log.ts";
 import { createThreads } from "@/services/threads.ts";
+import { createTitles } from "@/services/titles.ts";
 
 const config = loadConfig();
 const logger = createLogger(
@@ -128,6 +129,10 @@ const app = createApp({
     models,
     log,
     bus,
+    // The stand-in model answers every request alike, so it names no threads.
+    ...(!config.fakeModels && {
+      titles: createTitles({ models, threads: threadStore, log, logger }),
+    }),
   }),
   logger,
   pingDatabase: () => pingDatabase(db),

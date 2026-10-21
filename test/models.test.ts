@@ -505,6 +505,54 @@ describe("/api/v1/models and the default model", () => {
   });
 });
 
+describe("the title model", () => {
+  const withHaiku = {
+    status: 200,
+    body: {
+      ...claudeModels,
+      data: [...claudeModels.data, { id: "claude-haiku-5-5", display_name: "Claude Haiku" }],
+    },
+  };
+
+  it("is chosen automatically from the first connection whose list has its title model", async () => {
+    const { api, replies, ready } = setup();
+    const { cookie } = await ready();
+
+    expect(await (await api("GET", "/settings/title-model", cookie)).json()).toEqual({
+      ref: null,
+      automatic: null,
+    });
+    replies.claude = withHaiku;
+    expect(await (await api("GET", "/models?refresh=1", cookie)).json()).toMatchObject({
+      errors: [],
+    });
+    expect(await (await api("GET", "/settings/title-model", cookie)).json()).toEqual({
+      ref: null,
+      automatic: "claude/claude-haiku-5-5",
+    });
+  });
+
+  it("is the org's choice once an admin picks one, and automatic again after", async () => {
+    const { db, api, ready } = setup();
+    const { cookie, userId } = await ready();
+
+    const res = await api("PUT", "/settings/title-model", cookie, { ref: "codex/gpt-mini" });
+    expect(await res.json()).toEqual({ ref: "codex/gpt-mini", automatic: null });
+    expect((await api("PUT", "/settings/title-model", cookie, { ref: "claude/x" })).status).toBe(
+      400,
+    );
+    expect(await (await api("PUT", "/settings/title-model", cookie, { ref: null })).json()).toEqual(
+      { ref: null, automatic: null },
+    );
+
+    db.update(schema.member).set({ role: "member" }).where(eq(schema.member.userId, userId)).run();
+    expect((await api("GET", "/settings/title-model", cookie)).status).toBe(200);
+    expect(
+      (await api("PUT", "/settings/title-model", cookie, { ref: "codex/gpt-mini" })).status,
+    ).toBe(403);
+  });
+});
+
 describe("opening a model", () => {
   const request = {
     instructions: "Be brief.",

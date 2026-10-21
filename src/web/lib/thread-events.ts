@@ -1,8 +1,8 @@
 // Keeps a thread's cached events current and its replies in progress streaming: follows its live
-// event stream from the newest event already cached, merges each event in once, in seq order, and
-// gathers the pieces of each reply still being written. The browser reconnects on its own and
-// resumes after the last event it saw; the server sends each reply's pieces again from the start,
-// and the ones already here are skipped.
+// event stream from the newest event already cached, merges each event in once, in seq order, shows
+// a title the agent gives the thread, and gathers the pieces of each reply still being written. The
+// browser reconnects on its own and resumes after the last event it saw; the server sends each
+// reply's pieces again from the start, and the ones already here are skipped.
 
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -20,6 +20,15 @@ import { withEvents } from "@/web/lib/thread-detail";
 export function mergeEvents(queryClient: QueryClient, threadId: string, events: AnyThreadEvent[]) {
   queryClient.setQueryData(threadQuery(threadId).queryKey, (detail) =>
     detail ? withEvents(detail, events) : detail,
+  );
+}
+
+// Shows the title the agent gave the thread.
+function renamed(queryClient: QueryClient, threadId: string, data: unknown) {
+  const title = (data as { title?: unknown }).title;
+  if (typeof title !== "string") return;
+  queryClient.setQueryData(threadQuery(threadId).queryKey, (detail) =>
+    detail ? { ...detail, thread: { ...detail.thread, title } } : detail,
   );
 }
 
@@ -63,6 +72,7 @@ export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () =
       const event = anyThreadEventSchema.safeParse(JSON.parse(message.data as string));
       if (!event.success) return;
       mergeEvents(queryClient, threadId, [event.data]);
+      if (event.data.type === "thread.renamed") renamed(queryClient, threadId, event.data.data);
       onEvent?.();
     });
     source.addEventListener("message-delta", (message) => {

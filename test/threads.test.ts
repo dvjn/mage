@@ -234,4 +234,14 @@ describe("titleFrom", () => {
     expect(title).toMatch(/^word( word)+…$/);
     expect(titleFrom("x".repeat(100))).toBe(`${"x".repeat(59)}…`);
   });
+
+  it("leaves markdown out", () => {
+    expect(titleFrom("# Why do **gears** _turn_?")).toBe("Why do gears turn?");
+    expect(titleFrom("> Read [the notes](https://example.com) on `snake_case_names`")).toBe(
+      "Read the notes on snake_case_names",
+    );
+    expect(titleFrom("```ts\nconst x = 1;\n```")).toBe("const x = 1;");
+    expect(titleFrom("- one\n- two ~~three~~")).toBe("one two three");
+    expect(titleFrom("2 * 3 = 6")).toBe("2 * 3 = 6");
+  });
 });

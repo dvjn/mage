@@ -23,6 +23,10 @@ test("settings shows the default model card", async ({ page }) => {
   await expect(page.getByText("Pick a default model for new threads.")).toBeVisible();
   await expect(page.getByPlaceholder("Connect an account first")).toBeDisabled();
   await expect(page.getByRole("button", { name: "Refresh models" })).toBeVisible();
+  await expect(page.getByLabel("Title model")).toHaveAttribute(
+    "placeholder",
+    "Automatic (each thread's model)",
+  );
 });
 
 test("the default model picker groups models by connection and shows list errors", async ({

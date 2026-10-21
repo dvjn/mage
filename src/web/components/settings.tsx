@@ -1,4 +1,5 @@
-// Settings: the org's default model, picked from what its connections unlock; connecting the
+// Settings: the org's default model and the model that names threads, picked from what its
+// connections unlock; connecting the
 // signed-in user's ChatGPT account through the Codex sign-in, with a device code or in the
 // browser, and their Claude account through the Claude sign-in; and disconnecting them.
 
@@ -34,7 +35,13 @@ import { Input } from "@/web/components/ui/input";
 import { CONNECTION_LABELS, ModelPicker } from "@/web/components/model-picker";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
-import { connectionsQuery, defaultModelQuery, fetchModels, modelsQuery } from "@/web/lib/queries";
+import {
+  connectionsQuery,
+  defaultModelQuery,
+  fetchModels,
+  modelsQuery,
+  titleModelQuery,
+} from "@/web/lib/queries";
 
 type Method = "device" | "browser";
 
@@ -494,6 +501,7 @@ function DefaultModel() {
               </Button>
             </div>
           </Field>
+          <TitleModel />
           {models.data?.errors.map((failed) => (
             <FieldError key={failed.connectionId}>
               {labelOf(failed.connectionId)}: {failed.message}
@@ -503,6 +511,54 @@ function DefaultModel() {
         </FieldGroup>
       </CardContent>
     </Card>
+  );
+}
+
+// The model that names threads, chosen automatically until someone picks one.
+function TitleModel() {
+  const queryClient = useQueryClient();
+  const id = useId();
+  const models = useQuery(modelsQuery);
+  const current = useQuery(titleModelQuery);
+  const [error, setError] = useState<string>();
+  const list = models.data?.models ?? [];
+
+  async function choose(ref: string | null) {
+    setError(undefined);
+    const res = await apiClient.v1.settings["title-model"].$put({ json: { ref } });
+    if (!res.ok) {
+      setError(await errorOf(res));
+      return;
+    }
+    await queryClient.invalidateQueries({ queryKey: titleModelQuery.queryKey });
+  }
+
+  const automatic = current.data?.automatic;
+  const automaticName = automatic
+    ? (list.find((model) => model.ref === automatic)?.name ?? automatic)
+    : "each thread's model";
+  return (
+    <Field>
+      <FieldLabel htmlFor={id}>Title model</FieldLabel>
+      <div className="flex gap-2">
+        <ModelPicker
+          id={id}
+          models={list}
+          value={current.data?.ref ?? null}
+          onChange={(ref) => void choose(ref)}
+          placeholder={`Automatic (${automaticName})`}
+          disabled={list.length === 0}
+          className="flex-1"
+        />
+        {current.data?.ref && (
+          <Button variant="outline" onClick={() => void choose(null)}>
+            Automatic
+          </Button>
+        )}
+      </div>
+      <FieldDescription>Names new threads after their first message.</FieldDescription>
+      <FieldError>{error}</FieldError>
+    </Field>
   );
 }
 

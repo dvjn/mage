@@ -2,6 +2,8 @@
 
 import type { Effort, EventDataMap } from "@/shared/threads.ts";
 
+export type TitleSource = "message" | "agent" | "person";
+
 export type Actor = { kind: "user"; userId: string } | { kind: "agent" };
 
 export interface Thread {
@@ -11,6 +13,8 @@ export interface Thread {
   folderId: string | null;
   // Null until the first message names it or someone sets it.
   title: string | null;
+  // Who named it: its first message, the agent after it, or a person.
+  titleSource: TitleSource | null;
   model: string | null;
   // Null for the model's usual reasoning effort.
   effort: Effort | null;
@@ -51,12 +55,18 @@ export interface ThreadStore {
   search(spaceIds: string[], text: string, limit: number): Thread[];
   update(
     id: string,
-    changes: { title?: string; model?: string; effort?: Effort | null; folderId?: string | null },
+    changes: {
+      title?: string;
+      titleSource?: TitleSource;
+      model?: string;
+      effort?: Effort | null;
+      folderId?: string | null;
+    },
   ): Thread;
   // Deletes the thread with its events.
   delete(id: string): void;
-  // Adds the event with the thread's next seq in one transaction. `title` names the thread when
-  // it has no title yet.
+  // Adds the event with the thread's next seq in one transaction. `title` names the thread, as
+  // from its first message, when it has no title yet.
   append(threadId: string, event: NewEvent, title?: string): StoredEvent;
   // The thread's events with seq above `after`, in order.
   eventsAfter(threadId: string, after: number): StoredEvent[];

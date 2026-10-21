@@ -30,6 +30,8 @@ import {
   type DefaultModel,
   type ModelListSummary,
   setDefaultModelSchema,
+  setTitleModelSchema,
+  type TitleModel,
 } from "@/shared/models.ts";
 import { type SpaceSummary, spaceNameSchema } from "@/shared/spaces.ts";
 import {
@@ -48,7 +50,7 @@ export interface AppOptions {
   identity: Identity;
   // The signed-in user's connections, including signing in to make one.
   connections: Connections;
-  // The models the org's connections unlock and its default model.
+  // The models the org's connections unlock, its default model and its title model.
   models: Models;
   // The spaces the signed-in user can see in their org.
   spaces: Spaces;
@@ -118,6 +120,7 @@ function jsonBody<T extends z.ZodType>(schema: T, error: string) {
 }
 
 const setDefaultModel = jsonBody(setDefaultModelSchema, "ref is required");
+const setTitleModel = jsonBody(setTitleModelSchema, "ref must be a model ref or null");
 const spaceName = jsonBody(spaceNameSchema, "A name of 1 to 80 characters is required");
 const newThread = jsonBody(newThreadSchema, "text must be a non-empty string, folderId an id");
 const folderName = jsonBody(folderNameSchema, "A name of 1 to 80 characters is required");
@@ -191,6 +194,20 @@ function createApi(options: AppOptions) {
         const { ref } = c.req.valid("json");
         await models.setDefaultModel(principal.orgId, ref);
         return c.json({ ref } satisfies DefaultModel, 200);
+      })
+      .get("/v1/settings/title-model", async (c) => {
+        const { orgId } = signedIn(c.var.principal);
+        const ref = models.chosenTitleModel(orgId);
+        const automatic = await models.automaticTitleModel(orgId);
+        return c.json({ ref, automatic } satisfies TitleModel, 200);
+      })
+      .put("/v1/settings/title-model", setTitleModel, async (c) => {
+        const principal = signedIn(c.var.principal);
+        requireAdmin(principal);
+        const { ref } = c.req.valid("json");
+        await models.setTitleModel(principal.orgId, ref);
+        const automatic = await models.automaticTitleModel(principal.orgId);
+        return c.json({ ref, automatic } satisfies TitleModel, 200);
       })
       .get("/v1/spaces", (c) => {
         return c.json(spaces.list(signedIn(c.var.principal)).map(spaceSummary), 200);

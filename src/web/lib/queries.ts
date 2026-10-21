@@ -1,12 +1,12 @@
 // Server state the web client reads: the current session, who is signed in, their connections, the
-// models the org can use and its default model, and their spaces with their folders and threads.
+// models the org can use, its default model and title model, and their spaces with their folders and threads.
 
 import { queryOptions } from "@tanstack/react-query";
 
 import { connectionListSchema } from "@/shared/connections.ts";
 import { folderListSchema } from "@/shared/folders.ts";
 import { meSchema } from "@/shared/me.ts";
-import { defaultModelSchema, modelListSchema } from "@/shared/models.ts";
+import { defaultModelSchema, modelListSchema, titleModelSchema } from "@/shared/models.ts";
 import { spaceListSchema } from "@/shared/spaces.ts";
 import { type ThreadDetail, threadDetailSchema, threadListSchema } from "@/shared/threads.ts";
 import { apiClient } from "@/web/lib/api-client";
@@ -58,6 +58,15 @@ export const defaultModelQuery = queryOptions({
     const res = await apiClient.v1.settings["default-model"].$get();
     if (!res.ok) throw new Error("could not read the default model");
     return defaultModelSchema.parse(await res.json());
+  },
+});
+
+export const titleModelQuery = queryOptions({
+  queryKey: ["title-model"],
+  queryFn: async () => {
+    const res = await apiClient.v1.settings["title-model"].$get();
+    if (!res.ok) throw new Error("could not read the title model");
+    return titleModelSchema.parse(await res.json());
   },
 });
 

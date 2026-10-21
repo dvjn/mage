@@ -123,6 +123,8 @@ export const eventDataSchemas = {
     continuesRunId: z.string().nullable(),
   }),
   "run.completed": z.object({ runId: z.string() }),
+  // The agent named the thread after its first message, with the tokens that took.
+  "thread.renamed": z.object({ title: z.string(), usage: usageSchema.optional() }),
   // `error` says what happened; when the failure has a kind, `connection` is the kind of connection
   // the model is reached through, `detail` what the provider said and `resetsAt` when a limit
   // resets.
@@ -175,6 +177,7 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("run.completed"),
   eventSchema("run.failed"),
   eventSchema("run.cancelled"),
+  eventSchema("thread.renamed"),
 ]);
 
 export type ThreadEventSummary = z.infer<typeof threadEventSchema>;

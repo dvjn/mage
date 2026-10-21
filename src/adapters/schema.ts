@@ -213,6 +213,8 @@ export const orgSetting = sqliteTable("org_setting", {
     .references(() => organization.id, { onDelete: "cascade" }),
   // A model ref such as `codex/gpt-5`; null until the org picks one.
   defaultModel: text("default_model"),
+  // The model ref that names threads; null to choose one automatically.
+  titleModel: text("title_model"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
     .notNull(),
@@ -302,6 +304,8 @@ export const thread = sqliteTable(
     folderId: text("folder_id").references(() => folder.id),
     // Null until the first message names it or someone sets it.
     title: text("title"),
+    // Who named it: its first message, the agent after it, or a person; null while untitled.
+    titleSource: text("title_source", { enum: ["message", "agent", "person"] }),
     // A model ref such as `codex/gpt-5`; null when there was no default to start from.
     model: text("model"),
     // The reasoning effort its model is asked for; null for the usual one.

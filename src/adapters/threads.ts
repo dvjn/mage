@@ -13,6 +13,7 @@ const columns = {
   spaceId: thread.spaceId,
   folderId: thread.folderId,
   title: thread.title,
+  titleSource: thread.titleSource,
   model: thread.model,
   effort: thread.effort,
   createdBy: thread.createdBy,
@@ -122,7 +123,10 @@ export function createThreadStore(db: Db): ThreadStore {
           .set({
             lastEventSeq: sql`${thread.lastEventSeq} + 1`,
             updatedAt: new Date(),
-            ...(title !== undefined && { title: sql`coalesce(${thread.title}, ${title})` }),
+            ...(title !== undefined && {
+              title: sql`coalesce(${thread.title}, ${title})`,
+              titleSource: sql`coalesce(${thread.titleSource}, 'message')`,
+            }),
           })
           .where(eq(thread.id, threadId))
           .returning({ seq: thread.lastEventSeq })

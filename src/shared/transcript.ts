@@ -237,6 +237,12 @@ export function transcriptOf(
         if (run?.id === event.data.runId) run = null;
         break;
       }
+      case "thread.renamed":
+        if (event.data.usage) {
+          usage.inputTokens += event.data.usage.inputTokens;
+          usage.outputTokens += event.data.usage.outputTokens;
+        }
+        break;
       case "run.completed":
         if (run?.id === event.data.runId) run = null;
         break;
