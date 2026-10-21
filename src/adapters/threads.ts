@@ -1,6 +1,6 @@
 // Threads and their events kept in the thread and thread_event tables, with ULID ids.
 
-import { and, asc, desc, eq, gt, type SQL, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, type SQL, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 
 import type { NewEvent, StoredEvent, Thread, ThreadStore } from "@/ports/threads.ts";
@@ -78,6 +78,24 @@ export function createThreadStore(db: Db): ThreadStore {
 
     anyInSpace(spaceId) {
       return !!db.select({ id: thread.id }).from(thread).where(eq(thread.spaceId, spaceId)).get();
+    },
+
+    search(spaceIds, text, limit) {
+      if (spaceIds.length === 0) return [];
+      // The text's own % and _ match only themselves.
+      const pattern = `%${text.replace(/[\\%_]/g, "\\$&")}%`;
+      return db
+        .select(columns)
+        .from(thread)
+        .where(
+          and(
+            inArray(thread.spaceId, spaceIds),
+            sql`lower(${thread.title}) like lower(${pattern}) escape '\\'`,
+          ),
+        )
+        .orderBy(desc(thread.updatedAt), desc(thread.id))
+        .limit(limit)
+        .all();
     },
 
     update(id, changes) {

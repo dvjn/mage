@@ -1,10 +1,12 @@
 // The signed-in app: the sidebar beside the current page, open or collapsed as it was last left,
-// the header each page starts with, and the one column width every page's content sits in.
+// the thread search over both, the header each page starts with, and the one column width every
+// page's content sits in.
 
 import { Link, Outlet } from "@tanstack/react-router";
 import { Fragment } from "react";
 
 import { AppSidebar } from "@/web/components/app-sidebar";
+import { ThreadSearchProvider } from "@/web/components/thread-search";
 import {
   Breadcrumb,
   BreadcrumbItem,
@@ -23,12 +25,14 @@ function sidebarWasOpen() {
 
 export function AppShell() {
   return (
-    <SidebarProvider defaultOpen={sidebarWasOpen()}>
-      <AppSidebar />
-      <SidebarInset>
-        <Outlet />
-      </SidebarInset>
-    </SidebarProvider>
+    <ThreadSearchProvider>
+      <SidebarProvider defaultOpen={sidebarWasOpen()}>
+        <AppSidebar />
+        <SidebarInset>
+          <Outlet />
+        </SidebarInset>
+      </SidebarProvider>
+    </ThreadSearchProvider>
   );
 }
 

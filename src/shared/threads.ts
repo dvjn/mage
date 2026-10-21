@@ -1,5 +1,5 @@
-// Threads and their events as the API shows them, and the bodies that make and change them,
-// shared by the server and the web client.
+// Threads and their events as the API shows them, the bodies that make and change them, and
+// searching them by title, shared by the server and the web client.
 
 import * as z from "zod";
 
@@ -77,3 +77,13 @@ export const threadUpdateSchema = z.object({
   // Null moves the thread to the top of its space.
   folderId: z.string().min(1).nullable().optional(),
 });
+
+// Text to find in thread titles.
+export const threadSearchSchema = z.object({ q: z.string().trim().min(1).max(200) });
+
+// A thread found by title, with the space it is in.
+export const threadSearchResultSchema = threadSchema.extend({ spaceName: z.string() });
+
+export type ThreadSearchResult = z.infer<typeof threadSearchResultSchema>;
+
+export const threadSearchListSchema = z.array(threadSearchResultSchema);

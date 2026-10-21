@@ -1,6 +1,6 @@
-// Threads in the spaces a person can see: starting them, moving them between the space's folders,
-// deleting them, posting messages to their event logs, reading them back with each event's author
-// and following new events as they are appended.
+// Threads in the spaces a person can see: starting them, finding them by title, moving them
+// between the space's folders, deleting them, posting messages to their event logs, reading them
+// back with each event's author and following new events as they are appended.
 
 import type { EventBus } from "@/ports/event-bus.ts";
 import type { Principal } from "@/ports/identity.ts";
@@ -9,7 +9,7 @@ import { ServiceError } from "@/services/errors.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
-import type { ThreadEventSummary, ThreadSummary } from "@/shared/threads.ts";
+import type { ThreadEventSummary, ThreadSearchResult, ThreadSummary } from "@/shared/threads.ts";
 
 export interface ThreadsOptions {
   spaces: Spaces;
@@ -23,6 +23,7 @@ export type Threads = ReturnType<typeof createThreads>;
 
 const UNTITLED = "New thread";
 const TITLE_LENGTH = 60;
+export const SEARCH_LIMIT = 50;
 export const FORMER_MEMBER = "(former member)";
 
 // A thread's title from its first message: the text on one line, cut to about 60 characters.
@@ -98,6 +99,21 @@ export function createThreads(options: ThreadsOptions) {
     list(principal: Principal, spaceId: string) {
       spaces.visible(principal, spaceId);
       return threads.listInSpace(spaceId).map(threadSummary);
+    },
+
+    // Threads whose titles contain the text, ignoring case, in every space the principal can see:
+    // the most recently active first, at most 50.
+    search(principal: Principal, text: string): ThreadSearchResult[] {
+      const names = new Map(
+        spaces
+          .list(principal)
+          .filter((space) => spaces.canSee(principal, space))
+          .map((space) => [space.id, space.name]),
+      );
+      return threads.search([...names.keys()], text, SEARCH_LIMIT).map((thread) => ({
+        ...threadSummary(thread),
+        spaceName: names.get(thread.spaceId) ?? "",
+      }));
     },
 
     // Starts a thread on the org's default model, in a folder or at the top of the space, with its

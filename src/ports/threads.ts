@@ -42,6 +42,9 @@ export interface ThreadStore {
   // Most recently active first.
   listInSpace(spaceId: string): Thread[];
   anyInSpace(spaceId: string): boolean;
+  // Threads in the spaces whose titles contain the text, ignoring case, most recently active
+  // first, at most `limit` of them.
+  search(spaceIds: string[], text: string, limit: number): Thread[];
   update(id: string, changes: { title?: string; model?: string; folderId?: string | null }): Thread;
   // Deletes the thread with its events.
   delete(id: string): void;

@@ -32,7 +32,12 @@ import {
   setDefaultModelSchema,
 } from "@/shared/models.ts";
 import { type SpaceSummary, spaceNameSchema } from "@/shared/spaces.ts";
-import { messageInputSchema, newThreadSchema, threadUpdateSchema } from "@/shared/threads.ts";
+import {
+  messageInputSchema,
+  newThreadSchema,
+  threadSearchSchema,
+  threadUpdateSchema,
+} from "@/shared/threads.ts";
 
 export interface AppOptions {
   // Answers every request under /api/auth.
@@ -116,6 +121,13 @@ const newThread = jsonBody(newThreadSchema, "text must be a non-empty string, fo
 const folderName = jsonBody(folderNameSchema, "A name of 1 to 80 characters is required");
 const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or a folder");
 const message = jsonBody(messageInputSchema, "text is required");
+
+// `?q=` with the text to find in thread titles.
+const threadSearch = validator("query", (value: { q?: string }, c) => {
+  const parsed = threadSearchSchema.safeParse(value);
+  if (!parsed.success) return c.json({ error: "q must be 1 to 200 characters" }, 400);
+  return parsed.data;
+});
 
 // `?refresh=1` reads the lists again instead of from the cache.
 const refreshQuery = validator("query", (value: { refresh?: string }) => ({
@@ -216,6 +228,10 @@ function createApi(options: AppOptions) {
       .post("/v1/spaces/:id/threads", newThread, (c) => {
         const input = c.req.valid("json");
         return c.json(threads.create(signedIn(c.var.principal), c.req.param("id"), input), 200);
+      })
+      .get("/v1/threads/search", threadSearch, (c) => {
+        const { q } = c.req.valid("query");
+        return c.json(threads.search(signedIn(c.var.principal), q), 200);
       })
       .get("/v1/threads/:id", (c) => {
         return c.json(threads.get(signedIn(c.var.principal), c.req.param("id")), 200);

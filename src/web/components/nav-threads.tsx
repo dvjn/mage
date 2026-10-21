@@ -1,6 +1,6 @@
-// The sidebar's space and threads sections: starting a thread or folder, then the active space's
-// folders with their threads, the threads at the top of the space after them, and a menu on each
-// to start, rename, move or delete them.
+// The sidebar's space and threads sections: starting a thread or folder and searching threads, then
+// the active space's folders with their threads, the threads at the top of the space after them, and
+// a menu on each to start, rename, move or delete them.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
@@ -13,6 +13,7 @@ import {
   MoreHorizontalIcon,
   PencilIcon,
   PlusIcon,
+  SearchIcon,
   Trash2Icon,
 } from "lucide-react";
 import { createContext, type ReactNode, use, useEffect, useMemo, useState } from "react";
@@ -20,6 +21,7 @@ import { createContext, type ReactNode, use, useEffect, useMemo, useState } from
 import type { FolderSummary } from "@/shared/folders.ts";
 import { threadSchema, type ThreadSummary } from "@/shared/threads.ts";
 import { type NavAction, NavDialogs } from "@/web/components/nav-dialogs";
+import { useOpenThreadSearch } from "@/web/components/thread-search";
 import {
   Collapsible,
   CollapsibleContent,
@@ -199,6 +201,7 @@ export function NavThreads() {
   const threads = useQuery({ ...spaceThreadsQuery(spaceId), enabled: !!space });
   const { threadId } = useParams({ strict: false });
   const newThread = useNewThread();
+  const openSearch = useOpenThreadSearch();
   const { open, setFolderOpen } = useOpenFolders();
   const [action, setAction] = useState<NavAction | null>(null);
   const folderList = useMemo(() => folders.data ?? [], [folders.data]);
@@ -237,6 +240,12 @@ export function NavThreads() {
             <SidebarMenuButton onClick={() => setAction({ kind: "new-folder" })}>
               <FolderPlusIcon />
               <span>New folder</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={openSearch}>
+              <SearchIcon />
+              <span>Search threads</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
