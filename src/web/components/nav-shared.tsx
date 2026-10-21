@@ -1,15 +1,15 @@
-// The sidebar's "Shared with you" section: the threads the signed-in person is a guest in, each
-// with the space and org it belongs to below its title, whichever of their own spaces is active.
-// It is left out while there are none.
+// The sidebar's "Shared with you" entry, at the foot of its sections whichever space is active: it
+// opens the page of threads the signed-in person is a guest in, counts them, and is marked while
+// that page or one of those threads is open.
 
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "@tanstack/react-router";
-import { MessageSquareIcon } from "lucide-react";
+import { Link, useMatchRoute, useParams } from "@tanstack/react-router";
+import { UsersIcon } from "lucide-react";
 
 import {
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
 } from "@/web/components/ui/sidebar";
@@ -18,29 +18,20 @@ import { sharedThreadsQuery } from "@/web/lib/queries";
 export function NavShared() {
   const shared = useQuery(sharedThreadsQuery);
   const { threadId } = useParams({ strict: false });
-  if (!shared.data?.length) return null;
+  const matchRoute = useMatchRoute();
+  const count = shared.data?.length ?? 0;
+  const active =
+    !!matchRoute({ to: "/shared" }) || !!shared.data?.some((thread) => thread.id === threadId);
   return (
-    <SidebarGroup>
-      <SidebarGroupLabel>Shared with you</SidebarGroupLabel>
+    <SidebarGroup className="mt-auto">
       <SidebarMenu>
-        {shared.data.map((thread) => (
-          <SidebarMenuItem key={thread.id}>
-            <SidebarMenuButton
-              size="lg"
-              isActive={thread.id === threadId}
-              title={`${thread.title} — ${thread.spaceName}, ${thread.orgName}`}
-              render={<Link to="/t/$threadId" params={{ threadId: thread.id }} />}
-            >
-              <MessageSquareIcon />
-              <div className="grid flex-1 text-left leading-tight">
-                <span className="truncate">{thread.title}</span>
-                <span className="truncate text-xs text-muted-foreground">
-                  {thread.spaceName} · {thread.orgName}
-                </span>
-              </div>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        ))}
+        <SidebarMenuItem>
+          <SidebarMenuButton isActive={active} render={<Link to="/shared" />}>
+            <UsersIcon />
+            <span>Shared with you</span>
+          </SidebarMenuButton>
+          {count > 0 && <SidebarMenuBadge>{count}</SidebarMenuBadge>}
+        </SidebarMenuItem>
       </SidebarMenu>
     </SidebarGroup>
   );

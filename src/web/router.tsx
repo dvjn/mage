@@ -1,7 +1,7 @@
 // Pages: login and signup when signed out; when signed in, the app shell with a space and its
-// settings, a thread and settings, opening on the last space used. Each side redirects to the
-// other; signing in or up goes back to the page that asked for it, such as an invite link, which
-// is open either way.
+// settings, a thread, the threads shared with you and settings, opening on the last space used.
+// Each side redirects to the other; signing in or up goes back to the page that asked for it, such
+// as an invite link, which is open either way.
 
 import type { QueryClient } from "@tanstack/react-query";
 import {
@@ -16,6 +16,7 @@ import { AppShell, PageHeader } from "@/web/components/app-shell";
 import { InvitePage } from "@/web/components/invite-page";
 import { LoginForm } from "@/web/components/login-form";
 import { Settings } from "@/web/components/settings";
+import { SharedPage } from "@/web/components/shared-page";
 import { SignupForm } from "@/web/components/signup-form";
 import { SpacePage } from "@/web/components/space-page";
 import { SpaceSettings } from "@/web/components/space-settings";
@@ -123,6 +124,12 @@ const threadRoute = createRoute({
   component: ThreadPage,
 });
 
+const sharedRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/shared",
+  component: SharedPage,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/settings",
@@ -134,7 +141,14 @@ export function createAppRouter(queryClient: QueryClient) {
     routeTree: rootRoute.addChildren([
       signedOutRoute.addChildren([loginRoute, signupRoute]),
       inviteRoute,
-      appRoute.addChildren([homeRoute, spaceRoute, spaceSettingsRoute, threadRoute, settingsRoute]),
+      appRoute.addChildren([
+        homeRoute,
+        spaceRoute,
+        spaceSettingsRoute,
+        threadRoute,
+        sharedRoute,
+        settingsRoute,
+      ]),
     ]),
     context: { queryClient },
   });

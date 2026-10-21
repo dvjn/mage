@@ -56,6 +56,9 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
 }, testInfo) => {
   await signUp(page, "Ada Lovelace");
   const hostSpace = page.url();
+  await page.getByRole("link", { name: "Shared with you" }).click();
+  await expect(page.getByText("Nothing is shared with you yet")).toBeVisible();
+  await page.goto(hostSpace);
   await page.getByLabel("First message").fill("How do engines compute?");
   await page.getByRole("button", { name: "Start thread" }).click();
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
@@ -71,10 +74,11 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
   await expect(guest.getByRole("link", { name: "Your space", exact: true })).toHaveCount(0);
   await expect(guest.getByRole("button", { name: "Share" })).toHaveCount(0);
   await expect(guest.getByLabel("Model", { exact: true })).toHaveCount(0);
-  await expect(guest.getByText("Shared with you")).toBeVisible();
-  await expect(
-    guest.getByRole("link", { name: /^How do engines compute\? Your space/ }),
-  ).toBeVisible();
+  await guest.getByRole("link", { name: "Shared with you" }).click();
+  await guest
+    .getByRole("list", { name: "Shared threads" })
+    .getByRole("link", { name: /^How do engines compute\? Your space/ })
+    .click();
 
   await guest.getByLabel("Message", { exact: true }).fill("Can they hop frequencies?");
   await guest.getByLabel("Message", { exact: true }).press("Enter");
@@ -105,7 +109,8 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
   await expect(guest.getByText("Your access to this thread has ended")).toBeVisible({
     timeout: 20_000,
   });
-  await expect(guest.getByText("Shared with you")).toBeHidden();
+  await guest.getByRole("link", { name: "Shared with you" }).click();
+  await expect(guest.getByText("Nothing is shared with you yet")).toBeVisible();
 });
 
 test("someone signed in opens a link and goes straight to the thread", async ({

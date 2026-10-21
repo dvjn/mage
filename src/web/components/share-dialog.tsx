@@ -15,6 +15,7 @@ import {
   type PendingInvite,
   type ThreadPerson,
 } from "@/shared/guests.ts";
+import { Until } from "@/web/components/time";
 import { Button } from "@/web/components/ui/button";
 import {
   Dialog,
@@ -38,7 +39,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/web/components/ui/select";
-import { useMinute } from "@/web/hooks/use-minute";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { threadPeopleQuery } from "@/web/lib/queries";
@@ -67,13 +67,6 @@ function CopyLink({ url }: { url: string }) {
       {copied ? <CheckIcon /> : <CopyIcon />}
     </InputGroupButton>
   );
-}
-
-// "until in 3 hours", with the date and time on hover; "no expiry" for access that does not end.
-function Until({ iso }: { iso: string | null }) {
-  useMinute();
-  if (!iso) return <span>no expiry</span>;
-  return <span title={fullTime(iso)}>ends {timeUntil(iso) ?? "now"}</span>;
 }
 
 function Row({
