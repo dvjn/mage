@@ -45,7 +45,7 @@ function TranscriptRowFrame({
   at: string;
   label: string;
   note?: ReactNode;
-  // Shown under the body while the row is hovered or focused.
+  // Shown beside the author while the row is hovered or focused.
   actions?: ReactNode;
   children: ReactNode;
 }) {
@@ -57,13 +57,13 @@ function TranscriptRowFrame({
           <span className="text-sm font-medium">{author}</span>
           <Time iso={at} className="text-xs text-muted-foreground" />
           {note}
+          {actions && (
+            <div className="-my-1 ml-auto flex items-center gap-2 self-center text-xs text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100">
+              {actions}
+            </div>
+          )}
         </div>
         {children}
-        {actions && (
-          <div className="-ml-1.5 flex h-6 items-center gap-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100">
-            {actions}
-          </div>
-        )}
       </div>
     </article>
   );

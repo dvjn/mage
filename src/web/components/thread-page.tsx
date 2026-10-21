@@ -198,7 +198,7 @@ export function ThreadPage() {
         )}
       </PageHeader>
       <Conversation aria-label="Events" className="min-h-0">
-        <ConversationContent className={cn(pageWidth, "gap-6")}>
+        <ConversationContent className={cn(pageWidth, "gap-4")}>
           {detail.data && transcript.rows.length === 0 ? (
             <ConversationEmptyState description="Write the first message below." />
           ) : (
