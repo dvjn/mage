@@ -29,7 +29,7 @@ export interface ThreadInvite {
   revokedAt: Date | null;
 }
 
-// A thread a user is a guest in, with its space's and org's names.
+// A thread a user is a guest in, with its space's name as an outsider sees it and its org's name.
 export interface GuestThread {
   thread: Thread;
   spaceName: string;
@@ -57,6 +57,8 @@ export interface GuestStore {
   ): (ThreadGuest & { name: string; invitedByName: string | null })[];
   // The threads the user is an active guest in at `now`, most recently active first.
   threadsOf(userId: string, now: Date): GuestThread[];
+  // The thread's space name as someone outside its org sees it, or null for an unknown thread.
+  hostSpaceName(threadId: string): string | null;
 
   createInvite(invite: {
     threadId: string;

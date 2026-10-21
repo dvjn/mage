@@ -87,7 +87,7 @@ const log = createThreadLog({ threads: threadStore, bus, transact });
 const spaces = createSpaces({ spaces: spaceStore, threads: threadStore });
 const folders = createFolders({ spaces, folders: createFolderStore(db) });
 const guestStore = createGuestStore(db);
-const access = createThreadAccess({ spaceStore, spaces, threads: threadStore, guests: guestStore });
+const access = createThreadAccess({ spaces, threads: threadStore, guests: guestStore });
 
 // The stand-in model answers every thread, whatever model it names.
 const fakeGateway = createFakeGateway();

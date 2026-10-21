@@ -71,13 +71,15 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
   await fillSignUp(guest, "Hedy Lamarr");
   await expect(guest).toHaveURL(/\/t\/[^/]+$/);
   await expect(guest.locator("[data-slot=breadcrumb-page]")).toHaveText("How do engines compute?");
-  await expect(guest.getByRole("link", { name: "Your space", exact: true })).toHaveCount(0);
+  // The host's space is named after them, and is not a link for a guest.
+  await expect(guest.getByRole("link", { name: "Ada Lovelace's space" })).toHaveCount(0);
+  await expect(guest.locator("[data-slot=breadcrumb]")).toContainText("Ada Lovelace's space");
   await expect(guest.getByRole("button", { name: "Share" })).toHaveCount(0);
   await expect(guest.getByLabel("Model", { exact: true })).toHaveCount(0);
   await guest.getByRole("link", { name: "Shared with you" }).click();
   await guest
     .getByRole("list", { name: "Shared threads" })
-    .getByRole("link", { name: /^How do engines compute\? Your space/ })
+    .getByRole("link", { name: /^How do engines compute\? Ada Lovelace's space/ })
     .click();
 
   await guest.getByLabel("Message", { exact: true }).fill("Can they hop frequencies?");

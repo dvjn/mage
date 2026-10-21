@@ -41,7 +41,10 @@ export function SharedPage() {
                   <div className="grid min-w-0 gap-0.5">
                     <span className="truncate font-medium">{thread.title}</span>
                     <span className="truncate text-sm text-muted-foreground">
-                      {thread.spaceName} · {thread.orgName}
+                      {/* A space already named after its org's person needs no org after it. */}
+                      {thread.spaceName === `${thread.orgName}'s space`
+                        ? thread.spaceName
+                        : `${thread.spaceName} · ${thread.orgName}`}
                     </span>
                   </div>
                   <Until

@@ -66,7 +66,6 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}, { titles = 
   const folders = createFolders({ spaces, folders: createFolderStore(db) });
   const guestStore = createGuestStore(db);
   const access = createThreadAccess({
-    spaceStore,
     spaces,
     threads: threadStore,
     guests: guestStore,

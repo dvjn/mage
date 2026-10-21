@@ -9,6 +9,7 @@ import { and, eq, isNull } from "drizzle-orm";
 
 import type { Identity, Principal } from "@/ports/identity.ts";
 import type { Logger } from "@/ports/logger.ts";
+import { FIRST_SPACE_NAME } from "@/shared/spaces.ts";
 
 import type { Db } from "./db.ts";
 import * as schema from "./schema.ts";
@@ -70,7 +71,7 @@ export function createAuth(options: AuthOptions) {
             spaces.create({
               orgId: org.id,
               kind: "personal",
-              name: "Your space",
+              name: FIRST_SPACE_NAME,
               primary: true,
               createdBy: user.id,
             });

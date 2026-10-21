@@ -6,6 +6,7 @@ import { and, asc, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 
 import type { GuestStore, ThreadGuest, ThreadInvite } from "@/ports/guests.ts";
+import { outsiderSpaceName } from "@/shared/spaces.ts";
 
 import type { Db } from "./db.ts";
 import { organization, space, thread, threadGuest, threadInvite, user } from "./schema.ts";
@@ -104,7 +105,7 @@ export function createGuestStore(db: Db): GuestStore {
       return db
         .select({
           thread: threadColumns,
-          spaceName: space.name,
+          space: { name: space.name, kind: space.kind, primary: space.primary },
           orgName: organization.name,
           accessUntil: threadGuest.accessUntil,
         })
@@ -114,7 +115,27 @@ export function createGuestStore(db: Db): GuestStore {
         .innerJoin(organization, eq(organization.id, space.organizationId))
         .where(and(eq(threadGuest.userId, userId), active(now)))
         .orderBy(desc(thread.updatedAt), desc(thread.id))
-        .all();
+        .all()
+        .map(({ space: host, ...row }) => ({
+          ...row,
+          spaceName: outsiderSpaceName(host, row.orgName),
+        }));
+    },
+
+    hostSpaceName(threadId) {
+      const row = db
+        .select({
+          name: space.name,
+          kind: space.kind,
+          primary: space.primary,
+          orgName: organization.name,
+        })
+        .from(thread)
+        .innerJoin(space, eq(space.id, thread.spaceId))
+        .innerJoin(organization, eq(organization.id, space.organizationId))
+        .where(eq(thread.id, threadId))
+        .get();
+      return row ? outsiderSpaceName(row, row.orgName) : null;
     },
 
     createInvite(input) {

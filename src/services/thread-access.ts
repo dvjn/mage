@@ -5,16 +5,15 @@
 
 import type { GuestStore } from "@/ports/guests.ts";
 import type { Principal } from "@/ports/identity.ts";
-import type { SpaceRole, SpaceStore } from "@/ports/spaces.ts";
+import type { SpaceRole } from "@/ports/spaces.ts";
 import type { Thread, ThreadStore } from "@/ports/threads.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { SpaceAction, Spaces } from "@/services/spaces.ts";
 
 export interface ThreadAccessOptions {
-  spaceStore: Pick<SpaceStore, "find">;
   spaces: Pick<Spaces, "can" | "findVisible" | "require">;
   threads: Pick<ThreadStore, "find">;
-  guests: Pick<GuestStore, "find">;
+  guests: Pick<GuestStore, "find" | "hostSpaceName">;
   now?: () => Date;
 }
 
@@ -41,7 +40,7 @@ export type Access = { via: "space"; role: SpaceRole } | { via: "guest"; spaceNa
 type Who = Pick<Principal, "userId" | "orgId">;
 
 export function createThreadAccess(options: ThreadAccessOptions) {
-  const { spaceStore, spaces, threads, guests } = options;
+  const { spaces, threads, guests } = options;
   const now = options.now ?? (() => new Date());
 
   // Whether the person was a guest of the thread, and whether that access still holds.
@@ -59,7 +58,7 @@ export function createThreadAccess(options: ThreadAccessOptions) {
     if (space) return { via: "space", role: space.role };
     const guest = guestOf(who, thread);
     if (!guest || guest.ended) return null;
-    return { via: "guest", spaceName: spaceStore.find(thread.spaceId)?.name ?? "" };
+    return { via: "guest", spaceName: guests.hostSpaceName(thread.id) ?? "" };
   }
 
   return {
