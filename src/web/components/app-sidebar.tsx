@@ -1,9 +1,10 @@
 // The app's sidebar, inset beside the page: the active space with a switcher, the space's actions,
-// its folders and threads, and the signed-in user.
+// its folders and threads, the threads shared with the signed-in user, and the user.
 
 import { useQuery } from "@tanstack/react-query";
 import type * as React from "react";
 
+import { NavShared } from "@/web/components/nav-shared";
 import { NavThreads } from "@/web/components/nav-threads";
 import { NavUser } from "@/web/components/nav-user";
 import { SpaceSwitcher } from "@/web/components/space-switcher";
@@ -19,6 +20,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarHeader>
       <SidebarContent>
         <NavThreads />
+        <NavShared />
       </SidebarContent>
       <SidebarFooter>{me.data && <NavUser user={me.data.user} />}</SidebarFooter>
     </Sidebar>
