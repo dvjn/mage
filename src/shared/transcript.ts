@@ -12,6 +12,7 @@ import {
   type ReplyStatus,
   type RunReason,
   threadEventSchema,
+  type Usage,
 } from "@/shared/threads.ts";
 
 type Person = Extract<ActorSummary, { kind: "user" }>;
@@ -34,9 +35,13 @@ export interface AgentRow {
   id: string;
   seq: number;
   runId: string;
+  // The model ref it was written with, when known.
+  model: string | null;
   startedAt: string;
   text: string;
   status: "streaming" | ReplyStatus;
+  // The tokens its model step used, once it finished.
+  usage: Usage | null;
   // A later run tried the reply again.
   retried: boolean;
 }
@@ -95,6 +100,8 @@ export interface Transcript {
   rows: TranscriptRow[];
   pending: PendingMessage[];
   run: ActiveRun | null;
+  // The tokens every model call in the thread used.
+  usage: Usage;
 }
 
 function textOf(parts: { text: string }[]) {
@@ -110,6 +117,7 @@ export function transcriptOf(
   const pending = new Map<string, PendingMessage>();
   const replies = new Map<string, AgentRow>();
   let run: ActiveRun | null = null;
+  const usage: Usage = { inputTokens: 0, outputTokens: 0 };
 
   for (const raw of events) {
     const parsed = threadEventSchema.safeParse(raw);
@@ -157,9 +165,11 @@ export function transcriptOf(
           id: event.data.messageId,
           seq: event.seq,
           runId: event.data.runId,
+          model: event.data.model ?? null,
           startedAt: event.createdAt,
           text: streaming.get(event.data.messageId) ?? "",
           status: "streaming",
+          usage: null,
           retried: false,
         };
         replies.set(reply.id, reply);
@@ -171,6 +181,11 @@ export function transcriptOf(
         if (!reply) break;
         reply.text = textOf(event.data.parts);
         reply.status = event.data.status;
+        if (event.data.usage) {
+          reply.usage = event.data.usage;
+          usage.inputTokens += event.data.usage.inputTokens;
+          usage.outputTokens += event.data.usage.outputTokens;
+        }
         break;
       }
       case "run.created":
@@ -220,5 +235,5 @@ export function transcriptOf(
     }
   }
 
-  return { rows, pending: [...pending.values()], run };
+  return { rows, pending: [...pending.values()], run, usage };
 }

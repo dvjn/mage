@@ -1,5 +1,5 @@
 // A thread: its transcript as it happens, kept scrolled to the newest, what the agent is doing and
-// the messages waiting for it, a composer to post, steer, queue, interrupt and stop, trying the
+// the messages waiting for it, the tokens the thread used, a composer to post, steer, queue, interrupt and stop, trying the
 // last reply again when it failed or was stopped, and the thread's model.
 
 import { cn } from "cn";
@@ -18,7 +18,7 @@ import {
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
 import { ModelPicker } from "@/web/components/model-picker";
 import { Composer, PendingTray, RunStatus } from "@/web/components/thread-composer";
-import { AgentStarting, TranscriptItem } from "@/web/components/thread-events";
+import { AgentStarting, TokenCount, TranscriptItem } from "@/web/components/thread-events";
 import { FieldError } from "@/web/components/ui/field";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
@@ -156,7 +156,11 @@ export function ThreadPage() {
             : []),
           { label: thread?.title ?? "" },
         ]}
-      />
+      >
+        {transcript.usage.inputTokens + transcript.usage.outputTokens > 0 && (
+          <TokenCount usage={transcript.usage} className="text-xs text-muted-foreground" />
+        )}
+      </PageHeader>
       <Conversation aria-label="Events" className="min-h-0">
         <ConversationContent className={cn(pageWidth, "gap-6")}>
           {detail.data && transcript.rows.length === 0 ? (

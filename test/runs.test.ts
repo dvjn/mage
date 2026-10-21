@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ModelError } from "@/ports/model-gateway.ts";
 import { LeaseLost } from "@/ports/runs.ts";
+import { transcriptOf } from "@/shared/transcript.ts";
 
 import { agentThread } from "./agent-thread.ts";
 
@@ -34,6 +35,36 @@ describe("agent runs", () => {
     expect(call.request.instructions).toContain("Mage");
     expect(call.request.instructions).toContain("Ada Lovelace");
     expect(call.request.sessionId).toBe(thread.id);
+  });
+
+  it("names the model on each reply and counts its tokens, and the thread's in total", async () => {
+    const { ada, model, worker, post, events, start } = await agentThread();
+    start();
+
+    await post(ada, "Hello");
+    const call = await model.next();
+    call.startStep();
+    call.delta("One.");
+    call.endStep({ inputTokens: 10, outputTokens: 2 });
+    call.startStep();
+    call.delta("Two.");
+    call.endStep({ inputTokens: 12, outputTokens: 3 });
+    call.end();
+    await worker.idle();
+
+    const started = events().filter((event) => event.type === "message.started");
+    expect(started.map((event) => event.data)).toEqual([
+      expect.objectContaining({ model: "codex/gpt-big" }),
+      expect.objectContaining({ model: "codex/gpt-big" }),
+    ]);
+    const { rows, usage } = transcriptOf(events());
+    expect(rows.filter((row) => row.kind === "agent").map((row) => [row.model, row.usage])).toEqual(
+      [
+        ["codex/gpt-big", { inputTokens: 10, outputTokens: 2 }],
+        ["codex/gpt-big", { inputTokens: 12, outputTokens: 3 }],
+      ],
+    );
+    expect(usage).toEqual({ inputTokens: 22, outputTokens: 5 });
   });
 
   it("stores quiet asides without waking the agent, and shows them to it later", async () => {

@@ -61,6 +61,14 @@ export const failureKindSchema = z.enum(["auth", "limit", "model", "network"]);
 
 export type FailureKind = z.infer<typeof failureKindSchema>;
 
+// Tokens a model call read and wrote.
+export const usageSchema = z.object({
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+});
+
+export type Usage = z.infer<typeof usageSchema>;
+
 // Each event type's data.
 export const eventDataSchemas = {
   // A person's message.
@@ -75,14 +83,20 @@ export const eventDataSchemas = {
   "message.withdrawn": z.object({ messageId: z.string() }),
   // The agent took these messages in, in this order, during the run.
   "message.admitted": z.object({ runId: z.string(), messageIds: z.array(z.string()).min(1) }),
-  // The agent began a reply; its place in the thread is this event's seq.
-  "message.started": z.object({ messageId: z.string(), runId: z.string() }),
-  // The reply begun as messageId ended with this content.
+  // The agent began a reply with the model ref; its place in the thread is this event's seq.
+  "message.started": z.object({
+    messageId: z.string(),
+    runId: z.string(),
+    model: z.string().optional(),
+  }),
+  // The reply begun as messageId ended with this content, and the tokens the model step that
+  // wrote it used when it finished.
   "message.completed": z.object({
     messageId: z.string(),
     runId: z.string(),
     parts: z.array(textPartSchema),
     status: replyStatusSchema,
+    usage: usageSchema.optional(),
   }),
   // Someone's message woke the agent.
   "run.created": z.object({

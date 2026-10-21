@@ -1,5 +1,7 @@
 // How each row of a thread's transcript looks. A message is an avatar, who wrote it and when, then
-// its text as markdown; the signed-in person's own rows carry their avatar in the accent colour. An
+// its text as markdown, with a copy button on hover; the signed-in person's own rows carry their
+// avatar in the accent colour. An agent reply names the model that wrote it and, on hover, the
+// tokens it used. An
 // agent reply that was cut short says so, a run that failed says why and what to do about it, the
 // last run that failed or was stopped can be tried again, and an event this client does not know
 // yet gets a labelled placeholder.
@@ -7,17 +9,18 @@
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { RotateCcwIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { CheckIcon, CopyIcon, RotateCcwIcon } from "lucide-react";
+import { type ReactNode, useState } from "react";
 
+import type { Usage } from "@/shared/threads.ts";
 import type { AgentRow, FailureRow, HumanRow, TranscriptRow } from "@/shared/transcript.ts";
-import { MessageResponse } from "@/web/components/ai-elements/message";
+import { MessageAction, MessageResponse } from "@/web/components/ai-elements/message";
 import { CONNECTION_LABELS } from "@/web/components/model-picker";
 import { Time } from "@/web/components/time";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
 import { Button } from "@/web/components/ui/button";
 import { initialsOf } from "@/web/lib/initials";
-import { meQuery } from "@/web/lib/queries";
+import { meQuery, modelsQuery } from "@/web/lib/queries";
 import { timeUntil } from "@/web/lib/time";
 
 // A row of the transcript: the avatar beside a header with the author and the time, and the body
@@ -28,6 +31,7 @@ function TranscriptRowFrame({
   at,
   label,
   note,
+  actions,
   children,
 }: {
   avatar: ReactNode;
@@ -35,10 +39,12 @@ function TranscriptRowFrame({
   at: string;
   label: string;
   note?: ReactNode;
+  // Shown under the body while the row is hovered or focused.
+  actions?: ReactNode;
   children: ReactNode;
 }) {
   return (
-    <article aria-label={label} className="flex gap-3">
+    <article aria-label={label} className="group/row flex gap-3">
       <div className="mt-0.5 shrink-0">{avatar}</div>
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <div className="flex items-baseline gap-2">
@@ -47,8 +53,48 @@ function TranscriptRowFrame({
           {note}
         </div>
         {children}
+        {actions && (
+          <div className="-ml-1.5 flex h-6 items-center gap-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100">
+            {actions}
+          </div>
+        )}
       </div>
     </article>
+  );
+}
+
+function CopyMessage({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <MessageAction
+      label="Copy message"
+      size="icon-xs"
+      disabled={!text}
+      onClick={() => {
+        void navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 2000);
+        });
+      }}
+    >
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </MessageAction>
+  );
+}
+
+const compact = new Intl.NumberFormat(undefined, { notation: "compact" });
+const exact = new Intl.NumberFormat();
+
+// Tokens read and written, short, with the exact counts on hover.
+export function TokenCount({ usage, className }: { usage: Usage; className?: string }) {
+  const total = usage.inputTokens + usage.outputTokens;
+  return (
+    <span
+      className={className}
+      title={`${exact.format(usage.inputTokens)} input · ${exact.format(usage.outputTokens)} output tokens`}
+    >
+      {compact.format(total)} tokens
+    </span>
   );
 }
 
@@ -69,6 +115,7 @@ function HumanMessage({ row }: { row: HumanRow }) {
       at={row.postedAt}
       label={`Message from ${author}`}
       note={row.quiet && <span className="text-xs text-muted-foreground">aside</span>}
+      actions={<CopyMessage text={row.text} />}
     >
       <div className={cn("flex flex-col gap-2 text-sm", row.quiet && "text-muted-foreground")}>
         <MessageResponse>{row.text}</MessageResponse>
@@ -91,16 +138,37 @@ const agentAvatar = (
 // The blinking cursor the agent writes behind.
 const caret = <span aria-hidden className="inline-block h-4 w-2 animate-pulse bg-foreground/70" />;
 
+// The model's name from the org's list, or the id its ref ends with.
+function useModelName(ref: string | null) {
+  const models = useQuery(modelsQuery);
+  if (!ref) return null;
+  return models.data?.models.find((model) => model.ref === ref)?.name ?? ref.split("/").pop();
+}
+
 function AgentReply({ row }: { row: AgentRow }) {
   const ending = ENDINGS[row.status];
   const streaming = row.status === "streaming";
+  const model = useModelName(row.model);
   return (
     <TranscriptRowFrame
       avatar={agentAvatar}
       author="Agent"
       at={row.startedAt}
       label="Message from Agent"
-      note={ending && <span className="text-xs text-muted-foreground">{ending}</span>}
+      note={
+        <>
+          {model && <span className="text-xs text-muted-foreground">{model}</span>}
+          {ending && <span className="text-xs text-muted-foreground">{ending}</span>}
+        </>
+      }
+      actions={
+        !streaming && (
+          <>
+            <CopyMessage text={row.text} />
+            {row.usage && <TokenCount usage={row.usage} />}
+          </>
+        )
+      }
     >
       <div className="flex flex-col gap-2 text-sm" aria-busy={streaming}>
         {streaming && !row.text ? (

@@ -287,7 +287,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     }
 
     // Appends the open reply's completion, if any, and drops its pieces, inside a write.
-    function close(append: Append, status: ReplyStatus) {
+    function close(append: Append, status: ReplyStatus, usage?: ModelUsage) {
       clearTimeout(timer);
       timer = undefined;
       if (!open) return;
@@ -297,7 +297,13 @@ export function createRunWorker(options: RunWorkerOptions) {
       append({
         type: "message.completed",
         actor: AGENT,
-        data: { messageId: id, runId: run.id, parts: text ? [{ type: "text", text }] : [], status },
+        data: {
+          messageId: id,
+          runId: run.id,
+          parts: text ? [{ type: "text", text }] : [],
+          status,
+          ...(usage && { usage }),
+        },
       });
     }
 
@@ -305,7 +311,11 @@ export function createRunWorker(options: RunWorkerOptions) {
       const id = ulid();
       write(lease, run.threadId, (append) => {
         close(append, "completed");
-        append({ type: "message.started", actor: AGENT, data: { messageId: id, runId: run.id } });
+        append({
+          type: "message.started",
+          actor: AGENT,
+          data: { messageId: id, runId: run.id, ...(execution.ref && { model: execution.ref }) },
+        });
       });
       open = { id, text: "", stored: 0, buffer: [] };
     }
@@ -318,8 +328,8 @@ export function createRunWorker(options: RunWorkerOptions) {
         open!.buffer.push(text);
         timer ??= setTimeout(flush, flushMs);
       },
-      complete() {
-        write(lease, run.threadId, (append) => close(append, "completed"));
+      complete(usage: ModelUsage) {
+        write(lease, run.threadId, (append) => close(append, "completed", usage));
       },
       close,
     };
@@ -394,7 +404,7 @@ export function createRunWorker(options: RunWorkerOptions) {
         } else {
           usage.inputTokens += event.usage.inputTokens;
           usage.outputTokens += event.usage.outputTokens;
-          reply.complete();
+          reply.complete(event.usage);
         }
       }
       if (controller.signal.aborted) throw controller.signal.reason;
