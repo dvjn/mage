@@ -1,7 +1,10 @@
 // The agent worker: an in-process loop, woken by the event bus and by a slow poll, that claims
-// queued runs and drives each one. A run takes in the messages waiting for it, then streams the
-// model's reply, one reserved slot per model step, storing every piece as it comes. Every write a
-// run makes checks its lease in the same transaction, and a renewal keeps the lease while the run
+// queued runs and drives each one. A run takes in every message waiting for it before its first
+// model call, then streams the model's reply, one reserved slot per model step, storing every piece
+// as it comes; at each step boundary it takes in the messages sent to steer it, and a steer that
+// arrives during its last step earns it one more step. Queued messages wait for the run after it.
+// A stop request aborts the stream and ends the run with its partial reply kept. Every write a run
+// makes checks its lease in the same transaction, and a renewal keeps the lease while the run
 // works. Runs left running by a stopped server are failed with their partial reply rebuilt from its
 // stored pieces, and tried again until the same input has failed too many times.
 
@@ -10,7 +13,7 @@ import { ulid } from "ulid";
 import type { DeltaStore } from "@/ports/deltas.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
 import type { Logger } from "@/ports/logger.ts";
-import type { ModelUsage } from "@/ports/model-gateway.ts";
+import type { ModelMessage, ModelUsage } from "@/ports/model-gateway.ts";
 import {
   type EndStatus,
   type Lease,
@@ -22,7 +25,7 @@ import {
 import type { SpaceStore } from "@/ports/spaces.ts";
 import type { ThreadStore } from "@/ports/threads.ts";
 import type { Transact } from "@/ports/transaction.ts";
-import { contextOf } from "@/services/context.ts";
+import { contextOf, humanMessage } from "@/services/context.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import { type Append, eventSummary, type ThreadLog } from "@/services/thread-log.ts";
@@ -59,7 +62,7 @@ export type RunWorker = ReturnType<typeof createRunWorker>;
 export class RunFailure extends Error {}
 
 // Why a run was aborted from outside its stream.
-type Abort = { kind: "lease" } | { kind: "shutdown" };
+type Abort = { kind: "lease" } | { kind: "shutdown" } | { kind: "cancel" };
 
 interface Execution {
   run: Run;
@@ -147,17 +150,26 @@ export function createRunWorker(options: RunWorkerOptions) {
     outcome: { status: EndStatus; error?: string; usage?: ModelUsage },
     retry = false,
   ) {
-    runs.end(lease, outcome);
+    const ended = runs.end(lease, outcome);
     if (outcome.status === "failed") {
       append({
         type: "run.failed",
         actor: AGENT,
         data: { runId: run.id, error: outcome.error ?? "The agent could not reply." },
       });
+    } else if (outcome.status === "cancelled") {
+      const by = ended.cancelRequestedBy;
+      append({
+        type: "run.cancelled",
+        actor: by ? { kind: "user", userId: by } : AGENT,
+        data: { runId: run.id },
+      });
     } else {
       append({ type: "run.completed", actor: AGENT, data: { runId: run.id } });
     }
     const waiting = admissible(run.threadId, transcript(run.threadId).pending);
+    // An interrupting message starts the next run, with everything queued.
+    const first = waiting.find((message) => message.mode === "interrupt") ?? waiting[0];
     const next: NewRun | null = retry
       ? {
           threadId: run.threadId,
@@ -167,13 +179,13 @@ export function createRunWorker(options: RunWorkerOptions) {
           reason: "retry",
           attempt: run.attempt + 1,
         }
-      : waiting[0]
+      : first
         ? {
             threadId: run.threadId,
-            triggerSeq: waiting[0].seq,
-            createdBy: waiting[0].author.userId,
+            triggerSeq: first.seq,
+            createdBy: first.author.userId,
             continuesRunId: run.id,
-            reason: "queued_input",
+            reason: first.mode === "interrupt" ? "interrupt" : "queued_input",
           }
         : null;
     if (next) startRun(runs, append, next);
@@ -195,11 +207,13 @@ export function createRunWorker(options: RunWorkerOptions) {
       open.stored += batch.texts.length;
       open.buffer = [];
       try {
-        transact(() => {
-          runs.hold(lease);
+        const current = transact(() => {
+          const held = runs.hold(lease);
           deltas.append(run.threadId, batch);
+          return held;
         });
         bus.publish(run.threadId, { kind: "delta", delta: batch });
+        stopIfAsked(execution, current);
       } catch (err) {
         if (!(err instanceof LeaseLost)) logger.error({ err, runId: run.id }, "reply pieces lost");
         controller.abort({ kind: "lease" } satisfies Abort);
@@ -245,23 +259,40 @@ export function createRunWorker(options: RunWorkerOptions) {
     };
   }
 
-  // Takes in the messages waiting for the run.
-  function admit(execution: Execution) {
-    const { run, lease } = execution;
-    return write(lease, run.threadId, (append) => {
-      const ids = admissible(run.threadId, transcript(run.threadId).pending).map((m) => m.id);
-      if (ids.length > 0) {
+  // Aborts the run's stream when someone has asked it to stop.
+  function stopIfAsked(execution: Execution, run: Run) {
+    if (run.cancelRequestedAt && !execution.controller.signal.aborted) {
+      execution.controller.abort({ kind: "cancel" } satisfies Abort);
+    }
+  }
+
+  // At a step boundary: stops the run when asked to, otherwise takes in the waiting messages
+  // (all of them before the first model call, afterwards only those sent to steer) and returns
+  // them.
+  function boundary(execution: Execution, all: boolean): ModelMessage[] {
+    const { run, lease, controller } = execution;
+    const admitted = write(lease, run.threadId, (append) => {
+      const current = runs.hold(lease);
+      stopIfAsked(execution, current);
+      if (controller.signal.aborted) return [];
+      const waiting = admissible(run.threadId, transcript(run.threadId).pending).filter(
+        (message) => all || message.mode === "steer",
+      );
+      if (waiting.length > 0) {
         append({
           type: "message.admitted",
           actor: AGENT,
-          data: { runId: run.id, messageIds: ids },
+          data: { runId: run.id, messageIds: waiting.map((message) => message.id) },
         });
       }
-      return ids.length;
+      return waiting;
     });
+    if (controller.signal.aborted) throw controller.signal.reason;
+    return admitted.map(humanMessage);
   }
 
-  async function drive(execution: Execution, reply: ReturnType<typeof replies>) {
+  // Adds each step's token use to `usage`.
+  async function drive(execution: Execution, reply: ReturnType<typeof replies>, usage: ModelUsage) {
     const { run, lease, controller } = execution;
     const thread = threads.find(run.threadId);
     const space = thread && spaceStore.find(thread.spaceId);
@@ -273,23 +304,36 @@ export function createRunWorker(options: RunWorkerOptions) {
     });
     runs.setModel(lease, ref);
 
-    const usage: ModelUsage = { inputTokens: 0, outputTokens: 0 };
-    admit(execution);
-    const { instructions, messages } = contextOf(transcript(thread.id).rows);
-    const stream = model.stream(
-      { instructions, messages, maxSteps, sessionId: thread.id },
-      controller.signal,
-    );
-    for await (const event of stream) {
-      if (event.type === "step-start") reply.start();
-      else if (event.type === "delta") reply.add(event.text);
-      else {
-        usage.inputTokens += event.usage.inputTokens;
-        usage.outputTokens += event.usage.outputTokens;
-        reply.complete();
+    let steps = 0;
+    // Each model call is followed by another while steering messages keep arriving.
+    for (let call = 0; steps < maxSteps; call += 1) {
+      const admitted = boundary(execution, call === 0);
+      if (call > 0 && admitted.length === 0) break;
+      const { instructions, messages } = contextOf(transcript(thread.id).rows);
+      const stream = model.stream(
+        {
+          instructions,
+          messages,
+          maxSteps: maxSteps - steps,
+          sessionId: thread.id,
+          beforeStep: () => boundary(execution, false),
+        },
+        controller.signal,
+      );
+      for await (const event of stream) {
+        if (event.type === "step-start") {
+          steps += 1;
+          reply.start();
+        } else if (event.type === "delta") {
+          reply.add(event.text);
+        } else {
+          usage.inputTokens += event.usage.inputTokens;
+          usage.outputTokens += event.usage.outputTokens;
+          reply.complete();
+        }
       }
+      if (controller.signal.aborted) throw controller.signal.reason;
     }
-    return usage;
   }
 
   async function execute(execution: Execution) {
@@ -297,22 +341,34 @@ export function createRunWorker(options: RunWorkerOptions) {
     const reply = replies(execution);
     const renewal = setInterval(() => {
       try {
-        runs.renew(lease, expiry());
+        stopIfAsked(execution, runs.renew(lease, expiry()));
       } catch (err) {
         if (!(err instanceof LeaseLost))
           logger.error({ err, runId: run.id }, "lease renewal failed");
         controller.abort({ kind: "lease" } satisfies Abort);
       }
     }, leaseMs / 3);
-    let usage: ModelUsage | undefined;
+    const usage: ModelUsage = { inputTokens: 0, outputTokens: 0 };
     try {
-      usage = await drive(execution, reply);
+      await drive(execution, reply, usage);
       write(lease, run.threadId, (append) => {
         reply.close(append, "completed");
         end(lease, run, append, { status: "completed", usage });
       });
     } catch (err) {
       const abort = controller.signal.aborted ? (controller.signal.reason as Abort) : null;
+      if (abort?.kind === "cancel") {
+        try {
+          write(lease, run.threadId, (append) => {
+            reply.close(append, "interrupted");
+            end(lease, run, append, { status: "cancelled", usage });
+          });
+        } catch (writeErr) {
+          if (!(writeErr instanceof LeaseLost))
+            logger.error({ err: writeErr }, "run end not saved");
+        }
+        return;
+      }
       if (err instanceof LeaseLost || abort) {
         logger.info({ runId: run.id, reason: abort?.kind ?? "lease" }, "run left to recovery");
         return;
@@ -415,7 +471,17 @@ export function createRunWorker(options: RunWorkerOptions) {
     start() {
       if (!stopped) return;
       stopped = false;
-      unsubscribe = bus.onWake(() => tick());
+      unsubscribe = bus.onWake((threadId) => {
+        for (const execution of executions.values()) {
+          if (execution.run.threadId !== threadId) continue;
+          try {
+            stopIfAsked(execution, runs.hold(execution.lease));
+          } catch (err) {
+            if (!(err instanceof LeaseLost)) logger.error({ err }, "stop check failed");
+          }
+        }
+        tick();
+      });
       timer = setInterval(tick, pollMs);
       tick();
     },

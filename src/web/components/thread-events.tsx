@@ -118,6 +118,12 @@ export function TranscriptItem({ row }: { row: TranscriptRow }) {
           The agent stopped: {row.error}
         </p>
       );
+    case "stop":
+      return (
+        <p role="status" className="text-center text-xs text-muted-foreground">
+          {row.by ? `${row.by} stopped the agent` : "The agent was stopped"}
+        </p>
+      );
     case "unknown":
       return (
         <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">

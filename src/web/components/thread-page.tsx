@@ -71,7 +71,7 @@ export function ThreadPage() {
     setPending(true);
     const res = await apiClient.v1.threads[":id"].messages.$post({
       param: { id: threadId },
-      json: { text },
+      json: { text, mode: "steer" },
     });
     setPending(false);
     if (!res.ok) {

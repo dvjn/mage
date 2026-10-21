@@ -1,7 +1,9 @@
 // Threads in the spaces a person can see: starting them, finding them by title, moving them
 // between the space's folders, deleting them, posting messages to their event logs, reading them
 // back with each event's author and following new events and reply pieces as they are stored. A
-// message posted while the agent is idle wakes it at once; one posted while it is busy waits.
+// message posted while the agent is idle wakes it at once; one posted while it is busy steers the
+// run, waits for the next one, or interrupts the run, and its author can change it until the
+// agent takes it in. Anyone who can post can stop the run.
 
 import type { DeltaStore } from "@/ports/deltas.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
@@ -13,19 +15,21 @@ import type { Folders } from "@/services/folders.ts";
 import type { Models } from "@/services/models.ts";
 import { startRun } from "@/services/runs.ts";
 import type { SpaceAction, Spaces } from "@/services/spaces.ts";
-import { eventSummary, type ThreadLog } from "@/services/thread-log.ts";
+import { type Append, eventSummary, type ThreadLog } from "@/services/thread-log.ts";
 import {
+  type Delivery,
   QUIET_PREFIX,
   type ThreadFeedItem,
   type ThreadSearchResult,
   type ThreadSummary,
 } from "@/shared/threads.ts";
+import { transcriptOf } from "@/shared/transcript.ts";
 
 export interface ThreadsOptions {
   spaces: Spaces;
   folders: Pick<Folders, "requireIn">;
   threads: ThreadStore;
-  runs: Pick<RunStore, "active" | "create">;
+  runs: Pick<RunStore, "active" | "create" | "requestCancel">;
   deltas: Pick<DeltaStore, "inThread">;
   models: Pick<Models, "defaultModel" | "requireModel">;
   log: ThreadLog;
@@ -74,29 +78,55 @@ export function createThreads(options: ThreadsOptions) {
     return thread;
   }
 
-  // Stores the message; when it is not quiet and the agent is idle, starts a run that takes it in.
-  function post(principal: Principal, thread: Thread, text: string) {
+  // Stores the message. When it is not quiet and the agent is idle, a run starts that takes it in;
+  // while a run is under way it waits to steer that run or to start the next one, and an interrupt
+  // also asks the run under way to stop.
+  function post(principal: Principal, thread: Thread, text: string, mode: Delivery) {
     const quiet = text.startsWith(QUIET_PREFIX);
     const { events } = log.write(thread.id, (append) => {
       const message = append(
         {
           type: "message",
           actor: { kind: "user", userId: principal.userId },
-          data: { parts: [{ type: "text", text }], quiet },
+          data: { parts: [{ type: "text", text }], quiet, mode },
         },
         // Names the thread when nothing has yet.
         titleFrom(text),
       );
-      if (!quiet && !runs.active(thread.id)) {
+      if (quiet) return;
+      if (!runs.active(thread.id)) {
         startRun(
           runs,
           append,
           { threadId: thread.id, triggerSeq: message.seq, createdBy: principal.userId },
           [message.id],
         );
+      } else if (mode === "interrupt") {
+        runs.requestCancel(thread.id, principal.userId, new Date());
       }
     });
     if (!quiet) bus.wake(thread.id);
+    return events[0]!;
+  }
+
+  // Appends the author's change to one of their messages the agent has not taken in yet.
+  function changePending(
+    principal: Principal,
+    id: string,
+    messageId: string,
+    change: (append: Append) => void,
+  ) {
+    const thread = visible(principal, id, "message");
+    const { events } = log.write(thread.id, (append) => {
+      const pending = transcriptOf(threads.eventsAfter(thread.id, 0).map(eventSummary)).pending;
+      const message = pending.find((m) => m.id === messageId);
+      if (!message) throw new ServiceError(409, "The agent has already taken this message in");
+      if (message.author.userId !== principal.userId) {
+        throw new ServiceError(403, "Only its author can change a message");
+      }
+      change(append);
+    });
+    bus.wake(thread.id);
     return events[0]!;
   }
 
@@ -139,7 +169,7 @@ export function createThreads(options: ThreadsOptions) {
         model: models.defaultModel(principal.orgId),
         createdBy: principal.userId,
       });
-      if (text) post(principal, thread, text);
+      if (text) post(principal, thread, text, "steer");
       return threadSummary(threads.find(thread.id) ?? thread);
     },
 
@@ -171,8 +201,48 @@ export function createThreads(options: ThreadsOptions) {
       threads.delete(id);
     },
 
-    postMessage(principal: Principal, id: string, text: string) {
-      return post(principal, visible(principal, id, "message"), text);
+    postMessage(principal: Principal, id: string, text: string, mode: Delivery = "steer") {
+      return post(principal, visible(principal, id, "message"), text, mode);
+    },
+
+    // Changes the text of a waiting message, or whether it steers or waits for the next run.
+    changeMessage(
+      principal: Principal,
+      id: string,
+      messageId: string,
+      change: { text?: string; mode?: "steer" | "queue" },
+    ) {
+      return changePending(principal, id, messageId, (append) =>
+        append({
+          type: "message.changed",
+          actor: { kind: "user", userId: principal.userId },
+          data: {
+            messageId,
+            ...(change.text !== undefined && { parts: [{ type: "text", text: change.text }] }),
+            ...(change.mode && { mode: change.mode }),
+          },
+        }),
+      );
+    },
+
+    // Takes back a waiting message.
+    withdrawMessage(principal: Principal, id: string, messageId: string) {
+      return changePending(principal, id, messageId, (append) =>
+        append({
+          type: "message.withdrawn",
+          actor: { kind: "user", userId: principal.userId },
+          data: { messageId },
+        }),
+      );
+    },
+
+    // Asks the run under way to stop; the agent keeps what it has written.
+    stop(principal: Principal, id: string) {
+      const thread = visible(principal, id, "message");
+      if (!runs.requestCancel(thread.id, principal.userId, new Date())) {
+        throw new ServiceError(409, "The agent is not replying");
+      }
+      bus.wake(thread.id);
     },
 
     // Delivers the thread's events with seq above `after` in order, then the pieces stored so far

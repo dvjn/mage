@@ -64,6 +64,8 @@ export interface RunStore {
   find(id: string): Run | null;
   // The thread's queued, running or waiting run.
   active(threadId: string): Run | null;
+  // Asks the thread's active run to stop, unless someone already has; null when there is none.
+  requestCancel(threadId: string, userId: string, at: Date): Run | null;
   // Takes the oldest queued run for the owner until `expiresAt`.
   claim(owner: string, expiresAt: Date): Run | null;
   // Takes a running run whose lease expired before `before`, or any running run without `before`.

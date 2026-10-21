@@ -27,10 +27,19 @@ export const textPartSchema = z.object({ type: z.literal("text"), text: z.string
 // never wakes the agent.
 export const QUIET_PREFIX = "//";
 
+// What a message posted while the agent is busy asks for: to steer the run under way at its next
+// step boundary, to wait in the queue for the next run, or to stop the run and start the next one
+// with it at once.
+export const deliverySchema = z.enum(["steer", "queue", "interrupt"]);
+
+export type Delivery = z.infer<typeof deliverySchema>;
+
 export const messageDataSchema = z.object({
   parts: z.array(textPartSchema),
   // Starts with the quiet prefix.
   quiet: z.boolean(),
+  // Messages from before there were deliveries steer.
+  mode: deliverySchema.default("steer"),
 });
 
 export type MessageData = z.infer<typeof messageDataSchema>;
@@ -50,6 +59,14 @@ export type ReplyStatus = z.infer<typeof replyStatusSchema>;
 export const eventDataSchemas = {
   // A person's message.
   message: messageDataSchema,
+  // The author changed a message the agent has not taken in yet.
+  "message.changed": z.object({
+    messageId: z.string(),
+    parts: z.array(textPartSchema).optional(),
+    mode: deliverySchema.optional(),
+  }),
+  // The author took back a message the agent has not taken in yet.
+  "message.withdrawn": z.object({ messageId: z.string() }),
   // The agent took these messages in, in this order, during the run.
   "message.admitted": z.object({ runId: z.string(), messageIds: z.array(z.string()).min(1) }),
   // The agent began a reply; its place in the thread is this event's seq.
@@ -69,6 +86,8 @@ export const eventDataSchemas = {
   }),
   "run.completed": z.object({ runId: z.string() }),
   "run.failed": z.object({ runId: z.string(), error: z.string() }),
+  // The actor stopped the run.
+  "run.cancelled": z.object({ runId: z.string() }),
 };
 
 export type EventDataMap = {
@@ -99,12 +118,15 @@ function eventSchema<Type extends EventType>(type: Type) {
 
 export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("message"),
+  eventSchema("message.changed"),
+  eventSchema("message.withdrawn"),
   eventSchema("message.admitted"),
   eventSchema("message.started"),
   eventSchema("message.completed"),
   eventSchema("run.created"),
   eventSchema("run.completed"),
   eventSchema("run.failed"),
+  eventSchema("run.cancelled"),
 ]);
 
 export type ThreadEventSummary = z.infer<typeof threadEventSchema>;
@@ -139,10 +161,23 @@ export const threadDetailSchema = z.object({
 
 export type ThreadDetail = z.infer<typeof threadDetailSchema>;
 
-export const messageInputSchema = z.object({ text: z.string().trim().min(1).max(100_000) });
+const messageTextSchema = z.string().trim().min(1).max(100_000);
+
+export const messageInputSchema = z.object({
+  text: messageTextSchema,
+  mode: deliverySchema.default("steer"),
+});
+
+// A change to a message still waiting: its text, or steering instead of queueing or back.
+export const pendingChangeSchema = z
+  .object({
+    text: messageTextSchema.optional(),
+    mode: z.enum(["steer", "queue"]).optional(),
+  })
+  .refine((change) => change.text !== undefined || change.mode !== undefined);
 
 export const newThreadSchema = z.object({
-  text: messageInputSchema.shape.text.optional(),
+  text: messageTextSchema.optional(),
   folderId: z.string().min(1).nullable().optional(),
 });
 

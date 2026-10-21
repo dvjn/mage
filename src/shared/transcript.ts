@@ -6,6 +6,7 @@
 import {
   type ActorSummary,
   type AnyThreadEvent,
+  type Delivery,
   type ReplyStatus,
   type RunReason,
   threadEventSchema,
@@ -44,6 +45,14 @@ export interface FailureRow {
   error: string;
 }
 
+// Someone stopped the run.
+export interface StopRow {
+  kind: "stop";
+  id: string;
+  seq: number;
+  by: string | null;
+}
+
 // An event this client does not know how to show.
 export interface UnknownRow {
   kind: "unknown";
@@ -52,7 +61,7 @@ export interface UnknownRow {
   type: string;
 }
 
-export type TranscriptRow = HumanRow | AgentRow | FailureRow | UnknownRow;
+export type TranscriptRow = HumanRow | AgentRow | FailureRow | StopRow | UnknownRow;
 
 // A message posted while the agent was busy, waiting to be taken in.
 export interface PendingMessage {
@@ -61,6 +70,7 @@ export interface PendingMessage {
   author: Person;
   postedAt: string;
   text: string;
+  mode: Delivery;
 }
 
 export interface ActiveRun {
@@ -108,15 +118,26 @@ export function transcriptOf(
           text: textOf(event.data.parts),
         };
         if (event.data.quiet) rows.push({ kind: "human", ...message, quiet: true });
-        else pending.set(event.id, message);
+        else pending.set(event.id, { ...message, mode: event.data.mode });
         break;
       }
+      case "message.changed": {
+        const message = pending.get(event.data.messageId);
+        if (!message) break;
+        if (event.data.parts) message.text = textOf(event.data.parts);
+        if (event.data.mode) message.mode = event.data.mode;
+        break;
+      }
+      case "message.withdrawn":
+        pending.delete(event.data.messageId);
+        break;
       case "message.admitted":
         for (const id of event.data.messageIds) {
           const message = pending.get(id);
           if (!message) continue;
           pending.delete(id);
-          rows.push({ kind: "human", ...message, seq: event.seq, quiet: false });
+          const { mode: _mode, ...admitted } = message;
+          rows.push({ kind: "human", ...admitted, seq: event.seq, quiet: false });
         }
         break;
       case "message.started": {
@@ -152,6 +173,15 @@ export function transcriptOf(
         if (run?.id === event.data.runId) run = null;
         break;
       case "run.completed":
+        if (run?.id === event.data.runId) run = null;
+        break;
+      case "run.cancelled":
+        rows.push({
+          kind: "stop",
+          id: event.id,
+          seq: event.seq,
+          by: event.actor.kind === "user" ? event.actor.name : null,
+        });
         if (run?.id === event.data.runId) run = null;
         break;
     }

@@ -48,6 +48,13 @@ export class Call {
     }
   }
 
+  // Resolves once the worker has taken every event sent so far and waits for the next.
+  async drained() {
+    while (this.queue.length > 0 || !this.waiting) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+  }
+
   // The texts of the messages the call was given.
   get texts() {
     return this.request.messages.map((message: ModelMessage) => `${message.role}: ${message.text}`);

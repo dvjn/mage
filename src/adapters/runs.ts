@@ -1,7 +1,7 @@
 // Runs kept in the run table, with ULID ids. Claims and lease checks are single conditional
 // statements, so two workers never both hold a run.
 
-import { and, asc, eq, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 
 import { type Lease, LeaseLost, type Run, type RunStore } from "@/ports/runs.ts";
@@ -59,6 +59,16 @@ export function createRunStore(db: Db): RunStore {
     };
   }
 
+  function active(threadId: string) {
+    return (
+      db
+        .select(columns)
+        .from(run)
+        .where(and(eq(run.threadId, threadId), inArray(run.status, ACTIVE)))
+        .get() ?? null
+    );
+  }
+
   return {
     create(input) {
       return db
@@ -72,14 +82,20 @@ export function createRunStore(db: Db): RunStore {
       return db.select(columns).from(run).where(eq(run.id, id)).get() ?? null;
     },
 
-    active(threadId) {
-      return (
-        db
-          .select(columns)
-          .from(run)
-          .where(and(eq(run.threadId, threadId), inArray(run.status, ACTIVE)))
-          .get() ?? null
-      );
+    active,
+
+    requestCancel(threadId, userId, at) {
+      db.update(run)
+        .set({ cancelRequestedAt: at, cancelRequestedBy: userId, updatedAt: at })
+        .where(
+          and(
+            eq(run.threadId, threadId),
+            inArray(run.status, ACTIVE),
+            isNull(run.cancelRequestedAt),
+          ),
+        )
+        .run();
+      return active(threadId);
     },
 
     claim(owner, expiresAt) {

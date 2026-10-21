@@ -1,54 +1,9 @@
 import { sql } from "drizzle-orm";
-import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import { describe, expect, it } from "vite-plus/test";
 
 import { LeaseLost } from "@/ports/runs.ts";
-import { transcriptOf } from "@/shared/transcript.ts";
-import { eventSummary } from "@/services/thread-log.ts";
 
-import { setup } from "./workspace.ts";
-
-async function agentThread(options: Parameters<typeof setup>[0] = {}) {
-  const workspace = setup(options);
-  workspace.org.defaultModel = "codex/gpt-big";
-  const ada = await workspace.signUp("Ada Lovelace", "ada@example.com");
-  const space = await workspace.yourSpace(ada.cookie);
-  const thread = await workspace.createThread(ada.cookie, space.id);
-  const grace = workspace.join(
-    await workspace.signUp("Grace Hopper", "grace@example.com"),
-    space.id,
-    "messager",
-  );
-  async function post(who: { cookie: string }, text: string) {
-    const res = await workspace.api("POST", `/threads/${thread.id}/messages`, who.cookie, { text });
-    expect(res.status).toBe(202);
-  }
-  function events() {
-    return workspace.threadStore.eventsAfter(thread.id, 0).map(eventSummary);
-  }
-  function types() {
-    return events().map((event) => event.type);
-  }
-  // The transcript as people see it: who wrote each row and its text.
-  function transcript() {
-    return transcriptOf(events()).rows.map((row) =>
-      row.kind === "human"
-        ? `${row.author.name}: ${row.text}`
-        : row.kind === "agent"
-          ? `Agent (${row.status}): ${row.text}`
-          : `${row.kind}`,
-    );
-  }
-  function runs() {
-    return workspace.db.all<{ id: string; status: string; reason: string | null; attempt: number }>(
-      "select id, status, reason, attempt from run order by id",
-    );
-  }
-  function start(worker = workspace.worker) {
-    worker.start();
-    onTestFinished(() => worker.stop());
-  }
-  return { ...workspace, ada, grace, space, thread, post, events, types, transcript, runs, start };
-}
+import { agentThread } from "./agent-thread.ts";
 
 describe("agent runs", () => {
   it("wake on a message and reply in the thread", async () => {
@@ -118,15 +73,15 @@ describe("agent runs", () => {
     expect(model.calls).toHaveLength(1);
   });
 
-  it("answers messages that arrived during a run in one run after it", async () => {
+  it("answers queued messages together in the run after the one under way", async () => {
     const { ada, grace, model, worker, post, transcript, runs, start } = await agentThread();
     start();
 
     await post(ada, "First");
     const first = await model.next();
     first.startStep();
-    await post(grace, "Second");
-    await post(ada, "Third");
+    await post(grace, "Second", "queue");
+    await post(ada, "Third", "queue");
     first.delta("One.");
     first.endStep();
     first.end();
@@ -218,7 +173,7 @@ describe("run leases", () => {
     await post(ada, "Hello");
     const call = await model.next();
     call.startStep();
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await call.drained();
     await crashed.stop();
 
     const restarted = makeWorker();

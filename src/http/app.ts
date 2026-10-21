@@ -35,6 +35,7 @@ import { type SpaceSummary, spaceNameSchema } from "@/shared/spaces.ts";
 import {
   messageInputSchema,
   newThreadSchema,
+  pendingChangeSchema,
   threadSearchSchema,
   threadUpdateSchema,
 } from "@/shared/threads.ts";
@@ -120,7 +121,8 @@ const spaceName = jsonBody(spaceNameSchema, "A name of 1 to 80 characters is req
 const newThread = jsonBody(newThreadSchema, "text must be a non-empty string, folderId an id");
 const folderName = jsonBody(folderNameSchema, "A name of 1 to 80 characters is required");
 const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or a folder");
-const message = jsonBody(messageInputSchema, "text is required");
+const message = jsonBody(messageInputSchema, "text is required; mode is steer, queue or interrupt");
+const pendingChange = jsonBody(pendingChangeSchema, "Give a text, or a mode of steer or queue");
 
 // `?q=` with the text to find in thread titles.
 const threadSearch = validator("query", (value: { q?: string }, c) => {
@@ -279,8 +281,22 @@ function createApi(options: AppOptions) {
         });
       })
       .post("/v1/threads/:id/messages", message, (c) => {
-        const { text } = c.req.valid("json");
-        return c.json(threads.postMessage(signedIn(c.var.principal), c.req.param("id"), text), 202);
+        const { text, mode } = c.req.valid("json");
+        const principal = signedIn(c.var.principal);
+        return c.json(threads.postMessage(principal, c.req.param("id"), text, mode), 202);
+      })
+      .patch("/v1/threads/:id/messages/:messageId", pendingChange, (c) => {
+        const { id, messageId } = c.req.param();
+        const change = c.req.valid("json");
+        return c.json(threads.changeMessage(signedIn(c.var.principal), id, messageId, change), 200);
+      })
+      .delete("/v1/threads/:id/messages/:messageId", (c) => {
+        const { id, messageId } = c.req.param();
+        return c.json(threads.withdrawMessage(signedIn(c.var.principal), id, messageId), 200);
+      })
+      .post("/v1/threads/:id/stop", (c) => {
+        threads.stop(signedIn(c.var.principal), c.req.param("id"));
+        return c.json({ ok: true }, 202);
       })
       // Connections are for the owner of a personal org for now.
       .use("/v1/connections/*", async (c, next) => {
