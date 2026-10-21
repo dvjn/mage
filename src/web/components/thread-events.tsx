@@ -24,6 +24,7 @@ import { CONNECTION_LABELS } from "@/web/components/model-picker";
 import { Time } from "@/web/components/time";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
 import { Button } from "@/web/components/ui/button";
+import { useMinute } from "@/web/hooks/use-minute";
 import { initialsOf } from "@/web/lib/initials";
 import { meQuery, modelsQuery } from "@/web/lib/queries";
 import { timeUntil } from "@/web/lib/time";
@@ -227,6 +228,8 @@ function RetryButton({ onRetry }: { onRetry: () => void }) {
 
 // Why the run failed, in words for its kind, with the step that helps and what the provider said.
 function FailureNotice({ row, actions }: { row: FailureRow; actions: RowActions }) {
+  // When a limit resets is said relative to now.
+  useMinute();
   const label = row.connection ? CONNECTION_LABELS[row.connection] : "the provider";
   let summary: ReactNode = `The agent stopped: ${row.error}`;
   let step: ReactNode = null;

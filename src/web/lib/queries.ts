@@ -101,14 +101,22 @@ export function spaceThreadsQuery(spaceId: string) {
   });
 }
 
+// The server says the thread does not exist, or is not the reader's to see.
+export class ThreadNotFound extends Error {}
+
 // A thread with its events so far; live events are merged in as they arrive, and a read keeps
-// the ones that arrived while it was on its way.
+// the ones that arrived while it was on its way. A thread that is not found is not asked for
+// again; a read that fails otherwise, as when the server cannot be reached, is tried again until
+// it succeeds, waiting longer each time up to ten seconds.
 export function threadQuery(threadId: string) {
   const queryKey = ["threads", threadId] as const;
   return queryOptions({
     queryKey,
+    retry: (_count, error) => !(error instanceof ThreadNotFound),
+    retryDelay: (count) => Math.min(1000 * 2 ** count, 10_000),
     queryFn: async ({ client }) => {
       const res = await apiClient.v1.threads[":id"].$get({ param: { id: threadId } });
+      if ((res.status as number) === 404) throw new ThreadNotFound("Thread not found");
       if (!res.ok) throw new Error("could not read the thread");
       const fetched = threadDetailSchema.parse(await res.json());
       const shown = client.getQueryData<ThreadDetail>(queryKey);

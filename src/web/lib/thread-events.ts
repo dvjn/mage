@@ -58,16 +58,30 @@ export function withPieces(
   return next;
 }
 
-// The text so far of each reply in progress, by message id.
+// The text so far of each reply in progress, by message id, and whether the stream is lost and
+// being reconnected. Once it is back, the thread is read again.
 export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () => void) {
   const queryClient = useQueryClient();
   const [streaming, setStreaming] = useState<ReadonlyMap<string, Streaming>>(new Map());
+  const [reconnecting, setReconnecting] = useState(false);
 
   useEffect(() => {
     setStreaming(new Map());
+    setReconnecting(false);
     if (!ready) return;
     const after = queryClient.getQueryData(threadQuery(threadId).queryKey)?.thread.lastEventSeq;
     const source = new EventSource(`/api/v1/threads/${threadId}/events?after=${after ?? 0}`);
+    let lost = false;
+    source.addEventListener("error", () => {
+      lost = true;
+      setReconnecting(true);
+    });
+    source.addEventListener("open", () => {
+      if (!lost) return;
+      lost = false;
+      setReconnecting(false);
+      void queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
+    });
     source.addEventListener("thread-event", (message) => {
       const event = anyThreadEventSchema.safeParse(JSON.parse(message.data as string));
       if (!event.success) return;
@@ -82,5 +96,5 @@ export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () =
     return () => source.close();
   }, [queryClient, threadId, ready, onEvent]);
 
-  return streaming;
+  return { streaming, reconnecting };
 }

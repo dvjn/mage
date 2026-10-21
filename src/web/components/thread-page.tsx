@@ -1,7 +1,8 @@
 // A thread: its transcript as it happens, kept scrolled to the newest, what the agent is doing and
 // the messages waiting for it, the tokens the thread used, a composer to post, steer, queue, interrupt and stop, trying the
 // last reply again when it failed or was stopped, and the thread's model with, for a model that can
-// think, its reasoning effort.
+// think, its reasoning effort. When the server cannot be reached, the thread as last read stays in
+// view while it reconnects.
 
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -34,6 +35,7 @@ import { ModelPicker } from "@/web/components/model-picker";
 import { Composer, PendingTray, RunStatus } from "@/web/components/thread-composer";
 import { AgentStarting, TokenCount, TranscriptItem } from "@/web/components/thread-events";
 import { FieldError } from "@/web/components/ui/field";
+import { Spinner } from "@/web/components/ui/spinner";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { rememberSpace } from "@/web/lib/last-space";
@@ -42,6 +44,7 @@ import {
   modelsQuery,
   spaceThreadsQuery,
   spacesQuery,
+  ThreadNotFound,
   threadQuery,
 } from "@/web/lib/queries";
 import { mergeEvents, useThreadEvents } from "@/web/lib/thread-events";
@@ -79,7 +82,14 @@ export function ThreadPage() {
     if (spaceId)
       void queryClient.invalidateQueries({ queryKey: spaceThreadsQuery(spaceId).queryKey });
   }, [queryClient, spaceId]);
-  const streaming = useThreadEvents(threadId, detail.isSuccess, refreshList);
+  const notFound = detail.error instanceof ThreadNotFound;
+  const { streaming, reconnecting } = useThreadEvents(
+    threadId,
+    !!detail.data && !notFound,
+    refreshList,
+  );
+  // The thread cannot be read or followed right now; what is shown is what was last read.
+  const offline = !notFound && (detail.failureCount > 0 || reconnecting);
   const transcript = useMemo(
     () =>
       transcriptOf(
@@ -159,7 +169,7 @@ export function ThreadPage() {
     );
   }
 
-  if (detail.isError) {
+  if (notFound) {
     return (
       <>
         <PageHeader crumbs={[{ label: "Not found" }]} />
@@ -212,6 +222,16 @@ export function ThreadPage() {
       </Conversation>
       <div className={cn(pageWidth, "p-4 pt-0")}>
         <div className="flex flex-col gap-2">
+          {offline && (
+            <div
+              role="status"
+              aria-label="Connection"
+              className="flex items-center gap-2 px-1 text-xs text-muted-foreground"
+            >
+              <Spinner className="size-3.5" aria-hidden />
+              <span>Reconnecting…</span>
+            </div>
+          )}
           <RunStatus stopping={!!run && run.id === stopped} />
           <PendingTray threadId={threadId} pending={transcript.pending} me={me.data?.user.id} />
           <Composer

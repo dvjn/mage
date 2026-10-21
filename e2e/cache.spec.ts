@@ -65,6 +65,31 @@ test("a thread paints from the cache while the server has not answered", async (
   ).toBeVisible();
 });
 
+test("a thread the server cannot be reached for shows as cached while it reconnects", async ({
+  page,
+  context,
+}) => {
+  await signUp(page, "Ada Lovelace");
+  await startThread(page, "How do engines compute?");
+  const messages = page.getByRole("log", { name: "Events" });
+  await expect(messages.getByRole("article", { name: "Message from Agent" })).toContainText(
+    "I have read 1 message",
+  );
+  await expect.poll(() => persisted(context)).toContain("I have read 1 message");
+
+  // The thread's reads and its live events fail as when the network is down.
+  const unreachable = /\/api\/v1\/threads\/[^/?]+(\/events)?(\?.*)?$/;
+  await page.route(unreachable, (route) => route.abort("internetdisconnected"));
+  await page.reload();
+  await expect(messages.getByText("How do engines compute?")).toBeVisible();
+  await expect(page.getByRole("status", { name: "Connection" })).toHaveText("Reconnecting…");
+  await expect(page.getByText("This thread does not exist")).toBeHidden();
+
+  await page.unroute(unreachable);
+  await expect(page.getByRole("status", { name: "Connection" })).toBeHidden({ timeout: 15_000 });
+  await expect(messages.getByText("How do engines compute?")).toBeVisible();
+});
+
 test("signing out leaves nothing of the user for the next one", async ({ page, context }) => {
   await signUp(page, "Ada Lovelace");
   await startThread(page, "Ada's private notes");
