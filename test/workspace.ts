@@ -1,15 +1,17 @@
-// A signed-up app with real spaces, folders and threads over an in-memory database, for the tests
-// of spaces, folders, threads and their events.
+// A signed-up app with real spaces, folders, threads and runs over an in-memory database, for the
+// tests of spaces, folders, threads, their events and the agent's runs. The agent replies through a
+// model the test drives, once the test starts the worker.
 
 import { eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import { expect } from "vite-plus/test";
 
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
-import { openDatabase } from "@/adapters/db.ts";
+import { createTransact, openDatabase } from "@/adapters/db.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
 import { createFolderStore } from "@/adapters/folders.ts";
 import { createLogger } from "@/adapters/logger.ts";
+import { createRunStore } from "@/adapters/runs.ts";
 import * as schema from "@/adapters/schema.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
 import { createThreadStore } from "@/adapters/threads.ts";
@@ -19,8 +21,12 @@ import type { Connections } from "@/services/connections.ts";
 import type { Models } from "@/services/models.ts";
 import { ServiceError } from "@/services/errors.ts";
 import { createFolders } from "@/services/folders.ts";
+import { createRunWorker, type RunWorkerOptions } from "@/services/runs.ts";
 import { createSpaces } from "@/services/spaces.ts";
+import { createThreadLog } from "@/services/thread-log.ts";
 import { createThreads } from "@/services/threads.ts";
+
+import { scriptedModel } from "./scripted-model.ts";
 
 // Never called by these tests.
 const unusedConnections = {} as Connections;
@@ -43,7 +49,7 @@ export type ThreadBody = {
   model: string | null;
 };
 
-export function setup() {
+export function setup(workerOptions: Partial<RunWorkerOptions> = {}) {
   const db = openDatabase(":memory:");
   const logger = createLogger({ write() {} });
   const secret = "test-secret-that-is-long-enough-1234567890";
@@ -65,6 +71,7 @@ export function setup() {
   // Subscriptions still open.
   const listening = { count: 0 };
   const countingBus: typeof bus = {
+    ...bus,
     publish: (threadId, event) => bus.publish(threadId, event),
     subscribe(threadId, listener) {
       listening.count += 1;
@@ -75,13 +82,36 @@ export function setup() {
       };
     },
   };
+  const runStore = createRunStore(db);
+  const transact = createTransact(db);
+  const log = createThreadLog({ threads: threadStore, bus: countingBus, transact });
   const threads = createThreads({
     spaces,
     folders,
     threads: threadStore,
+    runs: runStore,
     models,
+    log,
     bus: countingBus,
   });
+  const model = scriptedModel();
+  const logLines: object[] = [];
+  // A worker as a server process would start it, sharing this app's stores.
+  function makeWorker(options: Partial<RunWorkerOptions> = {}) {
+    return createRunWorker({
+      runs: runStore,
+      threads: threadStore,
+      spaceStore,
+      spaces,
+      log,
+      bus: countingBus,
+      models: { defaultModel: models.defaultModel, open: () => model.open() },
+      logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
+      ...workerOptions,
+      ...options,
+    });
+  }
+  const worker = makeWorker();
   const app = createApp({
     handleAuth: auth.handler,
     identity: createIdentity(auth, db),
@@ -184,6 +214,14 @@ export function setup() {
     org,
     spaceStore,
     threadStore,
+    runStore,
+    transact,
+    log,
+    bus: countingBus,
+    model,
+    worker,
+    makeWorker,
+    logLines,
     listening,
     spaces,
     threads,

@@ -1,5 +1,6 @@
 // Threads and their events as the API shows them, the bodies that make and change them, and
-// searching them by title, shared by the server and the web client.
+// searching them by title, shared by the server and the web client. A thread's events are its
+// messages, when the agent took each one in, the agent's runs and the replies each run wrote.
 
 import * as z from "zod";
 
@@ -22,9 +23,59 @@ export const threadListSchema = z.array(threadSchema);
 
 export const textPartSchema = z.object({ type: z.literal("text"), text: z.string() });
 
-export const messageDataSchema = z.object({ parts: z.array(textPartSchema) });
+// A message starting with this is an aside between people: the agent sees it in later runs, but it
+// never wakes the agent.
+export const QUIET_PREFIX = "//";
+
+export const messageDataSchema = z.object({
+  parts: z.array(textPartSchema),
+  // Starts with the quiet prefix.
+  quiet: z.boolean(),
+});
 
 export type MessageData = z.infer<typeof messageDataSchema>;
+
+// Why a run follows an earlier one: someone interrupted it, input waited for it to end, or it is
+// tried again after the server stopped during it.
+export const runReasonSchema = z.enum(["interrupt", "queued_input", "retry"]);
+
+export type RunReason = z.infer<typeof runReasonSchema>;
+
+// How a reply ended: in full, cut short by someone, or cut short by a failure.
+export const replyStatusSchema = z.enum(["completed", "interrupted", "failed"]);
+
+export type ReplyStatus = z.infer<typeof replyStatusSchema>;
+
+// Each event type's data.
+export const eventDataSchemas = {
+  // A person's message.
+  message: messageDataSchema,
+  // The agent took these messages in, in this order, during the run.
+  "message.admitted": z.object({ runId: z.string(), messageIds: z.array(z.string()).min(1) }),
+  // The agent began a reply; its place in the thread is this event's seq.
+  "message.started": z.object({ messageId: z.string(), runId: z.string() }),
+  // The reply begun as messageId ended with this content.
+  "message.completed": z.object({
+    messageId: z.string(),
+    runId: z.string(),
+    parts: z.array(textPartSchema),
+    status: replyStatusSchema,
+  }),
+  // Someone's message woke the agent.
+  "run.created": z.object({
+    runId: z.string(),
+    reason: runReasonSchema.nullable(),
+    continuesRunId: z.string().nullable(),
+  }),
+  "run.completed": z.object({ runId: z.string() }),
+  "run.failed": z.object({ runId: z.string(), error: z.string() }),
+};
+
+export type EventDataMap = {
+  [Type in keyof typeof eventDataSchemas]: z.infer<(typeof eventDataSchemas)[Type]>;
+};
+
+export type EventType = keyof EventDataMap;
 
 // Who an event is from. `name` is "(former member)" once the user is gone.
 export const actorSchema = z.discriminatedUnion("kind", [
@@ -42,8 +93,18 @@ const eventFields = {
   createdAt: z.iso.datetime(),
 };
 
+function eventSchema<Type extends EventType>(type: Type) {
+  return z.object({ ...eventFields, type: z.literal(type), data: eventDataSchemas[type] });
+}
+
 export const threadEventSchema = z.discriminatedUnion("type", [
-  z.object({ ...eventFields, type: z.literal("message"), data: messageDataSchema }),
+  eventSchema("message"),
+  eventSchema("message.admitted"),
+  eventSchema("message.started"),
+  eventSchema("message.completed"),
+  eventSchema("run.created"),
+  eventSchema("run.completed"),
+  eventSchema("run.failed"),
 ]);
 
 export type ThreadEventSummary = z.infer<typeof threadEventSchema>;

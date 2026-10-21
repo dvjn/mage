@@ -1,4 +1,5 @@
-// Opens the SQLite file in WAL mode and applies pending migrations.
+// Opens the SQLite file in WAL mode and applies pending migrations, and runs store work in one
+// transaction.
 
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -7,6 +8,8 @@ import Database from "better-sqlite3";
 import { sql } from "drizzle-orm";
 import { type BetterSQLite3Database, drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
+
+import type { Transact } from "@/ports/transaction.ts";
 
 export type Db = BetterSQLite3Database;
 
@@ -28,4 +31,10 @@ export async function pingDatabase(db: Db): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// Every store shares the database's one connection, so their writes inside the work join its
+// transaction; a transaction already open nests as a savepoint.
+export function createTransact(db: Db): Transact {
+  return (work) => db.transaction(() => work());
 }

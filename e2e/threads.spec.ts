@@ -116,8 +116,9 @@ test("two tabs on a thread see each other's messages live", async ({ page, conte
 
   await send(other, "Hello from the second tab");
   await expect(messages(page).getByText("Hello from the second tab")).toBeVisible();
-  await expect(messages(page).getByRole("article")).toHaveCount(2);
-  await expect(messages(other).getByRole("article")).toHaveCount(2);
+  const fromAda = { name: "Message from Ada Lovelace" };
+  await expect(messages(page).getByRole("article", fromAda)).toHaveCount(2);
+  await expect(messages(other).getByRole("article", fromAda)).toHaveCount(2);
 });
 
 test("a collapsed sidebar stays collapsed after a reload", async ({ page }) => {

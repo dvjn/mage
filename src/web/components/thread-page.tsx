@@ -4,9 +4,10 @@
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { anyThreadEventSchema, threadSchema } from "@/shared/threads.ts";
+import { transcriptOf } from "@/shared/transcript.ts";
 import {
   Conversation,
   ConversationContent,
@@ -23,7 +24,7 @@ import {
 } from "@/web/components/ai-elements/prompt-input";
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
 import { ModelPicker } from "@/web/components/model-picker";
-import { ThreadEvent } from "@/web/components/thread-events";
+import { TranscriptItem, WaitingMessage } from "@/web/components/thread-events";
 import { FieldError } from "@/web/components/ui/field";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
@@ -42,6 +43,8 @@ export function ThreadPage() {
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
   const thread = detail.data?.thread;
+  const events = detail.data?.events;
+  const transcript = useMemo(() => transcriptOf(events ?? []), [events]);
   const space = spaces.data?.find((s) => s.id === thread?.spaceId);
 
   useEffect(() => {
@@ -116,10 +119,17 @@ export function ThreadPage() {
       />
       <Conversation aria-label="Events" className="min-h-0">
         <ConversationContent className={cn(pageWidth, "gap-6")}>
-          {detail.data?.events.length === 0 ? (
+          {detail.data && transcript.rows.length + transcript.pending.length === 0 ? (
             <ConversationEmptyState description="Write the first message below." />
           ) : (
-            detail.data?.events.map((event) => <ThreadEvent key={event.seq} event={event} />)
+            <>
+              {transcript.rows.map((row) => (
+                <TranscriptItem key={row.id} row={row} />
+              ))}
+              {transcript.pending.map((message) => (
+                <WaitingMessage key={message.id} message={message} />
+              ))}
+            </>
           )}
         </ConversationContent>
         <ConversationScrollButton />

@@ -10,6 +10,8 @@ export interface Config {
   logFormat: "json" | "pretty";
   port: number;
   webRoot: string;
+  // Replies come from a stand-in model instead of providers; only for the browser journeys.
+  fakeModels: boolean;
 }
 
 // The local development secret; refused in production.
@@ -63,6 +65,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       }
       return url.origin;
     });
+  const gateway = env.MODEL_GATEWAY ?? "providers";
+  if (gateway !== "providers" && gateway !== "fake") {
+    throw new Error("MODEL_GATEWAY must be providers or fake");
+  }
+  if (env.NODE_ENV === "production" && gateway === "fake") {
+    throw new Error("MODEL_GATEWAY=fake is not allowed in production");
+  }
   return {
     baseUrl,
     authSecret,
@@ -72,5 +81,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     logFormat,
     port,
     webRoot: env.WEB_ROOT ?? "dist/web",
+    fakeModels: gateway === "fake",
   };
 }

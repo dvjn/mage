@@ -344,6 +344,55 @@ export const threadEvent = sqliteTable(
   (table) => [uniqueIndex("thread_event_thread_seq_idx").on(table.threadId, table.seq)],
 );
 
+// A wake-up of the agent in a thread. At most one run per thread is queued, running or waiting.
+export const run = sqliteTable(
+  "run",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    status: text("status", {
+      enum: ["queued", "running", "waiting", "completed", "failed", "cancelled"],
+    }).notNull(),
+    // The seq of the message that woke the agent.
+    triggerSeq: integer("trigger_seq").notNull(),
+    // The model ref it replied with, once it started.
+    model: text("model"),
+    // The run this one follows, and why.
+    continuesRunId: text("continues_run_id"),
+    reason: text("reason", { enum: ["interrupt", "queued_input", "retry"] }),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    // How many times this input has been tried, counting this run.
+    attempt: integer("attempt").default(1).notNull(),
+    cancelRequestedAt: integer("cancel_requested_at", { mode: "timestamp_ms" }),
+    cancelRequestedBy: text("cancel_requested_by"),
+    // The worker holding the run, until when, and how many times it has been claimed.
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }),
+    leaseEpoch: integer("lease_epoch").default(0).notNull(),
+    error: text("error"),
+    inputTokens: integer("input_tokens").default(0).notNull(),
+    outputTokens: integer("output_tokens").default(0).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+    startedAt: integer("started_at", { mode: "timestamp_ms" }),
+    endedAt: integer("ended_at", { mode: "timestamp_ms" }),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("run_thread_idx").on(table.threadId),
+    index("run_status_idx").on(table.status),
+    uniqueIndex("run_active_idx")
+      .on(table.threadId)
+      .where(sql`${table.status} in ('queued', 'running', 'waiting')`),
+  ],
+);
+
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),

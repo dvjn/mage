@@ -15,6 +15,15 @@ describe("loadConfig", () => {
     expect(loadConfig(valid)).toMatchObject({ baseUrl: "http://localhost:4783", port: 4783 });
   });
 
+  it("uses the stand-in model only when asked, and never in production", () => {
+    expect(loadConfig(valid).fakeModels).toBe(false);
+    expect(loadConfig({ ...valid, MODEL_GATEWAY: "fake" }).fakeModels).toBe(true);
+    expect(() => loadConfig({ ...valid, MODEL_GATEWAY: "other" })).toThrow(/MODEL_GATEWAY/);
+    expect(() => loadConfig({ ...valid, MODEL_GATEWAY: "fake", NODE_ENV: "production" })).toThrow(
+      /MODEL_GATEWAY/,
+    );
+  });
+
   it("rejects a non-numeric PORT", () => {
     expect(() => loadConfig({ ...valid, PORT: "abc" })).toThrow(/PORT/);
   });

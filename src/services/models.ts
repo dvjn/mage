@@ -1,9 +1,11 @@
 // The models an org can use: each of its connections' live lists, kept for an hour, merged under
-// refs of the form `<auth kind>/<model id>`, and the org's default model chosen from them.
+// refs of the form `<auth kind>/<model id>`, the org's default model chosen from them, and opening
+// a model to stream a reply from through its connection.
 
 import type { Catalog, CatalogModel } from "@/ports/catalog.ts";
 import type { ConnectionStore } from "@/ports/connections.ts";
 import type { Logger } from "@/ports/logger.ts";
+import type { ModelEvent, ModelGateway, ModelRequest } from "@/ports/model-gateway.ts";
 import type { OrgSettingStore } from "@/ports/org-settings.ts";
 import { type AccountKind, ConnectionError, type Connections } from "@/services/connections.ts";
 import { ServiceError } from "@/services/errors.ts";
@@ -26,8 +28,15 @@ export interface ModelsOptions {
   tokens: Pick<Connections, "withFreshToken">;
   catalogs: Record<AccountKind, Catalog>;
   settings: OrgSettingStore;
+  // Streams replies for the connections of each kind that can reply.
+  gateways: Partial<Record<AccountKind, ModelGateway>>;
   logger: Logger;
   now?: () => Date;
+}
+
+// A model ready to stream a reply from.
+export interface OpenModel {
+  stream(request: Omit<ModelRequest, "model">, signal: AbortSignal): AsyncIterable<ModelEvent>;
 }
 
 export type Models = ReturnType<typeof createModels>;
@@ -40,8 +49,12 @@ export function modelRef(authKind: AccountKind, id: string) {
   return `${authKind}/${id}`;
 }
 
+function isAccountKind(value: string): value is AccountKind {
+  return Object.hasOwn(LABELS, value);
+}
+
 export function createModels(options: ModelsOptions) {
-  const { connections, tokens, catalogs, settings, logger } = options;
+  const { connections, tokens, catalogs, settings, gateways, logger } = options;
   const now = options.now ?? (() => new Date());
   const cache = new Map<string, { at: number; models: CatalogModel[] }>();
 
@@ -91,9 +104,50 @@ export function createModels(options: ModelsOptions) {
     throw new ServiceError(400, `${ref} is not a model this org can use.${unreadable}`);
   }
 
+  async function* streamFrom(
+    gateway: ModelGateway,
+    orgId: string,
+    connectionId: string,
+    request: ModelRequest,
+    signal: AbortSignal,
+  ) {
+    const token = await tokens.withFreshToken(orgId, connectionId, (fresh) =>
+      Promise.resolve(fresh),
+    );
+    yield* gateway.stream(token, request, signal);
+  }
+
   return {
     resolveModels,
     requireModel,
+
+    // The model a ref names, through the org's connection of its kind. Throws with a message for
+    // people when the org has no such connection or its models cannot reply.
+    open(orgId: string, ref: string): Promise<OpenModel> {
+      const slash = ref.indexOf("/");
+      const kind = ref.slice(0, slash);
+      const model = ref.slice(slash + 1);
+      if (slash < 1 || !model || !isAccountKind(kind)) {
+        return Promise.reject(new ServiceError(400, `${ref} is not a model ref.`));
+      }
+      const connection = connections.list(orgId).find((c) => c.authKind === kind);
+      if (!connection) {
+        return Promise.reject(
+          new ServiceError(
+            400,
+            `${ref} needs a ${LABELS[kind]} connection. Connect one in Settings.`,
+          ),
+        );
+      }
+      const gateway = gateways[kind];
+      if (!gateway) {
+        return Promise.reject(new ServiceError(400, `${LABELS[kind]} models cannot reply yet.`));
+      }
+      return Promise.resolve({
+        stream: (request, signal) =>
+          streamFrom(gateway, orgId, connection.id, { ...request, model }, signal),
+      });
+    },
 
     defaultModel(orgId: string): string | null {
       return settings.get(orgId).defaultModel;

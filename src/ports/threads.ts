@@ -1,6 +1,6 @@
 // Threads and their event logs. Appending is the only way a thread's content changes.
 
-import type { MessageData } from "@/shared/threads.ts";
+import type { EventDataMap } from "@/shared/threads.ts";
 
 export type Actor = { kind: "user"; userId: string } | { kind: "agent" };
 
@@ -20,7 +20,9 @@ export interface Thread {
   updatedAt: Date;
 }
 
-export type NewEvent = { type: "message"; actor: Actor; data: MessageData };
+export type NewEvent = {
+  [Type in keyof EventDataMap]: { type: Type; actor: Actor; data: EventDataMap[Type] };
+}[keyof EventDataMap];
 
 export type StoredEvent = NewEvent & {
   id: string;

@@ -147,6 +147,7 @@ function setup() {
       claude: createClaudeCatalog(fakeFetch as typeof fetch),
     },
     settings: createOrgSettingStore(db),
+    gateways: {},
     logger,
     now: () => clock.now,
   });

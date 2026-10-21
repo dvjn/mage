@@ -53,16 +53,15 @@ async function openStream(
   return { res, next, nextEvent, close: () => reader?.cancel() };
 }
 
+// Posts quiet asides, which wake no agent, so the log holds only these messages.
 async function withThread(messages: string[]) {
   const workspace = setup();
   const ada = await workspace.signUp("Ada Lovelace", "ada@example.com");
   const space = await workspace.yourSpace(ada.cookie);
   const thread = await workspace.createThread(ada.cookie, space.id);
-  for (const text of messages) {
-    await workspace.api("POST", `/threads/${thread.id}/messages`, ada.cookie, { text });
-  }
   const post = (text: string) =>
-    workspace.api("POST", `/threads/${thread.id}/messages`, ada.cookie, { text });
+    workspace.api("POST", `/threads/${thread.id}/messages`, ada.cookie, { text: `// ${text}` });
+  for (const text of messages) await post(text);
   return { ...workspace, ada, thread, post };
 }
 
@@ -86,7 +85,7 @@ describe("live thread events", () => {
     expect(four).toMatchObject({
       type: "message",
       actor: { kind: "user", name: "Ada Lovelace" },
-      data: { parts: [{ type: "text", text: "four" }] },
+      data: { parts: [{ type: "text", text: "// four" }], quiet: true },
     });
   });
 
@@ -141,19 +140,19 @@ describe("following a thread", () => {
       threadStore.eventsAfter = (id, after) => {
         if (when === "after") {
           const stored = eventsAfter(id, after);
-          threads.postMessage(ada, id, "three");
+          threads.postMessage(ada, id, "// three");
           return stored;
         }
-        threads.postMessage(ada, id, "three");
+        threads.postMessage(ada, id, "// three");
         return eventsAfter(id, after);
       };
       const delivered: number[] = [];
 
       const stop = threads.follow(ada, thread.id, 0, (event) => delivered.push(event.seq));
       threadStore.eventsAfter = eventsAfter;
-      threads.postMessage(ada, thread.id, "four");
+      threads.postMessage(ada, thread.id, "// four");
       stop();
-      threads.postMessage(ada, thread.id, "five");
+      threads.postMessage(ada, thread.id, "// five");
 
       expect(delivered).toEqual([1, 2, 3, 4]);
     });

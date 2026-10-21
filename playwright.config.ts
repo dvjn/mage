@@ -1,4 +1,5 @@
-// Browser journeys against the production build, served on its own port with a fresh database.
+// Browser journeys against the production build, served on its own port with a fresh database and
+// the stand-in model, which production refuses.
 
 import { rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,7 +31,8 @@ export default defineConfig({
     url: `${baseURL}/api/health`,
     reuseExistingServer: false,
     env: {
-      NODE_ENV: "production",
+      NODE_ENV: "test",
+      MODEL_GATEWAY: "fake",
       PORT: String(port),
       BASE_URL: baseURL,
       AUTH_SECRET: "mage-browser-journeys-secret-0123456789",

@@ -3,8 +3,7 @@
 import { and, asc, desc, eq, gt, inArray, type SQL, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 
-import type { NewEvent, StoredEvent, Thread, ThreadStore } from "@/ports/threads.ts";
-import type { MessageData } from "@/shared/threads.ts";
+import type { StoredEvent, Thread, ThreadStore } from "@/ports/threads.ts";
 
 import type { Db } from "./db.ts";
 import { thread, threadEvent, user } from "./schema.ts";
@@ -42,16 +41,19 @@ export function createThreadStore(db: Db): ThreadStore {
       .where(where)
       .orderBy(asc(threadEvent.seq))
       .all()
-      .map(({ actorKind, actorUserId, actorName, type, data, ...rest }) => ({
-        ...rest,
-        type: type as NewEvent["type"],
-        data: data as MessageData,
-        actor:
-          actorKind === "user" && actorUserId
-            ? { kind: "user", userId: actorUserId }
-            : { kind: "agent" },
-        actorName: actorName ?? null,
-      }));
+      .map(
+        ({ actorKind, actorUserId, actorName, type, data, ...rest }) =>
+          ({
+            ...rest,
+            type,
+            data,
+            actor:
+              actorKind === "user" && actorUserId
+                ? { kind: "user", userId: actorUserId }
+                : { kind: "agent" },
+            actorName: actorName ?? null,
+          }) as StoredEvent,
+      );
   }
 
   return {

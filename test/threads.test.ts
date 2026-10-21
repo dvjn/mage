@@ -45,7 +45,8 @@ describe("threads", () => {
     const res = await api("GET", `/threads/${thread.id}`, cookie);
     const body = (await res.json()) as { thread: { title: string }; events: EventBody[] };
     expect(body.thread.title).toBe("How do engines compute?");
-    expect(body.events.map((event) => event.data.parts[0]?.text)).toEqual([
+    const messages = body.events.filter((event) => event.type === "message");
+    expect(messages.map((event) => event.data.parts[0]?.text)).toEqual([
       "How do\n engines   compute?",
       "Another question",
     ]);
@@ -76,8 +77,9 @@ describe("threads", () => {
     const res = await api("GET", `/spaces/${space.id}/threads`, cookie);
     const list = (await res.json()) as { title: string; lastEventSeq: number }[];
     expect(list).toEqual([
-      expect.objectContaining({ title: "First", lastEventSeq: 2 }),
-      expect.objectContaining({ title: "Second", lastEventSeq: 1 }),
+      // The first message also started a run that took it in; the second waits for that run.
+      expect.objectContaining({ title: "First", lastEventSeq: 4 }),
+      expect.objectContaining({ title: "Second", lastEventSeq: 3 }),
     ]);
   });
 
@@ -148,9 +150,10 @@ describe("event log", () => {
     expect((await Promise.all(posts)).map((res) => res.status)).toEqual(Array(20).fill(202));
 
     for (const thread of [one, two]) {
-      const seqs = threadStore.eventsAfter(thread.id, 0).map((event) => event.seq);
-      expect(seqs).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
-      expect(threadStore.find(thread.id)?.lastEventSeq).toBe(10);
+      const events = threadStore.eventsAfter(thread.id, 0);
+      expect(events.filter((event) => event.type === "message")).toHaveLength(10);
+      expect(events.map((event) => event.seq)).toEqual(events.map((_, index) => index + 1));
+      expect(threadStore.find(thread.id)?.lastEventSeq).toBe(events.length);
     }
   });
 
@@ -170,8 +173,9 @@ describe("event log", () => {
     db.delete(schema.user).where(eq(schema.user.id, grace.userId)).run();
 
     const { events } = threads.get(ada, thread.id);
+    const messages = events.filter((event) => event.type === "message");
 
-    expect(events.map((event) => event.actor)).toEqual([
+    expect(messages.map((event) => event.actor)).toEqual([
       { kind: "user", userId: ada.userId, name: "Ada Lovelace" },
       { kind: "user", userId: grace.userId, name: "(former member)" },
       { kind: "user", userId: ada.userId, name: "Ada Lovelace" },

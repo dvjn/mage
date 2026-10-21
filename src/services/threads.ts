@@ -1,21 +1,32 @@
 // Threads in the spaces a person can see: starting them, finding them by title, moving them
 // between the space's folders, deleting them, posting messages to their event logs, reading them
-// back with each event's author and following new events as they are appended.
+// back with each event's author and following new events as they are appended. A message posted
+// while the agent is idle wakes it at once; one posted while it is busy waits for it.
 
 import type { EventBus } from "@/ports/event-bus.ts";
 import type { Principal } from "@/ports/identity.ts";
-import type { StoredEvent, Thread, ThreadStore } from "@/ports/threads.ts";
+import type { RunStore } from "@/ports/runs.ts";
+import type { Thread, ThreadStore } from "@/ports/threads.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Models } from "@/services/models.ts";
+import { startRun } from "@/services/runs.ts";
 import type { SpaceAction, Spaces } from "@/services/spaces.ts";
-import type { ThreadEventSummary, ThreadSearchResult, ThreadSummary } from "@/shared/threads.ts";
+import { eventSummary, type ThreadLog } from "@/services/thread-log.ts";
+import {
+  QUIET_PREFIX,
+  type ThreadEventSummary,
+  type ThreadSearchResult,
+  type ThreadSummary,
+} from "@/shared/threads.ts";
 
 export interface ThreadsOptions {
   spaces: Spaces;
   folders: Pick<Folders, "requireIn">;
   threads: ThreadStore;
+  runs: Pick<RunStore, "active" | "create">;
   models: Pick<Models, "defaultModel" | "requireModel">;
+  log: ThreadLog;
   bus: EventBus;
 }
 
@@ -24,7 +35,6 @@ export type Threads = ReturnType<typeof createThreads>;
 const UNTITLED = "New thread";
 const TITLE_LENGTH = 60;
 export const SEARCH_LIMIT = 50;
-export const FORMER_MEMBER = "(former member)";
 
 // A thread's title from its first message: the text on one line, cut to about 60 characters.
 export function titleFrom(text: string) {
@@ -48,24 +58,8 @@ export function threadSummary(thread: Thread): ThreadSummary {
   };
 }
 
-export function eventSummary(event: StoredEvent): ThreadEventSummary {
-  const { id, threadId, seq, type, data, actor, actorName } = event;
-  return {
-    id,
-    threadId,
-    seq,
-    type,
-    data,
-    actor:
-      actor.kind === "user"
-        ? { kind: "user", userId: actor.userId, name: actorName ?? FORMER_MEMBER }
-        : actor,
-    createdAt: event.createdAt.toISOString(),
-  };
-}
-
 export function createThreads(options: ThreadsOptions) {
-  const { spaces, folders, threads, models, bus } = options;
+  const { spaces, folders, threads, runs, models, log, bus } = options;
 
   // The thread when the principal may take the action in its space; one in a space they cannot
   // see is not found.
@@ -78,21 +72,30 @@ export function createThreads(options: ThreadsOptions) {
     return thread;
   }
 
+  // Stores the message; when it is not quiet and the agent is idle, starts a run that takes it in.
   function post(principal: Principal, thread: Thread, text: string) {
-    const event = threads.append(
-      thread.id,
-      {
-        type: "message",
-        actor: { kind: "user", userId: principal.userId },
-        data: { parts: [{ type: "text", text }] },
-      },
-      // Names the thread when nothing has yet.
-      titleFrom(text),
-    );
-    const summary = eventSummary(event);
-    // Only once the event is stored.
-    bus.publish(thread.id, summary);
-    return summary;
+    const quiet = text.startsWith(QUIET_PREFIX);
+    const { events } = log.write(thread.id, (append) => {
+      const message = append(
+        {
+          type: "message",
+          actor: { kind: "user", userId: principal.userId },
+          data: { parts: [{ type: "text", text }], quiet },
+        },
+        // Names the thread when nothing has yet.
+        titleFrom(text),
+      );
+      if (!quiet && !runs.active(thread.id)) {
+        startRun(
+          runs,
+          append,
+          { threadId: thread.id, triggerSeq: message.seq, createdBy: principal.userId },
+          [message.id],
+        );
+      }
+    });
+    if (!quiet) bus.wake(thread.id);
+    return events[0]!;
   }
 
   return {
