@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { createCodexGateway } from "@/adapters/openai-codex.ts";
-import type { ModelEvent, ModelRequest } from "@/ports/model-gateway.ts";
+import { type ModelEvent, ModelError, type ModelRequest } from "@/ports/model-gateway.ts";
 
 const token = { access: "access-token", accountId: "account-1" };
 
@@ -170,6 +170,86 @@ describe("Codex gateway", () => {
     await expect(
       collect(createCodexGateway(fetchFn).stream(token, request, new AbortController().signal)),
     ).rejects.toThrow(/max_output_tokens/);
+  });
+
+  it("reads a usage limit's reset from the backend's 429 and keeps its limit headers", async () => {
+    const limited = () =>
+      Response.json(
+        {
+          error: {
+            type: "usage_limit_reached",
+            message: "The usage limit has been reached",
+            plan_type: "plus",
+            resets_at: 1792000000,
+          },
+        },
+        {
+          status: 429,
+          headers: {
+            "retry-after": "0",
+            "x-codex-primary-used-percent": "100",
+            "x-codex-primary-window-minutes": "300",
+            "x-codex-primary-reset-at": "1791990000",
+            "cf-ray": "abc",
+          },
+        },
+      );
+    const { fetchFn } = recordingFetch([limited(), limited(), limited()]);
+
+    const failed = await collect(
+      createCodexGateway(fetchFn).stream(token, request, new AbortController().signal),
+    ).catch((err: unknown) => err);
+
+    expect(failed).toBeInstanceOf(ModelError);
+    const { kind, resetsAt, detail } = failed as ModelError;
+    expect(kind).toBe("limit");
+    expect(resetsAt).toEqual(new Date(1792000000 * 1000));
+    expect(detail.split("\n")).toEqual([
+      "429 The usage limit has been reached",
+      "retry-after: 0",
+      "x-codex-primary-reset-at: 1791990000",
+      "x-codex-primary-used-percent: 100",
+      "x-codex-primary-window-minutes: 300",
+    ]);
+  });
+
+  it("takes the reset of a used-up window when the body has none", async () => {
+    const limited = () =>
+      new Response(null, {
+        status: 429,
+        headers: {
+          "retry-after": "0",
+          "x-codex-primary-used-percent": "40",
+          "x-codex-primary-reset-at": "1791990000",
+          "x-codex-secondary-used-percent": "100",
+          "x-codex-secondary-reset-at": "1792500000",
+        },
+      });
+    const { fetchFn } = recordingFetch([limited(), limited(), limited()]);
+
+    await expect(
+      collect(createCodexGateway(fetchFn).stream(token, request, new AbortController().signal)),
+    ).rejects.toThrow(
+      expect.objectContaining({ kind: "limit", resetsAt: new Date(1792500000 * 1000) }),
+    );
+  });
+
+  it.each([
+    [401, "auth"],
+    [400, "model"],
+    [503, "network"],
+  ])("sorts a %i refusal as a %s failure", async (status, kind) => {
+    const message =
+      kind === "model" ? "The 'gpt-x' model is not supported with a ChatGPT account." : "Nope";
+    const refusal = () =>
+      Response.json({ detail: message }, { status, headers: { "retry-after": "0" } });
+    const { fetchFn } = recordingFetch([refusal(), refusal(), refusal()]);
+
+    await expect(
+      collect(createCodexGateway(fetchFn).stream(token, request, new AbortController().signal)),
+    ).rejects.toThrow(
+      expect.objectContaining({ kind, detail: `${status} ${message}\nretry-after: 0` }),
+    );
   });
 
   it("stops when the signal aborts", async () => {

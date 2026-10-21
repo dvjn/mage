@@ -1,4 +1,6 @@
-// Streams a model's reply from a provider, as our own events.
+// Streams a model's reply from a provider, as our own events, and says why when the provider
+// refuses: the sign-in no longer works, a limit was reached, the model is not available, or the
+// provider could not be reached.
 
 export interface ModelToken {
   access: string;
@@ -37,4 +39,22 @@ export type ModelEvent =
 export interface ModelGateway {
   // Ends when the reply is done; throws when the provider fails or the signal aborts.
   stream(token: ModelToken, request: ModelRequest, signal: AbortSignal): AsyncIterable<ModelEvent>;
+}
+
+export type ModelErrorKind = "auth" | "limit" | "model" | "network";
+
+// A provider failure sorted by what people can do about it. `detail` is what the provider said,
+// with the response headers that explain it.
+export class ModelError extends Error {
+  readonly kind: ModelErrorKind;
+  readonly detail: string;
+  // When a limit resets, when the provider says.
+  readonly resetsAt: Date | null;
+
+  constructor(kind: ModelErrorKind, detail: string, resetsAt: Date | null = null) {
+    super(detail);
+    this.kind = kind;
+    this.detail = detail;
+    this.resetsAt = resetsAt;
+  }
 }

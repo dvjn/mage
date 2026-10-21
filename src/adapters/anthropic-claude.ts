@@ -7,7 +7,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import * as z from "zod";
 
-import { streamReply } from "@/adapters/ai-sdk-stream.ts";
+import { type ProviderErrors, streamReply } from "@/adapters/ai-sdk-stream.ts";
 import type { Catalog } from "@/ports/catalog.ts";
 import type { ModelGateway } from "@/ports/model-gateway.ts";
 import type { BrowserOAuth, OAuthTokens } from "@/ports/oauth.ts";
@@ -148,6 +148,39 @@ export function createClaudeCatalog(fetchFn: typeof fetch = fetch): Catalog {
   };
 }
 
+// A rate limit reset as epoch seconds or an RFC 3339 time.
+function instant(value: string | undefined) {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return seconds > 0 ? new Date(seconds * 1000) : null;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : new Date(at);
+}
+
+// The Anthropic API explains its limits in `anthropic-ratelimit-*` headers: for a Claude account,
+// the unified status and reset of the account's windows (five hours, seven days) and of extra
+// usage, and why extra usage is off; for others, per-minute request and token limits.
+export const claudeErrors: ProviderErrors = {
+  explains: (name) => name.startsWith("anthropic-ratelimit-") || name === "request-id",
+  resetsAt(headers) {
+    const unified = instant(headers["anthropic-ratelimit-unified-reset"]);
+    if (unified) return unified;
+    const windows = Object.keys(headers)
+      .filter((name) => /^anthropic-ratelimit-unified-.+-status$/.test(name))
+      .filter((name) => headers[name] === "rejected")
+      .map((name) => instant(headers[name.replace(/-status$/, "-reset")]))
+      .filter((at): at is Date => at !== null)
+      .toSorted((a, b) => a.getTime() - b.getTime());
+    if (windows[0]) return windows[0];
+    const minute = ["requests", "tokens", "input-tokens", "output-tokens"]
+      .filter((limit) => headers[`anthropic-ratelimit-${limit}-remaining`] === "0")
+      .map((limit) => instant(headers[`anthropic-ratelimit-${limit}-reset`]))
+      .filter((at): at is Date => at !== null)
+      .toSorted((a, b) => b.getTime() - a.getTime());
+    return minute[0] ?? null;
+  },
+};
+
 // Replies through the Anthropic Messages API with the account's OAuth token as a bearer token, the
 // instructions as the system prompt.
 export function createClaudeGateway(fetchFn: typeof fetch = fetch): ModelGateway {
@@ -163,6 +196,7 @@ export function createClaudeGateway(fetchFn: typeof fetch = fetch): ModelGateway
       });
       yield* streamReply(provider.messages(request.model), request, signal, {
         system: request.instructions,
+        errors: claudeErrors,
       });
     },
   };

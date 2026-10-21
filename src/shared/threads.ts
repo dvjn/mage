@@ -55,6 +55,12 @@ export const replyStatusSchema = z.enum(["completed", "interrupted", "failed"]);
 
 export type ReplyStatus = z.infer<typeof replyStatusSchema>;
 
+// Why a run failed, sorted by what people can do about it: sign in to the provider again, wait for
+// a limit to reset, pick another model, or try again once the provider can be reached.
+export const failureKindSchema = z.enum(["auth", "limit", "model", "network"]);
+
+export type FailureKind = z.infer<typeof failureKindSchema>;
+
 // Each event type's data.
 export const eventDataSchemas = {
   // A person's message.
@@ -85,7 +91,17 @@ export const eventDataSchemas = {
     continuesRunId: z.string().nullable(),
   }),
   "run.completed": z.object({ runId: z.string() }),
-  "run.failed": z.object({ runId: z.string(), error: z.string() }),
+  // `error` says what happened; when the failure has a kind, `connection` is the kind of connection
+  // the model is reached through, `detail` what the provider said and `resetsAt` when a limit
+  // resets.
+  "run.failed": z.object({
+    runId: z.string(),
+    error: z.string(),
+    kind: failureKindSchema.optional(),
+    connection: z.enum(["codex", "claude"]).optional(),
+    detail: z.string().optional(),
+    resetsAt: z.iso.datetime().optional(),
+  }),
   // The actor stopped the run.
   "run.cancelled": z.object({ runId: z.string() }),
 };
@@ -187,6 +203,9 @@ export const threadUpdateSchema = z.object({
   // Null moves the thread to the top of its space.
   folderId: z.string().min(1).nullable().optional(),
 });
+
+// The run whose reply to try again.
+export const retrySchema = z.object({ runId: z.string().min(1) });
 
 // Text to find in thread titles.
 export const threadSearchSchema = z.object({ q: z.string().trim().min(1).max(200) });

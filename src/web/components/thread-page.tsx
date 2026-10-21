@@ -1,6 +1,6 @@
 // A thread: its transcript as it happens, kept scrolled to the newest, what the agent is doing and
-// the messages waiting for it, a composer to post, steer, queue, interrupt and stop, and the
-// thread's model.
+// the messages waiting for it, a composer to post, steer, queue, interrupt and stop, trying the
+// last reply again when it failed or was stopped, and the thread's model.
 
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -45,6 +45,7 @@ export function ThreadPage() {
   const [sending, setSending] = useState(false);
   // The run someone here asked to stop.
   const [stopped, setStopped] = useState<string>();
+  const [picking, setPicking] = useState(false);
   const thread = detail.data?.thread;
   const events = detail.data?.events;
   const space = spaces.data?.find((s) => s.id === thread?.spaceId);
@@ -98,6 +99,25 @@ export function ThreadPage() {
     if (!res.ok && (res.status as number) !== 409) setError(await errorOf(res));
   }
 
+  async function retry(runId: string) {
+    const res = await apiClient.v1.threads[":id"].retry.$post({
+      param: { id: threadId },
+      json: { runId },
+    });
+    if (!res.ok) {
+      setError(await errorOf(res));
+      return;
+    }
+    setError(undefined);
+    mergeEvents(queryClient, threadId, [anyThreadEventSchema.parse(await res.json())]);
+  }
+
+  // The last row, when it ends a run that failed or was stopped and nothing has run since.
+  const last = transcript.rows.at(-1);
+  const canRetry = space?.role !== "viewer" && !run && transcript.pending.length === 0;
+  const retryable =
+    canRetry && (last?.kind === "failure" || last?.kind === "stop") ? last : undefined;
+
   async function chooseModel(model: string) {
     const res = await apiClient.v1.threads[":id"].$patch({
       param: { id: threadId },
@@ -142,7 +162,16 @@ export function ThreadPage() {
           {detail.data && transcript.rows.length === 0 ? (
             <ConversationEmptyState description="Write the first message below." />
           ) : (
-            transcript.rows.map((row) => <TranscriptItem key={row.id} row={row} />)
+            transcript.rows.map((row) => (
+              <TranscriptItem
+                key={row.id}
+                row={row}
+                actions={{
+                  ...(row === retryable && { retry: () => void retry(retryable.runId) }),
+                  pickModel: () => setPicking(true),
+                }}
+              />
+            ))
           )}
           {run &&
             !transcript.rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
@@ -167,6 +196,8 @@ export function ThreadPage() {
                 models={models.data?.models ?? []}
                 value={thread?.model ?? null}
                 onChange={(ref) => void chooseModel(ref)}
+                open={picking}
+                onOpenChange={setPicking}
                 placeholder="Model"
                 className="w-56"
               />

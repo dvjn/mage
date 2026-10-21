@@ -5,7 +5,12 @@
 import type { Catalog, CatalogModel } from "@/ports/catalog.ts";
 import type { ConnectionStore } from "@/ports/connections.ts";
 import type { Logger } from "@/ports/logger.ts";
-import type { ModelEvent, ModelGateway, ModelRequest } from "@/ports/model-gateway.ts";
+import {
+  ModelError,
+  type ModelEvent,
+  type ModelGateway,
+  type ModelRequest,
+} from "@/ports/model-gateway.ts";
 import type { OrgSettingStore } from "@/ports/org-settings.ts";
 import { type AccountKind, ConnectionError, type Connections } from "@/services/connections.ts";
 import { ServiceError } from "@/services/errors.ts";
@@ -104,37 +109,47 @@ export function createModels(options: ModelsOptions) {
     throw new ServiceError(400, `${ref} is not a model this org can use.${unreadable}`);
   }
 
+  // When the provider refuses the token before the reply begins, renews it once and asks again.
   async function* streamFrom(
     gateway: ModelGateway,
     orgId: string,
     connectionId: string,
     request: ModelRequest,
     signal: AbortSignal,
-  ) {
-    const token = await tokens.withFreshToken(orgId, connectionId, (fresh) =>
-      Promise.resolve(fresh),
-    );
-    yield* gateway.stream(token, request, signal);
+  ): AsyncIterable<ModelEvent> {
+    const token = (force: boolean) =>
+      tokens.withFreshToken(orgId, connectionId, (fresh) => Promise.resolve(fresh), { force });
+    let begun = false;
+    try {
+      for await (const event of gateway.stream(await token(false), request, signal)) {
+        begun = true;
+        yield event;
+      }
+    } catch (err) {
+      if (begun || !(err instanceof ModelError) || err.kind !== "auth" || signal.aborted) throw err;
+      logger.info({ connectionId }, "token refused; renewing it");
+      yield* gateway.stream(await token(true), request, signal);
+    }
   }
 
   return {
     resolveModels,
     requireModel,
 
-    // The model a ref names, through the org's connection of its kind. Throws with a message for
-    // people when the org has no such connection.
+    // The model a ref names, through the org's connection of its kind. Rejects with a model error
+    // when the ref names no model or the org has no such connection.
     open(orgId: string, ref: string): Promise<OpenModel> {
       const slash = ref.indexOf("/");
       const kind = ref.slice(0, slash);
       const model = ref.slice(slash + 1);
       if (slash < 1 || !model || !isAccountKind(kind)) {
-        return Promise.reject(new ServiceError(400, `${ref} is not a model ref.`));
+        return Promise.reject(new ModelError("model", `${ref} is not a model ref.`));
       }
       const connection = connections.list(orgId).find((c) => c.authKind === kind);
       if (!connection) {
         return Promise.reject(
-          new ServiceError(
-            400,
+          new ModelError(
+            "auth",
             `${ref} needs a ${LABELS[kind]} connection. Connect one in Settings.`,
           ),
         );

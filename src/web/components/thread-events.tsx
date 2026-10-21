@@ -1,18 +1,24 @@
 // How each row of a thread's transcript looks. A message is an avatar, who wrote it and when, then
 // its text as markdown; the signed-in person's own rows carry their avatar in the accent colour. An
-// agent reply that was cut short says so, a run that failed says why, and an event this client does
-// not know yet gets a labelled placeholder.
+// agent reply that was cut short says so, a run that failed says why and what to do about it, the
+// last run that failed or was stopped can be tried again, and an event this client does not know
+// yet gets a labelled placeholder.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { RotateCcwIcon } from "lucide-react";
 import type { ReactNode } from "react";
 
-import type { AgentRow, HumanRow, TranscriptRow } from "@/shared/transcript.ts";
+import type { AgentRow, FailureRow, HumanRow, TranscriptRow } from "@/shared/transcript.ts";
 import { MessageResponse } from "@/web/components/ai-elements/message";
+import { CONNECTION_LABELS } from "@/web/components/model-picker";
 import { Time } from "@/web/components/time";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
+import { Button } from "@/web/components/ui/button";
 import { initialsOf } from "@/web/lib/initials";
 import { meQuery } from "@/web/lib/queries";
+import { timeUntil } from "@/web/lib/time";
 
 // A row of the transcript: the avatar beside a header with the author and the time, and the body
 // flush with the header.
@@ -120,23 +126,97 @@ export function AgentStarting({ at }: { at: string }) {
   );
 }
 
-export function TranscriptItem({ row }: { row: TranscriptRow }) {
+// What can be done from a row: try its run again, or open the model picker.
+export interface RowActions {
+  retry?: () => void;
+  pickModel?: () => void;
+}
+
+function RetryButton({ onRetry }: { onRetry: () => void }) {
+  return (
+    <Button size="xs" variant="outline" onClick={onRetry}>
+      <RotateCcwIcon />
+      Retry
+    </Button>
+  );
+}
+
+// Why the run failed, in words for its kind, with the step that helps and what the provider said.
+function FailureNotice({ row, actions }: { row: FailureRow; actions: RowActions }) {
+  const label = row.connection ? CONNECTION_LABELS[row.connection] : "the provider";
+  let summary: ReactNode = `The agent stopped: ${row.error}`;
+  let step: ReactNode = null;
+  switch (row.failure) {
+    case "auth":
+      summary = `The ${label} sign-in no longer works.`;
+      step = (
+        <Button size="xs" variant="outline" render={<Link to="/settings" />} nativeButton={false}>
+          Reconnect {label}
+        </Button>
+      );
+      break;
+    case "limit": {
+      const resets = row.resetsAt && timeUntil(row.resetsAt);
+      summary = resets ? `Limit reached, resets ${resets}.` : "Limit reached.";
+      break;
+    }
+    case "model":
+      summary = `${label === "the provider" ? "The provider" : label} cannot use this model.`;
+      if (actions.pickModel) {
+        step = (
+          <Button size="xs" variant="outline" onClick={actions.pickModel}>
+            Pick another model
+          </Button>
+        );
+      }
+      break;
+    case "network":
+      summary = `Couldn't reach ${label}.`;
+      break;
+  }
+  return (
+    <div
+      role="status"
+      aria-label="Run failed"
+      className="flex flex-col gap-2 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="mr-auto">{summary}</span>
+        {step}
+        {actions.retry && <RetryButton onRetry={actions.retry} />}
+      </div>
+      {row.detail && (
+        <details className="text-xs">
+          <summary className="cursor-pointer select-none">Details</summary>
+          <pre className="mt-1 font-mono break-words whitespace-pre-wrap">{row.detail}</pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+export function TranscriptItem({
+  row,
+  actions = {},
+}: {
+  row: TranscriptRow;
+  actions?: RowActions;
+}) {
   switch (row.kind) {
     case "human":
       return <HumanMessage row={row} />;
     case "agent":
       return <AgentReply row={row} />;
     case "failure":
-      return (
-        <p role="status" className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-          The agent stopped: {row.error}
-        </p>
-      );
+      return <FailureNotice row={row} actions={actions} />;
     case "stop":
       return (
-        <p role="status" className="text-center text-xs text-muted-foreground">
-          {row.by ? `${row.by} stopped the agent` : "The agent was stopped"}
-        </p>
+        <div role="status" className="flex items-center justify-center gap-2">
+          <p className="text-xs text-muted-foreground">
+            {row.by ? `${row.by} stopped the agent` : "The agent was stopped"}
+          </p>
+          {actions.retry && <RetryButton onRetry={actions.retry} />}
+        </div>
       );
     case "unknown":
       return (

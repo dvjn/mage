@@ -372,6 +372,9 @@ export const run = sqliteTable(
     leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }),
     leaseEpoch: integer("lease_epoch").default(0).notNull(),
     error: text("error"),
+    // Why it failed, as a failure kind, and what the provider said.
+    errorKind: text("error_kind", { enum: ["auth", "limit", "model", "network"] }),
+    errorDetail: text("error_detail"),
     inputTokens: integer("input_tokens").default(0).notNull(),
     outputTokens: integer("output_tokens").default(0).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })

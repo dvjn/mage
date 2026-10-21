@@ -36,6 +36,7 @@ import {
   messageInputSchema,
   newThreadSchema,
   pendingChangeSchema,
+  retrySchema,
   threadSearchSchema,
   threadUpdateSchema,
 } from "@/shared/threads.ts";
@@ -123,6 +124,7 @@ const folderName = jsonBody(folderNameSchema, "A name of 1 to 80 characters is r
 const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or a folder");
 const message = jsonBody(messageInputSchema, "text is required; mode is steer, queue or interrupt");
 const pendingChange = jsonBody(pendingChangeSchema, "Give a text, or a mode of steer or queue");
+const retry = jsonBody(retrySchema, "runId is required");
 
 // `?q=` with the text to find in thread titles.
 const threadSearch = validator("query", (value: { q?: string }, c) => {
@@ -297,6 +299,10 @@ function createApi(options: AppOptions) {
       .post("/v1/threads/:id/stop", (c) => {
         threads.stop(signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 202);
+      })
+      .post("/v1/threads/:id/retry", retry, (c) => {
+        const { runId } = c.req.valid("json");
+        return c.json(threads.retry(signedIn(c.var.principal), c.req.param("id"), runId), 202);
       })
       // Connections are for the owner of a personal org for now.
       .use("/v1/connections/*", async (c, next) => {

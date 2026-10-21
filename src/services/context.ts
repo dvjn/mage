@@ -1,6 +1,7 @@
 // What the agent is given to reply from: a short system prompt naming Mage and the people in the
 // thread, and the thread's messages in the order the agent saw them, each person's prefixed with
-// their name. Quiet asides are included; replies still being written are not.
+// their name. Quiet asides are included; replies still being written, and replies cut short that
+// were tried again, are not.
 
 import type { ModelMessage } from "@/ports/model-gateway.ts";
 import { QUIET_PREFIX } from "@/shared/threads.ts";
@@ -32,7 +33,7 @@ export function contextOf(rows: readonly TranscriptRow[]): Context {
     if (row.kind === "human") {
       people.add(row.author.name);
       messages.push(humanMessage(row));
-    } else if (row.kind === "agent" && row.status !== "streaming" && row.text) {
+    } else if (row.kind === "agent" && row.status !== "streaming" && !row.retried && row.text) {
       messages.push({ role: "assistant", text: row.text });
     }
   }

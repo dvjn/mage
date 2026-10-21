@@ -13,7 +13,12 @@ import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import * as schema from "@/adapters/schema.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { createApp } from "@/http/app.ts";
-import type { ModelGateway, ModelRequest, ModelToken } from "@/ports/model-gateway.ts";
+import {
+  ModelError,
+  type ModelGateway,
+  type ModelRequest,
+  type ModelToken,
+} from "@/ports/model-gateway.ts";
 import type { BrowserOAuth } from "@/ports/oauth.ts";
 import { createConnections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
@@ -97,10 +102,13 @@ function setup() {
   const refreshes: string[] = [];
   // What each gateway was asked to stream.
   const streamed: { kind: string; token: ModelToken; request: ModelRequest }[] = [];
+  // Access tokens the gateways refuse as a provider refuses a revoked one.
+  const refused = new Set<string>();
   function recordingGateway(kind: string): ModelGateway {
     return {
       async *stream(token, request) {
         streamed.push({ kind, token, request });
+        if (refused.has(token.access)) throw new ModelError("auth", "401 token revoked");
         yield* [{ type: "step-start" as const }, { type: "delta" as const, text: "Hi" }];
       },
     };
@@ -231,6 +239,7 @@ function setup() {
     replies,
     refreshes,
     streamed,
+    refused,
     models,
     signUp,
     api,
@@ -546,12 +555,41 @@ describe("opening a model", () => {
     ]);
   });
 
+  it("renews a token the provider refuses once, and asks again", async () => {
+    const { models, streamed, refreshes, refused, ready } = setup();
+    const owner = await ready();
+    refused.add("claude-access");
+
+    const model = await models.open(owner.orgId, "claude/claude-big");
+    const events = await collect(model.stream(request, new AbortController().signal));
+
+    expect(events).toEqual([{ type: "step-start" }, { type: "delta", text: "Hi" }]);
+    expect(refreshes).toEqual(["claude-refresh"]);
+    expect(streamed.map((call) => call.token.access)).toEqual(["claude-access", "claude-renewed"]);
+  });
+
+  it("fails as a sign-in failure when the renewed token is refused too", async () => {
+    const { models, streamed, refused, ready } = setup();
+    const owner = await ready();
+    refused.add("claude-access");
+    refused.add("claude-renewed");
+
+    const model = await models.open(owner.orgId, "claude/claude-big");
+    await expect(collect(model.stream(request, new AbortController().signal))).rejects.toThrow(
+      expect.objectContaining({ kind: "auth" }),
+    );
+    expect(streamed).toHaveLength(2);
+  });
+
   it("says what is missing when the ref cannot be opened", async () => {
     const { models, signUp } = setup();
     const owner = await signUp("Ada Lovelace", "ada@example.com");
 
     await expect(models.open(owner.orgId, "codex/gpt-big")).rejects.toThrow(
-      "codex/gpt-big needs a Codex connection. Connect one in Settings.",
+      expect.objectContaining({
+        kind: "auth",
+        message: "codex/gpt-big needs a Codex connection. Connect one in Settings.",
+      }),
     );
     await expect(models.open(owner.orgId, "gpt-big")).rejects.toThrow("not a model ref");
   });

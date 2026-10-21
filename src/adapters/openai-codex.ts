@@ -9,7 +9,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { decodeJwt } from "jose";
 import * as z from "zod";
 
-import { streamReply } from "@/adapters/ai-sdk-stream.ts";
+import { type ProviderErrors, streamReply } from "@/adapters/ai-sdk-stream.ts";
 import type { Catalog } from "@/ports/catalog.ts";
 import type { ModelGateway } from "@/ports/model-gateway.ts";
 import type { BrowserOAuth, DeviceOAuth, OAuthTokens } from "@/ports/oauth.ts";
@@ -253,6 +253,36 @@ export function createCodexCatalog(fetchFn: typeof fetch = fetch): Catalog {
   };
 }
 
+const usageLimitSchema = z.object({
+  error: z.object({
+    resets_at: z.number().optional(),
+    resets_in_seconds: z.number().optional(),
+  }),
+});
+
+// The Codex backend names its usage windows in `x-codex-*` headers (used percent, window and reset
+// time of the primary and secondary window, which limit is active), and a usage limit's 429 body
+// says when it resets.
+export const codexErrors: ProviderErrors = {
+  explains: (name) =>
+    name.startsWith("x-codex-") || name === "x-request-id" || name === "x-oai-request-id",
+  resetsAt(headers, body, now) {
+    const parsed = usageLimitSchema.safeParse(body);
+    if (parsed.success) {
+      const { resets_at, resets_in_seconds } = parsed.data.error;
+      if (resets_at) return new Date(resets_at * 1000);
+      if (resets_in_seconds) return new Date(now.getTime() + resets_in_seconds * 1000);
+    }
+    // The window that is used up, sooner first.
+    const resets = ["primary", "secondary"]
+      .filter((window) => Number(headers[`x-codex-${window}-used-percent`]) >= 100)
+      .map((window) => Number(headers[`x-codex-${window}-reset-at`]))
+      .filter((seconds) => Number.isFinite(seconds) && seconds > 0)
+      .toSorted((a, b) => a - b);
+    return resets[0] ? new Date(resets[0] * 1000) : null;
+  },
+};
+
 // Replies through the Codex backend's Responses endpoint. It keeps nothing between requests
 // (`store: false`), so every request carries the whole conversation, the instructions as their own
 // field rather than a system message, and the encrypted reasoning back; it takes no output token
@@ -282,6 +312,7 @@ export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway 
             promptCacheKey: request.sessionId,
           },
         },
+        errors: codexErrors,
       });
     },
   };

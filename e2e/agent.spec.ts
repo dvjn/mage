@@ -115,7 +115,7 @@ test("interrupt & send cuts the reply short and answers the new message", async 
   await expect(replies(page).nth(1)).toContainText("I have read 2 messages");
 });
 
-test("stop ends the reply where it is", async ({ page }) => {
+test("stop ends the reply where it is, and retry tries it again", async ({ page }) => {
   await signUp(page, "Ada Lovelace");
   await startThread(page, "Tell me slowly");
   await expect(replies(page).first()).toContainText("I have read 1 message");
@@ -126,6 +126,10 @@ test("stop ends the reply where it is", async ({ page }) => {
   await expect(transcript(page)).toContainText("Ada Lovelace stopped the agent");
   await expect(agentWriting(page)).toBeHidden();
   await expect(replies(page)).toHaveCount(1);
+
+  await page.getByRole("button", { name: "Retry" }).click();
+  await expect(replies(page).nth(1)).toContainText("I have read 1 message");
+  await expect(page.getByRole("button", { name: "Retry" })).toBeHidden();
 });
 
 test("two people in one thread see each other's messages, steers and stops live", async ({

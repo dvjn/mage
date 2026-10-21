@@ -2,7 +2,7 @@
 // time. A worker holds a running run under a lease; each claim raises the run's lease epoch, and
 // every write for the run checks the epoch it holds, so a worker that lost its lease writes nothing.
 
-import type { RunReason } from "@/shared/threads.ts";
+import type { FailureKind, RunReason } from "@/shared/threads.ts";
 
 export type RunStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled";
 
@@ -29,6 +29,8 @@ export interface Run {
   leaseExpiresAt: Date | null;
   leaseEpoch: number;
   error: string | null;
+  errorKind: FailureKind | null;
+  errorDetail: string | null;
   inputTokens: number;
   outputTokens: number;
   createdAt: Date;
@@ -62,6 +64,8 @@ export class LeaseLost extends Error {
 export interface RunStore {
   create(run: NewRun): Run;
   find(id: string): Run | null;
+  // The thread's newest run.
+  latest(threadId: string): Run | null;
   // The thread's queued, running or waiting run.
   active(threadId: string): Run | null;
   // Asks the thread's active run to stop, unless someone already has; null when there is none.
@@ -84,6 +88,8 @@ export interface RunStore {
     outcome: {
       status: EndStatus;
       error?: string;
+      errorKind?: FailureKind;
+      errorDetail?: string;
       usage?: { inputTokens: number; outputTokens: number };
     },
   ): Run;

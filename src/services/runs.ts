@@ -6,14 +6,21 @@
 // A stop request aborts the stream and ends the run with its partial reply kept. Every write a run
 // makes checks its lease in the same transaction, and a renewal keeps the lease while the run
 // works. Runs left running by a stopped server are failed with their partial reply rebuilt from its
-// stored pieces, and tried again until the same input has failed too many times.
+// stored pieces, and tried again until the same input has failed too many times. A run that fails
+// says why in a way people can act on: the provider's failure kind, what it said and, for a limit,
+// when it resets.
 
 import { ulid } from "ulid";
 
 import type { DeltaStore } from "@/ports/deltas.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
 import type { Logger } from "@/ports/logger.ts";
-import type { ModelMessage, ModelUsage } from "@/ports/model-gateway.ts";
+import {
+  ModelError,
+  type ModelErrorKind,
+  type ModelMessage,
+  type ModelUsage,
+} from "@/ports/model-gateway.ts";
 import {
   type EndStatus,
   type Lease,
@@ -25,11 +32,12 @@ import {
 import type { SpaceStore } from "@/ports/spaces.ts";
 import type { ThreadStore } from "@/ports/threads.ts";
 import type { Transact } from "@/ports/transaction.ts";
+import { ConnectionError } from "@/services/connections.ts";
 import { contextOf, humanMessage } from "@/services/context.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import { type Append, eventSummary, type ThreadLog } from "@/services/thread-log.ts";
-import type { ReplyStatus } from "@/shared/threads.ts";
+import type { EventDataMap, ReplyStatus } from "@/shared/threads.ts";
 import { type PendingMessage, transcriptOf } from "@/shared/transcript.ts";
 
 export interface RunWorkerOptions {
@@ -58,8 +66,55 @@ export interface RunWorkerOptions {
 
 export type RunWorker = ReturnType<typeof createRunWorker>;
 
-// A failure whose message people see.
-export class RunFailure extends Error {}
+type Failure = Omit<EventDataMap["run.failed"], "runId">;
+
+// A failure whose message people see, and its kind when it has one.
+export class RunFailure extends Error {
+  readonly failure: Failure;
+
+  constructor(failure: Failure | string) {
+    const value = typeof failure === "string" ? { error: failure } : failure;
+    super(value.error);
+    this.failure = value;
+  }
+}
+
+const CONNECTION_LABELS = { codex: "Codex", claude: "Claude" } as const;
+
+type ConnectionKind = keyof typeof CONNECTION_LABELS;
+
+function connectionOf(ref: string): ConnectionKind | undefined {
+  const kind = ref.slice(0, ref.indexOf("/"));
+  return Object.hasOwn(CONNECTION_LABELS, kind) ? (kind as ConnectionKind) : undefined;
+}
+
+const FAILURE_MESSAGES: Record<ModelErrorKind, (label: string) => string> = {
+  auth: (label) => `The ${label} sign-in no longer works. Reconnect ${label} in Settings.`,
+  limit: (label) => `${label} limit reached.`,
+  model: (label) => `${label} cannot use this model. Pick another model.`,
+  network: (label) => `Couldn't reach ${label}.`,
+};
+
+// What people are told about a failure while replying with the model `ref`.
+function failureOf(err: unknown, ref: string | null): RunFailure {
+  if (err instanceof RunFailure) return err;
+  const connection = ref ? connectionOf(ref) : undefined;
+  const label = connection ? CONNECTION_LABELS[connection] : "The provider";
+  const kinded =
+    err instanceof ModelError
+      ? err
+      : err instanceof ConnectionError
+        ? new ModelError("auth", err.message)
+        : null;
+  if (!kinded) return new RunFailure(`The model failed: ${messageOf(err)}`);
+  return new RunFailure({
+    error: FAILURE_MESSAGES[kinded.kind](label),
+    kind: kinded.kind,
+    ...(connection && { connection }),
+    detail: kinded.detail,
+    ...(kinded.resetsAt && { resetsAt: kinded.resetsAt.toISOString() }),
+  });
+}
 
 // Why a run was aborted from outside its stream.
 type Abort = { kind: "lease" } | { kind: "shutdown" } | { kind: "cancel" };
@@ -67,6 +122,8 @@ type Abort = { kind: "lease" } | { kind: "shutdown" } | { kind: "cancel" };
 interface Execution {
   run: Run;
   lease: Lease;
+  // The model ref the run replies with, once chosen.
+  ref: string | null;
   controller: AbortController;
   done: Promise<void>;
 }
@@ -147,17 +204,26 @@ export function createRunWorker(options: RunWorkerOptions) {
     lease: Lease,
     run: Run,
     append: Append,
-    outcome: { status: EndStatus; error?: string; usage?: ModelUsage },
+    outcome: { status: EndStatus; failure?: Failure; usage?: ModelUsage },
     retry = false,
   ) {
-    const ended = runs.end(lease, outcome);
-    if (outcome.status === "failed") {
+    const { status, failure, usage } = outcome;
+    const ended = runs.end(lease, {
+      status,
+      usage,
+      ...(failure && {
+        error: failure.error,
+        errorKind: failure.kind,
+        errorDetail: failure.detail,
+      }),
+    });
+    if (status === "failed") {
       append({
         type: "run.failed",
         actor: AGENT,
-        data: { runId: run.id, error: outcome.error ?? "The agent could not reply." },
+        data: { runId: run.id, ...(failure ?? { error: "The agent could not reply." }) },
       });
-    } else if (outcome.status === "cancelled") {
+    } else if (status === "cancelled") {
       const by = ended.cancelRequestedBy;
       append({
         type: "run.cancelled",
@@ -299,9 +365,8 @@ export function createRunWorker(options: RunWorkerOptions) {
     if (!thread || !space) throw new LeaseLost(run.id);
     const ref = thread.model ?? models.defaultModel(space.orgId);
     if (!ref) throw new RunFailure("Pick a model for this thread.");
-    const model = await models.open(space.orgId, ref).catch((err: unknown) => {
-      throw new RunFailure(messageOf(err));
-    });
+    execution.ref = ref;
+    const model = await models.open(space.orgId, ref);
     runs.setModel(lease, ref);
 
     let steps = 0;
@@ -374,11 +439,11 @@ export function createRunWorker(options: RunWorkerOptions) {
         return;
       }
       if (!(err instanceof RunFailure)) logger.warn({ err, runId: run.id }, "run failed");
-      const error = err instanceof RunFailure ? err.message : `The model failed: ${messageOf(err)}`;
+      const { failure } = failureOf(err, execution.ref);
       try {
         write(lease, run.threadId, (append) => {
           reply.close(append, "failed");
-          end(lease, run, append, { status: "failed", error, usage });
+          end(lease, run, append, { status: "failed", failure, usage });
         });
       } catch (writeErr) {
         if (!(writeErr instanceof LeaseLost)) logger.error({ err: writeErr }, "run end not saved");
@@ -398,9 +463,11 @@ export function createRunWorker(options: RunWorkerOptions) {
       if (!run) continue;
       const lease = { runId: run.id, owner, epoch: run.leaseEpoch };
       const retry = run.attempt < maxAttempts;
-      const error = retry
-        ? "The server stopped while the agent was replying."
-        : `The agent stopped ${run.attempt} times on this input and gave up.`;
+      const failure = {
+        error: retry
+          ? "The server stopped while the agent was replying."
+          : `The agent stopped ${run.attempt} times on this input and gave up.`,
+      };
       try {
         write(lease, run.threadId, (append) => {
           for (const row of transcript(run.threadId).rows) {
@@ -420,7 +487,7 @@ export function createRunWorker(options: RunWorkerOptions) {
               },
             });
           }
-          end(lease, run, append, { status: "failed", error }, retry);
+          end(lease, run, append, { status: "failed", failure }, retry);
         });
         if (!retry) logger.warn({ runId: run.id, attempt: run.attempt }, "run input given up on");
       } catch (err) {
@@ -433,6 +500,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     const execution: Execution = {
       run,
       lease: { runId: run.id, owner, epoch: run.leaseEpoch },
+      ref: null,
       controller: new AbortController(),
       done: Promise.resolve(),
     };

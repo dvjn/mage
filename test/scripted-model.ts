@@ -76,8 +76,8 @@ export class Call {
     this.push(END);
   }
 
-  fail(message: string) {
-    this.push(new Error(message));
+  fail(error: string | Error) {
+    this.push(typeof error === "string" ? new Error(error) : error);
   }
 
   // One whole step that answers with the text.

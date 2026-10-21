@@ -3,7 +3,8 @@
 // back with each event's author and following new events and reply pieces as they are stored. A
 // message posted while the agent is idle wakes it at once; one posted while it is busy steers the
 // run, waits for the next one, or interrupts the run, and its author can change it until the
-// agent takes it in. Anyone who can post can stop the run.
+// agent takes it in. Anyone who can post can stop the run, or try the last one again when it failed
+// or was stopped.
 
 import type { DeltaStore } from "@/ports/deltas.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
@@ -29,7 +30,7 @@ export interface ThreadsOptions {
   spaces: Spaces;
   folders: Pick<Folders, "requireIn">;
   threads: ThreadStore;
-  runs: Pick<RunStore, "active" | "create" | "requestCancel">;
+  runs: Pick<RunStore, "active" | "create" | "latest" | "requestCancel">;
   deltas: Pick<DeltaStore, "inThread">;
   models: Pick<Models, "defaultModel" | "requireModel">;
   log: ThreadLog;
@@ -243,6 +244,28 @@ export function createThreads(options: ThreadsOptions) {
         throw new ServiceError(409, "The agent is not replying");
       }
       bus.wake(thread.id);
+    },
+
+    // Starts a run that tries the thread's last run again, when it failed or was stopped and
+    // nothing has run since.
+    retry(principal: Principal, id: string, runId: string) {
+      const thread = visible(principal, id, "message");
+      const { events } = log.write(thread.id, (append) => {
+        if (runs.active(thread.id)) throw new ServiceError(409, "The agent is already replying");
+        const last = runs.latest(thread.id);
+        if (last?.id !== runId || (last.status !== "failed" && last.status !== "cancelled")) {
+          throw new ServiceError(409, "Only the last reply can be tried again");
+        }
+        startRun(runs, append, {
+          threadId: thread.id,
+          triggerSeq: last.triggerSeq,
+          createdBy: principal.userId,
+          continuesRunId: last.id,
+          reason: "retry",
+        });
+      });
+      bus.wake(thread.id);
+      return events[0]!;
     },
 
     // Delivers the thread's events with seq above `after` in order, then the pieces stored so far

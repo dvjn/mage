@@ -202,9 +202,10 @@ export function createConnections(options: ConnectionsOptions) {
     return ours && attempt.userId === owner.userId ? attempt : null;
   }
 
-  async function renew(connectionId: string, kind: AccountKind) {
+  // Renews the connection's tokens when they are about to expire, or always when forced.
+  async function renew(connectionId: string, kind: AccountKind, force: boolean) {
     const saved = credentialSchema.parse(credentials.get(connectionId));
-    if (saved.expires - REFRESH_SKEW_MS > now().getTime()) return saved;
+    if (!force && saved.expires - REFRESH_SKEW_MS > now().getTime()) return saved;
     let tokens: OAuthTokens;
     try {
       tokens = await providers[kind].browser.refresh(saved.refresh);
@@ -344,18 +345,19 @@ export function createConnections(options: ConnectionsOptions) {
     },
 
     // Runs `use` with the connection's access token, renewing it first when it is about to
-    // expire. Renewals of one connection run one at a time, so a rotated refresh token is
-    // used once.
+    // expire, or whatever its expiry when `force` is set, as after the provider refused it.
+    // Renewals of one connection run one at a time, so a rotated refresh token is used once.
     async withFreshToken<T>(
       orgId: string,
       connectionId: string,
       use: (token: FreshToken) => Promise<T>,
+      { force = false } = {},
     ): Promise<T> {
       const kind = connections.find(orgId, connectionId)?.authKind;
       if (!kind) throw new ConnectionError(404, "Connection not found");
       let pending = refreshing.get(connectionId);
       if (!pending) {
-        pending = renew(connectionId, kind).finally(() => refreshing.delete(connectionId));
+        pending = renew(connectionId, kind, force).finally(() => refreshing.delete(connectionId));
         refreshing.set(connectionId, pending);
       }
       const credential = await pending;

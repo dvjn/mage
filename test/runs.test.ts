@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
+import { ModelError } from "@/ports/model-gateway.ts";
 import { LeaseLost } from "@/ports/runs.ts";
 
 import { agentThread } from "./agent-thread.ts";
@@ -138,6 +139,145 @@ describe("agent runs", () => {
       type: "run.failed",
       data: { error: "The model failed: upstream broke" },
     });
+  });
+});
+
+describe("failures", () => {
+  it("say what kind of failure it was, through which connection, and what the provider said", async () => {
+    const { ada, model, worker, post, events, db, start } = await agentThread();
+    start();
+
+    await post(ada, "Hello");
+    const call = await model.next();
+    call.fail(
+      new ModelError("limit", "429 (empty body)\nretry-after: 60", new Date(1792000000000)),
+    );
+    await worker.idle();
+
+    expect(events().at(-1)).toMatchObject({
+      type: "run.failed",
+      data: {
+        error: "Codex limit reached.",
+        kind: "limit",
+        connection: "codex",
+        detail: "429 (empty body)\nretry-after: 60",
+        resetsAt: new Date(1792000000000).toISOString(),
+      },
+    });
+    expect(
+      db.all<{ error_kind: string; error_detail: string }>(
+        "select error_kind, error_detail from run",
+      ),
+    ).toEqual([{ error_kind: "limit", error_detail: "429 (empty body)\nretry-after: 60" }]);
+  });
+
+  it("is a sign-in failure when the thread's model has no connection", async () => {
+    const { ada, post, events, start, makeWorker } = await agentThread();
+    const noConnection = makeWorker({
+      models: {
+        defaultModel: () => "claude/claude-big",
+        open: () =>
+          Promise.reject(new ModelError("auth", "claude/claude-big needs a Claude connection.")),
+      },
+    });
+    start(noConnection);
+
+    await post(ada, "Hello");
+    await noConnection.idle();
+
+    expect(events().at(-1)).toMatchObject({
+      type: "run.failed",
+      data: {
+        kind: "auth",
+        connection: "codex",
+        error: expect.stringContaining("Reconnect Codex"),
+      },
+    });
+  });
+});
+
+describe("retrying", () => {
+  async function failedThread() {
+    const workspace = await agentThread();
+    const { ada, model, worker, post, start } = workspace;
+    start();
+    await post(ada, "Hello");
+    const call = await model.next();
+    call.startStep();
+    call.delta("Hel");
+    call.fail(new ModelError("network", "503 upstream"));
+    await worker.idle();
+    return workspace;
+  }
+
+  function retry(
+    workspace: Awaited<ReturnType<typeof agentThread>>,
+    who: { cookie: string },
+    runId: string,
+  ) {
+    return workspace.api("POST", `/threads/${workspace.thread.id}/retry`, who.cookie, { runId });
+  }
+
+  it("tries a failed run again without the reply it cut short", async () => {
+    const workspace = await failedThread();
+    const { ada, model, worker, runs, transcript } = workspace;
+    const [failed] = runs();
+
+    const res = await retry(workspace, ada, failed!.id);
+    expect(res.status).toBe(202);
+    const call = await model.next();
+    call.reply("Hello.");
+    await worker.idle();
+
+    expect(call.texts).toEqual(["user: [Ada Lovelace] Hello"]);
+    expect(runs()).toEqual([
+      expect.objectContaining({ status: "failed" }),
+      expect.objectContaining({ status: "completed", reason: "retry", attempt: 1 }),
+    ]);
+    expect(
+      workspace.db.all<{ continues_run_id: string }>("select continues_run_id from run")[1],
+    ).toEqual({ continues_run_id: failed!.id });
+    expect(transcript()).toEqual([
+      "Ada Lovelace: Hello",
+      "Agent (failed): Hel",
+      "failure",
+      "Agent (completed): Hello.",
+    ]);
+  });
+
+  it("tries a stopped run again", async () => {
+    const workspace = await agentThread();
+    const { ada, model, worker, post, start, runs, api, thread } = workspace;
+    start();
+    await post(ada, "Hello");
+    const call = await model.next();
+    call.startStep();
+    call.delta("Hel");
+    await call.drained();
+    await api("POST", `/threads/${thread.id}/stop`, ada.cookie);
+    await worker.idle();
+    const [stopped] = runs();
+    expect(stopped?.status).toBe("cancelled");
+
+    expect((await retry(workspace, ada, stopped!.id)).status).toBe(202);
+    (await model.next()).reply("Hello.");
+    await worker.idle();
+
+    expect(runs().at(-1)).toMatchObject({ status: "completed", reason: "retry" });
+  });
+
+  it("refuses a run that is not the thread's last, or while the agent replies", async () => {
+    const workspace = await failedThread();
+    const { ada, alan, model, runs } = workspace;
+    const [failed] = runs();
+
+    expect((await retry(workspace, alan, failed!.id)).status).toBe(403);
+    expect((await retry(workspace, ada, "nope")).status).toBe(409);
+    expect((await retry(workspace, ada, failed!.id)).status).toBe(202);
+    expect((await retry(workspace, ada, failed!.id)).status).toBe(409);
+    (await model.next()).reply("Hello.");
+    await workspace.worker.idle();
+    expect((await retry(workspace, ada, failed!.id)).status).toBe(409);
   });
 });
 

@@ -1,7 +1,7 @@
 // Runs kept in the run table, with ULID ids. Claims and lease checks are single conditional
 // statements, so two workers never both hold a run.
 
-import { and, asc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 
 import { type Lease, LeaseLost, type Run, type RunStore } from "@/ports/runs.ts";
@@ -25,6 +25,8 @@ const columns = {
   leaseExpiresAt: run.leaseExpiresAt,
   leaseEpoch: run.leaseEpoch,
   error: run.error,
+  errorKind: run.errorKind,
+  errorDetail: run.errorDetail,
   inputTokens: run.inputTokens,
   outputTokens: run.outputTokens,
   createdAt: run.createdAt,
@@ -80,6 +82,19 @@ export function createRunStore(db: Db): RunStore {
 
     find(id) {
       return db.select(columns).from(run).where(eq(run.id, id)).get() ?? null;
+    },
+
+    latest(threadId) {
+      return (
+        db
+          .select(columns)
+          .from(run)
+          .where(eq(run.threadId, threadId))
+          // Ids made in the same millisecond do not sort by time; rows are numbered as inserted.
+          .orderBy(desc(sql`rowid`))
+          .limit(1)
+          .get() ?? null
+      );
     },
 
     active,
@@ -157,13 +172,15 @@ export function createRunStore(db: Db): RunStore {
       if (!row) throw new LeaseLost(lease.runId);
     },
 
-    end(lease, { status, error, usage }): Run {
+    end(lease, { status, error, errorKind, errorDetail, usage }): Run {
       const now = new Date();
       const row = db
         .update(run)
         .set({
           status,
           error: error ?? null,
+          errorKind: errorKind ?? null,
+          errorDetail: errorDetail ?? null,
           ...(usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }),
           leaseOwner: null,
           leaseExpiresAt: null,

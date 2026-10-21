@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { createClaudeGateway } from "@/adapters/anthropic-claude.ts";
-import type { ModelEvent, ModelRequest } from "@/ports/model-gateway.ts";
+import { type ModelEvent, ModelError, type ModelRequest } from "@/ports/model-gateway.ts";
 
 const token = { access: "access-token", accountId: null };
 
@@ -154,6 +154,60 @@ describe("Claude gateway", () => {
     await expect(
       collect(createClaudeGateway(fetchFn).stream(token, request, new AbortController().signal)),
     ).rejects.toThrow(/unknown model/);
+  });
+
+  it("reads a limit's reset and explaining headers from a 429 with an empty body", async () => {
+    const limited = () =>
+      new Response(null, {
+        status: 429,
+        headers: {
+          "retry-after": "0",
+          "request-id": "req_1",
+          "anthropic-ratelimit-unified-status": "rejected",
+          "anthropic-ratelimit-unified-reset": "1792000000",
+          "anthropic-ratelimit-unified-5h-status": "rejected",
+          "anthropic-ratelimit-unified-overage-status": "rejected",
+          "anthropic-ratelimit-unified-overage-disabled-reason": "out_of_credits",
+          "x-unrelated": "1",
+        },
+      });
+    const { fetchFn } = recordingFetch([limited(), limited(), limited()]);
+
+    const failed = await collect(
+      createClaudeGateway(fetchFn).stream(token, request, new AbortController().signal),
+    ).catch((err: unknown) => err);
+
+    expect(failed).toBeInstanceOf(ModelError);
+    const { kind, resetsAt, detail } = failed as ModelError;
+    expect(kind).toBe("limit");
+    expect(resetsAt).toEqual(new Date(1792000000 * 1000));
+    expect(detail.split("\n")).toEqual([
+      "429 (empty body)",
+      "anthropic-ratelimit-unified-5h-status: rejected",
+      "anthropic-ratelimit-unified-overage-disabled-reason: out_of_credits",
+      "anthropic-ratelimit-unified-overage-status: rejected",
+      "anthropic-ratelimit-unified-reset: 1792000000",
+      "anthropic-ratelimit-unified-status: rejected",
+      "request-id: req_1",
+      "retry-after: 0",
+    ]);
+  });
+
+  it.each([
+    [401, { type: "authentication_error", message: "invalid bearer token" }, "auth"],
+    [404, { type: "not_found_error", message: "model: claude-gone" }, "model"],
+    [400, { type: "invalid_request_error", message: "model: unknown model" }, "model"],
+    [529, { type: "overloaded_error", message: "Overloaded" }, "network"],
+  ])("sorts a %i refusal as a %s failure", async (status, error, kind) => {
+    const refusal = () =>
+      Response.json({ type: "error", error }, { status, headers: { "retry-after": "0" } });
+    const { fetchFn } = recordingFetch([refusal(), refusal(), refusal()]);
+
+    await expect(
+      collect(createClaudeGateway(fetchFn).stream(token, request, new AbortController().signal)),
+    ).rejects.toThrow(
+      expect.objectContaining({ kind, detail: `${status} ${error.message}\nretry-after: 0` }),
+    );
   });
 
   it("stops when the signal aborts", async () => {

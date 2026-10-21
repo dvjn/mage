@@ -48,6 +48,8 @@ export function ModelPicker({
   placeholder = "Pick a model",
   disabled,
   className,
+  open,
+  onOpenChange,
 }: {
   id?: string;
   models: ModelSummary[];
@@ -56,6 +58,9 @@ export function ModelPicker({
   placeholder?: string;
   disabled?: boolean;
   className?: string;
+  // Opens and closes the list from outside, when given.
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const selected = models.find((model) => model.ref === value) ?? null;
   const groups = groupsOf(models);
@@ -69,6 +74,8 @@ export function ModelPicker({
       itemToStringLabel={(model: ModelSummary) => model.name}
       isItemEqualToValue={(a: ModelSummary, b: ModelSummary) => a.ref === b.ref}
       disabled={disabled}
+      {...(open !== undefined && { open })}
+      {...(onOpenChange && { onOpenChange: (next: boolean) => onOpenChange(next) })}
     >
       <ComboboxInput
         id={id}

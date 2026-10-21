@@ -1,12 +1,14 @@
 // A thread's events folded into what people see: the transcript in the order the agent saw it,
 // the messages it has not taken in yet, and the run under way. A person's message takes its place
 // when the agent takes it in, or where it was posted when it is a quiet aside; an agent reply takes
-// the place its run reserved when the reply began.
+// the place its run reserved when the reply began. A reply cut short and then tried again stays in
+// view but is left out of what the agent reads.
 
 import {
   type ActorSummary,
   type AnyThreadEvent,
   type Delivery,
+  type FailureKind,
   type ReplyStatus,
   type RunReason,
   threadEventSchema,
@@ -35,6 +37,8 @@ export interface AgentRow {
   startedAt: string;
   text: string;
   status: "streaming" | ReplyStatus;
+  // A later run tried the reply again.
+  retried: boolean;
 }
 
 // A run that ended without finishing, and why.
@@ -42,7 +46,12 @@ export interface FailureRow {
   kind: "failure";
   id: string;
   seq: number;
+  runId: string;
   error: string;
+  failure?: FailureKind;
+  connection?: "codex" | "claude";
+  detail?: string;
+  resetsAt?: string;
 }
 
 // Someone stopped the run.
@@ -50,6 +59,7 @@ export interface StopRow {
   kind: "stop";
   id: string;
   seq: number;
+  runId: string;
   by: string | null;
 }
 
@@ -150,6 +160,7 @@ export function transcriptOf(
           startedAt: event.createdAt,
           text: streaming.get(event.data.messageId) ?? "",
           status: "streaming",
+          retried: false,
         };
         replies.set(reply.id, reply);
         rows.push(reply);
@@ -163,6 +174,13 @@ export function transcriptOf(
         break;
       }
       case "run.created":
+        if (event.data.reason === "retry") {
+          for (const reply of replies.values()) {
+            if (reply.runId === event.data.continuesRunId && reply.status !== "completed") {
+              reply.retried = true;
+            }
+          }
+        }
         run = {
           id: event.data.runId,
           startedBy: event.actor.kind === "user" ? event.actor.name : null,
@@ -170,10 +188,22 @@ export function transcriptOf(
           createdAt: event.createdAt,
         };
         break;
-      case "run.failed":
-        rows.push({ kind: "failure", id: event.id, seq: event.seq, error: event.data.error });
+      case "run.failed": {
+        const { runId, error, kind, connection, detail, resetsAt } = event.data;
+        rows.push({
+          kind: "failure",
+          id: event.id,
+          seq: event.seq,
+          runId,
+          error,
+          ...(kind && { failure: kind }),
+          ...(connection && { connection }),
+          ...(detail && { detail }),
+          ...(resetsAt && { resetsAt }),
+        });
         if (run?.id === event.data.runId) run = null;
         break;
+      }
       case "run.completed":
         if (run?.id === event.data.runId) run = null;
         break;
@@ -182,6 +212,7 @@ export function transcriptOf(
           kind: "stop",
           id: event.id,
           seq: event.seq,
+          runId: event.data.runId,
           by: event.actor.kind === "user" ? event.actor.name : null,
         });
         if (run?.id === event.data.runId) run = null;
