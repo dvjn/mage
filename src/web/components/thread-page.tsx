@@ -179,7 +179,7 @@ export function ThreadPage() {
   }
 
   return (
-    <div className="flex h-svh min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <PageHeader
         crumbs={[
           ...(space

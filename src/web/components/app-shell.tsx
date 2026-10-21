@@ -26,9 +26,10 @@ function sidebarWasOpen() {
 export function AppShell() {
   return (
     <ThreadSearchProvider>
-      <SidebarProvider defaultOpen={sidebarWasOpen()}>
+      {/* The shell fills the window; each page scrolls inside the inset rather than the window. */}
+      <SidebarProvider defaultOpen={sidebarWasOpen()} className="h-svh">
         <AppSidebar />
-        <SidebarInset>
+        <SidebarInset className="min-h-0 overflow-y-auto">
           <Outlet />
         </SidebarInset>
       </SidebarProvider>
