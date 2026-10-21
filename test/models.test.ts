@@ -13,6 +13,7 @@ import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import * as schema from "@/adapters/schema.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { createApp } from "@/http/app.ts";
+import type { ModelGateway, ModelRequest, ModelToken } from "@/ports/model-gateway.ts";
 import type { BrowserOAuth } from "@/ports/oauth.ts";
 import { createConnections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
@@ -94,6 +95,14 @@ function setup() {
   // Replaces the provider's answer when set.
   const replies: { codex: Reply | null; claude: Reply | null } = { codex: null, claude: null };
   const refreshes: string[] = [];
+  // What the Codex gateway was asked to stream.
+  const streamed: { token: ModelToken; request: ModelRequest }[] = [];
+  const codexGateway: ModelGateway = {
+    async *stream(token, request) {
+      streamed.push({ token, request });
+      yield* [{ type: "step-start" as const }, { type: "delta" as const, text: "Hi" }];
+    },
+  };
 
   const fakeFetch = (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
@@ -147,7 +156,7 @@ function setup() {
       claude: createClaudeCatalog(fakeFetch as typeof fetch),
     },
     settings: createOrgSettingStore(db),
-    gateways: {},
+    gateways: { codex: codexGateway },
     logger,
     now: () => clock.now,
   });
@@ -213,7 +222,19 @@ function setup() {
     return { ...owner, codexId, claudeId };
   }
 
-  return { db, clock, requests, replies, refreshes, models, signUp, api, connect, ready };
+  return {
+    db,
+    clock,
+    requests,
+    replies,
+    refreshes,
+    streamed,
+    models,
+    signUp,
+    api,
+    connect,
+    ready,
+  };
 }
 
 describe("model lists", () => {
@@ -470,5 +491,52 @@ describe("/api/v1/models and the default model", () => {
     });
     const res = await api("PUT", "/settings/default-model", cookie, { ref: "codex/gpt-mini" });
     expect(res.status).toBe(403);
+  });
+});
+
+describe("opening a model", () => {
+  const request = {
+    instructions: "Be brief.",
+    messages: [{ role: "user" as const, text: "[Ada Lovelace] Hi" }],
+    maxSteps: 1,
+    sessionId: "thread-1",
+  };
+
+  async function collect(stream: AsyncIterable<unknown>) {
+    const events: unknown[] = [];
+    for await (const event of stream) events.push(event);
+    return events;
+  }
+
+  it("streams through the org's connection of the ref's kind with a renewed token", async () => {
+    const { models, clock, streamed, refreshes, ready } = setup();
+    const owner = await ready();
+    clock.now = new Date(clock.now.getTime() + 2 * 60 * 60 * 1000);
+
+    const model = await models.open(owner.orgId, "codex/gpt-big");
+    const events = await collect(model.stream(request, new AbortController().signal));
+
+    expect(events).toEqual([{ type: "step-start" }, { type: "delta", text: "Hi" }]);
+    expect(refreshes).toEqual(["codex-refresh"]);
+    expect(streamed).toEqual([
+      {
+        token: { access: "codex-renewed", accountId: "acct-123" },
+        request: { ...request, model: "gpt-big" },
+      },
+    ]);
+  });
+
+  it("says what is missing when the ref cannot reply", async () => {
+    const { models, signUp, connect } = setup();
+    const owner = await signUp("Ada Lovelace", "ada@example.com");
+
+    await expect(models.open(owner.orgId, "codex/gpt-big")).rejects.toThrow(
+      "codex/gpt-big needs a Codex connection. Connect one in Settings.",
+    );
+    connect(owner, "claude");
+    await expect(models.open(owner.orgId, "claude/claude-big")).rejects.toThrow(
+      "Claude models cannot reply yet.",
+    );
+    await expect(models.open(owner.orgId, "gpt-big")).rejects.toThrow("not a model ref");
   });
 });

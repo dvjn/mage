@@ -12,7 +12,11 @@ import { createEventBus } from "@/adapters/event-bus.ts";
 import { createFakeGateway, FAKE_MODEL_REF } from "@/adapters/fake-gateway.ts";
 import { createFolderStore } from "@/adapters/folders.ts";
 import { createLogger, createPrettyDestination } from "@/adapters/logger.ts";
-import { createCodexCatalog, createCodexOAuth } from "@/adapters/openai-codex.ts";
+import {
+  createCodexCatalog,
+  createCodexGateway,
+  createCodexOAuth,
+} from "@/adapters/openai-codex.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createRunStore } from "@/adapters/runs.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
@@ -61,7 +65,7 @@ const models = createModels({
   tokens: connections,
   catalogs: { codex: createCodexCatalog(fetch), claude: createClaudeCatalog(fetch) },
   settings: createOrgSettingStore(db),
-  gateways: {},
+  gateways: { codex: createCodexGateway(fetch) },
   logger,
 });
 const threadStore = createThreadStore(db);

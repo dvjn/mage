@@ -1,13 +1,17 @@
 // Signs in to a ChatGPT account with the Codex CLI's OAuth client: a device code, or a browser
 // authorization whose callback the user pastes back, and token refresh. Lists the models the
-// account can use from the Codex backend.
+// account can use from the Codex backend, and streams replies from it with the AI SDK's OpenAI
+// Responses provider, shaped the way the Codex CLI asks.
 
 import { createHash, randomBytes } from "node:crypto";
 
+import { createOpenAI } from "@ai-sdk/openai";
+import { isStepCount, type ModelMessage as SdkMessage, streamText } from "ai";
 import { decodeJwt } from "jose";
 import * as z from "zod";
 
 import type { Catalog } from "@/ports/catalog.ts";
+import type { ModelGateway, ModelMessage } from "@/ports/model-gateway.ts";
 import type { BrowserOAuth, DeviceOAuth, OAuthTokens } from "@/ports/oauth.ts";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -21,7 +25,8 @@ const DEVICE_VERIFICATION_URL = `${ISSUER}/codex/device`;
 const DEVICE_REDIRECT_URI = `${ISSUER}/deviceauth/callback`;
 const SCOPES = "openid profile email offline_access";
 const ORIGINATOR = "mage";
-const MODELS_URL = "https://chatgpt.com/backend-api/codex/models";
+const CODEX_URL = "https://chatgpt.com/backend-api/codex";
+const MODELS_URL = `${CODEX_URL}/models`;
 // The Codex CLI release whose model list we ask for; the backend leaves out models it is too old for.
 const CLIENT_VERSION = "0.163.0";
 const AUTH_CLAIM = "https://api.openai.com/auth";
@@ -244,6 +249,87 @@ export function createCodexCatalog(fetchFn: typeof fetch = fetch): Catalog {
             reasoning: model.supported_reasoning_levels.length > 0,
           }),
         }));
+    },
+  };
+}
+
+function sdkMessages(messages: ModelMessage[]): SdkMessage[] {
+  return messages.map((message) =>
+    message.role === "user"
+      ? { role: "user", content: message.text }
+      : { role: "assistant", content: [{ type: "text", text: message.text }] },
+  );
+}
+
+function errorText(error: unknown) {
+  return error instanceof Error ? error.message : typeof error === "string" ? error : "unknown";
+}
+
+// Replies through the Codex backend's Responses endpoint. It keeps nothing between requests
+// (`store: false`), so every request carries the whole conversation, the instructions as their own
+// field rather than a system message, and the encrypted reasoning back; it takes no output token
+// limit or sampling settings. The thread id keys its prompt cache and names the session.
+export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway {
+  return {
+    async *stream(token, request, signal) {
+      if (!token.accountId) throw new Error("the connection has no ChatGPT account id");
+      const provider = createOpenAI({
+        baseURL: CODEX_URL,
+        apiKey: token.access,
+        headers: {
+          "ChatGPT-Account-ID": token.accountId,
+          originator: ORIGINATOR,
+          "OpenAI-Beta": "responses=experimental",
+          "session-id": request.sessionId,
+          "x-client-request-id": request.sessionId,
+        },
+        fetch: fetchFn,
+      });
+      const result = streamText({
+        model: provider.responses(request.model),
+        messages: sdkMessages(request.messages),
+        providerOptions: {
+          openai: {
+            store: false,
+            instructions: request.instructions,
+            include: ["reasoning.encrypted_content"],
+            promptCacheKey: request.sessionId,
+          },
+        },
+        stopWhen: isStepCount(request.maxSteps),
+        // Messages taken in at a step boundary join the conversation before the next step.
+        prepareStep: ({ stepNumber, messages }) => {
+          if (stepNumber === 0 || !request.beforeStep) return undefined;
+          const added = request.beforeStep();
+          return added.length > 0 ? { messages: [...messages, ...sdkMessages(added)] } : undefined;
+        },
+        abortSignal: signal,
+        // Failures arrive as stream parts and are thrown below.
+        onError: () => {},
+      });
+      for await (const part of result.stream) {
+        switch (part.type) {
+          case "start-step":
+            yield { type: "step-start" };
+            break;
+          case "text-delta":
+            if (part.text) yield { type: "delta", text: part.text };
+            break;
+          case "finish-step":
+            yield {
+              type: "step-end",
+              usage: {
+                inputTokens: part.usage.inputTokens ?? 0,
+                outputTokens: part.usage.outputTokens ?? 0,
+              },
+            };
+            break;
+          case "error":
+            throw new Error(errorText(part.error), { cause: part.error });
+          case "abort":
+            throw signal.reason ?? new Error("aborted");
+        }
+      }
     },
   };
 }
