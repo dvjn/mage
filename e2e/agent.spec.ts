@@ -70,6 +70,19 @@ test("a message gets a streamed reply from the agent", async ({ page }) => {
   await expect(page.locator("header").getByText(/\d+ tokens$/)).toBeVisible();
 });
 
+test("the model's reasoning shows above its reply, folded once it answers", async ({ page }) => {
+  await signUp(page, "Ada Lovelace");
+  await startThread(page, "Think about engines");
+
+  const reply = replies(page).first();
+  await expect(reply).toContainText("I have read 1 message");
+  const thought = reply.getByRole("button", { name: /Thought for \d+s/ });
+  await expect(thought).toBeVisible();
+  await expect(reply.getByText("Considering the gears and the levers")).toBeHidden();
+  await thought.click();
+  await expect(reply.getByText("Considering the gears and the levers")).toBeVisible();
+});
+
 test("a message sent mid-reply steers it with one more reply", async ({ page }) => {
   await signUp(page, "Ada Lovelace");
   await startThread(page, "Tell me slowly");

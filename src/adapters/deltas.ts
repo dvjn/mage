@@ -1,4 +1,4 @@
-// Reply pieces kept in the message_delta table, one row per piece.
+// Reply pieces kept in the message_delta table, one row per piece, marked as answer or reasoning.
 
 import { asc, eq } from "drizzle-orm";
 
@@ -10,15 +10,23 @@ import { messageDelta } from "./schema.ts";
 
 export function createDeltaStore(db: Db): DeltaStore {
   return {
-    append(threadId, { messageId, index, texts }) {
+    append(threadId, { messageId, index, texts, part }) {
       if (texts.length === 0) return;
       db.insert(messageDelta)
-        .values(texts.map((text, offset) => ({ threadId, messageId, index: index + offset, text })))
+        .values(
+          texts.map((text, offset) => ({
+            threadId,
+            messageId,
+            index: index + offset,
+            text,
+            part: part ?? ("text" as const),
+          })),
+        )
         .run();
     },
 
     inThread(threadId) {
-      const batches = new Map<string, DeltaBatch>();
+      const batches: DeltaBatch[] = [];
       const rows = db
         .select()
         .from(messageDelta)
@@ -26,26 +34,35 @@ export function createDeltaStore(db: Db): DeltaStore {
         .orderBy(asc(messageDelta.messageId), asc(messageDelta.index))
         .all();
       for (const row of rows) {
-        const batch = batches.get(row.messageId) ?? {
-          messageId: row.messageId,
-          index: 0,
-          texts: [],
-        };
-        batch.texts.push(row.text);
-        batches.set(row.messageId, batch);
+        const part = row.part === "reasoning" ? row.part : undefined;
+        const last = batches.at(-1);
+        if (last?.messageId === row.messageId && last.part === part) {
+          last.texts.push(row.text);
+        } else {
+          batches.push({
+            messageId: row.messageId,
+            index: row.index,
+            texts: [row.text],
+            ...(part && { part }),
+          });
+        }
       }
-      return [...batches.values()];
+      return batches;
     },
 
-    textOf(messageId) {
-      return db
-        .select({ text: messageDelta.text })
+    partsOf(messageId) {
+      const rows = db
+        .select({ text: messageDelta.text, part: messageDelta.part })
         .from(messageDelta)
         .where(eq(messageDelta.messageId, messageId))
         .orderBy(asc(messageDelta.index))
-        .all()
-        .map((row) => row.text)
-        .join("");
+        .all();
+      const join = (part: string) =>
+        rows
+          .filter((row) => row.part === part)
+          .map((row) => row.text)
+          .join("");
+      return { text: join("text"), reasoning: join("reasoning") };
     },
 
     remove(messageId) {

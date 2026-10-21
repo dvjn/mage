@@ -148,11 +148,18 @@ export async function* streamReply(
   model: LanguageModel,
   request: ModelRequest,
   signal: AbortSignal,
-  options: { system?: string; providerOptions?: ProviderOptions; errors: ProviderErrors },
+  options: {
+    system?: string;
+    // The AI SDK's own reasoning setting, which the provider turns into its own.
+    reasoning?: ModelRequest["effort"];
+    providerOptions?: ProviderOptions;
+    errors: ProviderErrors;
+  },
 ): AsyncIterable<ModelEvent> {
   const result = streamText({
     model,
     ...(options.system !== undefined && { system: options.system }),
+    ...(options.reasoning && { reasoning: options.reasoning }),
     messages: sdkMessages(request.messages),
     ...(options.providerOptions && { providerOptions: options.providerOptions }),
     stopWhen: isStepCount(request.maxSteps),
@@ -166,10 +173,23 @@ export async function* streamReply(
     // Failures arrive as stream parts and are thrown below.
     onError: () => {},
   });
+  // Whether the step has reasoning yet, so that each further reasoning part starts a paragraph.
+  let reasoned = false;
+  let reasoningStarts = false;
   for await (const part of result.stream) {
     switch (part.type) {
       case "start-step":
+        reasoned = false;
         yield { type: "step-start" };
+        break;
+      case "reasoning-start":
+        reasoningStarts = reasoned;
+        break;
+      case "reasoning-delta":
+        if (!part.text) break;
+        yield { type: "reasoning", text: reasoningStarts ? `\n\n${part.text}` : part.text };
+        reasoned = true;
+        reasoningStarts = false;
         break;
       case "text-delta":
         if (part.text) yield { type: "delta", text: part.text };

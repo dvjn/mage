@@ -27,6 +27,11 @@ async function streamingThread() {
       "select message_id, idx, text from message_delta order by message_id, idx",
     );
   }
+  function storedParts() {
+    return workspace.db.all<{ idx: number; text: string; part: string }>(
+      "select idx, text, part from message_delta order by message_id, idx",
+    );
+  }
   function start(worker = workspace.worker) {
     worker.start();
     onTestFinished(() => worker.stop());
@@ -37,7 +42,7 @@ async function streamingThread() {
   function rows() {
     return transcriptOf(workspace.threadStore.eventsAfter(thread.id, 0).map(eventSummary)).rows;
   }
-  return { ...workspace, ada, thread, stored, start, post, rows };
+  return { ...workspace, ada, thread, stored, storedParts, start, post, rows };
 }
 
 describe("streamed replies", () => {
@@ -134,13 +139,87 @@ describe("streamed replies", () => {
   });
 });
 
+describe("reasoning", () => {
+  it("is stored like the answer, then kept on the reply with how long the model thought", async () => {
+    const { app, ada, thread, model, worker, storedParts, start, post, rows } =
+      await streamingThread();
+    start();
+    await post("Hello");
+    const call = await model.next();
+    call.startStep();
+    call.reason("Gears");
+    call.reason(" turn.");
+    await until(() => storedParts().length === 2);
+    call.delta("Gears.");
+    await until(() => storedParts().length === 3);
+
+    expect(storedParts()).toEqual([
+      { idx: 0, text: "Gears", part: "reasoning" },
+      { idx: 1, text: " turn.", part: "reasoning" },
+      { idx: 2, text: "Gears.", part: "text" },
+    ]);
+    expect(rows().at(-1)).toMatchObject({ kind: "agent", status: "streaming" });
+    const stream = await openStream(app, ada.cookie, thread.id, { after: 4 });
+    const replayed = [await stream.nextItem(), await stream.nextItem()].map(
+      (frame) => JSON.parse(frame.data!) as DeltaBatch,
+    );
+    await stream.close();
+    expect(replayed.map(({ index, texts, part }) => ({ index, texts, part }))).toEqual([
+      { index: 0, texts: ["Gears", " turn."], part: "reasoning" },
+      { index: 2, texts: ["Gears."], part: undefined },
+    ]);
+
+    call.endStep();
+    call.end();
+    await worker.idle();
+
+    expect(rows().at(-1)).toMatchObject({
+      kind: "agent",
+      text: "Gears.",
+      reasoning: "Gears turn.",
+      thoughtMs: expect.any(Number),
+      status: "completed",
+    });
+    expect(storedParts()).toEqual([]);
+  });
+
+  it("is rebuilt with the answer when a stopped server's run is recovered", async () => {
+    const { model, storedParts, start, post, rows, makeWorker } = await streamingThread();
+    const crashed = makeWorker();
+    start(crashed);
+    await post("Hello");
+    const call = await model.next();
+    call.startStep();
+    call.reason("Hmm");
+    call.delta("Gea");
+    await until(() => storedParts().length === 2);
+    await crashed.stop();
+
+    makeWorker().recover();
+
+    expect(rows()[1]).toMatchObject({ text: "Gea", reasoning: "Hmm", status: "failed" });
+  });
+});
+
 describe("withPieces", () => {
   it("adds only the pieces a reply does not have yet", () => {
     const first = withPieces(new Map(), { messageId: "m", index: 0, texts: ["a", "b"] });
     const again = withPieces(first, { messageId: "m", index: 0, texts: ["a", "b", "c"] });
     const stale = withPieces(again, { messageId: "m", index: 1, texts: ["b"] });
 
-    expect(again.get("m")).toEqual({ text: "abc", pieces: 3 });
+    expect(again.get("m")).toEqual({ text: "abc", reasoning: "", pieces: 3 });
     expect(stale).toBe(again);
+  });
+
+  it("keeps reasoning pieces apart from the answer", () => {
+    const thinking = withPieces(new Map(), {
+      messageId: "m",
+      index: 0,
+      texts: ["hm", "m"],
+      part: "reasoning",
+    });
+    const answered = withPieces(thinking, { messageId: "m", index: 2, texts: ["Yes"] });
+
+    expect(answered.get("m")).toEqual({ text: "Yes", reasoning: "hmm", pieces: 3 });
   });
 });

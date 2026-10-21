@@ -23,6 +23,7 @@ function detail(seqs: number[], title = "Engines"): ThreadDetail {
       folderId: null,
       title,
       model: null,
+      effort: null,
       lastEventSeq: seqs.at(-1) ?? 0,
       createdAt: "2026-10-21T00:00:00.000Z",
       updatedAt: "2026-10-21T00:00:00.000Z",

@@ -304,6 +304,8 @@ export const thread = sqliteTable(
     title: text("title"),
     // A model ref such as `codex/gpt-5`; null when there was no default to start from.
     model: text("model"),
+    // The reasoning effort its model is asked for; null for the usual one.
+    effort: text("effort", { enum: ["low", "medium", "high"] }),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     parentThreadId: text("parent_thread_id"),
     rootThreadId: text("root_thread_id"),
@@ -396,8 +398,8 @@ export const run = sqliteTable(
   ],
 );
 
-// The text an agent reply has streamed so far, one row per piece the model sent, kept until the
-// reply completes.
+// The text an agent reply has streamed so far, of its answer and its reasoning, one row per piece
+// the model sent, kept until the reply completes.
 export const messageDelta = sqliteTable(
   "message_delta",
   {
@@ -408,6 +410,10 @@ export const messageDelta = sqliteTable(
     // 0, 1, 2… per message, in the order the model sent them.
     index: integer("idx").notNull(),
     text: text("text").notNull(),
+    // Whether the piece is of the answer or of the reasoning before it.
+    part: text("part", { enum: ["text", "reasoning"] })
+      .default("text")
+      .notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.messageId, table.index] }),

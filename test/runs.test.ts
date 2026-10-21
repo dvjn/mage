@@ -67,6 +67,24 @@ describe("agent runs", () => {
     expect(usage).toEqual({ inputTokens: 22, outputTokens: 5 });
   });
 
+  it("asks the model for the thread's reasoning effort", async () => {
+    const { ada, model, worker, post, start, api, thread } = await agentThread();
+    start();
+
+    await post(ada, "Hello");
+    const usual = await model.next();
+    usual.reply("Hi.");
+    await worker.idle();
+    await api("PATCH", `/threads/${thread.id}`, ada.cookie, { effort: "low" });
+    await post(ada, "Again");
+    const low = await model.next();
+    low.reply("Hi.");
+    await worker.idle();
+
+    expect(usual.request.effort).toBeUndefined();
+    expect(low.request.effort).toBe("low");
+  });
+
   it("stores quiet asides without waking the agent, and shows them to it later", async () => {
     const { ada, grace, model, worker, post, types, start } = await agentThread();
     start();

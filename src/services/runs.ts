@@ -37,7 +37,7 @@ import { contextOf, humanMessage } from "@/services/context.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import { type Append, eventSummary, type ThreadLog } from "@/services/thread-log.ts";
-import type { EventDataMap, ReplyStatus } from "@/shared/threads.ts";
+import type { EventDataMap, ReplyPart, ReplyStatus } from "@/shared/threads.ts";
 import { type PendingMessage, transcriptOf } from "@/shared/transcript.ts";
 
 export interface RunWorkerOptions {
@@ -129,6 +129,24 @@ interface Execution {
 }
 
 const AGENT = { kind: "agent" } as const;
+
+type Part = "text" | "reasoning";
+
+// A reply's stored parts: its reasoning, when it has any, then its answer.
+function replyParts(text: string, reasoning: string, durationMs?: number): ReplyPart[] {
+  return [
+    ...(reasoning
+      ? [
+          {
+            type: "reasoning" as const,
+            text: reasoning,
+            ...(durationMs !== undefined && { durationMs }),
+          },
+        ]
+      : []),
+    ...(text ? [{ type: "text" as const, text }] : []),
+  ];
+}
 
 // Starts a run in a transaction that is appending to the thread, taking in the given messages.
 export function startRun(
@@ -259,17 +277,34 @@ export function createRunWorker(options: RunWorkerOptions) {
   }
 
   // The reply slots of one run: each model step reserves one when it starts and completes it when
-  // it ends. The pieces of a reply are stored and announced in small batches as they arrive, and
-  // dropped once the completed reply holds the whole text.
+  // it ends. The pieces of a reply, of its reasoning and of its answer, are stored and announced in
+  // small batches as they arrive, and dropped once the completed reply holds the whole text. How
+  // long the model reasoned runs from its first reasoning piece to the first piece of its answer.
   function replies(execution: Execution) {
     const { run, lease, controller } = execution;
-    let open: { id: string; text: string; stored: number; buffer: string[] } | null = null;
+    let open: {
+      id: string;
+      text: string;
+      reasoning: string;
+      stored: number;
+      buffer: string[];
+      // What the buffered pieces are of.
+      part: Part;
+      reasoningFrom: number | null;
+      reasoningMs: number | null;
+    } | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     function flush() {
+      clearTimeout(timer);
       timer = undefined;
       if (!open || open.buffer.length === 0) return;
-      const batch = { messageId: open.id, index: open.stored, texts: open.buffer };
+      const batch = {
+        messageId: open.id,
+        index: open.stored,
+        texts: open.buffer,
+        ...(open.part === "reasoning" && { part: open.part }),
+      };
       open.stored += batch.texts.length;
       open.buffer = [];
       try {
@@ -291,7 +326,8 @@ export function createRunWorker(options: RunWorkerOptions) {
       clearTimeout(timer);
       timer = undefined;
       if (!open) return;
-      const { id, text } = open;
+      const { id, text, reasoning, reasoningFrom } = open;
+      const durationMs = open.reasoningMs ?? (reasoningFrom && now().getTime() - reasoningFrom);
       open = null;
       deltas.remove(id);
       append({
@@ -300,7 +336,7 @@ export function createRunWorker(options: RunWorkerOptions) {
         data: {
           messageId: id,
           runId: run.id,
-          parts: text ? [{ type: "text", text }] : [],
+          parts: replyParts(text, reasoning, durationMs ?? undefined),
           status,
           ...(usage && { usage }),
         },
@@ -317,15 +353,36 @@ export function createRunWorker(options: RunWorkerOptions) {
           data: { messageId: id, runId: run.id, ...(execution.ref && { model: execution.ref }) },
         });
       });
-      open = { id, text: "", stored: 0, buffer: [] };
+      open = {
+        id,
+        text: "",
+        reasoning: "",
+        stored: 0,
+        buffer: [],
+        part: "text",
+        reasoningFrom: null,
+        reasoningMs: null,
+      };
     }
 
     return {
       start,
-      add(text: string) {
+      add(text: string, part: Part = "text") {
         if (!open) start();
-        open!.text += text;
-        open!.buffer.push(text);
+        const reply = open!;
+        // A batch holds pieces of one part.
+        if (reply.part !== part) flush();
+        reply.part = part;
+        if (part === "reasoning") {
+          reply.reasoning += text;
+          reply.reasoningFrom ??= now().getTime();
+        } else {
+          reply.text += text;
+          if (reply.reasoningFrom !== null) {
+            reply.reasoningMs ??= now().getTime() - reply.reasoningFrom;
+          }
+        }
+        reply.buffer.push(text);
         timer ??= setTimeout(flush, flushMs);
       },
       complete(usage: ModelUsage) {
@@ -391,6 +448,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           messages,
           maxSteps: maxSteps - steps,
           sessionId: thread.id,
+          ...(thread.effort && { effort: thread.effort }),
           beforeStep: () => boundary(execution, false),
         },
         controller.signal,
@@ -401,6 +459,8 @@ export function createRunWorker(options: RunWorkerOptions) {
           reply.start();
         } else if (event.type === "delta") {
           reply.add(event.text);
+        } else if (event.type === "reasoning") {
+          reply.add(event.text, "reasoning");
         } else {
           usage.inputTokens += event.usage.inputTokens;
           usage.outputTokens += event.usage.outputTokens;
@@ -484,7 +544,7 @@ export function createRunWorker(options: RunWorkerOptions) {
             if (row.kind !== "agent" || row.runId !== run.id || row.status !== "streaming") {
               continue;
             }
-            const text = deltas.textOf(row.id);
+            const { text, reasoning } = deltas.partsOf(row.id);
             deltas.remove(row.id);
             append({
               type: "message.completed",
@@ -492,7 +552,7 @@ export function createRunWorker(options: RunWorkerOptions) {
               data: {
                 messageId: row.id,
                 runId: run.id,
-                parts: text ? [{ type: "text", text }] : [],
+                parts: replyParts(text, reasoning),
                 status: "failed",
               },
             });

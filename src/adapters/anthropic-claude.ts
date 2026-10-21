@@ -182,7 +182,8 @@ export const claudeErrors: ProviderErrors = {
 };
 
 // Replies through the Anthropic Messages API with the account's OAuth token as a bearer token, the
-// instructions as the system prompt.
+// instructions as the system prompt. A model that can think does so at the effort asked for, and
+// streams its thinking.
 export function createClaudeGateway(fetchFn: typeof fetch = fetch): ModelGateway {
   return {
     async *stream(token, request, signal) {
@@ -196,6 +197,8 @@ export function createClaudeGateway(fetchFn: typeof fetch = fetch): ModelGateway
       });
       yield* streamReply(provider.messages(request.model), request, signal, {
         system: request.instructions,
+        // Adaptive thinking at that effort, or a thinking budget for models without it.
+        ...(request.effort && { reasoning: request.effort }),
         errors: claudeErrors,
       });
     },

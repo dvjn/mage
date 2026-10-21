@@ -23,24 +23,27 @@ export function mergeEvents(queryClient: QueryClient, threadId: string, events: 
   );
 }
 
-// A reply's pieces so far, joined.
+// A reply's pieces so far, of its answer and of its reasoning, joined.
 export interface Streaming {
   text: string;
-  // How many pieces the text holds.
+  reasoning: string;
+  // How many pieces the two hold.
   pieces: number;
 }
 
 // The replies with the batch's pieces they did not have yet.
 export function withPieces(
   streaming: ReadonlyMap<string, Streaming>,
-  { messageId, index, texts }: DeltaBatch,
+  { messageId, index, texts, part }: DeltaBatch,
 ): ReadonlyMap<string, Streaming> {
-  const current = streaming.get(messageId) ?? { text: "", pieces: 0 };
+  const current = streaming.get(messageId) ?? { text: "", reasoning: "", pieces: 0 };
   const known = Math.max(0, current.pieces - index);
   if (known >= texts.length) return streaming;
+  const added = texts.slice(known).join("");
   const next = new Map(streaming);
   next.set(messageId, {
-    text: current.text + texts.slice(known).join(""),
+    text: part === "reasoning" ? current.text : current.text + added,
+    reasoning: part === "reasoning" ? current.reasoning + added : current.reasoning,
     pieces: index + texts.length,
   });
   return next;

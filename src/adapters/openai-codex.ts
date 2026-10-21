@@ -286,7 +286,8 @@ export const codexErrors: ProviderErrors = {
 // Replies through the Codex backend's Responses endpoint. It keeps nothing between requests
 // (`store: false`), so every request carries the whole conversation, the instructions as their own
 // field rather than a system message, and the encrypted reasoning back; it takes no output token
-// limit or sampling settings. The thread id keys its prompt cache and names the session.
+// limit or sampling settings. A model that can think is given the effort and streams a summary of
+// its reasoning. The thread id keys its prompt cache and names the session.
 export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway {
   return {
     async *stream(token, request, signal) {
@@ -310,6 +311,8 @@ export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway 
             instructions: request.instructions,
             include: ["reasoning.encrypted_content"],
             promptCacheKey: request.sessionId,
+            // As the Codex CLI asks: the effort, and a summary of the reasoning to show.
+            ...(request.effort && { reasoningEffort: request.effort, reasoningSummary: "auto" }),
           },
         },
         errors: codexErrors,

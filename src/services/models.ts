@@ -137,28 +137,36 @@ export function createModels(options: ModelsOptions) {
     requireModel,
 
     // The model a ref names, through the org's connection of its kind. Rejects with a model error
-    // when the ref names no model or the org has no such connection.
-    open(orgId: string, ref: string): Promise<OpenModel> {
+    // when the ref names no model or the org has no such connection. A model its live list says
+    // can think is asked for the effort requested, or medium; others are asked for none.
+    async open(orgId: string, ref: string): Promise<OpenModel> {
       const slash = ref.indexOf("/");
       const kind = ref.slice(0, slash);
       const model = ref.slice(slash + 1);
       if (slash < 1 || !model || !isAccountKind(kind)) {
-        return Promise.reject(new ModelError("model", `${ref} is not a model ref.`));
+        throw new ModelError("model", `${ref} is not a model ref.`);
       }
       const connection = connections.list(orgId).find((c) => c.authKind === kind);
       if (!connection) {
-        return Promise.reject(
-          new ModelError(
-            "auth",
-            `${ref} needs a ${LABELS[kind]} connection. Connect one in Settings.`,
-          ),
+        throw new ModelError(
+          "auth",
+          `${ref} needs a ${LABELS[kind]} connection. Connect one in Settings.`,
         );
       }
+      // A list that cannot be read leaves the model's reasoning unknown.
+      const list = await listOf(orgId, connection.id, kind, false).catch(() => []);
+      const listed = list.find((m) => m.id === model);
       const gateway = gateways[kind];
-      return Promise.resolve({
-        stream: (request, signal) =>
-          streamFrom(gateway, orgId, connection.id, { ...request, model }, signal),
-      });
+      return {
+        stream: ({ effort, ...request }, signal) =>
+          streamFrom(
+            gateway,
+            orgId,
+            connection.id,
+            { ...request, model, ...(listed?.reasoning && { effort: effort ?? "medium" }) },
+            signal,
+          ),
+      };
     },
 
     defaultModel(orgId: string): string | null {

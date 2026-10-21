@@ -533,7 +533,7 @@ describe("opening a model", () => {
       {
         kind: "codex",
         token: { access: "codex-renewed", accountId: "acct-123" },
-        request: { ...request, model: "gpt-big" },
+        request: { ...request, model: "gpt-big", effort: "medium" },
       },
     ]);
   });
@@ -550,8 +550,24 @@ describe("opening a model", () => {
       {
         kind: "claude",
         token: { access: "claude-access", accountId: null },
-        request: { ...request, model: "claude-big" },
+        request: { ...request, model: "claude-big", effort: "medium" },
       },
+    ]);
+  });
+
+  it("asks a model that can think for the effort, and one that cannot for none", async () => {
+    const { models, streamed, ready } = setup();
+    const owner = await ready();
+
+    for (const ref of ["codex/gpt-big", "codex/gpt-mini", "claude/claude-old"]) {
+      const model = await models.open(owner.orgId, ref);
+      await collect(model.stream({ ...request, effort: "high" }, new AbortController().signal));
+    }
+
+    expect(streamed.map((call) => [call.request.model, call.request.effort])).toEqual([
+      ["gpt-big", "high"],
+      ["gpt-mini", undefined],
+      ["claude-old", undefined],
     ]);
   });
 

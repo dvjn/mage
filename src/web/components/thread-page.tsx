@@ -1,13 +1,20 @@
 // A thread: its transcript as it happens, kept scrolled to the newest, what the agent is doing and
 // the messages waiting for it, the tokens the thread used, a composer to post, steer, queue, interrupt and stop, trying the
-// last reply again when it failed or was stopped, and the thread's model.
+// last reply again when it failed or was stopped, and the thread's model with, for a model that can
+// think, its reasoning effort.
 
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import { anyThreadEventSchema, type Delivery, threadSchema } from "@/shared/threads.ts";
+import {
+  anyThreadEventSchema,
+  type Delivery,
+  type Effort,
+  effortSchema,
+  threadSchema,
+} from "@/shared/threads.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 import {
   Conversation,
@@ -16,6 +23,13 @@ import {
   ConversationScrollButton,
 } from "@/web/components/ai-elements/conversation";
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
+import {
+  PromptInputSelect,
+  PromptInputSelectContent,
+  PromptInputSelectItem,
+  PromptInputSelectTrigger,
+  PromptInputSelectValue,
+} from "@/web/components/ai-elements/prompt-input";
 import { ModelPicker } from "@/web/components/model-picker";
 import { Composer, PendingTray, RunStatus } from "@/web/components/thread-composer";
 import { AgentStarting, TokenCount, TranscriptItem } from "@/web/components/thread-events";
@@ -33,6 +47,12 @@ import {
 import { mergeEvents, useThreadEvents } from "@/web/lib/thread-events";
 
 const threadRoute = getRouteApi("/_app/t/$threadId");
+
+const EFFORT_LABELS: Record<Effort, string> = {
+  low: "Low effort",
+  medium: "Medium effort",
+  high: "High effort",
+};
 
 export function ThreadPage() {
   const { threadId } = threadRoute.useParams();
@@ -64,7 +84,12 @@ export function ThreadPage() {
     () =>
       transcriptOf(
         events ?? [],
-        new Map([...streaming].map(([messageId, { text }]) => [messageId, text])),
+        new Map(
+          [...streaming].map(([messageId, { text, reasoning }]) => [
+            messageId,
+            { text, reasoning },
+          ]),
+        ),
       ),
     [events, streaming],
   );
@@ -112,17 +137,18 @@ export function ThreadPage() {
     mergeEvents(queryClient, threadId, [anyThreadEventSchema.parse(await res.json())]);
   }
 
+  // Whether the thread's model can think, so its effort can be chosen.
+  const thinks = !!models.data?.models.find((model) => model.ref === thread?.model)?.reasoning;
+
   // The last row, when it ends a run that failed or was stopped and nothing has run since.
   const last = transcript.rows.at(-1);
   const canRetry = space?.role !== "viewer" && !run && transcript.pending.length === 0;
   const retryable =
     canRetry && (last?.kind === "failure" || last?.kind === "stop") ? last : undefined;
 
-  async function chooseModel(model: string) {
-    const res = await apiClient.v1.threads[":id"].$patch({
-      param: { id: threadId },
-      json: { model },
-    });
+  // Changes the thread's model or reasoning effort.
+  async function change(json: { model: string } | { effort: Effort }) {
+    const res = await apiClient.v1.threads[":id"].$patch({ param: { id: threadId }, json });
     if (!res.ok) {
       setError(await errorOf(res));
       return;
@@ -196,15 +222,39 @@ export function ThreadPage() {
             onSend={send}
             onStop={() => void stop()}
             tools={
-              <ModelPicker
-                models={models.data?.models ?? []}
-                value={thread?.model ?? null}
-                onChange={(ref) => void chooseModel(ref)}
-                open={picking}
-                onOpenChange={setPicking}
-                placeholder="Model"
-                className="w-56"
-              />
+              <>
+                <ModelPicker
+                  models={models.data?.models ?? []}
+                  value={thread?.model ?? null}
+                  onChange={(ref) => void change({ model: ref })}
+                  open={picking}
+                  onOpenChange={setPicking}
+                  placeholder="Model"
+                  className="w-56"
+                />
+                {thinks && (
+                  <PromptInputSelect
+                    value={thread?.effort ?? "medium"}
+                    onValueChange={(value) => {
+                      const effort = effortSchema.safeParse(value);
+                      if (effort.success) void change({ effort: effort.data });
+                    }}
+                  >
+                    <PromptInputSelectTrigger size="sm" aria-label="Reasoning effort">
+                      <PromptInputSelectValue>
+                        {(value: Effort) => EFFORT_LABELS[value]}
+                      </PromptInputSelectValue>
+                    </PromptInputSelectTrigger>
+                    <PromptInputSelectContent alignItemWithTrigger={false} side="top">
+                      {effortSchema.options.map((effort) => (
+                        <PromptInputSelectItem key={effort} value={effort}>
+                          {EFFORT_LABELS[effort]}
+                        </PromptInputSelectItem>
+                      ))}
+                    </PromptInputSelectContent>
+                  </PromptInputSelect>
+                )}
+              </>
             }
           />
         </div>

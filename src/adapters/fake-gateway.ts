@@ -1,6 +1,7 @@
 // A stand-in model for the browser journeys, chosen by configuration and refused in production.
 // It says how many messages from people it has read, then a few more words, one every few tens of
-// milliseconds; it keeps going much longer when the newest message asks it to reply slowly.
+// milliseconds; it keeps going much longer when the newest message asks it to reply slowly, and
+// reasons for a few words first when it asks it to think.
 
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -10,6 +11,7 @@ export const FAKE_MODEL_REF = "fake/echo";
 
 const WORD_MS = 40;
 const FILLER = "and so the engine turns its wheels".split(" ");
+const REASONING = "Considering the gears and the levers".split(" ");
 
 function wordsFor(messages: ModelMessage[]) {
   const read = messages.filter((message) => message.role === "user");
@@ -33,6 +35,12 @@ export function createFakeGateway(): ModelGateway {
           messages.push(...added);
         }
         yield { type: "step-start" };
+        if (/think/i.test(messages.at(-1)?.text ?? "")) {
+          for (const [index, word] of REASONING.entries()) {
+            await delay(WORD_MS, undefined, { signal });
+            yield { type: "reasoning", text: index === 0 ? word : ` ${word}` };
+          }
+        }
         const words = wordsFor(messages);
         for (const [index, word] of words.entries()) {
           await delay(WORD_MS, undefined, { signal });

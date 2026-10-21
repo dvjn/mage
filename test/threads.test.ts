@@ -97,6 +97,21 @@ describe("threads", () => {
     expect((await api("PATCH", `/threads/${thread.id}`, cookie, {})).status).toBe(200);
   });
 
+  it("keeps a reasoning effort, or the usual one", async () => {
+    const { api, signUp, yourSpace, createThread } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const thread = await createThread(cookie, (await yourSpace(cookie)).id);
+    expect(thread).toMatchObject({ effort: null });
+
+    const high = await api("PATCH", `/threads/${thread.id}`, cookie, { effort: "high" });
+    expect(await high.json()).toMatchObject({ effort: "high" });
+    const usual = await api("PATCH", `/threads/${thread.id}`, cookie, { effort: null });
+    expect(await usual.json()).toMatchObject({ effort: null });
+    expect((await api("PATCH", `/threads/${thread.id}`, cookie, { effort: "max" })).status).toBe(
+      400,
+    );
+  });
+
   it("is deleted with its events", async () => {
     const { api, threadStore, signUp, yourSpace, createThread } = setup();
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");

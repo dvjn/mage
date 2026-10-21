@@ -1,6 +1,6 @@
 // Threads and their event logs. Appending is the only way a thread's content changes.
 
-import type { EventDataMap } from "@/shared/threads.ts";
+import type { Effort, EventDataMap } from "@/shared/threads.ts";
 
 export type Actor = { kind: "user"; userId: string } | { kind: "agent" };
 
@@ -12,6 +12,8 @@ export interface Thread {
   // Null until the first message names it or someone sets it.
   title: string | null;
   model: string | null;
+  // Null for the model's usual reasoning effort.
+  effort: Effort | null;
   createdBy: string | null;
   parentThreadId: string | null;
   rootThreadId: string | null;
@@ -47,7 +49,10 @@ export interface ThreadStore {
   // Threads in the spaces whose titles contain the text, ignoring case, most recently active
   // first, at most `limit` of them.
   search(spaceIds: string[], text: string, limit: number): Thread[];
-  update(id: string, changes: { title?: string; model?: string; folderId?: string | null }): Thread;
+  update(
+    id: string,
+    changes: { title?: string; model?: string; effort?: Effort | null; folderId?: string | null },
+  ): Thread;
   // Deletes the thread with its events.
   delete(id: string): void;
   // Adds the event with the thread's next seq in one transaction. `title` names the thread when

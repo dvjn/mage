@@ -17,6 +17,9 @@ export interface ModelUsage {
   outputTokens: number;
 }
 
+// How hard a model that can think does so before it answers.
+export type Effort = "low" | "medium" | "high";
+
 export interface ModelRequest {
   // The provider's model id.
   model: string;
@@ -26,6 +29,8 @@ export interface ModelRequest {
   maxSteps: number;
   // Keeps one thread's requests together on the provider's side.
   sessionId: string;
+  // Set only for a model that can think; it then streams its reasoning too.
+  effort?: Effort;
   // Called at each step boundary after the first; the messages it returns join the conversation
   // before the next step.
   beforeStep?: () => ModelMessage[];
@@ -34,6 +39,8 @@ export interface ModelRequest {
 export type ModelEvent =
   | { type: "step-start" }
   | { type: "delta"; text: string }
+  // A piece of the model's reasoning, or of the provider's summary of it, before its answer.
+  | { type: "reasoning"; text: string }
   | { type: "step-end"; usage: ModelUsage };
 
 export interface ModelGateway {

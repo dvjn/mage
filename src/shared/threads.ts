@@ -4,6 +4,11 @@
 
 import * as z from "zod";
 
+// How hard a model that can think does so before it answers.
+export const effortSchema = z.enum(["low", "medium", "high"]);
+
+export type Effort = z.infer<typeof effortSchema>;
+
 export const threadSchema = z.object({
   id: z.string(),
   spaceId: z.string(),
@@ -12,6 +17,8 @@ export const threadSchema = z.object({
   title: z.string(),
   // A model ref, or null when the thread has none yet.
   model: z.string().nullable(),
+  // The reasoning effort its model is asked for, or null for the usual one.
+  effort: effortSchema.nullable(),
   lastEventSeq: z.number().int().nonnegative(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -22,6 +29,17 @@ export type ThreadSummary = z.infer<typeof threadSchema>;
 export const threadListSchema = z.array(threadSchema);
 
 export const textPartSchema = z.object({ type: z.literal("text"), text: z.string() });
+
+// What a model thought before it answered, or the provider's summary of it, and for how long.
+export const reasoningPartSchema = z.object({
+  type: z.literal("reasoning"),
+  text: z.string(),
+  durationMs: z.number().int().nonnegative().optional(),
+});
+
+export const replyPartSchema = z.discriminatedUnion("type", [textPartSchema, reasoningPartSchema]);
+
+export type ReplyPart = z.infer<typeof replyPartSchema>;
 
 // A message starting with this is an aside between people: the agent sees it in later runs, but it
 // never wakes the agent.
@@ -94,7 +112,7 @@ export const eventDataSchemas = {
   "message.completed": z.object({
     messageId: z.string(),
     runId: z.string(),
-    parts: z.array(textPartSchema),
+    parts: z.array(replyPartSchema),
     status: replyStatusSchema,
     usage: usageSchema.optional(),
   }),
@@ -170,11 +188,13 @@ export const anyThreadEventSchema = z.object({
 
 export type AnyThreadEvent = z.infer<typeof anyThreadEventSchema>;
 
-// Pieces of an agent reply in progress: `texts[0]` is its piece number `index`, the rest follow.
+// Pieces of an agent reply in progress: `texts[0]` is its piece number `index`, the rest follow,
+// all of its answer or, with `part`, all of its reasoning.
 export const deltaBatchSchema = z.object({
   messageId: z.string(),
   index: z.number().int().nonnegative(),
   texts: z.array(z.string()),
+  part: z.literal("reasoning").optional(),
 });
 
 export type DeltaBatch = z.infer<typeof deltaBatchSchema>;
@@ -214,6 +234,8 @@ export const newThreadSchema = z.object({
 export const threadUpdateSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
   model: z.string().min(1).optional(),
+  // Null goes back to the usual effort.
+  effort: effortSchema.nullable().optional(),
   // Null moves the thread to the top of its space.
   folderId: z.string().min(1).nullable().optional(),
 });

@@ -1,7 +1,7 @@
 // How each row of a thread's transcript looks. A message is an avatar, who wrote it and when, then
 // its text as markdown, with a copy button on hover; the signed-in person's own rows carry their
 // avatar in the accent colour. An agent reply names the model that wrote it and, on hover, the
-// tokens it used. An
+// tokens it used, and shows what the model thought first, folded away once it answers. An
 // agent reply that was cut short says so, a run that failed says why and what to do about it, the
 // last run that failed or was stopped can be tried again, and an event this client does not know
 // yet gets a labelled placeholder.
@@ -15,6 +15,11 @@ import { type ReactNode, useState } from "react";
 import type { Usage } from "@/shared/threads.ts";
 import type { AgentRow, FailureRow, HumanRow, TranscriptRow } from "@/shared/transcript.ts";
 import { MessageAction, MessageResponse } from "@/web/components/ai-elements/message";
+import {
+  Reasoning,
+  ReasoningContent,
+  ReasoningTrigger,
+} from "@/web/components/ai-elements/reasoning";
 import { CONNECTION_LABELS } from "@/web/components/model-picker";
 import { Time } from "@/web/components/time";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
@@ -171,8 +176,19 @@ function AgentReply({ row }: { row: AgentRow }) {
       }
     >
       <div className="flex flex-col gap-2 text-sm" aria-busy={streaming}>
+        {row.reasoning && (
+          <Reasoning
+            isStreaming={streaming && !row.text}
+            duration={
+              row.thoughtMs === null ? undefined : Math.max(1, Math.ceil(row.thoughtMs / 1000))
+            }
+          >
+            <ReasoningTrigger />
+            <ReasoningContent>{row.reasoning}</ReasoningContent>
+          </Reasoning>
+        )}
         {streaming && !row.text ? (
-          caret
+          !row.reasoning && caret
         ) : (
           <MessageResponse isAnimating={streaming} caret="block">
             {row.text}

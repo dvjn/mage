@@ -9,6 +9,7 @@ import {
   type AnyThreadEvent,
   type Delivery,
   type FailureKind,
+  type ReplyPart,
   type ReplyStatus,
   type RunReason,
   threadEventSchema,
@@ -39,6 +40,9 @@ export interface AgentRow {
   model: string | null;
   startedAt: string;
   text: string;
+  // What the model thought before it answered, and for how long, when it says.
+  reasoning: string;
+  thoughtMs: number | null;
   status: "streaming" | ReplyStatus;
   // The tokens its model step used, once it finished.
   usage: Usage | null;
@@ -104,14 +108,23 @@ export interface Transcript {
   usage: Usage;
 }
 
-function textOf(parts: { text: string }[]) {
-  return parts.map((part) => part.text).join("");
+function textOf(parts: ReplyPart[], type: ReplyPart["type"] = "text") {
+  return parts
+    .filter((part) => part.type === type)
+    .map((part) => part.text)
+    .join("");
 }
 
-// `streaming` holds the text so far of replies still being written, by message id.
+// A reply still being written: its answer and its reasoning so far.
+export interface StreamingReply {
+  text: string;
+  reasoning: string;
+}
+
+// `streaming` holds the replies still being written, by message id.
 export function transcriptOf(
   events: readonly AnyThreadEvent[],
-  streaming: ReadonlyMap<string, string> = new Map(),
+  streaming: ReadonlyMap<string, StreamingReply> = new Map(),
 ): Transcript {
   const rows: TranscriptRow[] = [];
   const pending = new Map<string, PendingMessage>();
@@ -167,7 +180,9 @@ export function transcriptOf(
           runId: event.data.runId,
           model: event.data.model ?? null,
           startedAt: event.createdAt,
-          text: streaming.get(event.data.messageId) ?? "",
+          text: streaming.get(event.data.messageId)?.text ?? "",
+          reasoning: streaming.get(event.data.messageId)?.reasoning ?? "",
+          thoughtMs: null,
           status: "streaming",
           usage: null,
           retried: false,
@@ -180,6 +195,9 @@ export function transcriptOf(
         const reply = replies.get(event.data.messageId);
         if (!reply) break;
         reply.text = textOf(event.data.parts);
+        reply.reasoning = textOf(event.data.parts, "reasoning");
+        reply.thoughtMs =
+          event.data.parts.find((part) => part.type === "reasoning")?.durationMs ?? null;
         reply.status = event.data.status;
         if (event.data.usage) {
           reply.usage = event.data.usage;

@@ -68,6 +68,10 @@ export class Call {
     this.push({ type: "delta", text });
   }
 
+  reason(text: string) {
+    this.push({ type: "reasoning", text });
+  }
+
   endStep(usage = { inputTokens: 3, outputTokens: 2 }) {
     this.push({ type: "step-end", usage });
   }

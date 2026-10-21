@@ -14,6 +14,7 @@ const columns = {
   folderId: thread.folderId,
   title: thread.title,
   model: thread.model,
+  effort: thread.effort,
   createdBy: thread.createdBy,
   parentThreadId: thread.parentThreadId,
   rootThreadId: thread.rootThreadId,

@@ -67,6 +67,55 @@ function reply(text: string[], usage = { input_tokens: 12, output_tokens: 4 }) {
   ];
 }
 
+// A reply that first reasons, with a summary in two parts.
+function reasoned(summaries: string[][], text: string[]) {
+  const [created, ...rest] = reply(text);
+  let sequence = 100;
+  const next = () => (sequence += 1);
+  const item = { type: "reasoning", id: "rs_1", summary: [], encrypted_content: null };
+  return [
+    created!,
+    { type: "response.output_item.added", sequence_number: next(), output_index: 0, item },
+    ...summaries.flatMap((deltas, summary_index) => [
+      {
+        type: "response.reasoning_summary_part.added",
+        sequence_number: next(),
+        item_id: "rs_1",
+        output_index: 0,
+        summary_index,
+        part: { type: "summary_text", text: "" },
+      },
+      ...deltas.map((delta) => ({
+        type: "response.reasoning_summary_text.delta",
+        sequence_number: next(),
+        item_id: "rs_1",
+        output_index: 0,
+        summary_index,
+        delta,
+      })),
+      {
+        type: "response.reasoning_summary_part.done",
+        sequence_number: next(),
+        item_id: "rs_1",
+        output_index: 0,
+        summary_index,
+        part: { type: "summary_text", text: deltas.join("") },
+      },
+    ]),
+    {
+      type: "response.output_item.done",
+      sequence_number: next(),
+      output_index: 0,
+      item: {
+        ...item,
+        encrypted_content: "secret",
+        summary: summaries.map((deltas) => ({ type: "summary_text", text: deltas.join("") })),
+      },
+    },
+    ...rest,
+  ];
+}
+
 function recordingFetch(responses: Response[]) {
   const requests: { url: string; headers: Headers; body: Record<string, unknown> }[] = [];
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -152,6 +201,47 @@ describe("Codex gateway", () => {
       { type: "delta", text: " cards." },
       { type: "step-end", usage: { inputTokens: 12, outputTokens: 4 } },
     ]);
+  });
+
+  it("asks a model that can think for the effort and a summary of its reasoning, and streams it", async () => {
+    const { fetchFn, requests } = recordingFetch([
+      sse(
+        reasoned(
+          [
+            ["Gears", " turn."],
+            ["Cards", " punch."],
+          ],
+          ["Both."],
+        ),
+      ),
+    ]);
+
+    const events = await collect(
+      createCodexGateway(fetchFn).stream(
+        token,
+        { ...request, effort: "high" },
+        new AbortController().signal,
+      ),
+    );
+
+    expect(requests[0]?.body).toMatchObject({ reasoning: { effort: "high", summary: "auto" } });
+    expect(events).toEqual([
+      { type: "step-start" },
+      { type: "reasoning", text: "Gears" },
+      { type: "reasoning", text: " turn." },
+      { type: "reasoning", text: "\n\nCards" },
+      { type: "reasoning", text: " punch." },
+      { type: "delta", text: "Both." },
+      { type: "step-end", usage: { inputTokens: 12, outputTokens: 4 } },
+    ]);
+  });
+
+  it("asks a model without an effort for no reasoning", async () => {
+    const { fetchFn, requests } = recordingFetch([sse(reply(["Hi"]))]);
+
+    await collect(createCodexGateway(fetchFn).stream(token, request, new AbortController().signal));
+
+    expect(requests[0]?.body).not.toHaveProperty("reasoning");
   });
 
   it("throws what the backend says when it refuses the request", async () => {

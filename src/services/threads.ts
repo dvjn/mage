@@ -19,6 +19,7 @@ import type { SpaceAction, Spaces } from "@/services/spaces.ts";
 import { type Append, eventSummary, type ThreadLog } from "@/services/thread-log.ts";
 import {
   type Delivery,
+  type Effort,
   QUIET_PREFIX,
   type ThreadFeedItem,
   type ThreadSearchResult,
@@ -59,6 +60,7 @@ export function threadSummary(thread: Thread): ThreadSummary {
     folderId: thread.folderId,
     title: thread.title ?? UNTITLED,
     model: thread.model,
+    effort: thread.effort,
     lastEventSeq: thread.lastEventSeq,
     createdAt: thread.createdAt.toISOString(),
     updatedAt: thread.updatedAt.toISOString(),
@@ -186,7 +188,12 @@ export function createThreads(options: ThreadsOptions) {
     async update(
       principal: Principal,
       id: string,
-      changes: { title?: string; model?: string; folderId?: string | null },
+      changes: {
+        title?: string;
+        model?: string;
+        effort?: Effort | null;
+        folderId?: string | null;
+      },
     ) {
       visible(principal, id, "message");
       if (changes.model) await models.requireModel(principal.orgId, changes.model);
@@ -297,7 +304,7 @@ export function createThreads(options: ThreadsOptions) {
         pieces.set(messageId, index + texts.length);
         deliver({
           kind: "delta",
-          delta: { messageId, index: index + sent, texts: texts.slice(sent) },
+          delta: { ...item.delta, index: index + sent, texts: texts.slice(sent) },
         });
       }
       const unsubscribe = bus.subscribe(id, (item) => {

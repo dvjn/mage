@@ -46,6 +46,34 @@ function reply(text: string[], usage = { input_tokens: 12, output_tokens: 4 }) {
   ];
 }
 
+// A reply that thinks first.
+function thought(thinking: string[], text: string[]) {
+  const [start, , , ...rest] = reply([]);
+  return [
+    start!,
+    {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "thinking", thinking: "", signature: "" },
+    },
+    ...thinking.map((delta) => ({
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "thinking_delta", thinking: delta },
+    })),
+    { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig" } },
+    { type: "content_block_stop", index: 0 },
+    { type: "content_block_start", index: 1, content_block: { type: "text", text: "" } },
+    ...text.map((delta) => ({
+      type: "content_block_delta",
+      index: 1,
+      delta: { type: "text_delta", text: delta },
+    })),
+    { type: "content_block_stop", index: 1 },
+    ...rest,
+  ];
+}
+
 function recordingFetch(responses: Response[]) {
   const requests: { url: string; headers: Headers; body: Record<string, unknown> }[] = [];
   const fetchFn = (async (input: string | URL | Request, init?: RequestInit) => {
@@ -138,6 +166,42 @@ describe("Claude gateway", () => {
       { type: "delta", text: " cards." },
       { type: "step-end", usage: { inputTokens: 12, outputTokens: 4 } },
     ]);
+  });
+
+  it("asks a model to think at the effort, and streams its thinking", async () => {
+    const { fetchFn, requests } = recordingFetch([sse(thought(["Gears", " turn."], ["Gears."]))]);
+
+    const events = await collect(
+      createClaudeGateway(fetchFn).stream(
+        token,
+        { ...request, model: "claude-opus-5-5", effort: "low" },
+        new AbortController().signal,
+      ),
+    );
+
+    expect(requests[0]?.body).toMatchObject({
+      thinking: { type: "adaptive" },
+      output_config: { effort: "low" },
+    });
+    expect(events).toEqual([
+      { type: "step-start" },
+      { type: "reasoning", text: "Gears" },
+      { type: "reasoning", text: " turn." },
+      { type: "delta", text: "Gears." },
+      { type: "step-end", usage: { inputTokens: 12, outputTokens: 4 } },
+    ]);
+  });
+
+  it("gives an older model a thinking budget, and a model without an effort no thinking", async () => {
+    const { fetchFn, requests } = recordingFetch([sse(reply(["Hi"])), sse(reply(["Hi"]))]);
+    const gateway = createClaudeGateway(fetchFn);
+    const signal = new AbortController().signal;
+
+    await collect(gateway.stream(token, { ...request, effort: "medium" }, signal));
+    await collect(gateway.stream(token, request, signal));
+
+    expect(requests[0]?.body.thinking).toMatchObject({ type: "enabled" });
+    expect(requests[1]?.body).not.toHaveProperty("thinking");
   });
 
   it("throws what the API says when it refuses the request", async () => {
