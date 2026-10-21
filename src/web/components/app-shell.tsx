@@ -37,7 +37,7 @@ export function AppShell() {
   );
 }
 
-export const pageWidth = "mx-auto w-full max-w-2xl";
+export const pageWidth = "mx-auto w-full max-w-3xl";
 
 export interface Crumb {
   label: string;

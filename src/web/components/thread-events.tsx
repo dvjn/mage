@@ -56,7 +56,12 @@ function TranscriptRowFrame({
         <div className="flex items-baseline gap-2">
           <span className="text-sm font-medium">{author}</span>
           <Time iso={at} className="text-xs text-muted-foreground" />
-          {note}
+          {/* Each note after the time reads as its own item. */}
+          {note && (
+            <span className="flex items-baseline gap-2 text-xs text-muted-foreground *:before:mr-2 *:before:content-['·']">
+              {note}
+            </span>
+          )}
           {actions && (
             <div className="-my-1 ml-auto flex items-center gap-2 self-center text-xs text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100">
               {actions}
@@ -120,7 +125,7 @@ function HumanMessage({ row }: { row: HumanRow }) {
       author={author}
       at={row.postedAt}
       label={`Message from ${author}`}
-      note={row.quiet && <span className="text-xs text-muted-foreground">aside</span>}
+      note={row.quiet && <span>aside</span>}
       actions={<CopyMessage text={row.text} />}
     >
       <div className={cn("flex flex-col gap-2 text-sm", row.quiet && "text-muted-foreground")}>
@@ -163,18 +168,12 @@ function AgentReply({ row }: { row: AgentRow }) {
       label="Message from Agent"
       note={
         <>
-          {model && <span className="text-xs text-muted-foreground">{model}</span>}
-          {ending && <span className="text-xs text-muted-foreground">{ending}</span>}
+          {model && <span>{model}</span>}
+          {row.usage && <TokenCount usage={row.usage} />}
+          {ending && <span>{ending}</span>}
         </>
       }
-      actions={
-        !streaming && (
-          <>
-            <CopyMessage text={row.text} />
-            {row.usage && <TokenCount usage={row.usage} />}
-          </>
-        )
-      }
+      actions={!streaming && <CopyMessage text={row.text} />}
     >
       <div className="flex flex-col gap-2 text-sm" aria-busy={streaming}>
         {row.reasoning && (

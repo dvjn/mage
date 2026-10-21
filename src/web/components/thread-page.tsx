@@ -52,9 +52,9 @@ import { mergeEvents, useThreadEvents } from "@/web/lib/thread-events";
 const threadRoute = getRouteApi("/_app/t/$threadId");
 
 const EFFORT_LABELS: Record<Effort, string> = {
-  low: "Low effort",
-  medium: "Medium effort",
-  high: "High effort",
+  low: "Low",
+  medium: "Medium",
+  high: "High",
 };
 
 export function ThreadPage() {
