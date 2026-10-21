@@ -1,12 +1,15 @@
 // Signs in to a Claude account with Claude Code's OAuth client: a browser authorization that ends
 // on a page showing a code the user pastes back, and token refresh. Lists the models the account
-// can use from the Anthropic API.
+// can use from the Anthropic API, and streams replies from it with the AI SDK's Anthropic provider.
 
 import { createHash, randomBytes } from "node:crypto";
 
+import { createAnthropic } from "@ai-sdk/anthropic";
 import * as z from "zod";
 
+import { streamReply } from "@/adapters/ai-sdk-stream.ts";
 import type { Catalog } from "@/ports/catalog.ts";
+import type { ModelGateway } from "@/ports/model-gateway.ts";
 import type { BrowserOAuth, OAuthTokens } from "@/ports/oauth.ts";
 
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -17,7 +20,8 @@ const REDIRECT_URI = "https://platform.claude.com/oauth/code/callback";
 const SCOPES =
   "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 
-const MODELS_URL = "https://api.anthropic.com/v1/models";
+const API_URL = "https://api.anthropic.com/v1";
+const MODELS_URL = `${API_URL}/models`;
 // Marks the request as using an OAuth token and names Mage as the client.
 const OAUTH_HEADERS = {
   "anthropic-version": "2023-06-01",
@@ -140,6 +144,26 @@ export function createClaudeCatalog(fetchFn: typeof fetch = fetch): Catalog {
         ...(model.max_input_tokens && { contextWindow: model.max_input_tokens }),
         ...(model.capabilities?.thinking && { reasoning: model.capabilities.thinking.supported }),
       }));
+    },
+  };
+}
+
+// Replies through the Anthropic Messages API with the account's OAuth token as a bearer token, the
+// instructions as the system prompt.
+export function createClaudeGateway(fetchFn: typeof fetch = fetch): ModelGateway {
+  return {
+    async *stream(token, request, signal) {
+      // Without a token the provider falls back to an API key from the environment.
+      if (!token.access) throw new Error("the connection has no access token");
+      const provider = createAnthropic({
+        baseURL: API_URL,
+        authToken: token.access,
+        headers: OAUTH_HEADERS,
+        fetch: fetchFn,
+      });
+      yield* streamReply(provider.messages(request.model), request, signal, {
+        system: request.instructions,
+      });
     },
   };
 }

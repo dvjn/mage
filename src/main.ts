@@ -2,7 +2,11 @@
 
 import { serve } from "@hono/node-server";
 
-import { createClaudeCatalog, createClaudeOAuth } from "@/adapters/anthropic-claude.ts";
+import {
+  createClaudeCatalog,
+  createClaudeGateway,
+  createClaudeOAuth,
+} from "@/adapters/anthropic-claude.ts";
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { createCipher } from "@/adapters/cipher.ts";
 import { createConnectionStore } from "@/adapters/connections.ts";
@@ -66,7 +70,7 @@ const models = createModels({
   tokens: connections,
   catalogs: { codex: createCodexCatalog(fetch), claude: createClaudeCatalog(fetch) },
   settings: createOrgSettingStore(db),
-  gateways: { codex: createCodexGateway(fetch) },
+  gateways: { codex: createCodexGateway(fetch), claude: createClaudeGateway(fetch) },
   logger,
 });
 const threadStore = createThreadStore(db);

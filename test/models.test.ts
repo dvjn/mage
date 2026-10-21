@@ -95,14 +95,16 @@ function setup() {
   // Replaces the provider's answer when set.
   const replies: { codex: Reply | null; claude: Reply | null } = { codex: null, claude: null };
   const refreshes: string[] = [];
-  // What the Codex gateway was asked to stream.
-  const streamed: { token: ModelToken; request: ModelRequest }[] = [];
-  const codexGateway: ModelGateway = {
-    async *stream(token, request) {
-      streamed.push({ token, request });
-      yield* [{ type: "step-start" as const }, { type: "delta" as const, text: "Hi" }];
-    },
-  };
+  // What each gateway was asked to stream.
+  const streamed: { kind: string; token: ModelToken; request: ModelRequest }[] = [];
+  function recordingGateway(kind: string): ModelGateway {
+    return {
+      async *stream(token, request) {
+        streamed.push({ kind, token, request });
+        yield* [{ type: "step-start" as const }, { type: "delta" as const, text: "Hi" }];
+      },
+    };
+  }
 
   const fakeFetch = (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
@@ -156,7 +158,7 @@ function setup() {
       claude: createClaudeCatalog(fakeFetch as typeof fetch),
     },
     settings: createOrgSettingStore(db),
-    gateways: { codex: codexGateway },
+    gateways: { codex: recordingGateway("codex"), claude: recordingGateway("claude") },
     logger,
     now: () => clock.now,
   });
@@ -520,22 +522,36 @@ describe("opening a model", () => {
     expect(refreshes).toEqual(["codex-refresh"]);
     expect(streamed).toEqual([
       {
+        kind: "codex",
         token: { access: "codex-renewed", accountId: "acct-123" },
         request: { ...request, model: "gpt-big" },
       },
     ]);
   });
 
-  it("says what is missing when the ref cannot reply", async () => {
-    const { models, signUp, connect } = setup();
+  it("streams Claude models through the org's Claude connection", async () => {
+    const { models, streamed, ready } = setup();
+    const owner = await ready();
+
+    const model = await models.open(owner.orgId, "claude/claude-big");
+    const events = await collect(model.stream(request, new AbortController().signal));
+
+    expect(events).toEqual([{ type: "step-start" }, { type: "delta", text: "Hi" }]);
+    expect(streamed).toEqual([
+      {
+        kind: "claude",
+        token: { access: "claude-access", accountId: null },
+        request: { ...request, model: "claude-big" },
+      },
+    ]);
+  });
+
+  it("says what is missing when the ref cannot be opened", async () => {
+    const { models, signUp } = setup();
     const owner = await signUp("Ada Lovelace", "ada@example.com");
 
     await expect(models.open(owner.orgId, "codex/gpt-big")).rejects.toThrow(
       "codex/gpt-big needs a Codex connection. Connect one in Settings.",
-    );
-    connect(owner, "claude");
-    await expect(models.open(owner.orgId, "claude/claude-big")).rejects.toThrow(
-      "Claude models cannot reply yet.",
     );
     await expect(models.open(owner.orgId, "gpt-big")).rejects.toThrow("not a model ref");
   });

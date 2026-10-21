@@ -6,12 +6,12 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import { createOpenAI } from "@ai-sdk/openai";
-import { isStepCount, type ModelMessage as SdkMessage, streamText } from "ai";
 import { decodeJwt } from "jose";
 import * as z from "zod";
 
+import { streamReply } from "@/adapters/ai-sdk-stream.ts";
 import type { Catalog } from "@/ports/catalog.ts";
-import type { ModelGateway, ModelMessage } from "@/ports/model-gateway.ts";
+import type { ModelGateway } from "@/ports/model-gateway.ts";
 import type { BrowserOAuth, DeviceOAuth, OAuthTokens } from "@/ports/oauth.ts";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -253,18 +253,6 @@ export function createCodexCatalog(fetchFn: typeof fetch = fetch): Catalog {
   };
 }
 
-function sdkMessages(messages: ModelMessage[]): SdkMessage[] {
-  return messages.map((message) =>
-    message.role === "user"
-      ? { role: "user", content: message.text }
-      : { role: "assistant", content: [{ type: "text", text: message.text }] },
-  );
-}
-
-function errorText(error: unknown) {
-  return error instanceof Error ? error.message : typeof error === "string" ? error : "unknown";
-}
-
 // Replies through the Codex backend's Responses endpoint. It keeps nothing between requests
 // (`store: false`), so every request carries the whole conversation, the instructions as their own
 // field rather than a system message, and the encrypted reasoning back; it takes no output token
@@ -285,9 +273,7 @@ export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway 
         },
         fetch: fetchFn,
       });
-      const result = streamText({
-        model: provider.responses(request.model),
-        messages: sdkMessages(request.messages),
+      yield* streamReply(provider.responses(request.model), request, signal, {
         providerOptions: {
           openai: {
             store: false,
@@ -296,40 +282,7 @@ export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway 
             promptCacheKey: request.sessionId,
           },
         },
-        stopWhen: isStepCount(request.maxSteps),
-        // Messages taken in at a step boundary join the conversation before the next step.
-        prepareStep: ({ stepNumber, messages }) => {
-          if (stepNumber === 0 || !request.beforeStep) return undefined;
-          const added = request.beforeStep();
-          return added.length > 0 ? { messages: [...messages, ...sdkMessages(added)] } : undefined;
-        },
-        abortSignal: signal,
-        // Failures arrive as stream parts and are thrown below.
-        onError: () => {},
       });
-      for await (const part of result.stream) {
-        switch (part.type) {
-          case "start-step":
-            yield { type: "step-start" };
-            break;
-          case "text-delta":
-            if (part.text) yield { type: "delta", text: part.text };
-            break;
-          case "finish-step":
-            yield {
-              type: "step-end",
-              usage: {
-                inputTokens: part.usage.inputTokens ?? 0,
-                outputTokens: part.usage.outputTokens ?? 0,
-              },
-            };
-            break;
-          case "error":
-            throw new Error(errorText(part.error), { cause: part.error });
-          case "abort":
-            throw signal.reason ?? new Error("aborted");
-        }
-      }
     },
   };
 }

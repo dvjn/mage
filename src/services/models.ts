@@ -29,7 +29,7 @@ export interface ModelsOptions {
   catalogs: Record<AccountKind, Catalog>;
   settings: OrgSettingStore;
   // Streams replies for the connections of each kind that can reply.
-  gateways: Partial<Record<AccountKind, ModelGateway>>;
+  gateways: Record<AccountKind, ModelGateway>;
   logger: Logger;
   now?: () => Date;
 }
@@ -122,7 +122,7 @@ export function createModels(options: ModelsOptions) {
     requireModel,
 
     // The model a ref names, through the org's connection of its kind. Throws with a message for
-    // people when the org has no such connection or its models cannot reply.
+    // people when the org has no such connection.
     open(orgId: string, ref: string): Promise<OpenModel> {
       const slash = ref.indexOf("/");
       const kind = ref.slice(0, slash);
@@ -140,9 +140,6 @@ export function createModels(options: ModelsOptions) {
         );
       }
       const gateway = gateways[kind];
-      if (!gateway) {
-        return Promise.reject(new ServiceError(400, `${LABELS[kind]} models cannot reply yet.`));
-      }
       return Promise.resolve({
         stream: (request, signal) =>
           streamFrom(gateway, orgId, connection.id, { ...request, model }, signal),
