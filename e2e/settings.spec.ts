@@ -80,6 +80,65 @@ test("settings offers the Claude sign-in with its billing note", async ({ page, 
   await expect(page.getByRole("alert")).toContainText("different sign-in");
 });
 
+test("a connection's proxy is set under Advanced, its header values never shown", async ({
+  page,
+}) => {
+  // Stands in for a connected Claude account, which needs a real sign-in.
+  const connection = {
+    id: "c1",
+    provider: "anthropic",
+    authKind: "claude",
+    account: "ada@claude.example",
+    createdAt: "2026-10-21T00:00:00.000Z",
+  };
+  let proxy: { baseUrl: string | null; headerNames: string[] } | null = null;
+  const sent: unknown[] = [];
+  await page.route("**/api/v1/connections", (route) =>
+    route.fulfill({ json: [{ ...connection, proxy }] }),
+  );
+  await page.route("**/api/v1/connections/c1/proxy", async (route) => {
+    const body = route.request().postDataJSON() as {
+      baseUrl: string | null;
+      headers: Record<string, string | null>;
+    };
+    sent.push(body);
+    proxy =
+      body.baseUrl || Object.keys(body.headers).length > 0
+        ? { baseUrl: body.baseUrl, headerNames: Object.keys(body.headers) }
+        : null;
+    await route.fulfill({ json: { ...connection, proxy } });
+  });
+
+  await signUpToSettings(page);
+  await expect(page.getByText("Connected as ada@claude.example")).toBeVisible();
+  await expect(page.getByLabel("Base URL")).toBeHidden();
+  await page.getByRole("button", { name: "Advanced" }).click();
+  await expect(page.getByLabel("Base URL")).toHaveAttribute(
+    "placeholder",
+    "https://api.anthropic.com/v1",
+  );
+
+  await page.getByLabel("Base URL").fill("https://proxy.example.com/v1");
+  await page.getByRole("button", { name: "Add header" }).click();
+  await page.getByLabel("Header name").fill("X-Team");
+  await page.getByLabel("Value of X-Team").fill("blue");
+  await page.getByRole("button", { name: "Save" }).click();
+
+  await expect(page.getByText("Proxy on")).toBeVisible();
+  await expect(page.getByLabel("Value of x-team")).toHaveValue("");
+  await expect(page.getByLabel("Value of x-team")).toHaveAttribute("placeholder", "••••");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect.poll(() => sent.length).toBe(2);
+
+  await page.getByRole("button", { name: "Clear" }).click();
+  await expect(page.getByText("Proxy on")).toBeHidden();
+  expect(sent).toEqual([
+    { baseUrl: "https://proxy.example.com/v1", headers: { "X-Team": "blue" } },
+    { baseUrl: "https://proxy.example.com/v1", headers: { "x-team": null } },
+    { baseUrl: null, headers: {} },
+  ]);
+});
+
 test("settings needs a session", async ({ page }) => {
   await page.goto("/settings");
   await expect(page).toHaveURL("/login");

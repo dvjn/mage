@@ -120,8 +120,11 @@ function setup() {
     const provider = request.url.startsWith(claudeUrl) ? "claude" : "codex";
     const reply = replies[provider];
     if (reply) return Promise.resolve(Response.json(reply.body ?? {}, reply));
-    if (request.url === codexUrl) return Promise.resolve(Response.json(codexModels));
-    if (request.url === `${claudeUrl}?limit=1000`) {
+    // At the provider's API or a proxy's.
+    if (request.url.endsWith("/models?client_version=0.163.0")) {
+      return Promise.resolve(Response.json(codexModels));
+    }
+    if (request.url.endsWith("/models?limit=1000")) {
       return Promise.resolve(Response.json(claudeModels));
     }
     return Promise.resolve(new Response(null, { status: 404 }));
@@ -235,6 +238,7 @@ function setup() {
   return {
     db,
     clock,
+    connections,
     requests,
     replies,
     refreshes,
@@ -580,7 +584,7 @@ describe("opening a model", () => {
     expect(streamed).toEqual([
       {
         kind: "codex",
-        token: { access: "codex-renewed", accountId: "acct-123" },
+        token: { access: "codex-renewed", accountId: "acct-123", proxy: null },
         request: { ...request, model: "gpt-big", effort: "medium" },
       },
     ]);
@@ -597,7 +601,7 @@ describe("opening a model", () => {
     expect(streamed).toEqual([
       {
         kind: "claude",
-        token: { access: "claude-access", accountId: null },
+        token: { access: "claude-access", accountId: null, proxy: null },
         request: { ...request, model: "claude-big", effort: "medium" },
       },
     ]);
@@ -656,5 +660,151 @@ describe("opening a model", () => {
       }),
     );
     await expect(models.open(owner.orgId, "gpt-big")).rejects.toThrow("not a model ref");
+  });
+});
+
+describe("proxies", () => {
+  const proxyUrl = "https://proxy.example.com/anthropic/v1";
+
+  function setProxy(
+    api: ReturnType<typeof setup>["api"],
+    cookie: string,
+    id: string,
+    body: { baseUrl: string | null; headers: Record<string, string | null> },
+  ) {
+    return api("PATCH", `/connections/${id}/proxy`, cookie, body);
+  }
+
+  it("send a connection's lists and replies to the proxy, with its headers over ours", async () => {
+    const { api, models, requests, streamed, ready } = setup();
+    const { cookie, orgId, claudeId } = await ready();
+
+    const res = await setProxy(api, cookie, claudeId, {
+      baseUrl: `${proxyUrl}/`,
+      headers: { "X-Team": "blue", "User-Agent": "corp" },
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      id: claudeId,
+      proxy: { baseUrl: proxyUrl, headerNames: ["x-team", "user-agent"] },
+    });
+
+    await models.resolveModels(orgId);
+    const listed = requests.find((request) => request.url.startsWith(proxyUrl));
+    expect(listed?.url).toBe(`${proxyUrl}/models?limit=1000`);
+    expect(Object.fromEntries(listed!.headers)).toMatchObject({
+      authorization: "Bearer claude-access",
+      "anthropic-beta": "oauth-2025-04-20",
+      "x-team": "blue",
+      "user-agent": "corp",
+    });
+    expect(requests.some((request) => request.url.startsWith(claudeUrl))).toBe(false);
+
+    const model = await models.open(orgId, "claude/claude-big");
+    for await (const _ of model.stream(
+      { instructions: "", messages: [], maxSteps: 1, sessionId: "t" },
+      new AbortController().signal,
+    ));
+    expect(streamed.at(-1)?.token.proxy).toEqual({
+      baseUrl: proxyUrl,
+      headers: { "x-team": "blue", "user-agent": "corp" },
+    });
+  });
+
+  it("refuse headers Mage sets, other addresses than http(s), and headers without values", async () => {
+    const { api, ready } = setup();
+    const { cookie, codexId } = await ready();
+
+    for (const name of [
+      "Authorization",
+      "ChatGPT-Account-ID",
+      "anthropic-version",
+      "Anthropic-Beta",
+      "content-type",
+      "Host",
+    ]) {
+      const res = await setProxy(api, cookie, codexId, { baseUrl: null, headers: { [name]: "x" } });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: `Mage sets ${name.toLowerCase()} itself` });
+    }
+    for (const baseUrl of ["ftp://proxy.example.com", "not a url"]) {
+      expect((await setProxy(api, cookie, codexId, { baseUrl, headers: {} })).status).toBe(400);
+    }
+    const unknown = await setProxy(api, cookie, codexId, {
+      baseUrl: null,
+      headers: { "x-new": null },
+    });
+    expect(unknown.status).toBe(400);
+    const split = await setProxy(api, cookie, codexId, {
+      baseUrl: null,
+      headers: { "x-two": "a\r\nb" },
+    });
+    expect(split.status).toBe(400);
+  });
+
+  it("never show header values, keep a value given as null, and keep them sealed", async () => {
+    const { db, api, connections, ready } = setup();
+    const { cookie, orgId, userId, codexId } = await ready();
+
+    await setProxy(api, cookie, codexId, { baseUrl: null, headers: { "X-Secret": "s3cret" } });
+    const listed = await (await api("GET", "/connections", cookie)).text();
+    expect(listed).not.toContain("s3cret");
+    expect(JSON.parse(listed)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: codexId,
+          proxy: { baseUrl: null, headerNames: ["x-secret"] },
+        }),
+        expect.objectContaining({ proxy: null }),
+      ]),
+    );
+    const sealed = db.select().from(schema.credential).all();
+    expect(sealed.some((row) => Buffer.from(row.sealed).includes("s3cret"))).toBe(false);
+
+    await setProxy(api, cookie, codexId, {
+      baseUrl: null,
+      headers: { "x-secret": null, "x-other": "o" },
+    });
+    expect(connections.proxyOf({ orgId, userId }, codexId)).toEqual({
+      baseUrl: null,
+      headerNames: ["x-secret", "x-other"],
+    });
+    const token = await connections.withFreshToken(orgId, codexId, async (t) => t);
+    expect(token.proxy).toEqual({
+      baseUrl: null,
+      headers: { "x-secret": "s3cret", "x-other": "o" },
+    });
+  });
+
+  it("survive a token refresh", async () => {
+    const { api, clock, connections, refreshes, ready } = setup();
+    const { cookie, orgId, claudeId } = await ready();
+    await setProxy(api, cookie, claudeId, { baseUrl: proxyUrl, headers: { "x-team": "blue" } });
+
+    clock.now = new Date(clock.now.getTime() + 2 * 60 * 60 * 1000);
+    const token = await connections.withFreshToken(orgId, claudeId, async (t) => t);
+
+    expect(refreshes).toEqual(["claude-refresh"]);
+    expect(token).toEqual({
+      access: "claude-renewed",
+      accountId: null,
+      proxy: { baseUrl: proxyUrl, headers: { "x-team": "blue" } },
+    });
+  });
+
+  it("forget the cached list when changed, and go back to the provider when cleared", async () => {
+    const { api, models, requests, ready } = setup();
+    const { cookie, orgId, claudeId } = await ready();
+    await models.resolveModels(orgId);
+    const urls = () => requests.map((request) => request.url.split("?")[0]);
+
+    await setProxy(api, cookie, claudeId, { baseUrl: proxyUrl, headers: {} });
+    await models.resolveModels(orgId);
+    expect(urls().at(-1)).toBe(`${proxyUrl}/models`);
+
+    const cleared = await setProxy(api, cookie, claudeId, { baseUrl: null, headers: {} });
+    expect(await cleared.json()).toMatchObject({ proxy: null });
+    await models.resolveModels(orgId);
+    expect(urls().at(-1)).toBe(claudeUrl);
   });
 });

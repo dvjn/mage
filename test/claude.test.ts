@@ -212,6 +212,7 @@ describe("Claude sign-in", () => {
       provider: "anthropic",
       authKind: "claude",
       account: "ada@claude.example",
+      proxy: null,
       createdAt: expect.any(String),
     });
     expect(requests).toEqual([
@@ -353,6 +354,7 @@ describe("fresh Claude tokens", () => {
     expect(await connections.withFreshToken(orgId, id, async (t) => t)).toEqual({
       access: "secret-access-1",
       accountId: "acct-uuid",
+      proxy: null,
     });
     expect(requests).toEqual([]);
   });

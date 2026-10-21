@@ -294,6 +294,7 @@ describe("browser sign-in", () => {
       provider: "openai",
       authKind: "codex",
       account: "ada@chatgpt.example",
+      proxy: null,
       createdAt: expect.any(String),
     });
     expect(requests).toEqual([
@@ -471,6 +472,7 @@ describe("device code sign-in", () => {
         provider: "openai",
         authKind: "codex",
         account: "ada@chatgpt.example",
+        proxy: null,
         createdAt: expect.any(String),
       },
     });
@@ -591,7 +593,7 @@ describe("fresh tokens", () => {
 
     const token = await connections.withFreshToken(orgId, id, async (t) => t);
 
-    expect(token).toEqual({ access: accessToken(1), accountId: "acct-123" });
+    expect(token).toEqual({ access: accessToken(1), accountId: "acct-123", proxy: null });
     expect(requests).toEqual([]);
   });
 
@@ -601,7 +603,7 @@ describe("fresh tokens", () => {
 
     const token = await connections.withFreshToken(orgId, id, async (t) => t);
 
-    expect(token).toEqual({ access: accessToken(2), accountId: "acct-123" });
+    expect(token).toEqual({ access: accessToken(2), accountId: "acct-123", proxy: null });
     expect(requests).toEqual([
       {
         url: tokenUrl,
@@ -684,6 +686,7 @@ describe("/api/v1/connections", () => {
         provider: "openai",
         authKind: "codex",
         account: "ada@chatgpt.example",
+        proxy: null,
         createdAt: expect.any(String),
       },
     ]);

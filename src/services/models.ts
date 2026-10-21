@@ -143,6 +143,11 @@ export function createModels(options: ModelsOptions) {
     resolveModels,
     requireModel,
 
+    // Forgets the connection's list, as when where its requests go changed.
+    invalidate(connectionId: string) {
+      cache.delete(connectionId);
+    },
+
     // The model a ref names, through the org's connection of its kind. Rejects with a model error
     // when the ref names no model or the org has no such connection. A model its live list says
     // can think is asked for the effort requested, or medium; others are asked for none.

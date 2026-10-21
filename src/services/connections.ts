@@ -1,6 +1,7 @@
 // An org's connections: made by signing in to a provider account the way the provider's own
 // coding app does, with a device code or a browser authorization whose result the user pastes
-// back, and kept usable by renewing their tokens.
+// back, kept usable by renewing their tokens, and optionally sending their provider API requests
+// through a proxy, kept sealed with the tokens.
 
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -10,8 +11,10 @@ import * as z from "zod";
 import type { Connection, ConnectionStore } from "@/ports/connections.ts";
 import type { CredentialStore } from "@/ports/credentials.ts";
 import type { Logger } from "@/ports/logger.ts";
+import type { ProviderProxy } from "@/ports/model-gateway.ts";
 import type { BrowserOAuth, DeviceCode, DeviceOAuth, OAuthTokens } from "@/ports/oauth.ts";
 import type { SignInAttemptStore } from "@/ports/sign-in-attempts.ts";
+import type { ProxyInput, ProxySummary } from "@/shared/connections.ts";
 
 export type AccountKind = Connection["authKind"];
 
@@ -59,6 +62,7 @@ export type AttemptStatus =
 export interface FreshToken {
   access: string;
   accountId: string | null;
+  proxy: ProviderProxy | null;
 }
 
 const BROWSER_TTL_MS = 10 * 60 * 1000;
@@ -77,6 +81,9 @@ const credentialSchema = z.object({
   accountId: z.string().optional(),
   email: z.string().optional(),
   plan: z.string().optional(),
+  proxy: z
+    .object({ baseUrl: z.string().nullable(), headers: z.record(z.string(), z.string()) })
+    .optional(),
 });
 
 type AccountCredential = z.infer<typeof credentialSchema>;
@@ -128,7 +135,7 @@ export function createConnections(options: ConnectionsOptions) {
     }
   }
 
-  // Keeps what earlier tokens told about the account when new ones leave it out.
+  // Keeps what earlier tokens told about the account when new ones leave it out, and the proxy.
   function credentialOf(tokens: OAuthTokens, previous?: AccountCredential): AccountCredential {
     return {
       access: tokens.access,
@@ -137,7 +144,14 @@ export function createConnections(options: ConnectionsOptions) {
       accountId: tokens.accountId ?? previous?.accountId,
       email: tokens.email ?? previous?.email,
       plan: tokens.plan ?? previous?.plan,
+      ...(previous?.proxy && { proxy: previous.proxy }),
     };
+  }
+
+  function savedCredential(connectionId: string) {
+    const saved = credentials.get(connectionId);
+    if (!saved) throw new ConnectionError(404, "Connection not found");
+    return credentialSchema.parse(saved);
   }
 
   function save(kind: AccountKind, owner: Owner, tokens: OAuthTokens): Connection {
@@ -216,9 +230,8 @@ export function createConnections(options: ConnectionsOptions) {
         `${providers[kind].label} sign-in could not be renewed. Connect again.`,
       );
     }
-    const next = credentialOf(tokens, saved);
-    // Disconnected while renewing.
-    if (!credentials.get(connectionId)) throw new ConnectionError(404, "Connection not found");
+    // Read again, for a proxy changed while renewing; gone when disconnected meanwhile.
+    const next = credentialOf(tokens, savedCredential(connectionId));
     credentials.put(connectionId, next);
     return next;
   }
@@ -361,7 +374,37 @@ export function createConnections(options: ConnectionsOptions) {
         refreshing.set(connectionId, pending);
       }
       const credential = await pending;
-      return use({ access: credential.access, accountId: credential.accountId ?? null });
+      return use({
+        access: credential.access,
+        accountId: credential.accountId ?? null,
+        proxy: credential.proxy ?? null,
+      });
+    },
+
+    // The connection's proxy without its header values, or null when it has none.
+    proxyOf(owner: Owner, id: string): ProxySummary | null {
+      if (!connections.find(owner.orgId, id))
+        throw new ConnectionError(404, "Connection not found");
+      const saved = credentials.get(id);
+      const proxy = saved && credentialSchema.parse(saved).proxy;
+      return proxy ? { baseUrl: proxy.baseUrl, headerNames: Object.keys(proxy.headers) } : null;
+    },
+
+    // Sets where the connection's provider API requests go and the headers they add. A null header
+    // value keeps the stored one; a proxy with no base URL and no headers is removed.
+    setProxy(owner: Owner, id: string, input: ProxyInput) {
+      if (!connections.find(owner.orgId, id))
+        throw new ConnectionError(404, "Connection not found");
+      const saved = savedCredential(id);
+      const headers: Record<string, string> = {};
+      for (const [name, value] of Object.entries(input.headers)) {
+        const kept = value ?? saved.proxy?.headers[name];
+        if (kept === undefined) throw new ConnectionError(400, `Give a value for ${name}`);
+        headers[name] = kept;
+      }
+      const { proxy: _proxy, ...rest } = saved;
+      const empty = !input.baseUrl && Object.keys(headers).length === 0;
+      credentials.put(id, empty ? rest : { ...rest, proxy: { baseUrl: input.baseUrl, headers } });
     },
   };
 }

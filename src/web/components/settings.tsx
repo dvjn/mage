@@ -1,11 +1,12 @@
 // Settings: the org's default model and the model that names threads, picked from what its
 // connections unlock; connecting the
 // signed-in user's ChatGPT account through the Codex sign-in, with a device code or in the
-// browser, and their Claude account through the Claude sign-in; and disconnecting them.
+// browser, and their Claude account through the Claude sign-in; sending a connection's requests
+// through a proxy; and disconnecting them.
 
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, RefreshCw } from "lucide-react";
+import { Check, ChevronDownIcon, Copy, PlusIcon, RefreshCw, XIcon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 
 import {
@@ -77,6 +78,174 @@ function CopyButton({ value }: { value: string }) {
   );
 }
 
+// Where each kind of connection sends its requests without a proxy.
+const DEFAULT_BASE_URLS: Record<ConnectionSummary["authKind"], string> = {
+  codex: "https://chatgpt.com/backend-api/codex",
+  claude: "https://api.anthropic.com/v1",
+};
+
+interface HeaderRow {
+  key: number;
+  name: string;
+  value: string;
+  // Its value is stored on the server, and kept unless a new one is typed.
+  stored: boolean;
+}
+
+// The connection's proxy: a base URL that replaces the provider's for model lists and replies,
+// and headers added to them. Stored header values are never shown.
+function ProxySettings({ connection }: { connection: ConnectionSummary }) {
+  const queryClient = useQueryClient();
+  const id = useId();
+  const { proxy } = connection;
+  const [open, setOpen] = useState(false);
+  const [baseUrl, setBaseUrl] = useState(proxy?.baseUrl ?? "");
+  const [rows, setRows] = useState<HeaderRow[]>(
+    (proxy?.headerNames ?? []).map((name, key) => ({ key, name, value: "", stored: true })),
+  );
+  const [nextKey, setNextKey] = useState(rows.length);
+  const [error, setError] = useState<string>();
+  const [pending, setPending] = useState(false);
+
+  function change(key: number, update: Partial<HeaderRow>) {
+    setRows((current) => current.map((row) => (row.key === key ? { ...row, ...update } : row)));
+  }
+
+  async function save(json: { baseUrl: string | null; headers: Record<string, string | null> }) {
+    setPending(true);
+    setError(undefined);
+    const res = await apiClient.v1.connections[":id"].proxy.$patch({
+      param: { id: connection.id },
+      json,
+    });
+    setPending(false);
+    if (!res.ok) {
+      setError(await errorOf(res));
+      return;
+    }
+    // Every value is stored now.
+    setRows((current) =>
+      current
+        .filter((row) => row.name.trim())
+        .map((row) => ({ ...row, name: row.name.trim().toLowerCase(), value: "", stored: true })),
+    );
+    await queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+    await queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
+  }
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const headers = Object.fromEntries(
+      rows
+        .filter((row) => row.name.trim())
+        .map((row) => [row.name.trim(), row.value || (row.stored ? null : "")]),
+    );
+    void save({ baseUrl: baseUrl.trim() || null, headers });
+  }
+
+  return (
+    <div className="mt-4">
+      <button
+        type="button"
+        aria-expanded={open}
+        className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        onClick={() => setOpen(!open)}
+      >
+        Advanced
+        <ChevronDownIcon className={cn("size-3.5 transition-transform", open && "rotate-180")} />
+        {proxy && <span className="ml-1 rounded bg-muted px-1.5 py-0.5">Proxy on</span>}
+      </button>
+      {open && (
+        <form className="mt-3" onSubmit={submit}>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor={`${id}-base`}>Base URL</FieldLabel>
+              <Input
+                id={`${id}-base`}
+                value={baseUrl}
+                onChange={(event) => setBaseUrl(event.target.value)}
+                placeholder={DEFAULT_BASE_URLS[connection.authKind]}
+                autoComplete="off"
+              />
+              <FieldDescription>
+                Model lists and replies go here instead. Signing in and renewing do not.
+              </FieldDescription>
+            </Field>
+            <Field>
+              <FieldLabel>Headers</FieldLabel>
+              {rows.map((row) => (
+                <div key={row.key} className="flex gap-2">
+                  <Input
+                    aria-label="Header name"
+                    value={row.name}
+                    disabled={row.stored}
+                    onChange={(event) => change(row.key, { name: event.target.value })}
+                    placeholder="Name"
+                    autoComplete="off"
+                  />
+                  <Input
+                    aria-label={`Value of ${row.name || "header"}`}
+                    type="password"
+                    value={row.value}
+                    onChange={(event) => change(row.key, { value: event.target.value })}
+                    placeholder={row.stored ? "••••" : "Value"}
+                    autoComplete="off"
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label={`Remove ${row.name || "header"}`}
+                    onClick={() =>
+                      setRows((current) => current.filter((other) => other.key !== row.key))
+                    }
+                  >
+                    <XIcon />
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-fit"
+                onClick={() => {
+                  setRows((current) => [
+                    ...current,
+                    { key: nextKey, name: "", value: "", stored: false },
+                  ]);
+                  setNextKey(nextKey + 1);
+                }}
+              >
+                <PlusIcon />
+                Add header
+              </Button>
+            </Field>
+            <FieldError>{error}</FieldError>
+            <div className="flex gap-2">
+              <Button type="submit" disabled={pending}>
+                Save
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={pending || !proxy}
+                onClick={() => {
+                  setBaseUrl("");
+                  setRows([]);
+                  void save({ baseUrl: null, headers: {} });
+                }}
+              >
+                Clear
+              </Button>
+            </div>
+          </FieldGroup>
+        </form>
+      )}
+    </div>
+  );
+}
+
 function Connected({
   connection,
   error,
@@ -94,6 +263,7 @@ function Connected({
           Connected as <span className="font-medium">{connection.account}</span>
         </p>
         <FieldError className="mt-4">{error}</FieldError>
+        <ProxySettings connection={connection} />
       </CardContent>
       <CardFooter>
         <Button

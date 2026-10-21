@@ -1,7 +1,8 @@
 // Signs in to a ChatGPT account with the Codex CLI's OAuth client: a device code, or a browser
 // authorization whose callback the user pastes back, and token refresh. Lists the models the
 // account can use from the Codex backend, and streams replies from it with the AI SDK's OpenAI
-// Responses provider, shaped the way the Codex CLI asks.
+// Responses provider, shaped the way the Codex CLI asks. A connection's proxy takes the place of
+// the backend for both, with its headers added.
 
 import { createHash, randomBytes } from "node:crypto";
 
@@ -26,7 +27,6 @@ const DEVICE_REDIRECT_URI = `${ISSUER}/deviceauth/callback`;
 const SCOPES = "openid profile email offline_access";
 const ORIGINATOR = "mage";
 const CODEX_URL = "https://chatgpt.com/backend-api/codex";
-const MODELS_URL = `${CODEX_URL}/models`;
 // The Codex CLI release whose model list we ask for; the backend leaves out models it is too old for.
 const CLIENT_VERSION = "0.163.0";
 const AUTH_CLAIM = "https://api.openai.com/auth";
@@ -225,13 +225,15 @@ export function createCodexCatalog(fetchFn: typeof fetch = fetch): Catalog {
   return {
     async list(token, signal) {
       if (!token.accountId) throw new Error("the connection has no ChatGPT account id");
-      const url = `${MODELS_URL}?${new URLSearchParams({ client_version: CLIENT_VERSION }).toString()}`;
-      const res = await fetchFn(url, {
+      const base = token.proxy?.baseUrl ?? CODEX_URL;
+      const query = new URLSearchParams({ client_version: CLIENT_VERSION }).toString();
+      const res = await fetchFn(`${base}/models?${query}`, {
         headers: {
           Accept: "application/json",
           Authorization: `Bearer ${token.access}`,
           "ChatGPT-Account-ID": token.accountId,
           originator: ORIGINATOR,
+          ...token.proxy?.headers,
         },
         signal,
       });
@@ -293,7 +295,7 @@ export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway 
     async *stream(token, request, signal) {
       if (!token.accountId) throw new Error("the connection has no ChatGPT account id");
       const provider = createOpenAI({
-        baseURL: CODEX_URL,
+        baseURL: token.proxy?.baseUrl ?? CODEX_URL,
         apiKey: token.access,
         headers: {
           "ChatGPT-Account-ID": token.accountId,
@@ -301,6 +303,7 @@ export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway 
           "OpenAI-Beta": "responses=experimental",
           "session-id": request.sessionId,
           "x-client-request-id": request.sessionId,
+          ...token.proxy?.headers,
         },
         fetch: fetchFn,
       });

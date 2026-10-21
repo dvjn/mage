@@ -1,6 +1,7 @@
 // Signs in to a Claude account with Claude Code's OAuth client: a browser authorization that ends
 // on a page showing a code the user pastes back, and token refresh. Lists the models the account
 // can use from the Anthropic API, and streams replies from it with the AI SDK's Anthropic provider.
+// A connection's proxy takes the place of the API for both, with its headers added.
 
 import { createHash, randomBytes } from "node:crypto";
 
@@ -21,7 +22,6 @@ const SCOPES =
   "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 
 const API_URL = "https://api.anthropic.com/v1";
-const MODELS_URL = `${API_URL}/models`;
 // Marks the request as using an OAuth token and names Mage as the client.
 const OAUTH_HEADERS = {
   "anthropic-version": "2023-06-01",
@@ -124,11 +124,12 @@ export function createClaudeCatalog(fetchFn: typeof fetch = fetch): Catalog {
       let after: string | null | undefined;
       do {
         const query = new URLSearchParams({ limit: "1000", ...(after && { after_id: after }) });
-        const res = await fetchFn(`${MODELS_URL}?${query.toString()}`, {
+        const res = await fetchFn(`${token.proxy?.baseUrl ?? API_URL}/models?${query.toString()}`, {
           headers: {
             Accept: "application/json",
             Authorization: `Bearer ${token.access}`,
             ...OAUTH_HEADERS,
+            ...token.proxy?.headers,
           },
           signal,
         });
@@ -190,9 +191,9 @@ export function createClaudeGateway(fetchFn: typeof fetch = fetch): ModelGateway
       // Without a token the provider falls back to an API key from the environment.
       if (!token.access) throw new Error("the connection has no access token");
       const provider = createAnthropic({
-        baseURL: API_URL,
+        baseURL: token.proxy?.baseUrl ?? API_URL,
         authToken: token.access,
-        headers: OAUTH_HEADERS,
+        headers: { ...OAUTH_HEADERS, ...token.proxy?.headers },
         fetch: fetchFn,
       });
       yield* streamReply(provider.messages(request.model), request, signal, {

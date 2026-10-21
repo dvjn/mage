@@ -2,9 +2,18 @@
 // refuses: the sign-in no longer works, a limit was reached, the model is not available, or the
 // provider could not be reached.
 
+// Where a connection's provider API requests go instead of the provider's own API, and the
+// headers they carry besides ours. Signing in and renewing tokens never go through it.
+export interface ProviderProxy {
+  // Replaces the provider's API base; null keeps it.
+  baseUrl: string | null;
+  headers: Record<string, string>;
+}
+
 export interface ModelToken {
   access: string;
   accountId: string | null;
+  proxy?: ProviderProxy | null;
 }
 
 export interface ModelMessage {

@@ -140,6 +140,26 @@ describe("Claude gateway", () => {
     });
   });
 
+  it("asks a connection's proxy instead, with its headers added", async () => {
+    const { fetchFn, requests } = recordingFetch([sse(reply(["Hi"]))]);
+    const proxy = { baseUrl: "https://proxy.example.com/v1", headers: { "x-team": "blue" } };
+
+    await collect(
+      createClaudeGateway(fetchFn).stream(
+        { ...token, proxy },
+        request,
+        new AbortController().signal,
+      ),
+    );
+
+    expect(requests[0]?.url).toBe("https://proxy.example.com/v1/messages");
+    expect(Object.fromEntries(requests[0]!.headers)).toMatchObject({
+      authorization: "Bearer access-token",
+      "anthropic-beta": "oauth-2025-04-20",
+      "x-team": "blue",
+    });
+  });
+
   it("never names Claude Code", async () => {
     const { fetchFn, requests } = recordingFetch([sse(reply(["Hi"]))]);
 

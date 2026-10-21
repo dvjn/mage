@@ -1,5 +1,7 @@
 // The models a provider account can use, read live from the provider.
 
+import type { ProviderProxy } from "@/ports/model-gateway.ts";
+
 export interface CatalogModel {
   id: string;
   name: string;
@@ -12,6 +14,7 @@ export interface CatalogModel {
 export interface CatalogToken {
   access: string;
   accountId: string | null;
+  proxy?: ProviderProxy | null;
 }
 
 export interface Catalog {

@@ -188,6 +188,26 @@ describe("Codex gateway", () => {
     expect(JSON.stringify(sent?.body.input)).not.toContain('"system"');
   });
 
+  it("asks a connection's proxy instead, with its headers added", async () => {
+    const { fetchFn, requests } = recordingFetch([sse(reply(["Hi"]))]);
+    const proxy = { baseUrl: "https://proxy.example.com/codex", headers: { "x-team": "blue" } };
+
+    await collect(
+      createCodexGateway(fetchFn).stream(
+        { ...token, proxy },
+        request,
+        new AbortController().signal,
+      ),
+    );
+
+    expect(requests[0]?.url).toBe("https://proxy.example.com/codex/responses");
+    expect(Object.fromEntries(requests[0]!.headers)).toMatchObject({
+      authorization: "Bearer access-token",
+      "chatgpt-account-id": "account-1",
+      "x-team": "blue",
+    });
+  });
+
   it("streams the reply as steps, deltas and usage", async () => {
     const { fetchFn } = recordingFetch([sse(reply(["Punched", " cards."]))]);
 

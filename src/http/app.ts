@@ -23,6 +23,8 @@ import {
   type AttemptSummary,
   browserFinishSchema,
   type ConnectionSummary,
+  proxyInputSchema,
+  type ProxySummary,
 } from "@/shared/connections.ts";
 import { type FolderSummary, folderNameSchema } from "@/shared/folders.ts";
 import type { Me } from "@/shared/me.ts";
@@ -48,7 +50,7 @@ export interface AppOptions {
   handleAuth: (request: Request) => Promise<Response>;
   // Tells who is signed in for each request under /api/v1.
   identity: Identity;
-  // The signed-in user's connections, including signing in to make one.
+  // The signed-in user's connections, including signing in to make one and their proxies.
   connections: Connections;
   // The models the org's connections unlock, its default model and its title model.
   models: Models;
@@ -77,9 +79,9 @@ function signedIn(principal: Principal | null): Principal {
   return principal;
 }
 
-function summary(connection: Connection): ConnectionSummary {
+function summary(connection: Connection, proxy: ProxySummary | null = null): ConnectionSummary {
   const { id, provider, authKind, account, createdAt } = connection;
-  return { id, provider, authKind, account, createdAt: createdAt.toISOString() };
+  return { id, provider, authKind, account, proxy, createdAt: createdAt.toISOString() };
 }
 
 function spaceSummary(space: Space & { role: SpaceRole }): SpaceSummary {
@@ -128,6 +130,18 @@ const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or a fo
 const message = jsonBody(messageInputSchema, "text is required; mode is steer, queue or interrupt");
 const pendingChange = jsonBody(pendingChangeSchema, "Give a text, or a mode of steer or queue");
 const retry = jsonBody(retrySchema, "runId is required");
+
+// A proxy body, refused with what is wrong with it.
+const proxyInput = validator("json", (value, c) => {
+  const parsed = proxyInputSchema.safeParse(value);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const error =
+      issue?.path[0] === "baseUrl" ? "The base URL must be an http or https URL" : issue?.message;
+    return c.json({ error: error ?? "Give a base URL and headers" }, 400);
+  }
+  return parsed.data;
+});
 
 // `?q=` with the text to find in thread titles.
 const threadSearch = validator("query", (value: { q?: string }, c) => {
@@ -330,8 +344,21 @@ function createApi(options: AppOptions) {
         await next();
       })
       .get("/v1/connections", (c) => {
-        const list = connections.list(signedIn(c.var.principal));
-        return c.json(list.map(summary), 200);
+        const owner = signedIn(c.var.principal);
+        const list = connections.list(owner);
+        return c.json(
+          list.map((connection) => summary(connection, connections.proxyOf(owner, connection.id))),
+          200,
+        );
+      })
+      .patch("/v1/connections/:id/proxy", proxyInput, (c) => {
+        const owner = signedIn(c.var.principal);
+        const id = c.req.param("id");
+        connections.setProxy(owner, id, c.req.valid("json"));
+        models.invalidate(id);
+        const connection = connections.list(owner).find((found) => found.id === id);
+        if (!connection) throw new ConnectionError(404, "Connection not found");
+        return c.json(summary(connection, connections.proxyOf(owner, id)), 200);
       })
       .post("/v1/connections/codex/device", async (c) => {
         return c.json(await connections.startDevice("codex", signedIn(c.var.principal)), 200);
