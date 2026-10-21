@@ -29,6 +29,7 @@ function detail(seqs: number[], title = "Engines"): ThreadDetail {
       updatedAt: "2026-10-21T00:00:00.000Z",
     },
     events: seqs.map(event),
+    access: { via: "space", role: "owner" },
   };
 }
 

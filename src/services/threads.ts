@@ -4,10 +4,12 @@
 // reply pieces as they are stored. A message posted while the agent is idle wakes it at once; one
 // posted while it is busy steers the run, waits for the next one, or interrupts the run, and its
 // author can change it until the agent takes it in. Anyone who can post can stop the run, or try
-// the last one again when it failed or was stopped.
+// the last one again when it failed or was stopped. Who may do each is the thread access rule's;
+// a thread's guests find it, and post in it, beside the threads of their own spaces.
 
 import type { DeltaStore } from "@/ports/deltas.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
+import type { GuestStore } from "@/ports/guests.ts";
 import type { Principal } from "@/ports/identity.ts";
 import type { RunStore } from "@/ports/runs.ts";
 import type { Thread, ThreadStore } from "@/ports/threads.ts";
@@ -16,12 +18,15 @@ import type { Folders } from "@/services/folders.ts";
 import type { Titles } from "@/services/titles.ts";
 import type { Models } from "@/services/models.ts";
 import { startRun } from "@/services/runs.ts";
-import type { SpaceAction, Spaces } from "@/services/spaces.ts";
+import type { Spaces } from "@/services/spaces.ts";
+import type { ThreadAccess, ThreadAction } from "@/services/thread-access.ts";
 import { type Append, eventSummary, type ThreadLog } from "@/services/thread-log.ts";
+import type { SharedThread } from "@/shared/guests.ts";
 import {
   type Delivery,
   type Effort,
   QUIET_PREFIX,
+  type ThreadDetail,
   type ThreadFeedItem,
   type ThreadSearchResult,
   type ThreadSummary,
@@ -30,6 +35,8 @@ import { transcriptOf } from "@/shared/transcript.ts";
 
 export interface ThreadsOptions {
   spaces: Spaces;
+  access: Pick<ThreadAccess, "can" | "require">;
+  guests: Pick<GuestStore, "threadsOf">;
   folders: Pick<Folders, "requireIn">;
   threads: ThreadStore;
   runs: Pick<RunStore, "active" | "create" | "latest" | "requestCancel">;
@@ -39,6 +46,7 @@ export interface ThreadsOptions {
   bus: EventBus;
   // Names threads after their first message, when given.
   titles?: Pick<Titles, "name">;
+  now?: () => Date;
 }
 
 export type Threads = ReturnType<typeof createThreads>;
@@ -83,23 +91,19 @@ export function threadSummary(thread: Thread): ThreadSummary {
 }
 
 export function createThreads(options: ThreadsOptions) {
-  const { spaces, folders, threads, runs, deltas, models, log, bus, titles } = options;
+  const { spaces, access, guests, folders, threads, runs, deltas, models, log, bus, titles } =
+    options;
+  const now = options.now ?? (() => new Date());
 
-  // The thread when the principal may take the action in its space; one in a space they cannot
-  // see is not found.
-  function visible(principal: Principal, id: string, action: SpaceAction = "read"): Thread {
-    const thread = threads.find(id);
-    if (!thread || !spaces.findVisible(principal, thread.spaceId)) {
-      throw new ServiceError(404, "Thread not found");
-    }
-    spaces.require(principal, thread.spaceId, action);
-    return thread;
+  // The thread when the principal may take the action in it.
+  function visible(principal: Principal, id: string, action: ThreadAction = "read"): Thread {
+    return access.require(principal, id, action).thread;
   }
 
   // Stores the message. When it is not quiet and the agent is idle, a run starts that takes it in;
   // while a run is under way it waits to steer that run or to start the next one, and an interrupt
   // also asks the run under way to stop.
-  function post(principal: Principal, thread: Thread, text: string, mode: Delivery) {
+  function post(principal: Principal, thread: Thread, text: string, mode: Delivery, guest = false) {
     const quiet = text.startsWith(QUIET_PREFIX);
     let first = false;
     const { events } = log.write(thread.id, (append) => {
@@ -108,7 +112,7 @@ export function createThreads(options: ThreadsOptions) {
         {
           type: "message",
           actor: { kind: "user", userId: principal.userId },
-          data: { parts: [{ type: "text", text }], quiet, mode },
+          data: { parts: [{ type: "text", text }], quiet, mode, ...(guest && { guest }) },
         },
         // Names the thread when nothing has yet.
         titleFrom(text),
@@ -137,7 +141,7 @@ export function createThreads(options: ThreadsOptions) {
     messageId: string,
     change: (append: Append) => void,
   ) {
-    const thread = visible(principal, id, "message");
+    const thread = visible(principal, id, "post");
     const { events } = log.write(thread.id, (append) => {
       const pending = transcriptOf(threads.eventsAfter(thread.id, 0).map(eventSummary)).pending;
       const message = pending.find((m) => m.id === messageId);
@@ -159,8 +163,8 @@ export function createThreads(options: ThreadsOptions) {
       return threads.listInSpace(spaceId).map(threadSummary);
     },
 
-    // Threads whose titles contain the text, ignoring case, in every space the principal can see:
-    // the most recently active first, at most 50.
+    // Threads whose titles contain the text, ignoring case, in every space the principal can see
+    // and among those they are a guest in: the most recently active first, at most 50.
     search(principal: Principal, text: string): ThreadSearchResult[] {
       const names = new Map(
         spaces
@@ -168,9 +172,34 @@ export function createThreads(options: ThreadsOptions) {
           .filter((space) => spaces.canSee(principal, space))
           .map((space) => [space.id, space.name]),
       );
-      return threads.search([...names.keys()], text, SEARCH_LIMIT).map((thread) => ({
-        ...threadSummary(thread),
-        spaceName: names.get(thread.spaceId) ?? "",
+      const needle = text.toLowerCase();
+      const shared = guests
+        .threadsOf(principal.userId, now())
+        .filter(({ thread }) => !names.has(thread.spaceId))
+        .filter(({ thread }) => thread.title?.toLowerCase().includes(needle))
+        .map(({ thread, spaceName }) => ({ thread, spaceName }));
+      return [
+        ...threads
+          .search([...names.keys()], text, SEARCH_LIMIT)
+          .map((thread) => ({ thread, spaceName: names.get(thread.spaceId) ?? "" })),
+        ...shared,
+      ]
+        .toSorted(
+          (a, b) =>
+            b.thread.updatedAt.getTime() - a.thread.updatedAt.getTime() ||
+            b.thread.id.localeCompare(a.thread.id),
+        )
+        .slice(0, SEARCH_LIMIT)
+        .map(({ thread, spaceName }) => ({ ...threadSummary(thread), spaceName }));
+    },
+
+    // The threads the principal is a guest in, with their spaces' and orgs' names.
+    shared(principal: Principal): SharedThread[] {
+      return guests.threadsOf(principal.userId, now()).map((shared) => ({
+        ...threadSummary(shared.thread),
+        spaceName: shared.spaceName,
+        orgName: shared.orgName,
+        accessUntil: shared.accessUntil?.toISOString() ?? null,
       }));
     },
 
@@ -194,12 +223,19 @@ export function createThreads(options: ThreadsOptions) {
       return threadSummary(threads.find(thread.id) ?? thread);
     },
 
-    get(principal: Principal, id: string) {
-      const thread = visible(principal, id);
+    get(principal: Principal, id: string): ThreadDetail {
+      const { thread, access: via } = access.require(principal, id);
       return {
         thread: threadSummary(thread),
         events: threads.eventsAfter(id, 0).map(eventSummary),
+        access: via,
       };
+    },
+
+    // Whether the principal may still read the thread.
+    readable(principal: Principal, id: string) {
+      const thread = threads.find(id);
+      return !!thread && access.can(principal, thread, "read");
     },
 
     // A folder it moves to must be in its space; null moves it to the top of the space.
@@ -213,10 +249,10 @@ export function createThreads(options: ThreadsOptions) {
         folderId?: string | null;
       },
     ) {
-      visible(principal, id, "message");
+      visible(principal, id, "arrange");
       if (changes.model) await models.requireModel(principal.orgId, changes.model);
       // Seen again after the model check, which waits on providers.
-      const thread = visible(principal, id, "message");
+      const thread = visible(principal, id, "arrange");
       if (changes.folderId !== undefined) folders.requireIn(thread.spaceId, changes.folderId);
       return threadSummary(
         threads.update(id, {
@@ -228,12 +264,13 @@ export function createThreads(options: ThreadsOptions) {
 
     // Its events go with it.
     remove(principal: Principal, id: string) {
-      visible(principal, id, "manage");
+      visible(principal, id, "delete");
       threads.delete(id);
     },
 
     postMessage(principal: Principal, id: string, text: string, mode: Delivery = "steer") {
-      return post(principal, visible(principal, id, "message"), text, mode);
+      const { thread, access: via } = access.require(principal, id, "post");
+      return post(principal, thread, text, mode, via.via === "guest");
     },
 
     // Changes the text of a waiting message, or whether it steers or waits for the next run.
@@ -269,7 +306,7 @@ export function createThreads(options: ThreadsOptions) {
 
     // Asks the run under way to stop; the agent keeps what it has written.
     stop(principal: Principal, id: string) {
-      const thread = visible(principal, id, "message");
+      const thread = visible(principal, id, "post");
       if (!runs.requestCancel(thread.id, principal.userId, new Date())) {
         throw new ServiceError(409, "The agent is not replying");
       }
@@ -279,7 +316,7 @@ export function createThreads(options: ThreadsOptions) {
     // Starts a run that tries the thread's last run again, when it failed or was stopped and
     // nothing has run since.
     retry(principal: Principal, id: string, runId: string) {
-      const thread = visible(principal, id, "message");
+      const thread = visible(principal, id, "post");
       const { events } = log.write(thread.id, (append) => {
         if (runs.active(thread.id)) throw new ServiceError(409, "The agent is already replying");
         const last = runs.latest(thread.id);

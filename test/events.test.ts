@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
 import { openStream } from "./sse.ts";
@@ -68,6 +69,21 @@ describe("live thread events", () => {
     await stream.close();
     await new Promise((resolve) => setTimeout(resolve, 10));
 
+    expect(listening.count).toBe(0);
+  });
+
+  it("ends the stream of a member who loses their place in the space", async () => {
+    const { app, db, join, signUp, thread, listening } = await withThread(["one"]);
+    const grace = join(await signUp("Grace Hopper", "grace@example.com"), thread.spaceId, "viewer");
+
+    const stream = await openStream(app, grace.cookie, thread.id);
+    await stream.nextEvent();
+    db.run(sql`delete from space_member where user_id = ${grace.userId}`);
+    let frame = await stream.next();
+    while (frame.comment === "heartbeat") frame = await stream.next();
+
+    expect(frame.event).toBe("access-ended");
+    await expect(stream.next()).rejects.toThrow("stream ended");
     expect(listening.count).toBe(0);
   });
 

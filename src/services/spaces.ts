@@ -48,7 +48,10 @@ export function createSpaces(options: SpacesOptions) {
   }
 
   // The space with the principal's role when they can see it, otherwise null.
-  function findVisible(principal: Principal, id: string): (Space & { role: SpaceRole }) | null {
+  function findVisible(
+    principal: Pick<Principal, "userId" | "orgId">,
+    id: string,
+  ): (Space & { role: SpaceRole }) | null {
     const space = spaces.find(id);
     const role = space && roleIn(principal, space);
     return space && role ? { ...space, role } : null;

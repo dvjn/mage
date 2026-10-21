@@ -16,6 +16,7 @@ import type { Logger } from "@/ports/logger.ts";
 import { type AttemptStatus, ConnectionError, type Connections } from "@/services/connections.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Folders } from "@/services/folders.ts";
+import type { Guests } from "@/services/guests.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
@@ -27,6 +28,7 @@ import {
   type ProxySummary,
 } from "@/shared/connections.ts";
 import { type FolderSummary, folderNameSchema } from "@/shared/folders.ts";
+import { acceptInviteSchema, newInviteSchema } from "@/shared/guests.ts";
 import type { Me } from "@/shared/me.ts";
 import {
   type DefaultModel,
@@ -58,10 +60,13 @@ export interface AppOptions {
   spaces: Spaces;
   // The folders that arrange those spaces' threads.
   folders: Folders;
-  // Threads in those spaces and their events.
+  // Threads in those spaces and the ones shared with the user, and their events.
   threads: Threads;
+  // Invite links to threads and the guests they let in.
+  guests: Guests;
   logger: Logger;
-  // How often a live event stream sends a comment to keep the connection open.
+  // How often a live event stream sends a comment to keep the connection open, and checks the
+  // reader may still read the thread.
   heartbeatMs?: number;
   // Reports whether the database answers a query.
   pingDatabase: () => Promise<boolean>;
@@ -130,6 +135,8 @@ const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or a fo
 const message = jsonBody(messageInputSchema, "text is required; mode is steer, queue or interrupt");
 const pendingChange = jsonBody(pendingChangeSchema, "Give a text, or a mode of steer or queue");
 const retry = jsonBody(retrySchema, "runId is required");
+const newInvite = jsonBody(newInviteSchema, "accessFor is 1h, 1d, 7d or never");
+const acceptInvite = jsonBody(acceptInviteSchema, "token is required");
 
 // A proxy body, refused with what is wrong with it.
 const proxyInput = validator("json", (value, c) => {
@@ -162,6 +169,7 @@ function requireAdmin(principal: Principal) {
   }
 }
 
+// Also how often a stream checks its reader may still read the thread.
 const HEARTBEAT_MS = 15_000;
 
 // Where a live event stream resumes: after the Last-Event-ID a reconnecting browser sends, or
@@ -177,7 +185,7 @@ const eventCursor = validator("query", (value: { after?: string }, c) => {
 
 // The typed API routes, mounted under /api.
 function createApi(options: AppOptions) {
-  const { identity, connections, models, spaces, folders, threads } = options;
+  const { identity, connections, models, spaces, folders, threads, guests } = options;
   return (
     new Hono<ApiEnv>()
       .use("/v1/*", async (c, next) => {
@@ -264,6 +272,13 @@ function createApi(options: AppOptions) {
         const input = c.req.valid("json");
         return c.json(threads.create(signedIn(c.var.principal), c.req.param("id"), input), 200);
       })
+      .get("/v1/shared-threads", (c) => {
+        return c.json(threads.shared(signedIn(c.var.principal)), 200);
+      })
+      .post("/v1/invites/accept", acceptInvite, (c) => {
+        const { token } = c.req.valid("json");
+        return c.json(guests.accept(signedIn(c.var.principal), token), 200);
+      })
       .get("/v1/threads/search", threadSearch, (c) => {
         const { q } = c.req.valid("query");
         return c.json(threads.search(signedIn(c.var.principal), q), 200);
@@ -309,7 +324,15 @@ function createApi(options: AppOptions) {
           stream.onAbort(unsubscribe);
           while (!stream.aborted) {
             await stream.sleep(options.heartbeatMs ?? HEARTBEAT_MS);
-            if (!stream.aborted) await write(() => stream.write(": heartbeat\n\n").then(() => {}));
+            if (stream.aborted) break;
+            // Whoever may no longer read the thread, as a guest whose access ended or a member who
+            // left its space, is told so, and the stream ends.
+            if (!threads.readable(principal, id)) {
+              unsubscribe();
+              await write(() => stream.writeSSE({ event: "access-ended", data: "{}" }));
+              break;
+            }
+            await write(() => stream.write(": heartbeat\n\n").then(() => {}));
           }
         });
       })
@@ -334,6 +357,23 @@ function createApi(options: AppOptions) {
       .post("/v1/threads/:id/retry", retry, (c) => {
         const { runId } = c.req.valid("json");
         return c.json(threads.retry(signedIn(c.var.principal), c.req.param("id"), runId), 202);
+      })
+      .post("/v1/threads/:id/invites", newInvite, (c) => {
+        const { accessFor } = c.req.valid("json");
+        return c.json(guests.invite(signedIn(c.var.principal), c.req.param("id"), accessFor), 200);
+      })
+      .get("/v1/threads/:id/people", (c) => {
+        return c.json(guests.people(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .delete("/v1/threads/:id/invites/:inviteId", (c) => {
+        const { id, inviteId } = c.req.param();
+        guests.revokeInvite(signedIn(c.var.principal), id, inviteId);
+        return c.json({ ok: true }, 200);
+      })
+      .delete("/v1/threads/:id/guests/:userId", (c) => {
+        const { id, userId } = c.req.param();
+        guests.revokeGuest(signedIn(c.var.principal), id, userId);
+        return c.json({ ok: true }, 200);
       })
       // Connections are for the owner of a personal org for now.
       .use("/v1/connections/*", async (c, next) => {
@@ -417,9 +457,10 @@ export function createApp(options: AppOptions): App {
   });
   app.onError((err, c) => {
     if (err instanceof HTTPException) return err.getResponse();
-    if (err instanceof ConnectionError || err instanceof ServiceError) {
-      return c.json({ error: err.message }, err.status);
+    if (err instanceof ServiceError) {
+      return c.json({ error: err.message, ...(err.reason && { reason: err.reason }) }, err.status);
     }
+    if (err instanceof ConnectionError) return c.json({ error: err.message }, err.status);
     logger.error({ reqId: c.var.requestId, err }, "unhandled error");
     return c.json({ error: "internal error" }, 500);
   });

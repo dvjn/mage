@@ -22,6 +22,7 @@ import {
 import type { BrowserOAuth } from "@/ports/oauth.ts";
 import { createConnections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
+import type { Guests } from "@/services/guests.ts";
 import { createModels } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
@@ -30,6 +31,7 @@ import type { Threads } from "@/services/threads.ts";
 const unusedSpaces = {} as Spaces;
 const unusedFolders = {} as Folders;
 const unusedThreads = {} as Threads;
+const unusedGuests = {} as Guests;
 
 const baseUrl = "http://localhost:4783";
 const codexUrl = "https://chatgpt.com/backend-api/codex/models?client_version=0.163.0";
@@ -181,6 +183,7 @@ function setup() {
     spaces: unusedSpaces,
     folders: unusedFolders,
     threads: unusedThreads,
+    guests: unusedGuests,
     logger,
     pingDatabase: () => Promise.resolve(true),
   });

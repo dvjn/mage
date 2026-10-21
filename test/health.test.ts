@@ -6,6 +6,7 @@ import { createApp } from "@/http/app.ts";
 import type { Identity } from "@/ports/identity.ts";
 import type { Connections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
+import type { Guests } from "@/services/guests.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
@@ -16,6 +17,7 @@ const unusedModels = {} as Models;
 const unusedSpaces = {} as Spaces;
 const unusedFolders = {} as Folders;
 const unusedThreads = {} as Threads;
+const unusedGuests = {} as Guests;
 
 const handleAuth = () => Promise.resolve(new Response(null, { status: 404 }));
 const logger = createLogger({ write() {} });
@@ -35,6 +37,7 @@ describe("GET /api/health", () => {
       spaces: unusedSpaces,
       folders: unusedFolders,
       threads: unusedThreads,
+      guests: unusedGuests,
       logger,
       pingDatabase: () => pingDatabase(db),
     }).request("/api/health");
@@ -51,6 +54,7 @@ describe("GET /api/health", () => {
       spaces: unusedSpaces,
       folders: unusedFolders,
       threads: unusedThreads,
+      guests: unusedGuests,
       logger,
       pingDatabase: () => Promise.resolve(false),
     }).request("/api/health");

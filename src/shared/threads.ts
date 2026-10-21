@@ -58,6 +58,8 @@ export const messageDataSchema = z.object({
   quiet: z.boolean(),
   // Messages from before there were deliveries steer.
   mode: deliverySchema.default("steer"),
+  // Written by a guest of the thread rather than a member of its space.
+  guest: z.boolean().optional(),
 });
 
 export type MessageData = z.infer<typeof messageDataSchema>;
@@ -207,9 +209,19 @@ export type ThreadFeedItem =
   | { kind: "event"; event: ThreadEventSummary }
   | { kind: "delta"; delta: DeltaBatch };
 
+// How the reader came to the thread: as a member of its space with their role, or as a guest, who
+// sees only the space's name.
+export const threadAccessSchema = z.discriminatedUnion("via", [
+  z.object({ via: z.literal("space"), role: z.enum(["owner", "messager", "viewer"]) }),
+  z.object({ via: z.literal("guest"), spaceName: z.string() }),
+]);
+
+export type ThreadAccessSummary = z.infer<typeof threadAccessSchema>;
+
 export const threadDetailSchema = z.object({
   thread: threadSchema,
   events: z.array(anyThreadEventSchema),
+  access: threadAccessSchema,
 });
 
 export type ThreadDetail = z.infer<typeof threadDetailSchema>;

@@ -16,6 +16,7 @@ import { createDeltaStore } from "@/adapters/deltas.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
 import { createFakeGateway, FAKE_MODEL_REF } from "@/adapters/fake-gateway.ts";
 import { createFolderStore } from "@/adapters/folders.ts";
+import { createGuestStore } from "@/adapters/guests.ts";
 import { createLogger, createPrettyDestination } from "@/adapters/logger.ts";
 import {
   createCodexCatalog,
@@ -31,9 +32,11 @@ import { loadConfig } from "@/config.ts";
 import { createApp } from "@/http/app.ts";
 import { createConnections } from "@/services/connections.ts";
 import { createFolders } from "@/services/folders.ts";
+import { createGuests } from "@/services/guests.ts";
 import { createModels, type Models } from "@/services/models.ts";
 import { createRunWorker, type RunWorker } from "@/services/runs.ts";
 import { createSpaces } from "@/services/spaces.ts";
+import { createThreadAccess } from "@/services/thread-access.ts";
 import { createThreadLog } from "@/services/thread-log.ts";
 import { createThreads } from "@/services/threads.ts";
 import { createTitles } from "@/services/titles.ts";
@@ -83,6 +86,8 @@ const transact = createTransact(db);
 const log = createThreadLog({ threads: threadStore, bus, transact });
 const spaces = createSpaces({ spaces: spaceStore, threads: threadStore });
 const folders = createFolders({ spaces, folders: createFolderStore(db) });
+const guestStore = createGuestStore(db);
+const access = createThreadAccess({ spaceStore, spaces, threads: threadStore, guests: guestStore });
 
 // The stand-in model answers every thread, whatever model it names.
 const fakeGateway = createFakeGateway();
@@ -104,7 +109,7 @@ const worker = createRunWorker({
   runs: runStore,
   threads: threadStore,
   spaceStore,
-  spaces,
+  access,
   deltas,
   log,
   bus,
@@ -122,6 +127,8 @@ const app = createApp({
   folders,
   threads: createThreads({
     spaces,
+    access,
+    guests: guestStore,
     folders,
     threads: threadStore,
     runs: runStore,
@@ -133,6 +140,13 @@ const app = createApp({
     ...(!config.fakeModels && {
       titles: createTitles({ models, threads: threadStore, log, logger }),
     }),
+  }),
+  guests: createGuests({
+    access,
+    guests: guestStore,
+    threads: threadStore,
+    transact,
+    baseUrl: config.baseUrl,
   }),
   logger,
   pingDatabase: () => pingDatabase(db),

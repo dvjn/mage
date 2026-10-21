@@ -35,7 +35,7 @@ import type { Transact } from "@/ports/transaction.ts";
 import { ConnectionError } from "@/services/connections.ts";
 import { contextOf, humanMessage } from "@/services/context.ts";
 import type { Models } from "@/services/models.ts";
-import type { Spaces } from "@/services/spaces.ts";
+import type { ThreadAccess } from "@/services/thread-access.ts";
 import { type Append, eventSummary, type ThreadLog } from "@/services/thread-log.ts";
 import type { EventDataMap, ReplyPart, ReplyStatus } from "@/shared/threads.ts";
 import { type PendingMessage, transcriptOf } from "@/shared/transcript.ts";
@@ -44,7 +44,7 @@ export interface RunWorkerOptions {
   runs: RunStore;
   threads: Pick<ThreadStore, "find" | "eventsAfter">;
   spaceStore: Pick<SpaceStore, "find">;
-  spaces: Pick<Spaces, "can">;
+  access: Pick<ThreadAccess, "can">;
   deltas: DeltaStore;
   log: ThreadLog;
   bus: EventBus;
@@ -176,7 +176,7 @@ function messageOf(err: unknown) {
 }
 
 export function createRunWorker(options: RunWorkerOptions) {
-  const { runs, threads, spaceStore, spaces, deltas, log, bus, transact, models, logger } = options;
+  const { runs, threads, spaceStore, access, deltas, log, bus, transact, models, logger } = options;
   const now = options.now ?? (() => new Date());
   const leaseMs = options.leaseMs ?? 30_000;
   const pollMs = options.pollMs ?? 5_000;
@@ -207,12 +207,14 @@ export function createRunWorker(options: RunWorkerOptions) {
     }).result;
   }
 
-  // Pending messages whose authors may still message in the thread's space.
+  // Pending messages whose authors may still post in the thread, as members of its space or as
+  // its guests.
   function admissible(threadId: string, pending: PendingMessage[]) {
-    const space = spaceStore.find(threads.find(threadId)?.spaceId ?? "");
+    const thread = threads.find(threadId);
+    const space = thread && spaceStore.find(thread.spaceId);
     if (!space) return [];
     return pending.filter((message) =>
-      spaces.can({ userId: message.author.userId, orgId: space.orgId }, space, "message"),
+      access.can({ userId: message.author.userId, orgId: space.orgId }, thread, "post"),
     );
   }
 
