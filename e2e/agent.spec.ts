@@ -63,11 +63,9 @@ test("a message gets a streamed reply from the agent", async ({ page }) => {
   await expect(agentWriting(page)).toBeHidden();
   await page.reload();
   await expect(replies(page)).toHaveText(/I have read 1 message, and so the engine/);
-  // The stand-in model's name, the reply's tokens, and the thread's.
+  // The stand-in model's name.
   await expect(replies(page)).toContainText("echo");
-  await expect(replies(page).getByText(/\d+ tokens$/)).toBeAttached();
   await expect(replies(page).getByRole("button", { name: "Copy message" })).toBeAttached();
-  await expect(page.locator("header").getByText(/\d+ tokens$/)).toBeVisible();
 });
 
 test("the model's reasoning shows above its reply, folded once it answers", async ({ page }) => {

@@ -1,7 +1,6 @@
 // How each row of a thread's transcript looks. A message is an avatar, who wrote it and when, then
 // its text as markdown, with a copy button on hover; the signed-in person's own rows carry their
-// avatar in the accent colour. An agent reply names the model that wrote it and, on hover, the
-// tokens it used, and shows what the model thought first, folded away once it answers. An
+// avatar in the accent colour. An agent reply names the model that wrote it and shows what the model thought first, folded away once it answers. An
 // agent reply that was cut short says so, a run that failed says why and what to do about it, the
 // last run that failed or was stopped can be tried again, and an event this client does not know
 // yet gets a labelled placeholder.
@@ -12,7 +11,6 @@ import { Link } from "@tanstack/react-router";
 import { CheckIcon, CopyIcon, RotateCcwIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-import type { Usage } from "@/shared/threads.ts";
 import type { AgentRow, FailureRow, HumanRow, TranscriptRow } from "@/shared/transcript.ts";
 import { MessageAction, MessageResponse } from "@/web/components/ai-elements/message";
 import {
@@ -93,22 +91,6 @@ function CopyMessage({ text }: { text: string }) {
   );
 }
 
-const compact = new Intl.NumberFormat(undefined, { notation: "compact" });
-const exact = new Intl.NumberFormat();
-
-// Tokens read and written, short, with the exact counts on hover.
-export function TokenCount({ usage, className }: { usage: Usage; className?: string }) {
-  const total = usage.inputTokens + usage.outputTokens;
-  return (
-    <span
-      className={className}
-      title={`${exact.format(usage.inputTokens)} input · ${exact.format(usage.outputTokens)} output tokens`}
-    >
-      {compact.format(total)} tokens
-    </span>
-  );
-}
-
 function HumanMessage({ row }: { row: HumanRow }) {
   const me = useQuery(meQuery);
   const author = row.author.name;
@@ -169,7 +151,6 @@ function AgentReply({ row }: { row: AgentRow }) {
       note={
         <>
           {model && <span>{model}</span>}
-          {row.usage && <TokenCount usage={row.usage} />}
           {ending && <span>{ending}</span>}
         </>
       }
