@@ -44,7 +44,7 @@ describe("thread search", () => {
     // Grace's own space, which Ada is a member of from Grace's org.
     const graces = await yourSpace(grace.cookie);
     db.insert(schema.spaceMember)
-      .values({ spaceId: graces.id, userId: ada.userId, role: "member", source: "direct" })
+      .values({ spaceId: graces.id, userId: ada.userId, role: "messager", source: "direct" })
       .run();
     await createThread(grace.cookie, graces.id, "Engine of another org");
 

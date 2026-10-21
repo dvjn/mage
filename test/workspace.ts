@@ -2,6 +2,7 @@
 // of spaces, folders, threads and their events.
 
 import { eq } from "drizzle-orm";
+import { ulid } from "ulid";
 import { expect } from "vite-plus/test";
 
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
@@ -13,6 +14,7 @@ import * as schema from "@/adapters/schema.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
 import { createThreadStore } from "@/adapters/threads.ts";
 import { createApp } from "@/http/app.ts";
+import type { SpaceRole } from "@/ports/spaces.ts";
 import type { Connections } from "@/services/connections.ts";
 import type { Models } from "@/services/models.ts";
 import { ServiceError } from "@/services/errors.ts";
@@ -109,6 +111,29 @@ export function setup() {
     return { userId: user.id, orgId: member?.organizationId as string, role: "owner", cookie };
   }
 
+  // Makes the user a member of the space with the role, acting from then on in the space's org.
+  function join<T extends { userId: string }>(user: T, spaceId: string, role: SpaceRole) {
+    const space = spaceStore.find(spaceId);
+    if (!space) throw new Error("no space");
+    db.insert(schema.member)
+      .values({
+        id: ulid(),
+        organizationId: space.orgId,
+        userId: user.userId,
+        role: "member",
+        createdAt: new Date(),
+      })
+      .run();
+    db.update(schema.session)
+      .set({ activeOrganizationId: space.orgId })
+      .where(eq(schema.session.userId, user.userId))
+      .run();
+    db.insert(schema.spaceMember)
+      .values({ spaceId, userId: user.userId, role, source: "direct" })
+      .run();
+    return { ...user, orgId: space.orgId, role: "member" };
+  }
+
   async function api(method: string, path: string, cookie: string, body?: object) {
     return app.request(`/api/v1${path}`, {
       method,
@@ -163,6 +188,7 @@ export function setup() {
     spaces,
     threads,
     signUp,
+    join,
     api,
     listSpaces,
     createSpace,

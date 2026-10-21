@@ -1,6 +1,7 @@
 // Spaces hold an org's threads; their members are who can see them.
 
-export type SpaceRole = "owner" | "member";
+// Owners manage the space; messagers and owners post; viewers only read.
+export type SpaceRole = "owner" | "messager" | "viewer";
 
 export interface Space {
   id: string;

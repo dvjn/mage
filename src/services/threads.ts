@@ -8,7 +8,7 @@ import type { StoredEvent, Thread, ThreadStore } from "@/ports/threads.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Models } from "@/services/models.ts";
-import type { Spaces } from "@/services/spaces.ts";
+import type { SpaceAction, Spaces } from "@/services/spaces.ts";
 import type { ThreadEventSummary, ThreadSearchResult, ThreadSummary } from "@/shared/threads.ts";
 
 export interface ThreadsOptions {
@@ -67,12 +67,14 @@ export function eventSummary(event: StoredEvent): ThreadEventSummary {
 export function createThreads(options: ThreadsOptions) {
   const { spaces, folders, threads, models, bus } = options;
 
-  // The thread when the principal can see its space; otherwise it is not found.
-  function visible(principal: Principal, id: string): Thread {
+  // The thread when the principal may take the action in its space; one in a space they cannot
+  // see is not found.
+  function visible(principal: Principal, id: string, action: SpaceAction = "read"): Thread {
     const thread = threads.find(id);
     if (!thread || !spaces.findVisible(principal, thread.spaceId)) {
       throw new ServiceError(404, "Thread not found");
     }
+    spaces.require(principal, thread.spaceId, action);
     return thread;
   }
 
@@ -97,7 +99,7 @@ export function createThreads(options: ThreadsOptions) {
     visible,
 
     list(principal: Principal, spaceId: string) {
-      spaces.visible(principal, spaceId);
+      spaces.require(principal, spaceId);
       return threads.listInSpace(spaceId).map(threadSummary);
     },
 
@@ -124,7 +126,7 @@ export function createThreads(options: ThreadsOptions) {
       input: { text?: string; folderId?: string | null } = {},
     ) {
       const { text, folderId = null } = input;
-      spaces.visible(principal, spaceId);
+      spaces.require(principal, spaceId, "message");
       folders.requireIn(spaceId, folderId);
       const thread = threads.create({
         spaceId,
@@ -150,22 +152,22 @@ export function createThreads(options: ThreadsOptions) {
       id: string,
       changes: { title?: string; model?: string; folderId?: string | null },
     ) {
-      visible(principal, id);
+      visible(principal, id, "message");
       if (changes.model) await models.requireModel(principal.orgId, changes.model);
       // Seen again after the model check, which waits on providers.
-      const thread = visible(principal, id);
+      const thread = visible(principal, id, "message");
       if (changes.folderId !== undefined) folders.requireIn(thread.spaceId, changes.folderId);
       return threadSummary(threads.update(id, changes));
     },
 
     // Its events go with it.
     remove(principal: Principal, id: string) {
-      visible(principal, id);
+      visible(principal, id, "manage");
       threads.delete(id);
     },
 
     postMessage(principal: Principal, id: string, text: string) {
-      return post(principal, visible(principal, id), text);
+      return post(principal, visible(principal, id, "message"), text);
     },
 
     // Delivers the thread's events with seq above `after` in order, then each new one as it is

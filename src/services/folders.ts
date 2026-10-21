@@ -4,7 +4,7 @@
 import type { Folder, FolderStore } from "@/ports/folders.ts";
 import type { Principal } from "@/ports/identity.ts";
 import { ServiceError } from "@/services/errors.ts";
-import type { Spaces } from "@/services/spaces.ts";
+import type { SpaceAction, Spaces } from "@/services/spaces.ts";
 
 export interface FoldersOptions {
   spaces: Spaces;
@@ -16,12 +16,14 @@ export type Folders = ReturnType<typeof createFolders>;
 export function createFolders(options: FoldersOptions) {
   const { spaces, folders } = options;
 
-  // The folder when the principal can see its space; otherwise it is not found.
-  function visible(principal: Principal, id: string): Folder {
+  // The folder when the principal may take the action in its space; one in a space they cannot
+  // see is not found.
+  function visible(principal: Principal, id: string, action: SpaceAction): Folder {
     const folder = folders.find(id);
     if (!folder || !spaces.findVisible(principal, folder.spaceId)) {
       throw new ServiceError(404, "Folder not found");
     }
+    spaces.require(principal, folder.spaceId, action);
     return folder;
   }
 
@@ -34,23 +36,23 @@ export function createFolders(options: FoldersOptions) {
     },
 
     list(principal: Principal, spaceId: string) {
-      spaces.visible(principal, spaceId);
+      spaces.require(principal, spaceId);
       return folders.listInSpace(spaceId);
     },
 
     create(principal: Principal, spaceId: string, name: string) {
-      spaces.visible(principal, spaceId);
+      spaces.require(principal, spaceId, "message");
       return folders.create({ spaceId, name, createdBy: principal.userId });
     },
 
     rename(principal: Principal, id: string, name: string) {
-      visible(principal, id);
+      visible(principal, id, "message");
       return folders.rename(id, name);
     },
 
     // Its threads move to the top of the space.
     remove(principal: Principal, id: string) {
-      visible(principal, id);
+      visible(principal, id, "message");
       folders.delete(id);
     },
   };

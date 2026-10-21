@@ -162,7 +162,7 @@ describe("event log", () => {
     const thread = await createThread(ada.cookie, space.id, "Hello");
     // Grace joins Ada's space, posts, and her account is later removed.
     db.insert(schema.spaceMember)
-      .values({ spaceId: space.id, userId: grace.userId, role: "member", source: "direct" })
+      .values({ spaceId: space.id, userId: grace.userId, role: "messager", source: "direct" })
       .run();
     const asGrace = { userId: grace.userId, orgId: ada.orgId, role: "member" };
     threads.postMessage(asGrace, thread.id, "Hi Ada");

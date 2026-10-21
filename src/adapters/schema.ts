@@ -255,7 +255,8 @@ export const spaceMember = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    role: text("role", { enum: ["owner", "member"] }).notNull(),
+    // Owners manage the space; messagers and owners post; viewers only read.
+    role: text("role", { enum: ["owner", "messager", "viewer"] }).notNull(),
     // How the user came to be a member.
     source: text("source", { enum: ["direct"] }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })

@@ -9,7 +9,7 @@ export const spaceSchema = z.object({
   name: z.string(),
   // The space every personal org starts with; it cannot be deleted.
   primary: z.boolean(),
-  role: z.enum(["owner", "member"]),
+  role: z.enum(["owner", "messager", "viewer"]),
   createdAt: z.iso.datetime(),
 });
 
