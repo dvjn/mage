@@ -1,6 +1,6 @@
 import { cn } from "cn";
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
 import { Button } from "@/web/components/ui/button";
@@ -26,6 +26,7 @@ import { sessionQuery } from "@/web/lib/queries";
 export function LoginForm({ className, ...props }: React.ComponentProps<"div">) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { redirect } = useSearch({ from: "/_signed-out/login" });
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
 
@@ -40,7 +41,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
     setError(error?.message);
     if (error) return;
     await queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey });
-    await navigate({ to: "/" });
+    await (redirect ? navigate({ href: redirect }) : navigate({ to: "/" }));
   }
 
   return (
@@ -81,7 +82,10 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
                   Sign in
                 </Button>
                 <FieldDescription className="text-center">
-                  New to Mage? <Link to="/signup">Create account</Link>
+                  New to Mage?{" "}
+                  <Link to="/signup" search={{ redirect }}>
+                    Create account
+                  </Link>
                 </FieldDescription>
               </Field>
             </FieldGroup>

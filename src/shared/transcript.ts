@@ -28,6 +28,8 @@ export interface HumanRow {
   postedAt: string;
   text: string;
   quiet: boolean;
+  // Written by a guest of the thread.
+  guest?: true;
 }
 
 export interface AgentRow {
@@ -90,6 +92,8 @@ export interface PendingMessage {
   postedAt: string;
   text: string;
   mode: Delivery;
+  // Written by a guest of the thread.
+  guest?: true;
 }
 
 export interface ActiveRun {
@@ -148,6 +152,7 @@ export function transcriptOf(
           author: event.actor,
           postedAt: event.createdAt,
           text: textOf(event.data.parts),
+          ...(event.data.guest && { guest: true as const }),
         };
         if (event.data.quiet) rows.push({ kind: "human", ...message, quiet: true });
         else pending.set(event.id, { ...message, mode: event.data.mode });

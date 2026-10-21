@@ -1,10 +1,12 @@
 // Server state the web client reads: the current session, who is signed in, their connections, the
-// models the org can use, its default model and title model, and their spaces with their folders and threads.
+// models the org can use, its default model and title model, their spaces with their folders and
+// threads, the threads shared with them, and who is in a thread.
 
 import { queryOptions } from "@tanstack/react-query";
 
 import { connectionListSchema } from "@/shared/connections.ts";
 import { folderListSchema } from "@/shared/folders.ts";
+import { sharedThreadListSchema, threadPeopleSchema } from "@/shared/guests.ts";
 import { meSchema } from "@/shared/me.ts";
 import { defaultModelSchema, modelListSchema, titleModelSchema } from "@/shared/models.ts";
 import { spaceListSchema } from "@/shared/spaces.ts";
@@ -101,22 +103,49 @@ export function spaceThreadsQuery(spaceId: string) {
   });
 }
 
+// The threads the signed-in user is a guest in.
+export const sharedThreadsQuery = queryOptions({
+  queryKey: ["shared-threads"],
+  queryFn: async () => {
+    const res = await apiClient.v1["shared-threads"].$get();
+    if (!res.ok) throw new Error("could not read the threads shared with you");
+    return sharedThreadListSchema.parse(await res.json());
+  },
+});
+
+// The thread's members who wrote in it, its guests and its invite links not yet used.
+export function threadPeopleQuery(threadId: string) {
+  return queryOptions({
+    queryKey: ["thread-people", threadId],
+    queryFn: async () => {
+      const res = await apiClient.v1.threads[":id"].people.$get({ param: { id: threadId } });
+      if (!res.ok) throw new Error("could not read who is in the thread");
+      return threadPeopleSchema.parse(await res.json());
+    },
+  });
+}
+
 // The server says the thread does not exist, or is not the reader's to see.
 export class ThreadNotFound extends Error {}
 
+// The reader was a guest of the thread and their access has ended.
+export class ThreadAccessEnded extends Error {}
+
 // A thread with its events so far; live events are merged in as they arrive, and a read keeps
-// the ones that arrived while it was on its way. A thread that is not found is not asked for
-// again; a read that fails otherwise, as when the server cannot be reached, is tried again until
-// it succeeds, waiting longer each time up to ten seconds.
+// the ones that arrived while it was on its way. A thread that is not found, or whose guest access
+// has ended, is not asked for again; a read that fails otherwise, as when the server cannot be
+// reached, is tried again until it succeeds, waiting longer each time up to ten seconds.
 export function threadQuery(threadId: string) {
   const queryKey = ["threads", threadId] as const;
   return queryOptions({
     queryKey,
-    retry: (_count, error) => !(error instanceof ThreadNotFound),
+    retry: (_count, error) =>
+      !(error instanceof ThreadNotFound || error instanceof ThreadAccessEnded),
     retryDelay: (count) => Math.min(1000 * 2 ** count, 10_000),
     queryFn: async ({ client }) => {
       const res = await apiClient.v1.threads[":id"].$get({ param: { id: threadId } });
       if ((res.status as number) === 404) throw new ThreadNotFound("Thread not found");
+      if ((res.status as number) === 410) throw new ThreadAccessEnded("Access ended");
       if (!res.ok) throw new Error("could not read the thread");
       const fetched = threadDetailSchema.parse(await res.json());
       const shown = client.getQueryData<ThreadDetail>(queryKey);

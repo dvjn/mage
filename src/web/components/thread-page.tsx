@@ -1,12 +1,14 @@
 // A thread: its transcript as it happens, kept scrolled to the newest, what the agent is doing and
 // the messages waiting for it, a composer to post, steer, queue, interrupt and stop, trying the
 // last reply again when it failed or was stopped, and the thread's model with, for a model that can
-// think, its reasoning effort. When the server cannot be reached, the thread as last read stays in
-// view while it reconnects.
+// think, its reasoning effort. Its space's owners and messagers can share it from its header. A
+// guest of the thread sees its space's name alone, and cannot change its model; once their access
+// ends, they are told so. When the server cannot be reached, the thread as last read stays in view
+// while it reconnects.
 
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi } from "@tanstack/react-router";
+import { getRouteApi, Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
@@ -32,8 +34,10 @@ import {
   PromptInputSelectValue,
 } from "@/web/components/ai-elements/prompt-input";
 import { ModelPicker } from "@/web/components/model-picker";
+import { ShareDialog } from "@/web/components/share-dialog";
 import { Composer, PendingTray, RunStatus } from "@/web/components/thread-composer";
 import { AgentStarting, TranscriptItem } from "@/web/components/thread-events";
+import { Button } from "@/web/components/ui/button";
 import { FieldError } from "@/web/components/ui/field";
 import { Spinner } from "@/web/components/ui/spinner";
 import { apiClient } from "@/web/lib/api-client";
@@ -44,6 +48,7 @@ import {
   modelsQuery,
   spaceThreadsQuery,
   spacesQuery,
+  ThreadAccessEnded,
   ThreadNotFound,
   threadQuery,
 } from "@/web/lib/queries";
@@ -71,11 +76,15 @@ export function ThreadPage() {
   const [picking, setPicking] = useState(false);
   const thread = detail.data?.thread;
   const events = detail.data?.events;
+  const access = detail.data?.access;
+  const guest = access?.via === "guest";
+  const role = access?.via === "space" ? access.role : undefined;
   const space = spaces.data?.find((s) => s.id === thread?.spaceId);
 
+  // A guest's thread is not in one of their own spaces.
   useEffect(() => {
-    if (thread) rememberSpace(thread.spaceId);
-  }, [thread]);
+    if (thread && !guest) rememberSpace(thread.spaceId);
+  }, [thread, guest]);
 
   const spaceId = thread?.spaceId;
   const refreshList = useCallback(() => {
@@ -83,13 +92,14 @@ export function ThreadPage() {
       void queryClient.invalidateQueries({ queryKey: spaceThreadsQuery(spaceId).queryKey });
   }, [queryClient, spaceId]);
   const notFound = detail.error instanceof ThreadNotFound;
+  const ended = detail.error instanceof ThreadAccessEnded;
   const { streaming, reconnecting } = useThreadEvents(
     threadId,
-    !!detail.data && !notFound,
+    !!detail.data && !notFound && !ended,
     refreshList,
   );
   // The thread cannot be read or followed right now; what is shown is what was last read.
-  const offline = !notFound && (detail.failureCount > 0 || reconnecting);
+  const offline = !notFound && !ended && (detail.failureCount > 0 || reconnecting);
   const transcript = useMemo(
     () =>
       transcriptOf(
@@ -152,7 +162,7 @@ export function ThreadPage() {
 
   // The last row, when it ends a run that failed or was stopped and nothing has run since.
   const last = transcript.rows.at(-1);
-  const canRetry = space?.role !== "viewer" && !run && transcript.pending.length === 0;
+  const canRetry = role !== "viewer" && !run && transcript.pending.length === 0;
   const retryable =
     canRetry && (last?.kind === "failure" || last?.kind === "stop") ? last : undefined;
 
@@ -178,21 +188,41 @@ export function ThreadPage() {
     );
   }
 
+  if (ended) {
+    return (
+      <>
+        <PageHeader crumbs={[{ label: "Access ended" }]} />
+        <div className={cn(pageWidth, "flex flex-col items-start gap-3 p-4")}>
+          <p className="text-muted-foreground">
+            Your access to this thread has ended. Ask whoever shared it for a new invite link.
+          </p>
+          <Button size="sm" variant="outline" render={<Link to="/" />} nativeButton={false}>
+            Go home
+          </Button>
+        </div>
+      </>
+    );
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
         crumbs={[
-          ...(space
-            ? [
-                {
-                  label: space.name,
-                  link: { to: "/s/$spaceId" as const, params: { spaceId: space.id } },
-                },
-              ]
-            : []),
+          ...(access?.via === "guest"
+            ? [{ label: access.spaceName }]
+            : space
+              ? [
+                  {
+                    label: space.name,
+                    link: { to: "/s/$spaceId" as const, params: { spaceId: space.id } },
+                  },
+                ]
+              : []),
           { label: thread?.title ?? "" },
         ]}
-      />
+      >
+        {(role === "owner" || role === "messager") && <ShareDialog threadId={threadId} />}
+      </PageHeader>
       <Conversation aria-label="Events" className="min-h-0">
         <ConversationContent className={cn(pageWidth, "gap-4")}>
           {detail.data && transcript.rows.length === 0 ? (
@@ -204,7 +234,7 @@ export function ThreadPage() {
                 row={row}
                 actions={{
                   ...(row === retryable && { retry: () => void retry(retryable.runId) }),
-                  pickModel: () => setPicking(true),
+                  ...(!guest && { pickModel: () => setPicking(true) }),
                 }}
               />
             ))
@@ -232,45 +262,48 @@ export function ThreadPage() {
           <PendingTray threadId={threadId} pending={transcript.pending} me={me.data?.user.id} />
           <Composer
             running={!!run}
-            readOnly={space?.role === "viewer"}
+            readOnly={role === "viewer"}
             sending={sending}
             stopping={!!run && run.id === stopped}
             onSend={send}
             onStop={() => void stop()}
             tools={
-              <>
-                <ModelPicker
-                  models={models.data?.models ?? []}
-                  value={thread?.model ?? null}
-                  onChange={(ref) => void change({ model: ref })}
-                  open={picking}
-                  onOpenChange={setPicking}
-                  placeholder="Model"
-                  variant="compact"
-                />
-                {thinks && (
-                  <PromptInputSelect
-                    value={thread?.effort ?? "medium"}
-                    onValueChange={(value) => {
-                      const effort = effortSchema.safeParse(value);
-                      if (effort.success) void change({ effort: effort.data });
-                    }}
-                  >
-                    <PromptInputSelectTrigger size="sm" aria-label="Reasoning effort">
-                      <PromptInputSelectValue>
-                        {(value: Effort) => EFFORT_LABELS[value]}
-                      </PromptInputSelectValue>
-                    </PromptInputSelectTrigger>
-                    <PromptInputSelectContent alignItemWithTrigger={false} side="top">
-                      {effortSchema.options.map((effort) => (
-                        <PromptInputSelectItem key={effort} value={effort}>
-                          {EFFORT_LABELS[effort]}
-                        </PromptInputSelectItem>
-                      ))}
-                    </PromptInputSelectContent>
-                  </PromptInputSelect>
-                )}
-              </>
+              // A guest uses the model the thread's space chose.
+              !guest && (
+                <>
+                  <ModelPicker
+                    models={models.data?.models ?? []}
+                    value={thread?.model ?? null}
+                    onChange={(ref) => void change({ model: ref })}
+                    open={picking}
+                    onOpenChange={setPicking}
+                    placeholder="Model"
+                    variant="compact"
+                  />
+                  {thinks && (
+                    <PromptInputSelect
+                      value={thread?.effort ?? "medium"}
+                      onValueChange={(value) => {
+                        const effort = effortSchema.safeParse(value);
+                        if (effort.success) void change({ effort: effort.data });
+                      }}
+                    >
+                      <PromptInputSelectTrigger size="sm" aria-label="Reasoning effort">
+                        <PromptInputSelectValue>
+                          {(value: Effort) => EFFORT_LABELS[value]}
+                        </PromptInputSelectValue>
+                      </PromptInputSelectTrigger>
+                      <PromptInputSelectContent alignItemWithTrigger={false} side="top">
+                        {effortSchema.options.map((effort) => (
+                          <PromptInputSelectItem key={effort} value={effort}>
+                            {EFFORT_LABELS[effort]}
+                          </PromptInputSelectItem>
+                        ))}
+                      </PromptInputSelectContent>
+                    </PromptInputSelect>
+                  )}
+                </>
+              )
             }
           />
         </div>

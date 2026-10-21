@@ -1,9 +1,10 @@
-// How each row of a thread's transcript looks. A message is an avatar, who wrote it and when, then
-// its text as markdown, with a copy button on hover; the signed-in person's own rows carry their
-// avatar in the accent colour. An agent reply names the model that wrote it and shows what the model thought first, folded away once it answers. An
-// agent reply that was cut short says so, a run that failed says why and what to do about it, the
-// last run that failed or was stopped can be tried again, and an event this client does not know
-// yet gets a labelled placeholder.
+// How each row of a thread's transcript looks. A message is an avatar, who wrote it and when, noted
+// when its author was a guest of the thread, then its text as markdown, with a copy button on
+// hover; the signed-in person's own rows carry their avatar in the accent colour. An agent reply
+// names the model that wrote it and shows what the model thought first, folded away once it
+// answers. An agent reply that was cut short says so, a run that failed says why and what to do
+// about it, the last run that failed or was stopped can be tried again, and an event this client
+// does not know yet gets a labelled placeholder.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
@@ -107,7 +108,14 @@ function HumanMessage({ row }: { row: HumanRow }) {
       author={author}
       at={row.postedAt}
       label={`Message from ${author}`}
-      note={row.quiet && <span>aside</span>}
+      note={
+        (row.guest || row.quiet) && (
+          <>
+            {row.guest && <span>guest</span>}
+            {row.quiet && <span>aside</span>}
+          </>
+        )
+      }
       actions={<CopyMessage text={row.text} />}
     >
       <div className={cn("flex flex-col gap-2 text-sm", row.quiet && "text-muted-foreground")}>

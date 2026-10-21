@@ -2,7 +2,9 @@
 // event stream from the newest event already cached, merges each event in once, in seq order, shows
 // a title the agent gives the thread, and gathers the pieces of each reply still being written. The
 // browser reconnects on its own and resumes after the last event it saw; the server sends each
-// reply's pieces again from the start, and the ones already here are skipped.
+// reply's pieces again from the start, and the ones already here are skipped. When the server says
+// the reader's guest access has ended, following stops and the thread is read again, which tells
+// them so.
 
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -13,7 +15,7 @@ import {
   type DeltaBatch,
   deltaBatchSchema,
 } from "@/shared/threads.ts";
-import { threadQuery } from "@/web/lib/queries";
+import { sharedThreadsQuery, threadQuery } from "@/web/lib/queries";
 import { withEvents } from "@/web/lib/thread-detail";
 
 // Adds the events the cache does not have yet.
@@ -88,6 +90,12 @@ export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () =
       mergeEvents(queryClient, threadId, [event.data]);
       if (event.data.type === "thread.renamed") renamed(queryClient, threadId, event.data.data);
       onEvent?.();
+    });
+    source.addEventListener("access-ended", () => {
+      source.close();
+      setReconnecting(false);
+      void queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
+      void queryClient.invalidateQueries({ queryKey: sharedThreadsQuery.queryKey });
     });
     source.addEventListener("message-delta", (message) => {
       const batch = deltaBatchSchema.safeParse(JSON.parse(message.data as string));

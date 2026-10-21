@@ -41,7 +41,8 @@ export const pageWidth = "mx-auto w-full max-w-3xl";
 
 export interface Crumb {
   label: string;
-  // Where the crumb leads; the last crumb is the current page.
+  // Where the crumb leads; the last crumb is the current page, and one before it without a link is
+  // only a name.
   link?: { to: "/s/$spaceId"; params: { spaceId: string } };
 }
 
@@ -64,6 +65,8 @@ export function PageHeader({ crumbs, children }: { crumbs: Crumb[]; children?: R
                   <BreadcrumbItem className="hidden md:block">
                     <BreadcrumbLink render={<Link {...crumb.link} />}>{crumb.label}</BreadcrumbLink>
                   </BreadcrumbItem>
+                ) : index < crumbs.length - 1 ? (
+                  <BreadcrumbItem className="hidden md:block">{crumb.label}</BreadcrumbItem>
                 ) : (
                   <BreadcrumbItem className="min-w-0">
                     <BreadcrumbPage className="truncate">{crumb.label}</BreadcrumbPage>

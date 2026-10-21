@@ -218,6 +218,7 @@ function WaitingItem({
     >
       <div className="flex items-baseline gap-2 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">{message.author.name}</span>
+        {message.guest && <span>guest</span>}
         <span>{MODE_LABELS[message.mode]}</span>
         {mine && !editing && (
           <span className="ml-auto flex gap-1">

@@ -1,5 +1,5 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
 import { Button } from "@/web/components/ui/button";
@@ -25,6 +25,7 @@ import { sessionQuery } from "@/web/lib/queries";
 export function SignupForm(props: React.ComponentProps<typeof Card>) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { redirect } = useSearch({ from: "/_signed-out/signup" });
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
 
@@ -42,7 +43,7 @@ export function SignupForm(props: React.ComponentProps<typeof Card>) {
     setError(error?.message);
     if (error) return;
     await queryClient.invalidateQueries({ queryKey: sessionQuery.queryKey });
-    await navigate({ to: "/" });
+    await (redirect ? navigate({ href: redirect }) : navigate({ to: "/" }));
   }
 
   return (
@@ -100,7 +101,10 @@ export function SignupForm(props: React.ComponentProps<typeof Card>) {
                     Create account
                   </Button>
                   <FieldDescription className="px-6 text-center">
-                    Already have an account? <Link to="/login">Sign in</Link>
+                    Already have an account?{" "}
+                    <Link to="/login" search={{ redirect }}>
+                      Sign in
+                    </Link>
                   </FieldDescription>
                 </Field>
               </FieldGroup>
