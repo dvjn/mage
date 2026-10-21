@@ -1,9 +1,9 @@
-// The sidebar's space and threads sections: starting a thread or folder and searching threads, then
-// the active space's folders with their threads, the threads at the top of the space after them, and
-// a menu on each to start, rename, move or delete them.
+// The sidebar's space and threads sections: starting a thread or folder, searching threads and
+// opening the space's settings, then the active space's folders with their threads, the threads at
+// the top of the space after them, and a menu on each to start, rename, move or delete them.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate, useParams } from "@tanstack/react-router";
+import { Link, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
 import {
   FolderIcon,
   FolderOpenIcon,
@@ -14,6 +14,7 @@ import {
   PencilIcon,
   PlusIcon,
   SearchIcon,
+  SettingsIcon,
   Trash2Icon,
 } from "lucide-react";
 import { createContext, type ReactNode, use, useEffect, useMemo, useState } from "react";
@@ -202,6 +203,7 @@ export function NavThreads() {
   const { threadId } = useParams({ strict: false });
   const newThread = useNewThread();
   const openSearch = useOpenThreadSearch();
+  const matchRoute = useMatchRoute();
   const { open, setFolderOpen } = useOpenFolders();
   const [action, setAction] = useState<NavAction | null>(null);
   const folderList = useMemo(() => folders.data ?? [], [folders.data]);
@@ -246,6 +248,15 @@ export function NavThreads() {
             <SidebarMenuButton onClick={openSearch}>
               <SearchIcon />
               <span>Search threads</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={!!matchRoute({ to: "/s/$spaceId/settings", params: { spaceId: space.id } })}
+              render={<Link to="/s/$spaceId/settings" params={{ spaceId: space.id }} />}
+            >
+              <SettingsIcon />
+              <span>Space settings</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>

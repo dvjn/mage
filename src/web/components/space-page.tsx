@@ -1,22 +1,19 @@
-// A space: its threads, most recently active first and narrowed by title as you type, starting a
-// new one, and renaming or deleting the space.
+// A space: its threads, most recently active first and narrowed by title as you type, and starting
+// a new one.
 
 import { cn } from "cn";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
+import { getRouteApi, Link } from "@tanstack/react-router";
 import { SearchIcon } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
 import { useNewThread } from "@/web/components/nav-threads";
-import { NameDialog } from "@/web/components/name-dialog";
 import { Time } from "@/web/components/time";
 import { Button } from "@/web/components/ui/button";
 import { Field, FieldError } from "@/web/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
 import { Textarea } from "@/web/components/ui/textarea";
-import { apiClient } from "@/web/lib/api-client";
-import { errorOf } from "@/web/lib/api-errors";
 import { rememberSpace } from "@/web/lib/last-space";
 import { spaceThreadsQuery, spacesQuery } from "@/web/lib/queries";
 
@@ -24,8 +21,6 @@ const spaceRoute = getRouteApi("/_app/s/$spaceId");
 
 export function SpacePage() {
   const { spaceId } = spaceRoute.useParams();
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const spaces = useQuery(spacesQuery);
   const threads = useQuery(spaceThreadsQuery(spaceId));
   const newThread = useNewThread();
@@ -44,23 +39,6 @@ export function SpacePage() {
     setError(await newThread(spaceId, typeof text === "string" ? text : ""));
   }
 
-  async function rename(name: string) {
-    const res = await apiClient.v1.spaces[":id"].$patch({ param: { id: spaceId }, json: { name } });
-    if (!res.ok) return errorOf(res);
-    await queryClient.invalidateQueries({ queryKey: spacesQuery.queryKey });
-    return undefined;
-  }
-
-  async function remove() {
-    const res = await apiClient.v1.spaces[":id"].$delete({ param: { id: spaceId } });
-    if (!res.ok) {
-      setError(await errorOf(res));
-      return;
-    }
-    await queryClient.invalidateQueries({ queryKey: spacesQuery.queryKey });
-    await navigate({ to: "/" });
-  }
-
   if (spaces.isSuccess && !space) {
     return (
       <>
@@ -72,26 +50,7 @@ export function SpacePage() {
 
   return (
     <>
-      <PageHeader crumbs={[{ label: space?.name ?? "" }]}>
-        {space && (
-          <NameDialog
-            title="Rename space"
-            action="Rename"
-            initialName={space.name}
-            onSubmit={rename}
-            trigger={
-              <Button variant="outline" size="sm">
-                Rename
-              </Button>
-            }
-          />
-        )}
-        {space && !space.primary && (
-          <Button variant="outline" size="sm" onClick={() => void remove()}>
-            Delete
-          </Button>
-        )}
-      </PageHeader>
+      <PageHeader crumbs={[{ label: space?.name ?? "" }]} />
       <div className={cn(pageWidth, "flex flex-col gap-6 p-4")}>
         <form onSubmit={(event) => void start(event)}>
           <Field>

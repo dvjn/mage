@@ -184,5 +184,13 @@ test("a viewer reads the thread but cannot write in it", async ({ page, browser 
   await expect(transcript(alan.page)).toContainText("How do engines compute?");
   await expect(replies(alan.page)).toContainText("I have read 1 message");
   await expect(alan.page.getByLabel("Message", { exact: true })).toBeDisabled();
+
+  await alan.page
+    .locator("[data-sidebar=sidebar]")
+    .getByRole("link", { name: "Space settings" })
+    .click();
+  await expect(alan.page.getByRole("textbox", { name: "Name" })).toBeDisabled();
+  await expect(alan.page.getByRole("button", { name: "Rename" })).toHaveCount(0);
+  await expect(alan.page.getByRole("button", { name: "Delete space" })).toHaveCount(0);
   await alan.page.context().close();
 });

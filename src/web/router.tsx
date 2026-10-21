@@ -1,5 +1,6 @@
-// Pages: login and signup when signed out; when signed in, the app shell with a space, a thread
-// and settings, opening on the last space used. Each side redirects to the other.
+// Pages: login and signup when signed out; when signed in, the app shell with a space and its
+// settings, a thread and settings, opening on the last space used. Each side redirects to the
+// other.
 
 import type { QueryClient } from "@tanstack/react-query";
 import {
@@ -15,6 +16,7 @@ import { LoginForm } from "@/web/components/login-form";
 import { Settings } from "@/web/components/settings";
 import { SignupForm } from "@/web/components/signup-form";
 import { SpacePage } from "@/web/components/space-page";
+import { SpaceSettings } from "@/web/components/space-settings";
 import { ThreadPage } from "@/web/components/thread-page";
 import { lastSpace } from "@/web/lib/last-space";
 import { sessionQuery, spacesQuery } from "@/web/lib/queries";
@@ -86,6 +88,12 @@ const spaceRoute = createRoute({
   component: SpacePage,
 });
 
+const spaceSettingsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/s/$spaceId/settings",
+  component: SpaceSettings,
+});
+
 const threadRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/t/$threadId",
@@ -102,7 +110,7 @@ export function createAppRouter(queryClient: QueryClient) {
   return createRouter({
     routeTree: rootRoute.addChildren([
       signedOutRoute.addChildren([loginRoute, signupRoute]),
-      appRoute.addChildren([homeRoute, spaceRoute, threadRoute, settingsRoute]),
+      appRoute.addChildren([homeRoute, spaceRoute, spaceSettingsRoute, threadRoute, settingsRoute]),
     ]),
     context: { queryClient },
   });

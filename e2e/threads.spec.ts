@@ -70,10 +70,14 @@ test("a second space can be made, renamed and switched from the sidebar header",
   await expect(switcher).toContainText("Research");
   await expect(sidebar.getByRole("link", { name: "New thread" })).toHaveCount(0);
 
+  const settings = sidebar.getByRole("link", { name: "Space settings" });
+  await settings.click();
+  await expect(page).toHaveURL(/\/s\/[^/]+\/settings$/);
+  await expect(settings).toHaveAttribute("data-active");
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Settings");
+  await page.getByRole("textbox", { name: "Name" }).fill("Engines");
   await page.getByRole("button", { name: "Rename" }).click();
-  await dialog.getByRole("textbox", { name: "Name" }).fill("Engines");
-  await dialog.getByRole("button", { name: "Rename" }).click();
-  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Engines");
+  await expect(page.locator("[data-slot=breadcrumb-link]")).toHaveText("Engines");
   await expect(switcher).toContainText("Engines");
 
   await switcher.click();
@@ -83,6 +87,31 @@ test("a second space can be made, renamed and switched from the sidebar header",
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Your space");
   await expect(switcher).toContainText("Your space");
   await expect(sidebar.getByRole("link", { name: "New thread" })).toBeVisible();
+  await settings.click();
+  await expect(page.getByRole("button", { name: "Delete space" })).toHaveCount(0);
+});
+
+test("an empty space is deleted from its settings, after a confirmation", async ({ page }) => {
+  await signUp(page);
+  const sidebar = page.locator("[data-sidebar=sidebar]");
+  const switcher = page.getByRole("button", { name: "Switch space" });
+  await switcher.click();
+  await page.getByRole("menuitem", { name: "Add space" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("textbox", { name: "Name" }).fill("Scratch");
+  await dialog.getByRole("button", { name: "Create" }).click();
+  await expect(switcher).toContainText("Scratch");
+
+  await sidebar.getByRole("link", { name: "Space settings" }).click();
+  await page.getByRole("button", { name: "Delete space" }).click();
+  const confirm = page.getByRole("alertdialog");
+  await expect(confirm).toContainText("Delete Scratch?");
+  await confirm.getByRole("button", { name: "Delete" }).click();
+
+  await expect(page).toHaveURL(/\/s\/[^/]+$/);
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Your space");
+  await switcher.click();
+  await expect(page.getByRole("menuitem", { name: "Scratch" })).toHaveCount(0);
 });
 
 test("deleting the open thread leads back to its space", async ({ page }) => {
