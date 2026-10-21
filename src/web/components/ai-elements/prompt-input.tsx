@@ -1164,20 +1164,18 @@ export type PromptInputSelectProps = ComponentProps<typeof Select>;
 
 export const PromptInputSelect = (props: PromptInputSelectProps) => <Select {...props} />;
 
+export const promptInputSelectTriggerClassName = cn(
+  "border-none bg-transparent font-medium text-muted-foreground shadow-none transition-colors",
+  "hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground",
+);
+
 export type PromptInputSelectTriggerProps = ComponentProps<typeof SelectTrigger>;
 
 export const PromptInputSelectTrigger = ({
   className,
   ...props
 }: PromptInputSelectTriggerProps) => (
-  <SelectTrigger
-    className={cn(
-      "border-none bg-transparent font-medium text-muted-foreground shadow-none transition-colors",
-      "hover:bg-accent hover:text-foreground aria-expanded:bg-accent aria-expanded:text-foreground",
-      className,
-    )}
-    {...props}
-  />
+  <SelectTrigger className={cn(promptInputSelectTriggerClassName, className)} {...props} />
 );
 
 export type PromptInputSelectContentProps = ComponentProps<typeof SelectContent>;

@@ -1,9 +1,13 @@
 // A searchable list of the models the org can use, grouped by the connection they come through.
-// With no models at all, it points to Settings to connect an account.
+// With no models at all, it points to Settings to connect an account. As a form field it filters
+// in place; compact, it is a composer button whose popup holds the search.
 
 import { Link } from "@tanstack/react-router";
 
+import { cn } from "cn";
+
 import type { ModelSummary } from "@/shared/models.ts";
+import { promptInputSelectTriggerClassName } from "@/web/components/ai-elements/prompt-input";
 import {
   Combobox,
   ComboboxCollection,
@@ -15,7 +19,10 @@ import {
   ComboboxLabel,
   ComboboxList,
   ComboboxSeparator,
+  ComboboxTrigger,
+  ComboboxValue,
 } from "@/web/components/ui/combobox";
+import { selectTriggerClassName } from "@/web/components/ui/select";
 
 export const CONNECTION_LABELS: Record<ModelSummary["authKind"], string> = {
   codex: "Codex",
@@ -50,6 +57,7 @@ export function ModelPicker({
   className,
   open,
   onOpenChange,
+  variant = "field",
 }: {
   id?: string;
   models: ModelSummary[];
@@ -61,6 +69,7 @@ export function ModelPicker({
   // Opens and closes the list from outside, when given.
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  variant?: "field" | "compact";
 }) {
   const selected = models.find((model) => model.ref === value) ?? null;
   const groups = groupsOf(models);
@@ -77,13 +86,38 @@ export function ModelPicker({
       {...(open !== undefined && { open })}
       {...(onOpenChange && { onOpenChange: (next: boolean) => onOpenChange(next) })}
     >
-      <ComboboxInput
-        id={id}
-        placeholder={value && !selected ? value : placeholder}
-        className={className}
-        disabled={disabled}
-      />
-      <ComboboxContent>
+      {variant === "compact" ? (
+        <ComboboxTrigger
+          id={id}
+          aria-label="Model"
+          data-size="sm"
+          className={cn(
+            selectTriggerClassName,
+            promptInputSelectTriggerClassName,
+            "max-w-56",
+            className,
+          )}
+        >
+          <span className="min-w-0 flex-1 truncate text-left">
+            <ComboboxValue placeholder={value ?? placeholder} />
+          </span>
+        </ComboboxTrigger>
+      ) : (
+        <ComboboxInput
+          id={id}
+          placeholder={value && !selected ? value : placeholder}
+          className={className}
+          disabled={disabled}
+        />
+      )}
+      <ComboboxContent {...(variant === "compact" && { side: "top" as const, className: "w-64" })}>
+        {variant === "compact" && (
+          <ComboboxInput
+            showTrigger={false}
+            placeholder="Search models"
+            aria-label="Search models"
+          />
+        )}
         <ComboboxEmpty>
           {models.length === 0 ? (
             <Link to="/settings" className="underline underline-offset-4">

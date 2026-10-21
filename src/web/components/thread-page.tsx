@@ -250,7 +250,7 @@ export function ThreadPage() {
                   open={picking}
                   onOpenChange={setPicking}
                   placeholder="Model"
-                  className="w-56"
+                  variant="compact"
                 />
                 {thinks && (
                   <PromptInputSelect
