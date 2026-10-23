@@ -1,10 +1,11 @@
 // The sidebar's space and threads sections. The space section starts a thread or a folder and opens
 // the space's settings; the threads section lists the active space's folders, closed unless they
 // hold the open thread, then the threads at the top of the space by when they were last active
-// (today, the previous 7 days, older), up to a limit, with the space's page for the rest. Rows stay
+// (today, the previous 7 days, older). Each list stops at a limit, with "Show all" leading to the
+// space's page, narrowed to the folder where it is one, for the rest. Rows stay
 // where they are while the pointer is over the list. Each row has a menu to start, rename, move or
 // delete. Nobody sees what their role never allows. In the shared context, the section lists the
-// threads shared with the person instead, each over the space it is in.
+// threads shared with the person instead, each over the space it is in, up to the same limit.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
@@ -21,6 +22,7 @@ import {
   Settings2Icon,
   Trash2Icon,
 } from "lucide-react";
+import type * as React from "react";
 import {
   createContext,
   type ReactNode,
@@ -72,7 +74,8 @@ import { SECTIONS, type Section, sectionOf } from "@/web/lib/time-sections";
 import { useOpenFolders } from "@/web/lib/open-folders";
 import { sharedThreadsQuery, spaceFoldersQuery, spaceThreadsQuery } from "@/web/lib/queries";
 
-// The most threads listed at the top of the space; the space's page lists them all.
+// The most threads listed at the top of the space, in a folder or shared; the space's page and the
+// shared page list them all.
 const THREAD_LIMIT = 30;
 
 // Opens a new thread's draft in the space, in a folder or at its top; the thread is made when its
@@ -230,7 +233,20 @@ function FolderItem({ folder }: { folder: FolderSummary }) {
               No threads
             </SidebarMenuSubItem>
           ) : (
-            threads.map((thread) => <ThreadItem key={thread.id} thread={thread} />)
+            threads
+              .slice(0, THREAD_LIMIT)
+              .map((thread) => <ThreadItem key={thread.id} thread={thread} />)
+          )}
+          {threads.length > THREAD_LIMIT && (
+            <ShowAll
+              link={
+                <Link
+                  to="/s/$spaceId"
+                  params={{ spaceId: nav.spaceId }}
+                  search={{ folder: folder.id }}
+                />
+              }
+            />
           )}
         </SidebarMenuSub>
       </CollapsibleContent>
@@ -260,6 +276,18 @@ function sectioned(threads: ThreadSummary[], layout: Layout) {
     (section) =>
       [section, placed.filter((p) => p.at.section === section).map((p) => p.thread)] as const,
   ).filter(([, list]) => list.length > 0);
+}
+
+// The last row of a list cut at the limit, leading to the page that lists it all.
+function ShowAll({ link }: { link: React.ReactElement }) {
+  return (
+    <SidebarMenuItem>
+      <SidebarMenuButton className="text-muted-foreground" render={link}>
+        <span>Show all</span>
+        <ArrowRightIcon className="ml-auto" />
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
 }
 
 // Rows of a list still being read.
@@ -407,15 +435,7 @@ function SpaceThreads({ space }: { space: SpaceSummary }) {
               </li>
             ))}
             {loose.length > THREAD_LIMIT && (
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  className="text-muted-foreground"
-                  render={<Link to="/s/$spaceId" params={{ spaceId: space.id }} />}
-                >
-                  <span>All threads</span>
-                  <ArrowRightIcon className="ml-auto" />
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+              <ShowAll link={<Link to="/s/$spaceId" params={{ spaceId: space.id }} />} />
             )}
             {threads.isPending && <MenuSkeleton />}
             {empty && (
@@ -440,7 +460,7 @@ function SharedThreads() {
     <SidebarGroup>
       <SidebarGroupLabel>Shared with you</SidebarGroupLabel>
       <SidebarMenu>
-        {list.map((thread) => (
+        {list.slice(0, THREAD_LIMIT).map((thread) => (
           <SidebarMenuItem key={thread.id}>
             <WithTooltip label={thread.place}>
               <SidebarMenuButton
@@ -457,6 +477,7 @@ function SharedThreads() {
             </WithTooltip>
           </SidebarMenuItem>
         ))}
+        {list.length > THREAD_LIMIT && <ShowAll link={<Link to="/shared" />} />}
         {shared.isPending && <MenuSkeleton />}
         {shared.isSuccess && list.length === 0 && (
           <SidebarMenuItem className="px-2 py-1.5 text-sm text-muted-foreground">

@@ -1,5 +1,5 @@
 // A space: a new thread's composer, and its threads by when they were last active, each with the
-// start of its newest message, narrowed by title or that message as you type.
+// start of its newest message, narrowed by title or that message as you type, and to one folder.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
@@ -11,6 +11,7 @@ import { PageHeader, pageWidth } from "@/web/components/app-shell";
 import { NewThreadComposer } from "@/web/components/draft-thread";
 import { EmptyState, ListSkeleton, LoadError, NotFound } from "@/web/components/page-states";
 import { Button } from "@/web/components/ui/button";
+import { FilterButton } from "@/web/components/table-toolbar";
 import { ThreadRow } from "@/web/components/thread-row";
 import { Time } from "@/web/components/time";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
@@ -22,6 +23,8 @@ const spaceRoute = getRouteApi("/_app/s/$spaceId");
 
 export function SpacePage() {
   const { spaceId } = spaceRoute.useParams();
+  const { folder } = spaceRoute.useSearch();
+  const navigate = spaceRoute.useNavigate();
   const spaces = useQuery(spacesQuery);
   const space = spaces.data?.find((s) => s.id === spaceId);
   // A team org's owner who manages the space without being in it does not see its threads.
@@ -35,8 +38,9 @@ export function SpacePage() {
   const needle = filter.trim().toLowerCase();
   const shown = threads.data?.filter(
     (thread) =>
-      thread.title.toLowerCase().includes(needle) ||
-      !!thread.preview?.text.toLowerCase().includes(needle),
+      (!folder || thread.folderId === folder) &&
+      (thread.title.toLowerCase().includes(needle) ||
+        !!thread.preview?.text.toLowerCase().includes(needle)),
   );
   const now = new Date();
   const folderNames = new Map((folders.data ?? []).map((f) => [f.id, f.name]));
@@ -72,18 +76,31 @@ export function SpacePage() {
       <div className={cn(pageWidth, "flex flex-col gap-6 p-4 pb-12")}>
         <NewThreadComposer spaceId={spaceId} />
         <div className="flex flex-col gap-2">
-          <InputGroup>
-            <InputGroupInput
-              type="search"
-              placeholder="Filter threads…"
-              aria-label="Filter threads"
-              value={filter}
-              onChange={(event) => setFilter(event.target.value)}
-            />
-            <InputGroupAddon>
-              <SearchIcon />
-            </InputGroupAddon>
-          </InputGroup>
+          <div className="flex gap-2">
+            <InputGroup className="flex-1">
+              <InputGroupInput
+                type="search"
+                placeholder="Filter threads…"
+                aria-label="Filter threads"
+                value={filter}
+                onChange={(event) => setFilter(event.target.value)}
+              />
+              <InputGroupAddon>
+                <SearchIcon />
+              </InputGroupAddon>
+            </InputGroup>
+            {!!folders.data?.length && (
+              <FilterButton
+                filter={{
+                  label: "Folder",
+                  value: folder,
+                  options: folders.data.map((f) => ({ value: f.id, label: f.name })),
+                  onChange: (value) =>
+                    void navigate({ search: value ? { folder: value } : {}, replace: true }),
+                }}
+              />
+            )}
+          </div>
           {threads.error && <LoadError />}
           {threads.isPending && <ListSkeleton />}
           <ul className="flex flex-col gap-4" aria-label="Threads">

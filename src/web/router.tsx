@@ -130,9 +130,12 @@ const homeRoute = createRoute({
   component: () => <PageHeader crumbs={[{ label: "No spaces" }]} />,
 });
 
+// The threads narrowed to the folder in `?folder=`.
 const spaceRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/s/$spaceId",
+  validateSearch: (search: Record<string, unknown>): { folder?: string } =>
+    typeof search.folder === "string" ? { folder: search.folder } : {},
   component: SpacePage,
 });
 

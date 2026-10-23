@@ -1,5 +1,6 @@
 // Narrows a table: a search, then one dashed button per filter, named after its field, that opens
-// its values with a check on the one set and shows it beside the name once set; while anything is
+// its values, searchable when there are many, with a check on the one set and shows it beside the
+// name once set; while anything is
 // set, how many rows match and Reset. The table's one action sits at the end. On a phone the search
 // takes the row and the filters sit below it. The server searches; the values live in the page's
 // address, so links and back keep them.
@@ -11,7 +12,14 @@ import { useEffect, useState } from "react";
 
 import { Badge } from "@/web/components/ui/badge";
 import { Button } from "@/web/components/ui/button";
-import { Command, CommandGroup, CommandItem, CommandList } from "@/web/components/ui/command";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/web/components/ui/command";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
 import { Popover, PopoverContent, PopoverTrigger } from "@/web/components/ui/popover";
 import { Separator } from "@/web/components/ui/separator";
@@ -25,7 +33,10 @@ export interface Filter {
   onChange: (value: string | undefined) => void;
 }
 
-function FilterButton({ filter }: { filter: Filter }) {
+// Above this many values the list gets a search.
+const SEARCH_FROM = 8;
+
+export function FilterButton({ filter }: { filter: Filter }) {
   const [open, setOpen] = useState(false);
   const chosen = filter.options.find((option) => option.value === filter.value);
   return (
@@ -50,9 +61,13 @@ function FilterButton({ filter }: { filter: Filter }) {
           </>
         )}
       </PopoverTrigger>
-      <PopoverContent align="start" className="w-44 p-0">
+      <PopoverContent align="start" className="w-48 p-0">
         <Command>
+          {filter.options.length > SEARCH_FROM && (
+            <CommandInput placeholder={`Find ${filter.label.toLowerCase()}`} />
+          )}
           <CommandList>
+            <CommandEmpty>Nothing matches.</CommandEmpty>
             <CommandGroup>
               {filter.options.map((option) => {
                 const selected = option.value === filter.value;

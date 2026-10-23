@@ -3,10 +3,10 @@
 // made for as long as the access it gives should last, shown once to copy; below, the thread's
 // people (the space's members who wrote, with their role, and its guests, with when their access
 // ends) and its links not yet used, each with Revoke where the signed-in person may revoke it;
-// revoking a person asks first.
+// revoking a person asks first. A long list scrolls, with a filter above it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { LinkIcon, UserPlusIcon } from "lucide-react";
+import { LinkIcon, SearchIcon, UserPlusIcon } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 
 import {
@@ -103,6 +103,9 @@ function Row({
   );
 }
 
+// Above this many rows the list gets a filter.
+const FILTER_FROM = 8;
+
 function People({
   people,
   invites,
@@ -112,11 +115,32 @@ function People({
   invites: PendingInvite[];
   onRevoke: (path: { guest: string } | { invite: string }) => void;
 }) {
+  const [filter, setFilter] = useState("");
+  const needle = filter.trim().toLowerCase();
+  const linkName = (invite: PendingInvite) =>
+    `Link, ${ACCESS_LABELS[invite.accessFor].toLowerCase()}`;
+  const shownPeople = people.filter((person) => person.name.toLowerCase().includes(needle));
+  const shownInvites = invites.filter((invite) => linkName(invite).toLowerCase().includes(needle));
+  const filtering = people.length + invites.length > FILTER_FROM;
   return (
     <section aria-label="People" className="flex flex-col gap-1">
       <h3 className="text-sm font-medium">People in this thread</h3>
-      <ul className="flex flex-col">
-        {people.map((person) => (
+      {filtering && (
+        <InputGroup className="my-1">
+          <InputGroupInput
+            type="search"
+            placeholder="Filter people…"
+            aria-label="Filter people"
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+        </InputGroup>
+      )}
+      <ul className="flex max-h-80 flex-col overflow-y-auto">
+        {shownPeople.map((person) => (
           <Row
             key={person.userId}
             label={person.name}
@@ -139,12 +163,15 @@ function People({
         {people.length === 0 && (
           <li className="text-sm text-muted-foreground">Nobody has written yet.</li>
         )}
-        {invites.map((invite) => (
+        {filtering && shownPeople.length + shownInvites.length === 0 && (
+          <li className="text-sm text-muted-foreground">Nobody matches.</li>
+        )}
+        {shownInvites.map((invite) => (
           <Row
             key={invite.id}
             label="Unused link"
             avatar={{ icon: <LinkIcon /> }}
-            name={`Link, ${ACCESS_LABELS[invite.accessFor].toLowerCase()}`}
+            name={linkName(invite)}
             detail={
               <span title={fullTime(invite.linkExpiresAt)}>
                 Unused · Expires {timeUntil(invite.linkExpiresAt) ?? "now"}
