@@ -1,5 +1,5 @@
 // Opens the SQLite file in WAL mode and applies pending migrations, and runs store work in one
-// transaction.
+// transaction that holds the write lock from its start.
 
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -33,8 +33,12 @@ export async function pingDatabase(db: Db): Promise<boolean> {
   }
 }
 
+// Taking the write lock as a transaction begins makes another connection's write wait out the
+// busy timeout; a transaction that read first and then wrote would fail at once instead.
+export const writeLock = { behavior: "immediate" } as const;
+
 // Every store shares the database's one connection, so their writes inside the work join its
 // transaction; a transaction already open nests as a savepoint.
 export function createTransact(db: Db): Transact {
-  return (work) => db.transaction(() => work());
+  return (work) => db.transaction(() => work(), writeLock);
 }

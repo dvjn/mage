@@ -10,7 +10,7 @@ import type { Directory, Group, OrgRole } from "@/ports/directory.ts";
 
 import type { Auth } from "./auth.ts";
 import { after, containing, pageOf } from "./paging.ts";
-import type { Db } from "./db.ts";
+import { type Db, writeLock } from "./db.ts";
 import {
   group,
   groupMember,
@@ -272,7 +272,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
           .where(eq(session.activeOrganizationId, orgId))
           .run();
         tx.delete(organization).where(eq(organization.id, orgId)).run();
-      });
+      }, writeLock);
     },
 
     user(id) {
@@ -355,7 +355,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
             set: { removedAt: at },
           })
           .run();
-      });
+      }, writeLock);
     },
 
     formerMembers(orgId, userIds) {
@@ -406,7 +406,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
           .where(and(eq(spaceMember.subjectKind, "group"), eq(spaceMember.subjectId, id)))
           .run();
         tx.delete(group).where(eq(group.id, id)).run();
-      });
+      }, writeLock);
     },
 
     groupMembers(orgId) {

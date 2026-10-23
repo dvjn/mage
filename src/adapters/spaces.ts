@@ -6,7 +6,7 @@ import { ulid } from "ulid";
 import type { Grant, Space, SpaceRole, SpaceStore, Subject } from "@/ports/spaces.ts";
 import { FIRST_SPACE_NAME, spaceNameFor } from "@/shared/spaces.ts";
 
-import type { Db } from "./db.ts";
+import { type Db, writeLock } from "./db.ts";
 import { after, containing, pageOf } from "./paging.ts";
 
 // What follows a person's name in their first space's name, as the one naming function gives it.
@@ -80,7 +80,7 @@ export function createSpaceStore(db: Db): SpaceStore {
           })
           .run();
         return created;
-      });
+      }, writeLock);
     },
 
     find(id): Space | null {

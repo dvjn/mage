@@ -67,10 +67,13 @@ test("a message gets a streamed reply from the agent", async ({ page }) => {
   await expect(replies(page)).toHaveText(/I have read 1 message, and so the engine/);
   await expect(agentWriting(page)).toBeHidden();
   await page.reload();
-  await expect(replies(page)).toHaveText(/I have read 1 message, and so the engine/);
+  // The reload first paints the thread as last cached, which can be a write behind: the reply
+  // done but its run not yet ended, so the agent's starting row shows under it until the stream
+  // catches up. Listing the replies waits that out.
+  await expect(replies(page)).toHaveText([/I have read 1 message, and so the engine/]);
   // The stand-in model's name.
-  await expect(replies(page)).toContainText("echo");
-  await expect(replies(page).getByRole("button", { name: "Copy message" })).toBeAttached();
+  await expect(replies(page)).toContainText(["echo"]);
+  await expect(replies(page).getByRole("button", { name: "Copy message" })).toHaveCount(1);
 });
 
 test("the model's reasoning shows above its reply, folded once it answers", async ({ page }) => {

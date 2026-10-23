@@ -5,7 +5,7 @@ import { ulid } from "ulid";
 
 import type { Folder, FolderStore } from "@/ports/folders.ts";
 
-import type { Db } from "./db.ts";
+import { type Db, writeLock } from "./db.ts";
 import { folder, thread } from "./schema.ts";
 
 const columns = {
@@ -53,7 +53,7 @@ export function createFolderStore(db: Db): FolderStore {
       db.transaction((tx) => {
         tx.update(thread).set({ folderId: null }).where(eq(thread.folderId, id)).run();
         tx.delete(folder).where(eq(folder.id, id)).run();
-      });
+      }, writeLock);
     },
   };
 }

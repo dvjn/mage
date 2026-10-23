@@ -5,7 +5,7 @@ import { ulid } from "ulid";
 
 import type { StoredEvent, Thread, ThreadStore } from "@/ports/threads.ts";
 
-import type { Db } from "./db.ts";
+import { type Db, writeLock } from "./db.ts";
 import { orgFormerMember, space, thread, threadEvent, user } from "./schema.ts";
 
 const columns = {
@@ -178,7 +178,7 @@ export function createThreadStore(db: Db): ThreadStore {
             data: event.data,
           })
           .run();
-      });
+      }, writeLock);
       const [stored] = eventsWhere(eq(threadEvent.id, id));
       if (!stored) throw new Error(`event ${id} not found after append`);
       return stored;

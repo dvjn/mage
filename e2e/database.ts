@@ -10,10 +10,16 @@ import Database from "better-sqlite3";
 export const dataDir = path.join(tmpdir(), "mage-e2e");
 export const databasePath = path.join(dataDir, "mage.db");
 
+// The database, waiting out the server's writes rather than failing on them. Transactions here
+// take the write lock as they begin, as one that read first would fail at once when it came to write.
+function open() {
+  return new Database(databasePath, { timeout: 5000 });
+}
+
 // Makes the user with `email` a member of the primary space of the user with `ownerEmail`, with
 // the role, acting from then on in that space's org.
 export function joinSpaceOf(ownerEmail: string, email: string, role: "messager" | "viewer") {
-  const db = new Database(databasePath);
+  const db = open();
   try {
     const userId = (email: string) =>
       (db.prepare("select id from user where email = ?").get(email) as { id: string }).id;
@@ -35,17 +41,10 @@ export function joinSpaceOf(ownerEmail: string, email: string, role: "messager" 
       db.prepare(
         "insert into space_member (space_id, subject_kind, subject_id, role, source) values (?, 'user', ?, ?, 'direct')",
       ).run(space.id, member, role);
-    })();
+    }).immediate();
   } finally {
     db.close();
   }
-}
-
-// The database, waiting out the server's writes rather than failing on them.
-function open() {
-  const db = new Database(databasePath);
-  db.pragma("busy_timeout = 5000");
-  return db;
 }
 
 function primarySpaceOf(db: Database.Database, email: string) {
@@ -91,7 +90,7 @@ export function addThreads(
       for (let index = 1; index <= count; index += 1) {
         insert.run(randomUUID(), space.id, `${prefix} ${index}`, space.userId, folderId);
       }
-    })();
+    }).immediate();
   } finally {
     db.close();
   }
