@@ -123,9 +123,7 @@ function WrongAccount({ preview }: { preview: JoinPreview }) {
       </CardHeader>
       <CardFooter className="flex gap-2">
         <GoHome />
-        <Button size="sm" onClick={() => void signOut()}>
-          Sign out
-        </Button>
+        <Button onClick={() => void signOut()}>Sign out</Button>
       </CardFooter>
     </Card>
   );

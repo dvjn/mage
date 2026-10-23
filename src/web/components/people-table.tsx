@@ -83,7 +83,7 @@ export function PeopleTable({
         title="No matches"
         description="Nothing here matches the search and filters."
         action={
-          <Button size="sm" variant="outline" onClick={filtered.onClear}>
+          <Button variant="outline" onClick={filtered.onClear}>
             Clear
           </Button>
         }

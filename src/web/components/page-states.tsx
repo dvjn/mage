@@ -87,7 +87,7 @@ export function NotFound({ what, id }: { what: "space" | "thread"; id?: string }
 
 export function GoHome() {
   return (
-    <Button size="sm" variant="outline" render={<Link to="/" />} nativeButton={false}>
+    <Button variant="outline" render={<Link to="/" />} nativeButton={false}>
       Go home
     </Button>
   );
