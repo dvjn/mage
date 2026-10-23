@@ -51,7 +51,6 @@ test("an API key's models become the org's and the space's defaults, which new t
   await page.getByRole("button", { name: "Add provider" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: /^Anthropic/ }).click();
-  await dialog.getByRole("button", { name: /^API key/ }).click();
   await dialog.getByRole("button", { name: "Advanced" }).click();
   await expect(dialog.getByRole("region", { name: "Proxy" })).toContainText("Base URL");
   await dialog.getByRole("button", { name: "Advanced" }).click();

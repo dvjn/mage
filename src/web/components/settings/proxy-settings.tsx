@@ -26,7 +26,6 @@ import { connectionsQuery, modelsQuery } from "@/web/lib/queries";
 // Where each kind of connection sends its requests without a proxy.
 export const DEFAULT_BASE_URLS: Record<Backend, string> = {
   codex: "https://chatgpt.com/backend-api/codex",
-  claude: "https://api.anthropic.com/v1",
   anthropic: "https://api.anthropic.com/v1",
   openai: "https://api.openai.com/v1",
 };

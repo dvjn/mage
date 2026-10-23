@@ -141,7 +141,7 @@ export const eventDataSchemas = {
   "thread.renamed": z.object({ title: z.string(), usage: usageSchema.optional() }),
   // `error` says what happened; when the failure has a kind, `connection` is the kind of connection
   // the model is reached through, `detail` what the provider said and `resetsAt` when a limit
-  // resets.
+  // resets. Older events can name the Claude sign-in, since removed.
   "run.failed": z.object({
     runId: z.string(),
     error: z.string(),

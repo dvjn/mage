@@ -1,0 +1,106 @@
+// Lists the models an Anthropic API key can use, from the Anthropic API, and streams replies from
+// its Messages endpoint with the AI SDK's Anthropic provider. A connection's proxy takes the place
+// of the API for both, with its headers added.
+
+import { createAnthropic } from "@ai-sdk/anthropic";
+import * as z from "zod";
+
+import { type ProviderErrors, streamReply } from "@/adapters/ai-sdk-stream.ts";
+import type { Catalog } from "@/ports/catalog.ts";
+import type { ModelGateway } from "@/ports/model-gateway.ts";
+
+const API_URL = "https://api.anthropic.com/v1";
+const API_VERSION = "2023-06-01";
+
+const modelsSchema = z.object({
+  data: z.array(
+    z.object({
+      id: z.string().min(1),
+      display_name: z.string().min(1),
+      max_input_tokens: z.number().int().positive().nullish(),
+      capabilities: z
+        .object({ thinking: z.object({ supported: z.boolean() }).nullish() })
+        .nullish(),
+    }),
+  ),
+  has_more: z.boolean().optional(),
+  last_id: z.string().nullish(),
+});
+
+export function createAnthropicKeyCatalog(fetchFn: typeof fetch = fetch): Catalog {
+  return {
+    async list(token, signal) {
+      const models: z.infer<typeof modelsSchema>["data"] = [];
+      let after: string | null | undefined;
+      do {
+        const query = new URLSearchParams({ limit: "1000", ...(after && { after_id: after }) });
+        const res = await fetchFn(`${token.proxy?.baseUrl ?? API_URL}/models?${query.toString()}`, {
+          headers: {
+            Accept: "application/json",
+            "x-api-key": token.access,
+            "anthropic-version": API_VERSION,
+            ...token.proxy?.headers,
+          },
+          signal,
+        });
+        if (!res.ok) throw new Error(`model list failed with status ${res.status}`);
+        const body = modelsSchema.safeParse(await res.json().catch(() => null));
+        if (!body.success) throw new Error("model list response is not a list");
+        models.push(...body.data.data);
+        after = body.data.has_more ? body.data.last_id : null;
+      } while (after);
+      return models.map((model) => ({
+        id: model.id,
+        name: model.display_name,
+        ...(model.max_input_tokens && { contextWindow: model.max_input_tokens }),
+        ...(model.capabilities?.thinking && { reasoning: model.capabilities.thinking.supported }),
+      }));
+    },
+  };
+}
+
+// A rate limit reset as epoch seconds or an RFC 3339 time.
+function instant(value: string | undefined) {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return seconds > 0 ? new Date(seconds * 1000) : null;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : new Date(at);
+}
+
+// The Anthropic API explains its limits in `anthropic-ratelimit-*` headers: per-minute request and
+// token limits, each with when it resets.
+export const anthropicErrors: ProviderErrors = {
+  explains: (name) => name.startsWith("anthropic-ratelimit-") || name === "request-id",
+  resetsAt(headers) {
+    const minute = ["requests", "tokens", "input-tokens", "output-tokens"]
+      .filter((limit) => headers[`anthropic-ratelimit-${limit}-remaining`] === "0")
+      .map((limit) => instant(headers[`anthropic-ratelimit-${limit}-reset`]))
+      .filter((at): at is Date => at !== null)
+      .toSorted((a, b) => b.getTime() - a.getTime());
+    return minute[0] ?? null;
+  },
+};
+
+// Replies through the Anthropic Messages API with an API key, the instructions as the system
+// prompt. A model that can think does so at the effort asked for, and streams its thinking.
+export function createAnthropicKeyGateway(fetchFn: typeof fetch = fetch): ModelGateway {
+  return {
+    async *stream(token, request, signal) {
+      // Without a key the provider falls back to one from the environment.
+      if (!token.access) throw new Error("the connection has no API key");
+      const provider = createAnthropic({
+        baseURL: token.proxy?.baseUrl ?? API_URL,
+        apiKey: token.access,
+        headers: { "user-agent": "mage", ...token.proxy?.headers },
+        fetch: fetchFn,
+      });
+      yield* streamReply(provider.messages(request.model), request, signal, {
+        system: request.instructions,
+        // Adaptive thinking at that effort, or a thinking budget for models without it.
+        ...(request.effort && { reasoning: request.effort }),
+        errors: anthropicErrors,
+      });
+    },
+  };
+}

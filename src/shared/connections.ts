@@ -16,7 +16,7 @@ export type ProxySummary = z.infer<typeof proxySummarySchema>;
 export const connectionSchema = z.object({
   id: z.string(),
   provider: z.enum(["openai", "anthropic"]),
-  authKind: z.enum(["codex", "claude", "api_key"]),
+  authKind: z.enum(["codex", "api_key"]),
   // The provider account, or an API key's masked hint.
   account: z.string(),
   // The name given to an API key; null for sign-ins.
@@ -32,7 +32,7 @@ type ConnectionKind = Pick<ConnectionSummary, "provider" | "authKind" | "label">
 
 // What replies and model lists go through: a subscription sign-in, or a provider's own API with a
 // key.
-export type Backend = "codex" | "claude" | "openai" | "anthropic";
+export type Backend = "codex" | "openai" | "anthropic";
 
 export function backendOf(connection: Pick<ConnectionKind, "provider" | "authKind">): Backend {
   return connection.authKind === "api_key" ? connection.provider : connection.authKind;
@@ -40,7 +40,6 @@ export function backendOf(connection: Pick<ConnectionKind, "provider" | "authKin
 
 export const BACKEND_LABELS: Record<Backend, string> = {
   codex: "Codex",
-  claude: "Claude",
   openai: "OpenAI",
   anthropic: "Anthropic",
 };

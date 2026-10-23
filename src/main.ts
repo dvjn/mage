@@ -2,13 +2,7 @@
 
 import { serve } from "@hono/node-server";
 
-import {
-  createAnthropicKeyCatalog,
-  createAnthropicKeyGateway,
-  createClaudeCatalog,
-  createClaudeGateway,
-  createClaudeOAuth,
-} from "@/adapters/anthropic-claude.ts";
+import { createAnthropicKeyCatalog, createAnthropicKeyGateway } from "@/adapters/anthropic-api.ts";
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { createCipher } from "@/adapters/cipher.ts";
 import { createConnectionStore } from "@/adapters/connections.ts";
@@ -73,7 +67,6 @@ const connections = createConnections({
   attempts: createSignInAttemptStore(db),
   providers: {
     codex: { provider: "openai", label: "Codex", browser: codex, device: codex },
-    claude: { provider: "anthropic", label: "Claude", browser: createClaudeOAuth(fetch) },
   },
   logger,
 });
@@ -92,13 +85,11 @@ const models = createModels({
   tokens: connections,
   catalogs: {
     codex: createCodexCatalog(fetch),
-    claude: createClaudeCatalog(fetch),
     ...keyCatalogs,
   },
   settings: settingStore,
   gateways: {
     codex: createCodexGateway(fetch),
-    claude: createClaudeGateway(fetch),
     openai: createOpenAIKeyGateway(fetch),
     anthropic: createAnthropicKeyGateway(fetch),
   },

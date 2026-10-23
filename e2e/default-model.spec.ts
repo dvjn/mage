@@ -44,12 +44,12 @@ test("the default model picker groups models by connection and shows list errors
             connectionLabel: "Codex",
           },
           {
-            ref: "claude/claude-big",
+            ref: "c2/claude-big",
             id: "claude-big",
             name: "Claude Big",
             connectionId: "c2",
-            authKind: "claude",
-            connectionLabel: "Claude",
+            authKind: "api_key",
+            connectionLabel: "Anthropic API key",
           },
         ],
         errors: [{ connectionId: "c3", message: "Could not read the Claude models. Try again." }],
@@ -63,7 +63,7 @@ test("the default model picker groups models by connection and shows list errors
   await page.getByLabel("Default model").click();
   const list = page.getByRole("listbox");
   await expect(list.getByText("Codex", { exact: true })).toBeVisible();
-  await expect(list.getByText("Claude", { exact: true })).toBeVisible();
+  await expect(list.getByText("Anthropic API key", { exact: true })).toBeVisible();
   await list.getByRole("option", { name: "Claude Big" }).click();
   // The server refuses a model its connections do not offer.
   await expect(page.getByRole("alert").filter({ hasText: "not a model" })).toBeVisible();

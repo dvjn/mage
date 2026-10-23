@@ -203,7 +203,6 @@ test("a provider's models are turned off in its dialog, and leave the pickers", 
   await page.getByRole("button", { name: "Add provider" }).click();
   const add = page.getByRole("dialog");
   await add.getByRole("button", { name: /^Anthropic/ }).click();
-  await add.getByRole("button", { name: /^API key/ }).click();
   await add.getByLabel("API key").fill("sk-ant-demo-1234");
   await add.getByRole("button", { name: "Add key" }).click();
   await add.getByRole("button", { name: "Done" }).click();

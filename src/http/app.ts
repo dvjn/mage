@@ -695,7 +695,7 @@ function createApi(options: AppOptions) {
             403,
           );
         }
-        if (org.kind === "team" && /^\/api\/v1\/connections\/(codex|claude)\//.test(c.req.path)) {
+        if (org.kind === "team" && c.req.path.startsWith("/api/v1/connections/codex/")) {
           return c.json(
             {
               error: "Subscription sign-ins are for personal organizations; add an API key instead",
@@ -765,14 +765,6 @@ function createApi(options: AppOptions) {
       .post("/v1/connections/codex/attempts/:id/cancel", (c) => {
         connections.cancel("codex", signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
-      })
-      .post("/v1/connections/claude/browser", (c) => {
-        return c.json(connections.startBrowser("claude", signedIn(c.var.principal)), 200);
-      })
-      .post("/v1/connections/claude/browser/finish", browserFinish, async (c) => {
-        const owner = signedIn(c.var.principal);
-        const connection = await connections.finishBrowser("claude", owner, c.req.valid("json"));
-        return c.json(summary(connection), 200);
       })
       .delete("/v1/connections/:id", (c) => {
         connections.remove(signedIn(c.var.principal), c.req.param("id"));

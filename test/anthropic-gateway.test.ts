@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { createClaudeGateway } from "@/adapters/anthropic-claude.ts";
+import { createAnthropicKeyGateway } from "@/adapters/anthropic-api.ts";
 import { type ModelEvent, ModelError, type ModelRequest } from "@/ports/model-gateway.ts";
 
-const token = { access: "access-token", accountId: null };
+const token = { access: "sk-ant-key", accountId: null };
 
 // One Messages stream as the Anthropic API sends it, as server-sent events.
 function sse(events: object[]) {
@@ -108,22 +108,21 @@ async function collect(stream: AsyncIterable<ModelEvent>) {
   return events;
 }
 
-describe("Claude gateway", () => {
-  it("asks the Messages API with the OAuth token as a bearer token", async () => {
+describe("Anthropic API key gateway", () => {
+  it("asks the Messages API with the key", async () => {
     const { fetchFn, requests } = recordingFetch([sse(reply(["Punched", " cards."]))]);
 
     await collect(
-      createClaudeGateway(fetchFn).stream(token, request, new AbortController().signal),
+      createAnthropicKeyGateway(fetchFn).stream(token, request, new AbortController().signal),
     );
 
     const [sent] = requests;
     expect(sent?.url).toBe("https://api.anthropic.com/v1/messages");
     expect(Object.fromEntries(sent!.headers)).toMatchObject({
-      authorization: "Bearer access-token",
+      "x-api-key": "sk-ant-key",
       "anthropic-version": "2023-06-01",
-      "anthropic-beta": "oauth-2025-04-20",
     });
-    expect(sent?.headers.has("x-api-key")).toBe(false);
+    expect(sent?.headers.has("authorization")).toBe(false);
     expect(sent?.headers.get("user-agent")).toMatch(/^mage\b/);
     expect(sent?.body).toMatchObject({
       model: "claude-sonnet-4-5",
@@ -145,7 +144,7 @@ describe("Claude gateway", () => {
     const proxy = { baseUrl: "https://proxy.example.com/v1", headers: { "x-team": "blue" } };
 
     await collect(
-      createClaudeGateway(fetchFn).stream(
+      createAnthropicKeyGateway(fetchFn).stream(
         { ...token, proxy },
         request,
         new AbortController().signal,
@@ -154,30 +153,16 @@ describe("Claude gateway", () => {
 
     expect(requests[0]?.url).toBe("https://proxy.example.com/v1/messages");
     expect(Object.fromEntries(requests[0]!.headers)).toMatchObject({
-      authorization: "Bearer access-token",
-      "anthropic-beta": "oauth-2025-04-20",
+      "x-api-key": "sk-ant-key",
       "x-team": "blue",
     });
-  });
-
-  it("never names Claude Code", async () => {
-    const { fetchFn, requests } = recordingFetch([sse(reply(["Hi"]))]);
-
-    await collect(
-      createClaudeGateway(fetchFn).stream(token, request, new AbortController().signal),
-    );
-
-    const [sent] = requests;
-    expect(sent?.headers.has("x-app")).toBe(false);
-    const sentText = JSON.stringify([...sent!.headers, sent!.body]).toLowerCase();
-    expect(sentText).not.toMatch(/claude-cli|claude-code|claude code/);
   });
 
   it("streams the reply as steps, deltas and usage", async () => {
     const { fetchFn } = recordingFetch([sse(reply(["Punched", " cards."]))]);
 
     const events = await collect(
-      createClaudeGateway(fetchFn).stream(token, request, new AbortController().signal),
+      createAnthropicKeyGateway(fetchFn).stream(token, request, new AbortController().signal),
     );
 
     expect(events).toEqual([
@@ -192,7 +177,7 @@ describe("Claude gateway", () => {
     const { fetchFn, requests } = recordingFetch([sse(thought(["Gears", " turn."], ["Gears."]))]);
 
     const events = await collect(
-      createClaudeGateway(fetchFn).stream(
+      createAnthropicKeyGateway(fetchFn).stream(
         token,
         { ...request, model: "claude-opus-5-5", effort: "low" },
         new AbortController().signal,
@@ -214,7 +199,7 @@ describe("Claude gateway", () => {
 
   it("gives an older model a thinking budget, and a model without an effort no thinking", async () => {
     const { fetchFn, requests } = recordingFetch([sse(reply(["Hi"])), sse(reply(["Hi"]))]);
-    const gateway = createClaudeGateway(fetchFn);
+    const gateway = createAnthropicKeyGateway(fetchFn);
     const signal = new AbortController().signal;
 
     await collect(gateway.stream(token, { ...request, effort: "medium" }, signal));
@@ -236,7 +221,9 @@ describe("Claude gateway", () => {
     const { fetchFn } = recordingFetch([refusal, refusal.clone(), refusal.clone()]);
 
     await expect(
-      collect(createClaudeGateway(fetchFn).stream(token, request, new AbortController().signal)),
+      collect(
+        createAnthropicKeyGateway(fetchFn).stream(token, request, new AbortController().signal),
+      ),
     ).rejects.toThrow(/unknown model/);
   });
 
@@ -247,38 +234,41 @@ describe("Claude gateway", () => {
         headers: {
           "retry-after": "0",
           "request-id": "req_1",
-          "anthropic-ratelimit-unified-status": "rejected",
-          "anthropic-ratelimit-unified-reset": "1792000000",
-          "anthropic-ratelimit-unified-5h-status": "rejected",
-          "anthropic-ratelimit-unified-overage-status": "rejected",
-          "anthropic-ratelimit-unified-overage-disabled-reason": "out_of_credits",
+          "anthropic-ratelimit-requests-remaining": "10",
+          "anthropic-ratelimit-requests-reset": "2026-10-24T10:00:30Z",
+          "anthropic-ratelimit-input-tokens-remaining": "0",
+          "anthropic-ratelimit-input-tokens-reset": "2026-10-24T10:00:20Z",
+          "anthropic-ratelimit-output-tokens-remaining": "0",
+          "anthropic-ratelimit-output-tokens-reset": "2026-10-24T10:00:40Z",
           "x-unrelated": "1",
         },
       });
     const { fetchFn } = recordingFetch([limited(), limited(), limited()]);
 
     const failed = await collect(
-      createClaudeGateway(fetchFn).stream(token, request, new AbortController().signal),
+      createAnthropicKeyGateway(fetchFn).stream(token, request, new AbortController().signal),
     ).catch((err: unknown) => err);
 
     expect(failed).toBeInstanceOf(ModelError);
     const { kind, resetsAt, detail } = failed as ModelError;
     expect(kind).toBe("limit");
-    expect(resetsAt).toEqual(new Date(1792000000 * 1000));
+    // The latest of the limits used up; the request limit is not.
+    expect(resetsAt).toEqual(new Date("2026-10-24T10:00:40Z"));
     expect(detail.split("\n")).toEqual([
       "429 (empty body)",
-      "anthropic-ratelimit-unified-5h-status: rejected",
-      "anthropic-ratelimit-unified-overage-disabled-reason: out_of_credits",
-      "anthropic-ratelimit-unified-overage-status: rejected",
-      "anthropic-ratelimit-unified-reset: 1792000000",
-      "anthropic-ratelimit-unified-status: rejected",
+      "anthropic-ratelimit-input-tokens-remaining: 0",
+      "anthropic-ratelimit-input-tokens-reset: 2026-10-24T10:00:20Z",
+      "anthropic-ratelimit-output-tokens-remaining: 0",
+      "anthropic-ratelimit-output-tokens-reset: 2026-10-24T10:00:40Z",
+      "anthropic-ratelimit-requests-remaining: 10",
+      "anthropic-ratelimit-requests-reset: 2026-10-24T10:00:30Z",
       "request-id: req_1",
       "retry-after: 0",
     ]);
   });
 
   it.each([
-    [401, { type: "authentication_error", message: "invalid bearer token" }, "auth"],
+    [401, { type: "authentication_error", message: "invalid x-api-key" }, "auth"],
     [404, { type: "not_found_error", message: "model: claude-gone" }, "model"],
     [400, { type: "invalid_request_error", message: "model: unknown model" }, "model"],
     [529, { type: "overloaded_error", message: "Overloaded" }, "network"],
@@ -288,7 +278,9 @@ describe("Claude gateway", () => {
     const { fetchFn } = recordingFetch([refusal(), refusal(), refusal()]);
 
     await expect(
-      collect(createClaudeGateway(fetchFn).stream(token, request, new AbortController().signal)),
+      collect(
+        createAnthropicKeyGateway(fetchFn).stream(token, request, new AbortController().signal),
+      ),
     ).rejects.toThrow(
       expect.objectContaining({ kind, detail: `${status} ${error.message}\nretry-after: 0` }),
     );
@@ -301,7 +293,7 @@ describe("Claude gateway", () => {
 
     await expect(
       (async () => {
-        for await (const event of createClaudeGateway(fetchFn).stream(
+        for await (const event of createAnthropicKeyGateway(fetchFn).stream(
           token,
           request,
           controller.signal,
@@ -314,18 +306,18 @@ describe("Claude gateway", () => {
     expect(events.filter((event) => event.type === "step-end")).toEqual([]);
   });
 
-  it("needs an access token rather than falling back to an API key", async () => {
+  it("needs a key rather than falling back to one from the environment", async () => {
     const { fetchFn, requests } = recordingFetch([]);
 
     await expect(
       collect(
-        createClaudeGateway(fetchFn).stream(
+        createAnthropicKeyGateway(fetchFn).stream(
           { access: "", accountId: null },
           request,
           new AbortController().signal,
         ),
       ),
-    ).rejects.toThrow(/access token/);
+    ).rejects.toThrow(/API key/);
     expect(requests).toEqual([]);
   });
 });

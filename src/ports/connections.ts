@@ -8,7 +8,7 @@ export interface Connection {
   provider: "openai" | "anthropic";
   // A subscription sign-in, or an API key; an org has one sign-in of each kind, and any number of
   // keys.
-  authKind: "codex" | "claude" | "api_key";
+  authKind: "codex" | "api_key";
   // The provider account, or a key's masked hint.
   account: string;
   // The name people gave a key; null for sign-ins.

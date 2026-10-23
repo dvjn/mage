@@ -66,7 +66,6 @@ import { connectionsQuery, meQuery, modelsQuery } from "@/web/lib/queries";
 const METHODS: Record<ConnectionSummary["authKind"], string> = {
   api_key: "API key",
   codex: "ChatGPT sign-in",
-  claude: "Claude sign-in",
 };
 
 type RowAction = {
@@ -355,7 +354,7 @@ export function OrgProviders() {
               ? "An owner of the organization adds model providers for its threads to reply with."
               : team
                 ? "Add an API key to give this organization's threads models to reply with."
-                : "Add an API key, or sign in with a ChatGPT or Claude subscription, to give this organization's threads models to reply with."
+                : "Add an API key, or sign in with a ChatGPT subscription, to give this organization's threads models to reply with."
           }
           action={manages && addButton}
         />

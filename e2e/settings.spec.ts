@@ -65,40 +65,24 @@ test("settings offers the Codex sign-in and rejects a pasted address from anothe
   await expect(page.getByRole("alert")).toContainText("different sign-in");
 });
 
-test("settings offers the Claude sign-in", async ({ page, context }) => {
-  // The authorize page is never loaded from Claude.
-  await context.route("https://claude.ai/**", (route) =>
-    route.fulfill({ contentType: "text/html", body: "<title>Claude</title>" }),
-  );
-
+test("Anthropic connects with an API key, with no sign-in to choose", async ({ page }) => {
   await signUpToSettings(page);
-  await addProvider(page, "Anthropic", "Sign in with Claude");
-
-  const [popup] = await Promise.all([
-    page.waitForEvent("popup"),
-    page.getByRole("button", { name: "Open the Claude sign-in" }).click(),
-  ]);
-  await popup.waitForURL(/^https:\/\/claude\.ai\/oauth\/authorize\?/);
-  const authorize = new URL(popup.url());
-  expect(authorize.searchParams.get("client_id")).toBe("9d1c250a-e61b-44d9-88ed-5944d1962f5e");
-  expect(authorize.searchParams.get("redirect_uri")).toBe(
-    "https://platform.claude.com/oauth/code/callback",
-  );
-
-  await page.getByLabel("Code").fill("abc#another-sign-in");
-  await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page.getByRole("alert")).toContainText("different sign-in");
+  await page.getByRole("button", { name: "Add provider" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: /^Anthropic/ }).click();
+  await expect(dialog.getByRole("heading", { name: "API key" })).toBeVisible();
+  await expect(dialog.getByLabel("API key")).toBeFocused();
 });
 
 test("a connection's proxy is set from its row, its header values never shown", async ({
   page,
 }) => {
-  // Stands in for a connected Claude account, which needs a real sign-in.
+  // Stands in for a connected ChatGPT account, which needs a real sign-in.
   const connection = {
     id: "c1",
-    provider: "anthropic",
-    authKind: "claude",
-    account: "ada@claude.example",
+    provider: "openai",
+    authKind: "codex",
+    account: "ada@chatgpt.example",
     label: null,
     createdAt: "2026-10-21T00:00:00.000Z",
   };
@@ -121,15 +105,15 @@ test("a connection's proxy is set from its row, its header values never shown", 
   });
 
   await signUpToSettings(page);
-  const row = page.getByRole("row", { name: "Claude" });
-  await expect(row).toContainText("ada@claude.example");
-  await expect(row).toContainText("Claude sign-in");
+  const row = page.getByRole("row", { name: "Codex" });
+  await expect(row).toContainText("ada@chatgpt.example");
+  await expect(row).toContainText("ChatGPT sign-in");
   await expect(page.getByLabel("Base URL")).toBeHidden();
-  await row.getByRole("button", { name: "Actions for Claude" }).click();
+  await row.getByRole("button", { name: "Actions for Codex" }).click();
   await page.getByRole("menuitem", { name: "Proxy settings…" }).click();
   await expect(page.getByLabel("Base URL")).toHaveAttribute(
     "placeholder",
-    "https://api.anthropic.com/v1",
+    "https://chatgpt.com/backend-api/codex",
   );
 
   await page.getByLabel("Base URL").fill("https://proxy.example.com/v1");
@@ -144,14 +128,14 @@ test("a connection's proxy is set from its row, its header values never shown", 
   await page.getByRole("button", { name: "Save" }).click();
   await expect.poll(() => sent.length).toBe(2);
   await page.keyboard.press("Escape");
-  await row.getByRole("button", { name: "Actions for Claude" }).click();
+  await row.getByRole("button", { name: "Actions for Codex" }).click();
   await page.getByRole("menuitem", { name: "Proxy settings…" }).click();
   await expect(page.getByLabel("Base URL")).toHaveValue("https://proxy.example.com/v1");
 
   await page.getByRole("button", { name: "Clear" }).click();
   await expect(page.getByText("Proxy cleared.")).toBeVisible();
   await page.keyboard.press("Escape");
-  await row.getByRole("button", { name: "Actions for Claude" }).click();
+  await row.getByRole("button", { name: "Actions for Codex" }).click();
   await page.getByRole("menuitem", { name: "Proxy settings…" }).click();
   await expect(page.getByLabel("Base URL")).toHaveValue("");
   expect(sent).toEqual([

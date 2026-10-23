@@ -11,7 +11,7 @@ export const modelSchema = z.object({
   id: z.string(),
   name: z.string(),
   connectionId: z.string(),
-  authKind: z.enum(["codex", "claude", "api_key"]),
+  authKind: z.enum(["codex", "api_key"]),
   // How people know the connection it comes through.
   connectionLabel: z.string(),
   contextWindow: z.number().optional(),

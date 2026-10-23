@@ -163,7 +163,7 @@ export const connection = sqliteTable(
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     provider: text("provider", { enum: ["openai", "anthropic"] }).notNull(),
     // A subscription sign-in, or an API key.
-    authKind: text("auth_kind", { enum: ["codex", "claude", "api_key"] }).notNull(),
+    authKind: text("auth_kind", { enum: ["codex", "api_key"] }).notNull(),
     // The provider account, as shown to people; for an API key, its masked hint.
     account: text("account").notNull(),
     // A name people gave an API key; null for sign-ins.
@@ -219,7 +219,7 @@ export const credential = sqliteTable("credential", {
 // A browser sign-in a user has started and not yet finished; each is used once.
 export const signInAttempt = sqliteTable("sign_in_attempt", {
   state: text("state").primaryKey(),
-  kind: text("kind", { enum: ["codex", "claude"] }).notNull(),
+  kind: text("kind", { enum: ["codex"] }).notNull(),
   codeVerifier: text("code_verifier").notNull(),
   organizationId: text("organization_id")
     .notNull()

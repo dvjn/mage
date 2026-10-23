@@ -141,6 +141,13 @@
       "when": 1792786959888,
       "tag": "0019_list_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1792790943681,
+      "tag": "0020_remove_claude_sign_in",
+      "breakpoints": true
     }
   ]
 }

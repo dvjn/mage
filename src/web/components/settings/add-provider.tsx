@@ -22,7 +22,6 @@ import {
 } from "@/shared/connections.ts";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { ModelPicker } from "@/web/components/model-picker";
-import { ClaudeSignIn } from "@/web/components/settings/claude-sign-in";
 import { CodexSignIn } from "@/web/components/settings/codex-sign-in";
 import {
   emptyProxy,
@@ -53,7 +52,7 @@ import { errorOf } from "@/web/lib/api-errors";
 import { connectionsQuery, defaultModelQuery, modelsQuery } from "@/web/lib/queries";
 
 type Provider = "anthropic" | "openai";
-type Method = "api_key" | "codex" | "claude";
+type Method = "api_key" | "codex";
 
 type Step =
   | { name: "provider" }
@@ -64,7 +63,7 @@ type Step =
 const PROVIDERS: { provider: Provider; description: string; keyDescription: string }[] = [
   {
     provider: "anthropic",
-    description: "Claude models, with an API key or a Claude plan.",
+    description: "Claude models, with an API key.",
     keyDescription: "Claude models, with an API key.",
   },
   {
@@ -77,11 +76,6 @@ const PROVIDERS: { provider: Provider; description: string; keyDescription: stri
 const METHODS: Record<Provider, { method: Method; title: string; description: string }[]> = {
   anthropic: [
     { method: "api_key", title: "API key", description: "Billed per token by Anthropic." },
-    {
-      method: "claude",
-      title: "Sign in with Claude",
-      description: "Your Claude Pro or Max plan; usage is billed from Claude extra usage.",
-    },
   ],
   openai: [
     { method: "api_key", title: "API key", description: "Billed per token by OpenAI." },
@@ -396,8 +390,8 @@ export function AddProviderDialog({
             ))}
             {apiKeysOnly && (
               <p className="text-xs text-muted-foreground">
-                Team organizations connect with API keys. Signing in with a ChatGPT or Claude plan
-                is for personal organizations.
+                Team organizations connect with API keys. Signing in with a ChatGPT plan is for
+                personal organizations.
               </p>
             )}
           </div>
@@ -428,9 +422,6 @@ export function AddProviderDialog({
         )}
         {step.name === "credentials" && step.method === "codex" && (
           <CodexSignIn onConnected={(connection) => setStep({ name: "done", connection })} />
-        )}
-        {step.name === "credentials" && step.method === "claude" && (
-          <ClaudeSignIn onConnected={(connection) => setStep({ name: "done", connection })} />
         )}
         {step.name === "done" && <DoneStep connection={step.connection} onClose={close} />}
       </DialogContent>

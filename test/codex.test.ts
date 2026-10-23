@@ -14,7 +14,6 @@ import { createCodexOAuth } from "@/adapters/openai-codex.ts";
 import * as schema from "@/adapters/schema.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { createApp } from "@/http/app.ts";
-import type { BrowserOAuth } from "@/ports/oauth.ts";
 import { createConnections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Guests } from "@/services/guests.ts";
@@ -36,7 +35,6 @@ const unusedSpaces = {} as Spaces;
 const unusedFolders = {} as Folders;
 const unusedThreads = {} as Threads;
 const unusedGuests = {} as Guests;
-const unusedClaude = {} as BrowserOAuth;
 
 function accessToken(serial: number, accountId: string | null = "acct-123") {
   return new UnsecuredJWT({
@@ -122,7 +120,6 @@ function setup() {
     attempts: createSignInAttemptStore(db),
     providers: {
       codex: { provider: "openai", label: "Codex", browser: codex, device: codex },
-      claude: { provider: "anthropic", label: "Claude", browser: unusedClaude },
     },
     logger,
     now: () => clock.now,

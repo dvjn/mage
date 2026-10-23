@@ -101,7 +101,6 @@ const CACHE_MS = 60 * 60 * 1000;
 // The model each kind of connection names threads with, when its list has it.
 const TITLE_MODELS: Record<Backend, string> = {
   codex: "gpt-6-luna",
-  claude: "claude-haiku-5-5",
   openai: "gpt-6-luna",
   anthropic: "claude-haiku-5-5",
 };
