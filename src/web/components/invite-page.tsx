@@ -1,15 +1,14 @@
-// An invite link opened in the browser. Signed out, it asks the person to create an account or sign
-// in, and brings them back here after; signed in, it lets them into the thread and opens it, or
-// says plainly why the link no longer works.
+// An invite link opened in the browser. Signed out, it asks the person to sign in, or to create an
+// account while they can, and brings them back here after; signed in, it lets them into the thread
+// and opens it, or says plainly why the link no longer works.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
+import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import { acceptedInviteSchema, type InviteRefusal, inviteRefusalSchema } from "@/shared/guests.ts";
-import { AuthCard, AuthFrame } from "@/web/components/auth-frame";
+import { AuthCard, AuthFrame, SignInActions, useCanSignUp } from "@/web/components/auth-frame";
 import { GoHome } from "@/web/components/page-states";
-import { Button } from "@/web/components/ui/button";
 import { Spinner } from "@/web/components/ui/spinner";
 import { apiClient } from "@/web/lib/api-client";
 import { sessionQuery, sharedThreadsQuery } from "@/web/lib/queries";
@@ -36,25 +35,12 @@ const REFUSALS: Record<InviteRefusal["reason"], { title: string; text: string }>
 };
 
 function SignedOut({ token }: { token: string }) {
-  const back = { redirect: `/invite/${token}` };
+  const canSignUp = useCanSignUp();
   return (
     <AuthCard
       title="You are invited to a thread"
-      description="Create an account or sign in to open it."
-      actions={
-        <>
-          <Button render={<Link to="/signup" search={back} />} nativeButton={false}>
-            Create account
-          </Button>
-          <Button
-            variant="outline"
-            render={<Link to="/login" search={back} />}
-            nativeButton={false}
-          >
-            Sign in
-          </Button>
-        </>
-      }
+      description={canSignUp ? "Create an account or sign in to open it." : "Sign in to open it."}
+      actions={<SignInActions back={{ redirect: `/invite/${token}` }} />}
     />
   );
 }

@@ -1,4 +1,4 @@
-// Server state the web client reads: the current session, who is signed in, the orgs they are in,
+// Server state the web client reads: the ways to sign in, the current session, who is signed in, the orgs they are in,
 // the tab org's members, groups and settings, their connections, the models the org can use, its
 // default model and effort and title model, their spaces with who is in them, their folders and
 // threads, the threads shared with them, and who is in a thread.
@@ -16,12 +16,24 @@ import {
   modelListSchema,
   titleModelSchema,
 } from "@/shared/models.ts";
+import { signInOptionsSchema } from "@/shared/sign-in.ts";
 import { spaceListSchema } from "@/shared/spaces.ts";
 import { type ThreadDetail, threadDetailSchema, threadListSchema } from "@/shared/threads.ts";
 import { apiClient } from "@/web/lib/api-client";
 import { authClient } from "@/web/lib/auth-client";
 import { adoptOrg } from "@/web/lib/org-tab";
 import { withLiveEvents } from "@/web/lib/thread-detail";
+
+// They change only when the server restarts.
+export const signInOptionsQuery = queryOptions({
+  queryKey: ["sign-in-options"],
+  staleTime: Number.POSITIVE_INFINITY,
+  queryFn: async () => {
+    const res = await apiClient["sign-in-options"].$get();
+    if (!res.ok) throw new Error("could not read the ways to sign in");
+    return signInOptionsSchema.parse(await res.json());
+  },
+});
 
 export const sessionQuery = queryOptions({
   queryKey: ["session"],

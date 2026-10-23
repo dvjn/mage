@@ -33,6 +33,7 @@ import {
 import { type FolderSummary, folderNameSchema } from "@/shared/folders.ts";
 import { acceptInviteSchema, newInviteSchema } from "@/shared/guests.ts";
 import type { Me } from "@/shared/me.ts";
+import type { SignInOptions } from "@/shared/sign-in.ts";
 import {
   type ConnectionModels,
   connectionModelsChangeSchema,
@@ -98,6 +99,8 @@ export interface AppOptions {
   // How often a live event stream sends a comment to keep the connection open, and checks the
   // reader may still read the thread.
   heartbeatMs?: number;
+  // The ways to sign in this server offers, for the sign-in page.
+  signInOptions: SignInOptions;
   // Reports whether the database answers a query.
   pingDatabase: () => Promise<boolean>;
   // Directory holding the built web client. Unset in dev, where Vite serves it.
@@ -336,6 +339,7 @@ function createApi(options: AppOptions) {
   const { identity, connections, models, spaces, folders, threads, guests, orgs, groups } = options;
   return (
     new Hono<ApiEnv>()
+      .get("/sign-in-options", (c) => c.json(options.signInOptions, 200))
       // What an org invite link offers; signed out, the whole email it is for.
       .get("/org-invites/:token", async (c) => {
         const account = await identity.resolve(c.req.raw.headers, null);

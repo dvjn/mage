@@ -208,6 +208,7 @@ function setup() {
     orgs: {} as Orgs,
     groups: {} as Groups,
     logger,
+    signInOptions: { password: "everyone", oidc: null },
     pingDatabase: () => Promise.resolve(true),
   });
 

@@ -1,10 +1,10 @@
 // An org invite link opened in the browser. Signed out, it names the org and who invited whom, and
-// asks the person to create an account or sign in with the invited email, bringing them back here
-// after; signed in as that person, it lets them into the org and opens it; signed in as someone
-// else, it says whom the invite is for. A link that no longer works says why.
+// asks the person to sign in, or create an account while they can, with the invited email, bringing
+// them back here after; signed in as that person, it lets them into the org and opens it; signed in
+// as someone else, it says whom the invite is for. A link that no longer works says why.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, Link } from "@tanstack/react-router";
+import { getRouteApi } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import {
@@ -13,7 +13,7 @@ import {
   joinPreviewSchema,
   joinRefusalSchema,
 } from "@/shared/orgs.ts";
-import { AuthCard, AuthFrame } from "@/web/components/auth-frame";
+import { AuthCard, AuthFrame, SignInActions, useCanSignUp } from "@/web/components/auth-frame";
 import { GoHome } from "@/web/components/page-states";
 import { Button } from "@/web/components/ui/button";
 import { Spinner } from "@/web/components/ui/spinner";
@@ -59,25 +59,13 @@ function invitedBy(preview: JoinPreview) {
 }
 
 function SignedOut({ token, preview }: { token: string; preview: JoinPreview }) {
-  const back = { redirect: `/join/${token}`, email: preview.email };
+  const canSignUp = useCanSignUp();
+  const how = canSignUp ? "Create an account or sign in" : "Sign in";
   return (
     <AuthCard
       title={`Join ${preview.orgName}`}
-      description={`${invitedBy(preview)} Create an account or sign in with that email to accept.`}
-      actions={
-        <>
-          <Button render={<Link to="/signup" search={back} />} nativeButton={false}>
-            Create account
-          </Button>
-          <Button
-            variant="outline"
-            render={<Link to="/login" search={back} />}
-            nativeButton={false}
-          >
-            Sign in
-          </Button>
-        </>
-      }
+      description={`${invitedBy(preview)} ${how} with that email to accept.`}
+      actions={<SignInActions back={{ redirect: `/join/${token}`, email: preview.email }} />}
     />
   );
 }

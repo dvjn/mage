@@ -32,6 +32,13 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...valid, TEAM_ORGS: "admins" })).toThrow(/TEAM_ORGS/);
   });
 
+  it("lets everyone sign in with a password unless only the operators may", () => {
+    expect(loadConfig(valid).passwordSignIn).toBe("everyone");
+    expect(loadConfig({ ...valid, PASSWORD_SIGN_IN: "operator" }).passwordSignIn).toBe("operator");
+    expect(() => loadConfig({ ...valid, PASSWORD_SIGN_IN: "admins" })).toThrow(/PASSWORD_SIGN_IN/);
+    expect(() => loadConfig({ ...valid, PASSWORD_SIGN_IN: "off" })).toThrow(/PASSWORD_SIGN_IN/);
+  });
+
   it("rejects a non-numeric PORT", () => {
     expect(() => loadConfig({ ...valid, PORT: "abc" })).toThrow(/PORT/);
   });

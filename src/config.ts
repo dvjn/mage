@@ -16,6 +16,9 @@ export interface Config {
   teamOrgs: "everyone" | "operator";
   // The accounts that run this server, by lower-cased email.
   operatorEmails: string[];
+  // Who may sign in with a password: every account, only the operators (with no password sign-up),
+  // or nobody.
+  passwordSignIn: "everyone" | "operator" | "off";
 }
 
 // The local development secret; refused in production.
@@ -84,6 +87,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     .split(",")
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
+  const passwordSignIn = env.PASSWORD_SIGN_IN ?? "everyone";
+  if (passwordSignIn !== "everyone" && passwordSignIn !== "operator" && passwordSignIn !== "off") {
+    throw new Error("PASSWORD_SIGN_IN must be everyone, operator or off");
+  }
+  if (passwordSignIn === "off") {
+    throw new Error("PASSWORD_SIGN_IN=off needs another way to sign in");
+  }
   return {
     baseUrl,
     authSecret,
@@ -96,5 +106,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     fakeModels: gateway === "fake",
     teamOrgs,
     operatorEmails,
+    passwordSignIn,
   };
 }

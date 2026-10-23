@@ -1,10 +1,11 @@
-// Email and password accounts with cookie sessions, served under /api/auth.
+// Email and password accounts with cookie sessions, served under /api/auth. Password sign-in is
+// open to everyone (the default), to the operators alone with no password sign-up, or to nobody.
 // Every user gets a personal org with its first space at sign-up, and new sessions act in it. Orgs
 // and their members are changed only through Mage's own API, so the library's org routes are off.
 
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError } from "better-auth/api";
+import { APIError, createAuthMiddleware } from "better-auth/api";
 import { organization } from "better-auth/plugins";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
@@ -23,12 +24,15 @@ export interface AuthOptions {
   secret: string;
   baseUrl: string;
   trustedOrigins: string[];
+  passwordSignIn?: "everyone" | "operator" | "off";
+  // The operators' lower-cased emails.
+  operatorEmails?: string[];
 }
 
 export type Auth = ReturnType<typeof createAuth>;
 
 export function createAuth(options: AuthOptions) {
-  const { db } = options;
+  const { db, passwordSignIn = "everyone", operatorEmails = [] } = options;
   const spaces = createSpaceStore(db);
 
   function personalOrgOf(userId: string) {
@@ -90,7 +94,25 @@ export function createAuth(options: AuthOptions) {
     telemetry: { enabled: false, debug: false },
     advanced: { cookiePrefix: "mage", disableOriginCheck: false, disableCSRFCheck: false },
     database: drizzleAdapter(db, { provider: "sqlite", schema }),
-    emailAndPassword: { enabled: true },
+    emailAndPassword: {
+      enabled: passwordSignIn !== "off",
+      disableSignUp: passwordSignIn !== "everyone",
+    },
+    hooks: {
+      // Someone other than an operator is told what a wrong password tells them, so the operators'
+      // emails stay unknown.
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== "/sign-in/email" || passwordSignIn !== "operator") return;
+        const email = (ctx.body as { email?: unknown } | undefined)?.email;
+        if (typeof email === "string" && operatorEmails.includes(email.toLowerCase())) {
+          return;
+        }
+        throw new APIError("UNAUTHORIZED", {
+          code: "INVALID_EMAIL_OR_PASSWORD",
+          message: "Invalid email or password",
+        });
+      }),
+    },
     databaseHooks: {
       user: {
         create: {

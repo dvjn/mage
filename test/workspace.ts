@@ -243,6 +243,7 @@ export function setup(
     }),
     groups: createGroups({ directory }),
     logger,
+    signInOptions: { password: "everyone", oidc: null },
     pingDatabase: () => Promise.resolve(true),
     heartbeatMs: 20,
   });

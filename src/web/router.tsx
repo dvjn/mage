@@ -1,4 +1,4 @@
-// Pages: login and signup when signed out; when signed in, the app shell with a space and its
+// Pages: login, and signup while password sign-up is open, when signed out; when signed in, the app shell with a space and its
 // settings, a new thread's draft, a thread, the threads shared with you, and the organization's
 // settings with its people and spaces, opening on the last space used.
 // Each side redirects to the other; signing in or up goes back to the page that asked for it, such
@@ -32,7 +32,7 @@ import { SpaceSettings } from "@/web/components/space-settings";
 import { DraftThread } from "@/web/components/draft-thread";
 import { ThreadPage } from "@/web/components/thread-page";
 import { lastSpace } from "@/web/lib/last-space";
-import { sessionQuery, spacesQuery } from "@/web/lib/queries";
+import { sessionQuery, signInOptionsQuery, spacesQuery } from "@/web/lib/queries";
 
 type Context = { context: { queryClient: QueryClient } };
 
@@ -86,10 +86,15 @@ const loginRoute = createRoute({
   component: LoginForm,
 });
 
+// Password sign-up is open only when everyone may sign in with a password.
 const signupRoute = createRoute({
   getParentRoute: () => signedOutRoute,
   path: "/signup",
   validateSearch: afterSignIn,
+  beforeLoad: async ({ context, search }) => {
+    const options = await context.queryClient.fetchQuery(signInOptionsQuery);
+    if (options.password !== "everyone") throw redirect({ to: "/login", search });
+  },
   component: SignupForm,
 });
 

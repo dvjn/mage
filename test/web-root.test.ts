@@ -36,6 +36,7 @@ const app = createApp({
   orgs: {} as Orgs,
   groups: {} as Groups,
   logger: createLogger({ write() {} }),
+  signInOptions: { password: "everyone", oidc: null },
   pingDatabase: () => Promise.resolve(true),
   webRoot,
 });

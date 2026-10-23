@@ -1,4 +1,7 @@
-import { useQueryClient } from "@tanstack/react-query";
+// Signing in with an email and password, and a way to create an account while password sign-up is
+// open.
+
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
@@ -13,7 +16,7 @@ import {
 } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
 import { authClient } from "@/web/lib/auth-client";
-import { sessionQuery } from "@/web/lib/queries";
+import { sessionQuery, signInOptionsQuery } from "@/web/lib/queries";
 
 export function LoginForm() {
   const queryClient = useQueryClient();
@@ -21,6 +24,7 @@ export function LoginForm() {
   const { redirect, email: invited } = useSearch({ from: "/_signed-out/login" });
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
+  const options = useQuery(signInOptionsQuery);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -67,12 +71,14 @@ export function LoginForm() {
             <Button type="submit" disabled={pending}>
               Sign in
             </Button>
-            <FieldDescription className="text-center">
-              New to Mage?{" "}
-              <Link to="/signup" search={{ redirect, email: invited }}>
-                Create account
-              </Link>
-            </FieldDescription>
+            {options.data?.password === "everyone" && (
+              <FieldDescription className="text-center">
+                New to Mage?{" "}
+                <Link to="/signup" search={{ redirect, email: invited }}>
+                  Create account
+                </Link>
+              </FieldDescription>
+            )}
           </Field>
         </FieldGroup>
       </form>

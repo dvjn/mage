@@ -43,6 +43,7 @@ describe("GET /api/health", () => {
       orgs: {} as Orgs,
       groups: {} as Groups,
       logger,
+      signInOptions: { password: "everyone", oidc: null },
       pingDatabase: () => pingDatabase(db),
     }).request("/api/health");
     expect(res.status).toBe(200);
@@ -62,6 +63,7 @@ describe("GET /api/health", () => {
       orgs: {} as Orgs,
       groups: {} as Groups,
       logger,
+      signInOptions: { password: "everyone", oidc: null },
       pingDatabase: () => Promise.resolve(false),
     }).request("/api/health");
     expect(res.status).toBe(503);
