@@ -125,14 +125,16 @@ function ItemMenu({ name, children }: { name: string; children: ReactNode }) {
   const { isMobile } = useSidebar();
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <SidebarMenuAction className="peer-hover/menu-button:opacity-100 hover:opacity-100 focus-visible:opacity-100 aria-expanded:bg-muted aria-expanded:opacity-100 md:opacity-0" />
-        }
-      >
-        <MoreHorizontalIcon />
-        <span className="sr-only">Actions for {name}</span>
-      </DropdownMenuTrigger>
+      <WithTooltip label="Actions">
+        <DropdownMenuTrigger
+          render={
+            <SidebarMenuAction className="peer-hover/menu-button:opacity-100 hover:opacity-100 focus-visible:opacity-100 aria-expanded:bg-muted aria-expanded:opacity-100 md:opacity-0" />
+          }
+        >
+          <MoreHorizontalIcon />
+          <span className="sr-only">Actions for {name}</span>
+        </DropdownMenuTrigger>
+      </WithTooltip>
       <DropdownMenuContent
         className="w-48"
         side={isMobile ? "bottom" : "right"}

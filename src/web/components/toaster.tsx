@@ -6,6 +6,7 @@ import { XIcon } from "lucide-react";
 import { createContext, type ReactNode, use, useCallback, useMemo, useRef, useState } from "react";
 
 import { Button } from "@/web/components/ui/button";
+import { WithTooltip } from "@/web/components/with-tooltip";
 
 const SHOWN_MS = 6000;
 
@@ -64,14 +65,16 @@ export function Toaster({ children }: { children: ReactNode }) {
             <span className={cn("flex-1 py-1", toast.tone === "error" && "text-destructive")}>
               {toast.text}
             </span>
-            <Button
-              size="icon-xs"
-              variant="ghost"
-              aria-label="Dismiss"
-              onClick={() => dismiss(toast.id)}
-            >
-              <XIcon />
-            </Button>
+            <WithTooltip label="Dismiss">
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Dismiss"
+                onClick={() => dismiss(toast.id)}
+              >
+                <XIcon />
+              </Button>
+            </WithTooltip>
           </li>
         ))}
       </ol>
