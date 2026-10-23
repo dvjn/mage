@@ -84,7 +84,7 @@ export function PeopleTable({
         description="Nothing here matches the search and filters."
         action={
           <Button variant="outline" onClick={filtered.onClear}>
-            Clear
+            Reset
           </Button>
         }
       />

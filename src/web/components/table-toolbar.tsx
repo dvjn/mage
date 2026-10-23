@@ -64,7 +64,7 @@ export function FilterButton({ filter }: { filter: Filter }) {
       <PopoverContent align="start" className="w-48 p-0">
         <Command>
           {filter.options.length > SEARCH_FROM && (
-            <CommandInput placeholder={`Find ${filter.label.toLowerCase()}`} />
+            <CommandInput placeholder={`Find a ${filter.label.toLowerCase()}`} />
           )}
           <CommandList>
             <CommandEmpty>Nothing matches.</CommandEmpty>
