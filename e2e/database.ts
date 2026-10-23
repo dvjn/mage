@@ -33,7 +33,7 @@ export function joinSpaceOf(ownerEmail: string, email: string, role: "messager" 
         member,
       );
       db.prepare(
-        "insert into space_member (space_id, user_id, role, source) values (?, ?, ?, 'direct')",
+        "insert into space_member (space_id, subject_kind, subject_id, role, source) values (?, 'user', ?, ?, 'direct')",
       ).run(space.id, member, role);
     })();
   } finally {

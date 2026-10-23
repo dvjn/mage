@@ -25,7 +25,7 @@ import { sessionQuery } from "@/web/lib/queries";
 export function SignupForm(props: React.ComponentProps<typeof Card>) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { redirect } = useSearch({ from: "/_signed-out/signup" });
+  const { redirect, email: invited } = useSearch({ from: "/_signed-out/signup" });
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
 
@@ -69,6 +69,7 @@ export function SignupForm(props: React.ComponentProps<typeof Card>) {
                   type="email"
                   placeholder="you@example.com"
                   autoComplete="email"
+                  defaultValue={invited}
                   required
                 />
               </Field>
@@ -102,7 +103,7 @@ export function SignupForm(props: React.ComponentProps<typeof Card>) {
                   </Button>
                   <FieldDescription className="px-6 text-center">
                     Already have an account?{" "}
-                    <Link to="/login" search={{ redirect }}>
+                    <Link to="/login" search={{ redirect, email: invited }}>
                       Sign in
                     </Link>
                   </FieldDescription>

@@ -26,7 +26,7 @@ import { sessionQuery } from "@/web/lib/queries";
 export function LoginForm({ className, ...props }: React.ComponentProps<"div">) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const { redirect } = useSearch({ from: "/_signed-out/login" });
+  const { redirect, email: invited } = useSearch({ from: "/_signed-out/login" });
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
 
@@ -63,6 +63,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
                   type="email"
                   placeholder="you@example.com"
                   autoComplete="email"
+                  defaultValue={invited}
                   required
                 />
               </Field>
@@ -83,7 +84,7 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
                 </Button>
                 <FieldDescription className="text-center">
                   New to Mage?{" "}
-                  <Link to="/signup" search={{ redirect }}>
+                  <Link to="/signup" search={{ redirect, email: invited }}>
                     Create account
                   </Link>
                 </FieldDescription>

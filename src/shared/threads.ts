@@ -111,6 +111,8 @@ export const eventDataSchemas = {
   }),
   // The author took back a message the agent has not taken in yet.
   "message.withdrawn": z.object({ messageId: z.string() }),
+  // A message the agent had not taken in yet was dropped: its author can no longer post.
+  "message.dropped": z.object({ messageId: z.string() }),
   // The agent took these messages in, in this order, during the run.
   "message.admitted": z.object({ runId: z.string(), messageIds: z.array(z.string()).min(1) }),
   // The agent began a reply with the model ref; its place in the thread is this event's seq.
@@ -158,9 +160,15 @@ export type EventDataMap = {
 
 export type EventType = keyof EventDataMap;
 
-// Who an event is from. `name` is "(former member)" once the user is gone.
+// Who an event is from. `name` is "(former member)" once the user is gone; `former` marks someone
+// removed from the thread's org.
 export const actorSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("user"), userId: z.string(), name: z.string() }),
+  z.object({
+    kind: z.literal("user"),
+    userId: z.string(),
+    name: z.string(),
+    former: z.boolean().optional(),
+  }),
   z.object({ kind: z.literal("agent") }),
 ]);
 
@@ -182,6 +190,7 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("message"),
   eventSchema("message.changed"),
   eventSchema("message.withdrawn"),
+  eventSchema("message.dropped"),
   eventSchema("message.admitted"),
   eventSchema("message.started"),
   eventSchema("message.completed"),

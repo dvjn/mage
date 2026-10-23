@@ -37,6 +37,8 @@ export type StoredEvent = NewEvent & {
   seq: number;
   // The acting user's name, or null once they are gone.
   actorName: string | null;
+  // The acting user was removed from the thread's org.
+  actorFormer: boolean;
   createdAt: Date;
 };
 

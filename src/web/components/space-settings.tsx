@@ -1,6 +1,8 @@
 // A space's settings: renaming it, the model and reasoning effort its new threads start with, or the
-// org's, and deleting it when it is not the primary space. Only its owner may change them; everyone
-// else sees them.
+// org's, who is in a shared space, and deleting it when it is not the primary space. Only those who
+// manage it (its owners, and a team org's owners) may change them; everyone else sees them. A team
+// org's owner who manages a space without being in it reads its threads once they give themselves
+// a role in it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
@@ -8,6 +10,7 @@ import { type FormEvent, useEffect, useId, useState } from "react";
 
 import type { SpaceSummary } from "@/shared/spaces.ts";
 import { NotFound } from "@/web/components/page-states";
+import { SpaceMembers } from "@/web/components/space-members";
 import {
   EFFORT_LABELS,
   EffortField,
@@ -49,7 +52,7 @@ function SpaceName({ space }: { space: SpaceSummary }) {
   const [name, setName] = useState(space.name);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
-  const owner = space.role === "owner";
+  const owner = space.manage;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -107,7 +110,7 @@ function SpaceModel({ space }: { space: SpaceSummary }) {
   const orgModel = useQuery(defaultModelQuery);
   const orgEffort = useQuery(defaultEffortQuery);
   const [error, setError] = useState<string>();
-  const owner = space.role === "owner";
+  const owner = space.manage;
   const list = models.data?.models ?? [];
 
   async function change(json: { model?: string | null; effort?: Effort | null }) {
@@ -162,7 +165,7 @@ function SpaceModel({ space }: { space: SpaceSummary }) {
 function DeleteSpace({ space }: { space: SpaceSummary }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
-  const threads = useQuery(spaceThreadsQuery(space.id));
+  const threads = useQuery({ ...spaceThreadsQuery(space.id), enabled: space.role !== null });
   const [error, setError] = useState<string>();
   const count = threads.data?.length ?? 0;
 
@@ -217,7 +220,7 @@ export function SpaceSettings() {
 
   useEffect(() => rememberSpace(spaceId), [spaceId]);
 
-  if (spaces.isSuccess && !space) return <NotFound what="space" />;
+  if (spaces.isSuccess && !space) return <NotFound what="space" id={spaceId} />;
 
   return (
     <SettingsPage
@@ -232,7 +235,8 @@ export function SpaceSettings() {
         <>
           <SpaceName key={space.id} space={space} />
           <SpaceModel space={space} />
-          {space.role === "owner" && !space.primary && <DeleteSpace space={space} />}
+          {space.kind === "shared" && <SpaceMembers space={space} />}
+          {space.manage && !space.primary && <DeleteSpace space={space} />}
         </>
       )}
     </SettingsPage>

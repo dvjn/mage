@@ -37,7 +37,7 @@ test("an API key's models become the org's and the space's defaults, which new t
   page,
 }) => {
   await signUp(page, "Ada Lovelace");
-  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("button", { name: "Switch space" }).click();
   await page.getByRole("menuitem", { name: "Organization settings" }).click();
   await expect(page).toHaveURL("/org/general");
   await expect(page.locator("[data-slot=breadcrumb]")).toContainText("Organization");

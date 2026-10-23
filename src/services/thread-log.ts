@@ -20,7 +20,7 @@ export const FORMER_MEMBER = "(former member)";
 export type Append = (event: NewEvent, title?: string) => StoredEvent;
 
 export function eventSummary(event: StoredEvent): ThreadEventSummary {
-  const { id, threadId, seq, type, data, actor, actorName } = event;
+  const { id, threadId, seq, type, data, actor, actorName, actorFormer } = event;
   return {
     id,
     threadId,
@@ -29,7 +29,12 @@ export function eventSummary(event: StoredEvent): ThreadEventSummary {
     data,
     actor:
       actor.kind === "user"
-        ? { kind: "user", userId: actor.userId, name: actorName ?? FORMER_MEMBER }
+        ? {
+            kind: "user",
+            userId: actor.userId,
+            name: actorName ?? FORMER_MEMBER,
+            ...(actorFormer && actorName && { former: true }),
+          }
         : actor,
     createdAt: event.createdAt.toISOString(),
   } as ThreadEventSummary;

@@ -6,10 +6,14 @@ import { createRoot } from "react-dom/client";
 
 import { ThemeProvider } from "@/web/components/theme-provider";
 import { Toaster } from "@/web/components/toaster";
+import { startTab } from "@/web/lib/org-tab";
 import { cacheMaxAge, cacheOptions } from "@/web/lib/query-cache";
 import { createAppRouter } from "@/web/router";
 
 import "./index.css";
+
+// A tab opened on a space or thread starts in that one's org.
+await startTab();
 
 // Cached queries stay in memory as long as the persisted cache may be restored.
 const queryClient = new QueryClient({ defaultOptions: { queries: { gcTime: cacheMaxAge } } });

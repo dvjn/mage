@@ -6,7 +6,7 @@ import { ulid } from "ulid";
 import type { StoredEvent, Thread, ThreadStore } from "@/ports/threads.ts";
 
 import type { Db } from "./db.ts";
-import { thread, threadEvent, user } from "./schema.ts";
+import { orgFormerMember, space, thread, threadEvent, user } from "./schema.ts";
 
 const columns = {
   id: thread.id,
@@ -35,16 +35,26 @@ export function createThreadStore(db: Db): ThreadStore {
         actorKind: threadEvent.actorKind,
         actorUserId: threadEvent.actorUserId,
         actorName: user.name,
+        actorRemovedAt: orgFormerMember.removedAt,
         data: threadEvent.data,
         createdAt: threadEvent.createdAt,
       })
       .from(threadEvent)
       .leftJoin(user, eq(user.id, threadEvent.actorUserId))
+      .innerJoin(thread, eq(thread.id, threadEvent.threadId))
+      .innerJoin(space, eq(space.id, thread.spaceId))
+      .leftJoin(
+        orgFormerMember,
+        and(
+          eq(orgFormerMember.organizationId, space.organizationId),
+          eq(orgFormerMember.userId, threadEvent.actorUserId),
+        ),
+      )
       .where(where)
       .orderBy(asc(threadEvent.seq))
       .all()
       .map(
-        ({ actorKind, actorUserId, actorName, type, data, ...rest }) =>
+        ({ actorKind, actorUserId, actorName, actorRemovedAt, type, data, ...rest }) =>
           ({
             ...rest,
             type,
@@ -54,6 +64,7 @@ export function createThreadStore(db: Db): ThreadStore {
                 ? { kind: "user", userId: actorUserId }
                 : { kind: "agent" },
             actorName: actorName ?? null,
+            actorFormer: actorRemovedAt !== null,
           }) as StoredEvent,
       );
   }

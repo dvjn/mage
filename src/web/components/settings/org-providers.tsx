@@ -1,8 +1,8 @@
 // The organization's model providers: a table of its connections (provider and label, how it
 // connects, the account or masked key, how many of its models are on, when it was added), each
 // with a menu to choose its models, rename an API key, set its proxy or remove it, and adding one
-// through the add-provider journey. On a phone each row is two lines. Only the owner of a personal
-// org manages them.
+// through the add-provider journey. On a phone each row is two lines. The org's owners manage them;
+// its members see them. A team org connects with API keys only.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -36,6 +36,14 @@ import {
   AlertDialogTitle,
 } from "@/web/components/ui/alert-dialog";
 import { Button } from "@/web/components/ui/button";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/web/components/ui/table";
 import {
   Dialog,
   DialogContent,
@@ -143,71 +151,71 @@ function ModelsCount({
 
 function ProvidersTable({
   connections,
+  manages,
   onAction,
 }: {
   connections: ConnectionSummary[];
+  manages: boolean;
   onAction: (action: RowAction) => void;
 }) {
   return (
-    <div>
-      <table className="w-full text-sm" aria-label="Model providers">
-        <thead className="hidden border-b text-left text-xs text-muted-foreground sm:table-header-group">
-          <tr>
-            <th className="px-3 py-2 font-medium">Provider</th>
-            <th className="px-3 py-2 font-medium">Method</th>
-            <th className="px-3 py-2 font-medium">Account</th>
-            <th className="px-3 py-2 font-medium">Models</th>
-            <th className="px-3 py-2 font-medium">Added</th>
-            <th className="w-10 px-1 py-2">
-              <span className="sr-only">Actions</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody className="divide-y [&_tr_td:first-child]:rounded-l-md [&_tr_td:last-child]:rounded-r-md">
-          {connections.map((connection) => {
-            const name = connectionLabel(connection);
-            return (
-              <tr
-                key={connection.id}
-                aria-label={name}
-                className="group align-middle hover:bg-muted/50"
-              >
-                <td className="px-3 py-2.5">
-                  <div className="font-medium">{name}</div>
-                  {/* On a phone the other columns fold into this line. */}
-                  <div className="truncate text-xs text-muted-foreground sm:hidden">
-                    {METHODS[connection.authKind]} ·{" "}
-                    <span className={connection.authKind === "api_key" ? "font-mono" : undefined}>
-                      {connection.account}
-                    </span>
-                  </div>
-                </td>
-                <td className="hidden px-3 py-2.5 text-muted-foreground sm:table-cell">
-                  {METHODS[connection.authKind]}
-                </td>
-                <td className="hidden max-w-48 truncate px-3 py-2.5 sm:table-cell">
+    <Table aria-label="Model providers">
+      <TableHeader className="hidden sm:table-header-group">
+        <TableRow className="hover:bg-transparent">
+          <TableHead className="px-3 text-xs text-muted-foreground">Provider</TableHead>
+          <TableHead className="px-3 text-xs text-muted-foreground">Method</TableHead>
+          <TableHead className="px-3 text-xs text-muted-foreground">Account</TableHead>
+          <TableHead className="px-3 text-xs text-muted-foreground">Models</TableHead>
+          <TableHead className="px-3 text-xs text-muted-foreground">Added</TableHead>
+          <TableHead className="w-10 px-1">
+            <span className="sr-only">Actions</span>
+          </TableHead>
+        </TableRow>
+      </TableHeader>
+      <TableBody>
+        {connections.map((connection) => {
+          const name = connectionLabel(connection);
+          return (
+            <TableRow key={connection.id} aria-label={name} className="group">
+              <TableCell className="w-full max-w-0 px-3 py-2.5">
+                <div className="truncate font-medium">{name}</div>
+                {/* On a phone the other columns fold into this line. */}
+                <div className="truncate text-xs text-muted-foreground sm:hidden">
+                  {METHODS[connection.authKind]} ·{" "}
                   <span className={connection.authKind === "api_key" ? "font-mono" : undefined}>
                     {connection.account}
                   </span>
-                </td>
-                <td className="hidden px-3 py-2.5 sm:table-cell">
+                </div>
+              </TableCell>
+              <TableCell className="hidden px-3 py-2.5 text-muted-foreground sm:table-cell">
+                {METHODS[connection.authKind]}
+              </TableCell>
+              <TableCell className="hidden max-w-48 truncate px-3 py-2.5 sm:table-cell">
+                <span className={connection.authKind === "api_key" ? "font-mono" : undefined}>
+                  {connection.account}
+                </span>
+              </TableCell>
+              <TableCell className="hidden px-3 py-2.5 sm:table-cell">
+                {manages ? (
                   <ModelsCount
                     connection={connection}
                     onOpen={() => onAction({ kind: "models", connection })}
                   />
-                </td>
-                <td className="hidden px-3 py-2.5 whitespace-nowrap text-muted-foreground sm:table-cell">
-                  <Time iso={connection.createdAt} />
-                </td>
-                <td className="px-1 py-2 text-right">
-                  <RowMenu connection={connection} onAction={onAction} />
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </TableCell>
+              <TableCell className="hidden px-3 py-2.5 text-muted-foreground sm:table-cell">
+                <Time iso={connection.createdAt} />
+              </TableCell>
+              <TableCell className="w-10 px-1 py-2 text-right">
+                {manages && <RowMenu connection={connection} onAction={onAction} />}
+              </TableCell>
+            </TableRow>
+          );
+        })}
+      </TableBody>
+    </Table>
   );
 }
 
@@ -308,8 +316,9 @@ function RowDialogs({ action, onClose }: { action: RowAction | null; onClose: ()
 
 export function OrgProviders() {
   const me = useQuery(meQuery);
-  const manages = me.data?.org.kind === "personal" && me.data.role === "owner";
-  const connections = useQuery({ ...connectionsQuery, enabled: manages });
+  const manages = me.data?.role === "owner";
+  const team = me.data?.org.kind === "team";
+  const connections = useQuery({ ...connectionsQuery, enabled: !!me.data });
   const [adding, setAdding] = useState(false);
   const [action, setAction] = useState<RowAction | null>(null);
   const list = connections.data ?? [];
@@ -328,11 +337,12 @@ export function OrgProviders() {
         description="The accounts and keys this organization's threads are answered through."
         action={manages && list.length > 0 && addButton}
       />
-      {me.data && !manages ? (
+      {me.data && !manages && (
         <p className="text-sm text-muted-foreground">
-          Only the owner of a personal organization manages its model providers.
+          Only the organization&apos;s owners manage its model providers.
         </p>
-      ) : connections.error ? (
+      )}
+      {connections.error ? (
         <LoadError />
       ) : !connections.data ? (
         <ListSkeleton />
@@ -340,13 +350,24 @@ export function OrgProviders() {
         <EmptyState
           icon={<BlocksIcon />}
           title="No model providers yet"
-          description="Add an API key, or sign in with a ChatGPT or Claude subscription, to give this organization's threads models to reply with."
-          action={addButton}
+          description={
+            !manages
+              ? "An owner of the organization adds model providers for its threads to reply with."
+              : team
+                ? "Add an API key to give this organization's threads models to reply with."
+                : "Add an API key, or sign in with a ChatGPT or Claude subscription, to give this organization's threads models to reply with."
+          }
+          action={manages && addButton}
         />
       ) : (
-        <ProvidersTable connections={list} onAction={setAction} />
+        <ProvidersTable connections={list} manages={manages} onAction={setAction} />
       )}
-      <AddProviderDialog open={adding} onOpenChange={setAdding} connections={list} />
+      <AddProviderDialog
+        open={adding}
+        onOpenChange={setAdding}
+        connections={list}
+        apiKeysOnly={team}
+      />
       <RowDialogs action={action} onClose={() => setAction(null)} />
     </>
   );

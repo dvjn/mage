@@ -16,6 +16,7 @@ import {
   deltaBatchSchema,
 } from "@/shared/threads.ts";
 import { sharedThreadsQuery, threadQuery } from "@/web/lib/queries";
+import { tabOrg } from "@/web/lib/org-tab";
 import { withEvents } from "@/web/lib/thread-detail";
 
 // Adds the events the cache does not have yet.
@@ -72,7 +73,11 @@ export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () =
     setReconnecting(false);
     if (!ready) return;
     const after = queryClient.getQueryData(threadQuery(threadId).queryKey)?.thread.lastEventSeq;
-    const source = new EventSource(`/api/v1/threads/${threadId}/events?after=${after ?? 0}`);
+    // A stream cannot send headers, so it names the tab's org in its address.
+    const org = tabOrg();
+    const source = new EventSource(
+      `/api/v1/threads/${threadId}/events?after=${after ?? 0}${org ? `&org=${org}` : ""}`,
+    );
     let lost = false;
     source.addEventListener("error", () => {
       lost = true;

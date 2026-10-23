@@ -9,6 +9,8 @@ import { createApp } from "@/http/app.ts";
 import type { Connections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Guests } from "@/services/guests.ts";
+import type { Groups } from "@/services/groups.ts";
+import type { Orgs } from "@/services/orgs.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
@@ -37,6 +39,8 @@ function setup() {
     folders: unusedFolders,
     threads: unusedThreads,
     guests: unusedGuests,
+    orgs: {} as Orgs,
+    groups: {} as Groups,
     logger,
     pingDatabase: () => Promise.resolve(true),
   });
@@ -96,7 +100,7 @@ describe("personal organization", () => {
     ]);
   });
 
-  it("rejects invitations", async () => {
+  it("has no invitations through the auth library's routes", async () => {
     const { post, signUp } = setup();
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
 
@@ -106,7 +110,7 @@ describe("personal organization", () => {
       cookie,
     );
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
   });
 
   it("rejects adding a member", async () => {
@@ -126,13 +130,13 @@ describe("personal organization", () => {
     ).rejects.toMatchObject({ statusCode: 403 });
   });
 
-  it("rejects creating another org through the API", async () => {
+  it("has no creating orgs through the auth library's routes", async () => {
     const { db, post, signUp } = setup();
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
 
     const res = await post("/organization/create", { name: "Acme", slug: "acme" }, cookie);
 
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(404);
     expect(db.select().from(schema.organization).all()).toHaveLength(1);
   });
 });

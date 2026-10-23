@@ -79,7 +79,7 @@ describe("thread access", () => {
     expect(access.of(ada, stored)).toEqual({ via: "space", role: "owner" });
     expect(access.of(alan, stored)).toEqual({ via: "space", role: "messager" });
     expect(access.of(grace, stored)).toEqual({ via: "space", role: "viewer" });
-    expect(access.of(hedy, stored)).toEqual({ via: "guest", spaceName: "Ada Lovelace's space" });
+    expect(access.of(hedy, stored)).toEqual({ via: "guest", spaceName: "Ada Lovelace's Space" });
     expect(access.can(hedy, stored, "post")).toBe(true);
     expect(access.can(grace, stored, "post")).toBe(false);
     for (const action of ["arrange", "share", "delete"] as const) {
@@ -102,7 +102,7 @@ describe("thread access", () => {
     const read = await api("GET", `/threads/${thread.id}`, hedy.cookie);
     expect(read.status).toBe(200);
     expect(await read.json()).toMatchObject({
-      access: { via: "guest", spaceName: "Ada Lovelace's space" },
+      access: { via: "guest", spaceName: "Ada Lovelace's Space" },
     });
     const posted = await api("POST", `/threads/${thread.id}/messages`, hedy.cookie, {
       text: "// Hello",
@@ -195,14 +195,14 @@ describe("thread access", () => {
       expect.objectContaining({
         id: thread.id,
         title: "// Engines",
-        spaceName: "Ada Lovelace's space",
+        spaceName: "Ada Lovelace's Space",
         orgName: "Ada Lovelace",
         accessUntil: null,
       }),
     ]);
     const found = await api("GET", "/threads/search?q=engi", hedy.cookie);
     expect(await found.json()).toEqual([
-      expect.objectContaining({ id: thread.id, spaceName: "Ada Lovelace's space", shared: true }),
+      expect.objectContaining({ id: thread.id, spaceName: "Ada Lovelace's Space", shared: true }),
     ]);
 
     expire(workspace, thread.id, hedy.userId);

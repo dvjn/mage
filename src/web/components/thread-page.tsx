@@ -167,7 +167,7 @@ export function ThreadPage() {
     await queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
   }
 
-  if (notFound) return <NotFound what="thread" />;
+  if (notFound) return <NotFound what="thread" id={threadId} />;
 
   if (ended) {
     return (

@@ -18,6 +18,7 @@ import {
   type ThreadPerson,
 } from "@/shared/guests.ts";
 import { CopyButton } from "@/web/components/copy-button";
+import { Subject, type SubjectAvatar } from "@/web/components/people-table";
 import { Until } from "@/web/components/time";
 import {
   AlertDialog,
@@ -74,23 +75,20 @@ const DESCRIPTION =
 
 function Row({
   label,
+  avatar,
   name,
-  children,
+  detail,
   onRevoke,
 }: {
   label: string;
+  avatar: SubjectAvatar;
   name: ReactNode;
-  children?: ReactNode;
+  detail?: ReactNode;
   onRevoke?: () => void;
 }) {
   return (
-    <li aria-label={label} className="group flex min-h-8 items-center gap-2 text-sm">
-      <span className="truncate font-medium">{name}</span>
-      {children && (
-        <span className="flex min-w-0 items-baseline gap-2 truncate text-xs text-muted-foreground">
-          {children}
-        </span>
-      )}
+    <li aria-label={label} className="group flex min-h-10 items-center gap-2 py-1">
+      <Subject avatar={avatar} name={name} detail={detail} size="sm" />
       {onRevoke && (
         <Button
           size="xs"
@@ -122,15 +120,21 @@ function People({
           <Row
             key={person.userId}
             label={person.name}
+            avatar={{ initials: person.name }}
             name={person.name}
+            detail={
+              person.kind === "guest" ? (
+                <>
+                  Guest · <Until iso={person.accessUntil} />
+                </>
+              ) : person.role ? (
+                ROLE_LABELS[person.role]
+              ) : (
+                "Member"
+              )
+            }
             onRevoke={person.canRevoke ? () => onRevoke({ guest: person.userId }) : undefined}
-          >
-            {person.kind === "guest" ? (
-              <Until iso={person.accessUntil} />
-            ) : (
-              <span>{person.role ? ROLE_LABELS[person.role] : "Member"}</span>
-            )}
-          </Row>
+          />
         ))}
         {people.length === 0 && (
           <li className="text-sm text-muted-foreground">Nobody has written yet.</li>
@@ -139,18 +143,15 @@ function People({
           <Row
             key={invite.id}
             label="Unused link"
-            name={
-              <span className="flex items-center gap-1.5 font-normal text-muted-foreground">
-                <LinkIcon className="size-3.5" />
-                Link, {ACCESS_LABELS[invite.accessFor].toLowerCase()}
+            avatar={{ icon: <LinkIcon /> }}
+            name={`Link, ${ACCESS_LABELS[invite.accessFor].toLowerCase()}`}
+            detail={
+              <span title={fullTime(invite.linkExpiresAt)}>
+                Unused · Expires {timeUntil(invite.linkExpiresAt) ?? "now"}
               </span>
             }
             onRevoke={invite.canRevoke ? () => onRevoke({ invite: invite.id }) : undefined}
-          >
-            <span title={fullTime(invite.linkExpiresAt)}>
-              Unused · Expires {timeUntil(invite.linkExpiresAt) ?? "now"}
-            </span>
-          </Row>
+          />
         ))}
       </ul>
     </section>

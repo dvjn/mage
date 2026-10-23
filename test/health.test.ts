@@ -7,6 +7,8 @@ import type { Identity } from "@/ports/identity.ts";
 import type { Connections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Guests } from "@/services/guests.ts";
+import type { Groups } from "@/services/groups.ts";
+import type { Orgs } from "@/services/orgs.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
@@ -38,6 +40,8 @@ describe("GET /api/health", () => {
       folders: unusedFolders,
       threads: unusedThreads,
       guests: unusedGuests,
+      orgs: {} as Orgs,
+      groups: {} as Groups,
       logger,
       pingDatabase: () => pingDatabase(db),
     }).request("/api/health");
@@ -55,6 +59,8 @@ describe("GET /api/health", () => {
       folders: unusedFolders,
       threads: unusedThreads,
       guests: unusedGuests,
+      orgs: {} as Orgs,
+      groups: {} as Groups,
       logger,
       pingDatabase: () => Promise.resolve(false),
     }).request("/api/health");

@@ -1,6 +1,7 @@
 // A stand-in model for the browser journeys, chosen by configuration and refused in production.
 // It says how many messages from people it has read, then a few more words, one every few tens of
-// milliseconds; it keeps going much longer when the newest message asks it to reply slowly, and
+// milliseconds; it keeps going much longer when the newest message asks it to reply slowly, longer
+// still very slowly, and
 // reasons for a few words first when it asks it to think. Its list stands in for an API key's: it
 // takes any key starting with `sk-`.
 
@@ -17,7 +18,8 @@ const REASONING = "Considering the gears and the levers".split(" ");
 
 function wordsFor(messages: ModelMessage[]) {
   const read = messages.filter((message) => message.role === "user");
-  const count = /slowly/i.test(read.at(-1)?.text ?? "") ? 60 : 8;
+  const last = read.at(-1)?.text ?? "";
+  const count = /very slowly/i.test(last) ? 300 : /slowly/i.test(last) ? 60 : 8;
   return [
     ..."I have read".split(" "),
     String(read.length),

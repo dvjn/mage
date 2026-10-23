@@ -1,5 +1,6 @@
-// Server state the web client reads: the current session, who is signed in, their connections, the
-// models the org can use, its default model and effort and title model, their spaces with their folders and
+// Server state the web client reads: the current session, who is signed in, the orgs they are in,
+// the tab org's members, groups and settings, their connections, the models the org can use, its
+// default model and effort and title model, their spaces with who is in them, their folders and
 // threads, the threads shared with them, and who is in a thread.
 
 import { queryOptions } from "@tanstack/react-query";
@@ -8,6 +9,7 @@ import { connectionListSchema } from "@/shared/connections.ts";
 import { folderListSchema } from "@/shared/folders.ts";
 import { sharedThreadListSchema, threadPeopleSchema } from "@/shared/guests.ts";
 import { meSchema } from "@/shared/me.ts";
+import { orgListSchema, teamSettingsSchema } from "@/shared/orgs.ts";
 import {
   defaultEffortSchema,
   defaultModelSchema,
@@ -18,6 +20,7 @@ import { spaceListSchema } from "@/shared/spaces.ts";
 import { type ThreadDetail, threadDetailSchema, threadListSchema } from "@/shared/threads.ts";
 import { apiClient } from "@/web/lib/api-client";
 import { authClient } from "@/web/lib/auth-client";
+import { adoptOrg } from "@/web/lib/org-tab";
 import { withLiveEvents } from "@/web/lib/thread-detail";
 
 export const sessionQuery = queryOptions({
@@ -34,7 +37,29 @@ export const meQuery = queryOptions({
   queryFn: async () => {
     const res = await apiClient.v1.me.$get();
     if (!res.ok) throw new Error("could not read the signed-in user");
-    return meSchema.parse(await res.json());
+    const me = meSchema.parse(await res.json());
+    // A tab that named no org acts from now on in the one the server chose.
+    adoptOrg(me.org.id);
+    return me;
+  },
+});
+
+// The orgs the signed-in user is in, and whether they may create a team org.
+export const orgsQuery = queryOptions({
+  queryKey: ["orgs"],
+  queryFn: async () => {
+    const res = await apiClient.v1.orgs.$get();
+    if (!res.ok) throw new Error("could not read your organizations");
+    return orgListSchema.parse(await res.json());
+  },
+});
+
+export const teamSettingsQuery = queryOptions({
+  queryKey: ["team-settings"],
+  queryFn: async () => {
+    const res = await apiClient.v1.org.settings.$get();
+    if (!res.ok) throw new Error("could not read the organization's settings");
+    return teamSettingsSchema.parse(await res.json());
   },
 });
 

@@ -25,6 +25,8 @@ export function createOrgSettingStore(db: Db): OrgSettingStore {
           defaultModel: orgSetting.defaultModel,
           titleModel: orgSetting.titleModel,
           defaultEffort: orgSetting.defaultEffort,
+          spaceCreation: orgSetting.spaceCreation,
+          memberSpaces: orgSetting.memberSpaces,
         })
         .from(orgSetting)
         .where(eq(orgSetting.organizationId, orgId))
@@ -33,6 +35,8 @@ export function createOrgSettingStore(db: Db): OrgSettingStore {
         defaultModel: row?.defaultModel ?? null,
         titleModel: row?.titleModel ?? null,
         defaultEffort: row?.defaultEffort ?? null,
+        spaceCreation: row?.spaceCreation ?? "members",
+        memberSpaces: row?.memberSpaces ?? true,
       };
     },
 
@@ -46,6 +50,10 @@ export function createOrgSettingStore(db: Db): OrgSettingStore {
 
     setDefaultEffort(orgId, effort) {
       set(orgId, { defaultEffort: effort });
+    },
+
+    setTeamSettings(orgId, changes) {
+      set(orgId, changes);
     },
   };
 }

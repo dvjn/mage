@@ -99,6 +99,15 @@ export function createRunStore(db: Db): RunStore {
 
     active,
 
+    activeThreadIds() {
+      return db
+        .select({ threadId: run.threadId })
+        .from(run)
+        .where(inArray(run.status, ACTIVE))
+        .all()
+        .map((row) => row.threadId);
+    },
+
     requestCancel(threadId, userId, at) {
       db.update(run)
         .set({ cancelRequestedAt: at, cancelRequestedBy: userId, updatedAt: at })

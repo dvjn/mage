@@ -61,9 +61,17 @@ type Step =
   | { name: "credentials"; provider: Provider; method: Method }
   | { name: "done"; connection: ConnectionSummary };
 
-const PROVIDERS: { provider: Provider; description: string }[] = [
-  { provider: "anthropic", description: "Claude models, with an API key or a Claude plan." },
-  { provider: "openai", description: "GPT models, with an API key or a ChatGPT plan." },
+const PROVIDERS: { provider: Provider; description: string; keyDescription: string }[] = [
+  {
+    provider: "anthropic",
+    description: "Claude models, with an API key or a Claude plan.",
+    keyDescription: "Claude models, with an API key.",
+  },
+  {
+    provider: "openai",
+    description: "GPT models, with an API key or a ChatGPT plan.",
+    keyDescription: "GPT models, with an API key.",
+  },
 ];
 
 const METHODS: Record<Provider, { method: Method; title: string; description: string }[]> = {
@@ -286,12 +294,17 @@ export function AddProviderDialog({
   open,
   onOpenChange,
   connections,
+  apiKeysOnly = false,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   connections: ConnectionSummary[];
+  // A team org connects with API keys only; subscription sign-ins are personal.
+  apiKeysOnly?: boolean;
 }) {
   const [step, setStep] = useState<Step>({ name: "provider" });
+  const methods = (provider: Provider) =>
+    apiKeysOnly ? METHODS[provider].filter((m) => m.method === "api_key") : METHODS[provider];
 
   function close() {
     onOpenChange(false);
@@ -302,7 +315,7 @@ export function AddProviderDialog({
     if (step.name === "method") setStep({ name: "provider" });
     else if (step.name === "credentials") {
       setStep(
-        METHODS[step.provider].length > 1
+        methods(step.provider).length > 1
           ? { name: "method", provider: step.provider }
           : { name: "provider" },
       );
@@ -318,7 +331,7 @@ export function AddProviderDialog({
     method: step.name === "method" ? `Connect ${BACKEND_LABELS[step.provider]}` : "",
     credentials:
       step.name === "credentials"
-        ? (METHODS[step.provider].find((m) => m.method === step.method)?.title ?? "")
+        ? (methods(step.provider).find((m) => m.method === step.method)?.title ?? "")
         : "",
     done: step.name === "done" ? connectionLabel(step.connection) : "",
   };
@@ -367,25 +380,31 @@ export function AddProviderDialog({
         </DialogHeader>
         {step.name === "provider" && (
           <div className="flex flex-col gap-2">
-            {PROVIDERS.map(({ provider, description }) => (
+            {PROVIDERS.map(({ provider, description, keyDescription }) => (
               <Choice
                 key={provider}
                 title={BACKEND_LABELS[provider]}
-                description={description}
+                description={apiKeysOnly ? keyDescription : description}
                 onSelect={() =>
                   setStep(
-                    METHODS[provider].length > 1
+                    methods(provider).length > 1
                       ? { name: "method", provider }
                       : { name: "credentials", provider, method: "api_key" },
                   )
                 }
               />
             ))}
+            {apiKeysOnly && (
+              <p className="text-xs text-muted-foreground">
+                Team organizations connect with API keys. Signing in with a ChatGPT or Claude plan
+                is for personal organizations.
+              </p>
+            )}
           </div>
         )}
         {step.name === "method" && (
           <div className="flex flex-col gap-2">
-            {METHODS[step.provider].map(({ method, title, description }) => (
+            {methods(step.provider).map(({ method, title, description }) => (
               <Choice
                 key={method}
                 title={title}

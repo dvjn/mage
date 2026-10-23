@@ -6,7 +6,7 @@ import { and, asc, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 
 import type { GuestStore, ThreadGuest, ThreadInvite } from "@/ports/guests.ts";
-import { outsiderSpaceName } from "@/shared/spaces.ts";
+import { spaceNameFor } from "@/shared/spaces.ts";
 
 import type { Db } from "./db.ts";
 import { organization, space, thread, threadGuest, threadInvite, user } from "./schema.ts";
@@ -57,6 +57,9 @@ function active(now: Date) {
   );
 }
 
+// Whoever made a thread's space.
+const creator = alias(user, "creator");
+
 export function createGuestStore(db: Db): GuestStore {
   return {
     find(threadId, userId): ThreadGuest | null {
@@ -106,6 +109,7 @@ export function createGuestStore(db: Db): GuestStore {
         .select({
           thread: threadColumns,
           space: { name: space.name, kind: space.kind, primary: space.primary },
+          ownerName: creator.name,
           orgName: organization.name,
           accessUntil: threadGuest.accessUntil,
         })
@@ -113,11 +117,12 @@ export function createGuestStore(db: Db): GuestStore {
         .innerJoin(thread, eq(thread.id, threadGuest.threadId))
         .innerJoin(space, eq(space.id, thread.spaceId))
         .innerJoin(organization, eq(organization.id, space.organizationId))
+        .leftJoin(creator, eq(creator.id, space.createdBy))
         .where(and(eq(threadGuest.userId, userId), active(now)))
         .orderBy(desc(thread.updatedAt), desc(thread.id))
         .all()
-        .map(({ space: host, ...row }) => {
-          const spaceName = outsiderSpaceName(host, row.orgName);
+        .map(({ space: host, ownerName, ...row }) => {
+          const spaceName = spaceNameFor(host, ownerName ?? row.orgName);
           return { ...row, spaceName, spaceNamedForOrg: spaceName !== host.name };
         });
     },
@@ -128,14 +133,16 @@ export function createGuestStore(db: Db): GuestStore {
           name: space.name,
           kind: space.kind,
           primary: space.primary,
+          ownerName: creator.name,
           orgName: organization.name,
         })
         .from(thread)
         .innerJoin(space, eq(space.id, thread.spaceId))
         .innerJoin(organization, eq(organization.id, space.organizationId))
+        .leftJoin(creator, eq(creator.id, space.createdBy))
         .where(eq(thread.id, threadId))
         .get();
-      return row ? outsiderSpaceName(row, row.orgName) : null;
+      return row ? spaceNameFor(row, row.ownerName ?? row.orgName) : null;
     },
 
     createInvite(input) {

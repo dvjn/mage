@@ -122,6 +122,8 @@ export const member = sqliteTable(
   (table) => [
     index("member_organizationId_idx").on(table.organizationId),
     index("member_userId_idx").on(table.userId),
+    // Narrows an org's members to one role.
+    index("member_org_role_idx").on(table.organizationId, table.role),
   ],
 );
 
@@ -239,6 +241,12 @@ export const orgSetting = sqliteTable("org_setting", {
   titleModel: text("title_model"),
   // The reasoning effort new threads start with; null for the usual one.
   defaultEffort: text("default_effort", { enum: ["low", "medium", "high"] }),
+  // Who may make shared spaces in a team org: any member, or only its owners.
+  spaceCreation: text("space_creation", { enum: ["members", "owners"] })
+    .default("members")
+    .notNull(),
+  // Whether each member of a team org gets a private space of their own on joining.
+  memberSpaces: integer("member_spaces", { mode: "boolean" }).default(true).notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
     .notNull(),
@@ -263,6 +271,8 @@ export const space = sqliteTable(
     // The model ref and reasoning effort its new threads start with; null takes the org's.
     defaultModel: text("default_model"),
     defaultEffort: text("default_effort", { enum: ["low", "medium", "high"] }),
+    // The role every member of the org has in a shared space, now and later; null for none.
+    everyoneRole: text("everyone_role", { enum: ["messager", "viewer"] }),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
@@ -275,27 +285,108 @@ export const space = sqliteTable(
   (table) => [index("space_org_idx").on(table.organizationId)],
 );
 
+// A person's or a group's role in a space.
 export const spaceMember = sqliteTable(
   "space_member",
   {
     spaceId: text("space_id")
       .notNull()
       .references(() => space.id, { onDelete: "cascade" }),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
+    // Who holds the role: a user, or every member of a group.
+    subjectKind: text("subject_kind", { enum: ["user", "group"] }).notNull(),
+    subjectId: text("subject_id").notNull(),
     // Owners manage the space; messagers and owners post; viewers only read.
     role: text("role", { enum: ["owner", "messager", "viewer"] }).notNull(),
-    // How the user came to be a member.
+    // How the role came to be given.
     source: text("source", { enum: ["direct"] }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.spaceId, table.userId] }),
-    index("space_member_user_idx").on(table.userId),
+    primaryKey({ columns: [table.spaceId, table.subjectKind, table.subjectId] }),
+    index("space_member_subject_idx").on(table.subjectKind, table.subjectId),
   ],
+);
+
+// A named set of an org's members that spaces give roles to. Mage keeps local groups; a directory
+// may later bring its own, named by their id there.
+export const group = sqliteTable(
+  "group",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    source: text("source", { enum: ["local", "scim"] })
+      .default("local")
+      .notNull(),
+    externalId: text("external_id"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [uniqueIndex("group_org_name_idx").on(table.organizationId, table.name)],
+);
+
+export const groupMember = sqliteTable(
+  "group_member",
+  {
+    groupId: text("group_id")
+      .notNull()
+      .references(() => group.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.groupId, table.userId] }),
+    index("group_member_user_idx").on(table.userId),
+  ],
+);
+
+// A single-use link that lets the account with that email join a team org with the role. Only the
+// hash of its token is kept.
+export const orgInvite = sqliteTable(
+  "org_invite",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // Lower-cased.
+    email: text("email").notNull(),
+    role: text("role", { enum: ["owner", "member"] }).notNull(),
+    tokenHash: text("token_hash").notNull().unique(),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    acceptedBy: text("accepted_by").references(() => user.id, { onDelete: "set null" }),
+    acceptedAt: integer("accepted_at", { mode: "timestamp_ms" }),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [index("org_invite_org_idx").on(table.organizationId, table.email)],
+);
+
+// Someone removed from an org, so what they wrote there says so; joining again clears it.
+export const orgFormerMember = sqliteTable(
+  "org_former_member",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    removedAt: integer("removed_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.organizationId, table.userId] })],
 );
 
 // A folder in a space, holding some of its threads.

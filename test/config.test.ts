@@ -24,6 +24,14 @@ describe("loadConfig", () => {
     );
   });
 
+  it("lets everyone create team orgs unless only the operators may", () => {
+    expect(loadConfig(valid)).toMatchObject({ teamOrgs: "everyone", operatorEmails: [] });
+    expect(
+      loadConfig({ ...valid, TEAM_ORGS: "operator", OPERATOR_EMAILS: " Ada@Example.com, ,b@x.io" }),
+    ).toMatchObject({ teamOrgs: "operator", operatorEmails: ["ada@example.com", "b@x.io"] });
+    expect(() => loadConfig({ ...valid, TEAM_ORGS: "admins" })).toThrow(/TEAM_ORGS/);
+  });
+
   it("rejects a non-numeric PORT", () => {
     expect(() => loadConfig({ ...valid, PORT: "abc" })).toThrow(/PORT/);
   });

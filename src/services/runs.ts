@@ -148,6 +148,50 @@ function replyParts(text: string, reasoning: string, durationMs?: number): Reply
   ];
 }
 
+// The thread's waiting messages whose authors may still post in it, and those whose authors no
+// longer may.
+export function sortWaiting(
+  threads: Pick<ThreadStore, "find">,
+  spaceStore: Pick<SpaceStore, "find">,
+  access: Pick<ThreadAccess, "can">,
+  threadId: string,
+  pending: PendingMessage[],
+) {
+  const thread = threads.find(threadId);
+  const space = thread && spaceStore.find(thread.spaceId);
+  const admitted: PendingMessage[] = [];
+  const refused: PendingMessage[] = [];
+  for (const message of pending) {
+    const allowed =
+      !!space && access.can({ userId: message.author.userId, orgId: space.orgId }, thread, "post");
+    (allowed ? admitted : refused).push(message);
+  }
+  return { admitted, refused };
+}
+
+// Drops the waiting messages of the org's threads whose authors can no longer post in them.
+export function dropRefusedWaiting(options: {
+  threads: Pick<ThreadStore, "find" | "eventsAfter">;
+  spaceStore: Pick<SpaceStore, "find">;
+  runs: Pick<RunStore, "activeThreadIds">;
+  access: Pick<ThreadAccess, "can">;
+  log: ThreadLog;
+  orgId: string;
+}) {
+  const { threads, spaceStore, runs, access, log, orgId } = options;
+  for (const threadId of new Set(runs.activeThreadIds())) {
+    const thread = threads.find(threadId);
+    if (!thread || spaceStore.find(thread.spaceId)?.orgId !== orgId) continue;
+    log.write(threadId, (append) => {
+      const pending = transcriptOf(threads.eventsAfter(threadId, 0).map(eventSummary)).pending;
+      const { refused } = sortWaiting(threads, spaceStore, access, threadId, pending);
+      for (const message of refused) {
+        append({ type: "message.dropped", actor: AGENT, data: { messageId: message.id } });
+      }
+    });
+  }
+}
+
 // Starts a run in a transaction that is appending to the thread, taking in the given messages.
 export function startRun(
   runs: Pick<RunStore, "create">,
@@ -208,14 +252,13 @@ export function createRunWorker(options: RunWorkerOptions) {
   }
 
   // Pending messages whose authors may still post in the thread, as members of its space or as
-  // its guests.
-  function admissible(threadId: string, pending: PendingMessage[]) {
-    const thread = threads.find(threadId);
-    const space = thread && spaceStore.find(thread.spaceId);
-    if (!space) return [];
-    return pending.filter((message) =>
-      access.can({ userId: message.author.userId, orgId: space.orgId }, thread, "post"),
-    );
+  // its guests; the others are dropped.
+  function admissible(threadId: string, pending: PendingMessage[], append: Append) {
+    const { admitted, refused } = sortWaiting(threads, spaceStore, access, threadId, pending);
+    for (const message of refused) {
+      append({ type: "message.dropped", actor: AGENT, data: { messageId: message.id } });
+    }
+    return admitted;
   }
 
   // Ends the run, then starts the next one: the same input again when it is to be retried, or the
@@ -253,7 +296,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     } else {
       append({ type: "run.completed", actor: AGENT, data: { runId: run.id } });
     }
-    const waiting = admissible(run.threadId, transcript(run.threadId).pending);
+    const waiting = admissible(run.threadId, transcript(run.threadId).pending, append);
     // An interrupting message starts the next run, with everything queued.
     const first = waiting.find((message) => message.mode === "interrupt") ?? waiting[0];
     const next: NewRun | null = retry
@@ -410,7 +453,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       const current = runs.hold(lease);
       stopIfAsked(execution, current);
       if (controller.signal.aborted) return [];
-      const waiting = admissible(run.threadId, transcript(run.threadId).pending).filter(
+      const waiting = admissible(run.threadId, transcript(run.threadId).pending, append).filter(
         (message) => all || message.mode === "steer",
       );
       if (waiting.length > 0) {

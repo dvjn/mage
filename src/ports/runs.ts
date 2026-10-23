@@ -68,6 +68,8 @@ export interface RunStore {
   latest(threadId: string): Run | null;
   // The thread's queued, running or waiting run.
   active(threadId: string): Run | null;
+  // The threads with a queued, running or waiting run.
+  activeThreadIds(): string[];
   // Asks the thread's active run to stop, unless someone already has; null when there is none.
   requestCancel(threadId: string, userId: string, at: Date): Run | null;
   // Takes the oldest queued run for the owner until `expiresAt`.

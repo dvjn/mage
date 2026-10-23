@@ -1,12 +1,14 @@
 // Email and password accounts with cookie sessions, served under /api/auth.
-// Every user gets a personal org with its first space at sign-up, and new sessions act in it.
+// Every user gets a personal org with its first space at sign-up, and new sessions act in it. Orgs
+// and their members are changed only through Mage's own API, so the library's org routes are off.
 
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError } from "better-auth/api";
 import { organization } from "better-auth/plugins";
-import { and, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull } from "drizzle-orm";
 
+import type { OrgRole } from "@/ports/directory.ts";
 import type { Identity, Principal } from "@/ports/identity.ts";
 import type { Logger } from "@/ports/logger.ts";
 import { FIRST_SPACE_NAME } from "@/shared/spaces.ts";
@@ -50,6 +52,34 @@ export function createAuth(options: AuthOptions) {
     if (org.kind === "personal") throw new APIError("FORBIDDEN", { message });
   }
 
+  const orgs = organization({
+    allowUserToCreateOrganization: false,
+    // Team orgs have no member limit.
+    membershipLimit: Number.MAX_SAFE_INTEGER,
+    schema: {
+      organization: {
+        additionalFields: {
+          kind: { type: ["personal", "team"], required: true, input: true },
+        },
+      },
+    },
+    organizationHooks: {
+      // Orgs made for sign-ups are personal; Mage names team orgs as such.
+      beforeCreateOrganization: async ({ organization }) => ({
+        data: { ...organization, kind: organization.kind === "team" ? "team" : "personal" },
+      }),
+      // A personal org has its owner and no one else.
+      beforeAddMember: async ({ organization }) => {
+        if (hasMembers(organization.id)) {
+          rejectPersonal(organization, "A personal organization has no other members");
+        }
+      },
+      beforeCreateInvitation: async ({ organization }) => {
+        rejectPersonal(organization, "A personal organization cannot invite members");
+      },
+    },
+  });
+
   const auth = betterAuth({
     // Every setting the library would otherwise take from BETTER_AUTH_* env vars is set here.
     baseURL: options.baseUrl,
@@ -66,7 +96,7 @@ export function createAuth(options: AuthOptions) {
         create: {
           after: async (user): Promise<void> => {
             const org = await auth.api.createOrganization({
-              body: { name: user.name, slug: user.id, userId: user.id },
+              body: { name: user.name, slug: user.id, userId: user.id, kind: "personal" },
             });
             spaces.create({
               orgId: org.id,
@@ -99,33 +129,8 @@ export function createAuth(options: AuthOptions) {
         },
       },
     },
-    plugins: [
-      organization({
-        allowUserToCreateOrganization: false,
-        schema: {
-          organization: {
-            additionalFields: {
-              kind: { type: ["personal", "team"], required: true, input: false },
-            },
-          },
-        },
-        organizationHooks: {
-          // Orgs are only created for sign-ups, so every new org is a personal one.
-          beforeCreateOrganization: async ({ organization }) => ({
-            data: { ...organization, kind: "personal" },
-          }),
-          // A personal org has its owner and no one else.
-          beforeAddMember: async ({ organization }) => {
-            if (hasMembers(organization.id)) {
-              rejectPersonal(organization, "A personal organization has no other members");
-            }
-          },
-          beforeCreateInvitation: async ({ organization }) => {
-            rejectPersonal(organization, "A personal organization cannot invite members");
-          },
-        },
-      }),
-    ],
+    plugins: [orgs],
+    disabledPaths: Object.values(orgs.endpoints).map((endpoint) => endpoint.path),
     logger: {
       log: (level, message, ...args) => options.logger[level](args.length ? { args } : {}, message),
     },
@@ -133,21 +138,52 @@ export function createAuth(options: AuthOptions) {
   return auth;
 }
 
-// Reads the principal from the session cookie and the member row for its active org.
+// Reads the signed-in user from the session cookie, and their member row in the org the request
+// names, or else in the org they used last, or else their personal one. Naming another org makes it
+// the one used last.
 export function createIdentity(auth: Auth, db: Db): Identity {
+  function roleIn(userId: string, orgId: string) {
+    const member = db
+      .select({ role: schema.member.role })
+      .from(schema.member)
+      .where(and(eq(schema.member.userId, userId), eq(schema.member.organizationId, orgId)))
+      .get();
+    return member ? (member.role as OrgRole) : null;
+  }
+
+  function personalOrgOf(userId: string) {
+    return db
+      .select({ id: schema.organization.id })
+      .from(schema.member)
+      .innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
+      .where(and(eq(schema.member.userId, userId), eq(schema.organization.kind, "personal")))
+      .get()?.id;
+  }
+
   return {
-    async resolve(headers) {
+    async resolve(headers, orgId) {
       const result = await auth.api.getSession({ headers });
-      const orgId = result?.session.activeOrganizationId;
-      if (!result || !orgId) return null;
-      const member = db
-        .select({ role: schema.member.role })
-        .from(schema.member)
-        .where(
-          and(eq(schema.member.userId, result.user.id), eq(schema.member.organizationId, orgId)),
-        )
-        .get();
-      return member ? { userId: result.user.id, orgId, role: member.role } : null;
+      if (!result) return null;
+      const userId = result.user.id;
+      const signedIn = { userId, email: result.user.email };
+      const last = result.session.activeOrganizationId;
+      if (orgId) {
+        const role = roleIn(userId, orgId);
+        if (!role) return { ...signedIn, principal: null };
+        if (orgId !== last) {
+          db.update(schema.session)
+            .set({ activeOrganizationId: orgId })
+            .where(eq(schema.session.id, result.session.id))
+            .run();
+        }
+        return { ...signedIn, principal: { userId, orgId, role } };
+      }
+      for (const candidate of [last, personalOrgOf(userId)]) {
+        const role = candidate ? roleIn(userId, candidate) : null;
+        if (candidate && role)
+          return { ...signedIn, principal: { userId, orgId: candidate, role } };
+      }
+      return { ...signedIn, principal: null };
     },
 
     async profile(principal: Principal) {
@@ -172,6 +208,7 @@ export function createIdentity(auth: Auth, db: Db): Identity {
         .where(
           and(eq(schema.member.organizationId, principal.orgId), eq(schema.member.role, "owner")),
         )
+        .orderBy(asc(schema.member.createdAt))
         .get();
       return {
         ...row,

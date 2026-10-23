@@ -56,7 +56,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
   useEffect(() => setOpenMobile(false), [pathname, searchStr, setOpenMobile]);
 
   useShortcut("newThread", () => space && newThread(space.id), {
-    enabled: !!space && space.role !== "viewer",
+    enabled: space?.role === "owner" || space?.role === "messager",
   });
 
   return (

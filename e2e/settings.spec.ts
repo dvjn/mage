@@ -12,7 +12,7 @@ async function signUpToSettings(page: Page) {
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(/\/s\/[^/]+$/);
 
-  await page.getByRole("button", { name: "Account menu" }).click();
+  await page.getByRole("button", { name: "Switch space" }).click();
   await page.getByRole("menuitem", { name: "Organization settings" }).click();
   await expect(page).toHaveURL("/org/general");
   await page

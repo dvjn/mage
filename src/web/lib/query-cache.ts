@@ -1,4 +1,5 @@
-// The query cache kept in IndexedDB between visits, under the signed-in user's id, so a reload or
+// The query cache kept in IndexedDB between visits, under the signed-in user's id and the tab's org,
+// so a reload or
 // a thread switch paints from it while the server is asked for what changed. It keeps spaces,
 // folders, thread lists and threads with their events; not who is signed in, their connections,
 // the models or the settings. A new build or seven days discard it.
@@ -9,9 +10,10 @@ import type {
   Persister,
   PersistQueryClientOptions,
 } from "@tanstack/react-query-persist-client";
-import { del, get, set } from "idb-keyval";
+import { del, get, keys, set } from "idb-keyval";
 
-import { sessionQuery } from "@/web/lib/queries";
+import { tabOrg } from "@/web/lib/org-tab";
+import { meQuery, sessionQuery } from "@/web/lib/queries";
 
 export const cacheMaxAge = 7 * 24 * 60 * 60 * 1000;
 
@@ -23,29 +25,35 @@ export function shouldPersist(query: Query): boolean {
   return typeof root === "string" && KEPT.has(root) && defaultShouldDehydrateQuery(query);
 }
 
-function cacheKey(userId: string) {
-  return `query-cache:${userId}`;
+function cacheKey(userId: string, orgId: string) {
+  return `query-cache:${userId}:${orgId}`;
 }
 
 function signedInUser(queryClient: QueryClient) {
   return queryClient.getQueryData(sessionQuery.queryKey)?.user.id;
 }
 
-// Restoring waits for the session, as every signed-in page does before it shows anything; writes
-// go under the user signed in at the time.
+// Restoring waits for the session, as every signed-in page does before it shows anything, and for
+// the tab's org; writes go under the user signed in and the tab's org at the time.
 function createPersister(queryClient: QueryClient): Persister {
   return {
     async persistClient(client: PersistedClient) {
       const userId = signedInUser(queryClient);
-      if (userId) await set(cacheKey(userId), client);
+      const orgId = tabOrg();
+      if (userId && orgId) await set(cacheKey(userId, orgId), client);
     },
     async restoreClient() {
       const session = await queryClient.fetchQuery(sessionQuery).catch(() => null);
-      return session ? get<PersistedClient>(cacheKey(session.user.id)) : undefined;
+      if (!session) return undefined;
+      // A tab that does not know its org yet learns it from who is signed in.
+      if (!tabOrg()) await queryClient.fetchQuery(meQuery).catch(() => null);
+      const orgId = tabOrg();
+      return orgId ? get<PersistedClient>(cacheKey(session.user.id, orgId)) : undefined;
     },
     async removeClient() {
       const userId = signedInUser(queryClient);
-      if (userId) await del(cacheKey(userId));
+      const orgId = tabOrg();
+      if (userId && orgId) await del(cacheKey(userId, orgId));
     },
   };
 }
@@ -61,9 +69,13 @@ export function cacheOptions(
   };
 }
 
-// Forgets everything cached for the signed-in user, in memory and in IndexedDB.
+// Forgets everything cached for the signed-in user, in every org, in memory and in IndexedDB.
 export async function forgetCache(queryClient: QueryClient) {
   const userId = signedInUser(queryClient);
   queryClient.clear();
-  if (userId) await del(cacheKey(userId));
+  if (!userId) return;
+  const prefix = `query-cache:${userId}`;
+  for (const key of await keys()) {
+    if (typeof key === "string" && (key === prefix || key.startsWith(`${prefix}:`))) await del(key);
+  }
 }

@@ -1,0 +1,204 @@
+// Long lists read a page at a time from the server, searched and narrowed there: the org's people
+// and invites, its members, a member's groups, its groups and a group's members, its spaces and a space's
+// members, and one member or group at a glance. Every list keeps showing its last rows while the
+// next search or filter is read.
+
+import {
+  infiniteQueryOptions,
+  keepPreviousData,
+  queryOptions,
+  useInfiniteQuery,
+} from "@tanstack/react-query";
+
+import {
+  groupMemberPageSchema,
+  groupPageSchema,
+  groupSchema,
+  orgMemberPageSchema,
+  orgMemberSchema,
+  type OrgRole,
+  orgPersonPageSchema,
+} from "@/shared/orgs.ts";
+import type { Page } from "@/shared/paging.ts";
+import { orgSpacePageSchema, type SpaceRole, spaceMembersSchema } from "@/shared/spaces.ts";
+import { apiClient } from "@/web/lib/api-client";
+
+// The query string of a page: the text, filters set, the limit and the cursor.
+function queryOf(
+  filters: Record<string, string | undefined>,
+  cursor: string | null,
+  limit?: number,
+) {
+  const query: Record<string, string> = {};
+  for (const [key, value] of Object.entries(filters)) if (value) query[key] = value;
+  if (cursor) query.cursor = cursor;
+  if (limit) query.limit = String(limit);
+  return query;
+}
+
+// A list read page by page; `limit` is for small lists, such as a glance.
+function pages<T extends { nextCursor: string | null }>(
+  key: readonly unknown[],
+  read: (query: Record<string, string>) => Promise<T>,
+  filters: Record<string, string | undefined>,
+  limit?: number,
+) {
+  return infiniteQueryOptions({
+    queryKey: [...key, filters, limit ?? null],
+    initialPageParam: null as string | null,
+    queryFn: ({ pageParam }) => read(queryOf(filters, pageParam, limit)),
+    getNextPageParam: (last) => last.nextCursor,
+    placeholderData: keepPreviousData,
+  });
+}
+
+async function json<T>(res: Response, parse: (body: unknown) => T, what: string) {
+  if (!res.ok) throw new Error(`could not read ${what}`);
+  return parse(await res.json());
+}
+
+export function membersPages(filters: { q?: string; role?: OrgRole }, limit?: number) {
+  return pages(
+    ["org-members"],
+    async (query) =>
+      json(
+        await apiClient.v1.org.members.$get({ query }),
+        (body) => orgMemberPageSchema.parse(body),
+        "the members",
+      ),
+    filters,
+    limit,
+  );
+}
+
+export function memberQuery(userId: string) {
+  return queryOptions({
+    queryKey: ["org-members", "one", userId],
+    queryFn: async () =>
+      json(
+        await apiClient.v1.org.members[":userId"].$get({ param: { userId } }),
+        (body) => orgMemberSchema.parse(body),
+        "the member",
+      ),
+  });
+}
+
+export function memberGroupsPages(userId: string, filters: { q?: string }, limit?: number) {
+  return pages(
+    ["org-groups", "of", userId],
+    async (query) =>
+      json(
+        await apiClient.v1.org.members[":userId"].groups.$get({ param: { userId }, query }),
+        (body) => groupPageSchema.parse(body),
+        "their groups",
+      ),
+    filters,
+    limit,
+  );
+}
+
+// The org's people: for its owners, the invites not yet used first, then its members.
+export function peoplePages(
+  filters: { q?: string; role?: OrgRole; status?: "member" | "invited" },
+  limit?: number,
+) {
+  return pages(
+    ["org-people"],
+    async (query) =>
+      json(
+        await apiClient.v1.org.people.$get({ query }),
+        (body) => orgPersonPageSchema.parse(body),
+        "the people",
+      ),
+    filters,
+    limit,
+  );
+}
+
+export function groupsPages(filters: { q?: string }, limit?: number) {
+  return pages(
+    ["org-groups"],
+    async (query) =>
+      json(
+        await apiClient.v1.org.groups.$get({ query }),
+        (body) => groupPageSchema.parse(body),
+        "the groups",
+      ),
+    filters,
+    limit,
+  );
+}
+
+export function groupQuery(groupId: string) {
+  return queryOptions({
+    queryKey: ["org-groups", "one", groupId],
+    queryFn: async () =>
+      json(
+        await apiClient.v1.org.groups[":id"].$get({ param: { id: groupId } }),
+        (body) => groupSchema.parse(body),
+        "the group",
+      ),
+  });
+}
+
+export function groupMembersPages(groupId: string, filters: { q?: string }, limit?: number) {
+  return pages(
+    ["org-groups", "members", groupId],
+    async (query) =>
+      json(
+        await apiClient.v1.org.groups[":id"].members.$get({ param: { id: groupId }, query }),
+        (body) => groupMemberPageSchema.parse(body),
+        "the group's members",
+      ),
+    filters,
+    limit,
+  );
+}
+
+export function orgSpacesPages(filters: { q?: string; kind?: string; everyone?: string }) {
+  return pages(
+    ["org-spaces"],
+    async (query) =>
+      json(
+        await apiClient.v1.org.spaces.$get({ query }),
+        (body) => orgSpacePageSchema.parse(body),
+        "the organization's spaces",
+      ),
+    filters,
+  );
+}
+
+// The space's members a page at a time; each page also says who everyone is and what they get.
+export function spaceMembersPages(spaceId: string, filters: { q?: string; role?: SpaceRole }) {
+  return infiniteQueryOptions({
+    queryKey: ["space-members", spaceId, filters],
+    initialPageParam: null as string | null,
+    queryFn: async ({ pageParam }) =>
+      json(
+        await apiClient.v1.spaces[":id"].members.$get({
+          param: { id: spaceId },
+          query: queryOf(filters, pageParam),
+        }),
+        (body) => spaceMembersSchema.parse(body),
+        "who is in the space",
+      ),
+    getNextPageParam: (last) => last.grants.nextCursor,
+    placeholderData: keepPreviousData,
+  });
+}
+
+export type PagesOptions<T> = ReturnType<typeof pages<Page<T>>>;
+
+// A list's rows so far, how many match in all, and reading the next page.
+export function usePages<T>(options: PagesOptions<T>) {
+  const list = useInfiniteQuery(options);
+  return {
+    items: list.data?.pages.flatMap((page) => page.items) ?? [],
+    total: list.data?.pages[0]?.total,
+    pending: list.isPending,
+    error: list.error,
+    more: !!list.hasNextPage,
+    loading: list.isFetchingNextPage,
+    loadMore: () => void list.fetchNextPage(),
+  };
+}

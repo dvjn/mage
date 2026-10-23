@@ -1,10 +1,12 @@
 // Pages: login and signup when signed out; when signed in, the app shell with a space and its
 // settings, a new thread's draft, a thread, the threads shared with you, and the organization's
-// settings, opening on the last space used.
+// settings with its people and spaces, opening on the last space used.
 // Each side redirects to the other; signing in or up goes back to the page that asked for it, such
 // as an invite link, which is open either way.
 
 import type { QueryClient } from "@tanstack/react-query";
+
+import type { SpaceRole } from "@/shared/spaces.ts";
 import {
   createRootRouteWithContext,
   createRoute,
@@ -15,8 +17,11 @@ import {
 
 import { AppShell, PageHeader } from "@/web/components/app-shell";
 import { InvitePage } from "@/web/components/invite-page";
+import { JoinPage } from "@/web/components/join-page";
 import { LoginForm } from "@/web/components/login-form";
 import { OrgGeneral } from "@/web/components/settings/org-general";
+import { OrgPeople, type PeopleSearch } from "@/web/components/settings/org-people";
+import { OrgSpaces, type OrgSpacesSearch } from "@/web/components/settings/org-spaces";
 import { OrgProviders } from "@/web/components/settings/org-providers";
 import { OrgShell } from "@/web/components/settings/org-shell";
 import { SharedPage } from "@/web/components/shared-page";
@@ -34,10 +39,17 @@ const rootRoute = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   component: Outlet,
 });
 
-// Where to go after signing in or up: a path in this app, never another site.
-export function afterSignIn(search: Record<string, unknown>): { redirect?: string } {
-  const { redirect } = search;
-  return typeof redirect === "string" && /^\/(?![/\\])/.test(redirect) ? { redirect } : {};
+// Where to go after signing in or up: a path in this app, never another site; and the email to
+// sign in or up with, as an org invite gives it.
+export function afterSignIn(search: Record<string, unknown>): {
+  redirect?: string;
+  email?: string;
+} {
+  const { redirect, email } = search;
+  return {
+    ...(typeof redirect === "string" && /^\/(?![/\\])/.test(redirect) && { redirect }),
+    ...(typeof email === "string" && { email }),
+  };
 }
 
 async function redirectIfSignedIn({
@@ -90,6 +102,14 @@ const inviteRoute = createRoute({
   component: InvitePage,
 });
 
+// Opens an org invite link: signed out, it asks to sign in or up with its email first; signed in as
+// its person, it lets them into the org.
+const joinRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/join/$token",
+  component: JoinPage,
+});
+
 const appRoute = createRoute({
   getParentRoute: () => rootRoute,
   id: "_app",
@@ -102,7 +122,7 @@ const homeRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/",
   beforeLoad: async ({ context }) => {
-    const spaces = await context.queryClient.fetchQuery(spacesQuery);
+    const spaces = (await context.queryClient.fetchQuery(spacesQuery)).filter((s) => s.role);
     const last = lastSpace();
     const space = spaces.find((s) => s.id === last) ?? spaces[0];
     if (space) throw redirect({ to: "/s/$spaceId", params: { spaceId: space.id } });
@@ -119,6 +139,13 @@ const spaceRoute = createRoute({
 const spaceSettingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/s/$spaceId/settings",
+  // The members' search in `?q=` and role in `?role=`.
+  validateSearch: (search: Record<string, unknown>): { q?: string; role?: SpaceRole } => ({
+    ...textOf(search),
+    ...((search.role === "owner" || search.role === "messager" || search.role === "viewer") && {
+      role: search.role,
+    }),
+  }),
   component: SpaceSettings,
 });
 
@@ -170,6 +197,53 @@ const orgProvidersRoute = createRoute({
   component: OrgProviders,
 });
 
+// Text in `?q=`, or empty.
+function textOf(search: Record<string, unknown>) {
+  return typeof search.q === "string" && search.q ? { q: search.q } : {};
+}
+
+// Its people: the search in `?q=`, and the role and status in `?role=` and `?status=`.
+const orgPeopleRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: "/people",
+  validateSearch: (search: Record<string, unknown>): PeopleSearch => ({
+    ...textOf(search),
+    ...((search.role === "owner" || search.role === "member") && { role: search.role }),
+    ...((search.status === "member" || search.status === "invited") && { status: search.status }),
+  }),
+  component: OrgPeople,
+});
+
+// The search in `?q=`, and the kind and everyone's role in `?kind=` and `?everyone=`.
+const orgSpacesRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: "/spaces",
+  validateSearch: (search: Record<string, unknown>): OrgSpacesSearch => ({
+    ...textOf(search),
+    ...((search.kind === "shared" || search.kind === "personal") && { kind: search.kind }),
+    ...((search.everyone === "none" ||
+      search.everyone === "viewer" ||
+      search.everyone === "messager") && { everyone: search.everyone }),
+  }),
+  component: OrgSpaces,
+});
+
+const orgMembersRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: "/members",
+  beforeLoad: () => {
+    throw redirect({ to: "/org/people" });
+  },
+});
+
+const orgGroupsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: "/groups",
+  beforeLoad: () => {
+    throw redirect({ to: "/org/people" });
+  },
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/settings",
@@ -183,6 +257,7 @@ export function createAppRouter(queryClient: QueryClient) {
     routeTree: rootRoute.addChildren([
       signedOutRoute.addChildren([loginRoute, signupRoute]),
       inviteRoute,
+      joinRoute,
       appRoute.addChildren([
         homeRoute,
         spaceRoute,
@@ -190,7 +265,15 @@ export function createAppRouter(queryClient: QueryClient) {
         draftRoute,
         threadRoute,
         sharedRoute,
-        orgRoute.addChildren([orgIndexRoute, orgGeneralRoute, orgProvidersRoute]),
+        orgRoute.addChildren([
+          orgIndexRoute,
+          orgGeneralRoute,
+          orgProvidersRoute,
+          orgPeopleRoute,
+          orgSpacesRoute,
+          orgMembersRoute,
+          orgGroupsRoute,
+        ]),
         settingsRoute,
       ]),
     ]),

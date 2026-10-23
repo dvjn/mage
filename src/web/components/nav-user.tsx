@@ -1,15 +1,9 @@
-// The signed-in user at the foot of the sidebar, with a menu for the theme, the keyboard
-// shortcuts, the organization's settings and signing out.
+// The signed-in user at the foot of the sidebar, with a menu for the theme, the keyboard shortcuts
+// and signing out.
 
 import { useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "@tanstack/react-router";
-import {
-  ChevronsUpDownIcon,
-  KeyboardIcon,
-  LogOutIcon,
-  Settings2Icon,
-  SunMoonIcon,
-} from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { ChevronsUpDownIcon, KeyboardIcon, LogOutIcon, SunMoonIcon } from "lucide-react";
 
 import { Kbd } from "@/web/components/ui/kbd";
 import { useOpenShortcutsHelp } from "@/web/components/shortcuts-help";
@@ -116,10 +110,6 @@ export function NavUser({ user }: { user: { name: string; email: string } }) {
                 <KeyboardIcon />
                 Keyboard shortcuts
                 <Kbd className="ml-auto">{shortcutHint("help")}</Kbd>
-              </DropdownMenuItem>
-              <DropdownMenuItem render={<Link to="/org/general" />}>
-                <Settings2Icon />
-                Organization settings
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />

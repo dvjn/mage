@@ -12,6 +12,10 @@ export interface Config {
   webRoot: string;
   // Replies come from a stand-in model instead of providers; only for the browser journeys.
   fakeModels: boolean;
+  // Who may create team orgs: every account, or only the operators.
+  teamOrgs: "everyone" | "operator";
+  // The accounts that run this server, by lower-cased email.
+  operatorEmails: string[];
 }
 
 // The local development secret; refused in production.
@@ -72,6 +76,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (env.NODE_ENV === "production" && gateway === "fake") {
     throw new Error("MODEL_GATEWAY=fake is not allowed in production");
   }
+  const teamOrgs = env.TEAM_ORGS ?? "everyone";
+  if (teamOrgs !== "everyone" && teamOrgs !== "operator") {
+    throw new Error("TEAM_ORGS must be everyone or operator");
+  }
+  const operatorEmails = (env.OPERATOR_EMAILS ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
   return {
     baseUrl,
     authSecret,
@@ -82,5 +94,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     port,
     webRoot: env.WEB_ROOT ?? "dist/web",
     fakeModels: gateway === "fake",
+    teamOrgs,
+    operatorEmails,
   };
 }

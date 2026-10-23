@@ -18,6 +18,8 @@ import type { BrowserOAuth } from "@/ports/oauth.ts";
 import { createConnections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Guests } from "@/services/guests.ts";
+import type { Groups } from "@/services/groups.ts";
+import type { Orgs } from "@/services/orgs.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
@@ -144,6 +146,8 @@ function setup() {
     folders: unusedFolders,
     threads: unusedThreads,
     guests: unusedGuests,
+    orgs: {} as Orgs,
+    groups: {} as Groups,
     logger,
     pingDatabase: () => Promise.resolve(true),
   });
@@ -727,7 +731,7 @@ describe("/api/v1/connections", () => {
     expect((await api("DELETE", "/connections/missing", cookie)).status).toBe(404);
   });
 
-  it("rejects a team org", async () => {
+  it("refuses subscription sign-ins in a team org", async () => {
     const { db, signUp, api } = setup();
     const { userId, cookie } = await signUp("Ada Lovelace", "ada@example.com");
     db.insert(schema.organization)
@@ -738,12 +742,12 @@ describe("/api/v1/connections", () => {
       .run();
     db.update(schema.session).set({ activeOrganizationId: "acme" }).run();
 
-    expect((await api("GET", "/connections", cookie)).status).toBe(403);
+    expect((await api("GET", "/connections", cookie)).status).toBe(200);
     expect((await api("POST", "/connections/codex/device", cookie)).status).toBe(403);
     expect((await api("POST", "/connections/codex/browser", cookie)).status).toBe(403);
   });
 
-  it("rejects a member who is not the owner", async () => {
+  it("shows a member who is not an owner the connections, and refuses their changes", async () => {
     const { db, signUp, api } = setup();
     await signUp("Ada Lovelace", "ada@example.com");
     const grace = await signUp("Grace Hopper", "grace@example.com");
@@ -766,7 +770,8 @@ describe("/api/v1/connections", () => {
       .where(eq(schema.session.userId, grace.userId))
       .run();
 
-    expect((await api("GET", "/connections", grace.cookie)).status).toBe(403);
+    expect((await api("GET", "/connections", grace.cookie)).status).toBe(200);
+    expect((await api("DELETE", "/connections/missing", grace.cookie)).status).toBe(403);
     expect((await api("POST", "/connections/codex/device", grace.cookie)).status).toBe(403);
     expect((await api("POST", "/connections/codex/browser", grace.cookie)).status).toBe(403);
   });

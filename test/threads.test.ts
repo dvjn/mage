@@ -180,9 +180,15 @@ describe("event log", () => {
     const thread = await createThread(ada.cookie, space.id, "Hello");
     // Grace joins Ada's space, posts, and her account is later removed.
     db.insert(schema.spaceMember)
-      .values({ spaceId: space.id, userId: grace.userId, role: "messager", source: "direct" })
+      .values({
+        spaceId: space.id,
+        subjectKind: "user",
+        subjectId: grace.userId,
+        role: "messager",
+        source: "direct",
+      })
       .run();
-    const asGrace = { userId: grace.userId, orgId: ada.orgId, role: "member" };
+    const asGrace = { userId: grace.userId, orgId: ada.orgId, role: "member" as const };
     threads.postMessage(asGrace, thread.id, "Hi Ada");
     await api("POST", `/threads/${thread.id}/messages`, ada.cookie, { text: "Hi Grace" });
     db.delete(schema.user).where(eq(schema.user.id, grace.userId)).run();
@@ -199,7 +205,7 @@ describe("event log", () => {
 });
 
 describe("thread visibility", () => {
-  it("answers 404 to people outside the thread's space", async () => {
+  it("answers 404 to people outside the thread's Space", async () => {
     const { api, signUp, yourSpace, createThread } = setup();
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const grace = await signUp("Grace Hopper", "grace@example.com");

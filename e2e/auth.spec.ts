@@ -31,19 +31,19 @@ test("signed out, home redirects to login, which links to signup", async ({ page
   await expect(page).toHaveURL("/signup");
 });
 
-test("signing up lands in Your space in the personal org and keeps the session", async ({
+test("signing up lands in their own space in the personal org and keeps the session", async ({
   page,
 }) => {
   await signUp(page, "Ada Lovelace", uniqueEmail());
   const sidebar = page.locator("[data-sidebar=sidebar]");
   await expect(sidebar.getByText("Ada Lovelace").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Account menu" })).toContainText("Ada Lovelace");
-  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Your space");
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Ada Lovelace's Space");
 
   const url = page.url();
   await page.reload();
   await expect(page).toHaveURL(url);
-  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Your space");
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Ada Lovelace's Space");
 
   await page.goto("/login");
   await expect(page).toHaveURL(url);

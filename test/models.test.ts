@@ -26,6 +26,8 @@ import type { BrowserOAuth } from "@/ports/oauth.ts";
 import { createConnections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Guests } from "@/services/guests.ts";
+import type { Groups } from "@/services/groups.ts";
+import type { Orgs } from "@/services/orgs.ts";
 import { createModels } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
@@ -202,6 +204,8 @@ function setup() {
     folders: unusedFolders,
     threads: unusedThreads,
     guests: unusedGuests,
+    orgs: {} as Orgs,
+    groups: {} as Groups,
     logger,
     pingDatabase: () => Promise.resolve(true),
   });

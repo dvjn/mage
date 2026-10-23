@@ -26,7 +26,8 @@ export function usePlace(): Place | undefined {
     return { kind: "shared", thread: shared.data?.find((t) => t.id === threadId) };
   }
   const wanted = spaceId ?? thread.data?.thread.spaceId ?? lastSpace();
-  const space = spaces.data?.find((s) => s.id === wanted) ?? spaces.data?.[0];
+  const space =
+    spaces.data?.find((s) => s.id === wanted) ?? spaces.data?.find((s) => s.role !== null);
   return space && { kind: "space", space };
 }
 

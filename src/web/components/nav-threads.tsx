@@ -275,7 +275,7 @@ function MenuSkeleton() {
 function SpaceSection({ space, onNewFolder }: { space: SpaceSummary; onNewFolder: () => void }) {
   const matchRoute = useMatchRoute();
   const newThread = useNewThread();
-  const writer = space.role !== "viewer";
+  const writer = space.role === "owner" || space.role === "messager";
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Space</SidebarGroupLabel>
@@ -471,5 +471,7 @@ export function NavThreads() {
   const place = usePlace();
   if (!place) return null;
   if (place.kind === "shared") return <SharedThreads />;
+  // A space its org's owner manages without being in it shows them only its settings.
+  if (place.space.role === null) return <SpaceSection space={place.space} onNewFolder={() => {}} />;
   return <SpaceThreads key={place.space.id} space={place.space} />;
 }

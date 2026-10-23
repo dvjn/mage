@@ -1,12 +1,15 @@
 // The states a page or list shows besides its content: loading, a read that failed, nothing there
-// yet, and a page that does not exist or is not the reader's.
+// yet, and a page that does not exist or is not the reader's, unless it is in another of their
+// orgs, which the tab then moves to.
 
 import type * as React from "react";
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
 import { PageHeader } from "@/web/components/app-shell";
 import { Button } from "@/web/components/ui/button";
 import { Skeleton } from "@/web/components/ui/skeleton";
+import { followPlace } from "@/web/lib/org-tab";
 
 export function LoadError({ className }: { className?: string }) {
   return (
@@ -55,8 +58,22 @@ export function EmptyState({
   );
 }
 
-// A page that does not exist or is not the reader's.
-export function NotFound({ what }: { what: "space" | "thread" }) {
+// A page that does not exist or is not the reader's. Given the space or thread, it first looks for
+// it in the reader's other orgs.
+export function NotFound({ what, id }: { what: "space" | "thread"; id?: string }) {
+  const [looking, setLooking] = useState(!!id);
+  useEffect(() => {
+    if (!id) return;
+    let current = true;
+    const place = what === "space" ? { space: id } : { thread: id };
+    void followPlace(place, window.location.pathname + window.location.search).then((moved) => {
+      if (current && !moved) setLooking(false);
+    });
+    return () => {
+      current = false;
+    };
+  }, [what, id]);
+  if (looking) return null;
   return (
     <>
       <PageHeader crumbs={[{ label: "Not found" }]} />

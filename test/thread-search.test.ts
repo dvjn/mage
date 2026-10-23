@@ -44,7 +44,13 @@ describe("thread search", () => {
     // Grace's own space, which Ada is a member of from Grace's org.
     const graces = await yourSpace(grace.cookie);
     db.insert(schema.spaceMember)
-      .values({ spaceId: graces.id, userId: ada.userId, role: "messager", source: "direct" })
+      .values({
+        spaceId: graces.id,
+        subjectKind: "user",
+        subjectId: ada.userId,
+        role: "messager",
+        source: "direct",
+      })
       .run();
     await createThread(grace.cookie, graces.id, "Engine of another org");
 
@@ -52,7 +58,7 @@ describe("thread search", () => {
 
     expect(results.map(({ id, spaceId, spaceName }) => ({ id, spaceId, spaceName }))).toEqual(
       expect.arrayContaining([
-        { id: notes.id, spaceId: yours.id, spaceName: "Your space" },
+        { id: notes.id, spaceId: yours.id, spaceName: "Ada Lovelace's Space" },
         { id: plans.id, spaceId: work.id, spaceName: "Work" },
       ]),
     );

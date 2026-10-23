@@ -3,13 +3,14 @@
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
-import { getRouteApi } from "@tanstack/react-router";
-import { SearchIcon } from "lucide-react";
+import { getRouteApi, Link } from "@tanstack/react-router";
+import { LockIcon, SearchIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
 import { NewThreadComposer } from "@/web/components/draft-thread";
-import { ListSkeleton, LoadError, NotFound } from "@/web/components/page-states";
+import { EmptyState, ListSkeleton, LoadError, NotFound } from "@/web/components/page-states";
+import { Button } from "@/web/components/ui/button";
 import { ThreadRow } from "@/web/components/thread-row";
 import { Time } from "@/web/components/time";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
@@ -22,10 +23,12 @@ const spaceRoute = getRouteApi("/_app/s/$spaceId");
 export function SpacePage() {
   const { spaceId } = spaceRoute.useParams();
   const spaces = useQuery(spacesQuery);
-  const threads = useQuery(spaceThreadsQuery(spaceId));
-  const folders = useQuery(spaceFoldersQuery(spaceId));
-  const [filter, setFilter] = useState("");
   const space = spaces.data?.find((s) => s.id === spaceId);
+  // A team org's owner who manages the space without being in it does not see its threads.
+  const reads = space?.role !== null;
+  const threads = useQuery({ ...spaceThreadsQuery(spaceId), enabled: reads });
+  const folders = useQuery({ ...spaceFoldersQuery(spaceId), enabled: reads });
+  const [filter, setFilter] = useState("");
 
   useEffect(() => rememberSpace(spaceId), [spaceId]);
 
@@ -38,7 +41,30 @@ export function SpacePage() {
   const now = new Date();
   const folderNames = new Map((folders.data ?? []).map((f) => [f.id, f.name]));
 
-  if (spaces.isSuccess && !space) return <NotFound what="space" />;
+  if (spaces.isSuccess && !space) return <NotFound what="space" id={spaceId} />;
+  if (space && space.role === null) {
+    return (
+      <>
+        <PageHeader crumbs={[{ label: space.name }]} />
+        <div className={cn(pageWidth, "flex flex-col gap-6 p-4 pb-12")}>
+          <EmptyState
+            icon={<LockIcon />}
+            title="You are not in this space"
+            description="As an owner of the organization you manage it, but its threads stay hidden until you add yourself."
+            action={
+              <Button
+                variant="outline"
+                render={<Link to="/s/$spaceId/settings" params={{ spaceId }} />}
+                nativeButton={false}
+              >
+                Open space settings
+              </Button>
+            }
+          />
+        </div>
+      </>
+    );
+  }
 
   return (
     <>

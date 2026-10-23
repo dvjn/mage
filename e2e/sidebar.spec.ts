@@ -258,7 +258,7 @@ test("a thread on a model turned off replies with the default until it is back o
     "Echo Mini is turned off, so this thread uses the default",
   );
   await model.click();
-  await expect(page.getByText("Turned off")).toBeVisible();
+  await expect(page.getByText("Turned off", { exact: true })).toBeVisible();
   // The default row names the model it resolves to, never a ref.
   const defaultRow = page.getByRole("button", { name: /Default · Echo$/ });
   await expect(defaultRow).toBeVisible();

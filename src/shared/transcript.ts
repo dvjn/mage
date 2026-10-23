@@ -166,6 +166,7 @@ export function transcriptOf(
         break;
       }
       case "message.withdrawn":
+      case "message.dropped":
         pending.delete(event.data.messageId);
         break;
       case "message.admitted":

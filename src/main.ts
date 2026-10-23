@@ -13,6 +13,7 @@ import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { createCipher } from "@/adapters/cipher.ts";
 import { createConnectionStore } from "@/adapters/connections.ts";
 import { createCredentialStore } from "@/adapters/credentials.ts";
+import { createDirectory } from "@/adapters/directory.ts";
 import { createTransact, openDatabase, pingDatabase } from "@/adapters/db.ts";
 import { createDeltaStore } from "@/adapters/deltas.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
@@ -27,6 +28,7 @@ import {
   createCodexOAuth,
 } from "@/adapters/openai-codex.ts";
 import { createOpenAIKeyCatalog, createOpenAIKeyGateway } from "@/adapters/openai-api.ts";
+import { createOrgInviteStore } from "@/adapters/org-invites.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createRunStore } from "@/adapters/runs.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
@@ -36,9 +38,11 @@ import { loadConfig } from "@/config.ts";
 import { createApp } from "@/http/app.ts";
 import { createConnections } from "@/services/connections.ts";
 import { createFolders } from "@/services/folders.ts";
+import { createGroups } from "@/services/groups.ts";
 import { createGuests } from "@/services/guests.ts";
 import { createModels, type Models } from "@/services/models.ts";
-import { createRunWorker, type RunWorker } from "@/services/runs.ts";
+import { createOrgs } from "@/services/orgs.ts";
+import { createRunWorker, dropRefusedWaiting, type RunWorker } from "@/services/runs.ts";
 import { createSpaces } from "@/services/spaces.ts";
 import { createThreadAccess } from "@/services/thread-access.ts";
 import { createThreadLog } from "@/services/thread-log.ts";
@@ -79,6 +83,8 @@ const keyCatalogs = config.fakeModels
   : { openai: createOpenAIKeyCatalog(fetch), anthropic: createAnthropicKeyCatalog(fetch) };
 const spaceStore = createSpaceStore(db);
 const threadStore = createThreadStore(db);
+const directory = createDirectory(db, auth);
+const settingStore = createOrgSettingStore(db);
 const models = createModels({
   connections: connectionStore,
   choices: createModelChoiceStore(db),
@@ -89,7 +95,7 @@ const models = createModels({
     claude: createClaudeCatalog(fetch),
     ...keyCatalogs,
   },
-  settings: createOrgSettingStore(db),
+  settings: settingStore,
   gateways: {
     codex: createCodexGateway(fetch),
     claude: createClaudeGateway(fetch),
@@ -103,7 +109,18 @@ const deltas = createDeltaStore(db);
 const bus = createEventBus();
 const transact = createTransact(db);
 const log = createThreadLog({ threads: threadStore, bus, transact });
-const spaces = createSpaces({ spaces: spaceStore, threads: threadStore, models });
+// When people may have lost a role in an org's spaces, their waiting messages there are dropped.
+function accessChanged(orgId: string) {
+  dropRefusedWaiting({ threads: threadStore, spaceStore, runs: runStore, access, log, orgId });
+}
+const spaces = createSpaces({
+  spaces: spaceStore,
+  threads: threadStore,
+  models,
+  directory,
+  settings: settingStore,
+  accessChanged,
+});
 const folders = createFolders({ spaces, folders: createFolderStore(db) });
 const guestStore = createGuestStore(db);
 const access = createThreadAccess({ spaces, threads: threadStore, guests: guestStore });
@@ -168,6 +185,20 @@ const app = createApp({
       titles: createTitles({ models, threads: threadStore, log, logger }),
     }),
   }),
+  orgs: createOrgs({
+    directory,
+    invites: createOrgInviteStore(db),
+    spaces,
+    spaceStore,
+    threads: threadStore,
+    runs: runStore,
+    settings: settingStore,
+    accessChanged,
+    baseUrl: config.baseUrl,
+    teamOrgs: config.teamOrgs,
+    operatorEmails: config.operatorEmails,
+  }),
+  groups: createGroups({ directory }),
   guests: createGuests({
     access,
     guests: guestStore,

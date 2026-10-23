@@ -5,20 +5,20 @@ import * as schema from "@/adapters/schema.ts";
 import { setup } from "./workspace.ts";
 
 describe("spaces", () => {
-  it("starts every personal org with Your space, owned by the user", async () => {
+  it("starts every personal org with a space named for the user, owned by them", async () => {
     const { db, signUp, listSpaces } = setup();
     const { userId, cookie } = await signUp("Ada Lovelace", "ada@example.com");
 
     expect(await listSpaces(cookie)).toEqual([
       expect.objectContaining({
-        name: "Your space",
+        name: "Ada Lovelace's Space",
         kind: "personal",
         primary: true,
         role: "owner",
       }),
     ]);
     expect(db.select().from(schema.spaceMember).all()).toEqual([
-      expect.objectContaining({ userId, role: "owner", source: "direct" }),
+      expect.objectContaining({ subjectKind: "user", subjectId: userId, role: "owner" }),
     ]);
   });
 
@@ -32,15 +32,15 @@ describe("spaces", () => {
     const renamed = await api("PATCH", `/spaces/${work.id}`, cookie, { name: "Research" });
     expect(renamed.status).toBe(200);
     expect((await listSpaces(cookie)).map((space) => space.name)).toEqual([
-      "Your space",
+      "Ada Lovelace's Space",
       "Research",
     ]);
 
     expect((await api("DELETE", `/spaces/${work.id}`, cookie)).status).toBe(200);
-    expect((await listSpaces(cookie)).map((space) => space.name)).toEqual(["Your space"]);
+    expect((await listSpaces(cookie)).map((space) => space.name)).toEqual(["Ada Lovelace's Space"]);
   });
 
-  it("renames Your space but does not delete it", async () => {
+  it("renames the first space but does not delete it", async () => {
     const { api, signUp, listSpaces } = setup();
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
     const [yours] = await listSpaces(cookie);
@@ -65,7 +65,9 @@ describe("spaces", () => {
     const grace = await signUp("Grace Hopper", "grace@example.com");
     const work = await createSpace(ada.cookie, "Work");
 
-    expect((await listSpaces(grace.cookie)).map((space) => space.name)).toEqual(["Your space"]);
+    expect((await listSpaces(grace.cookie)).map((space) => space.name)).toEqual([
+      "Grace Hopper's Space",
+    ]);
     expect((await api("PATCH", `/spaces/${work.id}`, grace.cookie, { name: "Mine" })).status).toBe(
       404,
     );

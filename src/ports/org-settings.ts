@@ -9,6 +9,10 @@ export interface OrgSettings {
   titleModel: string | null;
   // The reasoning effort new threads start with, or null for the usual one.
   defaultEffort: Effort | null;
+  // Who may make shared spaces in a team org.
+  spaceCreation: "members" | "owners";
+  // Whether each member of a team org gets a private space of their own on joining.
+  memberSpaces: boolean;
 }
 
 export interface OrgSettingStore {
@@ -16,4 +20,8 @@ export interface OrgSettingStore {
   setDefaultModel(orgId: string, ref: string): void;
   setTitleModel(orgId: string, ref: string | null): void;
   setDefaultEffort(orgId: string, effort: Effort | null): void;
+  setTeamSettings(
+    orgId: string,
+    changes: Partial<Pick<OrgSettings, "spaceCreation" | "memberSpaces">>,
+  ): void;
 }

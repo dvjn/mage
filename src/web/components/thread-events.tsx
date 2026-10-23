@@ -1,6 +1,7 @@
 // How each row of a thread's transcript looks. A message is an avatar, who wrote it and when, noted
-// when its author was a guest of the thread, then its text as markdown, with a copy button on
-// hover; the signed-in person's own rows carry their avatar in the accent colour. An agent reply
+// when its author was a guest of the thread or was removed from its org, then its text as markdown,
+// with a copy button on hover; the signed-in person's own rows carry their avatar in the accent
+// colour. An agent reply
 // names the model that wrote it and shows what the model thought first, folded away once it
 // answers. An agent reply that was cut short says so, a run that failed says why and what to do
 // about it, the last run that failed or was stopped can be tried again, and an event this client
@@ -91,8 +92,9 @@ function HumanMessage({ row }: { row: HumanRow }) {
       at={row.postedAt}
       label={`Message from ${author}`}
       note={
-        (row.guest || row.quiet) && (
+        (row.guest || row.quiet || row.author.former) && (
           <>
+            {row.author.former && <span>former member</span>}
             {row.guest && <span>Guest</span>}
             {row.quiet && <span>aside</span>}
           </>

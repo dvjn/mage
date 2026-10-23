@@ -7,6 +7,8 @@ import { createApp } from "@/http/app.ts";
 import type { Connections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Guests } from "@/services/guests.ts";
+import type { Groups } from "@/services/groups.ts";
+import type { Orgs } from "@/services/orgs.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
@@ -36,6 +38,8 @@ describe("/api/auth", () => {
       folders: unusedFolders,
       threads: unusedThreads,
       guests: unusedGuests,
+      orgs: {} as Orgs,
+      groups: {} as Groups,
       logger,
       pingDatabase: () => Promise.resolve(true),
     });

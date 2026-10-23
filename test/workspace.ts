@@ -10,22 +10,28 @@ import { expect } from "vite-plus/test";
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { createTransact, openDatabase } from "@/adapters/db.ts";
 import { createDeltaStore } from "@/adapters/deltas.ts";
+import { createDirectory } from "@/adapters/directory.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
 import { createFolderStore } from "@/adapters/folders.ts";
 import { createGuestStore } from "@/adapters/guests.ts";
 import { createLogger } from "@/adapters/logger.ts";
+import { createOrgInviteStore } from "@/adapters/org-invites.ts";
+import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createRunStore } from "@/adapters/runs.ts";
 import * as schema from "@/adapters/schema.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
 import { createThreadStore } from "@/adapters/threads.ts";
 import { createApp } from "@/http/app.ts";
+import type { OrgRole } from "@/ports/directory.ts";
 import type { Space, SpaceRole } from "@/ports/spaces.ts";
 import type { Connections } from "@/services/connections.ts";
 import { defaultsOf, type Models, pickReplyModel } from "@/services/models.ts";
 import { ServiceError } from "@/services/errors.ts";
 import { createFolders } from "@/services/folders.ts";
+import { createGroups } from "@/services/groups.ts";
 import { createGuests } from "@/services/guests.ts";
-import { createRunWorker, type RunWorkerOptions } from "@/services/runs.ts";
+import { createOrgs } from "@/services/orgs.ts";
+import { createRunWorker, dropRefusedWaiting, type RunWorkerOptions } from "@/services/runs.ts";
 import { createSpaces } from "@/services/spaces.ts";
 import { createThreadAccess } from "@/services/thread-access.ts";
 import { createThreadLog } from "@/services/thread-log.ts";
@@ -41,7 +47,15 @@ const unusedModels = {} as Models;
 
 const baseUrl = "http://localhost:4783";
 
-export type SpaceBody = { id: string; name: string; primary: boolean; role: string; kind: string };
+export type SpaceBody = {
+  id: string;
+  name: string;
+  primary: boolean;
+  role: string | null;
+  manage: boolean;
+  kind: string;
+  everyoneRole: string | null;
+};
 export type FolderBody = {
   id: string;
   spaceId: string;
@@ -56,7 +70,14 @@ export type ThreadBody = {
   model: string | null;
 };
 
-export function setup(workerOptions: Partial<RunWorkerOptions> = {}, { titles = false } = {}) {
+export function setup(
+  workerOptions: Partial<RunWorkerOptions> = {},
+  {
+    titles = false,
+    teamOrgs = "everyone" as "everyone" | "operator",
+    operatorEmails = [] as string[],
+  } = {},
+) {
   const db = openDatabase(":memory:");
   const logger = createLogger({ write() {} });
   const secret = "test-secret-that-is-long-enough-1234567890";
@@ -94,7 +115,18 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}, { titles = 
       models.availability("", ref),
     );
   }
-  const spaces = createSpaces({ spaces: spaceStore, threads: threadStore, models });
+  const directory = createDirectory(db, auth);
+  const settingStore = createOrgSettingStore(db);
+  const accessChanged = (orgId: string) =>
+    dropRefusedWaiting({ threads: threadStore, spaceStore, runs: runStore, access, log, orgId });
+  const spaces = createSpaces({
+    spaces: spaceStore,
+    threads: threadStore,
+    models,
+    directory,
+    settings: settingStore,
+    accessChanged,
+  });
   const folders = createFolders({ spaces, folders: createFolderStore(db) });
   const guestStore = createGuestStore(db);
   const access = createThreadAccess({
@@ -189,6 +221,20 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}, { titles = 
       transact,
       baseUrl,
     }),
+    orgs: createOrgs({
+      directory,
+      invites: createOrgInviteStore(db),
+      spaces,
+      spaceStore,
+      threads: threadStore,
+      runs: runStore,
+      settings: settingStore,
+      accessChanged,
+      baseUrl,
+      teamOrgs,
+      operatorEmails,
+    }),
+    groups: createGroups({ directory }),
     logger,
     pingDatabase: () => Promise.resolve(true),
     heartbeatMs: 20,
@@ -207,7 +253,12 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}, { titles = 
       .map((value) => value.split(";")[0])
       .join("; ");
     const member = db.select().from(schema.member).where(eq(schema.member.userId, user.id)).get();
-    return { userId: user.id, orgId: member?.organizationId as string, role: "owner", cookie };
+    return {
+      userId: user.id,
+      orgId: member?.organizationId as string,
+      role: "owner" as OrgRole,
+      cookie,
+    };
   }
 
   // Makes the user a member of the space with the role, acting from then on in the space's org.
@@ -228,15 +279,20 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}, { titles = 
       .where(eq(schema.session.userId, user.userId))
       .run();
     db.insert(schema.spaceMember)
-      .values({ spaceId, userId: user.userId, role, source: "direct" })
+      .values({ spaceId, subjectKind: "user", subjectId: user.userId, role, source: "direct" })
       .run();
-    return { ...user, orgId: space.orgId, role: "member" };
+    return { ...user, orgId: space.orgId, role: "member" as OrgRole };
   }
 
-  async function api(method: string, path: string, cookie: string, body?: object) {
+  // `org` names the org the request acts in.
+  async function api(method: string, path: string, cookie: string, body?: object, org?: string) {
     return app.request(`/api/v1${path}`, {
       method,
-      headers: { "Content-Type": "application/json", Cookie: cookie },
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: cookie,
+        ...(org && { "X-Mage-Org": org }),
+      },
       body: body && JSON.stringify(body),
     });
   }
@@ -298,6 +354,8 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}, { titles = 
     spaces,
     threads,
     access,
+    directory,
+    settingStore,
     guestStore,
     signUp,
     join,

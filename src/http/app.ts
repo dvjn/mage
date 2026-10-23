@@ -10,15 +10,16 @@ import type * as z from "zod";
 
 import type { Connection } from "@/ports/connections.ts";
 import type { Folder } from "@/ports/folders.ts";
-import type { Space, SpaceRole } from "@/ports/spaces.ts";
-import type { Identity, Principal } from "@/ports/identity.ts";
+import type { Identity, Principal, SignedIn } from "@/ports/identity.ts";
 import type { Logger } from "@/ports/logger.ts";
 import { type AttemptStatus, ConnectionError, type Connections } from "@/services/connections.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Folders } from "@/services/folders.ts";
+import type { Groups } from "@/services/groups.ts";
 import type { Guests } from "@/services/guests.ts";
 import type { ConnectionModel, Models } from "@/services/models.ts";
-import type { Spaces } from "@/services/spaces.ts";
+import type { Orgs } from "@/services/orgs.ts";
+import type { Spaces, SpaceView } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
 import {
   apiKeyInputSchema,
@@ -43,7 +44,26 @@ import {
   setTitleModelSchema,
   type TitleModel,
 } from "@/shared/models.ts";
-import { spaceDefaultsSchema, type SpaceSummary, spaceNameSchema } from "@/shared/spaces.ts";
+import {
+  acceptOrgInviteSchema,
+  ORG_NOT_FOUND,
+  memberFilterSchema,
+  newOrgInviteSchema,
+  peopleFilterSchema,
+  orgNameSchema,
+  setOrgRoleSchema,
+  teamSettingsChangeSchema,
+} from "@/shared/orgs.ts";
+import { pageParams, pageQuerySchema } from "@/shared/paging.ts";
+import {
+  orgSpaceFilterSchema,
+  setEveryoneSchema,
+  setSpaceMemberSchema,
+  spaceDefaultsSchema,
+  spaceMemberFilterSchema,
+  type SpaceSummary,
+  spaceNameSchema,
+} from "@/shared/spaces.ts";
 import {
   messageInputSchema,
   newThreadSchema,
@@ -70,6 +90,10 @@ export interface AppOptions {
   threads: Threads;
   // Invite links to threads and the guests they let in.
   guests: Guests;
+  // The orgs people are in, their members and invites, and creating team orgs.
+  orgs: Orgs;
+  // A team org's groups, as a directory brings them.
+  groups: Groups;
   logger: Logger;
   // How often a live event stream sends a comment to keep the connection open, and checks the
   // reader may still read the thread.
@@ -82,13 +106,31 @@ export interface AppOptions {
 
 export type App = Hono<{ Variables: RequestIdVariables }>;
 
-type ApiEnv = { Variables: { principal: Principal | null } };
+type ApiEnv = { Variables: { principal: Principal | null; account: SignedIn | null } };
 
-// Set for every route behind the signed-in check.
+// Set for every org route behind the signed-in check.
 function signedIn(principal: Principal | null): Principal {
   if (!principal) throw new Error("route reached without a principal");
   return principal;
 }
+
+// Set for every route behind the signed-in check.
+function accountOf(account: SignedIn | null) {
+  if (!account) throw new Error("route reached without an account");
+  return { userId: account.userId, email: account.email };
+}
+
+// The header that names the org a request acts in; `?org=` names it where headers cannot be sent.
+export const ORG_HEADER = "X-Mage-Org";
+
+// Routes about the person rather than one of their orgs, which work whichever org is named.
+const PERSONAL_ROUTES = [
+  "/v1/orgs",
+  "/v1/org-invites/",
+  "/v1/locate",
+  "/v1/shared-threads",
+  "/v1/invites/",
+];
 
 function summary(connection: Connection, proxy: ProxySummary | null = null): ConnectionSummary {
   const { id, provider, authKind, account, label, createdAt } = connection;
@@ -109,17 +151,20 @@ function connectionModelsBody(list: {
   };
 }
 
-function spaceSummary(space: Space & { role: SpaceRole }): SpaceSummary {
-  const { id, kind, name, primary, role, defaultModel, defaultEffort, createdAt } = space;
+function spaceSummary(space: SpaceView): SpaceSummary {
+  const { id, kind, name, primary, role, manage, everyoneRole, defaultModel, defaultEffort } =
+    space;
   return {
     id,
     kind,
     name,
     primary,
     role,
+    manage,
+    everyoneRole,
     defaultModel,
     defaultEffort,
-    createdAt: createdAt.toISOString(),
+    createdAt: space.createdAt.toISOString(),
   };
 }
 
@@ -174,6 +219,22 @@ const pendingChange = jsonBody(pendingChangeSchema, "Give a text, or a mode of s
 const retry = jsonBody(retrySchema, "runId is required");
 const newInvite = jsonBody(newInviteSchema, "accessFor is 1h, 1d, 7d or never");
 const acceptInvite = jsonBody(acceptInviteSchema, "token is required");
+const orgName = jsonBody(orgNameSchema, "A name of 1 to 80 characters is required");
+const newOrgInvite = jsonBody(newOrgInviteSchema, "Give an email address and a role");
+const setOrgRole = jsonBody(setOrgRoleSchema, "role is owner or member");
+const acceptOrgInvite = jsonBody(acceptOrgInviteSchema, "token is required");
+const teamSettingsChange = jsonBody(teamSettingsChangeSchema, "Give spaceCreation or memberSpaces");
+const setSpaceMember = jsonBody(
+  setSpaceMemberSchema,
+  "Give a user or group id and a role of owner, messager, viewer or null",
+);
+const setEveryone = jsonBody(setEveryoneSchema, "role is messager, viewer or null");
+
+// `?space=` or `?thread=` to find the org of.
+const placeQuery = validator("query", (value: { space?: string; thread?: string }) => ({
+  space: typeof value.space === "string" ? value.space : undefined,
+  thread: typeof value.thread === "string" ? value.thread : undefined,
+}));
 
 // An API key body, refused with what is wrong with it.
 // An API key body with its proxy, if any, every header given a value; refused with what is wrong.
@@ -221,6 +282,22 @@ const proxyInput = validator("json", (value, c) => {
   return parsed.data;
 });
 
+// A query string that must match the schema; otherwise 400.
+function queryOf<T extends z.ZodType>(schema: T) {
+  return validator("query", (value, c) => {
+    const parsed = schema.safeParse(value);
+    if (!parsed.success)
+      return c.json({ error: "Give q, limit, cursor and filters as they are" }, 400);
+    return parsed.data as z.output<T>;
+  });
+}
+
+const pageQuery = queryOf(pageQuerySchema);
+const memberQuery = queryOf(memberFilterSchema);
+const peopleQuery = queryOf(peopleFilterSchema);
+const orgSpaceQuery = queryOf(orgSpaceFilterSchema);
+const spaceMemberQuery = queryOf(spaceMemberFilterSchema);
+
 // `?q=` with the text to find in thread titles.
 const threadSearch = validator("query", (value: { q?: string }, c) => {
   const parsed = threadSearchSchema.safeParse(value);
@@ -233,10 +310,10 @@ const refreshQuery = validator("query", (value: { refresh?: string }) => ({
   refresh: value.refresh === "1",
 }));
 
-// Owners and admins change what applies to the whole org.
+// Owners change what applies to the whole org.
 function requireAdmin(principal: Principal) {
-  if (principal.role !== "owner" && principal.role !== "admin") {
-    throw new ServiceError(403, "Only an owner or admin can change this");
+  if (principal.role !== "owner") {
+    throw new ServiceError(403, "Only the organization's owners can change this");
   }
 }
 
@@ -256,13 +333,28 @@ const eventCursor = validator("query", (value: { after?: string }, c) => {
 
 // The typed API routes, mounted under /api.
 function createApi(options: AppOptions) {
-  const { identity, connections, models, spaces, folders, threads, guests } = options;
+  const { identity, connections, models, spaces, folders, threads, guests, orgs, groups } = options;
   return (
     new Hono<ApiEnv>()
+      // What an org invite link offers; signed out, the whole email it is for.
+      .get("/org-invites/:token", async (c) => {
+        const account = await identity.resolve(c.req.raw.headers, null);
+        return c.json(orgs.preview(c.req.param("token"), account && accountOf(account)), 200);
+      })
       .use("/v1/*", async (c, next) => {
-        const principal = await identity.resolve(c.req.raw.headers);
-        if (!principal) return c.json({ error: "unauthorized" }, 401);
-        c.set("principal", principal);
+        const named = c.req.header(ORG_HEADER) ?? c.req.query("org") ?? null;
+        let account = await identity.resolve(c.req.raw.headers, named);
+        if (!account) return c.json({ error: "unauthorized" }, 401);
+        if (!account.principal && named) {
+          // An org the person is not in is not found, except on routes about the person.
+          const personal = PERSONAL_ROUTES.some((route) => c.req.path.startsWith(`/api${route}`));
+          if (!personal) return c.json({ error: ORG_NOT_FOUND }, 404);
+          account = await identity.resolve(c.req.raw.headers, null);
+          if (!account) return c.json({ error: "unauthorized" }, 401);
+        }
+        if (!account.principal) return c.json({ error: ORG_NOT_FOUND }, 404);
+        c.set("account", account);
+        c.set("principal", account.principal);
         await next();
       })
       .get("/health", async (c) => {
@@ -271,6 +363,115 @@ function createApi(options: AppOptions) {
       })
       .get("/v1/me", async (c) => {
         return c.json((await identity.profile(signedIn(c.var.principal))) satisfies Me, 200);
+      })
+      .get("/v1/orgs", (c) => {
+        return c.json(orgs.list(accountOf(c.var.account)), 200);
+      })
+      .post("/v1/orgs", orgName, async (c) => {
+        return c.json(await orgs.create(accountOf(c.var.account), c.req.valid("json").name), 200);
+      })
+      .get("/v1/locate", placeQuery, (c) => {
+        const orgId = orgs.locate(accountOf(c.var.account), c.req.valid("query"));
+        if (!orgId) return c.json({ error: "Not found" }, 404);
+        return c.json({ orgId }, 200);
+      })
+      .post("/v1/org-invites/accept", acceptOrgInvite, async (c) => {
+        const { token } = c.req.valid("json");
+        return c.json(await orgs.accept(accountOf(c.var.account), token), 200);
+      })
+      .patch("/v1/org", orgName, (c) => {
+        orgs.rename(signedIn(c.var.principal), c.req.valid("json").name);
+        return c.json({ ok: true }, 200);
+      })
+      .delete("/v1/org", (c) => {
+        orgs.delete(signedIn(c.var.principal));
+        return c.json({ ok: true }, 200);
+      })
+      .get("/v1/org/spaces", orgSpaceQuery, (c) => {
+        const { kind, everyone, ...query } = c.req.valid("query");
+        const page = spaces.catalog(signedIn(c.var.principal), {
+          ...pageParams(query),
+          ...(kind && { kind }),
+          ...(everyone && { everyone }),
+        });
+        return c.json(
+          {
+            ...page,
+            items: page.items.map(({ ownerName, memberCount, hasThreads, ...space }) => ({
+              ...spaceSummary(space),
+              ownerName,
+              memberCount,
+              hasThreads,
+            })),
+          },
+          200,
+        );
+      })
+      .get("/v1/org/members", memberQuery, (c) => {
+        const { role, ...query } = c.req.valid("query");
+        const params = { ...pageParams(query), ...(role && { role }) };
+        return c.json(orgs.members(signedIn(c.var.principal), params), 200);
+      })
+      .get("/v1/org/members/:userId", (c) => {
+        return c.json(orgs.member(signedIn(c.var.principal), c.req.param("userId")), 200);
+      })
+      .get("/v1/org/members/:userId/groups", pageQuery, (c) => {
+        const params = pageParams(c.req.valid("query"));
+        const page = orgs.groupsOf(signedIn(c.var.principal), c.req.param("userId"), params);
+        return c.json(
+          {
+            ...page,
+            items: page.items.map((group) => ({
+              id: group.id,
+              name: group.name,
+              source: group.source,
+              memberCount: group.memberCount,
+              createdAt: group.createdAt.toISOString(),
+            })),
+          },
+          200,
+        );
+      })
+      .get("/v1/org/people", peopleQuery, (c) => {
+        const { role, status, ...query } = c.req.valid("query");
+        const params = { ...pageParams(query), ...(role && { role }), ...(status && { status }) };
+        return c.json(orgs.people(signedIn(c.var.principal), params), 200);
+      })
+      .patch("/v1/org/members/:userId", setOrgRole, (c) => {
+        const { role } = c.req.valid("json");
+        orgs.setRole(signedIn(c.var.principal), c.req.param("userId"), role);
+        return c.json({ ok: true }, 200);
+      })
+      .delete("/v1/org/members/:userId", (c) => {
+        orgs.removeMember(signedIn(c.var.principal), c.req.param("userId"));
+        return c.json({ ok: true }, 200);
+      })
+      .post("/v1/org/invites", newOrgInvite, (c) => {
+        const { email, role } = c.req.valid("json");
+        return c.json(orgs.invite(signedIn(c.var.principal), email, role), 200);
+      })
+      .delete("/v1/org/invites/:id", (c) => {
+        orgs.revokeInvite(signedIn(c.var.principal), c.req.param("id"));
+        return c.json({ ok: true }, 200);
+      })
+      .get("/v1/org/settings", (c) => {
+        return c.json(orgs.settings(signedIn(c.var.principal)), 200);
+      })
+      .patch("/v1/org/settings", teamSettingsChange, (c) => {
+        return c.json(orgs.setSettings(signedIn(c.var.principal), c.req.valid("json")), 200);
+      })
+      .get("/v1/org/groups", pageQuery, (c) => {
+        return c.json(
+          groups.list(signedIn(c.var.principal), pageParams(c.req.valid("query"))),
+          200,
+        );
+      })
+      .get("/v1/org/groups/:id", (c) => {
+        return c.json(groups.get(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .get("/v1/org/groups/:id/members", pageQuery, (c) => {
+        const params = pageParams(c.req.valid("query"));
+        return c.json(groups.members(signedIn(c.var.principal), c.req.param("id"), params), 200);
       })
       .get("/v1/models", refreshQuery, async (c) => {
         const { orgId } = signedIn(c.var.principal);
@@ -337,6 +538,21 @@ function createApi(options: AppOptions) {
       .delete("/v1/spaces/:id", (c) => {
         spaces.remove(signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
+      })
+      .get("/v1/spaces/:id/members", spaceMemberQuery, (c) => {
+        const { role, ...query } = c.req.valid("query");
+        const params = { ...pageParams(query), ...(role && { role }) };
+        return c.json(spaces.members(signedIn(c.var.principal), c.req.param("id"), params), 200);
+      })
+      .put("/v1/spaces/:id/members", setSpaceMember, (c) => {
+        const { kind, id, role } = c.req.valid("json");
+        spaces.setMember(signedIn(c.var.principal), c.req.param("id"), { kind, id }, role);
+        return c.json({ ok: true }, 200);
+      })
+      .put("/v1/spaces/:id/everyone", setEveryone, (c) => {
+        const { role } = c.req.valid("json");
+        const space = spaces.setEveryone(signedIn(c.var.principal), c.req.param("id"), role);
+        return c.json(spaceSummary(space), 200);
       })
       .get("/v1/spaces/:id/folders", (c) => {
         const list = folders.list(signedIn(c.var.principal), c.req.param("id"));
@@ -467,11 +683,25 @@ function createApi(options: AppOptions) {
         guests.revokeGuest(signedIn(c.var.principal), id, userId);
         return c.json({ ok: true }, 200);
       })
-      // Connections are for the owner of a personal org for now.
+      // Everyone in an org sees its connections; only its owners change them, and a team org
+      // connects with API keys only.
       .use("/v1/connections/*", async (c, next) => {
         const { org, role } = await identity.profile(signedIn(c.var.principal));
-        if (org.kind !== "personal" || role !== "owner") {
-          return c.json({ error: "Only the owner of a personal org can manage connections" }, 403);
+        const reading =
+          c.req.method === "GET" && /^\/api\/v1\/connections(\/[^/]+\/models)?$/.test(c.req.path);
+        if (!reading && role !== "owner") {
+          return c.json(
+            { error: "Only the organization's owners can manage model providers" },
+            403,
+          );
+        }
+        if (org.kind === "team" && /^\/api\/v1\/connections\/(codex|claude)\//.test(c.req.path)) {
+          return c.json(
+            {
+              error: "Subscription sign-ins are for personal organizations; add an API key instead",
+            },
+            403,
+          );
         }
         await next();
       })

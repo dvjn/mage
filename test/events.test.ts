@@ -78,7 +78,7 @@ describe("live thread events", () => {
 
     const stream = await openStream(app, grace.cookie, thread.id);
     await stream.nextEvent();
-    db.run(sql`delete from space_member where user_id = ${grace.userId}`);
+    db.run(sql`delete from space_member where subject_id = ${grace.userId}`);
     let frame = await stream.next();
     while (frame.comment === "heartbeat") frame = await stream.next();
 

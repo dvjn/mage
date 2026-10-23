@@ -18,7 +18,7 @@ async function signUp(page: Page) {
   await page.getByLabel("Confirm password").fill("correct horse battery");
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(/\/s\/[^/]+$/);
-  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Your space");
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Ada Lovelace's Space");
 }
 
 // Starts a thread from the space page and comes back to the space.
@@ -49,7 +49,7 @@ test("a thread found with the sidebar search opens", async ({ page }) => {
   const result = dialog.getByRole("option", { name: "How do engines compute?" });
   await expect(result).toBeVisible();
   await expect(dialog.getByRole("option")).toHaveCount(1);
-  await expect(dialog.getByRole("group", { name: "Your space" })).toBeVisible();
+  await expect(dialog.getByRole("group", { name: "Ada Lovelace's Space" })).toBeVisible();
   await result.click();
 
   await expect(dialog).toBeHidden();
@@ -101,13 +101,13 @@ test("Ctrl+K searches everywhere or in this space, and finds untitled threads", 
   const scope = dialog.getByRole("group", { name: "Where to search" });
   await expect(scope.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
   await dialog.getByRole("combobox").press("Tab");
-  await expect(scope.getByRole("button", { name: "Your space" })).toHaveAttribute(
+  await expect(scope.getByRole("button", { name: "Ada Lovelace's Space" })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
   await expect(dialog.getByRole("option")).toHaveCount(2);
-  await expect(dialog.getByRole("group", { name: "Your space" })).toHaveCount(0);
+  await expect(dialog.getByRole("group", { name: "Ada Lovelace's Space" })).toHaveCount(0);
   await dialog.getByRole("combobox").press("Shift+Tab");
   await expect(scope.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
-  await expect(dialog.getByRole("group", { name: "Your space" })).toBeVisible();
+  await expect(dialog.getByRole("group", { name: "Ada Lovelace's Space" })).toBeVisible();
 });
