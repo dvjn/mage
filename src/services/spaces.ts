@@ -1,14 +1,18 @@
 // An org's spaces as its people see them: listing, creating, renaming and deleting empty ones,
-// and the one rule for what each member may do in a space.
+// setting the model and effort their new threads start with, and the one rule for what each member
+// may do in a space.
 
 import type { Principal } from "@/ports/identity.ts";
 import type { Space, SpaceRole, SpaceStore } from "@/ports/spaces.ts";
 import type { ThreadStore } from "@/ports/threads.ts";
 import { ServiceError } from "@/services/errors.ts";
+import type { Models } from "@/services/models.ts";
+import type { Effort } from "@/shared/threads.ts";
 
 export interface SpacesOptions {
   spaces: SpaceStore;
   threads: Pick<ThreadStore, "anyInSpace">;
+  models: Pick<Models, "requireModel">;
 }
 
 export type Spaces = ReturnType<typeof createSpaces>;
@@ -29,7 +33,7 @@ const REFUSED: Record<SpaceAction, string> = {
 };
 
 export function createSpaces(options: SpacesOptions) {
-  const { spaces, threads } = options;
+  const { spaces, threads, models } = options;
 
   // The principal's role in the space, or null when its org is not theirs or they are not a member.
   function roleIn(principal: Pick<Principal, "userId" | "orgId">, space: Space) {
@@ -89,6 +93,19 @@ export function createSpaces(options: SpacesOptions) {
     rename(principal: Principal, id: string, name: string) {
       require(principal, id, "manage");
       return { ...spaces.rename(id, name), role: "owner" as const };
+    },
+
+    // A default model must be one the org can use now; null goes back to the org's.
+    async setDefaults(
+      principal: Principal,
+      id: string,
+      changes: { model?: string | null; effort?: Effort | null },
+    ) {
+      require(principal, id, "manage");
+      if (changes.model) await models.requireModel(principal.orgId, changes.model);
+      // Seen again after the model check, which waits on providers.
+      require(principal, id, "manage");
+      return { ...spaces.setDefaults(id, changes), role: "owner" as const };
     },
 
     remove(principal: Principal, id: string) {

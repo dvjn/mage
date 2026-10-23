@@ -224,7 +224,11 @@ describe("failures", () => {
     const { ada, post, events, start, makeWorker } = await agentThread();
     const noConnection = makeWorker({
       models: {
-        defaultModel: () => "claude/claude-big",
+        defaults: () => ({ model: "claude/claude-big", effort: null }),
+        replyModel: (_space, own) => {
+          const ok = { ref: own ?? "claude/claude-big", name: "", status: "ok" as const };
+          return Promise.resolve({ chosen: ok, used: ok });
+        },
         open: () =>
           Promise.reject(new ModelError("auth", "claude/claude-big needs a Claude connection.")),
       },
@@ -239,7 +243,7 @@ describe("failures", () => {
       data: {
         kind: "auth",
         connection: "codex",
-        error: expect.stringContaining("Reconnect Codex"),
+        error: expect.stringContaining("Reconnect it in Model providers"),
       },
     });
   });

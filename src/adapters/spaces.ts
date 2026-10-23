@@ -1,6 +1,6 @@
 // Spaces and their members kept in the space and space_member tables, with ULID ids.
 
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { ulid } from "ulid";
 
 import type { Space, SpaceStore } from "@/ports/spaces.ts";
@@ -14,6 +14,8 @@ const columns = {
   kind: space.kind,
   name: space.name,
   primary: space.primary,
+  defaultModel: space.defaultModel,
+  defaultEffort: space.defaultEffort,
   createdBy: space.createdBy,
   createdAt: space.createdAt,
   updatedAt: space.updatedAt,
@@ -61,10 +63,33 @@ export function createSpaceStore(db: Db): SpaceStore {
       return row?.role ?? null;
     },
 
+    withDefaultModel(orgId, refs) {
+      if (refs.length === 0) return [];
+      return db
+        .select(columns)
+        .from(space)
+        .where(and(eq(space.organizationId, orgId), inArray(space.defaultModel, refs)))
+        .orderBy(asc(space.name))
+        .all();
+    },
+
     rename(id, name) {
       return db
         .update(space)
         .set({ name, updatedAt: new Date() })
+        .where(eq(space.id, id))
+        .returning(columns)
+        .get() as Space;
+    },
+
+    setDefaults(id, { model, effort }) {
+      return db
+        .update(space)
+        .set({
+          ...(model !== undefined && { defaultModel: model }),
+          ...(effort !== undefined && { defaultEffort: effort }),
+          updatedAt: new Date(),
+        })
         .where(eq(space.id, id))
         .returning(columns)
         .get() as Space;

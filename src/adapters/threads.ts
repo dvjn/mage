@@ -80,11 +80,35 @@ export function createThreadStore(db: Db): ThreadStore {
         .all();
     },
 
+    lastMessagesInSpace(spaceId) {
+      const kinds = ["message", "message.completed"];
+      const latest = db
+        .select({
+          threadId: threadEvent.threadId,
+          lastSeq: sql<number>`max(${threadEvent.seq})`.as("last_seq"),
+        })
+        .from(threadEvent)
+        .innerJoin(thread, eq(thread.id, threadEvent.threadId))
+        .where(and(eq(thread.spaceId, spaceId), inArray(threadEvent.type, kinds)))
+        .groupBy(threadEvent.threadId)
+        .as("latest");
+      const ids = db
+        .select({ id: threadEvent.id })
+        .from(threadEvent)
+        .innerJoin(
+          latest,
+          and(eq(latest.threadId, threadEvent.threadId), eq(latest.lastSeq, threadEvent.seq)),
+        )
+        .all()
+        .map((row) => row.id);
+      return ids.length === 0 ? [] : eventsWhere(inArray(threadEvent.id, ids));
+    },
+
     anyInSpace(spaceId) {
       return !!db.select({ id: thread.id }).from(thread).where(eq(thread.spaceId, spaceId)).get();
     },
 
-    search(spaceIds, text, limit) {
+    search(spaceIds, text, limit, untitled) {
       if (spaceIds.length === 0) return [];
       // The text's own % and _ match only themselves.
       const pattern = `%${text.replace(/[\\%_]/g, "\\$&")}%`;
@@ -94,7 +118,7 @@ export function createThreadStore(db: Db): ThreadStore {
         .where(
           and(
             inArray(thread.spaceId, spaceIds),
-            sql`lower(${thread.title}) like lower(${pattern}) escape '\\'`,
+            sql`lower(coalesce(${thread.title}, ${untitled})) like lower(${pattern}) escape '\\'`,
           ),
         )
         .orderBy(desc(thread.updatedAt), desc(thread.id))

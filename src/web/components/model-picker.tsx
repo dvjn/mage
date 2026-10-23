@@ -27,6 +27,7 @@ import { selectTriggerClassName } from "@/web/components/ui/select";
 export const CONNECTION_LABELS: Record<ModelSummary["authKind"], string> = {
   codex: "Codex",
   claude: "Claude",
+  api_key: "API key",
 };
 
 interface Group {

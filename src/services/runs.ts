@@ -49,7 +49,7 @@ export interface RunWorkerOptions {
   log: ThreadLog;
   bus: EventBus;
   transact: Transact;
-  models: Pick<Models, "defaultModel" | "open">;
+  models: Pick<Models, "defaults" | "open" | "replyModel">;
   logger: Logger;
   now?: () => Date;
   // How long reply pieces gather before they are stored and announced together.
@@ -89,7 +89,7 @@ function connectionOf(ref: string): ConnectionKind | undefined {
 }
 
 const FAILURE_MESSAGES: Record<ModelErrorKind, (label: string) => string> = {
-  auth: (label) => `The ${label} sign-in no longer works. Reconnect ${label} in Settings.`,
+  auth: (label) => `The ${label} sign-in no longer works. Reconnect it in Model providers.`,
   limit: (label) => `${label} limit reached.`,
   model: (label) => `${label} cannot use this model. Pick another model.`,
   network: (label) => `Couldn't reach ${label}.`,
@@ -108,7 +108,7 @@ function failureOf(err: unknown, ref: string | null): RunFailure {
         : null;
   if (!kinded) return new RunFailure(`The model failed: ${messageOf(err)}`);
   return new RunFailure({
-    error: FAILURE_MESSAGES[kinded.kind](label),
+    error: kinded.summary ?? FAILURE_MESSAGES[kinded.kind](label),
     kind: kinded.kind,
     ...(connection && { connection }),
     detail: kinded.detail,
@@ -432,8 +432,13 @@ export function createRunWorker(options: RunWorkerOptions) {
     const thread = threads.find(run.threadId);
     const space = thread && spaceStore.find(thread.spaceId);
     if (!thread || !space) throw new LeaseLost(run.id);
-    const ref = thread.model ?? models.defaultModel(space.orgId);
-    if (!ref) throw new RunFailure("Pick a model for this thread.");
+    const defaults = models.defaults(space);
+    const effort = thread.effort ?? defaults.effort;
+    // A model turned off, or gone with its provider, gives way to the space's default, then the
+    // org's; opening the one named fails the run saying why when none can reply.
+    const replying = await models.replyModel(space, thread.model);
+    if (!replying) throw new RunFailure("Pick a model for this thread.");
+    const ref = replying.used?.ref ?? replying.chosen.ref;
     execution.ref = ref;
     const model = await models.open(space.orgId, ref);
     runs.setModel(lease, ref);
@@ -450,7 +455,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           messages,
           maxSteps: maxSteps - steps,
           sessionId: thread.id,
-          ...(thread.effort && { effort: thread.effort }),
+          ...(effort && { effort }),
           beforeStep: () => boundary(execution, false),
         },
         controller.signal,

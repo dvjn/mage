@@ -215,6 +215,7 @@ describe("Claude sign-in", () => {
       provider: "anthropic",
       authKind: "claude",
       account: "ada@claude.example",
+      label: null,
       proxy: null,
       createdAt: expect.any(String),
     });

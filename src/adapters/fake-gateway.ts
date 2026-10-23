@@ -1,10 +1,12 @@
 // A stand-in model for the browser journeys, chosen by configuration and refused in production.
 // It says how many messages from people it has read, then a few more words, one every few tens of
 // milliseconds; it keeps going much longer when the newest message asks it to reply slowly, and
-// reasons for a few words first when it asks it to think.
+// reasons for a few words first when it asks it to think. Its list stands in for an API key's: it
+// takes any key starting with `sk-`.
 
 import { setTimeout as delay } from "node:timers/promises";
 
+import type { Catalog } from "@/ports/catalog.ts";
 import type { ModelGateway, ModelMessage } from "@/ports/model-gateway.ts";
 
 export const FAKE_MODEL_REF = "fake/echo";
@@ -50,6 +52,18 @@ export function createFakeGateway(): ModelGateway {
         messages.push({ role: "assistant", text });
         yield { type: "step-end", usage: { inputTokens: 10, outputTokens: words.length } };
       }
+    },
+  };
+}
+
+export function createFakeCatalog(): Catalog {
+  return {
+    list(token) {
+      if (!token.access.startsWith("sk-")) return Promise.reject(new Error("401 invalid key"));
+      return Promise.resolve([
+        { id: "echo", name: "Echo", reasoning: true },
+        { id: "echo-mini", name: "Echo Mini", reasoning: false },
+      ]);
     },
   };
 }

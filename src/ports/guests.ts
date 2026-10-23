@@ -34,6 +34,8 @@ export interface GuestThread {
   thread: Thread;
   spaceName: string;
   orgName: string;
+  // The space is the org's person's own first space, named after them, so the org adds nothing.
+  spaceNamedForOrg: boolean;
   accessUntil: Date | null;
 }
 

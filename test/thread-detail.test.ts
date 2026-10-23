@@ -22,6 +22,7 @@ function detail(seqs: number[], title = "Engines"): ThreadDetail {
       spaceId: "s1",
       folderId: null,
       title,
+      untitled: false,
       model: null,
       effort: null,
       lastEventSeq: seqs.at(-1) ?? 0,
@@ -30,6 +31,8 @@ function detail(seqs: number[], title = "Engines"): ThreadDetail {
     },
     events: seqs.map(event),
     access: { via: "space", role: "owner" },
+    defaults: { model: null, effort: null },
+    model: null,
   };
 }
 

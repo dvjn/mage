@@ -160,9 +160,14 @@ export const connection = sqliteTable(
     // The user who connected it; null once that user is gone.
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     provider: text("provider", { enum: ["openai", "anthropic"] }).notNull(),
-    authKind: text("auth_kind", { enum: ["codex", "claude"] }).notNull(),
-    // The provider account, as shown to people.
+    // A subscription sign-in, or an API key.
+    authKind: text("auth_kind", { enum: ["codex", "claude", "api_key"] }).notNull(),
+    // The provider account, as shown to people; for an API key, its masked hint.
     account: text("account").notNull(),
+    // A name people gave an API key; null for sign-ins.
+    label: text("label"),
+    // Whether models the provider adds are turned on when first seen.
+    autoEnableModels: integer("auto_enable_models", { mode: "boolean" }).default(true).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),
@@ -171,9 +176,26 @@ export const connection = sqliteTable(
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
   },
+  // One sign-in of each kind per org; API keys as many as people add.
   (table) => [
-    uniqueIndex("connection_org_kind_idx").on(table.organizationId, table.provider, table.authKind),
+    uniqueIndex("connection_org_kind_idx")
+      .on(table.organizationId, table.provider, table.authKind)
+      .where(sql`${table.authKind} != 'api_key'`),
   ],
+);
+
+// Each model a connection's list has shown, whether people can pick it, and when it first showed.
+export const connectionModel = sqliteTable(
+  "connection_model",
+  {
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => connection.id, { onDelete: "cascade" }),
+    modelId: text("model_id").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+    firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.connectionId, table.modelId] })],
 );
 
 // A connection's secrets, sealed with the credential key of the recorded version.
@@ -215,6 +237,8 @@ export const orgSetting = sqliteTable("org_setting", {
   defaultModel: text("default_model"),
   // The model ref that names threads; null to choose one automatically.
   titleModel: text("title_model"),
+  // The reasoning effort new threads start with; null for the usual one.
+  defaultEffort: text("default_effort", { enum: ["low", "medium", "high"] }),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
     .notNull(),
@@ -236,6 +260,9 @@ export const space = sqliteTable(
     name: text("name").notNull(),
     // The space every personal org starts with; it can be renamed but not deleted.
     primary: integer("is_primary", { mode: "boolean" }).default(false).notNull(),
+    // The model ref and reasoning effort its new threads start with; null takes the org's.
+    defaultModel: text("default_model"),
+    defaultEffort: text("default_effort", { enum: ["low", "medium", "high"] }),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
@@ -306,9 +333,9 @@ export const thread = sqliteTable(
     title: text("title"),
     // Who named it: its first message, the agent after it, or a person; null while untitled.
     titleSource: text("title_source", { enum: ["message", "agent", "person"] }),
-    // A model ref such as `codex/gpt-5`; null when there was no default to start from.
+    // A model ref such as `codex/gpt-5`; null follows its space's default, then its org's.
     model: text("model"),
-    // The reasoning effort its model is asked for; null for the usual one.
+    // The reasoning effort its model is asked for; null follows the defaults, then the usual one.
     effort: text("effort", { enum: ["low", "medium", "high"] }),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     parentThreadId: text("parent_thread_id"),

@@ -297,6 +297,7 @@ describe("browser sign-in", () => {
       provider: "openai",
       authKind: "codex",
       account: "ada@chatgpt.example",
+      label: null,
       proxy: null,
       createdAt: expect.any(String),
     });
@@ -475,6 +476,7 @@ describe("device code sign-in", () => {
         provider: "openai",
         authKind: "codex",
         account: "ada@chatgpt.example",
+        label: null,
         proxy: null,
         createdAt: expect.any(String),
       },
@@ -689,6 +691,7 @@ describe("/api/v1/connections", () => {
         provider: "openai",
         authKind: "codex",
         account: "ada@chatgpt.example",
+        label: null,
         proxy: null,
         createdAt: expect.any(String),
       },

@@ -1,7 +1,8 @@
 // Signs in to a Claude account with Claude Code's OAuth client: a browser authorization that ends
-// on a page showing a code the user pastes back, and token refresh. Lists the models the account
-// can use from the Anthropic API, and streams replies from it with the AI SDK's Anthropic provider.
-// A connection's proxy takes the place of the API for both, with its headers added.
+// on a page showing a code the user pastes back, and token refresh. Lists the models the account,
+// or an Anthropic API key, can use from the Anthropic API, and streams replies from it with the AI
+// SDK's Anthropic provider. A connection's proxy takes the place of the API for both, with its
+// headers added.
 
 import { createHash, randomBytes } from "node:crypto";
 
@@ -22,9 +23,10 @@ const SCOPES =
   "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 
 const API_URL = "https://api.anthropic.com/v1";
+const API_VERSION = "2023-06-01";
 // Marks the request as using an OAuth token and names Mage as the client.
 const OAUTH_HEADERS = {
-  "anthropic-version": "2023-06-01",
+  "anthropic-version": API_VERSION,
   "anthropic-beta": "oauth-2025-04-20",
   "user-agent": "mage",
 };
@@ -118,6 +120,24 @@ export function createClaudeOAuth(fetchFn: typeof fetch = fetch): BrowserOAuth {
 }
 
 export function createClaudeCatalog(fetchFn: typeof fetch = fetch): Catalog {
+  return anthropicCatalog(fetchFn, (access) => ({
+    Authorization: `Bearer ${access}`,
+    ...OAUTH_HEADERS,
+  }));
+}
+
+// The same list read with an API key.
+export function createAnthropicKeyCatalog(fetchFn: typeof fetch = fetch): Catalog {
+  return anthropicCatalog(fetchFn, (access) => ({
+    "x-api-key": access,
+    "anthropic-version": API_VERSION,
+  }));
+}
+
+function anthropicCatalog(
+  fetchFn: typeof fetch,
+  authHeaders: (access: string) => Record<string, string>,
+): Catalog {
   return {
     async list(token, signal) {
       const models: z.infer<typeof modelsSchema>["data"] = [];
@@ -127,8 +147,7 @@ export function createClaudeCatalog(fetchFn: typeof fetch = fetch): Catalog {
         const res = await fetchFn(`${token.proxy?.baseUrl ?? API_URL}/models?${query.toString()}`, {
           headers: {
             Accept: "application/json",
-            Authorization: `Bearer ${token.access}`,
-            ...OAUTH_HEADERS,
+            ...authHeaders(token.access),
             ...token.proxy?.headers,
           },
           signal,
@@ -199,6 +218,27 @@ export function createClaudeGateway(fetchFn: typeof fetch = fetch): ModelGateway
       yield* streamReply(provider.messages(request.model), request, signal, {
         system: request.instructions,
         // Adaptive thinking at that effort, or a thinking budget for models without it.
+        ...(request.effort && { reasoning: request.effort }),
+        errors: claudeErrors,
+      });
+    },
+  };
+}
+
+// Replies through the Anthropic Messages API with an API key, as the Claude sign-in does otherwise.
+export function createAnthropicKeyGateway(fetchFn: typeof fetch = fetch): ModelGateway {
+  return {
+    async *stream(token, request, signal) {
+      // Without a key the provider falls back to one from the environment.
+      if (!token.access) throw new Error("the connection has no API key");
+      const provider = createAnthropic({
+        baseURL: token.proxy?.baseUrl ?? API_URL,
+        apiKey: token.access,
+        headers: { "user-agent": "mage", ...token.proxy?.headers },
+        fetch: fetchFn,
+      });
+      yield* streamReply(provider.messages(request.model), request, signal, {
+        system: request.instructions,
         ...(request.effort && { reasoning: request.effort }),
         errors: claudeErrors,
       });

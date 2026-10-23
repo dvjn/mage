@@ -30,12 +30,13 @@ export const createdInviteSchema = z.object({
 
 export type CreatedInvite = z.infer<typeof createdInviteSchema>;
 
-// Someone in the thread: a member of its space who has written in it, or a guest with when their
-// access runs out (null for never) and who let them in.
+// Someone in the thread: a member of its space who has written in it, with their role there, or a
+// guest with when their access runs out (null for never) and who let them in.
 export const threadPersonSchema = z.object({
   userId: z.string(),
   name: z.string(),
   kind: z.enum(["member", "guest"]),
+  role: z.enum(["owner", "messager", "viewer"]).nullable(),
   accessUntil: z.iso.datetime().nullable(),
   invitedBy: z.string().nullable(),
   // The asker may revoke this guest.
@@ -78,6 +79,8 @@ export type InviteRefusal = z.infer<typeof inviteRefusalSchema>;
 export const sharedThreadSchema = threadSchema.extend({
   spaceName: z.string(),
   orgName: z.string(),
+  // Where it is, as it reads: its space and org, or the space alone when it is named for the org.
+  place: z.string(),
   accessUntil: z.iso.datetime().nullable(),
 });
 

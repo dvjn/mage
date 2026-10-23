@@ -3,6 +3,8 @@
 import { serve } from "@hono/node-server";
 
 import {
+  createAnthropicKeyCatalog,
+  createAnthropicKeyGateway,
   createClaudeCatalog,
   createClaudeGateway,
   createClaudeOAuth,
@@ -14,15 +16,17 @@ import { createCredentialStore } from "@/adapters/credentials.ts";
 import { createTransact, openDatabase, pingDatabase } from "@/adapters/db.ts";
 import { createDeltaStore } from "@/adapters/deltas.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
-import { createFakeGateway, FAKE_MODEL_REF } from "@/adapters/fake-gateway.ts";
+import { createFakeCatalog, createFakeGateway, FAKE_MODEL_REF } from "@/adapters/fake-gateway.ts";
 import { createFolderStore } from "@/adapters/folders.ts";
 import { createGuestStore } from "@/adapters/guests.ts";
 import { createLogger, createPrettyDestination } from "@/adapters/logger.ts";
+import { createModelChoiceStore } from "@/adapters/model-choices.ts";
 import {
   createCodexCatalog,
   createCodexGateway,
   createCodexOAuth,
 } from "@/adapters/openai-codex.ts";
+import { createOpenAIKeyCatalog, createOpenAIKeyGateway } from "@/adapters/openai-api.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createRunStore } from "@/adapters/runs.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
@@ -69,31 +73,53 @@ const connections = createConnections({
   },
   logger,
 });
+// API keys are checked against the stand-in's list when replies come from it.
+const keyCatalogs = config.fakeModels
+  ? { openai: createFakeCatalog(), anthropic: createFakeCatalog() }
+  : { openai: createOpenAIKeyCatalog(fetch), anthropic: createAnthropicKeyCatalog(fetch) };
+const spaceStore = createSpaceStore(db);
+const threadStore = createThreadStore(db);
 const models = createModels({
   connections: connectionStore,
+  choices: createModelChoiceStore(db),
+  spaces: spaceStore,
   tokens: connections,
-  catalogs: { codex: createCodexCatalog(fetch), claude: createClaudeCatalog(fetch) },
+  catalogs: {
+    codex: createCodexCatalog(fetch),
+    claude: createClaudeCatalog(fetch),
+    ...keyCatalogs,
+  },
   settings: createOrgSettingStore(db),
-  gateways: { codex: createCodexGateway(fetch), claude: createClaudeGateway(fetch) },
+  gateways: {
+    codex: createCodexGateway(fetch),
+    claude: createClaudeGateway(fetch),
+    openai: createOpenAIKeyGateway(fetch),
+    anthropic: createAnthropicKeyGateway(fetch),
+  },
   logger,
 });
-const threadStore = createThreadStore(db);
-const spaceStore = createSpaceStore(db);
 const runStore = createRunStore(db);
 const deltas = createDeltaStore(db);
 const bus = createEventBus();
 const transact = createTransact(db);
 const log = createThreadLog({ threads: threadStore, bus, transact });
-const spaces = createSpaces({ spaces: spaceStore, threads: threadStore });
+const spaces = createSpaces({ spaces: spaceStore, threads: threadStore, models });
 const folders = createFolders({ spaces, folders: createFolderStore(db) });
 const guestStore = createGuestStore(db);
 const access = createThreadAccess({ spaces, threads: threadStore, guests: guestStore });
 
 // The stand-in model answers every thread, whatever model it names.
 const fakeGateway = createFakeGateway();
-const runModels: Pick<Models, "defaultModel" | "open"> = config.fakeModels
+const fakeModel = { ref: FAKE_MODEL_REF, name: "echo", status: "ok" as const };
+const runModels: Pick<Models, "defaults" | "open" | "replyModel"> = config.fakeModels
   ? {
-      defaultModel: (orgId) => models.defaultModel(orgId) ?? FAKE_MODEL_REF,
+      defaults: (space) => {
+        const defaults = models.defaults(space);
+        return { ...defaults, model: defaults.model ?? FAKE_MODEL_REF };
+      },
+      // Picked as for providers, so a model turned off gives way; with none, the stand-in.
+      replyModel: async (space, own) =>
+        (await models.replyModel(space, own)) ?? { chosen: fakeModel, used: fakeModel },
       open: () =>
         Promise.resolve({
           stream: (request, signal) =>
@@ -127,6 +153,7 @@ const app = createApp({
   folders,
   threads: createThreads({
     spaces,
+    spaceStore,
     access,
     guests: guestStore,
     folders,

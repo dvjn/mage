@@ -19,9 +19,9 @@ import * as schema from "@/adapters/schema.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
 import { createThreadStore } from "@/adapters/threads.ts";
 import { createApp } from "@/http/app.ts";
-import type { SpaceRole } from "@/ports/spaces.ts";
+import type { Space, SpaceRole } from "@/ports/spaces.ts";
 import type { Connections } from "@/services/connections.ts";
-import type { Models } from "@/services/models.ts";
+import { defaultsOf, type Models, pickReplyModel } from "@/services/models.ts";
 import { ServiceError } from "@/services/errors.ts";
 import { createFolders } from "@/services/folders.ts";
 import { createGuests } from "@/services/guests.ts";
@@ -31,6 +31,7 @@ import { createThreadAccess } from "@/services/thread-access.ts";
 import { createThreadLog } from "@/services/thread-log.ts";
 import { createThreads } from "@/services/threads.ts";
 import { createTitles } from "@/services/titles.ts";
+import type { Effort } from "@/shared/threads.ts";
 
 import { scriptedModel } from "./scripted-model.ts";
 
@@ -62,7 +63,38 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}, { titles = 
   const auth = createAuth({ db, logger, secret, baseUrl, trustedOrigins: [] });
   const spaceStore = createSpaceStore(db);
   const threadStore = createThreadStore(db);
-  const spaces = createSpaces({ spaces: spaceStore, threads: threadStore });
+  // The models the org can use, and its defaults.
+  const org = {
+    defaultModel: null as string | null,
+    defaultEffort: null as Effort | null,
+    models: ["codex/gpt-big"],
+    // Refs turned off.
+    off: [] as string[],
+    titleModel: null as string | null,
+    automaticTitleModel: null as string | null,
+  };
+  const models = {
+    defaultModel: () => org.defaultModel,
+    defaults: (space: Pick<Space, "defaultModel" | "defaultEffort">) => defaultsOf(space, org),
+    replyModel: (space: Pick<Space, "defaultModel">, own: string | null) => replyModel(space, own),
+    availability: (_orgId: string, ref: string) =>
+      Promise.resolve({
+        ref,
+        name: ref.slice(ref.indexOf("/") + 1),
+        status: org.off.includes(ref) ? ("off" as const) : ("ok" as const),
+      }),
+    requireModel: (_orgId: string, ref: string) =>
+      org.models.includes(ref)
+        ? Promise.resolve()
+        : Promise.reject(new ServiceError(400, `${ref} is not a model this org can use.`)),
+  };
+  // The model a run replies with, as the models service decides it, from the refs turned off.
+  function replyModel(space: Pick<Space, "defaultModel">, own: string | null) {
+    return pickReplyModel([own, space.defaultModel, org.defaultModel], (ref) =>
+      models.availability("", ref),
+    );
+  }
+  const spaces = createSpaces({ spaces: spaceStore, threads: threadStore, models });
   const folders = createFolders({ spaces, folders: createFolderStore(db) });
   const guestStore = createGuestStore(db);
   const access = createThreadAccess({
@@ -70,20 +102,6 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}, { titles = 
     threads: threadStore,
     guests: guestStore,
   });
-  // The models the org can use, and its default.
-  const org = {
-    defaultModel: null as string | null,
-    models: ["codex/gpt-big"],
-    titleModel: null as string | null,
-    automaticTitleModel: null as string | null,
-  };
-  const models = {
-    defaultModel: () => org.defaultModel,
-    requireModel: (_orgId: string, ref: string) =>
-      org.models.includes(ref)
-        ? Promise.resolve()
-        : Promise.reject(new ServiceError(400, `${ref} is not a model this org can use.`)),
-  };
   const bus = createEventBus();
   // Subscriptions still open.
   const listening = { count: 0 };
@@ -109,6 +127,7 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}, { titles = 
   const titledWith: string[] = [];
   const threads = createThreads({
     spaces,
+    spaceStore,
     access,
     guests: guestStore,
     folders,
@@ -148,7 +167,7 @@ export function setup(workerOptions: Partial<RunWorkerOptions> = {}, { titles = 
       bus: countingBus,
       transact,
       flushMs: 1,
-      models: { defaultModel: models.defaultModel, open: () => model.open() },
+      models: { defaults: models.defaults, open: () => model.open(), replyModel },
       logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
       ...workerOptions,
       ...options,

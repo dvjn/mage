@@ -8,7 +8,8 @@ export interface Principal {
 
 export interface Profile {
   user: { id: string; name: string; email: string };
-  org: { id: string; name: string; kind: "personal" | "team" };
+  // The owner's name, or null when the org has none.
+  org: { id: string; name: string; kind: "personal" | "team"; ownerName: string | null };
   role: string;
 }
 

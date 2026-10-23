@@ -15,9 +15,12 @@ export const threadSchema = z.object({
   // The folder it is in, or null at the top of the space.
   folderId: z.string().nullable(),
   title: z.string(),
-  // A model ref, or null when the thread has none yet.
+  // Nobody and nothing has named it yet; its title is then "Untitled".
+  untitled: z.boolean(),
+  // A model ref, or null to follow its space's default, then its org's.
   model: z.string().nullable(),
-  // The reasoning effort its model is asked for, or null for the usual one.
+  // The reasoning effort its model is asked for, or null to follow its space's default, then its
+  // org's, then the model's usual one.
   effort: effortSchema.nullable(),
   lastEventSeq: z.number().int().nonnegative(),
   createdAt: z.iso.datetime(),
@@ -26,7 +29,14 @@ export const threadSchema = z.object({
 
 export type ThreadSummary = z.infer<typeof threadSchema>;
 
-export const threadListSchema = z.array(threadSchema);
+// A thread in its space's list, with the start of its newest message or reply and who wrote it.
+export const threadListItemSchema = threadSchema.extend({
+  preview: z.object({ author: z.string(), text: z.string() }).nullable(),
+});
+
+export type ThreadListItem = z.infer<typeof threadListItemSchema>;
+
+export const threadListSchema = z.array(threadListItemSchema);
 
 export const textPartSchema = z.object({ type: z.literal("text"), text: z.string() });
 
@@ -218,10 +228,35 @@ export const threadAccessSchema = z.discriminatedUnion("via", [
 
 export type ThreadAccessSummary = z.infer<typeof threadAccessSchema>;
 
+// Whether a model can reply: listed and on, turned off, or gone.
+const modelAvailabilitySchema = z.object({
+  ref: z.string(),
+  name: z.string(),
+  status: z.enum(["ok", "off", "unavailable"]),
+});
+
+// The model and effort a thread follows where it has none of its own: its space's, then its org's;
+// null where neither has one.
+export const threadDefaultsSchema = z.object({
+  model: z.string().nullable(),
+  effort: effortSchema.nullable(),
+  // The default that replies: the space's while it can, else the org's; none when neither can.
+  used: z.object({ ref: z.string(), name: z.string() }).nullable().optional(),
+});
+
+export type ThreadDefaults = z.infer<typeof threadDefaultsSchema>;
+
 export const threadDetailSchema = z.object({
   thread: threadSchema,
   events: z.array(anyThreadEventSchema),
   access: threadAccessSchema,
+  defaults: threadDefaultsSchema,
+  // The model it names, its own or the default, and the one that replies: the same, or while that
+  // one is turned off or gone, the space's default, then the org's; null when none can. Null with
+  // no model at all.
+  model: z
+    .object({ chosen: modelAvailabilitySchema, used: modelAvailabilitySchema.nullable() })
+    .nullable(),
 });
 
 export type ThreadDetail = z.infer<typeof threadDetailSchema>;
@@ -241,15 +276,20 @@ export const pendingChangeSchema = z
   })
   .refine((change) => change.text !== undefined || change.mode !== undefined);
 
+// A new thread: its first message, its folder, and the model and effort it starts with instead of
+// its space's defaults.
 export const newThreadSchema = z.object({
   text: messageTextSchema.optional(),
   folderId: z.string().min(1).nullable().optional(),
+  model: z.string().min(1).optional(),
+  effort: effortSchema.optional(),
 });
 
 export const threadUpdateSchema = z.object({
   title: z.string().trim().min(1).max(200).optional(),
-  model: z.string().min(1).optional(),
-  // Null goes back to the usual effort.
+  // Null follows the space's default model.
+  model: z.string().min(1).nullable().optional(),
+  // Null follows the space's default effort.
   effort: effortSchema.nullable().optional(),
   // Null moves the thread to the top of its space.
   folderId: z.string().min(1).nullable().optional(),
@@ -261,8 +301,12 @@ export const retrySchema = z.object({ runId: z.string().min(1) });
 // Text to find in thread titles.
 export const threadSearchSchema = z.object({ q: z.string().trim().min(1).max(200) });
 
-// A thread found by title, with the space it is in.
-export const threadSearchResultSchema = threadSchema.extend({ spaceName: z.string() });
+// A thread found by title, with the space it is in, and whether it is one shared with the reader
+// from outside their spaces.
+export const threadSearchResultSchema = threadSchema.extend({
+  spaceName: z.string(),
+  shared: z.boolean(),
+});
 
 export type ThreadSearchResult = z.infer<typeof threadSearchResultSchema>;
 

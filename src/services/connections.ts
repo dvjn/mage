@@ -1,7 +1,7 @@
 // An org's connections: made by signing in to a provider account the way the provider's own
 // coding app does, with a device code or a browser authorization whose result the user pastes
-// back, kept usable by renewing their tokens, and optionally sending their provider API requests
-// through a proxy, kept sealed with the tokens.
+// back, kept usable by renewing their tokens, or by adding a provider API key, and optionally
+// sending their provider API requests through a proxy, kept sealed with the tokens or the key.
 
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -16,7 +16,8 @@ import type { BrowserOAuth, DeviceCode, DeviceOAuth, OAuthTokens } from "@/ports
 import type { SignInAttemptStore } from "@/ports/sign-in-attempts.ts";
 import type { ProxyInput, ProxySummary } from "@/shared/connections.ts";
 
-export type AccountKind = Connection["authKind"];
+// The subscription sign-ins.
+export type AccountKind = Exclude<Connection["authKind"], "api_key">;
 
 export class ConnectionError extends Error {
   readonly status: 400 | 404 | 409 | 502;
@@ -74,6 +75,11 @@ const SLOW_DOWN_MS = 5000;
 // Tokens this close to expiring are renewed before use.
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
 
+const proxySchema = z.object({
+  baseUrl: z.string().nullable(),
+  headers: z.record(z.string(), z.string()),
+});
+
 const credentialSchema = z.object({
   access: z.string(),
   refresh: z.string(),
@@ -81,10 +87,13 @@ const credentialSchema = z.object({
   accountId: z.string().optional(),
   email: z.string().optional(),
   plan: z.string().optional(),
-  proxy: z
-    .object({ baseUrl: z.string().nullable(), headers: z.record(z.string(), z.string()) })
-    .optional(),
+  proxy: proxySchema.optional(),
 });
+
+const apiKeyCredentialSchema = z.object({ apiKey: z.string(), proxy: proxySchema.optional() });
+
+// Whatever a connection keeps, read only for its proxy.
+const anyCredentialSchema = z.looseObject({ proxy: proxySchema.optional() });
 
 type AccountCredential = z.infer<typeof credentialSchema>;
 
@@ -100,6 +109,12 @@ interface DeviceAttempt {
 
 function randomValue() {
   return randomBytes(32).toString("base64url");
+}
+
+// A key as people may see it again: its prefix and last four characters, as `sk-ant-…abcd`.
+export function keyHint(key: string) {
+  const prefix = /^[a-z]+-(?:[a-z]+-)?/i.exec(key)?.[0] ?? "";
+  return `${prefix}…${key.slice(-4)}`;
 }
 
 // The code and state in what the user pasted: the callback address, its query, `code#state` or
@@ -152,6 +167,12 @@ export function createConnections(options: ConnectionsOptions) {
     const saved = credentials.get(connectionId);
     if (!saved) throw new ConnectionError(404, "Connection not found");
     return credentialSchema.parse(saved);
+  }
+
+  function savedAny(connectionId: string) {
+    const saved = credentials.get(connectionId);
+    if (!saved) throw new ConnectionError(404, "Connection not found");
+    return anyCredentialSchema.parse(saved);
   }
 
   function save(kind: AccountKind, owner: Owner, tokens: OAuthTokens): Connection {
@@ -239,6 +260,43 @@ export function createConnections(options: ConnectionsOptions) {
   return {
     list(owner: Owner): Connection[] {
       return connections.list(owner.orgId);
+    },
+
+    // Adds a provider API key to the org, under the label given. The caller has checked the
+    // provider takes it.
+    addApiKey(
+      owner: Owner,
+      input: {
+        provider: Connection["provider"];
+        label: string | null;
+        key: string;
+        proxy?: ProviderProxy | null;
+      },
+    ): Connection {
+      const connection = connections.create({
+        orgId: owner.orgId,
+        createdBy: owner.userId,
+        provider: input.provider,
+        authKind: "api_key",
+        account: keyHint(input.key),
+        label: input.label,
+      });
+      credentials.put(connection.id, {
+        apiKey: input.key,
+        ...(input.proxy && { proxy: input.proxy }),
+      });
+      return connection;
+    },
+
+    // Names an API key; null leaves it unnamed.
+    rename(owner: Owner, id: string, label: string | null): Connection {
+      const connection = connections.find(owner.orgId, id);
+      if (!connection) throw new ConnectionError(404, "Connection not found");
+      if (connection.authKind !== "api_key") {
+        throw new ConnectionError(400, "Only an API key has a label");
+      }
+      connections.setLabel(id, label);
+      return { ...connection, label };
     },
 
     // Removes a connection of the org with its credential. The provider is not told: these
@@ -368,6 +426,11 @@ export function createConnections(options: ConnectionsOptions) {
     ): Promise<T> {
       const kind = connections.find(orgId, connectionId)?.authKind;
       if (!kind) throw new ConnectionError(404, "Connection not found");
+      // A key never expires here; the provider says when it no longer works.
+      if (kind === "api_key") {
+        const saved = apiKeyCredentialSchema.parse(credentials.get(connectionId));
+        return use({ access: saved.apiKey, accountId: null, proxy: saved.proxy ?? null });
+      }
       let pending = refreshing.get(connectionId);
       if (!pending) {
         pending = renew(connectionId, kind, force).finally(() => refreshing.delete(connectionId));
@@ -386,7 +449,7 @@ export function createConnections(options: ConnectionsOptions) {
       if (!connections.find(owner.orgId, id))
         throw new ConnectionError(404, "Connection not found");
       const saved = credentials.get(id);
-      const proxy = saved && credentialSchema.parse(saved).proxy;
+      const proxy = saved && anyCredentialSchema.parse(saved).proxy;
       return proxy ? { baseUrl: proxy.baseUrl, headerNames: Object.keys(proxy.headers) } : null;
     },
 
@@ -395,7 +458,7 @@ export function createConnections(options: ConnectionsOptions) {
     setProxy(owner: Owner, id: string, input: ProxyInput) {
       if (!connections.find(owner.orgId, id))
         throw new ConnectionError(404, "Connection not found");
-      const saved = savedCredential(id);
+      const saved = savedAny(id);
       const headers: Record<string, string> = {};
       for (const [name, value] of Object.entries(input.headers)) {
         const kept = value ?? saved.proxy?.headers[name];

@@ -78,6 +78,23 @@ describe("thread search", () => {
     expect(await search(cookie, "_")).toEqual([]);
   });
 
+  it("finds untitled threads as Untitled", async () => {
+    const { signUp, yourSpace, createSpace, createThread, search } = workspace();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const yours = await yourSpace(cookie);
+    const work = await createSpace(cookie, "Work");
+    const blank = await createThread(cookie, yours.id);
+    await createThread(cookie, work.id, "Untitled draft notes");
+
+    const found = await search(cookie, "untitled");
+    expect(found).toHaveLength(2);
+    expect(found.find((result) => result.id === blank.id)).toMatchObject({
+      title: "Untitled",
+      untitled: true,
+      shared: false,
+    });
+  });
+
   it("returns at most 50, the most recently active first", async () => {
     const { signUp, yourSpace, search, storedThread } = workspace();
     const ada = await signUp("Ada Lovelace", "ada@example.com");

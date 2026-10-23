@@ -165,7 +165,19 @@ export function createIdentity(auth: Auth, db: Db): Identity {
         .where(eq(schema.user.id, principal.userId))
         .get();
       if (!row) throw new Error("principal has no user or org");
-      return { ...row, role: principal.role };
+      const owner = db
+        .select({ name: schema.user.name })
+        .from(schema.member)
+        .innerJoin(schema.user, eq(schema.user.id, schema.member.userId))
+        .where(
+          and(eq(schema.member.organizationId, principal.orgId), eq(schema.member.role, "owner")),
+        )
+        .get();
+      return {
+        ...row,
+        org: { ...row.org, ownerName: owner?.name ?? null },
+        role: principal.role,
+      };
     },
   };
 }

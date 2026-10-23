@@ -21,7 +21,7 @@ describe("threads", () => {
 
     const thread = await createThread(cookie, (await yourSpace(cookie)).id);
 
-    expect(thread).toMatchObject({ title: "New thread", model: "codex/gpt-big" });
+    expect(thread).toMatchObject({ title: "Untitled", untitled: true, model: "codex/gpt-big" });
   });
 
   it("starts without a model when the org has no default", async () => {
@@ -187,7 +187,7 @@ describe("event log", () => {
     await api("POST", `/threads/${thread.id}/messages`, ada.cookie, { text: "Hi Grace" });
     db.delete(schema.user).where(eq(schema.user.id, grace.userId)).run();
 
-    const { events } = threads.get(ada, thread.id);
+    const { events } = await threads.get(ada, thread.id);
     const messages = events.filter((event) => event.type === "message");
 
     expect(messages.map((event) => event.actor)).toEqual([
@@ -243,5 +243,56 @@ describe("titleFrom", () => {
     expect(titleFrom("```ts\nconst x = 1;\n```")).toBe("const x = 1;");
     expect(titleFrom("- one\n- two ~~three~~")).toBe("one two three");
     expect(titleFrom("2 * 3 = 6")).toBe("2 * 3 = 6");
+  });
+});
+
+describe("a space's thread list", () => {
+  it("shows the start of each thread's newest message or reply, and who wrote it", async () => {
+    const { api, signUp, yourSpace, createThread, threadStore } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const space = await yourSpace(cookie);
+    const blank = await createThread(cookie, space.id);
+    const talk = await createThread(
+      cookie,
+      space.id,
+      `**Engines**   and\n\n${"looms ".repeat(40)}`,
+    );
+    threadStore.append(talk.id, {
+      type: "message.completed",
+      actor: { kind: "agent" },
+      data: {
+        messageId: "m1",
+        runId: "r1",
+        parts: [
+          { type: "reasoning", text: "thinking" },
+          { type: "text", text: "They turn." },
+        ],
+        status: "completed",
+      },
+    });
+
+    const list = (await (await api("GET", `/spaces/${space.id}/threads`, cookie)).json()) as {
+      id: string;
+      preview: { author: string; text: string } | null;
+    }[];
+    expect(list.find((t) => t.id === blank.id)?.preview).toBeNull();
+    expect(list.find((t) => t.id === talk.id)?.preview).toEqual({
+      author: "Agent",
+      text: "They turn.",
+    });
+
+    const other = await createThread(
+      cookie,
+      space.id,
+      `**Engines**   and\n\n${"looms ".repeat(40)}`,
+    );
+    const again = (await (await api("GET", `/spaces/${space.id}/threads`, cookie)).json()) as {
+      id: string;
+      preview: { author: string; text: string };
+    }[];
+    const preview = again.find((t) => t.id === other.id)?.preview;
+    expect(preview?.author).toBe("Ada");
+    expect(preview?.text.startsWith("Engines and looms looms")).toBe(true);
+    expect(preview?.text).toHaveLength(120);
   });
 });

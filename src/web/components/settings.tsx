@@ -82,6 +82,8 @@ function CopyButton({ value }: { value: string }) {
 const DEFAULT_BASE_URLS: Record<ConnectionSummary["authKind"], string> = {
   codex: "https://chatgpt.com/backend-api/codex",
   claude: "https://api.anthropic.com/v1",
+  // An API key's provider API, as for the Claude sign-in.
+  api_key: "https://api.anthropic.com/v1",
 };
 
 interface HeaderRow {

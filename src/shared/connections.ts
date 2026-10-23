@@ -1,5 +1,5 @@
-// Connections as the API shows them, the bodies of the sign-ins that make them and of the proxies
-// their requests can go through, shared by the server and the web client. Credentials and proxy
+// Connections as the API shows them, the bodies of the sign-ins and API keys that make them and of
+// the proxies their requests can go through, shared by the server and the web client. Credentials and proxy
 // header values never leave the server.
 
 import * as z from "zod";
@@ -16,8 +16,11 @@ export type ProxySummary = z.infer<typeof proxySummarySchema>;
 export const connectionSchema = z.object({
   id: z.string(),
   provider: z.enum(["openai", "anthropic"]),
-  authKind: z.enum(["codex", "claude"]),
+  authKind: z.enum(["codex", "claude", "api_key"]),
+  // The provider account, or an API key's masked hint.
   account: z.string(),
+  // The name given to an API key; null for sign-ins.
+  label: z.string().nullable(),
   // Null when its requests go to the provider as usual.
   proxy: proxySummarySchema.nullable(),
   createdAt: z.iso.datetime(),
@@ -25,7 +28,59 @@ export const connectionSchema = z.object({
 
 export type ConnectionSummary = z.infer<typeof connectionSchema>;
 
+type ConnectionKind = Pick<ConnectionSummary, "provider" | "authKind" | "label">;
+
+// What replies and model lists go through: a subscription sign-in, or a provider's own API with a
+// key.
+export type Backend = "codex" | "claude" | "openai" | "anthropic";
+
+export function backendOf(connection: Pick<ConnectionKind, "provider" | "authKind">): Backend {
+  return connection.authKind === "api_key" ? connection.provider : connection.authKind;
+}
+
+export const BACKEND_LABELS: Record<Backend, string> = {
+  codex: "Codex",
+  claude: "Claude",
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+};
+
+// How people know a connection: the sign-in, or the key's provider and label.
+export function connectionLabel(connection: ConnectionKind) {
+  const backend = BACKEND_LABELS[backendOf(connection)];
+  if (connection.authKind !== "api_key") return backend;
+  return connection.label ? `${backend} · ${connection.label}` : `${backend} API key`;
+}
+
 export const connectionListSchema = z.array(connectionSchema);
+
+// An API key to add: its provider, an optional name, the key, which is never shown again, and the
+// proxy its requests go through, if any, given as `proxyInputSchema` below with every value.
+export const apiKeyInputSchema = z.object({
+  provider: z.enum(["openai", "anthropic"]),
+  label: z
+    .string()
+    .trim()
+    .max(80)
+    .transform((label) => label || null)
+    .nullable()
+    .optional()
+    .transform((label) => label ?? null),
+  key: z.string().trim().min(1, "Paste the key").max(500).regex(/^\S+$/, "A key has no spaces"),
+  proxy: z.unknown().optional(),
+});
+
+// A new name for an API key; empty leaves it unnamed.
+export const connectionLabelSchema = z.object({
+  label: z
+    .string()
+    .trim()
+    .max(80)
+    .nullable()
+    .transform((label) => label || null),
+});
+
+export type ApiKeyInput = z.infer<typeof apiKeyInputSchema>;
 
 export const deviceStartSchema = z.object({
   attemptId: z.string(),

@@ -1,17 +1,20 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
-import { createClaudeCatalog } from "@/adapters/anthropic-claude.ts";
+import { createAnthropicKeyCatalog, createClaudeCatalog } from "@/adapters/anthropic-claude.ts";
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { createCipher } from "@/adapters/cipher.ts";
 import { createConnectionStore } from "@/adapters/connections.ts";
 import { createCredentialStore } from "@/adapters/credentials.ts";
 import { openDatabase } from "@/adapters/db.ts";
 import { createLogger } from "@/adapters/logger.ts";
+import { createModelChoiceStore } from "@/adapters/model-choices.ts";
+import { createOpenAIKeyCatalog } from "@/adapters/openai-api.ts";
 import { createCodexCatalog } from "@/adapters/openai-codex.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import * as schema from "@/adapters/schema.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
+import { createSpaceStore } from "@/adapters/spaces.ts";
 import { createApp } from "@/http/app.ts";
 import {
   ModelError,
@@ -119,6 +122,12 @@ function setup() {
   const fakeFetch = (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
     requests.push({ url: request.url, headers: request.headers });
+    // Anthropic refuses this key.
+    if (request.headers.get("x-api-key") === "sk-ant-wrong") {
+      return Promise.resolve(
+        Response.json({ error: { type: "authentication_error" } }, { status: 401 }),
+      );
+    }
     const provider = request.url.startsWith(claudeUrl) ? "claude" : "codex";
     const reply = replies[provider];
     if (reply) return Promise.resolve(Response.json(reply.body ?? {}, reply));
@@ -165,13 +174,22 @@ function setup() {
   });
   const models = createModels({
     connections: connectionStore,
+    choices: createModelChoiceStore(db),
+    spaces: createSpaceStore(db),
     tokens: connections,
     catalogs: {
       codex: createCodexCatalog(fakeFetch as typeof fetch),
       claude: createClaudeCatalog(fakeFetch as typeof fetch),
+      openai: createOpenAIKeyCatalog(fakeFetch as typeof fetch),
+      anthropic: createAnthropicKeyCatalog(fakeFetch as typeof fetch),
     },
     settings: createOrgSettingStore(db),
-    gateways: { codex: recordingGateway("codex"), claude: recordingGateway("claude") },
+    gateways: {
+      codex: recordingGateway("codex"),
+      claude: recordingGateway("claude"),
+      openai: recordingGateway("openai"),
+      anthropic: recordingGateway("anthropic"),
+    },
     logger,
     now: () => clock.now,
   });
@@ -271,6 +289,7 @@ describe("model lists", () => {
         name: "GPT Big",
         connectionId: id,
         authKind: "codex",
+        connectionLabel: "Codex",
         contextWindow: 272000,
         reasoning: true,
       },
@@ -280,6 +299,7 @@ describe("model lists", () => {
         name: "GPT Mini",
         connectionId: id,
         authKind: "codex",
+        connectionLabel: "Codex",
         contextWindow: 128000,
         reasoning: false,
       },
@@ -304,6 +324,7 @@ describe("model lists", () => {
         name: "Claude Big",
         connectionId: id,
         authKind: "claude",
+        connectionLabel: "Claude",
         contextWindow: 1000000,
         reasoning: true,
       },
@@ -313,6 +334,7 @@ describe("model lists", () => {
         name: "Claude Old",
         connectionId: id,
         authKind: "claude",
+        connectionLabel: "Claude",
       },
     ]);
     const headers = requests[0]?.headers;
@@ -434,7 +456,11 @@ describe("model lists", () => {
     await ready();
     const other = await signUp("Grace Hopper", "grace@example.com");
 
-    expect(await models.resolveModels(other.orgId)).toEqual({ models: [], errors: [] });
+    expect(await models.resolveModels(other.orgId)).toEqual({
+      models: [],
+      errors: [],
+      turnedOff: [],
+    });
   });
 });
 
@@ -659,7 +685,7 @@ describe("opening a model", () => {
     await expect(models.open(owner.orgId, "codex/gpt-big")).rejects.toThrow(
       expect.objectContaining({
         kind: "auth",
-        message: "codex/gpt-big needs a Codex connection. Connect one in Settings.",
+        message: "codex/gpt-big needs a Codex connection. Add one in Model providers.",
       }),
     );
     await expect(models.open(owner.orgId, "gpt-big")).rejects.toThrow("not a model ref");
@@ -809,5 +835,341 @@ describe("proxies", () => {
     expect(await cleared.json()).toMatchObject({ proxy: null });
     await models.resolveModels(orgId);
     expect(urls().at(-1)).toBe(claudeUrl);
+  });
+});
+
+describe("API keys", () => {
+  const key = ["sk", "ant", "api03", "secret", "abcd"].join("-");
+
+  async function addKey(
+    api: ReturnType<typeof setup>["api"],
+    cookie: string,
+    body: { provider: string; label?: string | null; key: string },
+  ) {
+    return api("POST", "/connections/api-keys", cookie, body);
+  }
+
+  it("are added once the provider lists models with them, and never shown again", async () => {
+    const { api, db, requests, signUp } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+
+    const res = await addKey(api, cookie, { provider: "anthropic", label: "Work", key });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain("secret");
+    const added = JSON.parse(text) as { id: string };
+    expect(added).toMatchObject({
+      provider: "anthropic",
+      authKind: "api_key",
+      account: "sk-ant-…abcd",
+      label: "Work",
+      proxy: null,
+    });
+    expect(requests[0]?.url).toBe(`${claudeUrl}?limit=1000`);
+    expect(requests[0]?.headers.get("x-api-key")).toBe(key);
+    expect(requests[0]?.headers.get("authorization")).toBeNull();
+
+    const listed = await (await api("GET", "/connections", cookie)).text();
+    expect(listed).not.toContain("secret");
+    expect(JSON.stringify(db.select().from(schema.credential).all())).not.toContain("secret");
+
+    const models = (await (await api("GET", "/models", cookie)).json()) as {
+      models: { ref: string; connectionLabel: string }[];
+    };
+    expect(models.models.map((model) => [model.ref, model.connectionLabel])).toEqual([
+      [`${added.id}/claude-big`, "Anthropic · Work"],
+      [`${added.id}/claude-old`, "Anthropic · Work"],
+    ]);
+    // Read from the list the key was checked with.
+    expect(requests).toHaveLength(1);
+  });
+
+  it("refuse a key the provider does not take, and store nothing", async () => {
+    const { api, signUp } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+
+    const res = await addKey(api, cookie, { provider: "anthropic", key: "sk-ant-wrong" });
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({
+      error: "Anthropic did not accept this key (model list failed with status 401).",
+    });
+    expect((await addKey(api, cookie, { provider: "anthropic", key: "" })).status).toBe(400);
+    expect((await addKey(api, cookie, { provider: "mistral", key })).status).toBe(400);
+    expect(await (await api("GET", "/connections", cookie)).json()).toEqual([]);
+  });
+
+  it("can be several, beside a sign-in, each with its own refs, and deleted", async () => {
+    const { api, ready } = setup();
+    const { cookie } = await ready();
+    const first = (await (await addKey(api, cookie, { provider: "anthropic", key })).json()) as {
+      id: string;
+      label: string | null;
+    };
+    const second = (await (
+      await addKey(api, cookie, { provider: "anthropic", label: "Spare", key: `${key}2` })
+    ).json()) as { id: string };
+    expect(first.label).toBeNull();
+
+    const refs = async () =>
+      ((await (await api("GET", "/models", cookie)).json()) as { models: { ref: string }[] }).models
+        .map((model) => model.ref)
+        .filter((ref) => ref.endsWith("/claude-big"));
+    expect(await refs()).toEqual([
+      "claude/claude-big",
+      `${first.id}/claude-big`,
+      `${second.id}/claude-big`,
+    ]);
+
+    expect((await api("DELETE", `/connections/${first.id}`, cookie)).status).toBe(200);
+    expect(await refs()).not.toContain(`${first.id}/claude-big`);
+  });
+
+  it("reply through the provider's API with the key, and fail as a sign-in once removed", async () => {
+    const { api, models, streamed, signUp, connections } = setup();
+    const owner = await signUp("Ada Lovelace", "ada@example.com");
+    const added = (await (
+      await addKey(api, owner.cookie, { provider: "anthropic", key })
+    ).json()) as { id: string };
+
+    const model = await models.open(owner.orgId, `${added.id}/claude-big`);
+    for await (const _event of model.stream(
+      { instructions: "", messages: [], maxSteps: 1, sessionId: "t1" },
+      new AbortController().signal,
+    ));
+    expect(streamed).toMatchObject([
+      { kind: "anthropic", token: { access: key }, request: { model: "claude-big" } },
+    ]);
+
+    connections.remove(owner, added.id);
+    await expect(models.open(owner.orgId, `${added.id}/claude-big`)).rejects.toMatchObject({
+      kind: "auth",
+    });
+  });
+
+  it("are checked through the proxy given with them, which they keep, and can be renamed", async () => {
+    const { api, requests, signUp } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+
+    const res = await addKey(api, cookie, {
+      provider: "anthropic",
+      key,
+      proxy: { baseUrl: "https://proxy.example.com/v1", headers: { "X-Team": "blue" } },
+    } as never);
+    expect(res.status).toBe(200);
+    const added = (await res.json()) as { id: string; proxy: unknown };
+    expect(added.proxy).toEqual({
+      baseUrl: "https://proxy.example.com/v1",
+      headerNames: ["x-team"],
+    });
+    expect(requests[0]?.url).toBe("https://proxy.example.com/v1/models?limit=1000");
+    expect(requests[0]?.headers.get("x-team")).toBe("blue");
+
+    const bad = await addKey(api, cookie, {
+      provider: "anthropic",
+      key,
+      proxy: { baseUrl: "ftp://proxy.example.com", headers: {} },
+    } as never);
+    expect(bad.status).toBe(400);
+
+    const renamed = await api("PATCH", `/connections/${added.id}/label`, cookie, { label: "Team" });
+    expect(await renamed.json()).toMatchObject({ label: "Team" });
+    const cleared = await api("PATCH", `/connections/${added.id}/label`, cookie, { label: " " });
+    expect(await cleared.json()).toMatchObject({ label: null });
+  });
+
+  it("are for the owner of a personal org", async () => {
+    const { api, db, signUp } = setup();
+    const { cookie, userId } = await signUp("Ada Lovelace", "ada@example.com");
+    db.update(schema.member).set({ role: "member" }).where(eq(schema.member.userId, userId)).run();
+
+    expect((await addKey(api, cookie, { provider: "anthropic", key })).status).toBe(403);
+  });
+});
+
+describe("the default effort", () => {
+  it("is none until an admin picks one, and goes back to none", async () => {
+    const { api, db, signUp } = setup();
+    const { cookie, userId } = await signUp("Ada Lovelace", "ada@example.com");
+    const effort = async () => (await api("GET", "/settings/default-effort", cookie)).json();
+
+    expect(await effort()).toEqual({ effort: null });
+    expect((await api("PUT", "/settings/default-effort", cookie, { effort: "high" })).status).toBe(
+      200,
+    );
+    expect(await effort()).toEqual({ effort: "high" });
+    expect((await api("PUT", "/settings/default-effort", cookie, { effort: "max" })).status).toBe(
+      400,
+    );
+    await api("PUT", "/settings/default-effort", cookie, { effort: null });
+    expect(await effort()).toEqual({ effort: null });
+
+    db.update(schema.member).set({ role: "member" }).where(eq(schema.member.userId, userId)).run();
+    expect((await api("PUT", "/settings/default-effort", cookie, { effort: "low" })).status).toBe(
+      403,
+    );
+  });
+});
+
+describe("turning models on and off", () => {
+  type Listed = {
+    autoEnable: boolean;
+    models: { id: string; enabled: boolean }[];
+    spacesUsingOff?: { name: string }[];
+  };
+  const withNew = {
+    status: 200,
+    body: {
+      ...claudeModels,
+      data: [
+        ...claudeModels.data,
+        {
+          id: "claude-new",
+          display_name: "Claude New",
+          max_input_tokens: 1000,
+          capabilities: null,
+        },
+      ],
+    },
+  };
+
+  it("keeps a model turned off out of the pickers, and refuses it as a default", async () => {
+    const { api, ready } = setup();
+    const { cookie, claudeId } = await ready();
+
+    const res = await api("PATCH", `/connections/${claudeId}/models`, cookie, {
+      set: { ids: ["claude-old"], enabled: false },
+    });
+    expect(res.status).toBe(200);
+    const listed = (await res.json()) as Listed;
+    expect(listed.models.map((m) => [m.id, m.enabled])).toEqual([
+      ["claude-big", true],
+      ["claude-old", false],
+    ]);
+    const refs = (
+      (await (await api("GET", "/models", cookie)).json()) as { models: { ref: string }[] }
+    ).models.map((m) => m.ref);
+    expect(refs).toContain("claude/claude-big");
+    expect(refs).not.toContain("claude/claude-old");
+    expect(
+      (await api("PUT", "/settings/default-model", cookie, { ref: "claude/claude-old" })).status,
+    ).toBe(400);
+  });
+
+  it("keeps the org's default model on, and names spaces that start threads on one turned off", async () => {
+    const { api, ready, db } = setup();
+    const owner = await ready();
+    await api("PUT", "/settings/default-model", owner.cookie, { ref: "claude/claude-big" });
+    const off = (ids: string[]) =>
+      api("PATCH", `/connections/${owner.claudeId}/models`, owner.cookie, {
+        set: { ids, enabled: false },
+      });
+
+    const refused = await off(["claude-big"]);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({
+      error: "Claude Big is the organization's default model. Choose another default first.",
+    });
+
+    // Turned off with others, it stays on and the others go.
+    const together = (await (await off(["claude-big", "claude-old"])).json()) as {
+      models: { id: string; enabled: boolean; orgDefault: boolean }[];
+    };
+    expect(together.models.map((m) => [m.id, m.enabled, m.orgDefault])).toEqual([
+      ["claude-big", true, true],
+      ["claude-old", false, false],
+    ]);
+
+    const space = db
+      .select()
+      .from(schema.space)
+      .where(eq(schema.space.organizationId, owner.orgId))
+      .get();
+    db.update(schema.space).set({ defaultModel: "claude/claude-old" }).run();
+    const res = await off(["claude-old"]);
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as Listed).spacesUsingOff).toEqual([
+      { id: space?.id, name: space?.name },
+    ]);
+  });
+
+  it("turns on models first listed later, unless the connection says not to", async () => {
+    const { api, ready, replies } = setup();
+    const { cookie, claudeId } = await ready();
+    const list = async () =>
+      (await (
+        await api("GET", `/connections/${claudeId}/models?refresh=1`, cookie)
+      ).json()) as Listed;
+    expect((await list()).autoEnable).toBe(true);
+
+    await api("PATCH", `/connections/${claudeId}/models`, cookie, { autoEnable: false });
+    replies.claude = withNew;
+    const later = await list();
+    expect(later.autoEnable).toBe(false);
+    expect(later.models.find((m) => m.id === "claude-new")?.enabled).toBe(false);
+    expect(later.models.find((m) => m.id === "claude-big")?.enabled).toBe(true);
+  });
+
+  it("leaves threads and spaces on a model turned off, which can no longer reply", async () => {
+    const { api, ready, db, models } = setup();
+    const owner = await ready();
+    const space = db
+      .select()
+      .from(schema.space)
+      .where(eq(schema.space.organizationId, owner.orgId))
+      .get();
+    db.update(schema.space).set({ defaultModel: "claude/claude-old" }).run();
+    db.insert(schema.thread)
+      .values({ id: "t1", spaceId: space!.id, model: "claude/claude-old", createdBy: owner.userId })
+      .run();
+    const turn = (enabled: boolean) =>
+      api("PATCH", `/connections/${owner.claudeId}/models`, owner.cookie, {
+        set: { ids: ["claude-old"], enabled },
+      });
+
+    await turn(false);
+    expect(db.select().from(schema.thread).get()?.model).toBe("claude/claude-old");
+    expect(db.select().from(schema.space).get()?.defaultModel).toBe("claude/claude-old");
+    expect(await models.availability(owner.orgId, "claude/claude-old")).toEqual({
+      ref: "claude/claude-old",
+      name: "Claude Old",
+      status: "off",
+    });
+
+    await turn(true);
+    expect(db.select().from(schema.thread).get()?.model).toBe("claude/claude-old");
+    expect((await models.availability(owner.orgId, "claude/claude-old")).status).toBe("ok");
+    expect((await models.availability(owner.orgId, "claude/gone")).status).toBe("unavailable");
+  });
+
+  it("does not reply with a model turned off", async () => {
+    const { api, ready, models } = setup();
+    const owner = await ready();
+    await api("PATCH", `/connections/${owner.claudeId}/models`, owner.cookie, {
+      set: { ids: ["claude-old"], enabled: false },
+    });
+
+    await expect(models.open(owner.orgId, "claude/claude-old")).rejects.toMatchObject({
+      kind: "model",
+      summary: "Model Claude Old is turned off. Choose another model to continue.",
+    });
+  });
+});
+
+describe("the model a thread replies with", () => {
+  it("is the first model still on when even the org's default is gone", async () => {
+    const { ready, db, models } = setup();
+    const owner = await ready();
+    db.insert(schema.orgSetting)
+      .values({ organizationId: owner.orgId, defaultModel: "claude/gone" })
+      .run();
+    const space = { orgId: owner.orgId, defaultModel: null, defaultEffort: null };
+
+    const [first] = (await models.resolveModels(owner.orgId)).models;
+    expect(await models.replyModel(space, null)).toEqual({
+      chosen: { ref: "claude/gone", name: "gone", status: "unavailable" },
+      used: { ref: first?.ref, name: first?.name, status: "ok" },
+    });
+    // The org's choice stays as it was.
+    expect(db.select().from(schema.orgSetting).get()?.defaultModel).toBe("claude/gone");
   });
 });

@@ -17,12 +17,14 @@ import { type AttemptStatus, ConnectionError, type Connections } from "@/service
 import { ServiceError } from "@/services/errors.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Guests } from "@/services/guests.ts";
-import type { Models } from "@/services/models.ts";
+import type { ConnectionModel, Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
 import {
+  apiKeyInputSchema,
   type AttemptSummary,
   browserFinishSchema,
+  connectionLabelSchema,
   type ConnectionSummary,
   proxyInputSchema,
   type ProxySummary,
@@ -31,13 +33,17 @@ import { type FolderSummary, folderNameSchema } from "@/shared/folders.ts";
 import { acceptInviteSchema, newInviteSchema } from "@/shared/guests.ts";
 import type { Me } from "@/shared/me.ts";
 import {
+  type ConnectionModels,
+  connectionModelsChangeSchema,
+  type DefaultEffort,
+  defaultEffortSchema,
   type DefaultModel,
   type ModelListSummary,
   setDefaultModelSchema,
   setTitleModelSchema,
   type TitleModel,
 } from "@/shared/models.ts";
-import { type SpaceSummary, spaceNameSchema } from "@/shared/spaces.ts";
+import { spaceDefaultsSchema, type SpaceSummary, spaceNameSchema } from "@/shared/spaces.ts";
 import {
   messageInputSchema,
   newThreadSchema,
@@ -85,13 +91,36 @@ function signedIn(principal: Principal | null): Principal {
 }
 
 function summary(connection: Connection, proxy: ProxySummary | null = null): ConnectionSummary {
-  const { id, provider, authKind, account, createdAt } = connection;
-  return { id, provider, authKind, account, proxy, createdAt: createdAt.toISOString() };
+  const { id, provider, authKind, account, label, createdAt } = connection;
+  return { id, provider, authKind, account, label, proxy, createdAt: createdAt.toISOString() };
+}
+
+function connectionModelsBody(list: {
+  autoEnable: boolean;
+  models: (ConnectionModel & { orgDefault: boolean })[];
+  spacesUsingOff?: { id: string; name: string }[];
+}): ConnectionModels {
+  return {
+    ...list,
+    models: list.models.map(({ firstSeenAt, ...model }) => ({
+      ...model,
+      firstSeenAt: firstSeenAt.toISOString(),
+    })),
+  };
 }
 
 function spaceSummary(space: Space & { role: SpaceRole }): SpaceSummary {
-  const { id, kind, name, primary, role, createdAt } = space;
-  return { id, kind, name, primary, role, createdAt: createdAt.toISOString() };
+  const { id, kind, name, primary, role, defaultModel, defaultEffort, createdAt } = space;
+  return {
+    id,
+    kind,
+    name,
+    primary,
+    role,
+    defaultModel,
+    defaultEffort,
+    createdAt: createdAt.toISOString(),
+  };
 }
 
 function folderSummary(folder: Folder): FolderSummary {
@@ -129,7 +158,15 @@ function jsonBody<T extends z.ZodType>(schema: T, error: string) {
 const setDefaultModel = jsonBody(setDefaultModelSchema, "ref is required");
 const setTitleModel = jsonBody(setTitleModelSchema, "ref must be a model ref or null");
 const spaceName = jsonBody(spaceNameSchema, "A name of 1 to 80 characters is required");
-const newThread = jsonBody(newThreadSchema, "text must be a non-empty string, folderId an id");
+const setDefaultEffort = jsonBody(defaultEffortSchema, "effort is low, medium, high or null");
+const spaceDefaults = jsonBody(
+  spaceDefaultsSchema,
+  "Give a model ref or null, or an effort of low, medium, high or null",
+);
+const newThread = jsonBody(
+  newThreadSchema,
+  "text must be a non-empty string, folderId an id, model a ref, effort low, medium or high",
+);
 const folderName = jsonBody(folderNameSchema, "A name of 1 to 80 characters is required");
 const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or a folder");
 const message = jsonBody(messageInputSchema, "text is required; mode is steer, queue or interrupt");
@@ -137,6 +174,40 @@ const pendingChange = jsonBody(pendingChangeSchema, "Give a text, or a mode of s
 const retry = jsonBody(retrySchema, "runId is required");
 const newInvite = jsonBody(newInviteSchema, "accessFor is 1h, 1d, 7d or never");
 const acceptInvite = jsonBody(acceptInviteSchema, "token is required");
+
+// An API key body, refused with what is wrong with it.
+// An API key body with its proxy, if any, every header given a value; refused with what is wrong.
+const apiKeyInput = validator("json", (value, c) => {
+  const parsed = apiKeyInputSchema.safeParse(value);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const error = issue?.path[0] === "key" ? issue.message : "Give a provider, a label and a key";
+    return c.json({ error }, 400);
+  }
+  const { proxy: rawProxy, ...input } = parsed.data;
+  if (rawProxy === undefined || rawProxy === null) return { ...input, proxy: null };
+  const proxy = proxyInputSchema.safeParse(rawProxy);
+  if (!proxy.success) {
+    const issue = proxy.error.issues[0];
+    const error =
+      issue?.path[0] === "baseUrl" ? "The base URL must be an http or https URL" : issue?.message;
+    return c.json({ error: error ?? "Give a base URL and headers" }, 400);
+  }
+  const headers: Record<string, string> = {};
+  for (const [name, headerValue] of Object.entries(proxy.data.headers)) {
+    if (headerValue === null) return c.json({ error: `Give a value for ${name}` }, 400);
+    headers[name] = headerValue;
+  }
+  const empty = !proxy.data.baseUrl && Object.keys(headers).length === 0;
+  return { ...input, proxy: empty ? null : { baseUrl: proxy.data.baseUrl, headers } };
+});
+
+const connectionModelsChange = jsonBody(
+  connectionModelsChangeSchema,
+  "Give autoEnable, or set with model ids and enabled",
+);
+
+const connectionLabel = jsonBody(connectionLabelSchema, "label must be at most 80 characters");
 
 // A proxy body, refused with what is wrong with it.
 const proxyInput = validator("json", (value, c) => {
@@ -217,6 +288,17 @@ function createApi(options: AppOptions) {
         await models.setDefaultModel(principal.orgId, ref);
         return c.json({ ref } satisfies DefaultModel, 200);
       })
+      .get("/v1/settings/default-effort", (c) => {
+        const effort = models.defaultEffort(signedIn(c.var.principal).orgId);
+        return c.json({ effort } satisfies DefaultEffort, 200);
+      })
+      .put("/v1/settings/default-effort", setDefaultEffort, (c) => {
+        const principal = signedIn(c.var.principal);
+        requireAdmin(principal);
+        const { effort } = c.req.valid("json");
+        models.setDefaultEffort(principal.orgId, effort);
+        return c.json({ effort } satisfies DefaultEffort, 200);
+      })
       .get("/v1/settings/title-model", async (c) => {
         const { orgId } = signedIn(c.var.principal);
         const ref = models.chosenTitleModel(orgId);
@@ -241,6 +323,15 @@ function createApi(options: AppOptions) {
       .patch("/v1/spaces/:id", spaceName, (c) => {
         const { name } = c.req.valid("json");
         const space = spaces.rename(signedIn(c.var.principal), c.req.param("id"), name);
+        return c.json(spaceSummary(space), 200);
+      })
+      .patch("/v1/spaces/:id/defaults", spaceDefaults, async (c) => {
+        const changes = c.req.valid("json");
+        const space = await spaces.setDefaults(
+          signedIn(c.var.principal),
+          c.req.param("id"),
+          changes,
+        );
         return c.json(spaceSummary(space), 200);
       })
       .delete("/v1/spaces/:id", (c) => {
@@ -268,9 +359,10 @@ function createApi(options: AppOptions) {
       .get("/v1/spaces/:id/threads", (c) => {
         return c.json(threads.list(signedIn(c.var.principal), c.req.param("id")), 200);
       })
-      .post("/v1/spaces/:id/threads", newThread, (c) => {
+      .post("/v1/spaces/:id/threads", newThread, async (c) => {
         const input = c.req.valid("json");
-        return c.json(threads.create(signedIn(c.var.principal), c.req.param("id"), input), 200);
+        const thread = await threads.create(signedIn(c.var.principal), c.req.param("id"), input);
+        return c.json(thread, 200);
       })
       .get("/v1/shared-threads", (c) => {
         return c.json(threads.shared(signedIn(c.var.principal)), 200);
@@ -283,8 +375,8 @@ function createApi(options: AppOptions) {
         const { q } = c.req.valid("query");
         return c.json(threads.search(signedIn(c.var.principal), q), 200);
       })
-      .get("/v1/threads/:id", (c) => {
-        return c.json(threads.get(signedIn(c.var.principal), c.req.param("id")), 200);
+      .get("/v1/threads/:id", async (c) => {
+        return c.json(await threads.get(signedIn(c.var.principal), c.req.param("id")), 200);
       })
       .patch("/v1/threads/:id", threadUpdate, async (c) => {
         const changes = c.req.valid("json");
@@ -399,6 +491,31 @@ function createApi(options: AppOptions) {
         const connection = connections.list(owner).find((found) => found.id === id);
         if (!connection) throw new ConnectionError(404, "Connection not found");
         return c.json(summary(connection, connections.proxyOf(owner, id)), 200);
+      })
+      .post("/v1/connections/api-keys", apiKeyInput, async (c) => {
+        const owner = signedIn(c.var.principal);
+        const connection = await models.addApiKey(owner, c.req.valid("json"));
+        return c.json(summary(connection, connections.proxyOf(owner, connection.id)), 200);
+      })
+      .get("/v1/connections/:id/models", refreshQuery, async (c) => {
+        const { orgId } = signedIn(c.var.principal);
+        const list = await models.connectionModels(orgId, c.req.param("id"), c.req.valid("query"));
+        return c.json(connectionModelsBody(list), 200);
+      })
+      .patch("/v1/connections/:id/models", connectionModelsChange, async (c) => {
+        const { orgId } = signedIn(c.var.principal);
+        const result = await models.setConnectionModels(
+          orgId,
+          c.req.param("id"),
+          c.req.valid("json"),
+        );
+        return c.json(connectionModelsBody(result), 200);
+      })
+      .patch("/v1/connections/:id/label", connectionLabel, (c) => {
+        const owner = signedIn(c.var.principal);
+        const { label } = c.req.valid("json");
+        const connection = connections.rename(owner, c.req.param("id"), label);
+        return c.json(summary(connection, connections.proxyOf(owner, connection.id)), 200);
       })
       .post("/v1/connections/codex/device", async (c) => {
         return c.json(await connections.startDevice("codex", signedIn(c.var.principal)), 200);

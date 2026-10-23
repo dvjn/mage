@@ -8,6 +8,7 @@ import { createHash, randomBytes } from "node:crypto";
 
 import type { GuestStore, ThreadInvite } from "@/ports/guests.ts";
 import type { Principal } from "@/ports/identity.ts";
+import type { SpaceRole } from "@/ports/spaces.ts";
 import type { ThreadStore } from "@/ports/threads.ts";
 import type { Transact } from "@/ports/transaction.ts";
 import { ServiceError } from "@/services/errors.ts";
@@ -99,18 +100,20 @@ export function createGuests(options: GuestsOptions) {
       const at = now();
       const active = guests.activeIn(threadId, at);
       const guestIds = new Set(active.map((guest) => guest.userId));
-      const writers = new Map<string, string>();
+      const writers = new Map<string, { name: string; role: SpaceRole }>();
       for (const event of threads.eventsAfter(threadId, 0)) {
         if (event.type !== "message" || event.actor.kind !== "user") continue;
         const { userId } = event.actor;
         if (guestIds.has(userId) || writers.has(userId) || !event.actorName) continue;
         const theirs = access.of({ userId, orgId: principal.orgId }, thread);
-        if (theirs?.via === "space") writers.set(userId, event.actorName);
+        if (theirs?.via === "space")
+          writers.set(userId, { name: event.actorName, role: theirs.role });
       }
-      const members: ThreadPerson[] = [...writers].map(([userId, name]) => ({
+      const members: ThreadPerson[] = [...writers].map(([userId, { name, role }]) => ({
         userId,
         name,
         kind: "member",
+        role,
         accessUntil: null,
         invitedBy: null,
         canRevoke: false,
@@ -122,6 +125,7 @@ export function createGuests(options: GuestsOptions) {
             userId: guest.userId,
             name: guest.name,
             kind: "guest",
+            role: null,
             accessUntil: guest.accessUntil?.toISOString() ?? null,
             invitedBy: guest.invitedByName,
             canRevoke: mayRevoke(mine, principal, guest.invitedBy),

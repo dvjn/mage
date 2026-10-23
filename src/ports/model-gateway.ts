@@ -66,11 +66,27 @@ export class ModelError extends Error {
   readonly detail: string;
   // When a limit resets, when the provider says.
   readonly resetsAt: Date | null;
+  // What people are told, where the kind's usual words would not say why.
+  readonly summary: string | null;
 
-  constructor(kind: ModelErrorKind, detail: string, resetsAt: Date | null = null) {
+  constructor(
+    kind: ModelErrorKind,
+    detail: string,
+    resetsAt: Date | null = null,
+    summary: string | null = null,
+  ) {
     super(detail);
     this.kind = kind;
     this.detail = detail;
     this.resetsAt = resetsAt;
+    this.summary = summary;
+  }
+}
+
+// The model is one its org turned off.
+export class ModelTurnedOff extends ModelError {
+  constructor(name: string) {
+    const said = `Model ${name} is turned off. Choose another model to continue.`;
+    super("model", said, null, said);
   }
 }

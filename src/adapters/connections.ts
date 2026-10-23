@@ -15,16 +15,18 @@ const columns = {
   provider: connection.provider,
   authKind: connection.authKind,
   account: connection.account,
+  label: connection.label,
+  autoEnableModels: connection.autoEnableModels,
   createdAt: connection.createdAt,
 };
 
 export function createConnectionStore(db: Db): ConnectionStore {
   return {
     create(input) {
-      const { orgId, ...rest } = input;
+      const { orgId, label = null, ...rest } = input;
       return db
         .insert(connection)
-        .values({ id: ulid(), organizationId: orgId, ...rest })
+        .values({ id: ulid(), organizationId: orgId, label, ...rest })
         .returning(columns)
         .get();
     },
@@ -46,6 +48,14 @@ export function createConnectionStore(db: Db): ConnectionStore {
           .where(and(eq(connection.id, id), eq(connection.organizationId, orgId)))
           .get() ?? null
       );
+    },
+
+    setLabel(id, label) {
+      db.update(connection).set({ label }).where(eq(connection.id, id)).run();
+    },
+
+    setAutoEnableModels(id, on) {
+      db.update(connection).set({ autoEnableModels: on }).where(eq(connection.id, id)).run();
     },
 
     delete(id) {

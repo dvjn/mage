@@ -154,7 +154,7 @@ describe("GET /api/v1/me", () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       user: { id: userId, name: "Ada Lovelace", email: "ada@example.com" },
-      org: { id: org?.id, name: "Ada Lovelace", kind: "personal" },
+      org: { id: org?.id, name: "Ada Lovelace", kind: "personal", ownerName: "Ada Lovelace" },
       role: "owner",
     });
   });

@@ -12,7 +12,8 @@ import type { EventBus } from "@/ports/event-bus.ts";
 import type { GuestStore } from "@/ports/guests.ts";
 import type { Principal } from "@/ports/identity.ts";
 import type { RunStore } from "@/ports/runs.ts";
-import type { Thread, ThreadStore } from "@/ports/threads.ts";
+import type { SpaceStore } from "@/ports/spaces.ts";
+import type { StoredEvent, Thread, ThreadStore } from "@/ports/threads.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Titles } from "@/services/titles.ts";
@@ -28,6 +29,7 @@ import {
   QUIET_PREFIX,
   type ThreadDetail,
   type ThreadFeedItem,
+  type ThreadListItem,
   type ThreadSearchResult,
   type ThreadSummary,
 } from "@/shared/threads.ts";
@@ -35,13 +37,15 @@ import { transcriptOf } from "@/shared/transcript.ts";
 
 export interface ThreadsOptions {
   spaces: Spaces;
+  // Reads a thread's space for its defaults, whoever reads the thread.
+  spaceStore: Pick<SpaceStore, "find">;
   access: Pick<ThreadAccess, "can" | "require">;
   guests: Pick<GuestStore, "threadsOf">;
   folders: Pick<Folders, "requireIn">;
   threads: ThreadStore;
   runs: Pick<RunStore, "active" | "create" | "latest" | "requestCancel">;
   deltas: Pick<DeltaStore, "inThread">;
-  models: Pick<Models, "defaultModel" | "requireModel">;
+  models: Pick<Models, "defaults" | "requireModel" | "replyModel">;
   log: ThreadLog;
   bus: EventBus;
   // Names threads after their first message, when given.
@@ -51,7 +55,8 @@ export interface ThreadsOptions {
 
 export type Threads = ReturnType<typeof createThreads>;
 
-const UNTITLED = "New thread";
+// What an untitled thread is called, and found by.
+export const UNTITLED = "Untitled";
 const TITLE_LENGTH = 60;
 export const SEARCH_LIMIT = 50;
 
@@ -76,12 +81,30 @@ export function titleFrom(text: string) {
   return `${(space > TITLE_LENGTH / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
+const PREVIEW_LENGTH = 120;
+
+// Who wrote a message or reply, by first name, and the start of its text on one line.
+function previewOf(event: StoredEvent) {
+  const parts =
+    event.type === "message" || event.type === "message.completed"
+      ? event.data.parts.filter((part) => part.type === "text")
+      : [];
+  const text = plainText(parts.map((part) => part.text).join(" "))
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, PREVIEW_LENGTH);
+  const author =
+    event.actor.kind === "agent" ? "Agent" : (event.actorName ?? "(former member)").split(" ")[0]!;
+  return { author, text };
+}
+
 export function threadSummary(thread: Thread): ThreadSummary {
   return {
     id: thread.id,
     spaceId: thread.spaceId,
     folderId: thread.folderId,
     title: thread.title ?? UNTITLED,
+    untitled: thread.title === null,
     model: thread.model,
     effort: thread.effort,
     lastEventSeq: thread.lastEventSeq,
@@ -91,8 +114,20 @@ export function threadSummary(thread: Thread): ThreadSummary {
 }
 
 export function createThreads(options: ThreadsOptions) {
-  const { spaces, access, guests, folders, threads, runs, deltas, models, log, bus, titles } =
-    options;
+  const {
+    spaces,
+    spaceStore,
+    access,
+    guests,
+    folders,
+    threads,
+    runs,
+    deltas,
+    models,
+    log,
+    bus,
+    titles,
+  } = options;
   const now = options.now ?? (() => new Date());
 
   // The thread when the principal may take the action in it.
@@ -158,13 +193,20 @@ export function createThreads(options: ThreadsOptions) {
   return {
     visible,
 
-    list(principal: Principal, spaceId: string) {
+    // The space's threads, each with the start of its newest message or reply.
+    list(principal: Principal, spaceId: string): ThreadListItem[] {
       spaces.require(principal, spaceId);
-      return threads.listInSpace(spaceId).map(threadSummary);
+      const previews = new Map(
+        threads.lastMessagesInSpace(spaceId).map((event) => [event.threadId, previewOf(event)]),
+      );
+      return threads
+        .listInSpace(spaceId)
+        .map((thread) => ({ ...threadSummary(thread), preview: previews.get(thread.id) ?? null }));
     },
 
-    // Threads whose titles contain the text, ignoring case, in every space the principal can see
-    // and among those they are a guest in: the most recently active first, at most 50.
+    // Threads whose titles contain the text, ignoring case, untitled ones as "Untitled", in every
+    // space the principal can see and among those they are a guest in: the most recently active
+    // first, at most 50.
     search(principal: Principal, text: string): ThreadSearchResult[] {
       const names = new Map(
         spaces
@@ -176,12 +218,12 @@ export function createThreads(options: ThreadsOptions) {
       const shared = guests
         .threadsOf(principal.userId, now())
         .filter(({ thread }) => !names.has(thread.spaceId))
-        .filter(({ thread }) => thread.title?.toLowerCase().includes(needle))
-        .map(({ thread, spaceName }) => ({ thread, spaceName }));
+        .filter(({ thread }) => (thread.title ?? UNTITLED).toLowerCase().includes(needle))
+        .map(({ thread, spaceName }) => ({ thread, spaceName, shared: true }));
       return [
         ...threads
-          .search([...names.keys()], text, SEARCH_LIMIT)
-          .map((thread) => ({ thread, spaceName: names.get(thread.spaceId) ?? "" })),
+          .search([...names.keys()], text, SEARCH_LIMIT, UNTITLED)
+          .map((thread) => ({ thread, spaceName: names.get(thread.spaceId) ?? "", shared: false })),
         ...shared,
       ]
         .toSorted(
@@ -190,7 +232,7 @@ export function createThreads(options: ThreadsOptions) {
             b.thread.id.localeCompare(a.thread.id),
         )
         .slice(0, SEARCH_LIMIT)
-        .map(({ thread, spaceName }) => ({ ...threadSummary(thread), spaceName }));
+        .map(({ thread, spaceName, shared }) => ({ ...threadSummary(thread), spaceName, shared }));
     },
 
     // The threads the principal is a guest in, with their spaces' and orgs' names.
@@ -199,36 +241,56 @@ export function createThreads(options: ThreadsOptions) {
         ...threadSummary(shared.thread),
         spaceName: shared.spaceName,
         orgName: shared.orgName,
+        place: shared.spaceNamedForOrg
+          ? shared.spaceName
+          : `${shared.spaceName} · ${shared.orgName}`,
         accessUntil: shared.accessUntil?.toISOString() ?? null,
       }));
     },
 
-    // Starts a thread on the org's default model, in a folder or at the top of the space, with its
-    // first message when there is one.
-    create(
+    // Starts a thread on the model and effort chosen for it, or those its space's defaults, then
+    // its org's, give at this moment, so later changes to them leave it be; in a folder or at the
+    // top of the space, with its first message when there is one. A chosen model must be one the
+    // org can use.
+    async create(
       principal: Principal,
       spaceId: string,
-      input: { text?: string; folderId?: string | null } = {},
+      input: { text?: string; folderId?: string | null; model?: string; effort?: Effort } = {},
     ) {
       const { text, folderId = null } = input;
       spaces.require(principal, spaceId, "message");
+      if (input.model) await models.requireModel(principal.orgId, input.model);
+      // Seen again after the model check, which waits on providers.
+      const space = spaces.require(principal, spaceId, "message");
       folders.requireIn(spaceId, folderId);
+      const defaults = models.defaults(space);
       const thread = threads.create({
         spaceId,
         folderId,
-        model: models.defaultModel(principal.orgId),
+        model: input.model ?? defaults.model,
+        effort: input.effort ?? defaults.effort,
         createdBy: principal.userId,
       });
       if (text) post(principal, thread, text, "steer");
       return threadSummary(threads.find(thread.id) ?? thread);
     },
 
-    get(principal: Principal, id: string): ThreadDetail {
+    // The thread with its events, the defaults it follows, and the model it names and the one that
+    // replies, which differ while the one it names is turned off.
+    async get(principal: Principal, id: string): Promise<ThreadDetail> {
       const { thread, access: via } = access.require(principal, id);
+      const space = spaceStore.find(thread.spaceId);
+      const defaults = space ? models.defaults(space) : { model: null, effort: null };
       return {
         thread: threadSummary(thread),
         events: threads.eventsAfter(id, 0).map(eventSummary),
         access: via,
+        defaults: {
+          ...defaults,
+          used: space ? ((await models.replyModel(space, null))?.used ?? null) : null,
+        },
+        // The thread's own org decides, whoever reads it.
+        model: space ? await models.replyModel(space, thread.model) : null,
       };
     },
 
@@ -244,7 +306,7 @@ export function createThreads(options: ThreadsOptions) {
       id: string,
       changes: {
         title?: string;
-        model?: string;
+        model?: string | null;
         effort?: Effort | null;
         folderId?: string | null;
       },

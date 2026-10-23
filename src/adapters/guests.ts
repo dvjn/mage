@@ -116,10 +116,10 @@ export function createGuestStore(db: Db): GuestStore {
         .where(and(eq(threadGuest.userId, userId), active(now)))
         .orderBy(desc(thread.updatedAt), desc(thread.id))
         .all()
-        .map(({ space: host, ...row }) => ({
-          ...row,
-          spaceName: outsiderSpaceName(host, row.orgName),
-        }));
+        .map(({ space: host, ...row }) => {
+          const spaceName = outsiderSpaceName(host, row.orgName);
+          return { ...row, spaceName, spaceNamedForOrg: spaceName !== host.name };
+        });
     },
 
     hostSpaceName(threadId) {

@@ -15,8 +15,9 @@ export interface Thread {
   title: string | null;
   // Who named it: its first message, the agent after it, or a person.
   titleSource: TitleSource | null;
+  // Null follows the space's default, then the org's.
   model: string | null;
-  // Null for the model's usual reasoning effort.
+  // Null follows the space's default, then the org's, then the model's usual effort.
   effort: Effort | null;
   createdBy: string | null;
   parentThreadId: string | null;
@@ -44,21 +45,27 @@ export interface ThreadStore {
     spaceId: string;
     folderId: string | null;
     model: string | null;
+    effort?: Effort | null;
     createdBy: string;
   }): Thread;
   find(id: string): Thread | null;
   // Most recently active first.
   listInSpace(spaceId: string): Thread[];
   anyInSpace(spaceId: string): boolean;
+  // The newest message from a person or reply from the agent in each of the space's threads that
+  // has one.
+  lastMessagesInSpace(spaceId: string): StoredEvent[];
   // Threads in the spaces whose titles contain the text, ignoring case, most recently active
   // first, at most `limit` of them.
-  search(spaceIds: string[], text: string, limit: number): Thread[];
+  // Untitled threads match as `untitled`.
+  search(spaceIds: string[], text: string, limit: number, untitled: string): Thread[];
   update(
     id: string,
     changes: {
       title?: string;
       titleSource?: TitleSource;
-      model?: string;
+      // Null follows the space's default.
+      model?: string | null;
       effort?: Effort | null;
       folderId?: string | null;
     },

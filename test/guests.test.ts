@@ -202,7 +202,7 @@ describe("thread access", () => {
     ]);
     const found = await api("GET", "/threads/search?q=engi", hedy.cookie);
     expect(await found.json()).toEqual([
-      expect.objectContaining({ id: thread.id, spaceName: "Ada Lovelace's space" }),
+      expect.objectContaining({ id: thread.id, spaceName: "Ada Lovelace's space", shared: true }),
     ]);
 
     expire(workspace, thread.id, hedy.userId);
