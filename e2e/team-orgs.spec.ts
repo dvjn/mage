@@ -65,7 +65,9 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await page.getByRole("button", { name: "Add a model provider" }).click();
   await page.getByRole("button", { name: "Add provider" }).click();
   const dialog = page.getByRole("dialog");
-  await expect(dialog).toContainText("Team organizations connect with API keys");
+  await dialog.getByRole("button", { name: /^OpenAI/ }).click();
+  await expect(dialog.getByRole("heading", { name: "Add an OpenAI API key" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Back" }).click();
   await dialog.getByRole("button", { name: /^Anthropic/ }).click();
   await dialog.getByLabel("API key").fill("sk-ant-team-1234");
   await dialog.getByRole("button", { name: "Add key" }).click();

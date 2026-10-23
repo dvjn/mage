@@ -170,9 +170,7 @@ export function CodexSignIn({
             ) : (
               <>
                 <Button onClick={() => void startBrowser()}>Open the Codex sign-in</Button>
-                <FieldDescription>
-                  For a browser on the computer Mage runs on, or when the code does not work.
-                </FieldDescription>
+                <FieldDescription>When the code does not work.</FieldDescription>
               </>
             )}
           </Field>

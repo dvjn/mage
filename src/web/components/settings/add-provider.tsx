@@ -60,17 +60,9 @@ type Step =
   | { name: "credentials"; provider: Provider; method: Method }
   | { name: "done"; connection: ConnectionSummary };
 
-const PROVIDERS: { provider: Provider; description: string; keyDescription: string }[] = [
-  {
-    provider: "anthropic",
-    description: "Claude models, with an API key.",
-    keyDescription: "Claude models, with an API key.",
-  },
-  {
-    provider: "openai",
-    description: "GPT models, with an API key or a ChatGPT plan.",
-    keyDescription: "GPT models, with an API key.",
-  },
+const PROVIDERS: { provider: Provider; description: string }[] = [
+  { provider: "anthropic", description: "Claude models." },
+  { provider: "openai", description: "GPT models." },
 ];
 
 const METHODS: Record<Provider, { method: Method; title: string; description: string }[]> = {
@@ -79,12 +71,7 @@ const METHODS: Record<Provider, { method: Method; title: string; description: st
   ],
   openai: [
     { method: "api_key", title: "API key", description: "Billed per token by OpenAI." },
-    {
-      method: "codex",
-      title: "Sign in with ChatGPT (Codex)",
-      description:
-        "Your ChatGPT plan, through the Codex sign-in, which OpenAI does not offer to other apps.",
-    },
+    { method: "codex", title: "Sign in with ChatGPT", description: "Uses your ChatGPT plan." },
   ],
 };
 
@@ -193,7 +180,7 @@ function ApiKeyStep({
             id={`${id}-label`}
             value={label}
             onChange={(event) => setLabel(event.target.value)}
-            placeholder="Optional, as Work or Team"
+            placeholder="Optional"
             maxLength={80}
             autoComplete="off"
           />
@@ -293,7 +280,7 @@ export function AddProviderDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
   connections: ConnectionSummary[];
-  // A team org connects with API keys only; subscription sign-ins are personal.
+  // Leaves out the subscription sign-ins.
   apiKeysOnly?: boolean;
 }) {
   const [step, setStep] = useState<Step>({ name: "provider" });
@@ -325,20 +312,32 @@ export function AddProviderDialog({
     method: step.name === "method" ? `Connect ${BACKEND_LABELS[step.provider]}` : "",
     credentials:
       step.name === "credentials"
-        ? (methods(step.provider).find((m) => m.method === step.method)?.title ?? "")
+        ? step.method === "api_key"
+          ? `Add an ${BACKEND_LABELS[step.provider]} API key`
+          : (methods(step.provider).find((m) => m.method === step.method)?.title ?? "")
         : "",
     done: step.name === "done" ? connectionLabel(step.connection) : "",
   };
-  const descriptions: Record<Step["name"], string> = {
-    provider: "Which provider should this organization's threads be answered through?",
-    method: "How do you want to connect?",
-    credentials:
-      step.name === "credentials" && step.method === "api_key"
-        ? `Paste an ${BACKEND_LABELS[step.provider]} API key.`
-        : "Sign in, then come back here.",
-    done: "Its models are now in every model picker of this organization.",
+  const descriptions: Partial<Record<Step["name"], string>> = {
+    done: "Its models are now in this organization's model pickers.",
   };
-  const number = { provider: 1, method: 2, credentials: 3, done: 4 }[step.name];
+  // A provider with one way to connect skips choosing it.
+  const provider =
+    step.name === "done"
+      ? step.connection.provider
+      : step.name === "provider"
+        ? undefined
+        : step.provider;
+  const choosing = provider
+    ? methods(provider).length > 1
+    : PROVIDERS.some((p) => methods(p.provider).length > 1);
+  const steps = choosing ? 4 : 3;
+  const number = {
+    provider: 1,
+    method: 2,
+    credentials: choosing ? 3 : 2,
+    done: steps,
+  }[step.name];
 
   return (
     <Dialog
@@ -359,12 +358,14 @@ export function AddProviderDialog({
             )}
             <DialogTitle>{titles[step.name]}</DialogTitle>
           </div>
-          <DialogDescription>
-            <span className="sr-only">Step {number} of 4. </span>
+          <DialogDescription className={cn(!descriptions[step.name] && "sr-only")}>
+            <span className="sr-only">
+              Step {number} of {steps}.{" "}
+            </span>
             {descriptions[step.name]}
           </DialogDescription>
           <ol aria-hidden className="flex gap-1 pt-1">
-            {[1, 2, 3, 4].map((n) => (
+            {Array.from({ length: steps }, (_, i) => i + 1).map((n) => (
               <li
                 key={n}
                 className={cn("h-1 flex-1 rounded-full bg-muted", n <= number && "bg-primary")}
@@ -374,11 +375,11 @@ export function AddProviderDialog({
         </DialogHeader>
         {step.name === "provider" && (
           <div className="flex flex-col gap-2">
-            {PROVIDERS.map(({ provider, description, keyDescription }) => (
+            {PROVIDERS.map(({ provider, description }) => (
               <Choice
                 key={provider}
                 title={BACKEND_LABELS[provider]}
-                description={apiKeysOnly ? keyDescription : description}
+                description={description}
                 onSelect={() =>
                   setStep(
                     methods(provider).length > 1
@@ -388,12 +389,6 @@ export function AddProviderDialog({
                 }
               />
             ))}
-            {apiKeysOnly && (
-              <p className="text-xs text-muted-foreground">
-                Team organizations connect with API keys. Signing in with a ChatGPT plan is for
-                personal organizations.
-              </p>
-            )}
           </div>
         )}
         {step.name === "method" && (

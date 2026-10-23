@@ -295,7 +295,7 @@ function RowDialogs({ action, onClose }: { action: RowAction | null; onClose: ()
           <AlertDialogHeader>
             <AlertDialogTitle>Remove {name}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Threads on its models stop getting replies until they pick another model.
+              Threads on its models fall back to the default model.
               {connection?.authKind === "api_key" &&
                 " The key is deleted from Mage; it still works at the provider."}
             </AlertDialogDescription>
@@ -350,11 +350,9 @@ export function OrgProviders() {
           icon={<BlocksIcon />}
           title="No model providers yet"
           description={
-            !manages
-              ? "An owner of the organization adds model providers for its threads to reply with."
-              : team
-                ? "Add an API key to give this organization's threads models to reply with."
-                : "Add an API key, or sign in with a ChatGPT subscription, to give this organization's threads models to reply with."
+            manages
+              ? "Add one to give this organization's threads models to reply with."
+              : "An owner of the organization adds them."
           }
           action={manages && addButton}
         />

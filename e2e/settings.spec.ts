@@ -70,7 +70,7 @@ test("Anthropic connects with an API key, with no sign-in to choose", async ({ p
   await page.getByRole("button", { name: "Add provider" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("button", { name: /^Anthropic/ }).click();
-  await expect(dialog.getByRole("heading", { name: "API key" })).toBeVisible();
+  await expect(dialog.getByRole("heading", { name: "Add an Anthropic API key" })).toBeVisible();
   await expect(dialog.getByLabel("API key")).toBeFocused();
 });
 
