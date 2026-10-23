@@ -13,11 +13,10 @@ import {
   joinPreviewSchema,
   joinRefusalSchema,
 } from "@/shared/orgs.ts";
+import { AuthCard, AuthFrame } from "@/web/components/auth-frame";
 import { GoHome } from "@/web/components/page-states";
 import { Button } from "@/web/components/ui/button";
-import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from "@/web/components/ui/card";
 import { Spinner } from "@/web/components/ui/spinner";
-import { Wordmark } from "@/web/components/wordmark";
 import { apiClient } from "@/web/lib/api-client";
 import { authClient } from "@/web/lib/auth-client";
 import { switchOrg } from "@/web/lib/org-tab";
@@ -48,30 +47,9 @@ const REFUSALS: Record<Refusal, { title: string; text: string }> = {
   failed: { title: "Something went wrong", text: "The invite could not be opened. Try again." },
 };
 
-function Frame({ children }: { children: React.ReactNode }) {
-  return (
-    <main className="flex min-h-svh items-center justify-center p-6">
-      <div className="flex w-full max-w-sm flex-col gap-6">
-        <Wordmark className="self-center" />
-        {children}
-      </div>
-    </main>
-  );
-}
-
 function Refused({ refusal }: { refusal: Refusal }) {
   const { title, text } = REFUSALS[refusal];
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        <CardDescription>{text}</CardDescription>
-      </CardHeader>
-      <CardFooter>
-        <GoHome />
-      </CardFooter>
-    </Card>
-  );
+  return <AuthCard title={title} description={text} actions={<GoHome />} />;
 }
 
 function invitedBy(preview: JoinPreview) {
@@ -83,22 +61,24 @@ function invitedBy(preview: JoinPreview) {
 function SignedOut({ token, preview }: { token: string; preview: JoinPreview }) {
   const back = { redirect: `/join/${token}`, email: preview.email };
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Join {preview.orgName}</CardTitle>
-        <CardDescription>
-          {invitedBy(preview)} Create an account or sign in with that email to accept.
-        </CardDescription>
-      </CardHeader>
-      <CardFooter className="flex gap-2">
-        <Button render={<Link to="/signup" search={back} />} nativeButton={false}>
-          Create account
-        </Button>
-        <Button variant="outline" render={<Link to="/login" search={back} />} nativeButton={false}>
-          Sign in
-        </Button>
-      </CardFooter>
-    </Card>
+    <AuthCard
+      title={`Join ${preview.orgName}`}
+      description={`${invitedBy(preview)} Create an account or sign in with that email to accept.`}
+      actions={
+        <>
+          <Button render={<Link to="/signup" search={back} />} nativeButton={false}>
+            Create account
+          </Button>
+          <Button
+            variant="outline"
+            render={<Link to="/login" search={back} />}
+            nativeButton={false}
+          >
+            Sign in
+          </Button>
+        </>
+      }
+    />
   );
 }
 
@@ -113,19 +93,21 @@ function WrongAccount({ preview }: { preview: JoinPreview }) {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>This invite is for {preview.email}</CardTitle>
-        <CardDescription>
+    <AuthCard
+      title={`This invite is for ${preview.email}`}
+      description={
+        <>
           You are signed in with another account. Sign out, then open the link again and sign in or
           create an account with the invited email.
-        </CardDescription>
-      </CardHeader>
-      <CardFooter className="flex gap-2">
-        <GoHome />
-        <Button onClick={() => void signOut()}>Sign out</Button>
-      </CardFooter>
-    </Card>
+        </>
+      }
+      actions={
+        <>
+          <GoHome />
+          <Button onClick={() => void signOut()}>Sign out</Button>
+        </>
+      }
+    />
   );
 }
 
@@ -185,5 +167,5 @@ export function JoinPage() {
     else if (!found.yours) body = <WrongAccount preview={found} />;
     else body = <Joining token={token} />;
   }
-  return <Frame>{body}</Frame>;
+  return <AuthFrame>{body}</AuthFrame>;
 }

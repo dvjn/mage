@@ -16,6 +16,7 @@ import {
 } from "@tanstack/react-router";
 
 import { AppShell, PageHeader } from "@/web/components/app-shell";
+import { AuthFrame } from "@/web/components/auth-frame";
 import { InvitePage } from "@/web/components/invite-page";
 import { JoinPage } from "@/web/components/join-page";
 import { LoginForm } from "@/web/components/login-form";
@@ -72,11 +73,9 @@ const signedOutRoute = createRoute({
   id: "_signed-out",
   beforeLoad: redirectIfSignedIn,
   component: () => (
-    <main className="flex min-h-svh items-center justify-center p-6">
-      <div className="w-full max-w-sm">
-        <Outlet />
-      </div>
-    </main>
+    <AuthFrame>
+      <Outlet />
+    </AuthFrame>
   ),
 });
 

@@ -1,16 +1,9 @@
-import { cn } from "cn";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
+import { AuthCard } from "@/web/components/auth-frame";
 import { Button } from "@/web/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/web/components/ui/card";
 import {
   Field,
   FieldDescription,
@@ -19,11 +12,10 @@ import {
   FieldLabel,
 } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
-import { Wordmark } from "@/web/components/wordmark";
 import { authClient } from "@/web/lib/auth-client";
 import { sessionQuery } from "@/web/lib/queries";
 
-export function LoginForm({ className, ...props }: React.ComponentProps<"div">) {
+export function LoginForm() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { redirect, email: invited } = useSearch({ from: "/_signed-out/login" });
@@ -45,54 +37,45 @@ export function LoginForm({ className, ...props }: React.ComponentProps<"div">) 
   }
 
   return (
-    <div className={cn("flex flex-col gap-6", className)} {...props}>
-      <Wordmark className="self-center" />
-      <Card>
-        <CardHeader>
-          <CardTitle>Sign in</CardTitle>
-          <CardDescription>Use the email and password of your Mage account.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit}>
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="email">Email</FieldLabel>
-                <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  placeholder="you@example.com"
-                  autoComplete="email"
-                  defaultValue={invited}
-                  required
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="password">Password</FieldLabel>
-                <Input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete="current-password"
-                  required
-                />
-              </Field>
-              <Field>
-                <FieldError>{error}</FieldError>
-                <Button type="submit" disabled={pending}>
-                  Sign in
-                </Button>
-                <FieldDescription className="text-center">
-                  New to Mage?{" "}
-                  <Link to="/signup" search={{ redirect, email: invited }}>
-                    Create account
-                  </Link>
-                </FieldDescription>
-              </Field>
-            </FieldGroup>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
+    <AuthCard title="Sign in" description="Use the email and password of your Mage account.">
+      <form onSubmit={handleSubmit}>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="email">Email</FieldLabel>
+            <Input
+              id="email"
+              name="email"
+              type="email"
+              placeholder="you@example.com"
+              autoComplete="email"
+              defaultValue={invited}
+              required
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="password">Password</FieldLabel>
+            <Input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              required
+            />
+          </Field>
+          <Field>
+            <FieldError>{error}</FieldError>
+            <Button type="submit" disabled={pending}>
+              Sign in
+            </Button>
+            <FieldDescription className="text-center">
+              New to Mage?{" "}
+              <Link to="/signup" search={{ redirect, email: invited }}>
+                Create account
+              </Link>
+            </FieldDescription>
+          </Field>
+        </FieldGroup>
+      </form>
+    </AuthCard>
   );
 }

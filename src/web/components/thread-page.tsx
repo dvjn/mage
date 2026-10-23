@@ -27,6 +27,7 @@ import {
 } from "@/web/components/ai-elements/conversation";
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
 import { folderCrumb } from "@/web/components/folder-choice";
+import { AuthCard, AuthFrame } from "@/web/components/auth-frame";
 import { GoHome, NotFound } from "@/web/components/page-states";
 import { ShareDialog } from "@/web/components/share-dialog";
 import { Composer, PendingTray, RunStatus } from "@/web/components/thread-composer";
@@ -196,12 +197,13 @@ export function ThreadPage() {
     return (
       <>
         <PageHeader crumbs={[{ label: "Access ended" }]} />
-        <div className={cn(pageWidth, "flex flex-col items-start gap-3 p-4")}>
-          <p className="text-muted-foreground">
-            Your access to this thread has ended. Ask whoever shared it for a new invite link.
-          </p>
-          <GoHome />
-        </div>
+        <AuthFrame inApp>
+          <AuthCard
+            title="Your access to this thread has ended"
+            description="Ask whoever shared it for a new invite link."
+            actions={<GoHome />}
+          />
+        </AuthFrame>
       </>
     );
   }

@@ -2,14 +2,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { type FormEvent, useState } from "react";
 
+import { AuthCard } from "@/web/components/auth-frame";
 import { Button } from "@/web/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/web/components/ui/card";
 import {
   Field,
   FieldDescription,
@@ -18,11 +12,10 @@ import {
   FieldLabel,
 } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
-import { Wordmark } from "@/web/components/wordmark";
 import { authClient } from "@/web/lib/auth-client";
 import { sessionQuery } from "@/web/lib/queries";
 
-export function SignupForm(props: React.ComponentProps<typeof Card>) {
+export function SignupForm() {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { redirect, email: invited } = useSearch({ from: "/_signed-out/signup" });
@@ -47,72 +40,64 @@ export function SignupForm(props: React.ComponentProps<typeof Card>) {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <Wordmark className="self-center" />
-      <Card {...props}>
-        <CardHeader>
-          <CardTitle>Create account</CardTitle>
-          <CardDescription>Your name, an email and a password are all Mage needs.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handleSubmit}>
-            <FieldGroup>
-              <Field>
-                <FieldLabel htmlFor="name">Name</FieldLabel>
-                <Input id="name" name="name" type="text" autoComplete="name" required />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="email">Email</FieldLabel>
-                <Input
-                  id="email"
-                  name="email"
-                  type="email"
-                  placeholder="you@example.com"
-                  autoComplete="email"
-                  defaultValue={invited}
-                  required
-                />
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="password">Password</FieldLabel>
-                <Input
-                  id="password"
-                  name="password"
-                  type="password"
-                  autoComplete="new-password"
-                  minLength={8}
-                  required
-                />
-                <FieldDescription>At least 8 characters.</FieldDescription>
-              </Field>
-              <Field>
-                <FieldLabel htmlFor="confirm-password">Confirm password</FieldLabel>
-                <Input
-                  id="confirm-password"
-                  name="confirm-password"
-                  type="password"
-                  autoComplete="new-password"
-                  required
-                />
-              </Field>
-              <FieldGroup>
-                <Field>
-                  <FieldError>{error}</FieldError>
-                  <Button type="submit" disabled={pending}>
-                    Create account
-                  </Button>
-                  <FieldDescription className="px-6 text-center">
-                    Already have an account?{" "}
-                    <Link to="/login" search={{ redirect, email: invited }}>
-                      Sign in
-                    </Link>
-                  </FieldDescription>
-                </Field>
-              </FieldGroup>
-            </FieldGroup>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
+    <AuthCard
+      title="Create account"
+      description="Your name, an email and a password are all Mage needs."
+    >
+      <form onSubmit={handleSubmit}>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor="name">Name</FieldLabel>
+            <Input id="name" name="name" type="text" autoComplete="name" required />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="email">Email</FieldLabel>
+            <Input
+              id="email"
+              name="email"
+              type="email"
+              placeholder="you@example.com"
+              autoComplete="email"
+              defaultValue={invited}
+              required
+            />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="password">Password</FieldLabel>
+            <Input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              required
+            />
+            <FieldDescription>At least 8 characters.</FieldDescription>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="confirm-password">Confirm password</FieldLabel>
+            <Input
+              id="confirm-password"
+              name="confirm-password"
+              type="password"
+              autoComplete="new-password"
+              required
+            />
+          </Field>
+          <Field>
+            <FieldError>{error}</FieldError>
+            <Button type="submit" disabled={pending}>
+              Create account
+            </Button>
+            <FieldDescription className="text-center">
+              Already have an account?{" "}
+              <Link to="/login" search={{ redirect, email: invited }}>
+                Sign in
+              </Link>
+            </FieldDescription>
+          </Field>
+        </FieldGroup>
+      </form>
+    </AuthCard>
   );
 }
