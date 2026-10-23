@@ -4,7 +4,7 @@
 
 import * as z from "zod";
 
-import { effortSchema } from "@/shared/threads.ts";
+import { type Effort, effortSchema } from "@/shared/threads.ts";
 
 export const modelSchema = z.object({
   ref: z.string(),
@@ -35,6 +35,28 @@ export const modelAvailabilitySchema = z.object({
 });
 
 export type ModelListSummary = z.infer<typeof modelListSchema>;
+
+// A model and the effort that goes with it, each null where unset. Model and effort are chosen,
+// followed and fallen back on together.
+export interface ModelPair {
+  model: string | null;
+  effort: Effort | null;
+}
+
+// The models a thread can reply with, first to last, each with its effort: the one it names, its
+// own or the default it follows, with its own effort or else the default one; the space's default
+// with the space's effort or else the org's; the org's default with the org's effort.
+export function replyCandidates(thread: ModelPair, space: ModelPair, org: ModelPair) {
+  const defaults = {
+    model: space.model ?? org.model,
+    effort: space.effort ?? org.effort,
+  };
+  return [
+    { ref: thread.model ?? defaults.model, effort: thread.effort ?? defaults.effort },
+    { ref: space.model, effort: defaults.effort },
+    { ref: org.model, effort: org.effort },
+  ];
+}
 
 export const defaultModelSchema = z.object({ ref: z.string().nullable() });
 

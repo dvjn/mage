@@ -49,7 +49,7 @@ export interface RunWorkerOptions {
   log: ThreadLog;
   bus: EventBus;
   transact: Transact;
-  models: Pick<Models, "defaults" | "open" | "replyModel">;
+  models: Pick<Models, "open" | "replyModel">;
   logger: Logger;
   now?: () => Date;
   // How long reply pieces gather before they are stored and announced together.
@@ -475,13 +475,13 @@ export function createRunWorker(options: RunWorkerOptions) {
     const thread = threads.find(run.threadId);
     const space = thread && spaceStore.find(thread.spaceId);
     if (!thread || !space) throw new LeaseLost(run.id);
-    const defaults = models.defaults(space);
-    const effort = thread.effort ?? defaults.effort;
     // A model turned off, or gone with its provider, gives way to the space's default, then the
-    // org's; opening the one named fails the run saying why when none can reply.
-    const replying = await models.replyModel(space, thread.model);
+    // org's, each with its own effort; opening the one named fails the run saying why when none
+    // can reply.
+    const replying = await models.replyModel(space, { model: thread.model, effort: thread.effort });
     if (!replying) throw new RunFailure("Pick a model for this thread.");
     const ref = replying.used?.ref ?? replying.chosen.ref;
+    const { effort } = replying;
     execution.ref = ref;
     const model = await models.open(space.orgId, ref);
     runs.setModel(lease, ref);

@@ -29,6 +29,7 @@ import {
   backendOf,
   connectionLabel,
 } from "@/shared/connections.ts";
+import { type ModelPair, replyCandidates } from "@/shared/models.ts";
 import type { Effort } from "@/shared/threads.ts";
 
 export interface Model extends CatalogModel {
@@ -54,10 +55,12 @@ export interface ModelAvailability {
 
 // The model a thread names, its own or the default it follows, and the one that replies instead
 // while that cannot: the space's default, then the org's, then the first model still on; null
-// when none can.
+// when none can. The effort is the one that goes with the model used: with the first model still
+// on, null for its usual effort.
 export interface ReplyModel {
   chosen: ModelAvailability;
   used: ModelAvailability | null;
+  effort: Effort | null;
 }
 
 // What a thread with no model or effort of its own follows.
@@ -122,20 +125,22 @@ export function defaultsOf(
   };
 }
 
-// The model a thread replies with: the first of its own, its space's default and its org's
-// default that can reply, or, when none can, the first of them, to fail saying why; null with none.
+// The model a thread replies with, and its effort: the first of `replyCandidates` that can reply,
+// or, when none can, the first of them, to fail saying why; null with none.
 export async function pickReplyModel(
-  candidates: (string | null)[],
+  candidates: { ref: string | null; effort: Effort | null }[],
   availabilityOf: (ref: string) => Promise<ModelAvailability>,
 ): Promise<ReplyModel | null> {
-  let chosen: ModelAvailability | null = null;
-  for (const ref of new Set(candidates)) {
-    if (!ref) continue;
+  let first: ReplyModel | null = null;
+  const seen = new Set<string>();
+  for (const { ref, effort } of candidates) {
+    if (!ref || seen.has(ref)) continue;
+    seen.add(ref);
     const found = await availabilityOf(ref);
-    chosen ??= found;
-    if (found.status === "ok") return { chosen, used: found };
+    first ??= { chosen: found, used: null, effort };
+    if (found.status === "ok") return { chosen: first.chosen, used: found, effort };
   }
-  return chosen && { chosen, used: null };
+  return first;
 }
 
 export function createModels(options: ModelsOptions) {
@@ -249,20 +254,27 @@ export function createModels(options: ModelsOptions) {
     return { ref, name: ref.slice(ref.indexOf("/") + 1), status: unread ? "ok" : "unavailable" };
   }
 
+  // The model and effort a thread with `own` replies with; a thread that follows the defaults has
+  // neither of its own.
   async function replyModel(
     space: Pick<Space, "orgId" | "defaultModel" | "defaultEffort">,
-    own: string | null,
-  ) {
-    const org = settings.get(space.orgId).defaultModel;
-    const picked = await pickReplyModel([own, space.defaultModel, org], (ref) =>
-      availability(space.orgId, ref),
+    own: ModelPair,
+  ): Promise<ReplyModel | null> {
+    const org = settings.get(space.orgId);
+    const picked = await pickReplyModel(
+      replyCandidates(
+        own,
+        { model: space.defaultModel, effort: space.defaultEffort },
+        { model: org.defaultModel, effort: org.defaultEffort },
+      ),
+      (ref) => availability(space.orgId, ref),
     );
     if (picked?.used) return picked;
     // The org default gone too: the first model still on, in the list's order.
     const first = (await resolveModels(space.orgId)).models[0];
     if (!first) return picked;
     const used = { ref: first.ref, name: first.name, status: "ok" as const };
-    return { chosen: picked?.chosen ?? used, used };
+    return { chosen: picked?.chosen ?? used, used, effort: null };
   }
 
   // Throws unless the ref names a model the org can use right now.

@@ -26,6 +26,7 @@ import type { OrgRole } from "@/ports/directory.ts";
 import type { Space, SpaceRole } from "@/ports/spaces.ts";
 import type { Connections } from "@/services/connections.ts";
 import { defaultsOf, type Models, pickReplyModel } from "@/services/models.ts";
+import { type ModelPair, replyCandidates } from "@/shared/models.ts";
 import { ServiceError } from "@/services/errors.ts";
 import { createFolders } from "@/services/folders.ts";
 import { createGroups } from "@/services/groups.ts";
@@ -97,7 +98,8 @@ export function setup(
   const models = {
     defaultModel: () => org.defaultModel,
     defaults: (space: Pick<Space, "defaultModel" | "defaultEffort">) => defaultsOf(space, org),
-    replyModel: (space: Pick<Space, "defaultModel">, own: string | null) => replyModel(space, own),
+    replyModel: (space: Pick<Space, "defaultModel" | "defaultEffort">, own: ModelPair) =>
+      replyModel(space, own),
     availability: (_orgId: string, ref: string) =>
       Promise.resolve({
         ref,
@@ -110,9 +112,14 @@ export function setup(
         : Promise.reject(new ServiceError(400, `${ref} is not a model this org can use.`)),
   };
   // The model a run replies with, as the models service decides it, from the refs turned off.
-  function replyModel(space: Pick<Space, "defaultModel">, own: string | null) {
-    return pickReplyModel([own, space.defaultModel, org.defaultModel], (ref) =>
-      models.availability("", ref),
+  function replyModel(space: Pick<Space, "defaultModel" | "defaultEffort">, own: ModelPair) {
+    return pickReplyModel(
+      replyCandidates(
+        own,
+        { model: space.defaultModel, effort: space.defaultEffort },
+        { model: org.defaultModel, effort: org.defaultEffort },
+      ),
+      (ref) => models.availability("", ref),
     );
   }
   const directory = createDirectory(db, auth);
@@ -199,7 +206,7 @@ export function setup(
       bus: countingBus,
       transact,
       flushMs: 1,
-      models: { defaults: models.defaults, open: () => model.open(), replyModel },
+      models: { open: () => model.open(), replyModel },
       logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
       ...workerOptions,
       ...options,

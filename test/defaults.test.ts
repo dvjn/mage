@@ -158,6 +158,78 @@ describe("a thread whose model is turned off", () => {
     expect(threadStore.find(thread.id)?.model).toBe("claude/own");
   });
 
+  it("replies at the effort that goes with the model used, not its own", async () => {
+    const { api, signUp, yourSpace, createThread, org, model, worker } = setup();
+    org.defaultModel = "codex/gpt-big";
+    org.defaultEffort = "low";
+    org.models.push("claude/own", "claude/space");
+    const ada = await signUp("Ada Lovelace", "ada@example.com");
+    const space = await yourSpace(ada.cookie);
+    await api("PATCH", `/spaces/${space.id}/defaults`, ada.cookie, {
+      model: "claude/space",
+      effort: "medium",
+    });
+    const thread = await createThread(ada.cookie, space.id);
+    await api("PATCH", `/threads/${thread.id}`, ada.cookie, {
+      model: "claude/own",
+      effort: "high",
+    });
+    const efforts: (string | undefined)[] = [];
+    async function reply() {
+      await api("POST", `/threads/${thread.id}/messages`, ada.cookie, { text: "Hi" });
+      const call = await model.next();
+      efforts.push(call.request.effort);
+      call.reply("Hello");
+      await worker.idle();
+    }
+
+    worker.start();
+    try {
+      await reply();
+      org.off = ["claude/own"];
+      await reply();
+      org.off = ["claude/own", "claude/space"];
+      await reply();
+    } finally {
+      await worker.stop();
+    }
+
+    expect(efforts).toEqual(["high", "medium", "low"]);
+  });
+
+  it("shows the model and effort that reply instead", async () => {
+    const { api, signUp, yourSpace, createThread, org } = setup();
+    org.defaultModel = "codex/gpt-big";
+    org.defaultEffort = "low";
+    org.models.push("claude/own", "claude/space");
+    const ada = await signUp("Ada Lovelace", "ada@example.com");
+    const space = await yourSpace(ada.cookie);
+    await api("PATCH", `/spaces/${space.id}/defaults`, ada.cookie, {
+      model: "claude/space",
+      effort: "medium",
+    });
+    const thread = await createThread(ada.cookie, space.id);
+    await api("PATCH", `/threads/${thread.id}`, ada.cookie, {
+      model: "claude/own",
+      effort: "high",
+    });
+    const detail = async () =>
+      (await (await api("GET", `/threads/${thread.id}`, ada.cookie)).json()) as {
+        defaults: { used: { ref: string; effort: string | null } | null };
+        model: { used: { ref: string } | null; effort: string | null };
+      };
+
+    expect(await detail()).toMatchObject({
+      defaults: { used: { ref: "claude/space", effort: "medium" } },
+      model: { used: { ref: "claude/own" }, effort: "high" },
+    });
+    org.off = ["claude/own", "claude/space"];
+    expect(await detail()).toMatchObject({
+      defaults: { used: { ref: "codex/gpt-big", effort: "low" } },
+      model: { used: { ref: "codex/gpt-big" }, effort: "low" },
+    });
+  });
+
   it("fails its run saying why when nothing it could use is on", async () => {
     const { api, signUp, yourSpace, createThread, org, makeWorker, threadStore } = setup();
     org.defaultModel = "codex/gpt-big";
@@ -167,10 +239,9 @@ describe("a thread whose model is turned off", () => {
     const thread = await createThread(ada.cookie, space.id);
     const worker = makeWorker({
       models: {
-        defaults: (s) => ({ model: s.defaultModel ?? org.defaultModel, effort: null }),
         replyModel: () => {
           const off = { ref: "codex/gpt-big", name: "GPT Big", status: "off" as const };
-          return Promise.resolve({ chosen: off, used: null });
+          return Promise.resolve({ chosen: off, used: null, effort: null });
         },
         open: () => Promise.reject(new ModelTurnedOff("GPT Big")),
       },

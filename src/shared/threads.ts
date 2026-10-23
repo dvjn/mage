@@ -249,8 +249,12 @@ const modelAvailabilitySchema = z.object({
 export const threadDefaultsSchema = z.object({
   model: z.string().nullable(),
   effort: effortSchema.nullable(),
-  // The default that replies: the space's while it can, else the org's; none when neither can.
-  used: z.object({ ref: z.string(), name: z.string() }).nullable().optional(),
+  // The default that replies, with the effort that goes with it: the space's while it can, else
+  // the org's; none when neither can.
+  used: z
+    .object({ ref: z.string(), name: z.string(), effort: effortSchema.nullable() })
+    .nullable()
+    .optional(),
 });
 
 export type ThreadDefaults = z.infer<typeof threadDefaultsSchema>;
@@ -264,7 +268,12 @@ export const threadDetailSchema = z.object({
   // one is turned off or gone, the space's default, then the org's; null when none can. Null with
   // no model at all.
   model: z
-    .object({ chosen: modelAvailabilitySchema, used: modelAvailabilitySchema.nullable() })
+    .object({
+      chosen: modelAvailabilitySchema,
+      used: modelAvailabilitySchema.nullable(),
+      // The effort that goes with the model used.
+      effort: effortSchema.nullable(),
+    })
     .nullable(),
 });
 

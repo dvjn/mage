@@ -9,6 +9,7 @@ import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import { FolderIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { type ModelPair, replyCandidates } from "@/shared/models.ts";
 import { type Effort, threadSchema } from "@/shared/threads.ts";
 import {
   Conversation,
@@ -76,19 +77,27 @@ export function NewThreadComposer({ spaceId, folderId }: { spaceId: string; fold
   const [error, setError] = useState<string>();
   const space = spaces.data?.find((s) => s.id === spaceId);
   const list = models.data?.models ?? [];
-  // The first of these that can reply, as the server decides it from the same list.
-  const firstListed = (refs: (string | null | undefined)[]) =>
-    refs.map((ref) => list.find((m) => m.ref === ref)).find((found) => !!found);
-  const defaultUsed = firstListed([space?.defaultModel, orgModel.data?.ref]);
+  // The first model, with its effort, that can reply for a thread with `own`, as the server
+  // decides it from the same list.
+  const replying = (own: ModelPair) => {
+    const candidates = replyCandidates(
+      own,
+      { model: space?.defaultModel ?? null, effort: space?.defaultEffort ?? null },
+      { model: orgModel.data?.ref ?? null, effort: orgEffort.data?.effort ?? null },
+    );
+    for (const { ref, effort } of candidates) {
+      const found = list.find((m) => m.ref === ref);
+      if (found) return { ref: found.ref, name: found.name, effort };
+    }
+    return null;
+  };
   const defaults = space && {
     model: space.defaultModel ?? orgModel.data?.ref ?? null,
     effort: space.defaultEffort ?? orgEffort.data?.effort ?? null,
-    used: defaultUsed ? { ref: defaultUsed.ref, name: defaultUsed.name } : null,
+    used: replying({ model: null, effort: null }),
   };
-  // What replies while the model named is turned off or gone: the space's default, then the org's,
-  // as the server decides it, from the same list.
-  const usedModel = firstListed([model, space?.defaultModel, orgModel.data?.ref]);
-  const used = usedModel ? { ref: usedModel.ref, name: usedModel.name } : null;
+  // What replies while the model named is turned off or gone: the space's default, then the org's.
+  const used = replying({ model, effort });
 
   async function send(text: string) {
     if (!text.trim()) return;

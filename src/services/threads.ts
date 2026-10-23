@@ -281,16 +281,18 @@ export function createThreads(options: ThreadsOptions) {
       const { thread, access: via } = access.require(principal, id);
       const space = spaceStore.find(thread.spaceId);
       const defaults = space ? models.defaults(space) : { model: null, effort: null };
+      // The default that replies, with its effort.
+      const following = space && (await models.replyModel(space, { model: null, effort: null }));
+      const used = following?.used ? { used: following.used, effort: following.effort } : null;
       return {
         thread: threadSummary(thread),
         events: threads.eventsAfter(id, 0).map(eventSummary),
         access: via,
-        defaults: {
-          ...defaults,
-          used: space ? ((await models.replyModel(space, null))?.used ?? null) : null,
-        },
+        defaults: { ...defaults, used: used && { ...used.used, effort: used.effort } },
         // The thread's own org decides, whoever reads it.
-        model: space ? await models.replyModel(space, thread.model) : null,
+        model: space
+          ? await models.replyModel(space, { model: thread.model, effort: thread.effort })
+          : null,
       };
     },
 

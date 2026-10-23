@@ -290,7 +290,12 @@ export function ThreadPage() {
                   model={thread?.model ?? null}
                   effort={thread?.effort ?? null}
                   defaults={detail.data?.defaults}
-                  used={detail.data?.model?.used}
+                  used={
+                    detail.data?.model?.used && {
+                      ...detail.data.model.used,
+                      effort: detail.data.model.effort,
+                    }
+                  }
                   onModel={(ref) => void change({ model: ref })}
                   onEffort={(effort) => void change({ effort })}
                   open={picking}

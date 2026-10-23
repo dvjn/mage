@@ -28,7 +28,8 @@ import type { Folders } from "@/services/folders.ts";
 import type { Guests } from "@/services/guests.ts";
 import type { Groups } from "@/services/groups.ts";
 import type { Orgs } from "@/services/orgs.ts";
-import { createModels } from "@/services/models.ts";
+import { createModels, pickReplyModel } from "@/services/models.ts";
+import { replyCandidates } from "@/shared/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
 
@@ -1187,11 +1188,85 @@ describe("the model a thread replies with", () => {
     const space = { orgId: owner.orgId, defaultModel: null, defaultEffort: null };
 
     const [first] = (await models.resolveModels(owner.orgId)).models;
-    expect(await models.replyModel(space, null)).toEqual({
+    expect(await models.replyModel(space, { model: null, effort: null })).toEqual({
       chosen: { ref: "claude/gone", name: "gone", status: "unavailable" },
       used: { ref: first?.ref, name: first?.name, status: "ok" },
+      effort: null,
     });
     // The org's choice stays as it was.
     expect(db.select().from(schema.orgSetting).get()?.defaultModel).toBe("claude/gone");
+  });
+});
+
+describe("a model and its effort", () => {
+  const thread = { model: "a/own", effort: "high" as const };
+  const space = { model: "a/space", effort: "medium" as const };
+  const org = { model: "a/org", effort: "low" as const };
+
+  it("are the thread's own, then each default with the effort that goes with it", () => {
+    expect(replyCandidates(thread, space, org)).toEqual([
+      { ref: "a/own", effort: "high" },
+      { ref: "a/space", effort: "medium" },
+      { ref: "a/org", effort: "low" },
+    ]);
+  });
+
+  it("follow the defaults where the thread has none, its own effort with the model it follows", () => {
+    expect(replyCandidates({ model: null, effort: null }, space, org)[0]).toEqual({
+      ref: "a/space",
+      effort: "medium",
+    });
+    expect(replyCandidates({ model: "a/own", effort: null }, space, org)[0]).toEqual({
+      ref: "a/own",
+      effort: "medium",
+    });
+    expect(replyCandidates({ model: null, effort: "high" }, space, org)[0]).toEqual({
+      ref: "a/space",
+      effort: "high",
+    });
+    // A space without an effort of its own takes the org's with its model.
+    expect(replyCandidates(thread, { model: "a/space", effort: null }, org)[1]).toEqual({
+      ref: "a/space",
+      effort: "low",
+    });
+  });
+
+  it("fall back together to the first that can reply", async () => {
+    const status = (off: string[]) => (ref: string) =>
+      Promise.resolve({
+        ref,
+        name: ref,
+        status: off.includes(ref) ? ("off" as const) : ("ok" as const),
+      });
+    const candidates = replyCandidates(thread, space, org);
+
+    expect(await pickReplyModel(candidates, status(["a/own"]))).toMatchObject({
+      chosen: { ref: "a/own" },
+      used: { ref: "a/space" },
+      effort: "medium",
+    });
+    expect(await pickReplyModel(candidates, status(["a/own", "a/space"]))).toMatchObject({
+      used: { ref: "a/org" },
+      effort: "low",
+    });
+    expect(await pickReplyModel(candidates, status(["a/own", "a/space", "a/org"]))).toMatchObject({
+      chosen: { ref: "a/own" },
+      used: null,
+      effort: "high",
+    });
+  });
+
+  it("are the first model still on with its usual effort when no default can reply", async () => {
+    const { ready, db, models } = setup();
+    const owner = await ready();
+    db.insert(schema.orgSetting)
+      .values({ organizationId: owner.orgId, defaultModel: "claude/gone", defaultEffort: "high" })
+      .run();
+    const space = { orgId: owner.orgId, defaultModel: null, defaultEffort: null };
+
+    const reply = await models.replyModel(space, { model: "claude/gone", effort: "low" });
+
+    expect(reply?.used?.status).toBe("ok");
+    expect(reply?.effort).toBeNull();
   });
 });

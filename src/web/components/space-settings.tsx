@@ -9,6 +9,7 @@ import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useId, useState } from "react";
 
 import type { SpaceSummary } from "@/shared/spaces.ts";
+import { useMissingModel } from "@/web/components/model-picker";
 import { NotFound } from "@/web/components/page-states";
 import { SpaceMembers } from "@/web/components/space-members";
 import {
@@ -124,6 +125,8 @@ function SpaceModel({ space }: { space: SpaceSummary }) {
   }
 
   const orgModelName = modelName(list, orgModel.data?.ref ?? null) ?? "none picked";
+  // While the space's model is turned off or gone, its threads take the org's model and effort.
+  const fallingBack = !!useMissingModel(list, space.defaultModel, models.isPending);
   const orgEffortName = orgEffort.data?.effort ? EFFORT_LABELS[orgEffort.data.effort] : "Medium";
   return (
     <SettingsCard
@@ -150,7 +153,7 @@ function SpaceModel({ space }: { space: SpaceSummary }) {
             disabled={!owner}
           />
           <EffortField
-            value={space.defaultEffort}
+            value={fallingBack ? null : space.defaultEffort}
             onChange={(effort) => void change({ effort })}
             defaultLabel={`Default · ${orgEffortName}`}
             disabled={!owner}

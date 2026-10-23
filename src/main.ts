@@ -119,15 +119,15 @@ const access = createThreadAccess({ spaces, threads: threadStore, guests: guestS
 // The stand-in model answers every thread, whatever model it names.
 const fakeGateway = createFakeGateway();
 const fakeModel = { ref: FAKE_MODEL_REF, name: "echo", status: "ok" as const };
-const runModels: Pick<Models, "defaults" | "open" | "replyModel"> = config.fakeModels
+const runModels: Pick<Models, "open" | "replyModel"> = config.fakeModels
   ? {
-      defaults: (space) => {
-        const defaults = models.defaults(space);
-        return { ...defaults, model: defaults.model ?? FAKE_MODEL_REF };
-      },
       // Picked as for providers, so a model turned off gives way; with none, the stand-in.
       replyModel: async (space, own) =>
-        (await models.replyModel(space, own)) ?? { chosen: fakeModel, used: fakeModel },
+        (await models.replyModel(space, own)) ?? {
+          chosen: fakeModel,
+          used: fakeModel,
+          effort: own.effort,
+        },
       open: () =>
         Promise.resolve({
           stream: (request, signal) =>

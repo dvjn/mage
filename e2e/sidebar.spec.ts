@@ -242,7 +242,9 @@ test("a thread on a model turned off replies with the default until it is back o
   await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const threadId = page.url().split("/t/")[1]!;
-  await api("PATCH", `/threads/${threadId}`, { model: `${key.id}/echo-mini` });
+  // Its own effort goes with its own model; the default takes the org's effort with it.
+  await api("PUT", "/settings/default-effort", { effort: "low" });
+  await api("PATCH", `/threads/${threadId}`, { model: `${key.id}/echo-mini`, effort: "high" });
   // The space starts threads on the same model, so its default gives way to the org's too.
   const [space] = (await (await api("GET", "/spaces")).json()) as { id: string }[];
   await api("PATCH", `/spaces/${space!.id}/defaults`, { model: `${key.id}/echo-mini` });
@@ -254,6 +256,9 @@ test("a thread on a model turned off replies with the default until it is back o
   const model = page.getByRole("combobox", { name: "Model", exact: true });
   await expect(model).toContainText("Default · Echo");
   await expect(model).toHaveClass(/text-amber/);
+  await expect(page.getByRole("combobox", { name: "Reasoning effort" })).toContainText(
+    "Default · Low",
+  );
   await model.hover();
   await expect(page.locator("[data-slot=tooltip-content]")).toContainText(
     "Echo Mini is turned off, so this thread uses the default",

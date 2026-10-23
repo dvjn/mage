@@ -224,13 +224,12 @@ describe("failures", () => {
     const { ada, post, events, start, makeWorker } = await agentThread();
     const noConnection = makeWorker({
       models: {
-        defaults: () => ({ model: "claude/claude-big", effort: null }),
         replyModel: (_space, own) => {
-          const ok = { ref: own ?? "claude/claude-big", name: "", status: "ok" as const };
-          return Promise.resolve({ chosen: ok, used: ok });
+          const ok = { ref: own.model ?? "codex/gpt-big", name: "", status: "ok" as const };
+          return Promise.resolve({ chosen: ok, used: ok, effort: null });
         },
         open: () =>
-          Promise.reject(new ModelError("auth", "claude/claude-big needs a Claude connection.")),
+          Promise.reject(new ModelError("auth", "codex/gpt-big needs a Codex connection.")),
       },
     });
     start(noConnection);
