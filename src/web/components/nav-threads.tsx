@@ -35,7 +35,7 @@ import type { FolderSummary } from "@/shared/folders.ts";
 import type { SpaceSummary } from "@/shared/spaces.ts";
 import type { ThreadSummary } from "@/shared/threads.ts";
 import { type NavAction, NavDialogs } from "@/web/components/nav-dialogs";
-import { FolderChoices } from "@/web/components/folder-choice";
+import { FolderPickerDialog } from "@/web/components/folder-choice";
 import { ShortcutHint } from "@/web/components/shortcut-keys";
 import { useToast } from "@/web/components/toaster";
 import { ThreadTitle } from "@/web/components/thread-title";
@@ -50,9 +50,6 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/web/components/ui/dropdown-menu";
 import {
@@ -101,6 +98,7 @@ interface Nav {
   act: (action: NavAction) => void;
   startThread: (folderId: string) => void;
   folders: FolderSummary[];
+  spaceId: string;
   // Moves a thread to a folder or out of one; a failure is told in a toast.
   move: (thread: ThreadSummary, folderId: string | null) => void;
   role: SpaceSummary["role"];
@@ -145,6 +143,7 @@ function ItemMenu({ name, children }: { name: string; children: ReactNode }) {
 
 function ThreadItem({ thread }: { thread: ThreadSummary }) {
   const nav = useNav();
+  const [moving, setMoving] = useState(false);
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
@@ -160,19 +159,10 @@ function ThreadItem({ thread }: { thread: ThreadSummary }) {
             <PencilIcon />
             Rename…
           </DropdownMenuItem>
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              <FolderInputIcon />
-              Move to
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="min-w-44">
-              <FolderChoices
-                folders={nav.folders}
-                value={thread.folderId}
-                onChange={(folderId) => nav.move(thread, folderId)}
-              />
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
+          <DropdownMenuItem onClick={() => setMoving(true)}>
+            <FolderInputIcon />
+            Move to…
+          </DropdownMenuItem>
           {nav.role === "owner" && (
             <>
               <DropdownMenuSeparator />
@@ -187,6 +177,15 @@ function ThreadItem({ thread }: { thread: ThreadSummary }) {
           )}
         </ItemMenu>
       )}
+      <FolderPickerDialog
+        spaceId={nav.spaceId}
+        title={thread.title}
+        folders={nav.folders}
+        value={thread.folderId}
+        open={moving}
+        onOpenChange={setMoving}
+        onChange={(folderId) => nav.move(thread, folderId)}
+      />
     </SidebarMenuItem>
   );
 }
@@ -346,6 +345,7 @@ function SpaceThreads({ space }: { space: SpaceSummary }) {
       act: setAction,
       startThread: (folderId) => newThread(space.id, folderId),
       folders: folderList,
+      spaceId: space.id,
       move: (thread, folderId) => {
         if (thread.folderId === folderId) return;
         void apiClient.v1.threads[":id"]
@@ -357,6 +357,7 @@ function SpaceThreads({ space }: { space: SpaceSummary }) {
             }
             if (folderId) setFolderOpen(folderId, true);
             await queryClient.invalidateQueries({ queryKey: ["spaces", space.id] });
+            await queryClient.invalidateQueries({ queryKey: ["threads", thread.id] });
           });
       },
       role: space.role,

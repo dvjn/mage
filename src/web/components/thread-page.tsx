@@ -26,6 +26,7 @@ import {
   ConversationScrollButton,
 } from "@/web/components/ai-elements/conversation";
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
+import { folderCrumb } from "@/web/components/folder-choice";
 import { GoHome, NotFound } from "@/web/components/page-states";
 import { ShareDialog } from "@/web/components/share-dialog";
 import { Composer, PendingTray, RunStatus } from "@/web/components/thread-composer";
@@ -40,6 +41,7 @@ import { rememberSpace } from "@/web/lib/last-space";
 import {
   meQuery,
   modelsQuery,
+  spaceFoldersQuery,
   spaceThreadsQuery,
   spacesQuery,
   ThreadAccessEnded,
@@ -70,6 +72,10 @@ export function ThreadPage() {
   const guest = access?.via === "guest";
   const role = access?.via === "space" ? access.role : undefined;
   const space = spaces.data?.find((s) => s.id === thread?.spaceId);
+  const folders = useQuery({
+    ...spaceFoldersQuery(thread?.spaceId ?? ""),
+    enabled: !!thread && !guest,
+  });
 
   // A guest's thread is not in one of their own spaces.
   useEffect(() => {
@@ -167,6 +173,23 @@ export function ThreadPage() {
     await queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
   }
 
+  // Moves the thread to a folder, or out of one, as the sidebar's "Move to" does.
+  async function move(folderId: string | null) {
+    if (!thread || thread.folderId === folderId) return;
+    const res = await apiClient.v1.threads[":id"].$patch({
+      param: { id: thread.id },
+      json: { folderId },
+    });
+    if (!res.ok) {
+      toast(await errorOf(res));
+      return;
+    }
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: threadQuery(thread.id).queryKey }),
+      queryClient.invalidateQueries({ queryKey: ["spaces", thread.spaceId] }),
+    ]);
+  }
+
   if (notFound) return <NotFound what="thread" id={threadId} />;
 
   if (ended) {
@@ -197,6 +220,17 @@ export function ThreadPage() {
                   },
                 ]
               : []),
+          ...(thread && !guest
+            ? [
+                folderCrumb({
+                  spaceId: thread.spaceId,
+                  folders: folders.data ?? [],
+                  value: thread.folderId,
+                  canMove: role === "owner" || role === "messager",
+                  onChange: (folderId) => void move(folderId),
+                }),
+              ].filter((crumb) => crumb !== null)
+            : []),
           { label: thread?.title ?? "" },
         ]}
       >

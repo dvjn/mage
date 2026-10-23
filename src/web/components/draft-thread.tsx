@@ -6,10 +6,9 @@
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
-import { ChevronDownIcon, FolderIcon } from "lucide-react";
+import { FolderIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import type { FolderSummary } from "@/shared/folders.ts";
 import { type Effort, threadSchema } from "@/shared/threads.ts";
 import {
   Conversation,
@@ -17,14 +16,8 @@ import {
   ConversationEmptyState,
 } from "@/web/components/ai-elements/conversation";
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
-import { FolderChoices, NO_FOLDER } from "@/web/components/folder-choice";
+import { folderCrumb } from "@/web/components/folder-choice";
 import { Composer } from "@/web/components/thread-composer";
-import { Button } from "@/web/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuTrigger,
-} from "@/web/components/ui/dropdown-menu";
 import { ThreadPickers } from "@/web/components/thread-pickers";
 import { FieldError } from "@/web/components/ui/field";
 import { apiClient } from "@/web/lib/api-client";
@@ -66,40 +59,6 @@ export function useCreateThread() {
     await queryClient.invalidateQueries({ queryKey: spaceThreadsQuery(spaceId).queryKey });
     await navigate({ to: "/t/$threadId", params: { threadId: thread.id }, replace: true });
   };
-}
-
-// The breadcrumb's folder: a menu of "No folder" and the space's folders, the chosen one checked.
-function FolderMenu({
-  folders,
-  value,
-  onChange,
-}: {
-  folders: FolderSummary[];
-  value: string | null;
-  onChange: (folderId: string | null) => void;
-}) {
-  const current = folders.find((f) => f.id === value);
-  return (
-    <DropdownMenu>
-      <DropdownMenuTrigger
-        render={
-          <Button
-            size="xs"
-            variant="ghost"
-            aria-label={`Folder: ${current?.name ?? NO_FOLDER}`}
-            className="max-w-40 font-normal"
-          />
-        }
-      >
-        <FolderIcon />
-        <span className="truncate">{current?.name ?? NO_FOLDER}</span>
-        <ChevronDownIcon />
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" className="min-w-44">
-        <FolderChoices folders={folders} value={current?.id ?? null} onChange={onChange} />
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
 }
 
 // Writing a new thread's first message, on the model and effort picked beside it or the space's
@@ -195,27 +154,21 @@ export function DraftThread() {
           ...(space
             ? [{ label: space.name, link: { to: "/s/$spaceId" as const, params: { spaceId } } }]
             : []),
-          ...((folders.data?.length ?? 0) > 0
-            ? [
-                {
-                  label: folder?.name ?? NO_FOLDER,
-                  control: (
-                    <FolderMenu
-                      folders={folders.data ?? []}
-                      value={folder?.id ?? null}
-                      onChange={(id) =>
-                        void navigate({
-                          to: "/s/$spaceId/new",
-                          params: { spaceId },
-                          search: id ? { folder: id } : {},
-                          replace: true,
-                        })
-                      }
-                    />
-                  ),
-                },
-              ]
-            : []),
+          ...[
+            folderCrumb({
+              spaceId,
+              folders: folders.data ?? [],
+              value: folder?.id ?? null,
+              canMove: !!space && space.role !== "viewer" && space.role !== null,
+              onChange: (id) =>
+                void navigate({
+                  to: "/s/$spaceId/new",
+                  params: { spaceId },
+                  search: id ? { folder: id } : {},
+                  replace: true,
+                }),
+            }),
+          ].filter((crumb) => crumb !== null),
           { label: "New thread" },
         ]}
       />
