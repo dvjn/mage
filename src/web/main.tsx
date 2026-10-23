@@ -5,6 +5,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { ThemeProvider } from "@/web/components/theme-provider";
+import { Toaster } from "@/web/components/toaster";
 import { cacheMaxAge, cacheOptions } from "@/web/lib/query-cache";
 import { createAppRouter } from "@/web/router";
 
@@ -20,7 +21,9 @@ createRoot(root).render(
   <StrictMode>
     <ThemeProvider defaultTheme="system">
       <PersistQueryClientProvider client={queryClient} persistOptions={cacheOptions(queryClient)}>
-        <RouterProvider router={router} />
+        <Toaster>
+          <RouterProvider router={router} />
+        </Toaster>
       </PersistQueryClientProvider>
     </ThemeProvider>
   </StrictMode>,

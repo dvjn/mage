@@ -13,8 +13,22 @@ async function signUpToSettings(page: Page) {
   await expect(page).toHaveURL(/\/s\/[^/]+$/);
 
   await page.getByRole("button", { name: "Account menu" }).click();
-  await page.getByRole("menuitem", { name: "Settings" }).click();
-  await expect(page).toHaveURL("/settings");
+  await page.getByRole("menuitem", { name: "Organization settings" }).click();
+  await expect(page).toHaveURL("/org/general");
+  await page
+    .getByRole("navigation", { name: "Organization settings" })
+    .getByRole("link", { name: "Model providers" })
+    .click();
+  await expect(page).toHaveURL("/org/providers");
+}
+
+// Opens the add-provider journey at the provider and way of connecting given.
+async function addProvider(page: Page, provider: string, method: string) {
+  await page.getByRole("button", { name: "Add provider" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByRole("button", { name: new RegExp(`^${provider}`) }).click();
+  await dialog.getByRole("button", { name: new RegExp(`^${method}`) }).click();
+  return dialog;
 }
 
 test("settings offers the Codex sign-in and rejects a pasted address from another sign-in", async ({
@@ -27,7 +41,7 @@ test("settings offers the Codex sign-in and rejects a pasted address from anothe
   );
 
   await signUpToSettings(page);
-  await expect(page.getByText("Sign in with Codex")).toBeVisible();
+  await addProvider(page, "OpenAI", "Sign in with ChatGPT");
   await expect(page.getByRole("button", { name: "Device code" })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -51,18 +65,14 @@ test("settings offers the Codex sign-in and rejects a pasted address from anothe
   await expect(page.getByRole("alert")).toContainText("different sign-in");
 });
 
-test("settings offers the Claude sign-in with its billing note", async ({ page, context }) => {
+test("settings offers the Claude sign-in", async ({ page, context }) => {
   // The authorize page is never loaded from Claude.
   await context.route("https://claude.ai/**", (route) =>
     route.fulfill({ contentType: "text/html", body: "<title>Claude</title>" }),
   );
 
   await signUpToSettings(page);
-  await expect(page.getByText("Sign in with Claude")).toBeVisible();
-  await expect(page.getByRole("link", { name: "extra usage" })).toHaveAttribute(
-    "href",
-    "https://claude.ai/settings/usage",
-  );
+  await addProvider(page, "Anthropic", "Sign in with Claude");
 
   const [popup] = await Promise.all([
     page.waitForEvent("popup"),
@@ -80,7 +90,7 @@ test("settings offers the Claude sign-in with its billing note", async ({ page, 
   await expect(page.getByRole("alert")).toContainText("different sign-in");
 });
 
-test("a connection's proxy is set under Advanced, its header values never shown", async ({
+test("a connection's proxy is set from its row, its header values never shown", async ({
   page,
 }) => {
   // Stands in for a connected Claude account, which needs a real sign-in.
@@ -89,6 +99,7 @@ test("a connection's proxy is set under Advanced, its header values never shown"
     provider: "anthropic",
     authKind: "claude",
     account: "ada@claude.example",
+    label: null,
     createdAt: "2026-10-21T00:00:00.000Z",
   };
   let proxy: { baseUrl: string | null; headerNames: string[] } | null = null;
@@ -110,9 +121,12 @@ test("a connection's proxy is set under Advanced, its header values never shown"
   });
 
   await signUpToSettings(page);
-  await expect(page.getByText("Connected as ada@claude.example")).toBeVisible();
+  const row = page.getByRole("row", { name: "Claude" });
+  await expect(row).toContainText("ada@claude.example");
+  await expect(row).toContainText("Claude sign-in");
   await expect(page.getByLabel("Base URL")).toBeHidden();
-  await page.getByRole("button", { name: "Advanced" }).click();
+  await row.getByRole("button", { name: "Actions for Claude" }).click();
+  await page.getByRole("menuitem", { name: "Proxy settings…" }).click();
   await expect(page.getByLabel("Base URL")).toHaveAttribute(
     "placeholder",
     "https://api.anthropic.com/v1",
@@ -124,14 +138,22 @@ test("a connection's proxy is set under Advanced, its header values never shown"
   await page.getByLabel("Value of X-Team").fill("blue");
   await page.getByRole("button", { name: "Save" }).click();
 
-  await expect(page.getByText("Proxy on")).toBeVisible();
+  await expect(page.getByText("Proxy saved.")).toBeVisible();
   await expect(page.getByLabel("Value of x-team")).toHaveValue("");
   await expect(page.getByLabel("Value of x-team")).toHaveAttribute("placeholder", "••••");
   await page.getByRole("button", { name: "Save" }).click();
   await expect.poll(() => sent.length).toBe(2);
+  await page.keyboard.press("Escape");
+  await row.getByRole("button", { name: "Actions for Claude" }).click();
+  await page.getByRole("menuitem", { name: "Proxy settings…" }).click();
+  await expect(page.getByLabel("Base URL")).toHaveValue("https://proxy.example.com/v1");
 
   await page.getByRole("button", { name: "Clear" }).click();
-  await expect(page.getByText("Proxy on")).toBeHidden();
+  await expect(page.getByText("Proxy cleared.")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await row.getByRole("button", { name: "Actions for Claude" }).click();
+  await page.getByRole("menuitem", { name: "Proxy settings…" }).click();
+  await expect(page.getByLabel("Base URL")).toHaveValue("");
   expect(sent).toEqual([
     { baseUrl: "https://proxy.example.com/v1", headers: { "X-Team": "blue" } },
     { baseUrl: "https://proxy.example.com/v1", headers: { "x-team": null } },
@@ -140,6 +162,6 @@ test("a connection's proxy is set under Advanced, its header values never shown"
 });
 
 test("settings needs a session", async ({ page }) => {
-  await page.goto("/settings");
+  await page.goto("/org/providers");
   await expect(page).toHaveURL("/login");
 });

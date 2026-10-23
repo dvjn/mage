@@ -1,4 +1,5 @@
-// Asks for a name, to make or rename a space, a folder or a thread. It opens from its trigger, or
+// Asks for a name, to make or rename a space, a folder or a thread, or label an API key, where it
+// may be left empty. It opens from its trigger, or
 // from its owner when it has no trigger.
 
 import { type FormEvent, type ReactElement, useId, useState } from "react";
@@ -6,6 +7,7 @@ import { type FormEvent, type ReactElement, useId, useState } from "react";
 import { Button } from "@/web/components/ui/button";
 import {
   Dialog,
+  DialogClose,
   DialogContent,
   DialogFooter,
   DialogHeader,
@@ -23,6 +25,8 @@ export function NameDialog({
   action,
   initialName = "",
   maxLength = 80,
+  label = "Name",
+  required = true,
   onSubmit,
 }: {
   trigger?: ReactElement;
@@ -32,6 +36,8 @@ export function NameDialog({
   action: string;
   initialName?: string;
   maxLength?: number;
+  label?: string;
+  required?: boolean;
   // Resolves to an error to show, or nothing when done.
   onSubmit: (name: string) => Promise<string | undefined>;
 }) {
@@ -72,12 +78,12 @@ export function NameDialog({
           </DialogHeader>
           <FieldGroup className="py-4">
             <Field>
-              <FieldLabel htmlFor={id}>Name</FieldLabel>
+              <FieldLabel htmlFor={id}>{label}</FieldLabel>
               <Input
                 id={id}
                 name="name"
                 defaultValue={initialName}
-                required
+                required={required}
                 maxLength={maxLength}
                 autoComplete="off"
               />
@@ -85,6 +91,7 @@ export function NameDialog({
             </Field>
           </FieldGroup>
           <DialogFooter>
+            <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
             <Button type="submit" disabled={pending}>
               {action}
             </Button>

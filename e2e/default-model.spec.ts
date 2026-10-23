@@ -13,20 +13,18 @@ async function signUpToSettings(page: Page) {
   await expect(page).toHaveURL(/\/s\/[^/]+$/);
 
   await page.getByRole("button", { name: "Account menu" }).click();
-  await page.getByRole("menuitem", { name: "Settings" }).click();
-  await expect(page).toHaveURL("/settings");
+  await page.getByRole("menuitem", { name: "Organization settings" }).click();
+  await expect(page).toHaveURL("/org/general");
 }
 
 test("settings shows the default model card", async ({ page }) => {
   await signUpToSettings(page);
   await expect(page.getByText("Default model", { exact: true })).toBeVisible();
   await expect(page.getByText("Pick a default model for new threads.")).toBeVisible();
-  await expect(page.getByPlaceholder("Connect an account first")).toBeDisabled();
+  await expect(page.getByLabel("Default model")).toBeDisabled();
+  await expect(page.getByLabel("Default model")).toContainText("Add a model provider first");
   await expect(page.getByRole("button", { name: "Refresh models" })).toBeVisible();
-  await expect(page.getByLabel("Title model")).toHaveAttribute(
-    "placeholder",
-    "Automatic (each thread's model)",
-  );
+  await expect(page.getByLabel("Title model")).toContainText("Automatic · each thread's model");
 });
 
 test("the default model picker groups models by connection and shows list errors", async ({
@@ -43,6 +41,7 @@ test("the default model picker groups models by connection and shows list errors
             name: "GPT Big",
             connectionId: "c1",
             authKind: "codex",
+            connectionLabel: "Codex",
           },
           {
             ref: "claude/claude-big",
@@ -50,16 +49,18 @@ test("the default model picker groups models by connection and shows list errors
             name: "Claude Big",
             connectionId: "c2",
             authKind: "claude",
+            connectionLabel: "Claude",
           },
         ],
         errors: [{ connectionId: "c3", message: "Could not read the Claude models. Try again." }],
+        turnedOff: [],
       },
     }),
   );
 
   await signUpToSettings(page);
   await expect(page.getByRole("alert").filter({ hasText: "Could not read" })).toBeVisible();
-  await page.getByPlaceholder("Pick a default").click();
+  await page.getByLabel("Default model").click();
   const list = page.getByRole("listbox");
   await expect(list.getByText("Codex", { exact: true })).toBeVisible();
   await expect(list.getByText("Claude", { exact: true })).toBeVisible();

@@ -45,11 +45,14 @@ async function nameIt(page: Page, name: string, action: string) {
   await expect(dialog).toBeHidden();
 }
 
+// Starts a draft in the folder; its first message makes the thread and names it.
 async function newThreadIn(page: Page, folderName: string, title: string) {
   await itemMenu(page, folderName, "New thread");
+  await expect(page).toHaveURL(/\/s\/[^/]+\/new\?folder=/);
+  await expect(page.getByText(`New thread in ${folderName}`)).toBeVisible();
+  await page.getByLabel("Message", { exact: true }).fill(title);
+  await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
-  await itemMenu(page, "New thread", "Rename");
-  await nameIt(page, title, "Rename");
 }
 
 test("a thread started in a folder stays there after a reload and moves to the top", async ({
@@ -65,8 +68,8 @@ test("a thread started in a folder stays there after a reload and moves to the t
   await page.reload();
   await expect(folder(page, "Engines").getByRole("link", { name: "Pistons" })).toBeVisible();
 
-  await itemMenu(page, "Pistons", "Move to…");
-  await page.getByRole("option", { name: "Top of the space" }).click();
+  await itemMenu(page, "Pistons", "Move to");
+  await page.getByRole("menuitem", { name: "No folder" }).click();
   await expect(sidebar(page).getByRole("link", { name: "Pistons" })).toBeVisible();
   await expect(folder(page, "Engines").getByRole("link", { name: "Pistons" })).toHaveCount(0);
 });

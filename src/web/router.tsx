@@ -1,5 +1,6 @@
 // Pages: login and signup when signed out; when signed in, the app shell with a space and its
-// settings, a thread, the threads shared with you and settings, opening on the last space used.
+// settings, a new thread's draft, a thread, the threads shared with you, and the organization's
+// settings, opening on the last space used.
 // Each side redirects to the other; signing in or up goes back to the page that asked for it, such
 // as an invite link, which is open either way.
 
@@ -15,11 +16,14 @@ import {
 import { AppShell, PageHeader } from "@/web/components/app-shell";
 import { InvitePage } from "@/web/components/invite-page";
 import { LoginForm } from "@/web/components/login-form";
-import { Settings } from "@/web/components/settings";
+import { OrgGeneral } from "@/web/components/settings/org-general";
+import { OrgProviders } from "@/web/components/settings/org-providers";
+import { OrgShell } from "@/web/components/settings/org-shell";
 import { SharedPage } from "@/web/components/shared-page";
 import { SignupForm } from "@/web/components/signup-form";
 import { SpacePage } from "@/web/components/space-page";
 import { SpaceSettings } from "@/web/components/space-settings";
+import { DraftThread } from "@/web/components/draft-thread";
 import { ThreadPage } from "@/web/components/thread-page";
 import { lastSpace } from "@/web/lib/last-space";
 import { sessionQuery, spacesQuery } from "@/web/lib/queries";
@@ -118,6 +122,15 @@ const spaceSettingsRoute = createRoute({
   component: SpaceSettings,
 });
 
+// A thread not made yet, at the top of the space or in `?folder=`.
+const draftRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/s/$spaceId/new",
+  validateSearch: (search: Record<string, unknown>): { folder?: string } =>
+    typeof search.folder === "string" ? { folder: search.folder } : {},
+  component: DraftThread,
+});
+
 const threadRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/t/$threadId",
@@ -130,10 +143,39 @@ const sharedRoute = createRoute({
   component: SharedPage,
 });
 
+// The organization's settings, opening on its general page; /settings leads there too.
+const orgRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/org",
+  component: OrgShell,
+});
+
+const orgIndexRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: "/",
+  beforeLoad: () => {
+    throw redirect({ to: "/org/general" });
+  },
+});
+
+const orgGeneralRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: "/general",
+  component: OrgGeneral,
+});
+
+const orgProvidersRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: "/providers",
+  component: OrgProviders,
+});
+
 const settingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/settings",
-  component: Settings,
+  beforeLoad: () => {
+    throw redirect({ to: "/org/general" });
+  },
 });
 
 export function createAppRouter(queryClient: QueryClient) {
@@ -145,8 +187,10 @@ export function createAppRouter(queryClient: QueryClient) {
         homeRoute,
         spaceRoute,
         spaceSettingsRoute,
+        draftRoute,
         threadRoute,
         sharedRoute,
+        orgRoute.addChildren([orgIndexRoute, orgGeneralRoute, orgProvidersRoute]),
         settingsRoute,
       ]),
     ]),

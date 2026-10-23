@@ -1,11 +1,19 @@
-// The signed-in user at the foot of the sidebar, with a menu for the theme, settings and signing
-// out.
+// The signed-in user at the foot of the sidebar, with a menu for the theme, the keyboard
+// shortcuts, the organization's settings and signing out.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ChevronsUpDownIcon, LogOutIcon, Settings2Icon, SunMoonIcon } from "lucide-react";
+import {
+  ChevronsUpDownIcon,
+  KeyboardIcon,
+  LogOutIcon,
+  Settings2Icon,
+  SunMoonIcon,
+} from "lucide-react";
 
-import { type Theme, useTheme } from "@/web/components/theme-provider";
+import { Kbd } from "@/web/components/ui/kbd";
+import { useOpenShortcutsHelp } from "@/web/components/shortcuts-help";
+import { type Theme, THEMES, useTheme } from "@/web/components/theme-provider";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
 import {
   DropdownMenu,
@@ -28,20 +36,16 @@ import {
   useSidebar,
 } from "@/web/components/ui/sidebar";
 import { authClient } from "@/web/lib/auth-client";
+import { shortcutHint } from "@/web/lib/shortcuts";
 import { initialsOf } from "@/web/lib/initials";
 import { forgetCache } from "@/web/lib/query-cache";
-
-const THEMES: { value: Theme; label: string }[] = [
-  { value: "light", label: "Light" },
-  { value: "dark", label: "Dark" },
-  { value: "system", label: "System" },
-];
 
 export function NavUser({ user }: { user: { name: string; email: string } }) {
   const { isMobile } = useSidebar();
   const { theme, setTheme } = useTheme();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const openHelp = useOpenShortcutsHelp();
 
   async function signOut() {
     await authClient.signOut();
@@ -108,9 +112,14 @@ export function NavUser({ user }: { user: { name: string; email: string } }) {
                   </DropdownMenuRadioGroup>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
-              <DropdownMenuItem render={<Link to="/settings" />}>
+              <DropdownMenuItem onClick={openHelp}>
+                <KeyboardIcon />
+                Keyboard shortcuts
+                <Kbd className="ml-auto">{shortcutHint("help")}</Kbd>
+              </DropdownMenuItem>
+              <DropdownMenuItem render={<Link to="/org/general" />}>
                 <Settings2Icon />
-                Settings
+                Organization settings
               </DropdownMenuItem>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />

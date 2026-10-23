@@ -1,21 +1,21 @@
 // A thread: its transcript as it happens, kept scrolled to the newest, what the agent is doing and
 // the messages waiting for it, a composer to post, steer, queue, interrupt and stop, trying the
 // last reply again when it failed or was stopped, and the thread's model with, for a model that can
-// think, its reasoning effort. Its space's owners and messagers can share it from its header. A
+// think, its reasoning effort, or the defaults it follows, named as such, with a way back to them.
+// Its space's owners and messagers can share it from its header. A
 // guest of the thread sees its space's name alone, and cannot change its model; once their access
 // ends, they are told so. When the server cannot be reached, the thread as last read stays in view
 // while it reconnects.
 
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, Link } from "@tanstack/react-router";
+import { getRouteApi } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   anyThreadEventSchema,
   type Delivery,
   type Effort,
-  effortSchema,
   threadSchema,
 } from "@/shared/threads.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
@@ -26,18 +26,12 @@ import {
   ConversationScrollButton,
 } from "@/web/components/ai-elements/conversation";
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
-import {
-  PromptInputSelect,
-  PromptInputSelectContent,
-  PromptInputSelectItem,
-  PromptInputSelectTrigger,
-  PromptInputSelectValue,
-} from "@/web/components/ai-elements/prompt-input";
-import { ModelPicker } from "@/web/components/model-picker";
+import { GoHome, NotFound } from "@/web/components/page-states";
 import { ShareDialog } from "@/web/components/share-dialog";
 import { Composer, PendingTray, RunStatus } from "@/web/components/thread-composer";
+import { ThreadPickers } from "@/web/components/thread-pickers";
 import { AgentStarting, TranscriptItem } from "@/web/components/thread-events";
-import { Button } from "@/web/components/ui/button";
+import { useToast } from "@/web/components/toaster";
 import { FieldError } from "@/web/components/ui/field";
 import { Spinner } from "@/web/components/ui/spinner";
 import { apiClient } from "@/web/lib/api-client";
@@ -56,12 +50,6 @@ import { mergeEvents, useThreadEvents } from "@/web/lib/thread-events";
 
 const threadRoute = getRouteApi("/_app/t/$threadId");
 
-const EFFORT_LABELS: Record<Effort, string> = {
-  low: "Low",
-  medium: "Medium",
-  high: "High",
-};
-
 export function ThreadPage() {
   const { threadId } = threadRoute.useParams();
   const queryClient = useQueryClient();
@@ -69,7 +57,9 @@ export function ThreadPage() {
   const spaces = useQuery(spacesQuery);
   const models = useQuery(modelsQuery);
   const me = useQuery(meQuery);
+  // A message that could not be posted, said above the composer; other failures are toasts.
   const [error, setError] = useState<string>();
+  const toast = useToast();
   const [sending, setSending] = useState(false);
   // The run someone here asked to stop.
   const [stopped, setStopped] = useState<string>();
@@ -141,7 +131,7 @@ export function ThreadPage() {
     setStopped(run.id);
     const res = await apiClient.v1.threads[":id"].stop.$post({ param: { id: threadId } });
     // A run that ended meanwhile has nothing to stop.
-    if (!res.ok && (res.status as number) !== 409) setError(await errorOf(res));
+    if (!res.ok && (res.status as number) !== 409) toast(await errorOf(res));
   }
 
   async function retry(runId: string) {
@@ -150,15 +140,11 @@ export function ThreadPage() {
       json: { runId },
     });
     if (!res.ok) {
-      setError(await errorOf(res));
+      toast(await errorOf(res));
       return;
     }
-    setError(undefined);
     mergeEvents(queryClient, threadId, [anyThreadEventSchema.parse(await res.json())]);
   }
-
-  // Whether the thread's model can think, so its effort can be chosen.
-  const thinks = !!models.data?.models.find((model) => model.ref === thread?.model)?.reasoning;
 
   // The last row, when it ends a run that failed or was stopped and nothing has run since.
   const last = transcript.rows.at(-1);
@@ -167,26 +153,21 @@ export function ThreadPage() {
     canRetry && (last?.kind === "failure" || last?.kind === "stop") ? last : undefined;
 
   // Changes the thread's model or reasoning effort.
-  async function change(json: { model: string } | { effort: Effort }) {
+  async function change(json: { model: string | null } | { effort: Effort | null }) {
     const res = await apiClient.v1.threads[":id"].$patch({ param: { id: threadId }, json });
     if (!res.ok) {
-      setError(await errorOf(res));
+      toast(await errorOf(res));
       return;
     }
     const updated = threadSchema.parse(await res.json());
     queryClient.setQueryData(threadQuery(threadId).queryKey, (current) =>
       current ? { ...current, thread: updated } : current,
     );
+    // Whether the model it now names can reply is the server's to say.
+    await queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
   }
 
-  if (notFound) {
-    return (
-      <>
-        <PageHeader crumbs={[{ label: "Not found" }]} />
-        <p className="p-4 text-muted-foreground">This thread does not exist or is not yours.</p>
-      </>
-    );
-  }
+  if (notFound) return <NotFound what="thread" />;
 
   if (ended) {
     return (
@@ -196,9 +177,7 @@ export function ThreadPage() {
           <p className="text-muted-foreground">
             Your access to this thread has ended. Ask whoever shared it for a new invite link.
           </p>
-          <Button size="sm" variant="outline" render={<Link to="/" />} nativeButton={false}>
-            Go home
-          </Button>
+          <GoHome />
         </div>
       </>
     );
@@ -260,6 +239,7 @@ export function ThreadPage() {
           )}
           <RunStatus stopping={!!run && run.id === stopped} />
           <PendingTray threadId={threadId} pending={transcript.pending} me={me.data?.user.id} />
+          <FieldError>{error}</FieldError>
           <Composer
             running={!!run}
             readOnly={role === "viewer"}
@@ -270,44 +250,22 @@ export function ThreadPage() {
             tools={
               // A guest uses the model the thread's space chose.
               !guest && (
-                <>
-                  <ModelPicker
-                    models={models.data?.models ?? []}
-                    value={thread?.model ?? null}
-                    onChange={(ref) => void change({ model: ref })}
-                    open={picking}
-                    onOpenChange={setPicking}
-                    placeholder="Model"
-                    variant="compact"
-                  />
-                  {thinks && (
-                    <PromptInputSelect
-                      value={thread?.effort ?? "medium"}
-                      onValueChange={(value) => {
-                        const effort = effortSchema.safeParse(value);
-                        if (effort.success) void change({ effort: effort.data });
-                      }}
-                    >
-                      <PromptInputSelectTrigger size="sm" aria-label="Reasoning effort">
-                        <PromptInputSelectValue>
-                          {(value: Effort) => EFFORT_LABELS[value]}
-                        </PromptInputSelectValue>
-                      </PromptInputSelectTrigger>
-                      <PromptInputSelectContent alignItemWithTrigger={false} side="top">
-                        {effortSchema.options.map((effort) => (
-                          <PromptInputSelectItem key={effort} value={effort}>
-                            {EFFORT_LABELS[effort]}
-                          </PromptInputSelectItem>
-                        ))}
-                      </PromptInputSelectContent>
-                    </PromptInputSelect>
-                  )}
-                </>
+                <ThreadPickers
+                  models={models.data?.models ?? []}
+                  loading={models.isPending}
+                  model={thread?.model ?? null}
+                  effort={thread?.effort ?? null}
+                  defaults={detail.data?.defaults}
+                  used={detail.data?.model?.used}
+                  onModel={(ref) => void change({ model: ref })}
+                  onEffort={(effort) => void change({ effort })}
+                  open={picking}
+                  onOpenChange={setPicking}
+                />
               )
             }
           />
         </div>
-        <FieldError className="mt-2">{error}</FieldError>
       </div>
     </div>
   );

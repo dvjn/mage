@@ -33,8 +33,8 @@ async function send(page: Page, text: string) {
 test("a message posted in a new thread is there after a reload", async ({ page }) => {
   await signUp(page);
 
-  await page.getByLabel("First message").fill("How do engines compute?");
-  await page.getByRole("button", { name: "Start thread" }).click();
+  await page.getByLabel("Message", { exact: true }).fill("How do engines compute?");
+  await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await expect(messages(page).getByText("How do engines compute?")).toBeVisible();
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("How do engines compute?");
@@ -57,36 +57,39 @@ test("a second space can be made, renamed and switched from the sidebar header",
   const sidebar = page.locator("[data-sidebar=sidebar]");
   const switcher = page.getByRole("button", { name: "Switch space" });
   await expect(switcher).toContainText("YS");
-  await sidebar.getByRole("button", { name: "New thread" }).click();
+  await expect(switcher).toContainText("Personal");
+  await page.getByLabel("Message", { exact: true }).fill("Engines");
+  await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
-  await expect(sidebar.getByRole("link", { name: "New thread" })).toBeVisible();
+  await expect(sidebar.getByRole("link", { name: "Engines" })).toBeVisible();
 
   await switcher.click();
-  await page.getByRole("menuitem", { name: "Add space" }).click();
+  await page.getByRole("menuitem", { name: "New space" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("textbox", { name: "Name" }).fill("Research");
   await dialog.getByRole("button", { name: "Create" }).click();
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Research");
   await expect(switcher).toContainText("Research");
-  await expect(sidebar.getByRole("link", { name: "New thread" })).toHaveCount(0);
+  await expect(sidebar.getByRole("link", { name: "Engines" })).toHaveCount(0);
 
   const settings = sidebar.getByRole("link", { name: "Space settings" });
   await settings.click();
   await expect(page).toHaveURL(/\/s\/[^/]+\/settings$/);
   await expect(settings).toHaveAttribute("data-active");
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Settings");
-  await page.getByRole("textbox", { name: "Name" }).fill("Engines");
-  await page.getByRole("button", { name: "Rename" }).click();
-  await expect(page.locator("[data-slot=breadcrumb-link]")).toHaveText("Engines");
-  await expect(switcher).toContainText("Engines");
+  await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
+  await page.getByRole("textbox", { name: "Space name" }).fill("Mills");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.locator("[data-slot=breadcrumb-link]")).toHaveText("Mills");
+  await expect(switcher).toContainText("Mills");
 
   await switcher.click();
   const menu = page.getByRole("menu");
-  await expect(menu.getByRole("menuitem", { name: "Engines" })).toBeVisible();
+  await expect(menu.getByRole("menuitem", { name: "Mills" })).toContainText("(active)");
   await menu.getByRole("menuitem", { name: "Your space" }).click();
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Your space");
   await expect(switcher).toContainText("Your space");
-  await expect(sidebar.getByRole("link", { name: "New thread" })).toBeVisible();
+  await expect(sidebar.getByRole("link", { name: "Engines" })).toBeVisible();
   await settings.click();
   await expect(page.getByRole("button", { name: "Delete space" })).toHaveCount(0);
 });
@@ -96,7 +99,7 @@ test("an empty space is deleted from its settings, after a confirmation", async 
   const sidebar = page.locator("[data-sidebar=sidebar]");
   const switcher = page.getByRole("button", { name: "Switch space" });
   await switcher.click();
-  await page.getByRole("menuitem", { name: "Add space" }).click();
+  await page.getByRole("menuitem", { name: "New space" }).click();
   const dialog = page.getByRole("dialog");
   await dialog.getByRole("textbox", { name: "Name" }).fill("Scratch");
   await dialog.getByRole("button", { name: "Create" }).click();
@@ -117,8 +120,8 @@ test("an empty space is deleted from its settings, after a confirmation", async 
 test("deleting the open thread leads back to its space", async ({ page }) => {
   await signUp(page);
   const sidebar = page.locator("[data-sidebar=sidebar]");
-  await page.getByLabel("First message").fill("Short lived");
-  await page.getByRole("button", { name: "Start thread" }).click();
+  await page.getByLabel("Message", { exact: true }).fill("Short lived");
+  await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
 
   await sidebar.getByRole("button", { name: "Actions for Short lived" }).click();
@@ -134,7 +137,8 @@ test("deleting the open thread leads back to its space", async ({ page }) => {
 
 test("two tabs on a thread see each other's messages live", async ({ page, context }) => {
   await signUp(page);
-  await page.locator("[data-sidebar=sidebar]").getByRole("button", { name: "New thread" }).click();
+  await page.getByLabel("Message", { exact: true }).fill("Two tabs");
+  await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const other = await context.newPage();
   await other.goto(page.url());
@@ -146,8 +150,8 @@ test("two tabs on a thread see each other's messages live", async ({ page, conte
   await send(other, "Hello from the second tab");
   await expect(messages(page).getByText("Hello from the second tab")).toBeVisible();
   const fromAda = { name: "Message from Ada Lovelace" };
-  await expect(messages(page).getByRole("article", fromAda)).toHaveCount(2);
-  await expect(messages(other).getByRole("article", fromAda)).toHaveCount(2);
+  await expect(messages(page).getByRole("article", fromAda)).toHaveCount(3);
+  await expect(messages(other).getByRole("article", fromAda)).toHaveCount(3);
 });
 
 test("a collapsed sidebar stays collapsed after a reload", async ({ page }) => {

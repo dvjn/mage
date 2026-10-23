@@ -1,11 +1,13 @@
-// Sharing a thread with people outside its space: the Share button in the thread's header opens a
-// dialog that makes an invite link with how long the access it gives lasts, shows the link once to
-// copy, and lists the thread's people and its links not yet used, with Revoke beside those the
-// signed-in person may revoke.
+// Sharing a thread with people outside its space, on one surface opened from the Share button in
+// the thread's header: a dialog, or a sheet from the bottom on a phone. At the top, an invite link
+// made for as long as the access it gives should last, shown once to copy; below, the thread's
+// people (the space's members who wrote, with their role, and its guests, with when their access
+// ends) and its links not yet used, each with Revoke where the signed-in person may revoke it;
+// revoking a person asks first.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckIcon, CopyIcon, UserPlusIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { LinkIcon, UserPlusIcon } from "lucide-react";
+import { type ReactNode, useId, useState } from "react";
 
 import {
   type AccessFor,
@@ -15,7 +17,18 @@ import {
   type PendingInvite,
   type ThreadPerson,
 } from "@/shared/guests.ts";
+import { CopyButton } from "@/web/components/copy-button";
 import { Until } from "@/web/components/time";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/web/components/ui/alert-dialog";
 import { Button } from "@/web/components/ui/button";
 import {
   Dialog,
@@ -25,13 +38,8 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/web/components/ui/dialog";
-import { Field, FieldDescription, FieldError, FieldLabel } from "@/web/components/ui/field";
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupButton,
-  InputGroupInput,
-} from "@/web/components/ui/input-group";
+import { FieldError, FieldLabel } from "@/web/components/ui/field";
+import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
 import {
   Select,
   SelectContent,
@@ -39,9 +47,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/web/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+  SheetTrigger,
+} from "@/web/components/ui/sheet";
+import { useIsMobile } from "@/web/hooks/use-mobile";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { threadPeopleQuery } from "@/web/lib/queries";
+import { ROLE_LABELS } from "@/web/lib/roles";
 import { fullTime, timeUntil } from "@/web/lib/time";
 
 const ACCESS_LABELS: Record<AccessFor, string> = {
@@ -51,23 +69,8 @@ const ACCESS_LABELS: Record<AccessFor, string> = {
   never: "No expiry",
 };
 
-function CopyLink({ url }: { url: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <InputGroupButton
-      aria-label="Copy link"
-      size="icon-xs"
-      onClick={() => {
-        void navigator.clipboard.writeText(url).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        });
-      }}
-    >
-      {copied ? <CheckIcon /> : <CopyIcon />}
-    </InputGroupButton>
-  );
-}
+const DESCRIPTION =
+  "Whoever opens an invite link can read and write in this thread, and nothing else in its space.";
 
 function Row({
   label,
@@ -76,20 +79,25 @@ function Row({
   onRevoke,
 }: {
   label: string;
-  name: string;
-  children?: React.ReactNode;
+  name: ReactNode;
+  children?: ReactNode;
   onRevoke?: () => void;
 }) {
   return (
-    <li aria-label={label} className="flex min-h-8 items-center gap-2 text-sm">
+    <li aria-label={label} className="group flex min-h-8 items-center gap-2 text-sm">
       <span className="truncate font-medium">{name}</span>
       {children && (
-        <span className="flex min-w-0 items-baseline gap-2 truncate text-xs text-muted-foreground *:before:mr-2 *:before:content-['·']">
+        <span className="flex min-w-0 items-baseline gap-2 truncate text-xs text-muted-foreground">
           {children}
         </span>
       )}
       {onRevoke && (
-        <Button size="xs" variant="ghost" className="ml-auto" onClick={onRevoke}>
+        <Button
+          size="xs"
+          variant="ghost"
+          className="ml-auto focus-visible:opacity-100 group-hover:opacity-100 md:opacity-0"
+          onClick={onRevoke}
+        >
           Revoke
         </Button>
       )}
@@ -107,64 +115,70 @@ function People({
   onRevoke: (path: { guest: string } | { invite: string }) => void;
 }) {
   return (
-    <div className="flex flex-col gap-3">
-      <section aria-label="People" className="flex flex-col gap-1">
-        <h3 className="text-xs font-medium text-muted-foreground">People</h3>
-        <ul className="flex flex-col">
-          {people.map((person) => (
-            <Row
-              key={person.userId}
-              label={person.name}
-              name={person.name}
-              onRevoke={person.canRevoke ? () => onRevoke({ guest: person.userId }) : undefined}
-            >
-              {person.kind === "guest" ? (
-                <>
-                  <span>guest</span>
-                  <Until iso={person.accessUntil} />
-                </>
-              ) : (
-                <span>member</span>
-              )}
-            </Row>
-          ))}
-          {people.length === 0 && (
-            <li className="text-sm text-muted-foreground">Nobody has written yet.</li>
-          )}
-        </ul>
-      </section>
-      {invites.length > 0 && (
-        <section aria-label="Unused links" className="flex flex-col gap-1">
-          <h3 className="text-xs font-medium text-muted-foreground">Unused links</h3>
-          <ul className="flex flex-col">
-            {invites.map((invite) => (
-              <Row
-                key={invite.id}
-                label="Unused link"
-                name={`Link for ${ACCESS_LABELS[invite.accessFor].toLowerCase()}`}
-                onRevoke={invite.canRevoke ? () => onRevoke({ invite: invite.id }) : undefined}
-              >
-                <span title={fullTime(invite.linkExpiresAt)}>
-                  expires {timeUntil(invite.linkExpiresAt) ?? "now"}
-                </span>
-              </Row>
-            ))}
-          </ul>
-        </section>
-      )}
-    </div>
+    <section aria-label="People" className="flex flex-col gap-1">
+      <h3 className="text-sm font-medium">People in this thread</h3>
+      <ul className="flex flex-col">
+        {people.map((person) => (
+          <Row
+            key={person.userId}
+            label={person.name}
+            name={person.name}
+            onRevoke={person.canRevoke ? () => onRevoke({ guest: person.userId }) : undefined}
+          >
+            {person.kind === "guest" ? (
+              <Until iso={person.accessUntil} />
+            ) : (
+              <span>{person.role ? ROLE_LABELS[person.role] : "Member"}</span>
+            )}
+          </Row>
+        ))}
+        {people.length === 0 && (
+          <li className="text-sm text-muted-foreground">Nobody has written yet.</li>
+        )}
+        {invites.map((invite) => (
+          <Row
+            key={invite.id}
+            label="Unused link"
+            name={
+              <span className="flex items-center gap-1.5 font-normal text-muted-foreground">
+                <LinkIcon className="size-3.5" />
+                Link, {ACCESS_LABELS[invite.accessFor].toLowerCase()}
+              </span>
+            }
+            onRevoke={invite.canRevoke ? () => onRevoke({ invite: invite.id }) : undefined}
+          >
+            <span title={fullTime(invite.linkExpiresAt)}>
+              Unused · Expires {timeUntil(invite.linkExpiresAt) ?? "now"}
+            </span>
+          </Row>
+        ))}
+      </ul>
+    </section>
   );
 }
 
-export function ShareDialog({ threadId }: { threadId: string }) {
+// Revokes a guest or an unused link; what went wrong, if anything.
+async function revokeIn(threadId: string, path: { guest: string } | { invite: string }) {
+  const res =
+    "guest" in path
+      ? await apiClient.v1.threads[":id"].guests[":userId"].$delete({
+          param: { id: threadId, userId: path.guest },
+        })
+      : await apiClient.v1.threads[":id"].invites[":inviteId"].$delete({
+          param: { id: threadId, inviteId: path.invite },
+        });
+  return res.ok ? undefined : errorOf(res);
+}
+
+function ShareBody({ threadId }: { threadId: string }) {
   const queryClient = useQueryClient();
   const id = useId();
-  const [open, setOpen] = useState(false);
-  const people = useQuery({ ...threadPeopleQuery(threadId), enabled: open });
+  const people = useQuery(threadPeopleQuery(threadId));
   const [accessFor, setAccessFor] = useState<AccessFor>("1d");
   const [created, setCreated] = useState<CreatedInvite>();
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
+  const [confirming, setConfirming] = useState<ThreadPerson | null>(null);
 
   const refresh = () =>
     queryClient.invalidateQueries({ queryKey: threadPeopleQuery(threadId).queryKey });
@@ -185,73 +199,52 @@ export function ShareDialog({ threadId }: { threadId: string }) {
     await refresh();
   }
 
+  // Revoking a person asks first; an unused link goes at once.
+  function ask(path: { guest: string } | { invite: string }) {
+    if ("invite" in path) {
+      void revoke(path);
+      return;
+    }
+    setConfirming(people.data?.people.find((person) => person.userId === path.guest) ?? null);
+  }
+
   async function revoke(path: { guest: string } | { invite: string }) {
     setError(undefined);
-    const res =
-      "guest" in path
-        ? await apiClient.v1.threads[":id"].guests[":userId"].$delete({
-            param: { id: threadId, userId: path.guest },
-          })
-        : await apiClient.v1.threads[":id"].invites[":inviteId"].$delete({
-            param: { id: threadId, inviteId: path.invite },
-          });
-    if (!res.ok) setError(await errorOf(res));
+    const failed = await revokeIn(threadId, path);
+    if (failed) setError(failed);
     if ("invite" in path && path.invite === created?.id) setCreated(undefined);
     await refresh();
   }
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        // The link is shown once; closing the dialog lets it go.
-        if (!next) {
-          setCreated(undefined);
-          setError(undefined);
-        }
-      }}
-    >
-      <DialogTrigger render={<Button size="sm" variant="outline" />}>
-        <UserPlusIcon />
-        Share
-      </DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Share this thread</DialogTitle>
-          <DialogDescription>
-            Whoever opens an invite link can read and write in this thread, and nothing else in its
-            space. Each link works once, within 7 days.
-          </DialogDescription>
-        </DialogHeader>
-        <Field>
-          <FieldLabel htmlFor={id}>Access lasts</FieldLabel>
-          <div className="flex gap-2">
-            <Select
-              value={accessFor}
-              onValueChange={(value) => {
-                const parsed = accessForSchema.safeParse(value);
-                if (parsed.success) setAccessFor(parsed.data);
-              }}
-            >
-              <SelectTrigger id={id} className="flex-1">
-                <SelectValue>{(value: AccessFor) => ACCESS_LABELS[value]}</SelectValue>
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false}>
-                {accessForSchema.options.map((option) => (
-                  <SelectItem key={option} value={option}>
-                    {ACCESS_LABELS[option]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button disabled={pending} onClick={() => void create()}>
-              Create invite link
-            </Button>
-          </div>
-        </Field>
+    <div className="flex flex-col gap-5">
+      <section aria-label="Invite with a link" className="flex flex-col gap-2">
+        <FieldLabel htmlFor={id}>Invite with a link</FieldLabel>
+        <div className="flex gap-2">
+          <Select
+            value={accessFor}
+            onValueChange={(value) => {
+              const parsed = accessForSchema.safeParse(value);
+              if (parsed.success) setAccessFor(parsed.data);
+            }}
+          >
+            <SelectTrigger id={id} aria-label="Access lasts" className="flex-1">
+              <SelectValue>{(value: AccessFor) => ACCESS_LABELS[value]}</SelectValue>
+            </SelectTrigger>
+            <SelectContent alignItemWithTrigger={false}>
+              {accessForSchema.options.map((option) => (
+                <SelectItem key={option} value={option}>
+                  {ACCESS_LABELS[option]}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button disabled={pending} onClick={() => void create()}>
+            Create link
+          </Button>
+        </div>
         {created && (
-          <Field>
+          <>
             <InputGroup>
               <InputGroupInput
                 aria-label="Invite link"
@@ -260,23 +253,89 @@ export function ShareDialog({ threadId }: { threadId: string }) {
                 onFocus={(event) => event.currentTarget.select()}
               />
               <InputGroupAddon align="inline-end">
-                <CopyLink url={created.url} />
+                <CopyButton label="Copy link" value={created.url} />
               </InputGroupAddon>
             </InputGroup>
-            <FieldDescription>
-              Copy it now: it is shown only once. It gives {ACCESS_LABELS[created.accessFor]}
-              {created.accessFor === "never" ? "" : " of access"} from when it is opened.
-            </FieldDescription>
-          </Field>
+            <p className="text-xs text-muted-foreground">
+              Copy it now: it is shown only once. It works once, within 7 days, and gives{" "}
+              {created.accessFor === "never"
+                ? "access with no expiry"
+                : `${ACCESS_LABELS[created.accessFor]} of access`}{" "}
+              from when it is opened.
+            </p>
+          </>
         )}
         <FieldError>{error}</FieldError>
-        {people.data && (
-          <People
-            people={people.data.people}
-            invites={people.data.invites}
-            onRevoke={(path) => void revoke(path)}
-          />
-        )}
+      </section>
+      {people.data && (
+        <People people={people.data.people} invites={people.data.invites} onRevoke={ask} />
+      )}
+      <AlertDialog
+        open={!!confirming}
+        onOpenChange={(open) => {
+          if (!open) setConfirming(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Revoke {confirming?.name}&apos;s access?</AlertDialogTitle>
+            <AlertDialogDescription>
+              They can no longer read or write in this thread. A new invite link lets them back in.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                if (confirming) void revoke({ guest: confirming.userId });
+                setConfirming(null);
+              }}
+            >
+              Revoke
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  );
+}
+
+export function ShareDialog({ threadId }: { threadId: string }) {
+  const mobile = useIsMobile();
+  // Each opening starts afresh: the link made last time is not shown again.
+  const [opened, setOpened] = useState(0);
+  const trigger = (
+    <>
+      <UserPlusIcon />
+      Share
+    </>
+  );
+  if (mobile) {
+    return (
+      <Sheet onOpenChange={(open) => open && setOpened(opened + 1)}>
+        <SheetTrigger render={<Button size="sm" variant="outline" />}>{trigger}</SheetTrigger>
+        <SheetContent side="bottom" className="max-h-[85svh] overflow-y-auto">
+          <SheetHeader className="pb-0">
+            <SheetTitle>Share this thread</SheetTitle>
+            <SheetDescription>{DESCRIPTION}</SheetDescription>
+          </SheetHeader>
+          <div className="px-4 pb-6">
+            <ShareBody key={opened} threadId={threadId} />
+          </div>
+        </SheetContent>
+      </Sheet>
+    );
+  }
+  return (
+    <Dialog onOpenChange={(open) => open && setOpened(opened + 1)}>
+      <DialogTrigger render={<Button size="sm" variant="outline" />}>{trigger}</DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Share this thread</DialogTitle>
+          <DialogDescription>{DESCRIPTION}</DialogDescription>
+        </DialogHeader>
+        <ShareBody key={opened} threadId={threadId} />
       </DialogContent>
     </Dialog>
   );

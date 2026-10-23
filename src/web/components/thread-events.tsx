@@ -9,11 +9,12 @@
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { CheckIcon, CopyIcon, RotateCcwIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { RotateCcwIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import type { AgentRow, FailureRow, HumanRow, TranscriptRow } from "@/shared/transcript.ts";
-import { MessageAction, MessageResponse } from "@/web/components/ai-elements/message";
+import { MessageResponse } from "@/web/components/ai-elements/message";
+import { CopyButton } from "@/web/components/copy-button";
 import {
   Reasoning,
   ReasoningContent,
@@ -73,25 +74,6 @@ function TranscriptRowFrame({
   );
 }
 
-function CopyMessage({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <MessageAction
-      label="Copy message"
-      size="icon-xs"
-      disabled={!text}
-      onClick={() => {
-        void navigator.clipboard.writeText(text).then(() => {
-          setCopied(true);
-          setTimeout(() => setCopied(false), 2000);
-        });
-      }}
-    >
-      {copied ? <CheckIcon /> : <CopyIcon />}
-    </MessageAction>
-  );
-}
-
 function HumanMessage({ row }: { row: HumanRow }) {
   const me = useQuery(meQuery);
   const author = row.author.name;
@@ -111,12 +93,12 @@ function HumanMessage({ row }: { row: HumanRow }) {
       note={
         (row.guest || row.quiet) && (
           <>
-            {row.guest && <span>guest</span>}
+            {row.guest && <span>Guest</span>}
             {row.quiet && <span>aside</span>}
           </>
         )
       }
-      actions={<CopyMessage text={row.text} />}
+      actions={<CopyButton label="Copy message" value={row.text} />}
     >
       <div className={cn("flex flex-col gap-2 text-sm", row.quiet && "text-muted-foreground")}>
         <MessageResponse>{row.text}</MessageResponse>
@@ -143,7 +125,8 @@ const caret = <span aria-hidden className="inline-block h-4 w-2 animate-pulse bg
 function useModelName(ref: string | null) {
   const models = useQuery(modelsQuery);
   if (!ref) return null;
-  return models.data?.models.find((model) => model.ref === ref)?.name ?? ref.split("/").pop();
+  const listed = [...(models.data?.models ?? []), ...(models.data?.turnedOff ?? [])];
+  return listed.find((model) => model.ref === ref)?.name ?? (ref.split("/").pop() || null);
 }
 
 function AgentReply({ row }: { row: AgentRow }) {
@@ -162,7 +145,7 @@ function AgentReply({ row }: { row: AgentRow }) {
           {ending && <span>{ending}</span>}
         </>
       }
-      actions={!streaming && <CopyMessage text={row.text} />}
+      actions={!streaming && <CopyButton label="Copy message" value={row.text} />}
     >
       <div className="flex flex-col gap-2 text-sm" aria-busy={streaming}>
         {row.reasoning && (
@@ -225,7 +208,12 @@ function FailureNotice({ row, actions }: { row: FailureRow; actions: RowActions 
     case "auth":
       summary = `The ${label} sign-in no longer works.`;
       step = (
-        <Button size="xs" variant="outline" render={<Link to="/settings" />} nativeButton={false}>
+        <Button
+          size="xs"
+          variant="outline"
+          render={<Link to="/org/providers" />}
+          nativeButton={false}
+        >
           Reconnect {label}
         </Button>
       );

@@ -7,6 +7,7 @@ import { getRouteApi, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 
 import { acceptedInviteSchema, type InviteRefusal, inviteRefusalSchema } from "@/shared/guests.ts";
+import { GoHome } from "@/web/components/page-states";
 import { Button } from "@/web/components/ui/button";
 import { Card, CardDescription, CardFooter, CardHeader, CardTitle } from "@/web/components/ui/card";
 import { Spinner } from "@/web/components/ui/spinner";
@@ -108,9 +109,7 @@ function Accepting({ token }: { token: string }) {
         <CardDescription>{text}</CardDescription>
       </CardHeader>
       <CardFooter>
-        <Button variant="outline" render={<Link to="/" />} nativeButton={false}>
-          Go home
-        </Button>
+        <GoHome />
       </CardFooter>
     </Card>
   );

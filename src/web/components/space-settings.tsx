@@ -1,13 +1,20 @@
-// A space's settings: renaming it, and deleting it when it is not the primary space. Only its owner
-// may change them; everyone else sees its name.
+// A space's settings: renaming it, the model and reasoning effort its new threads start with, or the
+// org's, and deleting it when it is not the primary space. Only its owner may change them; everyone
+// else sees them.
 
-import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useId, useState } from "react";
 
 import type { SpaceSummary } from "@/shared/spaces.ts";
-import { PageHeader, pageWidth } from "@/web/components/app-shell";
+import { NotFound } from "@/web/components/page-states";
+import {
+  EFFORT_LABELS,
+  EffortField,
+  modelName,
+  ModelField,
+} from "@/web/components/settings/default-fields";
+import { SettingsCard, SettingsPage } from "@/web/components/settings/layout";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,20 +27,19 @@ import {
   AlertDialogTrigger,
 } from "@/web/components/ui/alert-dialog";
 import { Button } from "@/web/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/web/components/ui/card";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { rememberSpace } from "@/web/lib/last-space";
-import { spacesQuery } from "@/web/lib/queries";
+import {
+  defaultEffortQuery,
+  defaultModelQuery,
+  modelsQuery,
+  spaceThreadsQuery,
+  spacesQuery,
+} from "@/web/lib/queries";
+import type { Effort } from "@/shared/threads.ts";
 
 const spaceSettingsRoute = getRouteApi("/_app/s/$spaceId/settings");
 
@@ -62,53 +68,103 @@ function SpaceName({ space }: { space: SpaceSummary }) {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Name</CardTitle>
-        <CardDescription>
-          {owner
-            ? "Shown in the sidebar and the space switcher."
-            : "Only the space's owner can rename it."}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={(event) => void submit(event)}>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor={id}>Name</FieldLabel>
-              <Input
-                id={id}
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                maxLength={80}
-                required
-                disabled={!owner}
-                autoComplete="off"
-              />
-            </Field>
-            <FieldError>{error}</FieldError>
-            {owner && (
-              <Field>
-                <Button
-                  type="submit"
-                  className="w-fit"
-                  disabled={pending || !name.trim() || name.trim() === space.name}
-                >
-                  Rename
-                </Button>
-              </Field>
-            )}
-          </FieldGroup>
-        </form>
-      </CardContent>
-    </Card>
+    <SettingsCard
+      title="General"
+      description={owner ? undefined : "Only the space's owner can change its settings."}
+    >
+      <form onSubmit={(event) => void submit(event)}>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor={id}>Space name</FieldLabel>
+            <Input
+              id={id}
+              value={name}
+              onChange={(event) => setName(event.target.value)}
+              maxLength={80}
+              required
+              disabled={!owner}
+              autoComplete="off"
+            />
+          </Field>
+          <FieldError>{error}</FieldError>
+          {owner && name.trim() !== space.name && (
+            <div>
+              <Button type="submit" disabled={pending || !name.trim()}>
+                Save
+              </Button>
+            </div>
+          )}
+        </FieldGroup>
+      </form>
+    </SettingsCard>
+  );
+}
+
+// The model and effort the space's new threads start with, or the org's.
+function SpaceModel({ space }: { space: SpaceSummary }) {
+  const queryClient = useQueryClient();
+  const models = useQuery(modelsQuery);
+  const orgModel = useQuery(defaultModelQuery);
+  const orgEffort = useQuery(defaultEffortQuery);
+  const [error, setError] = useState<string>();
+  const owner = space.role === "owner";
+  const list = models.data?.models ?? [];
+
+  async function change(json: { model?: string | null; effort?: Effort | null }) {
+    setError(undefined);
+    const res = await apiClient.v1.spaces[":id"].defaults.$patch({ param: { id: space.id }, json });
+    if (!res.ok) {
+      setError(await errorOf(res));
+      return;
+    }
+    await queryClient.invalidateQueries({ queryKey: spacesQuery.queryKey });
+  }
+
+  const orgModelName = modelName(list, orgModel.data?.ref ?? null) ?? "none picked";
+  const orgEffortName = orgEffort.data?.effort ? EFFORT_LABELS[orgEffort.data.effort] : "Medium";
+  return (
+    <SettingsCard
+      title="Models"
+      description={
+        owner
+          ? "New threads in this space start with this model and effort. Threads already started keep theirs."
+          : "Only the space's owner can change what its new threads start with."
+      }
+      state={{
+        isPending: models.isPending || orgModel.isPending || orgEffort.isPending,
+        error: models.error ?? orgModel.error ?? orgEffort.error,
+      }}
+    >
+      <FieldGroup>
+        <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_12rem]">
+          <ModelField
+            label="Default model"
+            models={list}
+            value={space.defaultModel}
+            onChange={(model) => void change({ model })}
+            inherit={{ label: `Default · ${orgModelName}`, ref: orgModel.data?.ref ?? null }}
+            fallback={orgModelName}
+            disabled={!owner}
+          />
+          <EffortField
+            value={space.defaultEffort}
+            onChange={(effort) => void change({ effort })}
+            defaultLabel={`Default · ${orgEffortName}`}
+            disabled={!owner}
+          />
+        </div>
+        <FieldError>{error}</FieldError>
+      </FieldGroup>
+    </SettingsCard>
   );
 }
 
 function DeleteSpace({ space }: { space: SpaceSummary }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const threads = useQuery(spaceThreadsQuery(space.id));
   const [error, setError] = useState<string>();
+  const count = threads.data?.length ?? 0;
 
   async function remove() {
     setError(undefined);
@@ -122,19 +178,16 @@ function DeleteSpace({ space }: { space: SpaceSummary }) {
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Delete space</CardTitle>
-        <CardDescription>Only a space without threads can be deleted.</CardDescription>
-      </CardHeader>
-      {error && (
-        <CardContent>
-          <FieldError>{error}</FieldError>
-        </CardContent>
-      )}
-      <CardFooter>
+    <SettingsCard
+      title="Delete space"
+      description={
+        count > 0
+          ? `It has ${count} ${count === 1 ? "thread" : "threads"}; only a space without threads can be deleted.`
+          : "Only a space without threads can be deleted."
+      }
+      footer={
         <AlertDialog>
-          <AlertDialogTrigger render={<Button variant="destructive" />}>
+          <AlertDialogTrigger render={<Button variant="destructive" disabled={count > 0} />}>
             Delete space
           </AlertDialogTrigger>
           <AlertDialogContent>
@@ -150,8 +203,10 @@ function DeleteSpace({ space }: { space: SpaceSummary }) {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
-      </CardFooter>
-    </Card>
+      }
+    >
+      {error && <FieldError>{error}</FieldError>}
+    </SettingsCard>
   );
 }
 
@@ -162,29 +217,24 @@ export function SpaceSettings() {
 
   useEffect(() => rememberSpace(spaceId), [spaceId]);
 
-  if (spaces.isSuccess && !space) {
-    return (
-      <>
-        <PageHeader crumbs={[{ label: "Not found" }]} />
-        <p className="p-4 text-muted-foreground">This space does not exist or is not yours.</p>
-      </>
-    );
-  }
+  if (spaces.isSuccess && !space) return <NotFound what="space" />;
 
   return (
-    <>
-      <PageHeader
-        crumbs={[
-          { label: space?.name ?? "", link: { to: "/s/$spaceId", params: { spaceId } } },
-          { label: "Settings" },
-        ]}
-      />
+    <SettingsPage
+      crumbs={[
+        { label: space?.name ?? "", link: { to: "/s/$spaceId", params: { spaceId } } },
+        { label: "Settings" },
+      ]}
+      title="Space settings"
+      description={space ? `Settings for ${space.name} and the threads in it.` : undefined}
+    >
       {space && (
-        <div className={cn(pageWidth, "flex flex-col gap-6 p-4")}>
+        <>
           <SpaceName key={space.id} space={space} />
+          <SpaceModel space={space} />
           {space.role === "owner" && !space.primary && <DeleteSpace space={space} />}
-        </div>
+        </>
       )}
-    </>
+    </SettingsPage>
   );
 }

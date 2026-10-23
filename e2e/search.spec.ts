@@ -24,8 +24,8 @@ async function signUp(page: Page) {
 // Starts a thread from the space page and comes back to the space.
 async function startThread(page: Page, text: string) {
   const space = page.url();
-  await page.getByLabel("First message").fill(text);
-  await page.getByRole("button", { name: "Start thread" }).click();
+  await page.getByLabel("Message", { exact: true }).fill(text);
+  await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await page.goto(space);
 }
@@ -42,7 +42,7 @@ test("a thread found with the sidebar search opens", async ({ page }) => {
 
   const searchButton = page
     .locator("[data-sidebar=sidebar]")
-    .getByRole("button", { name: "Search threads" });
+    .getByRole("button", { name: "Search" });
   await searchButton.click();
   const dialog = page.getByRole("dialog", { name: "Search threads" });
   await dialog.getByRole("combobox").fill("ENGINES");
@@ -73,4 +73,41 @@ test("the space page narrows its threads by title", async ({ page }) => {
   await page.getByLabel("Filter threads").fill("pistons");
   await expect(threadList(page).getByRole("link")).toHaveCount(0);
   await expect(threadList(page)).toContainText("No thread matches.");
+});
+
+test("Ctrl+K searches everywhere or in this space, and finds untitled threads", async ({
+  page,
+}) => {
+  await signUp(page);
+  const spaceId = page.url().split("/s/")[1]!;
+  await startThread(page, "Untitled ideas about engines");
+  // A thread nothing has named yet.
+  const res = await page.request.post(`/api/v1/spaces/${spaceId}/threads`, { data: {} });
+  expect(res.ok()).toBe(true);
+  await page.reload();
+  const sidebar = page.locator("[data-sidebar=sidebar]");
+  await expect(
+    sidebar.getByRole("link", { name: "Untitled", exact: true }).locator(".italic"),
+  ).toBeVisible();
+
+  await page.keyboard.press("Control+k");
+  const dialog = page.getByRole("dialog", { name: "Search threads" });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("combobox").fill("untitled");
+  await expect(dialog.getByRole("option")).toHaveCount(2);
+  await expect(dialog.getByRole("option", { name: "Untitled", exact: true })).toBeVisible();
+
+  // Tab narrows the search to this space, and back.
+  const scope = dialog.getByRole("group", { name: "Where to search" });
+  await expect(scope.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+  await dialog.getByRole("combobox").press("Tab");
+  await expect(scope.getByRole("button", { name: "Your space" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(dialog.getByRole("option")).toHaveCount(2);
+  await expect(dialog.getByRole("group", { name: "Your space" })).toHaveCount(0);
+  await dialog.getByRole("combobox").press("Shift+Tab");
+  await expect(scope.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+  await expect(dialog.getByRole("group", { name: "Your space" })).toBeVisible();
 });

@@ -33,10 +33,15 @@ async function someoneElse(browser: Browser, index: number, name: string) {
 }
 
 async function startThread(page: Page, text: string) {
-  await page.getByLabel("First message").fill(text);
-  await page.getByRole("button", { name: "Start thread" }).click();
+  await page.getByLabel("Message", { exact: true }).fill(text);
+  await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
 }
+
+// What the stand-in model writes when asked to reply slowly takes it about 2.5 seconds, before
+// the reply that follows can begin; waiting for that one needs more than the usual 5 seconds when
+// the machine is busy.
+const AFTER_SLOW_REPLY = { timeout: 15_000 };
 
 function transcript(page: Page) {
   return page.getByRole("log", { name: "Events" });
@@ -94,8 +99,8 @@ test("a message sent mid-reply steers it with one more reply", async ({ page }) 
     "steers this reply",
   );
 
-  await expect(replies(page)).toHaveCount(2);
-  await expect(replies(page).nth(1)).toContainText("I have read 2 messages");
+  await expect(replies(page)).toHaveCount(2, AFTER_SLOW_REPLY);
+  await expect(replies(page).nth(1)).toContainText("I have read 2 messages", AFTER_SLOW_REPLY);
   await expect(transcript(page).getByRole("article").nth(2)).toContainText("Mention looms too");
   await expect(tray).toBeHidden();
 });
@@ -114,7 +119,7 @@ test("Alt+Enter queues a message for the next reply", async ({ page }) => {
     "queued for the next reply",
   );
 
-  await expect(replies(page).nth(1)).toContainText("I have read 2 messages");
+  await expect(replies(page).nth(1)).toContainText("I have read 2 messages", AFTER_SLOW_REPLY);
 });
 
 test("interrupt & send cuts the reply short and answers the new message", async ({ page }) => {
@@ -128,7 +133,7 @@ test("interrupt & send cuts the reply short and answers the new message", async 
 
   await expect(replies(page).first()).toContainText("Interrupted");
   await expect(transcript(page)).toContainText("Ada Lovelace stopped the agent");
-  await expect(replies(page).nth(1)).toContainText("I have read 2 messages");
+  await expect(replies(page).nth(1)).toContainText("I have read 2 messages", AFTER_SLOW_REPLY);
 });
 
 test("stop ends the reply where it is, and retry tries it again", async ({ page }) => {
@@ -163,8 +168,11 @@ test("two people in one thread see each other's messages, steers and stops live"
   await write(grace.page, "Mention looms too, slowly");
   await grace.page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page.getByRole("list", { name: "Waiting messages" })).toContainText("Grace Hopper");
-  await expect(replies(page).nth(1)).toContainText("I have read 2 messages");
-  await expect(replies(grace.page).nth(1)).toContainText("I have read 2 messages");
+  await expect(replies(page).nth(1)).toContainText("I have read 2 messages", AFTER_SLOW_REPLY);
+  await expect(replies(grace.page).nth(1)).toContainText(
+    "I have read 2 messages",
+    AFTER_SLOW_REPLY,
+  );
   await grace.page.getByRole("button", { name: "Stop" }).click();
 
   await expect(transcript(page)).toContainText("Grace Hopper stopped the agent");

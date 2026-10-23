@@ -1,13 +1,15 @@
 // The dialogs behind the sidebar's folder and thread menus: naming a new folder, renaming a folder
-// or a thread, moving a thread to a folder or the top of the space, and deleting a folder or a
-// thread. Deleting the open thread leads back to its space.
+// or a thread, and deleting a folder or a thread. Deleting the open thread leads back to its space.
+// A delete that fails says why in its dialog, which stays open.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { useState } from "react";
 
 import type { FolderSummary } from "@/shared/folders.ts";
 import type { ThreadSummary } from "@/shared/threads.ts";
 import { NameDialog } from "@/web/components/name-dialog";
+import { FieldError } from "@/web/components/ui/field";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,15 +20,6 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/web/components/ui/alert-dialog";
-import {
-  Command,
-  CommandDialog,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/web/components/ui/command";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { threadQuery } from "@/web/lib/queries";
@@ -35,27 +28,27 @@ export type NavAction =
   | { kind: "new-folder" }
   | { kind: "rename-folder"; folder: FolderSummary }
   | { kind: "rename-thread"; thread: ThreadSummary }
-  | { kind: "move-thread"; thread: ThreadSummary }
   | { kind: "delete-folder"; folder: FolderSummary }
   | { kind: "delete-thread"; thread: ThreadSummary };
 
 export function NavDialogs({
   spaceId,
-  folders,
   action,
   onClose,
-  onReveal,
 }: {
   spaceId: string;
-  folders: FolderSummary[];
   action: NavAction | null;
   onClose: () => void;
-  // Opens the folder a thread was just moved to.
-  onReveal: (folderId: string | null) => void;
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { threadId: openThreadId } = useParams({ strict: false });
+  // Why the last move or delete failed, shown in its dialog.
+  const [failed, setFailed] = useState<string>();
+
+  function fail(message: string) {
+    setFailed(message);
+  }
 
   async function refresh(threadId?: string) {
     await queryClient.invalidateQueries({ queryKey: ["spaces", spaceId] });
@@ -79,37 +72,40 @@ export function NavDialogs({
     return undefined;
   }
 
-  async function changeThread(id: string, json: { title?: string; folderId?: string | null }) {
+  async function renameThread(id: string, json: { title: string }) {
     const res = await apiClient.v1.threads[":id"].$patch({ param: { id }, json });
     if (!res.ok) return errorOf(res);
-    if (json.folderId !== undefined) onReveal(json.folderId);
     await refresh(id);
     return undefined;
   }
 
   async function deleteFolder(id: string) {
     const res = await apiClient.v1.folders[":id"].$delete({ param: { id } });
-    if (res.ok) await refresh();
-    onClose();
+    if (!res.ok) {
+      fail(await errorOf(res));
+      return;
+    }
+    await refresh();
+    closed(false);
   }
 
   async function deleteThread(id: string) {
     const res = await apiClient.v1.threads[":id"].$delete({ param: { id } });
-    if (res.ok) {
-      if (id === openThreadId) await navigate({ to: "/s/$spaceId", params: { spaceId } });
-      queryClient.removeQueries({ queryKey: threadQuery(id).queryKey });
-      await refresh();
+    if (!res.ok) {
+      fail(await errorOf(res));
+      return;
     }
-    onClose();
+    if (id === openThreadId) await navigate({ to: "/s/$spaceId", params: { spaceId } });
+    queryClient.removeQueries({ queryKey: threadQuery(id).queryKey });
+    await refresh();
+    closed(false);
   }
 
   function closed(open: boolean) {
-    if (!open) onClose();
-  }
-
-  async function moveTo(folderId: string | null) {
-    if (action?.kind === "move-thread") await changeThread(action.thread.id, { folderId });
-    onClose();
+    if (!open) {
+      setFailed(undefined);
+      onClose();
+    }
   }
 
   return (
@@ -124,7 +120,7 @@ export function NavDialogs({
       <NameDialog
         key={action?.kind === "rename-folder" ? action.folder.id : "rename-folder"}
         title="Rename folder"
-        action="Rename"
+        action="Save"
         initialName={action?.kind === "rename-folder" ? action.folder.name : ""}
         open={action?.kind === "rename-folder"}
         onOpenChange={closed}
@@ -137,47 +133,17 @@ export function NavDialogs({
       <NameDialog
         key={action?.kind === "rename-thread" ? action.thread.id : "rename-thread"}
         title="Rename thread"
-        action="Rename"
+        action="Save"
         maxLength={200}
         initialName={action?.kind === "rename-thread" ? action.thread.title : ""}
         open={action?.kind === "rename-thread"}
         onOpenChange={closed}
         onSubmit={(title) =>
           action?.kind === "rename-thread"
-            ? changeThread(action.thread.id, { title })
+            ? renameThread(action.thread.id, { title })
             : Promise.resolve(undefined)
         }
       />
-      {/* Its title and description are in the page even while closed, so it only exists open. */}
-      {action?.kind === "move-thread" && (
-        <CommandDialog
-          open
-          onOpenChange={closed}
-          title={`Move ${action.thread.title}`}
-          description="Choose a folder, or the top of the space."
-        >
-          <Command>
-            <CommandInput placeholder="Move to…" />
-            <CommandList>
-              <CommandEmpty>No folder matches.</CommandEmpty>
-              <CommandGroup>
-                <CommandItem value="top of the space" onSelect={() => void moveTo(null)}>
-                  Top of the space
-                </CommandItem>
-                {folders.map((folder) => (
-                  <CommandItem
-                    key={folder.id}
-                    value={`${folder.name} ${folder.id}`}
-                    onSelect={() => void moveTo(folder.id)}
-                  >
-                    {folder.name}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        </CommandDialog>
-      )}
       <AlertDialog open={action?.kind === "delete-folder"} onOpenChange={closed}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -187,6 +153,7 @@ export function NavDialogs({
             <AlertDialogDescription>
               Its threads move to the top of the space.
             </AlertDialogDescription>
+            <FieldError>{failed}</FieldError>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -210,6 +177,7 @@ export function NavDialogs({
             <AlertDialogDescription>
               Its messages go with it. This cannot be undone.
             </AlertDialogDescription>
+            <FieldError>{failed}</FieldError>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

@@ -28,8 +28,8 @@ async function signOut(page: Page) {
 }
 
 async function startThread(page: Page, text: string) {
-  await page.getByLabel("First message").fill(text);
-  await page.getByRole("button", { name: "Start thread" }).click();
+  await page.getByLabel("Message", { exact: true }).fill(text);
+  await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await expect(page.getByRole("log", { name: "Events" }).getByText(text)).toBeVisible();
 }

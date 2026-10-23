@@ -13,13 +13,13 @@ export function Time({ iso, ...props }: { iso: string } & React.ComponentProps<"
   );
 }
 
-// "ends in 3 hours"; "no expiry" for access that does not end.
+// "Ends in 3 hours"; "No expiry" for access that does not end.
 export function Until({ iso, ...props }: { iso: string | null } & React.ComponentProps<"span">) {
   useMinute();
-  if (!iso) return <span {...props}>no expiry</span>;
+  if (!iso) return <span {...props}>No expiry</span>;
   return (
     <span title={fullTime(iso)} {...props}>
-      ends {timeUntil(iso) ?? "now"}
+      Ends {timeUntil(iso) ?? "now"}
     </span>
   );
 }

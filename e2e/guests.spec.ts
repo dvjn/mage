@@ -39,10 +39,17 @@ function replies(page: Page) {
   return transcript(page).getByRole("article", { name: "Message from Agent" });
 }
 
+// Opens the threads shared with the person from the space switcher.
+async function openShared(page: Page) {
+  await page.getByRole("button", { name: "Switch space" }).click();
+  await page.getByRole("menuitem", { name: /^Shared with you/ }).click();
+  await expect(page).toHaveURL("/shared");
+}
+
 // Makes an invite link from the thread's Share dialog and closes it.
 async function inviteLink(page: Page) {
   await page.getByRole("button", { name: "Share" }).click();
-  await page.getByRole("button", { name: "Create invite link" }).click();
+  await page.getByRole("button", { name: "Create link" }).click();
   const link = page.getByLabel("Invite link");
   await expect(link).toHaveValue(/\/invite\//);
   const url = await link.inputValue();
@@ -56,11 +63,11 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
 }, testInfo) => {
   await signUp(page, "Ada Lovelace");
   const hostSpace = page.url();
-  await page.getByRole("link", { name: "Shared with you" }).click();
+  await openShared(page);
   await expect(page.getByText("Nothing is shared with you yet")).toBeVisible();
   await page.goto(hostSpace);
-  await page.getByLabel("First message").fill("How do engines compute?");
-  await page.getByRole("button", { name: "Start thread" }).click();
+  await page.getByLabel("Message", { exact: true }).fill("How do engines compute?");
+  await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await expect(replies(page)).toHaveText(/I have read 1 message/);
   const url = await inviteLink(page);
@@ -72,11 +79,23 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
   await expect(guest).toHaveURL(/\/t\/[^/]+$/);
   await expect(guest.locator("[data-slot=breadcrumb-page]")).toHaveText("How do engines compute?");
   // The host's space is named after them, and is not a link for a guest.
-  await expect(guest.getByRole("link", { name: "Ada Lovelace's space" })).toHaveCount(0);
+  await expect(
+    guest.locator("[data-slot=breadcrumb]").getByRole("link", { name: "Ada Lovelace's space" }),
+  ).toHaveCount(0);
   await expect(guest.locator("[data-slot=breadcrumb]")).toContainText("Ada Lovelace's space");
   await expect(guest.getByRole("button", { name: "Share" })).toHaveCount(0);
   await expect(guest.getByLabel("Model", { exact: true })).toHaveCount(0);
-  await guest.getByRole("link", { name: "Shared with you" }).click();
+  // The sidebar shows where the guest is: the threads shared with them, not a space of their own.
+  const switcher = guest.getByRole("button", { name: "Switch space" });
+  await expect(switcher).toContainText("Shared with you");
+  await expect(switcher).toContainText("1 thread");
+  const sidebar = guest.locator("[data-sidebar=sidebar]");
+  await expect(sidebar.getByRole("link", { name: "Space settings" })).toHaveCount(0);
+  const row = sidebar.getByRole("link", { name: /^How do engines compute\?/ });
+  await expect(row).toContainText("Ada Lovelace's space");
+  await row.hover();
+  await expect(guest.locator("[data-slot=tooltip-content]")).toHaveText("Ada Lovelace's space");
+  await openShared(guest);
   await guest
     .getByRole("list", { name: "Shared threads" })
     .getByRole("link", { name: /^How do engines compute\? Ada Lovelace's space/ })
@@ -87,7 +106,7 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
   await expect(replies(guest).nth(1)).toHaveText(/I have read 2 messages/);
   await expect(
     transcript(page).getByRole("article", { name: "Message from Hedy Lamarr" }),
-  ).toContainText("guest");
+  ).toContainText("Guest");
 
   // The space itself stays out of reach.
   await guest.goto(hostSpace);
@@ -103,15 +122,16 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
 
   await page.getByRole("button", { name: "Share" }).click();
   const hedy = page.getByRole("listitem", { name: "Hedy Lamarr" });
-  await expect(hedy).toContainText("guest");
+  await expect(hedy).toContainText("Ends");
   await hedy.getByRole("button", { name: "Revoke" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Revoke" }).click();
   await expect(hedy).toBeHidden();
 
   // The guest's open thread learns of it on its own.
   await expect(guest.getByText("Your access to this thread has ended")).toBeVisible({
     timeout: 20_000,
   });
-  await guest.getByRole("link", { name: "Shared with you" }).click();
+  await openShared(guest);
   await expect(guest.getByText("Nothing is shared with you yet")).toBeVisible();
 });
 
@@ -120,8 +140,8 @@ test("someone signed in opens a link and goes straight to the thread", async ({
   browser,
 }, testInfo) => {
   await signUp(page, "Ada Lovelace");
-  await page.getByLabel("First message").fill("// Looms");
-  await page.getByRole("button", { name: "Start thread" }).click();
+  await page.getByLabel("Message", { exact: true }).fill("// Looms");
+  await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const url = await inviteLink(page);
 

@@ -73,7 +73,7 @@ export function Composer({
         <PromptInputBody>
           <PromptInputTextarea
             aria-label="Message"
-            placeholder="You can read this thread, but only its space's messagers can write in it."
+            placeholder="You can read this thread; only people who can write in its space can post."
             disabled
           />
         </PromptInputBody>
@@ -218,7 +218,7 @@ function WaitingItem({
     >
       <div className="flex items-baseline gap-2 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">{message.author.name}</span>
-        {message.guest && <span>guest</span>}
+        {message.guest && <span>Guest</span>}
         <span>{MODE_LABELS[message.mode]}</span>
         {mine && !editing && (
           <span className="ml-auto flex gap-1">
