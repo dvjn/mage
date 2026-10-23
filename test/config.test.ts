@@ -39,6 +39,28 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...valid, PASSWORD_SIGN_IN: "off" })).toThrow(/PASSWORD_SIGN_IN/);
   });
 
+  it("reads an OpenID Connect provider from all three of its variables, or none", () => {
+    const oidc = {
+      OIDC_ISSUER: "https://id.example.com/application/o/mage/",
+      OIDC_CLIENT_ID: "mage",
+      OIDC_CLIENT_SECRET: "s3cret",
+    };
+    expect(loadConfig(valid).oidc).toBeNull();
+    expect(loadConfig({ ...valid, ...oidc }).oidc).toEqual({
+      issuer: "https://id.example.com/application/o/mage/",
+      clientId: "mage",
+      clientSecret: "s3cret",
+      name: "SSO",
+    });
+    expect(loadConfig({ ...valid, ...oidc, OIDC_NAME: "Authentik" }).oidc?.name).toBe("Authentik");
+    expect(() => loadConfig({ ...valid, ...oidc, OIDC_CLIENT_SECRET: "" })).toThrow(/together/);
+    expect(() => loadConfig({ ...valid, OIDC_CLIENT_ID: "mage" })).toThrow(/together/);
+    expect(() => loadConfig({ ...valid, ...oidc, OIDC_ISSUER: "id.example.com" })).toThrow(
+      /OIDC_ISSUER/,
+    );
+    expect(loadConfig({ ...valid, ...oidc, PASSWORD_SIGN_IN: "off" }).passwordSignIn).toBe("off");
+  });
+
   it("rejects a non-numeric PORT", () => {
     expect(() => loadConfig({ ...valid, PORT: "abc" })).toThrow(/PORT/);
   });

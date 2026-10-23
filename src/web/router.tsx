@@ -79,10 +79,14 @@ const signedOutRoute = createRoute({
   ),
 });
 
+// `error` is what the identity provider's sign-in ended with, when it failed.
 const loginRoute = createRoute({
   getParentRoute: () => signedOutRoute,
   path: "/login",
-  validateSearch: afterSignIn,
+  validateSearch: (search: Record<string, unknown>) => ({
+    ...afterSignIn(search),
+    ...(typeof search.error === "string" && { error: search.error }),
+  }),
   component: LoginForm,
 });
 

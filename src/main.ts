@@ -57,6 +57,7 @@ const auth = createAuth({
   trustedOrigins: config.authTrustedOrigins,
   passwordSignIn: config.passwordSignIn,
   operatorEmails: config.operatorEmails,
+  oidc: config.oidc,
 });
 
 // CREDENTIAL_KEY is key version 1.
@@ -200,7 +201,10 @@ const app = createApp({
     baseUrl: config.baseUrl,
   }),
   logger,
-  signInOptions: { password: config.passwordSignIn, oidc: null },
+  signInOptions: {
+    password: config.passwordSignIn,
+    oidc: config.oidc && { name: config.oidc.name },
+  },
   pingDatabase: () => pingDatabase(db),
   webRoot: import.meta.main ? config.webRoot : undefined,
 });

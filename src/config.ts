@@ -17,8 +17,17 @@ export interface Config {
   // The accounts that run this server, by lower-cased email.
   operatorEmails: string[];
   // Who may sign in with a password: every account, only the operators (with no password sign-up),
-  // or nobody.
+  // or nobody, which needs an identity provider.
   passwordSignIn: "everyone" | "operator" | "off";
+  // The OpenID Connect provider people can sign in with, and the name its button shows.
+  oidc: Oidc | null;
+}
+
+export interface Oidc {
+  issuer: string;
+  clientId: string;
+  clientSecret: string;
+  name: string;
 }
 
 // The local development secret; refused in production.
@@ -91,8 +100,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (passwordSignIn !== "everyone" && passwordSignIn !== "operator" && passwordSignIn !== "off") {
     throw new Error("PASSWORD_SIGN_IN must be everyone, operator or off");
   }
-  if (passwordSignIn === "off") {
-    throw new Error("PASSWORD_SIGN_IN=off needs another way to sign in");
+  const oidcVars = [env.OIDC_ISSUER, env.OIDC_CLIENT_ID, env.OIDC_CLIENT_SECRET];
+  if (oidcVars.some(Boolean) && !oidcVars.every(Boolean)) {
+    throw new Error(
+      "OIDC_ISSUER, OIDC_CLIENT_ID and OIDC_CLIENT_SECRET are set together or not at all",
+    );
+  }
+  const [issuer = "", clientId = "", clientSecret = ""] = oidcVars;
+  if (issuer && !["http:", "https:"].includes(URL.parse(issuer)?.protocol ?? "")) {
+    throw new Error("OIDC_ISSUER must be an http(s) URL");
+  }
+  const oidc = issuer ? { issuer, clientId, clientSecret, name: env.OIDC_NAME || "SSO" } : null;
+  if (passwordSignIn === "off" && !oidc) {
+    throw new Error("PASSWORD_SIGN_IN=off needs OIDC_ISSUER, so people can still sign in");
   }
   return {
     baseUrl,
@@ -107,5 +127,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     teamOrgs,
     operatorEmails,
     passwordSignIn,
+    oidc,
   };
 }

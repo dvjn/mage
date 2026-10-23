@@ -1,12 +1,15 @@
 // Email and password accounts with cookie sessions, served under /api/auth. Password sign-in is
 // open to everyone (the default), to the operators alone with no password sign-up, or to nobody.
+// With an OpenID Connect provider, people also sign in there: a returning person by their subject
+// at the provider, someone new to it by their email, joining an account they already have, or else
+// getting a new one.
 // Every user gets a personal org with its first space at sign-up, and new sessions act in it. Orgs
 // and their members are changed only through Mage's own API, so the library's org routes are off.
 
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
-import { organization } from "better-auth/plugins";
+import { genericOAuth, organization } from "better-auth/plugins";
 import { and, asc, eq, isNull } from "drizzle-orm";
 
 import type { OrgRole } from "@/ports/directory.ts";
@@ -27,12 +30,16 @@ export interface AuthOptions {
   passwordSignIn?: "everyone" | "operator" | "off";
   // The operators' lower-cased emails.
   operatorEmails?: string[];
+  oidc?: { issuer: string; clientId: string; clientSecret: string } | null;
 }
+
+// The id people sign in with the OpenID Connect provider under, in the callback's path too.
+export const OIDC_PROVIDER = "oidc";
 
 export type Auth = ReturnType<typeof createAuth>;
 
 export function createAuth(options: AuthOptions) {
-  const { db, passwordSignIn = "everyone", operatorEmails = [] } = options;
+  const { db, passwordSignIn = "everyone", operatorEmails = [], oidc } = options;
   const spaces = createSpaceStore(db);
 
   function personalOrgOf(userId: string) {
@@ -94,6 +101,11 @@ export function createAuth(options: AuthOptions) {
     telemetry: { enabled: false, debug: false },
     advanced: { cookiePrefix: "mage", disableOriginCheck: false, disableCSRFCheck: false },
     database: drizzleAdapter(db, { provider: "sqlite", schema }),
+    account: {
+      // The operator chose the provider, so the email it gives is trusted to join an account that
+      // has it, though Mage never verified that account's email.
+      accountLinking: { trustedProviders: [OIDC_PROVIDER], requireLocalEmailVerified: false },
+    },
     emailAndPassword: {
       enabled: passwordSignIn !== "off",
       disableSignUp: passwordSignIn !== "everyone",
@@ -151,7 +163,24 @@ export function createAuth(options: AuthOptions) {
         },
       },
     },
-    plugins: [orgs],
+    plugins: [
+      orgs,
+      genericOAuth({
+        config: oidc
+          ? [
+              {
+                providerId: OIDC_PROVIDER,
+                discoveryUrl: `${oidc.issuer.replace(/\/+$/, "")}/.well-known/openid-configuration`,
+                clientId: oidc.clientId,
+                clientSecret: oidc.clientSecret,
+                scopes: ["openid", "email", "profile"],
+                // A provider that gives no name has the person go by their email.
+                mapProfileToUser: (profile) => ({ name: profile.name || profile.email || "" }),
+              },
+            ]
+          : [],
+      }),
+    ],
     disabledPaths: Object.values(orgs.endpoints).map((endpoint) => endpoint.path),
     logger: {
       log: (level, message, ...args) => options.logger[level](args.length ? { args } : {}, message),
