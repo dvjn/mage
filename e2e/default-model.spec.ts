@@ -40,16 +40,18 @@ test("the default model picker groups models by connection and shows list errors
             id: "gpt-big",
             name: "GPT Big",
             connectionId: "c1",
-            provider: "openai",
-            authKind: "codex",
-            connectionLabel: "Codex",
+            host: "codex",
+            maker: "openai",
+            authKind: "oauth",
+            connectionLabel: "ChatGPT",
           },
           {
             ref: "c2/claude-big",
             id: "claude-big",
             name: "Claude Big",
             connectionId: "c2",
-            provider: "anthropic",
+            host: "anthropic",
+            maker: "anthropic",
             authKind: "api_key",
             connectionLabel: "Anthropic API key",
           },
@@ -64,7 +66,7 @@ test("the default model picker groups models by connection and shows list errors
   await expect(page.getByRole("alert").filter({ hasText: "Could not read" })).toBeVisible();
   await page.getByLabel("Default model").click();
   const list = page.getByRole("listbox");
-  await expect(list.getByText("Codex", { exact: true })).toBeVisible();
+  await expect(list.getByText("ChatGPT", { exact: true })).toBeVisible();
   await expect(list.getByText("Anthropic API key", { exact: true })).toBeVisible();
   await list.getByRole("option", { name: "Claude Big" }).click();
   // The server refuses a model its connections do not offer.

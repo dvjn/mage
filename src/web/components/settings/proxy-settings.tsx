@@ -6,8 +6,8 @@ import { useQueryClient } from "@tanstack/react-query";
 import { PlusIcon, XIcon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 
-import type { Backend, ConnectionSummary } from "@/shared/connections.ts";
-import { backendOf } from "@/shared/connections.ts";
+import type { ConnectionSummary } from "@/shared/connections.ts";
+import { type HostId, hostOf } from "@/shared/hosts.ts";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { Button } from "@/web/components/ui/button";
 import { DialogFooter } from "@/web/components/ui/dialog";
@@ -23,12 +23,11 @@ import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { connectionsQuery, modelsQuery } from "@/web/lib/queries";
 
-// Where each kind of connection sends its requests without a proxy.
-export const DEFAULT_BASE_URLS: Record<Backend, string> = {
-  codex: "https://chatgpt.com/backend-api/codex",
-  anthropic: "https://api.anthropic.com/v1",
-  openai: "https://api.openai.com/v1",
-};
+// Where a connection sends its requests without a proxy: its host's address, or the server's or
+// resource's it was given.
+export function defaultBaseUrl(host: HostId, settings: Record<string, string> = {}) {
+  return settings.baseUrl ?? settings.endpoint ?? hostOf(host).baseUrl ?? "";
+}
 
 export interface HeaderRow {
   key: number;
@@ -62,11 +61,12 @@ export function proxyBody(draft: ProxyDraft) {
 export function ProxyFields({
   draft,
   onChange,
-  backend,
+  placeholder,
 }: {
   draft: ProxyDraft;
   onChange: (draft: ProxyDraft) => void;
-  backend: Backend;
+  // The address requests go to without one.
+  placeholder: string;
 }) {
   const id = useId();
   const { rows } = draft;
@@ -86,7 +86,7 @@ export function ProxyFields({
           id={`${id}-base`}
           value={draft.baseUrl}
           onChange={(event) => onChange({ ...draft, baseUrl: event.target.value })}
-          placeholder={DEFAULT_BASE_URLS[backend]}
+          placeholder={placeholder || "https://proxy.example.com"}
           autoComplete="off"
         />
         <FieldDescription>
@@ -199,7 +199,11 @@ export function ProxyForm({ connection }: { connection: ConnectionSummary }) {
   return (
     <form onSubmit={submit}>
       <FieldGroup>
-        <ProxyFields draft={draft} onChange={setDraft} backend={backendOf(connection)} />
+        <ProxyFields
+          draft={draft}
+          onChange={setDraft}
+          placeholder={defaultBaseUrl(connection.host, connection.settings)}
+        />
         <FieldError>{error}</FieldError>
         {saved && (
           <p role="status" className="text-sm text-muted-foreground">

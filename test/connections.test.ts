@@ -19,8 +19,8 @@ function setup() {
 
 const codex = {
   createdBy: "ada",
-  provider: "openai",
-  authKind: "codex",
+  host: "codex",
+  authKind: "oauth",
   account: "a@example.com",
 } as const;
 

@@ -65,7 +65,8 @@ export default defineConfig({
       injectClientScript: false,
     }),
   ],
-  fmt: { ignorePatterns: ["src/adapters/migrations/**"] },
+  // Migrations and the vendored marks are written by tools, as they write them.
+  fmt: { ignorePatterns: ["src/adapters/migrations/**", "src/web/icons/marks.ts"] },
   lint: {
     options: {
       typeAware: true,

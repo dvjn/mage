@@ -4,7 +4,8 @@
 
 import * as z from "zod";
 
-import { providerSchema } from "@/shared/connections.ts";
+import { hostIdSchema } from "@/shared/hosts.ts";
+import { MAKER_IDS } from "@/shared/makers.ts";
 import { toolDefinitionSchema } from "@/shared/tools.ts";
 
 // How hard a model that can think does so before it answers.
@@ -63,12 +64,15 @@ export const threadParticipantsSchema = z.object({
 
 export type ThreadParticipants = z.infer<typeof threadParticipantsSchema>;
 
-// The model a list shows for a thread, its own or the default it follows: its name, and the
-// provider it comes through, null when the org has no connection for it.
+// The model a list shows for a thread, its own or the default it follows: its name, who makes it,
+// null when no one can tell, and the host it comes through with how people know that connection,
+// both null when the org has no connection for it.
 export const shownModelSchema = z.object({
   ref: z.string(),
   name: z.string(),
-  provider: providerSchema.nullable(),
+  maker: z.enum(MAKER_IDS).nullable(),
+  host: hostIdSchema.nullable(),
+  connection: z.string().nullable(),
 });
 
 export type ShownModel = z.infer<typeof shownModelSchema>;

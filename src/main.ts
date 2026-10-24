@@ -4,7 +4,6 @@ import type { Server } from "node:http";
 
 import { serve } from "@hono/node-server";
 
-import { createAnthropicKeyCatalog, createAnthropicKeyGateway } from "@/adapters/anthropic-api.ts";
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
 import { createCipher } from "@/adapters/cipher.ts";
 import { createConnectionStore } from "@/adapters/connections.ts";
@@ -13,17 +12,13 @@ import { createDirectory } from "@/adapters/directory.ts";
 import { createTransact, openDatabase, pingDatabase } from "@/adapters/db.ts";
 import { createDeltaStore } from "@/adapters/deltas.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
-import { createFakeCatalog, createFakeGateway, FAKE_MODEL_REF } from "@/adapters/fake-gateway.ts";
+import { createFakeCatalogs, createFakeGateway, FAKE_MODEL_REF } from "@/adapters/fake-gateway.ts";
 import { createFolderStore } from "@/adapters/folders.ts";
 import { createGuestStore } from "@/adapters/guests.ts";
 import { createLogger, createPrettyDestination } from "@/adapters/logger.ts";
 import { createModelChoiceStore } from "@/adapters/model-choices.ts";
-import {
-  createCodexCatalog,
-  createCodexGateway,
-  createCodexOAuth,
-} from "@/adapters/openai-codex.ts";
-import { createOpenAIKeyCatalog, createOpenAIKeyGateway } from "@/adapters/openai-api.ts";
+import { createHostAdapters } from "@/adapters/hosts.ts";
+import { createCodexOAuth } from "@/adapters/openai-codex.ts";
 import { createOrgInviteStore } from "@/adapters/org-invites.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createRunStore } from "@/adapters/runs.ts";
@@ -80,14 +75,14 @@ const connections = createConnections({
   credentials: createCredentialStore(db, cipher),
   attempts: createSignInAttemptStore(db),
   providers: {
-    codex: { provider: "openai", label: "Codex", browser: codex, device: codex },
+    codex: { label: "ChatGPT", browser: codex, device: codex },
   },
   logger,
 });
-// API keys are checked against the stand-in's list when replies come from it.
-const keyCatalogs = config.fakeModels
-  ? { openai: createFakeCatalog(), anthropic: createFakeCatalog() }
-  : { openai: createOpenAIKeyCatalog(fetch), anthropic: createAnthropicKeyCatalog(fetch) };
+const hosts = createHostAdapters(fetch);
+// Connections are checked against the stand-in's lists when replies come from it, but for servers
+// people run, whose lists are read where they say.
+const catalogs = config.fakeModels ? createFakeCatalogs(hosts.catalogs) : hosts.catalogs;
 const spaceStore = createSpaceStore(db);
 const threadStore = createThreadStore(db);
 const directory = createDirectory(db, auth);
@@ -97,16 +92,9 @@ const models = createModels({
   choices: createModelChoiceStore(db),
   spaces: spaceStore,
   tokens: connections,
-  catalogs: {
-    codex: createCodexCatalog(fetch),
-    ...keyCatalogs,
-  },
+  catalogs,
   settings: settingStore,
-  gateways: {
-    codex: createCodexGateway(fetch),
-    openai: createOpenAIKeyGateway(fetch),
-    anthropic: createAnthropicKeyGateway(fetch),
-  },
+  gateways: hosts.gateways,
   logger,
 });
 const runStore = createRunStore(db);

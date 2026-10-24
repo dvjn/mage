@@ -11,6 +11,8 @@ import {
   primaryKey,
 } from "drizzle-orm/sqlite-core";
 
+import { AUTH_KINDS } from "../shared/hosts.ts";
+
 export const user = sqliteTable("user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
@@ -165,13 +167,16 @@ export const connection = sqliteTable(
       .references(() => organization.id, { onDelete: "cascade" }),
     // The user who connected it; null once that user is gone.
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
-    provider: text("provider", { enum: ["openai", "anthropic"] }).notNull(),
-    // A subscription sign-in, or an API key.
-    authKind: text("auth_kind", { enum: ["codex", "api_key"] }).notNull(),
-    // The provider account, as shown to people; for an API key, its masked hint.
+    // Who serves its models, as the host registry names it.
+    host: text("host").notNull(),
+    // A subscription sign-in, a key, cloud credentials or a server's address.
+    authKind: text("auth_kind", { enum: AUTH_KINDS }).notNull(),
+    // The account, as shown to people; for a key, its masked hint.
     account: text("account").notNull(),
-    // A name people gave an API key; null for sign-ins.
+    // A name people gave it; null for sign-ins.
     label: text("label"),
+    // What is not secret about how it connects, as JSON; null where it says nothing.
+    settings: text("settings", { mode: "json" }).$type<Record<string, string>>(),
     // Whether models the provider adds are turned on when first seen.
     autoEnableModels: integer("auto_enable_models", { mode: "boolean" }).default(true).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -182,11 +187,11 @@ export const connection = sqliteTable(
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
   },
-  // One sign-in of each kind per org; API keys as many as people add.
+  // One sign-in of each host per org; the rest as many as people add.
   (table) => [
-    uniqueIndex("connection_org_kind_idx")
-      .on(table.organizationId, table.provider, table.authKind)
-      .where(sql`${table.authKind} != 'api_key'`),
+    uniqueIndex("connection_org_sign_in_idx")
+      .on(table.organizationId, table.host)
+      .where(sql`${table.authKind} = 'oauth'`),
   ],
 );
 

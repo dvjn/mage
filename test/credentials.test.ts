@@ -53,8 +53,8 @@ describe("credential store", () => {
     const connection = createConnectionStore(db).create({
       orgId: "acme",
       createdBy: "ada",
-      provider: "openai",
-      authKind: "codex",
+      host: "codex",
+      authKind: "oauth",
       account: "ada@example.com",
     });
     const store = createCredentialStore(db, createCipher({ version: 1, key }));

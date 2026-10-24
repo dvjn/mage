@@ -1,7 +1,7 @@
 // One thread in a list of threads, in the sidebar or in a page's table, always two lines high
 // whatever its status, so rows never move as threads start and stop working. A tile of its model
-// leads the row, as its product's mark named with the model on hover, with the status's glyph on
-// the tile's corner. The first line is its title, bold while something new waits there. The second
+// leads the row, as its maker's mark with its host's badge on one corner, named with the model and
+// its connection on hover, with the status's glyph on another corner. The first line is its title, bold while something new waits there. The second
 // line is who has written in it, as the first names of the one or two who wrote last and how many
 // more, all named in full on hover with a guest marked, then where the thread is when the list
 // mixes places. A sidebar row ends its second line with how long ago the thread was last active and
@@ -17,7 +17,7 @@ import type * as React from "react";
 
 import type { ThreadStatus } from "@/shared/thread-status.ts";
 import type { ShownModel, ThreadActivity, ThreadParticipants } from "@/shared/threads.ts";
-import { ModelIcon } from "@/web/components/provider-icon";
+import { ModelTile, modelLabel } from "@/web/components/marks";
 import { StatusGlyph, useThreadStatus } from "@/web/components/thread-status";
 import { ThreadTitle } from "@/web/components/thread-title";
 import { ShortTime } from "@/web/components/time";
@@ -64,26 +64,21 @@ export function ThreadRow(
 }
 
 // The tile leading the row, though after the title for screen readers, so a row is named by its
-// title first: the model's mark, named with the model, a bot for a model of no
-// provider Mage knows or for none; and on its corner the status's glyph, on a disc of the colour
-// the row has, given as `disc`.
-function ModelTile({
-  thread,
-  status,
-  disc,
-}: {
-  thread: Listed;
-  status: ThreadStatus;
-  disc: string;
-}) {
+// title first: the model's tile, named with the model and its connection, a bot for a model no one
+// can tell the maker of or for none; and on its bottom-right corner the status's glyph, on a disc
+// of the colour the row has, given as `disc`, which rings the host's badge too.
+function RowTile({ thread, status, disc }: { thread: Listed; status: ThreadStatus; disc: string }) {
   const model = thread.shownModel;
-  const label = model?.name ?? "No model";
+  const label = model ? modelLabel(model.name, model.connection) : "No model";
   return (
-    <span className="relative order-first grid size-8 shrink-0 place-items-center overflow-visible! rounded-lg bg-muted">
+    <ModelTile
+      maker={model?.maker ?? null}
+      host={model?.host ?? null}
+      connection={model?.connection}
+      disc={disc}
+    >
       <WithTooltip label={label}>
-        <span role="img" aria-label={label} className="flex">
-          <ModelIcon provider={model?.provider ?? null} className="size-4" />
-        </span>
+        <span role="img" aria-label={label} className="absolute inset-0" />
       </WithTooltip>
       <StatusGlyph
         status={status}
@@ -94,7 +89,7 @@ function ModelTile({
           disc,
         )}
       />
-    </span>
+    </ModelTile>
   );
 }
 
@@ -157,7 +152,7 @@ function PageRow({ thread, place, badge, time }: PageRowProps) {
           <Writers thread={thread} place={place} />
         </span>
       </span>
-      <ModelTile thread={thread} status={status} disc="bg-(--row)" />
+      <RowTile thread={thread} status={status} disc="bg-(--row)" />
     </Link>
   );
 }
@@ -191,7 +186,7 @@ function SidebarRow({ thread, place, title, isActive, children }: SidebarRowProp
           <ShortTime iso={thread.updatedAt} className="ml-auto shrink-0 pl-1 tabular-nums" />
         </span>
       </span>
-      <ModelTile thread={thread} status={status} disc={sidebarDisc} />
+      <RowTile thread={thread} status={status} disc={sidebarDisc} />
     </SidebarMenuButton>
   );
   return (

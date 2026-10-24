@@ -124,11 +124,14 @@ export function setup(
         name: ref.slice(ref.indexOf("/") + 1),
         status: org.off.includes(ref) ? ("off" as const) : ("ok" as const),
       }),
-    // A ref's provider by its prefix, as a sign-in's is: codex for OpenAI, claude for Anthropic.
+    // A ref's maker and host by its prefix: the ChatGPT sign-in's models are OpenAI's, and those
+    // of an Anthropic key, named `claude`, Anthropic's.
     shownModels: () => (ref: string) => {
       const prefix = ref.slice(0, ref.indexOf("/"));
-      const provider = prefix === "codex" ? "openai" : prefix === "claude" ? "anthropic" : null;
-      return { ref, name: ref.slice(ref.indexOf("/") + 1), provider } as const;
+      const host = prefix === "codex" ? "codex" : prefix === "claude" ? "anthropic" : null;
+      const maker = host && (host === "codex" ? "openai" : "anthropic");
+      const connection = host && (host === "codex" ? "ChatGPT" : "Anthropic API key");
+      return { ref, name: ref.slice(ref.indexOf("/") + 1), maker, host, connection } as const;
     },
     requireModel: (_orgId: string, ref: string) =>
       org.models.includes(ref)

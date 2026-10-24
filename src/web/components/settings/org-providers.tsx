@@ -1,9 +1,9 @@
-// The organization's model providers: a card with a table of its connections (provider's mark and
-// label, how it connects, the account or masked key, how many of its models are on, when it was
-// added), each with a menu to choose its models, rename an API key, set its proxy or remove it, and
-// adding one through the add-provider journey, started from the empty state while there are none.
-// On a phone each row is two lines. The org's owners manage them; its members see them. A team org
-// connects with API keys only.
+// The organization's model providers: a card with a table of its connections (the host's mark and
+// label, how it connects, the account, masked key or server with its region, the makers of its
+// models, how many of its models are on, when it was added), each with a menu to choose its models,
+// rename it, set its proxy or remove it, and adding one through the add-provider journey, started
+// from the empty state while there are none. On a phone each row is two lines. The org's owners
+// manage them; its members see them. A team org connects with no subscription sign-ins.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -18,9 +18,11 @@ import {
 import { useState } from "react";
 
 import { type ConnectionSummary, connectionLabel } from "@/shared/connections.ts";
+import { methodOf } from "@/shared/hosts.ts";
+import { MAKERS, type MakerId } from "@/shared/makers.ts";
+import { HostMark, MakerMark } from "@/web/components/marks";
 import { EmptyState } from "@/web/components/page-states";
 import { HeaderAction } from "@/web/components/people-table";
-import { ProviderIcon } from "@/web/components/provider-icon";
 import { Time } from "@/web/components/time";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { NameDialog } from "@/web/components/name-dialog";
@@ -66,10 +68,42 @@ import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { connectionsQuery, meQuery, modelsQuery } from "@/web/lib/queries";
 
-const METHODS: Record<ConnectionSummary["authKind"], string> = {
-  api_key: "API key",
-  codex: "ChatGPT sign-in",
-};
+// How it connects, as its host's way of connecting is called.
+function methodTitle(connection: ConnectionSummary) {
+  const method = methodOf(connection.host, connection.settings.method, connection.authKind);
+  return method?.title ?? connection.authKind;
+}
+
+// The account, key or server, with where it runs when that was given.
+function accountLine(connection: ConnectionSummary) {
+  const { region, location } = connection.settings;
+  return [connection.account, region ?? location].filter(Boolean).join(" · ");
+}
+
+// The marks of up to four makers of the connection's models, most models first.
+function Makers({ connection }: { connection: ConnectionSummary }) {
+  const models = useQuery(modelsQuery);
+  const counts = new Map<MakerId, number>();
+  for (const model of models.data?.models ?? []) {
+    if (model.connectionId !== connection.id || !model.maker) continue;
+    counts.set(model.maker, (counts.get(model.maker) ?? 0) + 1);
+  }
+  const makers = [...counts.entries()].toSorted((a, b) => b[1] - a[1]).map(([maker]) => maker);
+  if (makers.length === 0) return <span className="text-muted-foreground">—</span>;
+  const named = makers.map((maker) => MAKERS[maker].label).join(", ");
+  return (
+    <WithTooltip label={named}>
+      <span role="img" aria-label={`Makers: ${named}`} className="flex items-center gap-1">
+        {makers.slice(0, 4).map((maker) => (
+          <MakerMark key={maker} maker={maker} className="size-3.5" />
+        ))}
+        {makers.length > 4 && (
+          <span className="text-xs text-muted-foreground">+{makers.length - 4}</span>
+        )}
+      </span>
+    </WithTooltip>
+  );
+}
 
 type RowAction = {
   kind: "models" | "rename" | "proxy" | "remove";
@@ -83,7 +117,7 @@ function RowMenu({
   connection: ConnectionSummary;
   onAction: (action: RowAction) => void;
 }) {
-  const key = connection.authKind === "api_key";
+  const named = connection.authKind !== "oauth";
   return (
     <DropdownMenu>
       <WithTooltip label="Actions">
@@ -105,7 +139,7 @@ function RowMenu({
           <ListChecksIcon />
           Models
         </DropdownMenuItem>
-        {key && (
+        {named && (
           <DropdownMenuItem onClick={() => onAction({ kind: "rename", connection })}>
             <PencilIcon />
             Rename label
@@ -167,8 +201,11 @@ function ProvidersTable({
           <TableHead className="px-3 text-xs text-muted-foreground">Provider</TableHead>
           <TableHead className="px-3 text-xs text-muted-foreground">Method</TableHead>
           <TableHead className="px-3 text-xs text-muted-foreground">Account</TableHead>
+          <TableHead className="px-3 text-xs text-muted-foreground">Makers</TableHead>
           <TableHead className="px-3 text-xs text-muted-foreground">Models</TableHead>
-          <TableHead className="px-3 text-xs text-muted-foreground">Added</TableHead>
+          <TableHead className="hidden px-3 text-xs text-muted-foreground 2xl:table-cell">
+            Added
+          </TableHead>
           <TableHead className="w-10 px-1">
             <span className="sr-only">Actions</span>
           </TableHead>
@@ -179,26 +216,29 @@ function ProvidersTable({
           const name = connectionLabel(connection);
           return (
             <TableRow key={connection.id} aria-label={name} className="group">
-              <TableCell className="w-full max-w-0 px-3 py-2.5">
+              <TableCell className="w-full max-w-0 min-w-36 px-3 py-2.5">
                 <div className="flex min-w-0 items-center gap-2 font-medium">
-                  <ProviderIcon provider={connection.provider} />
+                  <HostMark host={connection.host} label={connection.label} />
                   <span className="truncate">{name}</span>
                 </div>
                 {/* On a phone the other columns fold into this line. */}
                 <div className="truncate text-xs text-muted-foreground sm:hidden">
-                  {METHODS[connection.authKind]} ·{" "}
+                  {methodTitle(connection)} ·{" "}
                   <span className={connection.authKind === "api_key" ? "font-mono" : undefined}>
-                    {connection.account}
+                    {accountLine(connection)}
                   </span>
                 </div>
               </TableCell>
-              <TableCell className="hidden px-3 py-2.5 text-muted-foreground sm:table-cell">
-                {METHODS[connection.authKind]}
+              <TableCell className="hidden px-3 py-2.5 whitespace-nowrap text-muted-foreground sm:table-cell">
+                {methodTitle(connection)}
               </TableCell>
-              <TableCell className="hidden max-w-48 truncate px-3 py-2.5 sm:table-cell">
+              <TableCell className="hidden max-w-40 truncate px-3 py-2.5 sm:table-cell">
                 <span className={connection.authKind === "api_key" ? "font-mono" : undefined}>
-                  {connection.account}
+                  {accountLine(connection)}
                 </span>
+              </TableCell>
+              <TableCell className="hidden px-3 py-2.5 sm:table-cell">
+                <Makers connection={connection} />
               </TableCell>
               <TableCell className="hidden px-3 py-2.5 sm:table-cell">
                 {manages ? (
@@ -210,7 +250,7 @@ function ProvidersTable({
                   <span className="text-muted-foreground">—</span>
                 )}
               </TableCell>
-              <TableCell className="hidden px-3 py-2.5 text-muted-foreground sm:table-cell">
+              <TableCell className="hidden px-3 py-2.5 whitespace-nowrap text-muted-foreground 2xl:table-cell">
                 <Time iso={connection.createdAt} />
               </TableCell>
               <TableCell className="w-10 px-1 py-2 text-right">

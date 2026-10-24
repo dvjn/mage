@@ -2,7 +2,8 @@
 // production refuses. It is served twice on the one database: with passwords, and signing in only
 // through a stand-in OpenID Connect provider, as an instance that later turned one on. The identity
 // provider and directory journeys run against the second; they provision people and groups over
-// SCIM themselves, as a directory would.
+// SCIM themselves, as a directory would. A stand-in OpenAI-compatible server lists models for the
+// journeys that connect one.
 
 import { rmSync } from "node:fs";
 
@@ -10,7 +11,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 import { databasePath, dataDir } from "./e2e/database.ts";
 import { JOURNEY_SCIM_TOKEN } from "./e2e/scim-client.ts";
-import { issuer, passwordServer, ssoServer } from "./e2e/servers.ts";
+import { issuer, modelServer, passwordServer, ssoServer } from "./e2e/servers.ts";
 
 // The journeys that sign in through the identity provider.
 const ssoJourneys = ["**/oidc.spec.ts", "**/scim.spec.ts"];
@@ -47,6 +48,12 @@ export default defineConfig({
     },
   ],
   webServer: [
+    {
+      command: "node e2e/model-server.ts",
+      url: `${modelServer}/v1/models`,
+      reuseExistingServer: false,
+      env: { PORT: new URL(modelServer).port },
+    },
     {
       command: "node e2e/oidc-issuer.ts",
       url: `${issuer}/.well-known/openid-configuration`,

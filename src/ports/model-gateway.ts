@@ -10,10 +10,14 @@ export interface ProviderProxy {
   headers: Record<string, string>;
 }
 
+// What a connection reaches its host with: an access token or key (empty with none), the account
+// it is for, its proxy, and, for the hosts that need them, its settings and its other secrets.
 export interface ModelToken {
   access: string;
   accountId: string | null;
   proxy?: ProviderProxy | null;
+  settings?: Record<string, string>;
+  secrets?: Record<string, string>;
 }
 
 // A tool the model may call, with its input as a JSON schema.

@@ -39,3 +39,11 @@ run = "pnpm e2e"
 [tasks."db:generate"]
 description = "Generate a migration from schema changes"
 run = "pnpm db:generate"
+
+[tasks."models:update"]
+description = "Refresh the vendored model data from LiteLLM's model map"
+run = "node scripts/update-models.ts"
+
+[tasks."icons:update"]
+description = "Write the makers' and hosts' marks from the pinned Lobe Icons release"
+run = "node scripts/update-icons.ts"

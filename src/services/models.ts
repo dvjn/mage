@@ -1,11 +1,11 @@
-// The models an org can use: each of its connections' live lists, kept for an hour, merged under
-// refs of the form `<auth kind>/<model id>` for a sign-in and `<connection id>/<model id>` for an
-// API key, the defaults new threads start with, chosen from them, and opening a model to stream a
-// reply from through its connection, and the model that names threads: the org's choice, or a
-// small model of its first connection that has one. An API key is added only once its provider
-// lists models with it. Each connection's models can be turned off, and those it lists for the
-// first time are turned on or not as the connection says; a model turned off is in no picker and
-// does not reply.
+// The models an org can use: each of its connections' lists, kept for an hour, merged under refs of
+// the form `<host>/<model id>` for a sign-in and `<connection id>/<model id>` for the rest, each
+// with who makes it, the defaults new threads start with, chosen from them, and opening a model to
+// stream a reply from through its connection, and the model that names threads: the org's choice,
+// or a small model of its first connection that has one. A key, cloud credentials or a server is
+// added only once its host lists models with them. Each connection's models can be turned off, and
+// those it lists for the first time are turned on or not as the connection says; a model turned off
+// is in no picker and does not reply.
 
 import type { Catalog, CatalogModel } from "@/ports/catalog.ts";
 import type { Connection, ConnectionStore } from "@/ports/connections.ts";
@@ -14,28 +14,30 @@ import type { ModelChoiceStore } from "@/ports/model-choices.ts";
 import {
   ModelError,
   ModelTurnedOff,
-  type ProviderProxy,
   type ModelEvent,
   type ModelGateway,
   type ModelRequest,
 } from "@/ports/model-gateway.ts";
 import type { OrgSettings, OrgSettingStore } from "@/ports/org-settings.ts";
 import type { Space, SpaceStore } from "@/ports/spaces.ts";
-import { ConnectionError, type Connections, type Owner } from "@/services/connections.ts";
-import { ServiceError } from "@/services/errors.ts";
 import {
-  BACKEND_LABELS as LABELS,
-  type Backend,
-  backendOf,
-  connectionLabel,
-} from "@/shared/connections.ts";
+  ConnectionError,
+  type Connections,
+  type NewHostConnection,
+  type Owner,
+} from "@/services/connections.ts";
+import { ServiceError } from "@/services/errors.ts";
+import { connectionLabel } from "@/shared/connections.ts";
+import { type HostId, HOSTS, hostOf, isHost } from "@/shared/hosts.ts";
+import { type MakerId, makerOf } from "@/shared/makers.ts";
 import { type ModelPair, replyCandidates } from "@/shared/models.ts";
 import type { Effort, ShownModel } from "@/shared/threads.ts";
 
 export interface Model extends CatalogModel {
   ref: string;
   connectionId: string;
-  provider: Connection["provider"];
+  host: HostId;
+  maker: MakerId | null;
   authKind: Connection["authKind"];
   // How people know the connection it comes through.
   connectionLabel: string;
@@ -80,15 +82,15 @@ export interface ModelList {
 
 export interface ModelsOptions {
   connections: ConnectionStore;
-  // Reads each connection's token, renewed when it is about to expire, and adds API keys.
-  tokens: Pick<Connections, "withFreshToken" | "addApiKey">;
-  catalogs: Record<Backend, Catalog>;
+  // Reads each connection's token, renewed when it is about to expire, and adds connections.
+  tokens: Pick<Connections, "withFreshToken" | "add">;
+  catalogs: Record<HostId, Catalog>;
   settings: OrgSettingStore;
   choices: ModelChoiceStore;
   // Finds the spaces that start threads on a model being turned off.
   spaces: Pick<SpaceStore, "withDefaultModel">;
-  // Streams replies for the connections of each kind that can reply.
-  gateways: Record<Backend, ModelGateway>;
+  // Streams replies for the connections of each host.
+  gateways: Record<HostId, ModelGateway>;
   logger: Logger;
   now?: () => Date;
 }
@@ -102,16 +104,9 @@ export type Models = ReturnType<typeof createModels>;
 
 const CACHE_MS = 60 * 60 * 1000;
 
-// The model each kind of connection names threads with, when its list has it.
-const TITLE_MODELS: Record<Backend, string> = {
-  codex: "gpt-6-luna",
-  openai: "gpt-6-luna",
-  anthropic: "claude-haiku-5-5",
-};
-
-// A sign-in's models are named by its kind, of which an org has one; a key's by the connection.
-export function modelRef(connection: Pick<Connection, "id" | "authKind">, id: string) {
-  return `${connection.authKind === "api_key" ? connection.id : connection.authKind}/${id}`;
+// A sign-in's models are named by its host, of which an org has one; the rest by the connection.
+export function modelRef(connection: Pick<Connection, "id" | "authKind" | "host">, id: string) {
+  return `${connection.authKind === "oauth" ? connection.host : connection.id}/${id}`;
 }
 
 // The one place that decides what a thread follows where it has no model or effort of its own: its
@@ -150,18 +145,17 @@ export function createModels(options: ModelsOptions) {
   const cache = new Map<string, { at: number; models: CatalogModel[] }>();
 
   async function listOf(orgId: string, connection: Connection, refresh: boolean) {
-    const { id } = connection;
-    const kind = backendOf(connection);
+    const { id, host } = connection;
     const cached = cache.get(id);
     if (!refresh && cached && now().getTime() - cached.at < CACHE_MS) return cached.models;
     try {
-      const models = await tokens.withFreshToken(orgId, id, (token) => catalogs[kind].list(token));
+      const models = await tokens.withFreshToken(orgId, id, (token) => catalogs[host].list(token));
       cache.set(id, { at: now().getTime(), models });
       return models;
     } catch (err) {
       if (err instanceof ConnectionError) throw err;
-      logger.warn({ err, kind }, "model list failed");
-      throw new Error(`Could not read the ${LABELS[kind]} models. Try again.`);
+      logger.warn({ err, host }, "model list failed");
+      throw new Error(`Could not read the ${hostOf(host).label} models. Try again.`);
     }
   }
 
@@ -177,7 +171,8 @@ export function createModels(options: ModelsOptions) {
       ...model,
       ref: modelRef(connection, model.id),
       connectionId: connection.id,
-      provider: connection.provider,
+      host: connection.host,
+      maker: model.maker ?? makerOf(hostOf(connection.host), model.id),
       authKind: connection.authKind,
       connectionLabel: connectionLabel(connection),
       enabled: chosen.get(model.id)?.enabled ?? connection.autoEnableModels,
@@ -193,9 +188,7 @@ export function createModels(options: ModelsOptions) {
 
   // The connection of the list that a ref's prefix names, or null.
   function namedBy(list: Connection[], prefix: string) {
-    return (
-      list.find((c) => (c.authKind === "api_key" ? c.id === prefix : c.authKind === prefix)) ?? null
-    );
+    return list.find((c) => (c.authKind === "oauth" ? c.host === prefix : c.id === prefix)) ?? null;
   }
 
   // The connection a ref names, or null.
@@ -322,31 +315,32 @@ export function createModels(options: ModelsOptions) {
       cache.delete(connectionId);
     },
 
-    // Adds the key once its provider, or the proxy given for it, lists models with it, which
-    // become the connection's list.
-    async addApiKey(
-      owner: Owner,
-      input: {
-        provider: Connection["provider"];
-        label: string | null;
-        key: string;
-        proxy?: ProviderProxy | null;
-      },
-    ): Promise<Connection> {
-      const kind = input.provider;
+    // Adds the connection once its host, or the proxy given for it, lists models with what it was
+    // given, which become the connection's list.
+    async add(owner: Owner, input: NewHostConnection): Promise<Connection> {
+      const { host } = input;
+      const { apiKey = "", ...secrets } = input.secrets;
       let list: CatalogModel[];
       try {
-        list = await catalogs[kind].list({
-          access: input.key,
+        list = await catalogs[host].list({
+          access: apiKey,
           accountId: null,
           proxy: input.proxy ?? null,
+          settings: input.settings,
+          secrets,
         });
       } catch (err) {
-        logger.info({ err, kind }, "api key refused");
+        logger.info({ err, host }, "connection refused");
         const said = err instanceof Error && err.message ? ` (${err.message})` : "";
-        throw new ConnectionError(400, `${LABELS[kind]} did not accept this key${said}.`);
+        throw new ConnectionError(
+          400,
+          `${hostOf(host).label} did not accept these details${said}.`,
+        );
       }
-      const connection = tokens.addApiKey(owner, input);
+      if (list.length === 0) {
+        throw new ConnectionError(400, `${hostOf(host).label} lists no models; give their ids.`);
+      }
+      const connection = tokens.add(owner, input);
       cache.set(connection.id, { at: now().getTime(), models: list });
       return connection;
     },
@@ -361,16 +355,16 @@ export function createModels(options: ModelsOptions) {
       if (slash < 1 || !model) throw new ModelError("model", `${ref} is not a model ref.`);
       const connection = connectionOf(orgId, prefix);
       if (!connection) {
-        const needs = Object.hasOwn(LABELS, prefix)
-          ? `a ${LABELS[prefix as Backend]} connection`
-          : "an API key that was removed";
+        const needs = isHost(prefix)
+          ? `a ${HOSTS[prefix].label} connection`
+          : "a connection that was removed";
         throw new ModelError("auth", `${ref} needs ${needs}. Add one in Model providers.`);
       }
       // A list that cannot be read leaves the model's reasoning unknown.
       const list = await listOf(orgId, connection, false).catch(() => []);
       const listed = withChoices(connection, list).find((m) => m.id === model);
       if (listed && !listed.enabled) throw new ModelTurnedOff(listed.name);
-      const gateway = gateways[backendOf(connection)];
+      const gateway = gateways[connection.host];
       return {
         stream: ({ effort, ...request }, signal) =>
           streamFrom(
@@ -444,17 +438,27 @@ export function createModels(options: ModelsOptions) {
       settings.setDefaultEffort(orgId, effort);
     },
 
-    // The org's models as lists show them, by ref: the provider of the connection each comes
-    // through, null when the org has none such, and the name its last list gave it, else its id.
-    // Reads the org's connections once and asks no provider.
+    // The org's models as lists show them, by ref: who makes each, the host and the connection it
+    // comes through, null when the org has none such, and the name its last list gave it, else its
+    // id. Reads the org's connections once and asks no host.
     shownModels(orgId: string): (ref: string) => ShownModel {
       const list = connections.list(orgId);
       return (ref) => {
         const slash = ref.indexOf("/");
+        const prefix = ref.slice(0, slash);
         const id = ref.slice(slash + 1);
-        const connection = namedBy(list, ref.slice(0, slash));
+        const connection = namedBy(list, prefix);
         const listed = connection && cache.get(connection.id)?.models.find((m) => m.id === id);
-        return { ref, name: listed?.name ?? id, provider: connection?.provider ?? null };
+        // A sign-in's ref names its host even after it is gone.
+        const host = connection?.host ?? null;
+        const hinted = host ?? (isHost(prefix) ? prefix : null);
+        return {
+          ref,
+          name: listed?.name ?? id,
+          maker: listed?.maker ?? makerOf(hinted && hostOf(hinted), id),
+          host,
+          connection: connection ? connectionLabel(connection) : null,
+        };
       };
     },
 
@@ -472,8 +476,9 @@ export function createModels(options: ModelsOptions) {
     async automaticTitleModel(orgId: string): Promise<string | null> {
       const { models } = await resolveModels(orgId);
       for (const connection of connections.list(orgId)) {
-        const ref = modelRef(connection, TITLE_MODELS[backendOf(connection)]);
-        if (models.some((model) => model.ref === ref)) return ref;
+        const title = hostOf(connection.host).titleModel;
+        const ref = title && modelRef(connection, title);
+        if (ref && models.some((model) => model.ref === ref)) return ref;
       }
       return null;
     },

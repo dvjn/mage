@@ -22,12 +22,13 @@ async function signUpToSettings(page: Page) {
   await expect(page).toHaveURL("/org/providers");
 }
 
-// Opens the add-provider journey at the provider and way of connecting given.
-async function addProvider(page: Page, provider: string, method: string) {
+// Opens the add-provider journey at the provider given, and the way of connecting given where it
+// has several.
+async function addProvider(page: Page, provider: string, method?: string) {
   await page.getByRole("button", { name: "Add provider" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("button", { name: new RegExp(`^${provider}`) }).click();
-  await dialog.getByRole("button", { name: new RegExp(`^${method}`) }).click();
+  await dialog.getByRole("option", { name: new RegExp(`^${provider} ·`) }).click();
+  if (method) await dialog.getByRole("button", { name: new RegExp(`^${method}`) }).click();
   return dialog;
 }
 
@@ -41,7 +42,7 @@ test("settings offers the Codex sign-in and rejects a pasted address from anothe
   );
 
   await signUpToSettings(page);
-  await addProvider(page, "OpenAI", "Sign in with ChatGPT");
+  await addProvider(page, "ChatGPT");
   await expect(page.getByRole("button", { name: "Device code" })).toHaveAttribute(
     "aria-pressed",
     "true",
@@ -67,9 +68,7 @@ test("settings offers the Codex sign-in and rejects a pasted address from anothe
 
 test("Anthropic connects with an API key, with no sign-in to choose", async ({ page }) => {
   await signUpToSettings(page);
-  await page.getByRole("button", { name: "Add provider" }).click();
-  const dialog = page.getByRole("dialog");
-  await dialog.getByRole("button", { name: /^Anthropic/ }).click();
+  const dialog = await addProvider(page, "Anthropic");
   await expect(dialog.getByRole("heading", { name: "Add an Anthropic API key" })).toBeVisible();
   await expect(dialog.getByLabel("API key")).toBeFocused();
 });
@@ -80,10 +79,11 @@ test("a connection's proxy is set from its row, its header values never shown", 
   // Stands in for a connected ChatGPT account, which needs a real sign-in.
   const connection = {
     id: "c1",
-    provider: "openai",
-    authKind: "codex",
+    host: "codex",
+    authKind: "oauth",
     account: "ada@chatgpt.example",
     label: null,
+    settings: {},
     createdAt: "2026-10-21T00:00:00.000Z",
   };
   let proxy: { baseUrl: string | null; headerNames: string[] } | null = null;
@@ -105,11 +105,11 @@ test("a connection's proxy is set from its row, its header values never shown", 
   });
 
   await signUpToSettings(page);
-  const row = page.getByRole("row", { name: "Codex" });
+  const row = page.getByRole("row", { name: "ChatGPT" });
   await expect(row).toContainText("ada@chatgpt.example");
-  await expect(row).toContainText("ChatGPT sign-in");
+  await expect(row).toContainText("Sign in with ChatGPT");
   await expect(page.getByLabel("Base URL")).toBeHidden();
-  await row.getByRole("button", { name: "Actions for Codex" }).click();
+  await row.getByRole("button", { name: "Actions for ChatGPT" }).click();
   await page.getByRole("menuitem", { name: "Proxy settings" }).click();
   await expect(page.getByLabel("Base URL")).toHaveAttribute(
     "placeholder",
@@ -128,14 +128,14 @@ test("a connection's proxy is set from its row, its header values never shown", 
   await page.getByRole("button", { name: "Save" }).click();
   await expect.poll(() => sent.length).toBe(2);
   await page.keyboard.press("Escape");
-  await row.getByRole("button", { name: "Actions for Codex" }).click();
+  await row.getByRole("button", { name: "Actions for ChatGPT" }).click();
   await page.getByRole("menuitem", { name: "Proxy settings" }).click();
   await expect(page.getByLabel("Base URL")).toHaveValue("https://proxy.example.com/v1");
 
   await page.getByRole("button", { name: "Clear" }).click();
   await expect(page.getByText("Proxy cleared.")).toBeVisible();
   await page.keyboard.press("Escape");
-  await row.getByRole("button", { name: "Actions for Codex" }).click();
+  await row.getByRole("button", { name: "Actions for ChatGPT" }).click();
   await page.getByRole("menuitem", { name: "Proxy settings" }).click();
   await expect(page.getByLabel("Base URL")).toHaveValue("");
   expect(sent).toEqual([

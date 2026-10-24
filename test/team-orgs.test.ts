@@ -564,7 +564,7 @@ describe("renaming and deleting a team org", () => {
       .values({
         id: "c1",
         organizationId: orgId,
-        provider: "openai",
+        host: "openai",
         authKind: "api_key",
         account: "sk-…1",
       })

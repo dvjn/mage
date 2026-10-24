@@ -1,36 +1,53 @@
-// Adding a model provider, step by step in one dialog: the provider, then how to connect to it
-// where there is more than one way, then the key (with an optional proxy it is checked through) or
-// the sign-in, and finally how many models it brought, with a shortcut to make one of them the
-// default. Back goes a step back; a refused key says why on its step.
+// Adding a model provider, step by step in one dialog: the host, found in a searchable grid by
+// kind, then how to connect to it where there is more than one way, then the fields that way asks
+// for (with an optional name, and a proxy it is checked through) or the sign-in, and finally how
+// many models it brought, with a shortcut to make one of them the default. Back goes a step back;
+// refused details say why on their step.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeftIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
+  CloudIcon,
   KeyRoundIcon,
   LogInIcon,
+  ServerIcon,
 } from "lucide-react";
 import { cn } from "cn";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 
+import { connectionSchema, type ConnectionSummary, connectionLabel } from "@/shared/connections.ts";
 import {
-  BACKEND_LABELS,
-  connectionSchema,
-  type ConnectionSummary,
-  connectionLabel,
-} from "@/shared/connections.ts";
+  type AuthKind,
+  type Field as HostField,
+  HOST_GROUPS,
+  HOST_IDS,
+  type HostGroup,
+  type HostId,
+  hostOf,
+  type Method,
+} from "@/shared/hosts.ts";
 import { WithTooltip } from "@/web/components/with-tooltip";
+import { HostMark } from "@/web/components/marks";
 import { ModelPicker } from "@/web/components/model-picker";
-import { ProviderIcon } from "@/web/components/provider-icon";
 import { CodexSignIn } from "@/web/components/settings/codex-sign-in";
 import {
+  defaultBaseUrl,
   emptyProxy,
   type ProxyDraft,
   ProxyFields,
   proxyBody,
 } from "@/web/components/settings/proxy-settings";
 import { Button } from "@/web/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/web/components/ui/command";
 import {
   Dialog,
   DialogContent,
@@ -48,37 +65,29 @@ import {
   FieldLabel,
 } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/web/components/ui/select";
+import { Textarea } from "@/web/components/ui/textarea";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { connectionsQuery, defaultModelQuery, modelsQuery } from "@/web/lib/queries";
 
-type Provider = "anthropic" | "openai";
-type Method = "api_key" | "codex";
-
 type Step =
-  | { name: "provider" }
-  | { name: "method"; provider: Provider }
-  | { name: "credentials"; provider: Provider; method: Method }
+  | { name: "host" }
+  | { name: "method"; host: HostId }
+  | { name: "credentials"; host: HostId; method: string }
   | { name: "done"; connection: ConnectionSummary };
 
-const PROVIDERS: { provider: Provider; description: string }[] = [
-  { provider: "anthropic", description: "Claude models." },
-  { provider: "openai", description: "GPT models." },
-];
-
-const METHODS: Record<Provider, { method: Method; title: string; description: string }[]> = {
-  anthropic: [
-    { method: "api_key", title: "API key", description: "Billed per token by Anthropic." },
-  ],
-  openai: [
-    { method: "api_key", title: "API key", description: "Billed per token by OpenAI." },
-    { method: "codex", title: "Sign in with ChatGPT", description: "Uses your ChatGPT plan." },
-  ],
-};
-
-const KEY_PLACEHOLDERS: Record<Provider, string> = {
-  anthropic: "sk-ant-…",
-  openai: "sk-…",
+const METHOD_ICONS: Record<AuthKind, ReactNode> = {
+  api_key: <KeyRoundIcon />,
+  oauth: <LogInIcon />,
+  cloud: <CloudIcon />,
+  endpoint: <ServerIcon />,
 };
 
 function Choice({
@@ -110,21 +119,147 @@ function Choice({
   );
 }
 
-function ApiKeyStep({
-  provider,
+// Every host by its kind, as tiles of its mark, name and what it connects with, found by any of
+// them; one already signed in to is shown but cannot be chosen.
+function HostGrid({
+  hosts,
+  taken,
+  onSelect,
+}: {
+  hosts: HostId[];
+  taken: (host: HostId) => boolean;
+  onSelect: (host: HostId) => void;
+}) {
+  const groups = (Object.keys(HOST_GROUPS) as HostGroup[])
+    .map((group) => ({ group, hosts: hosts.filter((host) => hostOf(host).group === group) }))
+    .filter(({ hosts: list }) => list.length > 0);
+  return (
+    <Command className="rounded-none! bg-transparent p-0">
+      <CommandInput placeholder="Search providers" aria-label="Search providers" autoFocus />
+      <CommandList className="max-h-[min(60vh,30rem)]">
+        <CommandEmpty>No providers found.</CommandEmpty>
+        {groups.map(({ group, hosts: list }) => (
+          <CommandGroup
+            key={group}
+            heading={HOST_GROUPS[group]}
+            className="px-0 **:[[cmdk-group-items]]:grid **:[[cmdk-group-items]]:grid-cols-2 **:[[cmdk-group-items]]:gap-1 sm:**:[[cmdk-group-items]]:grid-cols-3"
+          >
+            {list.map((host) => {
+              const { label, hint } = hostOf(host);
+              const connected = taken(host);
+              return (
+                <CommandItem
+                  key={host}
+                  value={host}
+                  keywords={[label, hint, HOST_GROUPS[group]]}
+                  aria-label={`${label} · ${connected ? "Already connected" : hint}`}
+                  disabled={connected}
+                  onSelect={() => onSelect(host)}
+                  className="items-start gap-2.5 rounded-lg! border border-transparent p-2 data-selected:border-border [&>svg:last-child]:hidden"
+                >
+                  <HostMark host={host} className="mt-0.5 size-5" />
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate font-medium">{label}</span>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {connected ? "Already connected" : hint}
+                    </span>
+                  </span>
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
+        ))}
+      </CommandList>
+    </Command>
+  );
+}
+
+// One field of a way of connecting, as the kind of input its value takes.
+function FieldInput({
+  id,
+  field,
+  value,
+  onChange,
+  autoFocus,
+}: {
+  id: string;
+  field: HostField;
+  value: string;
+  onChange: (value: string) => void;
+  autoFocus?: boolean;
+}) {
+  const common = {
+    id,
+    value,
+    required: field.required,
+    placeholder: field.placeholder,
+    autoComplete: "off",
+    autoFocus,
+  };
+  switch (field.kind) {
+    case "choice":
+      return (
+        <Select value={value} onValueChange={(next) => onChange(String(next ?? ""))}>
+          <SelectTrigger id={id} className="w-full">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent alignItemWithTrigger={false}>
+            {field.options?.map((option) => (
+              <SelectItem key={option} value={option}>
+                {option}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      );
+    case "json":
+    case "list":
+      return (
+        <Textarea
+          {...common}
+          rows={field.kind === "json" ? 4 : 3}
+          spellCheck={false}
+          className={cn("max-h-40", field.kind === "json" && "font-mono text-xs")}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      );
+    default:
+      return (
+        <Input
+          {...common}
+          type={
+            field.kind === "secret" && !field.shown
+              ? "password"
+              : field.kind === "url"
+                ? "url"
+                : "text"
+          }
+          onChange={(event) => onChange(event.target.value)}
+        />
+      );
+  }
+}
+
+function CredentialsStep({
+  host,
+  method,
   onAdded,
 }: {
-  provider: Provider;
+  host: HostId;
+  method: Method;
   onAdded: (connection: ConnectionSummary) => void;
 }) {
   const queryClient = useQueryClient();
   const id = useId();
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(method.fields.map((field) => [field.name, field.initial ?? ""])),
+  );
   const [label, setLabel] = useState("");
-  const [key, setKey] = useState("");
   const [advanced, setAdvanced] = useState(false);
   const [proxy, setProxy] = useState<ProxyDraft>(emptyProxy);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
+  const missing = method.fields.some((field) => field.required && !values[field.name]?.trim());
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -134,11 +269,12 @@ function ApiKeyStep({
     const headers = Object.fromEntries(
       Object.entries(body.headers).map(([name, value]) => [name, value ?? ""]),
     );
-    const res = await apiClient.v1.connections["api-keys"].$post({
+    const res = await apiClient.v1.connections.$post({
       json: {
-        provider,
+        host,
+        method: method.id,
         label: label.trim() || null,
-        key,
+        values,
         proxy:
           body.baseUrl || Object.keys(headers).length > 0
             ? { baseUrl: body.baseUrl, headers }
@@ -159,22 +295,19 @@ function ApiKeyStep({
   return (
     <form onSubmit={(event) => void submit(event)}>
       <FieldGroup>
-        <Field>
-          <FieldLabel htmlFor={`${id}-key`}>API key</FieldLabel>
-          <Input
-            id={`${id}-key`}
-            type="password"
-            value={key}
-            onChange={(event) => setKey(event.target.value)}
-            placeholder={KEY_PLACEHOLDERS[provider]}
-            required
-            autoComplete="off"
-            autoFocus
-          />
-          <FieldDescription>
-            Checked by listing its models, then kept sealed and never shown again.
-          </FieldDescription>
-        </Field>
+        {method.fields.map((field, index) => (
+          <Field key={field.name}>
+            <FieldLabel htmlFor={`${id}-${field.name}`}>{field.label}</FieldLabel>
+            <FieldInput
+              id={`${id}-${field.name}`}
+              field={field}
+              value={values[field.name] ?? ""}
+              onChange={(value) => setValues((current) => ({ ...current, [field.name]: value }))}
+              autoFocus={index === method.fields.findIndex((f) => !f.initial)}
+            />
+            {field.description && <FieldDescription>{field.description}</FieldDescription>}
+          </Field>
+        ))}
         <Field>
           <FieldLabel htmlFor={`${id}-label`}>Label</FieldLabel>
           <Input
@@ -204,26 +337,36 @@ function ApiKeyStep({
             <div className="flex flex-col gap-0.5">
               <h3 className="text-sm font-medium">Proxy</h3>
               <p className="text-sm text-muted-foreground">
-                Check and use the key through another address, with headers of your own.
+                Check and use the connection through another address, with headers of your own.
               </p>
             </div>
-            <ProxyFields draft={proxy} onChange={setProxy} backend={provider} />
+            <ProxyFields
+              draft={proxy}
+              onChange={setProxy}
+              placeholder={defaultBaseUrl(host, values)}
+            />
           </section>
         )}
         <FieldError>{error}</FieldError>
       </FieldGroup>
       <DialogFooter className="mt-4">
         <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-        <Button type="submit" disabled={pending || !key.trim()}>
-          {pending ? "Checking…" : "Add key"}
+        <Button type="submit" disabled={pending || missing}>
+          {pending ? "Checking…" : method.authKind === "api_key" ? "Add key" : "Connect"}
         </Button>
       </DialogFooter>
     </form>
   );
 }
 
+// "an" before a vowel.
+function article(word: string) {
+  return /^[aeiou]/i.test(word) ? "an" : "a";
+}
+
 function DoneStep({ connection, onClose }: { connection: ConnectionSummary; onClose: () => void }) {
   const queryClient = useQueryClient();
+  const id = useId();
   const models = useQuery(modelsQuery);
   const current = useQuery(defaultModelQuery);
   const [error, setError] = useState<string>();
@@ -253,8 +396,9 @@ function DoneStep({ connection, onClose }: { connection: ConnectionSummary; onCl
       </div>
       {count > 0 && (
         <Field>
-          <FieldLabel>Set as default model (optional)</FieldLabel>
+          <FieldLabel htmlFor={`${id}-default`}>Set as default model (optional)</FieldLabel>
           <ModelPicker
+            id={`${id}-default`}
             models={theirs}
             value={
               theirs.some((m) => m.ref === current.data?.ref) ? (current.data?.ref ?? null) : null
@@ -284,57 +428,69 @@ export function AddProviderDialog({
   // Leaves out the subscription sign-ins.
   apiKeysOnly?: boolean;
 }) {
-  const [step, setStep] = useState<Step>({ name: "provider" });
-  const methods = (provider: Provider) =>
-    apiKeysOnly ? METHODS[provider].filter((m) => m.method === "api_key") : METHODS[provider];
+  const [step, setStep] = useState<Step>({ name: "host" });
+  const methods = (host: HostId) =>
+    hostOf(host).methods.filter((method) => !apiKeysOnly || method.authKind !== "oauth");
+  const hosts = HOST_IDS.filter((host) => methods(host).length > 0);
+  const methodIn = (host: HostId, id: string) => methods(host).find((m) => m.id === id);
 
   function close() {
     onOpenChange(false);
-    setStep({ name: "provider" });
+    setStep({ name: "host" });
   }
 
   function back() {
-    if (step.name === "method") setStep({ name: "provider" });
+    if (step.name === "method") setStep({ name: "host" });
     else if (step.name === "credentials") {
       setStep(
-        methods(step.provider).length > 1
-          ? { name: "method", provider: step.provider }
-          : { name: "provider" },
+        methods(step.host).length > 1 ? { name: "method", host: step.host } : { name: "host" },
       );
     }
   }
 
-  // One sign-in of each kind per org.
-  const signedIn = (method: Method) =>
-    method !== "api_key" && connections.some((c) => c.authKind === method);
+  function choose(host: HostId) {
+    const list = methods(host);
+    setStep(
+      list.length > 1
+        ? { name: "method", host }
+        : { name: "credentials", host, method: list[0]!.id },
+    );
+  }
 
+  // One sign-in of each host per org.
+  const signedIn = (host: HostId) =>
+    methods(host).every((m) => m.authKind === "oauth") &&
+    connections.some((c) => c.authKind === "oauth" && c.host === host);
+
+  const method = step.name === "credentials" ? methodIn(step.host, step.method) : undefined;
+  const hostLabel =
+    step.name === "method" || step.name === "credentials" ? hostOf(step.host).label : "";
   const titles: Record<Step["name"], string> = {
-    provider: "Add a model provider",
-    method: step.name === "method" ? `Connect ${BACKEND_LABELS[step.provider]}` : "",
-    credentials:
-      step.name === "credentials"
-        ? step.method === "api_key"
-          ? `Add an ${BACKEND_LABELS[step.provider]} API key`
-          : (methods(step.provider).find((m) => m.method === step.method)?.title ?? "")
-        : "",
+    host: "Add a model provider",
+    method: `Connect ${hostLabel}`,
+    credentials: !method
+      ? ""
+      : method.authKind === "oauth"
+        ? method.title
+        : method.title === "API key"
+          ? `Add ${article(hostLabel)} ${hostLabel} API key`
+          : `Connect ${hostLabel}`,
     done: step.name === "done" ? connectionLabel(step.connection) : "",
   };
   const descriptions: Partial<Record<Step["name"], string>> = {
+    credentials:
+      method && method.authKind !== "oauth" && method.title !== "API key"
+        ? `${method.title}. ${method.description}`
+        : undefined,
     done: "Its models are now in this organization's model pickers.",
   };
-  // A provider with one way to connect skips choosing it.
-  const provider =
-    step.name === "done"
-      ? step.connection.provider
-      : step.name === "provider"
-        ? undefined
-        : step.provider;
-  const choosing = provider
-    ? methods(provider).length > 1
-    : PROVIDERS.some((p) => methods(p.provider).length > 1);
+  // A host with one way to connect skips choosing it.
+  const host =
+    step.name === "done" ? step.connection.host : step.name === "host" ? undefined : step.host;
+  const choosing = host ? methods(host).length > 1 : true;
   const steps = choosing ? 4 : 3;
   const number = {
-    provider: 1,
+    host: 1,
     method: 2,
     credentials: choosing ? 3 : 2,
     done: steps,
@@ -347,7 +503,7 @@ export function AddProviderDialog({
         if (!next) close();
       }}
     >
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className={cn("sm:max-w-lg", step.name === "host" && "sm:max-w-2xl")}>
         <DialogHeader>
           <div className="flex items-center gap-2">
             {(step.name === "method" || step.name === "credentials") && (
@@ -357,6 +513,7 @@ export function AddProviderDialog({
                 </Button>
               </WithTooltip>
             )}
+            {host && step.name !== "done" && <HostMark host={host} />}
             <DialogTitle>{titles[step.name]}</DialogTitle>
           </div>
           <DialogDescription className={cn(!descriptions[step.name] && "sr-only")}>
@@ -374,51 +531,30 @@ export function AddProviderDialog({
             ))}
           </ol>
         </DialogHeader>
-        {step.name === "provider" && (
-          <div className="flex flex-col gap-2">
-            {PROVIDERS.map(({ provider, description }) => (
-              <Choice
-                key={provider}
-                title={BACKEND_LABELS[provider]}
-                icon={<ProviderIcon provider={provider} />}
-                description={description}
-                onSelect={() =>
-                  setStep(
-                    methods(provider).length > 1
-                      ? { name: "method", provider }
-                      : { name: "credentials", provider, method: "api_key" },
-                  )
-                }
-              />
-            ))}
-          </div>
-        )}
+        {step.name === "host" && <HostGrid hosts={hosts} taken={signedIn} onSelect={choose} />}
         {step.name === "method" && (
           <div className="flex flex-col gap-2">
-            {methods(step.provider).map(({ method, title, description }) => (
+            {methods(step.host).map(({ id, authKind, title, description }) => (
               <Choice
-                key={method}
+                key={id}
                 title={title}
-                icon={method === "api_key" ? <KeyRoundIcon /> : <LogInIcon />}
-                description={
-                  signedIn(method)
-                    ? "Already connected. Remove it first to connect another."
-                    : description
-                }
-                disabled={signedIn(method)}
-                onSelect={() => setStep({ name: "credentials", provider: step.provider, method })}
+                icon={METHOD_ICONS[authKind]}
+                description={description}
+                onSelect={() => setStep({ name: "credentials", host: step.host, method: id })}
               />
             ))}
           </div>
         )}
-        {step.name === "credentials" && step.method === "api_key" && (
-          <ApiKeyStep
-            provider={step.provider}
+        {step.name === "credentials" && method?.authKind === "oauth" && (
+          <CodexSignIn onConnected={(connection) => setStep({ name: "done", connection })} />
+        )}
+        {step.name === "credentials" && method && method.authKind !== "oauth" && (
+          <CredentialsStep
+            key={`${step.host}/${method.id}`}
+            host={step.host}
+            method={method}
             onAdded={(connection) => setStep({ name: "done", connection })}
           />
-        )}
-        {step.name === "credentials" && step.method === "codex" && (
-          <CodexSignIn onConnected={(connection) => setStep({ name: "done", connection })} />
         )}
         {step.name === "done" && <DoneStep connection={step.connection} onClose={close} />}
       </DialogContent>

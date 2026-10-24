@@ -10,6 +10,7 @@ import { openDatabase } from "@/adapters/db.ts";
 import { createLogger } from "@/adapters/logger.ts";
 import { createModelChoiceStore } from "@/adapters/model-choices.ts";
 import { createOpenAIKeyCatalog } from "@/adapters/openai-api.ts";
+import { createHostAdapters } from "@/adapters/hosts.ts";
 import { createCodexCatalog } from "@/adapters/openai-codex.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import * as schema from "@/adapters/schema.ts";
@@ -33,6 +34,7 @@ import { createModels, pickReplyModel } from "@/services/models.ts";
 import { replyCandidates } from "@/shared/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
+import { HOST_IDS, type HostId } from "@/shared/hosts.ts";
 
 // Never called by these tests.
 const unusedSpaces = {} as Spaces;
@@ -135,6 +137,12 @@ function setup() {
         Response.json({ error: { type: "authentication_error" } }, { status: 401 }),
       );
     }
+    // A server people run, which needs no key.
+    if (request.url === "http://llm.local/v1/models") {
+      return Promise.resolve(
+        Response.json({ data: [{ id: "llama-4-scout" }, { id: "nomic-embed-text" }] }),
+      );
+    }
     const provider = request.url.startsWith(anthropicUrl) ? "anthropic" : "codex";
     const reply = replies[provider];
     if (reply) return Promise.resolve(Response.json(reply.body ?? {}, reply));
@@ -173,7 +181,7 @@ function setup() {
     credentials,
     attempts: createSignInAttemptStore(db),
     providers: {
-      codex: { provider: "openai", label: "Codex", browser: refresher("codex") },
+      codex: { label: "Codex", browser: refresher("codex") },
     },
     logger,
     now: () => clock.now,
@@ -184,16 +192,16 @@ function setup() {
     spaces: createSpaceStore(db),
     tokens: connections,
     catalogs: {
+      ...createHostAdapters(fakeFetch as typeof fetch).catalogs,
       codex: createCodexCatalog(fakeFetch as typeof fetch),
       openai: createOpenAIKeyCatalog(fakeFetch as typeof fetch),
       anthropic: createAnthropicKeyCatalog(fakeFetch as typeof fetch),
     },
     settings: createOrgSettingStore(db),
-    gateways: {
-      codex: recordingGateway("codex"),
-      openai: recordingGateway("openai"),
-      anthropic: recordingGateway("anthropic"),
-    },
+    gateways: Object.fromEntries(HOST_IDS.map((host) => [host, recordingGateway(host)])) as Record<
+      HostId,
+      ModelGateway
+    >,
     logger,
     now: () => clock.now,
   });
@@ -242,17 +250,19 @@ function setup() {
   // key.
   function connect(owner: { orgId: string; userId: string }, kind: "codex" | "anthropic") {
     if (kind === "anthropic") {
-      return connections.addApiKey(owner, {
-        provider: "anthropic",
+      return connections.add(owner, {
+        host: "anthropic",
+        authKind: "api_key",
         label: null,
-        key: "anthropic-key",
+        settings: { method: "api_key" },
+        secrets: { apiKey: "anthropic-key" },
       }).id;
     }
     const connection = connectionStore.create({
       orgId: owner.orgId,
       createdBy: owner.userId,
-      provider: "openai",
-      authKind: "codex",
+      host: "codex",
+      authKind: "oauth",
       account: "codex@example.com",
     });
     credentials.put(connection.id, {
@@ -304,9 +314,10 @@ describe("model lists", () => {
         id: "gpt-big",
         name: "GPT Big",
         connectionId: id,
-        provider: "openai",
-        authKind: "codex",
-        connectionLabel: "Codex",
+        host: "codex",
+        maker: "openai",
+        authKind: "oauth",
+        connectionLabel: "ChatGPT",
         contextWindow: 272000,
         reasoning: true,
       },
@@ -315,9 +326,10 @@ describe("model lists", () => {
         id: "gpt-mini",
         name: "GPT Mini",
         connectionId: id,
-        provider: "openai",
-        authKind: "codex",
-        connectionLabel: "Codex",
+        host: "codex",
+        maker: "openai",
+        authKind: "oauth",
+        connectionLabel: "ChatGPT",
         contextWindow: 128000,
         reasoning: false,
       },
@@ -341,7 +353,8 @@ describe("model lists", () => {
         id: "claude-big",
         name: "Claude Big",
         connectionId: id,
-        provider: "anthropic",
+        host: "anthropic",
+        maker: "anthropic",
         authKind: "api_key",
         connectionLabel: "Anthropic API key",
         contextWindow: 1000000,
@@ -352,7 +365,8 @@ describe("model lists", () => {
         id: "claude-old",
         name: "Claude Old",
         connectionId: id,
-        provider: "anthropic",
+        host: "anthropic",
+        maker: "anthropic",
         authKind: "api_key",
         connectionLabel: "Anthropic API key",
       },
@@ -404,24 +418,40 @@ describe("model lists", () => {
     );
   });
 
-  it("shows a model by its connection's provider and its listed name, without asking again", async () => {
+  it("shows a model by its maker, its connection's host and its listed name, without asking again", async () => {
     const { models, requests, ready } = setup();
     const { orgId, anthropicId } = await ready();
     const before = models.shownModels(orgId);
     expect(before(`${anthropicId}/claude-big`)).toEqual({
       ref: `${anthropicId}/claude-big`,
       name: "claude-big",
-      provider: "anthropic",
+      maker: "anthropic",
+      host: "anthropic",
+      connection: "Anthropic API key",
     });
 
     await models.resolveModels(orgId);
     const shown = models.shownModels(orgId);
-    expect(shown("codex/gpt-big")).toMatchObject({ name: "GPT Big", provider: "openai" });
+    expect(shown("codex/gpt-big")).toMatchObject({
+      name: "GPT Big",
+      maker: "openai",
+      host: "codex",
+      connection: "ChatGPT",
+    });
     expect(shown(`${anthropicId}/claude-big`)).toMatchObject({
       name: "Claude Big",
-      provider: "anthropic",
+      maker: "anthropic",
+      host: "anthropic",
     });
-    expect(shown("gone/echo")).toEqual({ ref: "gone/echo", name: "echo", provider: null });
+    expect(shown("gone/echo")).toEqual({
+      ref: "gone/echo",
+      name: "echo",
+      maker: null,
+      host: null,
+      connection: null,
+    });
+    // A sign-in's ref still says whose models it had.
+    expect(shown("codex/gpt-gone")).toMatchObject({ maker: "openai", host: "codex" });
     expect(requests).toHaveLength(2);
   });
 
@@ -452,7 +482,7 @@ describe("model lists", () => {
 
     const { models: list, errors } = await models.resolveModels(orgId);
 
-    expect(list.map((model) => model.authKind)).toEqual(["codex", "codex"]);
+    expect(list.map((model) => model.authKind)).toEqual(["oauth", "oauth"]);
     expect(errors).toEqual([
       { connectionId: anthropicId, message: expect.stringMatching(/Anthropic/) },
     ]);
@@ -465,7 +495,7 @@ describe("model lists", () => {
 
     const { errors } = await models.resolveModels(orgId);
 
-    expect(errors).toEqual([{ connectionId: codexId, message: expect.stringMatching(/Codex/) }]);
+    expect(errors).toEqual([{ connectionId: codexId, message: expect.stringMatching(/ChatGPT/) }]);
   });
 
   it("does not keep a failed list", async () => {
@@ -726,7 +756,7 @@ describe("opening a model", () => {
     await expect(models.open(owner.orgId, "codex/gpt-big")).rejects.toThrow(
       expect.objectContaining({
         kind: "auth",
-        message: "codex/gpt-big needs a Codex connection. Add one in Model providers.",
+        message: "codex/gpt-big needs a ChatGPT connection. Add one in Model providers.",
       }),
     );
     await expect(models.open(owner.orgId, "gpt-big")).rejects.toThrow("not a model ref");
@@ -884,9 +914,15 @@ describe("API keys", () => {
   async function addKey(
     api: ReturnType<typeof setup>["api"],
     cookie: string,
-    body: { provider: string; label?: string | null; key: string },
+    body: { provider: string; label?: string | null; key: string; proxy?: unknown },
   ) {
-    return api("POST", "/connections/api-keys", cookie, body);
+    const { provider, key: apiKey, ...rest } = body;
+    return api("POST", "/connections", cookie, {
+      host: provider,
+      method: "api_key",
+      values: { apiKey },
+      ...rest,
+    });
   }
 
   it("are added once the provider lists models with them, and never shown again", async () => {
@@ -899,9 +935,10 @@ describe("API keys", () => {
     expect(text).not.toContain("secret");
     const added = JSON.parse(text) as { id: string };
     expect(added).toMatchObject({
-      provider: "anthropic",
+      host: "anthropic",
       authKind: "api_key",
       account: "sk-ant-…abcd",
+      settings: { method: "api_key" },
       label: "Work",
       proxy: null,
     });
@@ -931,10 +968,10 @@ describe("API keys", () => {
     const res = await addKey(api, cookie, { provider: "anthropic", key: "sk-ant-wrong" });
     expect(res.status).toBe(400);
     expect(await res.json()).toEqual({
-      error: "Anthropic did not accept this key (model list failed with status 401).",
+      error: "Anthropic did not accept these details (model list failed with status 401).",
     });
     expect((await addKey(api, cookie, { provider: "anthropic", key: "" })).status).toBe(400);
-    expect((await addKey(api, cookie, { provider: "mistral", key })).status).toBe(400);
+    expect((await addKey(api, cookie, { provider: "nowhere", key })).status).toBe(400);
     expect(await (await api("GET", "/connections", cookie)).json()).toEqual([]);
   });
 
@@ -1023,6 +1060,69 @@ describe("API keys", () => {
     db.update(schema.member).set({ role: "member" }).where(eq(schema.member.userId, userId)).run();
 
     expect((await addKey(api, cookie, { provider: "anthropic", key })).status).toBe(403);
+  });
+});
+
+describe("connections to other hosts", () => {
+  it("are added with their settings shown and their secrets sealed, models with their makers", async () => {
+    const { api, db, signUp } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+
+    const res = await api("POST", "/connections", cookie, {
+      host: "custom",
+      method: "endpoint",
+      label: "Lab box",
+      values: { baseUrl: "http://llm.local/v1/", apiKey: "lab-secret-key", models: "my-tune" },
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain("lab-secret-key");
+    const added = JSON.parse(text) as { id: string };
+    expect(added).toMatchObject({
+      host: "custom",
+      authKind: "endpoint",
+      account: "llm.local",
+      label: "Lab box",
+      settings: { method: "endpoint", baseUrl: "http://llm.local/v1", models: "my-tune" },
+    });
+    expect(JSON.stringify(db.select().from(schema.credential).all())).not.toContain("lab-secret");
+
+    const { models } = (await (await api("GET", "/models", cookie)).json()) as {
+      models: { id: string; maker: string | null; host: string; connectionLabel: string }[];
+    };
+    expect(models.map((model) => [model.id, model.maker, model.host])).toEqual([
+      ["llama-4-scout", "meta", "custom"],
+      ["my-tune", null, "custom"],
+    ]);
+    expect(models[0]?.connectionLabel).toBe("OpenAI-compatible · Lab box");
+  });
+
+  it("refuse missing fields and details the host does not take, and store nothing", async () => {
+    const { api, signUp } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+
+    const missing = await api("POST", "/connections", cookie, {
+      host: "bedrock",
+      method: "access_keys",
+      values: { region: "us-east-1", accessKeyId: "AKIA1" },
+    });
+    expect(await missing.json()).toEqual({ error: "Give the secret access key" });
+    const refused = await api("POST", "/connections", cookie, {
+      host: "bedrock",
+      method: "access_keys",
+      values: { region: "us-east-1", accessKeyId: "AKIA1", secretAccessKey: "s" },
+    });
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toMatch(
+      /^Amazon Bedrock did not accept these details/,
+    );
+    const signIn = await api("POST", "/connections", cookie, {
+      host: "codex",
+      method: "sign_in",
+      values: {},
+    });
+    expect(signIn.status).toBe(400);
+    expect(await (await api("GET", "/connections", cookie)).json()).toEqual([]);
   });
 });
 

@@ -4,7 +4,8 @@
 
 import * as z from "zod";
 
-import { providerSchema } from "@/shared/connections.ts";
+import { AUTH_KINDS, hostIdSchema } from "@/shared/hosts.ts";
+import { MAKER_IDS } from "@/shared/makers.ts";
 import { type Effort, effortSchema } from "@/shared/threads.ts";
 
 export const modelSchema = z.object({
@@ -12,8 +13,10 @@ export const modelSchema = z.object({
   id: z.string(),
   name: z.string(),
   connectionId: z.string(),
-  provider: providerSchema,
-  authKind: z.enum(["codex", "api_key"]),
+  // Who serves it, and who makes it, null when no one can tell.
+  host: hostIdSchema,
+  maker: z.enum(MAKER_IDS).nullable(),
+  authKind: z.enum(AUTH_KINDS),
   // How people know the connection it comes through.
   connectionLabel: z.string(),
   contextWindow: z.number().optional(),

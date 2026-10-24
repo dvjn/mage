@@ -1,6 +1,7 @@
 // The one model picker: a button opening a searchable list of the models the org can use, grouped
-// by the provider they come through, each group marked with its provider's company and each model
-// with its product, with the default the level above chose offered first where there is one, and a
+// by the connection they come through, each group marked with its host and each model with its
+// maker, found by its name, its maker's or its host's, with the default the level above chose
+// offered first where there is one, and a
 // model that is turned off or gone shown as a warning with what stands in. With no models at all,
 // it points to adding a model provider. As a form field it is outlined, full width and opens below;
 // compact, it is a composer button that opens above.
@@ -12,10 +13,11 @@ import type * as React from "react";
 
 import { cn } from "cn";
 
-import type { Provider } from "@/shared/connections.ts";
+import { type HostId, hostOf } from "@/shared/hosts.ts";
+import { MAKERS } from "@/shared/makers.ts";
 import type { ModelSummary } from "@/shared/models.ts";
 import { promptInputSelectTriggerClassName } from "@/web/components/ai-elements/prompt-input";
-import { ModelIcon, ProviderIcon } from "@/web/components/provider-icon";
+import { givenName, HostMark, MakerMark, makerOwnHost } from "@/web/components/marks";
 import {
   Combobox,
   ComboboxCollection,
@@ -48,7 +50,7 @@ export const CONNECTION_LABELS: Record<"codex" | "claude", string> = {
 interface Group {
   value: string;
   label: string;
-  provider: Provider;
+  host: HostId;
   items: ModelSummary[];
 }
 
@@ -58,13 +60,31 @@ function groupsOf(models: ModelSummary[]): Group[] {
     const group = groups.get(model.connectionId) ?? {
       value: model.connectionId,
       label: model.connectionLabel,
-      provider: model.provider,
+      host: model.host,
       items: [],
     };
     group.items.push(model);
     groups.set(model.connectionId, group);
   }
   return [...groups.values()];
+}
+
+// Whether every word searched for is in the model's name or id, its maker's name or its
+// connection's, as "bedrock claude".
+function matches(model: ModelSummary, query: string) {
+  const text = [
+    model.name,
+    model.id,
+    model.maker && MAKERS[model.maker].label,
+    hostOf(model.host).label,
+    model.connectionLabel,
+  ]
+    .join(" ")
+    .toLowerCase();
+  return query
+    .toLowerCase()
+    .split(/\s+/)
+    .every((word) => text.includes(word));
 }
 
 export interface MissingModel {
@@ -171,6 +191,7 @@ export function ModelPicker({
         if (model) onChange(model.ref);
       }}
       itemToStringLabel={(model: ModelSummary) => model.name}
+      filter={(model: ModelSummary, query: string) => matches(model, query)}
       isItemEqualToValue={(a: ModelSummary, b: ModelSummary) => a.ref === b.ref}
       disabled={disabled || loading}
       {...(open !== undefined && { open })}
@@ -199,7 +220,7 @@ export function ModelPicker({
                 {missing ? (
                   <TriangleAlertIcon className="size-3.5 shrink-0" />
                 ) : (
-                  shown && <ModelIcon provider={shown.provider} className="size-3.5" />
+                  shown && <MakerMark maker={shown.maker} className="size-3.5" />
                 )}
                 <span
                   className={cn(
@@ -209,6 +230,14 @@ export function ModelPicker({
                 >
                   {label}
                 </span>
+                {/* Where the model comes from, unless it is its maker's own API. */}
+                {shown && !missing && !makerOwnHost(shown.host, shown.maker) && (
+                  <HostMark
+                    host={shown.host}
+                    label={givenName(shown.connectionLabel)}
+                    className="size-3 opacity-80"
+                  />
+                )}
               </>
             )}
           </span>
@@ -267,13 +296,13 @@ export function ModelPicker({
           {(group: Group, index: number) => (
             <ComboboxGroup key={group.value} items={group.items}>
               <ComboboxLabel className="flex items-center gap-1.5">
-                <ProviderIcon provider={group.provider} className="size-3" />
+                <HostMark host={group.host} label={givenName(group.label)} className="size-3" />
                 {group.label}
               </ComboboxLabel>
               <ComboboxCollection>
                 {(model: ModelSummary) => (
                   <ComboboxItem key={model.ref} value={model}>
-                    <ModelIcon provider={model.provider} className="size-3.5" />
+                    <MakerMark maker={model.maker} className="size-3.5" />
                     {model.name}
                   </ComboboxItem>
                 )}

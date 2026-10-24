@@ -1,6 +1,8 @@
-// The models a provider account can use, read live from the provider.
+// The models a connection can use, read live from its host where it has a list, else from what
+// Mage knows the host serves and the ids people typed.
 
-import type { ProviderProxy } from "@/ports/model-gateway.ts";
+import type { ModelToken } from "@/ports/model-gateway.ts";
+import type { MakerId } from "@/shared/makers.ts";
 
 export interface CatalogModel {
   id: string;
@@ -9,13 +11,11 @@ export interface CatalogModel {
   contextWindow?: number;
   // Whether the model can think before answering, when the provider says.
   reasoning?: boolean;
+  // Who makes it, when the host says.
+  maker?: MakerId | null;
 }
 
-export interface CatalogToken {
-  access: string;
-  accountId: string | null;
-  proxy?: ProviderProxy | null;
-}
+export type CatalogToken = ModelToken;
 
 export interface Catalog {
   // Throws when the provider does not answer with a list.

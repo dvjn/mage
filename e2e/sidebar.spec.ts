@@ -202,7 +202,7 @@ test("a provider's models are turned off in its dialog, and leave the pickers", 
   await page.goto("/org/providers");
   await page.getByRole("button", { name: "Add provider" }).click();
   const add = page.getByRole("dialog");
-  await add.getByRole("button", { name: /^Anthropic/ }).click();
+  await add.getByRole("option", { name: /^Anthropic ·/ }).click();
   await add.getByLabel("API key").fill("sk-ant-demo-1234");
   await add.getByRole("button", { name: "Add key" }).click();
   await add.getByRole("button", { name: "Done" }).click();
@@ -235,7 +235,11 @@ test("a thread on a model turned off replies with the default until it is back o
   const api = (method: string, path: string, data?: object) =>
     page.request.fetch(`/api/v1${path}`, { method, data });
   const key = (await (
-    await api("POST", "/connections/api-keys", { provider: "anthropic", key: "sk-ant-demo-1234" })
+    await api("POST", "/connections", {
+      host: "anthropic",
+      method: "api_key",
+      values: { apiKey: "sk-ant-demo-1234" },
+    })
   ).json()) as { id: string };
   await api("PUT", "/settings/default-model", { ref: `${key.id}/echo` });
   await page.getByLabel("Message", { exact: true }).fill("How do engines compute?");

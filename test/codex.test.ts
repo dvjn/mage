@@ -120,7 +120,7 @@ function setup() {
     credentials,
     attempts: createSignInAttemptStore(db),
     providers: {
-      codex: { provider: "openai", label: "Codex", browser: codex, device: codex },
+      codex: { label: "Codex", browser: codex, device: codex },
     },
     logger,
     now: () => clock.now,
@@ -298,10 +298,11 @@ describe("browser sign-in", () => {
     const summary = JSON.parse(text) as { id: string };
     expect(summary).toEqual({
       id: expect.any(String),
-      provider: "openai",
-      authKind: "codex",
+      host: "codex",
+      authKind: "oauth",
       account: "ada@chatgpt.example",
       label: null,
+      settings: {},
       proxy: null,
       createdAt: expect.any(String),
     });
@@ -477,10 +478,11 @@ describe("device code sign-in", () => {
       status: "connected",
       connection: {
         id: expect.any(String),
-        provider: "openai",
-        authKind: "codex",
+        host: "codex",
+        authKind: "oauth",
         account: "ada@chatgpt.example",
         label: null,
+        settings: {},
         proxy: null,
         createdAt: expect.any(String),
       },
@@ -692,10 +694,11 @@ describe("/api/v1/connections", () => {
     expect(JSON.parse(text)).toEqual([
       {
         id,
-        provider: "openai",
-        authKind: "codex",
+        host: "codex",
+        authKind: "oauth",
         account: "ada@chatgpt.example",
         label: null,
+        settings: {},
         proxy: null,
         createdAt: expect.any(String),
       },

@@ -50,14 +50,14 @@ test("an API key's models become the org's and the space's defaults, which new t
   // The add-provider journey; the stand-in provider takes keys starting with sk-.
   await page.getByRole("button", { name: "Add provider" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("button", { name: /^Anthropic/ }).click();
+  await dialog.getByRole("option", { name: /^Anthropic ·/ }).click();
   await dialog.getByRole("button", { name: "Advanced" }).click();
   await expect(dialog.getByRole("region", { name: "Proxy" })).toContainText("Base URL");
   await dialog.getByRole("button", { name: "Advanced" }).click();
   await dialog.getByLabel("Label").fill("Work");
   await dialog.getByLabel("API key").fill("not-a-key");
   await dialog.getByRole("button", { name: "Add key" }).click();
-  await expect(dialog.getByRole("alert")).toContainText("Anthropic did not accept this key");
+  await expect(dialog.getByRole("alert")).toContainText("Anthropic did not accept these details");
   await dialog.getByLabel("API key").fill("sk-ant-demo-1234");
   await dialog.getByRole("button", { name: "Add key" }).click();
   await expect(dialog.getByRole("status")).toContainText("Connected · 2 models found");
@@ -124,8 +124,7 @@ test("a provider is renamed and removed from its row", async ({ page }) => {
   await page.goto("/org/providers");
   await page.getByRole("button", { name: "Add provider" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByRole("button", { name: /^OpenAI/ }).click();
-  await dialog.getByRole("button", { name: /^API key/ }).click();
+  await dialog.getByRole("option", { name: /^OpenAI ·/ }).click();
   await dialog.getByLabel("API key").fill("sk-proj-demo-9876");
   await dialog.getByRole("button", { name: "Add key" }).click();
   await dialog.getByRole("button", { name: "Done" }).click();

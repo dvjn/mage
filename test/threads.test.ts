@@ -318,7 +318,7 @@ describe("a space's thread list", () => {
     });
   });
 
-  it("shows each thread's model and its provider, its own or the default it follows", async () => {
+  it("shows each thread's model, its maker and host, its own or the default it follows", async () => {
     const { api, org, signUp, yourSpace, createThread } = setup();
     org.models.push("claude/claude-big");
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
@@ -338,12 +338,16 @@ describe("a space's thread list", () => {
     expect(shown.find((t) => t.id === own.id)?.shownModel).toEqual({
       ref: "codex/gpt-big",
       name: "gpt-big",
-      provider: "openai",
+      maker: "openai",
+      host: "codex",
+      connection: "ChatGPT",
     });
     expect(shown.find((t) => t.id === following.id)?.shownModel).toEqual({
       ref: "claude/claude-big",
       name: "claude-big",
-      provider: "anthropic",
+      maker: "anthropic",
+      host: "anthropic",
+      connection: "Anthropic API key",
     });
   });
 });

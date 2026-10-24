@@ -5,7 +5,7 @@
 // reasons for a few words first when it asks it to think. Each `/tool <id> <json>` line in the
 // newest message makes it call that tool after its words, when it is offered, or say it cannot;
 // shown what the calls gave back, it says so. A `/fail <text>` line makes it fail with that text
-// after its words. Its list stands in for an API key's: it takes any key starting with `sk-`.
+// after its words. Its lists stand in for hosts' lists: they take any key starting with `sk-`.
 
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -14,6 +14,7 @@ import { ulid } from "ulid";
 import type { Catalog } from "@/ports/catalog.ts";
 import type { ModelMessage, ModelToolCall, ModelToolResult } from "@/ports/model-gateway.ts";
 import type { ModelGateway } from "@/ports/model-gateway.ts";
+import { HOST_IDS, type HostId, hostOf } from "@/shared/hosts.ts";
 
 export const FAKE_MODEL_REF = "fake/echo";
 
@@ -106,14 +107,45 @@ export function createFakeGateway(): ModelGateway {
   };
 }
 
-export function createFakeCatalog(): Catalog {
+// The stand-in's list for a host: Echo and Echo Mini, and, for a host serving many makers, a model
+// of another maker's by the ids that host gives, so their marks show. A key must start with `sk-`
+// and other secrets must not start with `wrong`.
+function fakeCatalog(host: HostId): Catalog {
+  const many = !hostOf(host).maker;
+  const others =
+    host === "bedrock"
+      ? [
+          { id: "us.anthropic.claude-echo-5", name: "Claude Echo" },
+          { id: "meta.llama-echo-v1:0", name: "Llama Echo" },
+        ]
+      : [{ id: "llama-echo", name: "Llama Echo" }];
   return {
     list(token) {
-      if (!token.access.startsWith("sk-")) return Promise.reject(new Error("401 invalid key"));
+      const secrets = Object.values(token.secrets ?? {});
+      if (
+        (token.access && !token.access.startsWith("sk-")) ||
+        (!token.access && secrets.length === 0)
+      ) {
+        return Promise.reject(new Error("401 invalid key"));
+      }
+      if (secrets.some((secret) => secret.startsWith("wrong"))) {
+        return Promise.reject(new Error("403 invalid credentials"));
+      }
       return Promise.resolve([
         { id: "echo", name: "Echo", reasoning: true },
         { id: "echo-mini", name: "Echo Mini", reasoning: false },
+        ...(many ? others : []),
       ]);
     },
   };
+}
+
+// The stand-in's lists in place of every host's but the servers people run, whose lists are read.
+export function createFakeCatalogs(real: Record<HostId, Catalog>) {
+  return Object.fromEntries(
+    HOST_IDS.map((host) => [
+      host,
+      hostOf(host).group === "self-hosted" ? real[host] : fakeCatalog(host),
+    ]),
+  ) as Record<HostId, Catalog>;
 }

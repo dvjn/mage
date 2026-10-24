@@ -25,7 +25,6 @@ import type { Spaces, SpaceView } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
 import type { ToolDecisions } from "@/services/tools.ts";
 import {
-  apiKeyInputSchema,
   type AttemptSummary,
   browserFinishSchema,
   connectionLabelSchema,
@@ -34,6 +33,7 @@ import {
   type ProxySummary,
 } from "@/shared/connections.ts";
 import { type FolderSummary, folderNameSchema } from "@/shared/folders.ts";
+import { connectionInputSchema, splitValues } from "@/shared/hosts.ts";
 import { acceptInviteSchema, newInviteSchema } from "@/shared/guests.ts";
 import type { Me } from "@/shared/me.ts";
 import type { SignInOptions } from "@/shared/sign-in.ts";
@@ -149,8 +149,17 @@ const PERSONAL_ROUTES = [
 ];
 
 function summary(connection: Connection, proxy: ProxySummary | null = null): ConnectionSummary {
-  const { id, provider, authKind, account, label, createdAt } = connection;
-  return { id, provider, authKind, account, label, proxy, createdAt: createdAt.toISOString() };
+  const { id, host, authKind, account, label, settings, createdAt } = connection;
+  return {
+    id,
+    host,
+    authKind,
+    account,
+    label,
+    settings,
+    proxy,
+    createdAt: createdAt.toISOString(),
+  };
 }
 
 function connectionModelsBody(list: {
@@ -260,14 +269,12 @@ const placeQuery = validator("query", (value: { space?: string; thread?: string 
   thread: typeof value.thread === "string" ? value.thread : undefined,
 }));
 
-// An API key body, refused with what is wrong with it.
-// An API key body with its proxy, if any, every header given a value; refused with what is wrong.
-const apiKeyInput = validator("json", (value, c) => {
-  const parsed = apiKeyInputSchema.safeParse(value);
+// A connection body: the host, the way it connects with each of its fields, and its proxy, if
+// any, every header given a value; refused with what is wrong.
+const connectionInput = validator("json", (value, c) => {
+  const parsed = connectionInputSchema.safeParse(value);
   if (!parsed.success) {
-    const issue = parsed.error.issues[0];
-    const error = issue?.path[0] === "key" ? issue.message : "Give a provider, a label and a key";
-    return c.json({ error }, 400);
+    return c.json({ error: "Give a provider, a way to connect and its fields" }, 400);
   }
   const { proxy: rawProxy, ...input } = parsed.data;
   if (rawProxy === undefined || rawProxy === null) return { ...input, proxy: null };
@@ -851,7 +858,7 @@ function createApi(options: AppOptions) {
         return c.json({ ok: true }, 200);
       })
       // Everyone in an org sees its connections; only its owners change them, and a team org
-      // connects with API keys only.
+      // connects with no subscription sign-ins.
       .use("/v1/connections/*", async (c, next) => {
         const { org, role } = await identity.profile(signedIn(c.var.principal));
         const reading =
@@ -889,9 +896,21 @@ function createApi(options: AppOptions) {
         if (!connection) throw new ConnectionError(404, "Connection not found");
         return c.json(summary(connection, connections.proxyOf(owner, id)), 200);
       })
-      .post("/v1/connections/api-keys", apiKeyInput, async (c) => {
+      .post("/v1/connections", connectionInput, async (c) => {
         const owner = signedIn(c.var.principal);
-        const connection = await models.addApiKey(owner, c.req.valid("json"));
+        const { host, method: methodId, label, values, proxy } = c.req.valid("json");
+        const split = splitValues(host, methodId, values);
+        if (!split.ok) return c.json({ error: split.error }, 400);
+        const { method, settings, secrets } = split;
+        if (method.authKind === "oauth") return c.json({ error: "Sign in instead" }, 400);
+        const connection = await models.add(owner, {
+          host,
+          authKind: method.authKind,
+          label,
+          settings,
+          secrets,
+          proxy,
+        });
         return c.json(summary(connection, connections.proxyOf(owner, connection.id)), 200);
       })
       .get("/v1/connections/:id/models", refreshQuery, async (c) => {

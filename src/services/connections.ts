@@ -1,7 +1,8 @@
 // An org's connections: made by signing in to a provider account the way the provider's own
 // coding app does, with a device code or a browser authorization whose result the user pastes
-// back, kept usable by renewing their tokens, or by adding a provider API key, and optionally
-// sending their provider API requests through a proxy, kept sealed with the tokens or the key.
+// back, kept usable by renewing their tokens, or by adding a key, cloud credentials or a server's
+// address for a host, and optionally sending their requests through a proxy, kept sealed with the
+// tokens or the secrets.
 
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -15,9 +16,10 @@ import type { ProviderProxy } from "@/ports/model-gateway.ts";
 import type { BrowserOAuth, DeviceCode, DeviceOAuth, OAuthTokens } from "@/ports/oauth.ts";
 import type { SignInAttemptStore } from "@/ports/sign-in-attempts.ts";
 import type { ProxyInput, ProxySummary } from "@/shared/connections.ts";
+import type { AuthKind, HostId } from "@/shared/hosts.ts";
 
-// The subscription sign-ins.
-export type AccountKind = Exclude<Connection["authKind"], "api_key">;
+// The hosts signed in to with a subscription.
+export type AccountKind = "codex";
 
 export class ConnectionError extends Error {
   readonly status: 400 | 404 | 409 | 502;
@@ -35,7 +37,6 @@ export interface Owner {
 }
 
 export interface AccountProvider {
-  provider: Connection["provider"];
   // How people know the sign-in, as in "Sign in with Codex".
   label: string;
   browser: BrowserOAuth;
@@ -60,10 +61,22 @@ export type AttemptStatus =
   | { status: "connected"; connection: Connection }
   | { status: "failed"; error: string };
 
+// A connection to add for a host, with what is not secret about it apart from its secrets.
+export interface NewHostConnection {
+  host: HostId;
+  authKind: Exclude<AuthKind, "oauth">;
+  label: string | null;
+  settings: Record<string, string>;
+  secrets: Record<string, string>;
+  proxy?: ProviderProxy | null;
+}
+
 export interface FreshToken {
   access: string;
   accountId: string | null;
   proxy: ProviderProxy | null;
+  settings?: Record<string, string>;
+  secrets?: Record<string, string>;
 }
 
 const BROWSER_TTL_MS = 10 * 60 * 1000;
@@ -90,7 +103,12 @@ const credentialSchema = z.object({
   proxy: proxySchema.optional(),
 });
 
-const apiKeyCredentialSchema = z.object({ apiKey: z.string(), proxy: proxySchema.optional() });
+// A key, cloud credentials or a server's optional key, and the proxy.
+const secretsCredentialSchema = z.object({
+  apiKey: z.string().optional(),
+  secrets: z.record(z.string(), z.string()).optional(),
+  proxy: proxySchema.optional(),
+});
 
 // Whatever a connection keeps, read only for its proxy.
 const anyCredentialSchema = z.looseObject({ proxy: proxySchema.optional() });
@@ -113,8 +131,26 @@ function randomValue() {
 
 // A key as people may see it again: its prefix and last four characters, as `sk-ant-…abcd`.
 export function keyHint(key: string) {
-  const prefix = /^[a-z]+-(?:[a-z]+-)?/i.exec(key)?.[0] ?? "";
+  const prefix = /^[a-z]+[-_](?:[a-z]+[-_])?/i.exec(key)?.[0] ?? "";
   return `${prefix}…${key.slice(-4)}`;
+}
+
+// What tells a connection's credentials apart, as people may see it: the server's address, a key's
+// hint, the role, an access key's first and last characters, the service account, or the app.
+export function accountOf(settings: Record<string, string>, secrets: Record<string, string>) {
+  if (settings.baseUrl) return URL.parse(settings.baseUrl)?.host ?? settings.baseUrl;
+  if (secrets.apiKey) return keyHint(secrets.apiKey);
+  if (settings.roleArn) return settings.roleArn;
+  if (secrets.accessKeyId)
+    return `${secrets.accessKeyId.slice(0, 4)}…${secrets.accessKeyId.slice(-4)}`;
+  if (secrets.serviceAccount) {
+    const parsed = z
+      .object({ client_email: z.string() })
+      .safeParse(JSON.parse(secrets.serviceAccount));
+    return parsed.success ? parsed.data.client_email : "Service account";
+  }
+  if (settings.clientId) return settings.clientId;
+  return "—";
 }
 
 // The code and state in what the user pasted: the callback address, its query, `code#state` or
@@ -145,7 +181,7 @@ export function createConnections(options: ConnectionsOptions) {
   const refreshing = new Map<string, Promise<AccountCredential>>();
 
   function rejectIfConnected(kind: AccountKind, orgId: string) {
-    if (connections.list(orgId).some((c) => c.authKind === kind)) {
+    if (connections.list(orgId).some((c) => c.authKind === "oauth" && c.host === kind)) {
       throw new ConnectionError(409, `${providers[kind].label} is already connected`);
     }
   }
@@ -177,12 +213,12 @@ export function createConnections(options: ConnectionsOptions) {
 
   function save(kind: AccountKind, owner: Owner, tokens: OAuthTokens): Connection {
     rejectIfConnected(kind, owner.orgId);
-    const { provider, label } = providers[kind];
+    const { label } = providers[kind];
     const connection = connections.create({
       orgId: owner.orgId,
       createdBy: owner.userId,
-      provider,
-      authKind: kind,
+      host: kind,
+      authKind: "oauth",
       account: tokens.email ?? tokens.accountId ?? label,
     });
     credentials.put(connection.id, credentialOf(tokens));
@@ -262,38 +298,33 @@ export function createConnections(options: ConnectionsOptions) {
       return connections.list(owner.orgId);
     },
 
-    // Adds a provider API key to the org, under the label given. The caller has checked the
-    // provider takes it.
-    addApiKey(
-      owner: Owner,
-      input: {
-        provider: Connection["provider"];
-        label: string | null;
-        key: string;
-        proxy?: ProviderProxy | null;
-      },
-    ): Connection {
+    // Adds a key, cloud credentials or a server to the org, under the label given, with its
+    // settings and its secrets sealed. The caller has checked the host takes them.
+    add(owner: Owner, input: NewHostConnection): Connection {
+      const { apiKey, ...secrets } = input.secrets;
       const connection = connections.create({
         orgId: owner.orgId,
         createdBy: owner.userId,
-        provider: input.provider,
-        authKind: "api_key",
-        account: keyHint(input.key),
+        host: input.host,
+        authKind: input.authKind,
+        account: accountOf(input.settings, input.secrets),
         label: input.label,
+        settings: input.settings,
       });
       credentials.put(connection.id, {
-        apiKey: input.key,
+        ...(apiKey && { apiKey }),
+        ...(Object.keys(secrets).length > 0 && { secrets }),
         ...(input.proxy && { proxy: input.proxy }),
       });
       return connection;
     },
 
-    // Names an API key; null leaves it unnamed.
+    // Names a connection; null leaves it unnamed. A sign-in goes by its account.
     rename(owner: Owner, id: string, label: string | null): Connection {
       const connection = connections.find(owner.orgId, id);
       if (!connection) throw new ConnectionError(404, "Connection not found");
-      if (connection.authKind !== "api_key") {
-        throw new ConnectionError(400, "Only an API key has a label");
+      if (connection.authKind === "oauth") {
+        throw new ConnectionError(400, "A sign-in has no label");
       }
       connections.setLabel(id, label);
       return { ...connection, label };
@@ -424,13 +455,21 @@ export function createConnections(options: ConnectionsOptions) {
       use: (token: FreshToken) => Promise<T>,
       { force = false } = {},
     ): Promise<T> {
-      const kind = connections.find(orgId, connectionId)?.authKind;
-      if (!kind) throw new ConnectionError(404, "Connection not found");
-      // A key never expires here; the provider says when it no longer works.
-      if (kind === "api_key") {
-        const saved = apiKeyCredentialSchema.parse(credentials.get(connectionId));
-        return use({ access: saved.apiKey, accountId: null, proxy: saved.proxy ?? null });
+      const connection = connections.find(orgId, connectionId);
+      if (!connection) throw new ConnectionError(404, "Connection not found");
+      // Keys and cloud credentials never expire here; the host says when they no longer work, and
+      // the adapters renew what cloud credentials make.
+      if (connection.authKind !== "oauth") {
+        const saved = secretsCredentialSchema.parse(credentials.get(connectionId));
+        return use({
+          access: saved.apiKey ?? "",
+          accountId: null,
+          proxy: saved.proxy ?? null,
+          settings: connection.settings,
+          secrets: saved.secrets ?? {},
+        });
       }
+      const kind = connection.host as AccountKind;
       let pending = refreshing.get(connectionId);
       if (!pending) {
         pending = renew(connectionId, kind, force).finally(() => refreshing.delete(connectionId));
