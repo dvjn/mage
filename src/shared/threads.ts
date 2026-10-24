@@ -53,26 +53,17 @@ export const threadActivitySchema = z.object({
 
 export type ThreadActivity = z.infer<typeof threadActivitySchema>;
 
-// The start of a thread's newest message or reply, with the first name of who wrote it ("Agent"
-// for the agent).
-export const threadPreviewSchema = z.object({ author: z.string(), text: z.string() });
-
-export type ThreadPreview = z.infer<typeof threadPreviewSchema>;
-
-// Who has written in a thread: the first few people to, by when they first did, how many have in
-// all, and whether the agent has replied.
+// Who has written in a thread: the few who wrote most recently, whoever wrote last first, and how
+// many have in all.
 export const threadParticipantsSchema = z.object({
   people: z.array(z.object({ userId: z.string(), name: z.string() })),
   total: z.number().int().nonnegative(),
-  agent: z.boolean(),
 });
 
 export type ThreadParticipants = z.infer<typeof threadParticipantsSchema>;
 
-// A thread in its space's list, with the start of its newest message or reply and who wrote it,
-// who has written in it, and what it holds for the reader.
+// A thread in its space's list, with who has written in it, and what it holds for the reader.
 export const threadListItemSchema = threadSchema.extend({
-  preview: threadPreviewSchema.nullable(),
   participants: threadParticipantsSchema,
   activity: threadActivitySchema,
 });

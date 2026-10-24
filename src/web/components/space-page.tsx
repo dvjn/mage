@@ -1,7 +1,7 @@
 // A space: a new thread's composer for those who can write in it, and its threads a page at a time
-// by when they were last active, each with its status for the reader, who has written in it and
-// the start of its newest message, narrowed by title or that message, to one folder, once there
-// are any, and to those that need the reader or have something new for them.
+// by when they were last active, each with its status for the reader and who has written in it,
+// narrowed by title or newest message, to one folder, once there are any, and to those that need
+// the reader or have something new for them.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";

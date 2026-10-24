@@ -51,12 +51,9 @@ export interface ThreadFacts {
   failed: { seq: number; error: string } | null;
 }
 
-// Who has written in a thread: each person who posted a message, by when they first did, with
-// their name while they still have one, and whether the agent has replied.
-export interface ThreadWriters {
-  people: { userId: string; name: string | null }[];
-  agent: boolean;
-}
+// The people who have written in a thread, whoever wrote last first, each with their name while
+// they still have one.
+export type ThreadWriters = { userId: string; name: string | null }[];
 
 export interface ThreadStore {
   create(thread: {
@@ -73,8 +70,6 @@ export interface ThreadStore {
   // The newest message from a person or reply from the agent in each of the space's threads that
   // has one.
   lastMessagesInSpace(spaceId: string): StoredEvent[];
-  // The same, for the threads named.
-  lastMessagesOf(threadIds: string[]): StoredEvent[];
   // The facts of each of the threads named that has any events.
   facts(threadIds: string[]): Map<string, ThreadFacts>;
   // Who has written in each of the threads named that anyone has.

@@ -98,10 +98,10 @@ test("opening a thread clears what is new for that person only", async ({
   // Ada hears of it while she is elsewhere.
   await expect(sidebarRow(page, "Engines")).toHaveAttribute("data-status", "unread");
   await expect(page.getByRole("img", { name: "New messages" }).first()).toBeVisible();
-  // The row says who has written and what was said last.
-  await expect(sidebarRow(page, "Engines")).toContainText("Grace: // Looks good");
+  // The row shows who has written, whoever wrote last first, and not what they said.
+  await expect(sidebarRow(page, "Engines")).not.toContainText("Looks good");
   await expect(
-    sidebarRow(page, "Engines").getByRole("img", { name: "Ada Lovelace and Grace Hopper" }),
+    sidebarRow(page, "Engines").getByRole("img", { name: "Grace Hopper and Ada Lovelace" }),
   ).toBeVisible();
 
   await sidebarRow(page, "Engines").getByRole("link").click();
@@ -205,5 +205,6 @@ test("a shared thread shows its status in the same row, also on a phone", async 
   await expect(row).toHaveAttribute("data-status", "unread");
   // The status's glyph sits at the end of the title's line, named for those who cannot see it.
   await expect(row.getByRole("img", { name: "New messages" })).toBeVisible();
-  await expect(row).toContainText("Ada Lovelace's Space · Ada: // Another note");
+  await expect(row).toContainText("Ada Lovelace's Space");
+  await expect(row).not.toContainText("Another note");
 });

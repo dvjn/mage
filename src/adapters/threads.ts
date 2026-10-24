@@ -131,10 +131,6 @@ export function createThreadStore(db: Db): ThreadStore {
       return lastMessages(eq(thread.spaceId, spaceId));
     },
 
-    lastMessagesOf(threadIds) {
-      return threadIds.length === 0 ? [] : lastMessages(inArray(thread.id, threadIds));
-    },
-
     facts(threadIds) {
       const facts = new Map<string, ThreadFacts>();
       if (threadIds.length === 0) return facts;
@@ -201,33 +197,28 @@ export function createThreadStore(db: Db): ThreadStore {
     writers(threadIds) {
       const writers = new Map<string, ThreadWriters>();
       if (threadIds.length === 0) return writers;
+      const last = sql<number>`max(${threadEvent.seq})`;
       const rows = db
         .select({
           threadId: threadEvent.threadId,
-          actorKind: threadEvent.actorKind,
           userId: threadEvent.actorUserId,
           name: user.name,
-          first: sql<number>`min(${threadEvent.seq})`,
         })
         .from(threadEvent)
         .leftJoin(user, eq(user.id, threadEvent.actorUserId))
         .where(
           and(
             inArray(threadEvent.threadId, threadIds),
-            inArray(threadEvent.type, ["message", "message.completed"]),
+            eq(threadEvent.type, "message"),
+            eq(threadEvent.actorKind, "user"),
           ),
         )
-        .groupBy(threadEvent.threadId, threadEvent.actorKind, threadEvent.actorUserId)
-        .all()
-        .toSorted((a, b) => a.first - b.first);
-      for (const row of rows) {
-        const of = writers.get(row.threadId) ?? { people: [], agent: false };
-        if (row.actorKind === "user" && row.userId) {
-          of.people.push({ userId: row.userId, name: row.name });
-        } else {
-          of.agent = true;
-        }
-        writers.set(row.threadId, of);
+        .groupBy(threadEvent.threadId, threadEvent.actorUserId)
+        .orderBy(desc(last))
+        .all();
+      for (const { threadId, userId, name } of rows) {
+        if (!userId) continue;
+        writers.set(threadId, [...(writers.get(threadId) ?? []), { userId, name }]);
       }
       return writers;
     },

@@ -108,35 +108,28 @@ export function titleFrom(text: string) {
   return `${(space > TITLE_LENGTH / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
-const PREVIEW_LENGTH = 120;
 // The most people a list names of those who have written in a thread.
 const PARTICIPANT_LIMIT = 3;
 const FORMER_MEMBER = "(former member)";
 
-// Who wrote a message or reply, by first name, and the start of its text on one line.
-function previewOf(event: StoredEvent) {
+// The text of a message or reply without markdown, on one line.
+function textOf(event: StoredEvent) {
   const parts =
     event.type === "message" || event.type === "message.completed"
       ? event.data.parts.filter((part) => part.type === "text")
       : [];
-  const text = plainText(parts.map((part) => part.text).join(" "))
+  return plainText(parts.map((part) => part.text).join(" "))
     .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, PREVIEW_LENGTH);
-  const author =
-    event.actor.kind === "agent" ? "Agent" : (event.actorName ?? FORMER_MEMBER).split(" ")[0]!;
-  return { author, text };
+    .trim();
 }
 
-// The first few who have written in the thread, and how many have.
-function participantsOf(writers: ThreadWriters | undefined): ThreadParticipants {
-  const people = writers?.people ?? [];
+// The few who wrote in the thread most recently, and how many have.
+function participantsOf(writers: ThreadWriters = []): ThreadParticipants {
   return {
-    people: people
+    people: writers
       .slice(0, PARTICIPANT_LIMIT)
       .map(({ userId, name }) => ({ userId, name: name ?? FORMER_MEMBER })),
-    total: people.length,
-    agent: writers?.agent ?? false,
+    total: writers.length,
   };
 }
 
@@ -212,20 +205,14 @@ export function createThreads(options: ThreadsOptions) {
     };
   }
 
-  // The threads as the reader's lists show them: each with the start of its newest message or
-  // reply among `previews`, who has written in it, and what it holds for them.
-  function itemsOf(
-    userId: string,
-    list: Thread[],
-    active: Run[],
-    previews: StoredEvent[],
-  ): ThreadListItem[] {
+  // The threads as the reader's lists show them: each with who has written in it, and what it holds
+  // for them.
+  function itemsOf(userId: string, list: Thread[], active: Run[]): ThreadListItem[] {
     const ids = list.map((thread) => thread.id);
     const facts = threads.facts(ids);
     const writers = threads.writers(ids);
     const seen = reads.seen(userId, ids);
     const runOf = new Map(active.map((run) => [run.threadId, run]));
-    const previewBy = new Map(previews.map((event) => [event.threadId, previewOf(event)]));
     return list.map((thread) => {
       const fact = facts.get(thread.id);
       const activity: ThreadActivity = {
@@ -237,7 +224,6 @@ export function createThreads(options: ThreadsOptions) {
       };
       return {
         ...threadSummary(thread),
-        preview: previewBy.get(thread.id) ?? null,
         participants: participantsOf(writers.get(thread.id)),
         activity,
       };
@@ -249,12 +235,7 @@ export function createThreads(options: ThreadsOptions) {
     const thread = threads.find(id);
     const via = thread && access.of(principal, thread);
     if (!thread || !via) return null;
-    const [item] = itemsOf(
-      principal.userId,
-      [thread],
-      runs.activeIn([id]),
-      threads.lastMessagesOf([id]),
-    );
+    const [item] = itemsOf(principal.userId, [thread], runs.activeIn([id]));
     return { kind: "thread", thread: item!, shared: via.via === "guest" };
   }
 
@@ -326,29 +307,22 @@ export function createThreads(options: ThreadsOptions) {
     return events[0]!;
   }
 
-  // The space's threads, each with the start of its newest message or reply.
+  // The space's threads, each with who has written in it.
   function listIn(principal: Principal, spaceId: string): ThreadListItem[] {
     spaces.require(principal, spaceId);
-    return itemsOf(
-      principal.userId,
-      threads.listInSpace(spaceId),
-      runs.activeInSpace(spaceId),
-      threads.lastMessagesInSpace(spaceId),
-    );
+    return itemsOf(principal.userId, threads.listInSpace(spaceId), runs.activeInSpace(spaceId));
   }
 
   // The threads the principal is a guest in, with their spaces' and orgs' names.
   function sharedWith(principal: Principal): SharedThread[] {
     const shared = guests.threadsOf(principal.userId, now());
-    const ids = shared.map(({ thread }) => thread.id);
     const items = itemsOf(
       principal.userId,
       shared.map(({ thread }) => thread),
-      runs.activeIn(ids),
-      threads.lastMessagesOf(ids),
+      runs.activeIn(shared.map(({ thread }) => thread.id)),
     );
     return shared.map((shared, index) => {
-      const { preview, participants, activity } = items[index]!;
+      const { participants, activity } = items[index]!;
       return {
         ...threadSummary(shared.thread),
         spaceName: shared.spaceName,
@@ -357,7 +331,6 @@ export function createThreads(options: ThreadsOptions) {
           ? shared.spaceName
           : `${shared.spaceName} · ${shared.orgName}`,
         accessUntil: shared.accessUntil?.toISOString() ?? null,
-        preview,
         participants,
         activity,
       };
@@ -377,12 +350,17 @@ export function createThreads(options: ThreadsOptions) {
       params: PageParams & { folder?: string; show?: ThreadShow },
     ): Page<ThreadListItem> {
       const needle = params.q?.toLowerCase() ?? "";
-      const list = listIn(principal, spaceId).filter(
+      const all = listIn(principal, spaceId);
+      const said = new Map(
+        threads
+          .lastMessagesInSpace(spaceId)
+          .map((event) => [event.threadId, textOf(event).toLowerCase()]),
+      );
+      const list = all.filter(
         (thread) =>
           (!params.folder || thread.folderId === params.folder) &&
           shows(params.show, statusOf(thread.activity, principal.userId)) &&
-          (thread.title.toLowerCase().includes(needle) ||
-            !!thread.preview?.text.toLowerCase().includes(needle)),
+          (thread.title.toLowerCase().includes(needle) || !!said.get(thread.id)?.includes(needle)),
       );
       return pageOfList(list, params);
     },

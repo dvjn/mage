@@ -253,71 +253,24 @@ describe("titleFrom", () => {
 });
 
 describe("a space's thread list", () => {
-  it("shows the start of each thread's newest message or reply, and who wrote it", async () => {
-    const { api, signUp, yourSpace, createThread, threadStore } = setup();
-    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
-    const space = await yourSpace(cookie);
-    const blank = await createThread(cookie, space.id);
-    const talk = await createThread(
-      cookie,
-      space.id,
-      `**Engines**   and\n\n${"looms ".repeat(40)}`,
-    );
-    threadStore.append(talk.id, {
-      type: "message.completed",
-      actor: { kind: "agent" },
-      data: {
-        messageId: "m1",
-        runId: "r1",
-        parts: [
-          { type: "reasoning", text: "thinking" },
-          { type: "text", text: "They turn." },
-        ],
-        status: "completed",
-      },
-    });
-
-    const list = (await (await api("GET", `/spaces/${space.id}/threads`, cookie)).json()) as {
-      id: string;
-      preview: { author: string; text: string } | null;
-    }[];
-    expect(list.find((t) => t.id === blank.id)?.preview).toBeNull();
-    expect(list.find((t) => t.id === talk.id)?.preview).toEqual({
-      author: "Agent",
-      text: "They turn.",
-    });
-
-    const other = await createThread(
-      cookie,
-      space.id,
-      `**Engines**   and\n\n${"looms ".repeat(40)}`,
-    );
-    const again = (await (await api("GET", `/spaces/${space.id}/threads`, cookie)).json()) as {
-      id: string;
-      preview: { author: string; text: string };
-    }[];
-    const preview = again.find((t) => t.id === other.id)?.preview;
-    expect(preview?.author).toBe("Ada");
-    expect(preview?.text.startsWith("Engines and looms looms")).toBe(true);
-    expect(preview?.text).toHaveLength(120);
-  });
-
-  it("names the first few people who wrote in each thread, and whether the agent replied", async () => {
+  it("names the people who wrote in each thread, whoever wrote last first", async () => {
     const { api, signUp, join, yourSpace, createThread, threadStore } = setup();
-    const { cookie, userId } = await signUp("Ada Lovelace", "ada@example.com");
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(cookie);
     const others = [];
     for (const name of ["Grace Hopper", "Alan Turing", "Hedy Lamarr"]) {
       const member = await signUp(name, `${name.split(" ")[0]!.toLowerCase()}@example.com`);
       others.push(join(member, space.id, "messager"));
     }
+    const [grace, alan, hedy] = [others[0]!, others[1]!, others[2]!];
     const blank = await createThread(cookie, space.id);
     const talk = await createThread(cookie, space.id, "// Engines");
-    for (const member of others) {
+    for (const member of [grace, alan, hedy]) {
       await api("POST", `/threads/${talk.id}/messages`, member.cookie, { text: "// Looms" });
     }
-    // Writing again does not list anyone twice.
-    await api("POST", `/threads/${talk.id}/messages`, others[0]!.cookie, { text: "// Again" });
+    // Writing again moves Grace first, without listing her twice.
+    await api("POST", `/threads/${talk.id}/messages`, grace.cookie, { text: "// Again" });
+    // The agent's replies do not count.
     threadStore.append(talk.id, {
       type: "message.completed",
       actor: { kind: "agent" },
@@ -326,21 +279,42 @@ describe("a space's thread list", () => {
 
     const list = (await (await api("GET", `/spaces/${space.id}/threads`, cookie)).json()) as {
       id: string;
-      participants: { people: { userId: string; name: string }[]; total: number; agent: boolean };
+      participants: unknown;
     }[];
-    expect(list.find((t) => t.id === blank.id)?.participants).toEqual({
-      people: [],
-      total: 0,
-      agent: false,
-    });
+    expect(list.find((t) => t.id === blank.id)?.participants).toEqual({ people: [], total: 0 });
     expect(list.find((t) => t.id === talk.id)?.participants).toEqual({
       people: [
-        { userId, name: "Ada Lovelace" },
-        { userId: others[0]!.userId, name: "Grace Hopper" },
-        { userId: others[1]!.userId, name: "Alan Turing" },
+        { userId: grace.userId, name: "Grace Hopper" },
+        { userId: hedy.userId, name: "Hedy Lamarr" },
+        { userId: alan.userId, name: "Alan Turing" },
       ],
       total: 4,
-      agent: true,
+    });
+  });
+
+  it("does not name the agent when only it has replied since", async () => {
+    const { api, signUp, yourSpace, createThread, threadStore } = setup();
+    const { cookie, userId } = await signUp("Ada Lovelace", "ada@example.com");
+    const space = await yourSpace(cookie);
+    const talk = await createThread(cookie, space.id, "// Engines");
+    threadStore.append(talk.id, {
+      type: "message.completed",
+      actor: { kind: "agent" },
+      data: {
+        messageId: "m1",
+        runId: "r1",
+        parts: [{ type: "text", text: "They turn." }],
+        status: "completed",
+      },
+    });
+
+    const list = (await (await api("GET", `/spaces/${space.id}/threads`, cookie)).json()) as {
+      id: string;
+      participants: unknown;
+    }[];
+    expect(list.find((t) => t.id === talk.id)?.participants).toEqual({
+      people: [{ userId, name: "Ada Lovelace" }],
+      total: 1,
     });
   });
 });
@@ -371,5 +345,35 @@ describe("a space's thread table", () => {
     expect(await page("q=alpha")).toEqual({ titles: ["Alpha two", "Alpha one"], total: 2 });
     expect(await page(`folder=${folder.id}`)).toEqual({ titles: ["Beta"], total: 1 });
     expect(await page("show=unread")).toEqual({ titles: [], total: 0 });
+  });
+
+  it("narrows by the text of each thread's newest message or reply", async () => {
+    const { api, signUp, yourSpace, createThread, threadStore } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const space = await yourSpace(cookie);
+    const talk = await createThread(cookie, space.id, "// Engines and looms");
+    await api("PATCH", `/threads/${talk.id}`, cookie, { title: "Alpha" });
+    threadStore.append(talk.id, {
+      type: "message.completed",
+      actor: { kind: "agent" },
+      data: {
+        messageId: "m1",
+        runId: "r1",
+        parts: [
+          { type: "reasoning", text: "thinking" },
+          { type: "text", text: "**They**   turn." },
+        ],
+        status: "completed",
+      },
+    });
+    async function titles(q: string) {
+      const res = await api("GET", `/spaces/${space.id}/threads/page?q=${q}`, cookie);
+      const body = (await res.json()) as { items: { title: string }[] };
+      return body.items.map((thread) => thread.title);
+    }
+
+    expect(await titles("they%20turn")).toEqual(["Alpha"]);
+    expect(await titles("thinking")).toEqual([]);
+    expect(await titles("looms")).toEqual([]);
   });
 });

@@ -4,12 +4,7 @@
 
 import * as z from "zod";
 
-import {
-  threadActivitySchema,
-  threadParticipantsSchema,
-  threadPreviewSchema,
-  threadSchema,
-} from "@/shared/threads.ts";
+import { threadActivitySchema, threadParticipantsSchema, threadSchema } from "@/shared/threads.ts";
 
 // How long a guest's access lasts from accepting the link: an hour, a day, a week or for good.
 export const accessForSchema = z.enum(["1h", "1d", "7d", "never"]);
@@ -88,7 +83,6 @@ export const sharedThreadSchema = threadSchema.extend({
   // Where it is, as it reads: its space and org, or the space alone when it is named for the org.
   place: z.string(),
   accessUntil: z.iso.datetime().nullable(),
-  preview: threadPreviewSchema.nullable(),
   participants: threadParticipantsSchema,
   activity: threadActivitySchema,
 });
