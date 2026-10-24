@@ -162,13 +162,15 @@ export function setup(
   });
   const toolSettings = createToolSettingStore(db);
   const tools = createTools({
-    specs: createSystemTools({
-      threads: threadStore,
-      spaceStore,
-      folders: folderStore,
-      guests: guestStore,
-      models: { replyModel, requireModel: models.requireModel },
-    }),
+    toolsets: [
+      createSystemTools({
+        threads: threadStore,
+        spaceStore,
+        folders: folderStore,
+        guests: guestStore,
+        models: { replyModel, requireModel: models.requireModel },
+      }),
+    ],
     settings: toolSettings,
     access,
   });

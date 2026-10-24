@@ -1,8 +1,8 @@
-// Mage's own tools, which act on the thread the agent replies in: reading its details, renaming it,
-// moving it to one of its space's folders, and changing the model and effort it replies with. Each
-// is cheap, undone as easily, and shows in the thread. Changing the model asks first when the new
-// one comes through another connection than the one replying now, since the whole thread then goes
-// to another provider.
+// Mage's built-in Thread toolset, whose tools act on the thread the agent replies in: reading its
+// details, renaming it, moving it to one of its space's folders, and changing the model and effort
+// it replies with. Each is cheap, undone as easily, and shows in the thread. Changing the model asks
+// first when the new one comes through another connection than the one replying now, since the
+// whole thread then goes to another provider.
 
 import * as z from "zod";
 
@@ -10,7 +10,7 @@ import type { FolderStore } from "@/ports/folders.ts";
 import type { GuestStore } from "@/ports/guests.ts";
 import type { SpaceStore } from "@/ports/spaces.ts";
 import type { ThreadStore } from "@/ports/threads.ts";
-import type { ToolSpec } from "@/ports/tools.ts";
+import type { Toolset, ToolSpec } from "@/ports/tools.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Models } from "@/services/models.ts";
 import { eventSummary } from "@/services/thread-log.ts";
@@ -31,7 +31,7 @@ function connectionOf(ref: string) {
   return ref.slice(0, ref.indexOf("/"));
 }
 
-export function createSystemTools(options: SystemToolsOptions) {
+export function createSystemTools(options: SystemToolsOptions): Toolset {
   const { threads, spaceStore, folders, guests, models } = options;
   const now = options.now ?? (() => new Date());
 
@@ -43,8 +43,8 @@ export function createSystemTools(options: SystemToolsOptions) {
 
   const info: ToolSpec<Record<string, never>> = {
     name: "thread.info",
-    source: "system",
     title: "Thread details",
+    annotations: { readOnlyHint: true },
     description:
       "Read this thread's title, folder, the model and effort it is set to and the one replying, and the people in it. Check it before changing any of them.",
     input: z.object({}).strict() as z.ZodType<Record<string, never>>,
@@ -83,8 +83,8 @@ export function createSystemTools(options: SystemToolsOptions) {
 
   const rename: ToolSpec<{ title: string }> = {
     name: "thread.rename",
-    source: "system",
     title: "Rename thread",
+    annotations: { readOnlyHint: false },
     description: "Rename this thread.",
     input: z.object({
       title: z.string().trim().min(1).max(200).meta({ title: "Title" }),
@@ -101,8 +101,8 @@ export function createSystemTools(options: SystemToolsOptions) {
 
   const move: ToolSpec<{ folder: string | null }> = {
     name: "thread.move",
-    source: "system",
     title: "Move thread",
+    annotations: { readOnlyHint: false },
     description:
       "Move this thread to one of its space's folders, by name, or to the top of the space with null. It does not make folders.",
     input: z.object({
@@ -137,8 +137,8 @@ export function createSystemTools(options: SystemToolsOptions) {
 
   const setModel: ToolSpec<{ model: string; effort: "low" | "medium" | "high" | null }> = {
     name: "thread.set_model",
-    source: "system",
     title: "Change model",
+    annotations: { readOnlyHint: false },
     description:
       "Set the model this thread replies with and its reasoning effort, together; null effort uses the model's usual one. Takes effect from your next step.",
     input: z.object({
@@ -159,5 +159,10 @@ export function createSystemTools(options: SystemToolsOptions) {
     },
   };
 
-  return [info, rename, move, setModel];
+  return {
+    id: "thread",
+    title: "Thread",
+    source: "builtin",
+    tools: [info, rename, move, setModel],
+  };
 }

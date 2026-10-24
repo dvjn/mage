@@ -137,14 +137,14 @@ test("a failed run needs the person until they open it, and a run elsewhere spin
   await expect(page).toHaveTitle("Mage");
 });
 
-test("a viewer sees the agent paused while a messager's call waits for the owner", async ({
+test("a viewer sees the agent paused while a messager's call waits for approval", async ({
   page,
   browser,
 }, testInfo) => {
   const adaEmail = await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
   const res = await page.request.patch(`/api/v1/spaces/${spaceId}/tools`, {
-    data: { toolId: "thread.rename", messager: "approve" },
+    data: { toolIds: ["thread.rename"], mode: "ask" },
   });
   expect(res.ok()).toBe(true);
   const threadUrl = await startThread(page, "// Looms");

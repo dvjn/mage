@@ -104,7 +104,16 @@ test("the agent renames a thread at once when the owner alone asked", async ({ p
   await expect(transcript(page).getByRole("region", { name: "Output" })).toContainText("Engines");
 });
 
-test("a guest's words make a move wait; Allow for now lets the next one run until they write again", async ({
+// Sets the tool's mode in the open space's settings, from the tool's own row.
+async function setInSpace(page: Page, spaceId: string, tool: string, mode: string) {
+  await page.goto(`/s/${spaceId}/settings`);
+  const row = page.getByRole("listitem", { name: tool });
+  await row.getByRole("button", { name: mode }).click();
+  await expect(row.getByRole("button", { name: mode })).toHaveAttribute("aria-pressed", "true");
+  await page.goto(`/s/${spaceId}`);
+}
+
+test("a tool that needs approval asks every time, and a guest may decide it", async ({
   page,
   browser,
 }, testInfo) => {
@@ -112,6 +121,7 @@ test("a guest's words make a move wait; Allow for now lets the next one run unti
   const spaceId = spaceIdOf(page);
   await makeFolder(page, spaceId, "Research");
   await makeFolder(page, spaceId, "Archive");
+  await setInSpace(page, spaceId, "Move thread", "Needs approval");
   await startThread(page, "How do engines compute?");
   await expect(replies(page)).toHaveText(/I have read 1 message/);
   const url = await inviteLink(page);
@@ -121,102 +131,81 @@ test("a guest's words make a move wait; Allow for now lets the next one run unti
   await guest.getByRole("button", { name: "Create account" }).click();
   await fillSignUp(guest, "Hedy Lamarr");
   await expect(guest).toHaveURL(/\/t\/[^/]+$/);
-  await write(guest, "Can they hop frequencies?");
-  await expect(replies(page)).toHaveCount(2);
 
   await write(page, '/tool thread.move {"folder":"Research"}');
   await expect(card(page)).toContainText("The agent wants to use Move thread");
   await expect(card(page)).toContainText("Research");
+  await expect(card(page).getByRole("button", { name: "Allow for now" })).toHaveCount(0);
   await expect(page.getByLabel("Message", { exact: true })).toHaveAttribute(
     "placeholder",
     "The agent is waiting for a decision above; you can still steer or queue.",
   );
-  // The guest may not decide: the card is paused for them.
-  await expect(card(guest)).toContainText("Paused");
-  await expect(card(guest).getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
-
-  await card(page).getByRole("button", { name: "Allow for now" }).click();
-  await expect(line(page, /^Move thread · Ran · allowed for now by Ada Lovelace/)).toBeVisible();
-  await expect(line(guest, /^Move thread · Ran · allowed for now/)).toBeVisible();
+  await expect(card(guest)).not.toContainText("Paused");
+  await card(guest).getByRole("button", { name: "Allow", exact: true }).click();
+  await expect(line(page, /^Move thread · Ran · allowed by Hedy Lamarr/)).toBeVisible();
   await expect(page.locator("[data-slot=breadcrumb]")).toContainText("Research");
   await expect(replies(page).last()).toHaveText(/Tool thread.move said: ok/);
 
   await write(page, '/tool thread.move {"folder":"Archive"}');
-  await expect(line(page, /^Move thread · Ran$/)).toBeVisible();
-  await expect(card(page)).toHaveCount(0);
-
-  await write(guest, "Thanks");
-  await expect(replies(page).last()).toHaveText(/I have read \d+ messages/);
-  await write(page, '/tool thread.move {"folder":"Research"}');
-  await expect(card(page)).toContainText("Research");
+  await expect(card(page)).toContainText("Archive");
   await card(page).getByRole("button", { name: "Deny" }).click();
   await expect(line(page, /^Move thread · Denied · by Ada Lovelace/)).toBeVisible();
   await expect(replies(page).last()).toHaveText(/Tool thread.move said: error This action/);
 });
 
-test("a messager who needs approval sees the card paused while the owner decides it", async ({
+test("a viewer sees the card paused while a messager decides it", async ({
   page,
   browser,
 }, testInfo) => {
   const adaEmail = await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
-  await page.goto(`/s/${spaceId}/settings`);
-  const rename = page.getByRole("listitem", { name: "Rename thread" });
-  await rename.getByRole("combobox", { name: "Messagers: Rename thread" }).click();
-  await page.getByRole("option", { name: "Need approval" }).click();
-  await expect(rename.getByRole("combobox", { name: "Messagers: Rename thread" })).toContainText(
-    "Need approval",
-  );
-  await page.goto(`/s/${spaceId}`);
+  await setInSpace(page, spaceId, "Rename thread", "Needs approval");
   await startThread(page, "How do looms work?");
   await expect(replies(page)).toHaveText(/I have read 1 message/);
 
   const grace = await someoneElse(browser, testInfo.parallelIndex);
-  const graceEmail = await signUp(grace, "Grace Hopper");
-  joinSpaceOf(adaEmail, graceEmail, "messager");
+  joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
+  const alan = await someoneElse(browser, testInfo.parallelIndex);
+  joinSpaceOf(adaEmail, await signUp(alan, "Alan Turing"), "viewer");
+  await write(page, '/tool thread.rename {"title":"Looms"}');
+
+  await alan.goto(page.url());
+  await expect(card(alan)).toContainText("The agent wants to use Rename thread");
+  await expect(card(alan)).toContainText("Paused");
+  await expect(card(alan).getByRole("button", { name: "Deny" })).toBeDisabled();
   await grace.goto(page.url());
-  await expect(transcript(grace)).toContainText("How do looms work?");
-  await write(grace, '/tool thread.rename {"title":"Looms"}');
+  await expect(card(grace)).not.toContainText("Paused");
+  await card(grace).getByRole("button", { name: "Allow", exact: true }).click();
 
-  await expect(card(grace)).toContainText("The agent wants to use Rename thread");
-  await expect(card(grace)).toContainText("Looms");
-  await expect(card(grace)).toContainText("Paused");
-  await expect(card(grace).getByRole("button", { name: "Deny" })).toBeDisabled();
-  await expect(card(page)).not.toContainText("Paused");
-  await card(page).getByRole("button", { name: "Allow", exact: true }).click();
-
-  await expect(line(grace, /^Rename thread · Ran · allowed by Ada Lovelace/)).toBeVisible();
-  await expect(card(grace)).toHaveCount(0);
-  await expect(grace.locator("[data-slot=breadcrumb-page]")).toHaveText("Looms");
+  await expect(line(alan, /^Rename thread · Ran · allowed by Grace Hopper/)).toBeVisible();
+  await expect(card(alan)).toHaveCount(0);
+  await expect(alan.locator("[data-slot=breadcrumb-page]")).toHaveText("Looms");
 });
-
-// Grace, a messager in Ada's space, whose renames need approval there.
-async function messagerNeedingApproval(page: Page, browser: Browser, index: number) {
-  const adaEmail = await signUp(page, "Ada Lovelace");
-  const spaceId = spaceIdOf(page);
-  const res = await page.request.patch(`/api/v1/spaces/${spaceId}/tools`, {
-    data: { toolId: "thread.rename", messager: "approve" },
-  });
-  expect(res.ok()).toBe(true);
-  const grace = await someoneElse(browser, index);
-  const graceEmail = await signUp(grace, "Grace Hopper");
-  joinSpaceOf(adaEmail, graceEmail, "messager");
-  return grace;
-}
 
 test("on a phone the card's buttons stack, Allow first and Deny last", async ({
   page,
   browser,
 }, testInfo) => {
-  const grace = await messagerNeedingApproval(page, browser, testInfo.parallelIndex);
+  await signUp(page, "Ada Lovelace");
   await page.setViewportSize({ width: 390, height: 800 });
   await startThread(page, "How do engines compute?");
   await expect(replies(page)).toHaveText(/I have read 1 message/);
-  await grace.goto(page.url());
-  await expect(transcript(grace)).toContainText("How do engines compute?");
-  await write(grace, '/tool thread.rename {"title":"Pistons"}');
-  await expect(card(grace)).toContainText("Paused");
+  const url = await inviteLink(page);
+  const threadId = new URL(page.url()).pathname.split("/")[2]!;
 
+  // A guest writes, then loses access: what they wrote now needs approval.
+  const guest = await someoneElse(browser, testInfo.parallelIndex);
+  await guest.goto(url);
+  await guest.getByRole("button", { name: "Create account" }).click();
+  await fillSignUp(guest, "Hedy Lamarr");
+  await expect(guest).toHaveURL(/\/t\/[^/]+$/);
+  await write(guest, "Call it Pistons");
+  await expect(replies(page)).toHaveCount(2);
+  const me = (await (await guest.request.get("/api/v1/me")).json()) as { user: { id: string } };
+  const revoked = await page.request.delete(`/api/v1/threads/${threadId}/guests/${me.user.id}`);
+  expect(revoked.ok()).toBe(true);
+
+  await write(page, '/tool thread.rename {"title":"Pistons"}');
   const allow = card(page).getByRole("button", { name: "Allow", exact: true });
   const forNow = card(page).getByRole("button", { name: "Allow for now" });
   const deny = card(page).getByRole("button", { name: "Deny" });
@@ -229,17 +218,57 @@ test("on a phone the card's buttons stack, Allow first and Deny last", async ({
   await expect(line(page, /^Rename thread · Ran/)).toBeVisible();
 });
 
-test("a tool the space turned off is not offered, and the agent says it cannot use it", async ({
+test("a tool the space blocked is not offered, and the agent says it cannot use it", async ({
   page,
 }) => {
   await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
-  await page.goto(`/s/${spaceId}/settings`);
-  await page.getByRole("switch", { name: "Move thread" }).click();
-  await expect(page.getByRole("switch", { name: "Move thread" })).not.toBeChecked();
-  await page.goto(`/s/${spaceId}`);
+  await setInSpace(page, spaceId, "Move thread", "Blocked");
 
   await startThread(page, '/tool thread.move {"folder":"Research"}');
   await expect(replies(page)).toHaveText(/I cannot use thread.move here\./);
   await expect(card(page)).toHaveCount(0);
+});
+
+test("a space can only make a tool stricter than its org, and remembers the sections it closed", async ({
+  page,
+}) => {
+  await signUp(page, "Ada Lovelace");
+  const spaceId = spaceIdOf(page);
+  await page.goto("/org/general");
+  const orgMove = page.getByRole("listitem", { name: "Move thread" });
+  await orgMove.getByRole("button", { name: "Needs approval" }).click();
+  await expect(orgMove.getByRole("button", { name: "Needs approval" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  await page.goto(`/s/${spaceId}/settings`);
+  const thread = page.getByRole("region", { name: "Thread" });
+  await expect(thread).toContainText("Built in");
+  await expect(thread).toContainText("4 tools");
+  const move = page.getByRole("listitem", { name: "Move thread" });
+  await expect(move.getByRole("button", { name: "Always allow" })).toBeDisabled();
+  await expect(move.getByRole("button", { name: "Needs approval" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  const interactive = page.getByRole("combobox", { name: "Interactive tools" });
+  await expect(interactive).toContainText("Custom");
+  await expect(page.getByRole("combobox", { name: "Read-only tools" })).toContainText(
+    "Always allow",
+  );
+  await interactive.click();
+  await page.getByRole("option", { name: "Blocked" }).click();
+  await expect(interactive).toContainText("Blocked");
+  await expect(move.getByRole("button", { name: "Blocked" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  await page.getByRole("button", { name: /^Thread/ }).click();
+  await expect(move).toBeHidden();
+  await page.reload();
+  await expect(page.getByRole("region", { name: "Thread" })).toContainText("4 tools");
+  await expect(page.getByRole("listitem", { name: "Move thread" })).toBeHidden();
 });

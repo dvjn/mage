@@ -1,6 +1,6 @@
 // The agent's tools as the API shows them, shared by the server and the web client: their
-// definitions, the switches and levels orgs and spaces set for them, and the bodies that change
-// those.
+// definitions, the toolsets they come in, the modes and levels orgs and spaces set for them, and the
+// bodies that change those.
 
 import * as z from "zod";
 
@@ -26,42 +26,50 @@ export const toolLevelSchema = z.enum(["run", "approve"]);
 
 export type ToolLevel = z.infer<typeof toolLevelSchema>;
 
-// A tool in the org's settings: on or off for all its spaces.
-export const orgToolSchema = z.object({
+// How a tool is set: allowed, so anyone who can message runs it without asking; asking each time,
+// so every call waits for someone who can message; or blocked, so it is off. Strictest first.
+export const toolModeSchema = z.enum(["block", "ask", "allow"]);
+
+export type ToolMode = z.infer<typeof toolModeSchema>;
+
+// The stricter of two modes.
+export function strictest(a: ToolMode, b: ToolMode): ToolMode {
+  const order = toolModeSchema.options;
+  return order.indexOf(a) <= order.indexOf(b) ? a : b;
+}
+
+// Where a toolset comes from: Mage itself, or an MCP server.
+export const toolsetSourceSchema = z.enum(["builtin", "mcp"]);
+
+export type ToolsetSource = z.infer<typeof toolsetSourceSchema>;
+
+// A tool in settings: its definition, the mode the org gives it, and the mode it has where it is
+// shown (for the org, the same).
+export const toolSettingSchema = z.object({
   id: z.string(),
-  enabled: z.boolean(),
   definition: toolDefinitionSchema,
+  orgMode: toolModeSchema,
+  mode: toolModeSchema,
 });
 
-export type OrgTool = z.infer<typeof orgToolSchema>;
+export type ToolSetting = z.infer<typeof toolSettingSchema>;
 
-export const orgToolListSchema = z.array(orgToolSchema);
-
-export const orgToolChangeSchema = z.object({ toolId: z.string().min(1), enabled: z.boolean() });
-
-// A tool in a space's settings: on there, whether its org left it on, and the level its messagers
-// and guests get.
-export const spaceToolSchema = z.object({
+// A toolset in settings: what it is, where it comes from, and its tools.
+export const toolsetSettingSchema = z.object({
   id: z.string(),
-  definition: toolDefinitionSchema,
-  enabled: z.boolean(),
-  orgEnabled: z.boolean(),
-  messager: toolLevelSchema,
-  guest: toolLevelSchema,
+  title: z.string(),
+  source: toolsetSourceSchema,
+  tools: z.array(toolSettingSchema),
 });
 
-export type SpaceTool = z.infer<typeof spaceToolSchema>;
+export type ToolsetSetting = z.infer<typeof toolsetSettingSchema>;
 
-export const spaceToolListSchema = z.array(spaceToolSchema);
+export const toolsetSettingListSchema = z.array(toolsetSettingSchema);
 
-export const spaceToolChangeSchema = z
-  .object({
-    toolId: z.string().min(1),
-    enabled: z.boolean().optional(),
-    messager: toolLevelSchema.optional(),
-    guest: toolLevelSchema.optional(),
-  })
-  .refine(
-    (change) =>
-      change.enabled !== undefined || change.messager !== undefined || change.guest !== undefined,
-  );
+// Sets each named tool to the mode, as one change.
+export const toolModeChangeSchema = z.object({
+  toolIds: z.array(z.string().min(1)).min(1),
+  mode: toolModeSchema,
+});
+
+export type ToolModeChange = z.infer<typeof toolModeChangeSchema>;

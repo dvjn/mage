@@ -132,13 +132,15 @@ const guestStore = createGuestStore(db);
 const access = createThreadAccess({ spaces, threads: threadStore, guests: guestStore });
 const toolSettings = createToolSettingStore(db);
 const tools = createTools({
-  specs: createSystemTools({
-    threads: threadStore,
-    spaceStore,
-    folders: folderStore,
-    guests: guestStore,
-    models,
-  }),
+  toolsets: [
+    createSystemTools({
+      threads: threadStore,
+      spaceStore,
+      folders: folderStore,
+      guests: guestStore,
+      models,
+    }),
+  ],
   settings: toolSettings,
   access,
 });

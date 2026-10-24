@@ -185,7 +185,7 @@ export function createThreads(options: ThreadsOptions) {
         since: call?.kind === "tool" ? call.requestedAt : since,
         ...(toolId && { toolId }),
       },
-      canApprove: !!toolId && !!space && tools.levelFor(userId, thread, space, toolId) === "run",
+      canApprove: !!toolId && !!space && tools.levelFor(userId, thread, space) === "run",
     };
   }
 
@@ -441,9 +441,7 @@ export function createThreads(options: ThreadsOptions) {
         access: via,
         levels: Object.fromEntries(
           space
-            ? tools
-                .ids()
-                .map((toolId) => [toolId, tools.levelFor(principal.userId, thread, space, toolId)])
+            ? tools.ids().map((toolId) => [toolId, tools.levelFor(principal.userId, thread, space)])
             : [],
         ),
         tools: tools.definitions(),

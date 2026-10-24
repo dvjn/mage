@@ -1,15 +1,15 @@
 // Tools the agent can call, each with its definition (what people and the model read about it, the
-// input it takes and what it gives back), how much a call can do, and running it; and the switches and levels orgs and spaces set for them. A tool's id
-// names where it comes from: `thread.rename` for Mage's own, later `mcp:<server>/<tool>` and
-// `skill:<name>`.
+// input it takes and what it gives back), how much a call can do, and running it; the toolsets they
+// come in; and the mode orgs and spaces set for each. A tool's id names where it comes from:
+// `thread.rename` for Mage's own, later `mcp:<server>/<tool>` and `skill:<name>`.
 
 import type * as z from "zod";
 
 import type { NewEvent } from "@/ports/threads.ts";
 import type { ToolRisk } from "@/shared/threads.ts";
-import type { ToolLevel } from "@/shared/tools.ts";
+import type { ToolLevel, ToolMode, ToolsetSource } from "@/shared/tools.ts";
 
-export type { ToolLevel };
+export type { ToolLevel, ToolMode };
 
 export type ToolOutput = { ok: true; value: unknown } | { ok: false; error: string };
 
@@ -30,7 +30,6 @@ export interface ToolContext {
 // Schemas of what it takes and gives back. People and the model see it the same.
 export interface ToolSpec<I = unknown> {
   name: string;
-  source: "system" | "mcp" | "skill";
   title?: string;
   // What the model reads; the same for everyone.
   description: string;
@@ -42,24 +41,22 @@ export interface ToolSpec<I = unknown> {
   run(input: I, ctx: ToolContext): Promise<ToolOutput>;
 }
 
-// A space's choices for one tool: off there, and the level its messagers and guests get instead of
-// the usual one; null keeps the usual.
-export interface SpaceToolSetting {
-  toolId: string;
-  enabled: boolean;
-  messager: ToolLevel | null;
-  guest: ToolLevel | null;
+// Any tool, whatever its input.
+export type AnyToolSpec = ToolSpec<any>;
+
+// Tools from one provider, set out together: Mage's own, or later one MCP server's.
+export interface Toolset {
+  id: string;
+  title: string;
+  source: ToolsetSource;
+  tools: AnyToolSpec[];
 }
 
+// The modes an org or a space set, by tool, for the tools it set. A tool the org did not set is
+// allowed; one the space did not set has the org's mode.
 export interface ToolSettingStore {
-  // The tools the org turned off.
-  offInOrg(orgId: string): Set<string>;
-  setInOrg(orgId: string, toolId: string, enabled: boolean): void;
-  // The space's choices, by tool, for the tools it set anything for.
-  inSpace(spaceId: string): Map<string, SpaceToolSetting>;
-  setInSpace(
-    spaceId: string,
-    toolId: string,
-    changes: Partial<Omit<SpaceToolSetting, "toolId">>,
-  ): void;
+  inOrg(orgId: string): Map<string, ToolMode>;
+  setInOrg(orgId: string, toolIds: readonly string[], mode: ToolMode): void;
+  inSpace(spaceId: string): Map<string, ToolMode>;
+  setInSpace(spaceId: string, toolIds: readonly string[], mode: ToolMode): void;
 }

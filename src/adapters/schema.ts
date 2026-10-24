@@ -289,7 +289,7 @@ export const space = sqliteTable(
   (table) => [index("space_org_idx").on(table.organizationId)],
 );
 
-// A tool an org turned off, or back on, for all its spaces.
+// The mode an org set for a tool, for all its spaces.
 export const orgToolSetting = sqliteTable(
   "org_tool_setting",
   {
@@ -297,13 +297,12 @@ export const orgToolSetting = sqliteTable(
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
     toolId: text("tool_id").notNull(),
-    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+    mode: text("mode", { enum: ["block", "ask", "allow"] }).notNull(),
   },
   (table) => [primaryKey({ columns: [table.organizationId, table.toolId] })],
 );
 
-// A space's choices for a tool: off there, and the level its messagers and guests get; null keeps
-// the usual level.
+// The mode a space set for a tool; it only makes the org's stricter.
 export const spaceToolSetting = sqliteTable(
   "space_tool_setting",
   {
@@ -311,9 +310,7 @@ export const spaceToolSetting = sqliteTable(
       .notNull()
       .references(() => space.id, { onDelete: "cascade" }),
     toolId: text("tool_id").notNull(),
-    enabled: integer("enabled", { mode: "boolean" }).default(true).notNull(),
-    messagerLevel: text("messager_level", { enum: ["run", "approve"] }),
-    guestLevel: text("guest_level", { enum: ["run", "approve"] }),
+    mode: text("mode", { enum: ["block", "ask", "allow"] }).notNull(),
   },
   (table) => [primaryKey({ columns: [table.spaceId, table.toolId] })],
 );

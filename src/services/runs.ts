@@ -59,7 +59,7 @@ export interface RunWorkerOptions {
   bus: EventBus;
   transact: Transact;
   models: Pick<Models, "open" | "replyModel">;
-  tools: Pick<Tools, "offered" | "forModel" | "decide" | "approvalHolds">;
+  tools: Pick<Tools, "offered" | "riskOf" | "forModel" | "decide" | "approvalHolds">;
   logger: Logger;
   now?: () => Date;
   // How long reply pieces gather before they are stored and announced together.
@@ -532,13 +532,15 @@ export function createRunWorker(options: RunWorkerOptions) {
       const thread = threads.find(run.threadId);
       if (!thread) throw new LeaseLost(run.id);
       const { rows } = transcript(run.threadId);
-      const offered = tools.offered(space.orgId, space.id);
+      const offered = tools.offered(space);
       for (const call of calls) {
         const { callId, toolId, input, messageId } = call;
         const spec = offered.find((candidate) => candidate.name === toolId);
         const parsed = spec?.input.safeParse(input);
         const risk =
-          spec && parsed?.success ? spec.risk(parsed.data, { model: execution.ref }) : "normal";
+          spec && parsed?.success
+            ? tools.riskOf(space, spec, parsed.data, execution.ref)
+            : "normal";
         const waits =
           !!spec && !!parsed?.success && tools.decide(rows, thread, space, toolId, risk) === "wait";
         append({
@@ -577,7 +579,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       const calls = rows.filter(
         (row): row is ToolRow => row.kind === "tool" && row.runId === run.id && open(row),
       );
-      const offered = tools.offered(space.orgId, space.id);
+      const offered = tools.offered(space);
       let waiting = false;
       for (const call of calls) {
         const spec = offered.find((candidate) => candidate.name === call.toolId);
@@ -587,7 +589,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           if (call.state === "allowed") {
             allowed = tools.approvalHolds(call, rows, thread, space);
           } else {
-            const risk = spec.risk(parsed.data, { model: execution.ref });
+            const risk = tools.riskOf(space, spec, parsed.data, execution.ref);
             allowed = tools.decide(rows, thread, space, call.toolId, risk) !== "wait";
             if (!allowed && call.waits) {
               waiting = true;
@@ -688,7 +690,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           sessionId: thread.id,
           ...(model.effort && { effort: model.effort }),
           beforeStep: () => boundary(execution, false),
-          tools: tools.forModel(tools.offered(space.orgId, space.id)),
+          tools: tools.forModel(tools.offered(space)),
         },
         controller.signal,
       );

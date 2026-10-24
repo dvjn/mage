@@ -169,6 +169,13 @@
       "when": 1792827310252,
       "tag": "0023_thread_read",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1792836697754,
+      "tag": "0024_tool_modes",
+      "breakpoints": true
     }
   ]
 }

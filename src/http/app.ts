@@ -81,7 +81,7 @@ import {
   toolDecisionSchema,
 } from "@/shared/threads.ts";
 import { spaceThreadPageQuerySchema, threadPageQuerySchema } from "@/shared/thread-status.ts";
-import { orgToolChangeSchema, spaceToolChangeSchema } from "@/shared/tools.ts";
+import { toolModeChangeSchema } from "@/shared/tools.ts";
 
 export interface AppOptions {
   // Answers every request under /api/auth.
@@ -235,10 +235,9 @@ const pendingChange = jsonBody(pendingChangeSchema, "Give a text, or a mode of s
 const retry = jsonBody(retrySchema, "runId is required");
 const threadRead = jsonBody(threadReadSchema, "seq is required");
 const toolDecision = jsonBody(toolDecisionSchema, "allow is required; scope is once or for_now");
-const orgToolChange = jsonBody(orgToolChangeSchema, "Give a toolId and enabled");
-const spaceToolChange = jsonBody(
-  spaceToolChangeSchema,
-  "Give a toolId and enabled, or a messager or guest level of run or approve",
+const toolModeChange = jsonBody(
+  toolModeChangeSchema,
+  "Give toolIds and a mode of allow, ask or block",
 );
 const newInvite = jsonBody(newInviteSchema, "accessFor is 1h, 1d, 7d or never");
 const acceptInvite = jsonBody(acceptInviteSchema, "token is required");
@@ -814,18 +813,17 @@ function createApi(options: AppOptions) {
       .get("/v1/org/tools", (c) => {
         return c.json(tools.orgTools(signedIn(c.var.principal)), 200);
       })
-      .patch("/v1/org/tools", orgToolChange, (c) => {
+      .patch("/v1/org/tools", toolModeChange, (c) => {
         const principal = signedIn(c.var.principal);
-        const { toolId, enabled } = c.req.valid("json");
-        tools.setOrgTool(principal, toolId, enabled);
+        tools.setOrgTools(principal, c.req.valid("json"));
         return c.json(tools.orgTools(principal), 200);
       })
       .get("/v1/spaces/:id/tools", (c) => {
         return c.json(tools.spaceTools(signedIn(c.var.principal), c.req.param("id")), 200);
       })
-      .patch("/v1/spaces/:id/tools", spaceToolChange, (c) => {
+      .patch("/v1/spaces/:id/tools", toolModeChange, (c) => {
         const principal = signedIn(c.var.principal);
-        tools.setSpaceTool(principal, c.req.param("id"), c.req.valid("json"));
+        tools.setSpaceTools(principal, c.req.param("id"), c.req.valid("json"));
         return c.json(tools.spaceTools(principal, c.req.param("id")), 200);
       })
       .post("/v1/threads/:id/retry", retry, (c) => {

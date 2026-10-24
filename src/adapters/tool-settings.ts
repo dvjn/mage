@@ -1,7 +1,7 @@
-// Tool switches and levels kept in the org_tool_setting and space_tool_setting tables, one row per
-// org or space and tool once it sets anything.
+// Tool modes kept in the org_tool_setting and space_tool_setting tables, one row per org or space
+// and tool once it sets one.
 
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 
 import type { ToolSettingStore } from "@/ports/tools.ts";
 
@@ -10,51 +10,42 @@ import { orgToolSetting, spaceToolSetting } from "./schema.ts";
 
 export function createToolSettingStore(db: Db): ToolSettingStore {
   return {
-    offInOrg(orgId) {
+    inOrg(orgId) {
       const rows = db
-        .select({ toolId: orgToolSetting.toolId })
+        .select({ toolId: orgToolSetting.toolId, mode: orgToolSetting.mode })
         .from(orgToolSetting)
-        .where(and(eq(orgToolSetting.organizationId, orgId), eq(orgToolSetting.enabled, false)))
+        .where(eq(orgToolSetting.organizationId, orgId))
         .all();
-      return new Set(rows.map((row) => row.toolId));
+      return new Map(rows.map((row) => [row.toolId, row.mode]));
     },
 
-    setInOrg(orgId, toolId, enabled) {
+    setInOrg(orgId, toolIds, mode) {
+      if (toolIds.length === 0) return;
       db.insert(orgToolSetting)
-        .values({ organizationId: orgId, toolId, enabled })
+        .values(toolIds.map((toolId) => ({ organizationId: orgId, toolId, mode })))
         .onConflictDoUpdate({
           target: [orgToolSetting.organizationId, orgToolSetting.toolId],
-          set: { enabled },
+          set: { mode },
         })
         .run();
     },
 
     inSpace(spaceId) {
       const rows = db
-        .select({
-          toolId: spaceToolSetting.toolId,
-          enabled: spaceToolSetting.enabled,
-          messager: spaceToolSetting.messagerLevel,
-          guest: spaceToolSetting.guestLevel,
-        })
+        .select({ toolId: spaceToolSetting.toolId, mode: spaceToolSetting.mode })
         .from(spaceToolSetting)
         .where(eq(spaceToolSetting.spaceId, spaceId))
         .all();
-      return new Map(rows.map((row) => [row.toolId, row]));
+      return new Map(rows.map((row) => [row.toolId, row.mode]));
     },
 
-    setInSpace(spaceId, toolId, changes) {
-      const set = {
-        ...(changes.enabled !== undefined && { enabled: changes.enabled }),
-        ...(changes.messager !== undefined && { messagerLevel: changes.messager }),
-        ...(changes.guest !== undefined && { guestLevel: changes.guest }),
-      };
-      if (Object.keys(set).length === 0) return;
+    setInSpace(spaceId, toolIds, mode) {
+      if (toolIds.length === 0) return;
       db.insert(spaceToolSetting)
-        .values({ spaceId, toolId, ...set })
+        .values(toolIds.map((toolId) => ({ spaceId, toolId, mode })))
         .onConflictDoUpdate({
           target: [spaceToolSetting.spaceId, spaceToolSetting.toolId],
-          set,
+          set: { mode },
         })
         .run();
     },

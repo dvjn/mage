@@ -12,19 +12,12 @@ const run = "run" as const;
 const approve = "approve" as const;
 
 describe("levels", () => {
-  it("come from how a person reaches the thread now, and the space's overrides", () => {
-    const owner = { via: "space" as const, role: "owner" as const };
-    const messager = { via: "space" as const, role: "messager" as const };
-    const viewer = { via: "space" as const, role: "viewer" as const };
-    const guest = { via: "guest" as const, spaceName: "Ada" };
-    expect(levelOf(owner, "thread.move", { messager: approve })).toBe(run);
-    expect(levelOf(messager, "thread.move")).toBe(run);
-    expect(levelOf(messager, "thread.move", { messager: approve })).toBe(approve);
-    expect(levelOf(viewer, "thread.move")).toBe(approve);
-    expect(levelOf(guest, "thread.move")).toBe(approve);
-    expect(levelOf(guest, "thread.info")).toBe(run);
-    expect(levelOf(guest, "thread.move", { guest: run })).toBe(run);
-    expect(levelOf(null, "thread.info")).toBe(approve);
+  it("let anyone who can message in the thread run tools, and nobody else", () => {
+    expect(levelOf({ via: "space", role: "owner" })).toBe(run);
+    expect(levelOf({ via: "space", role: "messager" })).toBe(run);
+    expect(levelOf({ via: "guest", spaceName: "Ada" })).toBe(run);
+    expect(levelOf({ via: "space", role: "viewer" })).toBe(approve);
+    expect(levelOf(null)).toBe(approve);
   });
 });
 
@@ -136,7 +129,11 @@ async function toolThread() {
       )
       .run();
   }
-  return { ...workspace, hedy, calls, tools, decideCall, setRole };
+  // Hedy's access ends, so what she wrote now needs approval.
+  function revokeHedy() {
+    guestStore.revoke(thread.id, hedy.userId, ada.userId, new Date());
+  }
+  return { ...workspace, hedy, calls, tools, decideCall, setRole, revokeHedy };
 }
 
 async function answered(call: Promise<Call>, text = "Done.") {
@@ -195,12 +192,13 @@ describe("tool calls", () => {
     expect(next.texts.at(-1)).toContain("The folders here: Research.");
   });
 
-  it("wait for a decision when someone who needs approval wrote, letting the lease go", async () => {
+  it("wait for a decision when someone who can no longer message wrote, letting the lease go", async () => {
     const workspace = await toolThread();
     const { ada, hedy, grace, post, calls, model, runStore, thread, makeWorker, start } = workspace;
     const first = makeWorker();
     start(first);
     await post(hedy, "Please move this to Research");
+    workspace.revokeHedy();
     await workspace.createFolder(ada.cookie, workspace.space.id, "Research");
     await calls(["thread.move", { folder: "Research" }]);
     await first.idle();
@@ -231,24 +229,28 @@ describe("tool calls", () => {
     expect(workspace.threadStore.find(thread.id)?.folderId).not.toBeNull();
   });
 
-  it("refuse decisions from guests and viewers", async () => {
-    const { hedy, alan, post, calls, worker, start, tools, decideCall } = await toolThread();
+  it("refuse decisions from viewers and people whose access ended", async () => {
+    const { hedy, alan, post, calls, worker, start, tools, decideCall, revokeHedy } =
+      await toolThread();
     start();
     await post(hedy, "Rename it to Looms");
+    revokeHedy();
     await calls(["thread.rename", { title: "Looms" }]);
     await worker.idle();
 
     const callId = tools()[0]!.id;
-    expect((await decideCall(hedy, callId, true)).status).toBe(403);
+    expect((await decideCall(hedy, callId, true)).status).toBe(410);
     expect((await decideCall(alan, callId, true)).status).toBe(403);
   });
 
   it("deny a call whose approval no longer holds, and tell the model it was not approved", async () => {
+    const workspace = await toolThread();
     const { hedy, grace, post, calls, model, start, makeWorker, tools, decideCall, setRole } =
-      await toolThread();
+      workspace;
     const first = makeWorker();
     start(first);
     await post(hedy, "Rename it to Looms");
+    workspace.revokeHedy();
     await calls(["thread.rename", { title: "Looms" }]);
     await first.idle();
     await first.stop();
@@ -267,7 +269,7 @@ describe("tool calls", () => {
     );
   });
 
-  it("take in a steer on resuming, which can make an approval no longer hold", async () => {
+  it("take in a steer on resuming, before the approved call runs", async () => {
     const { ada, hedy, post, calls, model, start, worker, tools, decideCall, transcript } =
       await toolThread();
     start();
@@ -276,25 +278,27 @@ describe("tool calls", () => {
     await worker.idle();
     expect(tools()[0]).toMatchObject({ risk: "ask", state: "pending" });
 
-    await post(hedy, "Actually, do not");
+    await post(hedy, "Then name it Looms");
     expect((await decideCall(ada, tools()[0]!.id, true)).status).toBe(200);
-    await answered(model.next());
+    const next = await answered(model.next());
     await worker.idle();
 
     expect(transcript()).toEqual([
       "Ada Lovelace: Use the other provider",
       "Agent (completed): On it.",
-      "thread.set_model (stale by Ada Lovelace)",
-      "Hedy Lamarr: Actually, do not",
+      "thread.set_model (ran by Ada Lovelace)",
+      "Hedy Lamarr: Then name it Looms",
       "Agent (completed): Done.",
     ]);
+    expect(next.texts.at(-1)).toBe("user: [Hedy Lamarr] Then name it Looms");
   });
 
   it("are denied as stopped when an interrupt ends the waiting run", async () => {
-    const { ada, hedy, post, calls, model, start, worker, tools, transcript, runs } =
-      await toolThread();
+    const workspace = await toolThread();
+    const { ada, hedy, post, calls, model, start, worker, tools, transcript, runs } = workspace;
     start();
     await post(hedy, "Rename it to Looms");
+    workspace.revokeHedy();
     await calls(["thread.rename", { title: "Looms" }]);
     await worker.idle();
 
@@ -313,9 +317,11 @@ describe("tool calls", () => {
 
   it("run without a card once allowed for now, until someone who needs approval writes", async () => {
     const workspace = await toolThread();
-    const { ada, hedy, post, calls, model, start, worker, tools, decideCall } = workspace;
+    const { ada, hedy, grace, post, calls, model, start, worker, tools, decideCall, setRole } =
+      workspace;
     start();
     await post(hedy, "Rename it");
+    workspace.revokeHedy();
     await calls(["thread.rename", { title: "One" }]);
     await worker.idle();
     expect((await decideCall(ada, tools()[0]!.id, true, "for_now")).status).toBe(200);
@@ -329,7 +335,8 @@ describe("tool calls", () => {
     expect(tools().map((row) => row.state)).toEqual(["ran", "ran"]);
     expect(tools()[1]!.waits).toBe(false);
 
-    await post(hedy, "And again");
+    await post(grace, "And again");
+    setRole(grace.userId, "viewer");
     await calls(["thread.rename", { title: "Three" }]);
     await worker.idle();
     expect(tools()[2]).toMatchObject({ state: "pending", waits: true });
@@ -345,7 +352,24 @@ describe("tool calls", () => {
     expect((await decideCall(ada, tools()[0]!.id, true, "for_now")).status).toBe(400);
   });
 
-  it("let thread.info run for guests", async () => {
+  it("ask every time where the tool is set to ask, never for now", async () => {
+    const { ada, post, calls, model, worker, start, tools, decideCall, toolSettings, space } =
+      await toolThread();
+    toolSettings.setInSpace(space.id, ["thread.rename"], "ask");
+    start();
+    await post(ada, "Rename it");
+    await calls(["thread.rename", { title: "Looms" }]);
+    await worker.idle();
+
+    expect(tools()[0]).toMatchObject({ risk: "ask", state: "pending", waits: true });
+    expect((await decideCall(ada, tools()[0]!.id, true, "for_now")).status).toBe(400);
+    expect((await decideCall(ada, tools()[0]!.id, true)).status).toBe(200);
+    await answered(model.next());
+    await worker.idle();
+    expect(tools().map((row) => row.state)).toEqual(["ran"]);
+  });
+
+  it("let guests run them, as anyone who can message", async () => {
     const { hedy, post, calls, model, worker, start, tools } = await toolThread();
     start();
     await post(hedy, "What is this thread?");
@@ -374,11 +398,11 @@ describe("tool calls", () => {
     expect(second.request.effort).toBe("low");
   });
 
-  it("are not offered where the org or the space turned them off", async () => {
+  it("are not offered where the org or the space blocked them", async () => {
     const workspace = await toolThread();
     const { ada, post, model, worker, start, toolSettings, space } = workspace;
-    toolSettings.setInOrg(ada.orgId, "thread.info", false);
-    toolSettings.setInSpace(space.id, "thread.move", { enabled: false });
+    toolSettings.setInOrg(ada.orgId, ["thread.info"], "block");
+    toolSettings.setInSpace(space.id, ["thread.move"], "block");
     start();
     await post(ada, "Hello");
     const call = await answered(model.next());
@@ -395,77 +419,78 @@ describe("tool calls", () => {
 });
 
 describe("tool settings", () => {
-  it("let org owners turn tools off, and spaces only narrow what the org allows", async () => {
+  it("let org owners set each tool, and spaces only make it stricter", async () => {
     const { ada, grace, api, space } = await toolThread();
+    const change = (toolIds: string[], mode: string) => ({ toolIds, mode });
 
     expect(
-      (await api("PATCH", "/org/tools", grace.cookie, { toolId: "thread.move", enabled: false }))
-        .status,
+      (await api("PATCH", "/org/tools", grace.cookie, change(["thread.move"], "ask"))).status,
     ).toBe(403);
-    const org = await api("PATCH", "/org/tools", ada.cookie, {
-      toolId: "thread.move",
-      enabled: false,
-    });
-    expect(await org.json()).toContainEqual(
-      expect.objectContaining({ id: "thread.move", enabled: false }),
+    expect(
+      (await api("PATCH", "/org/tools", ada.cookie, change(["thread.nope"], "ask"))).status,
+    ).toBe(404);
+    const org = await api("PATCH", "/org/tools", ada.cookie, change(["thread.move"], "ask"));
+    const [thread] = (await org.json()) as {
+      id: string;
+      title: string;
+      source: string;
+      tools: unknown[];
+    }[];
+    expect(thread).toMatchObject({ id: "thread", title: "Thread", source: "builtin" });
+    expect(thread!.tools).toContainEqual(
+      expect.objectContaining({ id: "thread.move", orgMode: "ask", mode: "ask" }),
+    );
+    expect(thread!.tools).toContainEqual(
+      expect.objectContaining({
+        id: "thread.info",
+        mode: "allow",
+        definition: expect.objectContaining({ annotations: { readOnlyHint: true } }),
+      }),
     );
 
-    const changed = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
-      toolId: "thread.rename",
-      messager: "approve",
-      guest: "run",
-    });
-    expect(await changed.json()).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          id: "thread.move",
-          enabled: true,
-          orgEnabled: false,
-          messager: "run",
-          guest: "approve",
-        }),
-        expect.objectContaining({
-          id: "thread.rename",
-          enabled: true,
-          orgEnabled: true,
-          messager: "approve",
-          guest: "run",
-        }),
-        expect.objectContaining({
-          id: "thread.info",
-          enabled: true,
-          orgEnabled: true,
-          messager: "run",
-          guest: "run",
-        }),
-      ]),
+    await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, change(["thread.move"], "allow"));
+    const changed = await api(
+      "PATCH",
+      `/spaces/${space.id}/tools`,
+      ada.cookie,
+      change(["thread.rename", "thread.info"], "block"),
     );
+    const [inSpace] = (await changed.json()) as { tools: unknown[] }[];
+    expect(inSpace!.tools).toEqual([
+      expect.objectContaining({ id: "thread.info", orgMode: "allow", mode: "block" }),
+      expect.objectContaining({ id: "thread.rename", orgMode: "allow", mode: "block" }),
+      expect.objectContaining({ id: "thread.move", orgMode: "ask", mode: "ask" }),
+      expect.objectContaining({ id: "thread.set_model", orgMode: "allow", mode: "allow" }),
+    ]);
     expect((await api("GET", `/spaces/${space.id}/tools`, grace.cookie)).status).toBe(403);
   });
 });
 
 describe("thread lists", () => {
   it("say when the agent waits for a decision, on which tool, and who may make it", async () => {
-    const { ada, hedy, post, calls, worker, start, api, space, thread } = await toolThread();
+    const { ada, alan, hedy, post, calls, worker, start, api, space, thread, toolSettings } =
+      await toolThread();
+    toolSettings.setInSpace(space.id, ["thread.rename"], "ask");
     start();
-    await post(hedy, "Rename it");
+    await post(ada, "Rename it");
     await calls(["thread.rename", { title: "Looms" }]);
     await worker.idle();
 
-    const list = (await (await api("GET", `/spaces/${space.id}/threads`, ada.cookie)).json()) as {
-      id: string;
-      activity: unknown;
-    }[];
-    expect(list.find((item) => item.id === thread.id)?.activity).toMatchObject({
+    const activityFor = async (who: { cookie: string }) => {
+      const list = (await (await api("GET", `/spaces/${space.id}/threads`, who.cookie)).json()) as {
+        id: string;
+        activity: unknown;
+      }[];
+      return list.find((item) => item.id === thread.id)?.activity;
+    };
+    expect(await activityFor(ada)).toMatchObject({
       run: { status: "waiting", toolId: "thread.rename" },
       canApprove: true,
     });
+    expect(await activityFor(alan)).toMatchObject({ canApprove: false });
     const shared = (await (await api("GET", "/shared-threads", hedy.cookie)).json()) as {
       activity: unknown;
     }[];
-    expect(shared[0]?.activity).toMatchObject({
-      run: { status: "waiting" },
-      canApprove: false,
-    });
+    expect(shared[0]?.activity).toMatchObject({ run: { status: "waiting" }, canApprove: true });
   });
 });
