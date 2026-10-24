@@ -15,6 +15,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.72",
     "@ai-sdk/openai": "4.0.84",
+    "@ai-sdk/openai-compatible": "3.0.67",
     "@better-auth/scim": "1.7.11",
     "@hono/node-server": "2.1.5",
     "ai": "7.0.128",
