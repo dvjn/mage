@@ -200,6 +200,9 @@ importers:
       ai:
         specifier: 7.0.128
         version: 7.0.128(zod@4.6.7)
+      aws4fetch:
+        specifier: 1.0.20
+        version: 1.0.20
       better-auth:
         specifier: 1.7.11
         version: 1.7.11(drizzle-kit@0.31.11)(drizzle-orm@0.45.4(@types/better-sqlite3@9.6.0)(better-sqlite3@13.0.3)(kysely@0.29.7))(react-dom@19.3.1(react@19.3.1))(react@19.3.1)(vitest@5.0.5)
