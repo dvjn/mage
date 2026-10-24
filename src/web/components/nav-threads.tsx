@@ -5,9 +5,9 @@
 // space's page, narrowed to the folder where it is one, for the rest. Rows stay
 // where they are while the pointer is over the list, and never move for their status. Each row has
 // a menu to start, rename, move or delete. Nobody sees what their role never allows. In the shared
-// context, the section lists the threads shared with the person instead, each over the space it is
-// in, up to the same limit. Above either, while any thread there or shared waits on the person or
-// failed since they looked, "Needs you" lists the newest few, leading to the page for the rest.
+// context, the section lists the threads shared with the person instead, each with the space it
+// is in, up to the same limit. Above either, while any thread there or shared waits on the person
+// or failed since they looked, "Needs you" lists the newest few, leading to the page for the rest.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
@@ -133,7 +133,7 @@ function ItemMenu({ name, children }: { name: string; children: ReactNode }) {
       <WithTooltip label="Actions">
         <DropdownMenuTrigger
           render={
-            <SidebarMenuAction className="peer-hover/menu-button:opacity-100 hover:opacity-100 focus-visible:opacity-100 aria-expanded:bg-muted aria-expanded:opacity-100 md:opacity-0" />
+            <SidebarMenuAction className="peer-hover/menu-button:opacity-100 hover:opacity-100 focus-visible:opacity-100 aria-expanded:bg-muted aria-expanded:opacity-100 md:opacity-0 peer-data-[size=lg]/menu-button:top-[5px]" />
           }
         >
           <MoreHorizontalIcon />
@@ -151,21 +151,11 @@ function ItemMenu({ name, children }: { name: string; children: ReactNode }) {
   );
 }
 
-// The start of the thread's newest message or reply, with who wrote it.
-function previewOf(thread: ThreadListItem) {
-  return thread.preview ? `${thread.preview.author}: ${thread.preview.text}` : undefined;
-}
-
 function ThreadItem({ thread }: { thread: ThreadListItem }) {
   const nav = useNav();
   const [moving, setMoving] = useState(false);
   return (
-    <ThreadRow
-      variant="sidebar"
-      thread={thread}
-      detail={previewOf(thread)}
-      isActive={thread.id === nav.activeThreadId}
-    >
+    <ThreadRow variant="sidebar" thread={thread} isActive={thread.id === nav.activeThreadId}>
       {nav.role !== "viewer" && (
         <ItemMenu name={thread.title}>
           <DropdownMenuItem onClick={() => nav.act({ kind: "rename-thread", thread })}>
@@ -300,11 +290,11 @@ function ShowAll({ link }: { link: React.ReactElement }) {
   );
 }
 
-// Rows of a list still being read.
+// Rows of a list still being read, as tall as the rows to come.
 function MenuSkeleton() {
   return [0, 1, 2].map((index) => (
     <SidebarMenuItem key={index}>
-      <SidebarMenuSkeleton showIcon />
+      <SidebarMenuSkeleton className="h-12" />
     </SidebarMenuItem>
   ));
 }
@@ -480,14 +470,13 @@ function SpaceThreads({ space }: { space: SpaceSummary }) {
   );
 }
 
-// A thread shared with the person, over the space it is in.
+// A thread shared with the person, with the space it is in, and its org on hover.
 function SharedItem({ thread, isActive }: { thread: SharedThread; isActive: boolean }) {
   return (
     <ThreadRow
       variant="sidebar"
-      shared
       thread={thread}
-      detail={thread.spaceName}
+      place={thread.spaceName}
       title={thread.place}
       isActive={isActive}
     />
@@ -518,7 +507,6 @@ function NeedsYou({ more }: { more: React.ReactElement }) {
                 key={item.thread.id}
                 variant="sidebar"
                 thread={item.thread}
-                detail={previewOf(item.thread)}
                 isActive={item.thread.id === threadId}
               />
             ),

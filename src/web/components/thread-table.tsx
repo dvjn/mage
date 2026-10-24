@@ -7,7 +7,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import type * as React from "react";
 
 import type { ThreadShow } from "@/shared/thread-status.ts";
-import type { ThreadActivity } from "@/shared/threads.ts";
+import type { ThreadActivity, ThreadParticipants, ThreadPreview } from "@/shared/threads.ts";
 import { DataTable, type Empty } from "@/web/components/data-table/data-table";
 import { DataTableToolbar } from "@/web/components/data-table/data-table-toolbar";
 import { filterColumn } from "@/web/components/people-table";
@@ -21,7 +21,15 @@ import {
   withoutUnset,
 } from "@/web/lib/data-table";
 
-type Thread = { id: string; title: string; untitled: boolean; activity: ThreadActivity };
+type Thread = {
+  id: string;
+  title: string;
+  untitled: boolean;
+  updatedAt: string;
+  preview: ThreadPreview | null;
+  participants: ThreadParticipants;
+  activity: ThreadActivity;
+};
 
 type ThreadSearch = TableSearch & { show?: ThreadShow; folder?: string };
 
@@ -38,8 +46,8 @@ export function ThreadTable<T extends Thread, S extends ThreadSearch>({
   page: { data?: { items: T[]; total: number }; error: unknown };
   search: S;
   onSearch: (search: (previous: S) => S) => void;
-  // What the row says besides the title and status.
-  row: (thread: T) => { detail?: React.ReactNode; badge?: string; time: React.ReactNode };
+  // What the row says besides the thread itself: where it is, its badge and its time.
+  row: (thread: T) => { place?: string; badge?: string; time: React.ReactNode };
   // The space's folders, to narrow to one.
   folders?: FilterOption[];
   empty: Empty;

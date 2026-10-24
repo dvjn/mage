@@ -33,7 +33,7 @@ export function SharedPage() {
           page={page}
           search={search}
           onSearch={(next) => void navigate({ search: next, replace: true })}
-          row={(thread) => ({ detail: thread.place, time: <Until iso={thread.accessUntil} /> })}
+          row={(thread) => ({ place: thread.place, time: <Until iso={thread.accessUntil} /> })}
           empty={{
             icon: <UsersIcon />,
             title: "Nothing is shared with you yet",

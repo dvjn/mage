@@ -98,6 +98,11 @@ test("opening a thread clears what is new for that person only", async ({
   // Ada hears of it while she is elsewhere.
   await expect(sidebarRow(page, "Engines")).toHaveAttribute("data-status", "unread");
   await expect(page.getByRole("img", { name: "New messages" }).first()).toBeVisible();
+  // The row says who has written and what was said last.
+  await expect(sidebarRow(page, "Engines")).toContainText("Grace: // Looks good");
+  await expect(
+    sidebarRow(page, "Engines").getByRole("img", { name: "Ada Lovelace and Grace Hopper" }),
+  ).toBeVisible();
 
   await sidebarRow(page, "Engines").getByRole("link").click();
   await expect(sidebarRow(page, "Engines")).toHaveAttribute("data-status", "read");
@@ -118,14 +123,18 @@ test("a failed run needs the person until they open it, and a run elsewhere spin
 
   await write(grace, "Count the cards very slowly");
   await expect(sidebarRow(page, "Card reader")).toHaveAttribute("data-status", "working");
-  await expect(sidebarRow(page, "Card reader")).toContainText("Working");
+  await expect(
+    sidebarRow(page, "Card reader").getByRole("img", { name: /^Working/ }),
+  ).toBeVisible();
   await grace.getByRole("button", { name: "Stop" }).click();
   await expect(sidebarRow(page, "Card reader")).not.toHaveAttribute("data-status", "working");
 
   await write(grace, "/fail The provider is over its limit.");
   await expect(sidebarRow(page, "Card reader")).toHaveAttribute("data-status", "failed");
   await expect(needsYou(page)).toContainText("Card reader");
-  await expect(needsYou(page)).toContainText("Failed");
+  await expect(
+    needsYou(page).getByRole("img", { name: /^Failed · .*over its limit/ }),
+  ).toBeVisible();
   await expect(page).toHaveTitle("● Mage");
 
   await needsYou(page)
@@ -160,11 +169,10 @@ test("a viewer sees the agent paused while a messager's call waits for approval"
   await write(grace, '/tool thread.rename {"title":"Weaving"}');
 
   await expect(sidebarRow(page, "Looms")).toHaveAttribute("data-status", "waiting");
-  await expect(needsYou(page)).toContainText("Waiting for you");
+  await expect(needsYou(page).getByRole("img", { name: /^Waiting for you/ })).toBeVisible();
   await expect(sidebarRow(alan, "Looms")).toHaveAttribute("data-status", "paused");
-  await expect(sidebarRow(alan, "Looms")).toContainText("Paused");
   await expect(
-    sidebarRow(alan, "Looms").getByRole("img", { name: "Waiting for someone to approve" }),
+    sidebarRow(alan, "Looms").getByRole("img", { name: "Paused · waiting for someone to approve" }),
   ).toBeVisible();
   await expect(needsYou(alan)).toHaveCount(0);
 });
@@ -195,6 +203,7 @@ test("a shared thread shows its status in the same row, also on a phone", async 
 
   await write(page, "// Another note");
   await expect(row).toHaveAttribute("data-status", "unread");
-  // On a phone the muted line, with the status's word, sits under the title.
-  await expect(row.getByText("New", { exact: true }).filter({ visible: true })).toBeVisible();
+  // The status's glyph sits at the end of the title's line, named for those who cannot see it.
+  await expect(row.getByRole("img", { name: "New messages" })).toBeVisible();
+  await expect(row).toContainText("Ada Lovelace's Space · Ada: // Another note");
 });

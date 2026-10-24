@@ -69,7 +69,7 @@ test("a folder lists its first 30 threads, then leads to the space page narrowed
   addThreads(email, 2, { prefix: "Loose" });
   await page.reload();
   await sidebar(page).getByRole("button", { name: "Looms", exact: true }).click();
-  await expect(sidebar(page).getByRole("link", { name: /^Loom \d+$/ })).toHaveCount(30);
+  await expect(sidebar(page).getByRole("link", { name: /^Loom \d+ / })).toHaveCount(30);
   await sidebar(page).getByRole("link", { name: "Show all" }).click();
   await expect(page).toHaveURL(/\/s\/[^/]+\?folder=/);
   await expect(page.getByRole("button", { name: "Folder: Looms" })).toBeVisible();

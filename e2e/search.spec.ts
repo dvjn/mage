@@ -87,7 +87,7 @@ test("Ctrl+K searches everywhere or in this space, and finds untitled threads", 
   await page.reload();
   const sidebar = page.locator("[data-sidebar=sidebar]");
   await expect(
-    sidebar.getByRole("link", { name: "Untitled", exact: true }).locator(".italic"),
+    sidebar.getByRole("link", { name: /^Untitled / }).filter({ has: page.locator(".italic") }),
   ).toBeVisible();
 
   await page.keyboard.press("Control+k");

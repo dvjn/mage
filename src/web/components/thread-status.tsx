@@ -1,10 +1,11 @@
-// A thread's status for the signed-in person, as its row in a list shows it: a glyph in the row's
-// icon slot with what it means on hover, and a short label for the row's muted line, so the status
-// never rests on colour alone. The spinner holds still for those who ask for less motion.
+// A thread's status for the signed-in person, as its row in a list shows it: a glyph of its own
+// shape and colour, with what it means in words on hover and for screen readers, so the status
+// never rests on colour alone; nothing while there is nothing new. The spinner holds still for
+// those who ask for less motion.
 
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
-import { CircleAlertIcon, HandIcon, LoaderCircleIcon, MessageSquareIcon } from "lucide-react";
+import { CircleAlertIcon, HandIcon, LoaderCircleIcon } from "lucide-react";
 
 import { statusOf, type ThreadStatus } from "@/shared/thread-status.ts";
 import type { ThreadActivity } from "@/shared/threads.ts";
@@ -20,40 +21,22 @@ export function useThreadStatus(activity: ThreadActivity): ThreadStatus {
   return me.data ? statusOf(activity, me.data.user.id) : "read";
 }
 
-// The words the row's muted line starts with; none for a thread with nothing new.
-export function statusLabel(status: ThreadStatus, activity: ThreadActivity) {
-  switch (status) {
-    case "waiting":
-      return "Waiting for you";
-    case "paused":
-      return "Paused";
-    case "failed":
-      return "Failed";
-    case "working":
-      return activity.run?.status === "queued" ? "Queued" : "Working";
-    case "unread":
-      return "New";
-    case "read":
-      return null;
-  }
-}
-
 // How long ago, in whole minutes, as the tooltip says it.
 function minutesSince(iso: string) {
   const minutes = Math.floor((Date.now() - new Date(iso).getTime()) / 60_000);
   return minutes < 1 ? "just now" : `${minutes} min`;
 }
 
-// What the glyph means, on hover.
+// What the glyph means: the status's word, then what there is to say about it.
 function tooltipOf(status: ThreadStatus, activity: ThreadActivity) {
   const run = activity.run;
   switch (status) {
     case "waiting":
       return `Waiting for you · since ${clock.format(new Date(run?.since ?? Date.now()))}`;
     case "paused":
-      return "Waiting for someone to approve";
+      return "Paused · waiting for someone to approve";
     case "failed":
-      return activity.failed?.error || "The agent could not reply";
+      return `Failed · ${activity.failed?.error || "The agent could not reply"}`;
     case "working":
       return run?.status === "queued" ? "Queued" : `Working · ${minutesSince(run?.since ?? "")}`;
     case "unread":
@@ -86,11 +69,12 @@ function Glyph({ status }: { status: ThreadStatus }) {
         </span>
       );
     case "read":
-      return <MessageSquareIcon className="size-4 shrink-0 text-muted-foreground" />;
+      return null;
   }
 }
 
-// The status's glyph, named for screen readers, with what it means on hover.
+// The status's glyph, named for screen readers, with what it means on hover; nothing for a thread
+// with nothing new.
 export function StatusGlyph({
   status,
   activity,
@@ -102,13 +86,7 @@ export function StatusGlyph({
 }) {
   useMinute();
   const tooltip = tooltipOf(status, activity);
-  if (!tooltip) {
-    return (
-      <span aria-hidden className={cn("flex shrink-0", className)}>
-        <Glyph status={status} />
-      </span>
-    );
-  }
+  if (!tooltip) return null;
   const glyph = (
     <span role="img" aria-label={tooltip} className={cn("flex shrink-0", className)}>
       <Glyph status={status} />
