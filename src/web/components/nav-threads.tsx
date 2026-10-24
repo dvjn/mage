@@ -3,7 +3,7 @@
 // hold the open thread, then the threads at the top of the space by when they were last active
 // (today, the previous 7 days, older). A folder's header counts its threads and, while it is closed,
 // shows the statuses inside that say something, the most pressing first; its threads hang under it
-// on a thin guide, their titles in line with its name. Each list stops at a limit, with "Show all"
+// on a thin guide, their model tiles in line with its name. Each list stops at a limit, with "Show all"
 // leading to the space's page, narrowed to the folder where it is one, for the rest. Rows stay
 // where they are while the pointer is over the list, and never move for their status. Each row has
 // a menu to start, rename, move or delete. Nobody sees what their role never allows. In the shared
@@ -48,7 +48,7 @@ import { type NavAction, NavDialogs } from "@/web/components/nav-dialogs";
 import { FolderPickerDialog } from "@/web/components/folder-choice";
 import { ShortcutHint } from "@/web/components/shortcut-keys";
 import { useToast } from "@/web/components/toaster";
-import { slotUnderMenu, ThreadRow } from "@/web/components/thread-row";
+import { ThreadRow } from "@/web/components/thread-row";
 import { StatusGlyph } from "@/web/components/thread-status";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import {
@@ -220,6 +220,11 @@ function rollupOf(threads: ThreadListItem[], userId: string | undefined) {
   });
 }
 
+// While the pointer is over a header with a menu, or the menu is in use, the menu stands where
+// this is; on a phone the menu always shows, beside it.
+const slotUnderMenu =
+  "md:group-has-data-[sidebar=menu-action]/menu-item:group-hover/menu-item:opacity-0 md:group-has-[[data-sidebar=menu-action]:is(:focus-visible,[aria-expanded=true])]/menu-item:opacity-0";
+
 // The end of a folder's header: while it is closed, the statuses inside that say something, then
 // how many threads it holds. The menu stands over it while the pointer is over the header.
 function Rollup({ id, threads, open }: { id: string; threads: ThreadListItem[]; open: boolean }) {
@@ -247,7 +252,7 @@ function Rollup({ id, threads, open }: { id: string; threads: ThreadListItem[]; 
 }
 
 // The guide hangs from the folder icon's centre to just above the end of its list, clear of the
-// rows, which are indented so their titles line up with the folder's name.
+// rows, which are indented so their model tiles line up with the folder's name.
 const guided =
   "relative flex flex-col gap-0.5 pt-0.5 pb-1.5 pl-6 before:absolute before:top-0 before:bottom-2 before:left-4 before:w-px before:bg-sidebar-border";
 

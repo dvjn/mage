@@ -1,9 +1,9 @@
 // A thread's status for the signed-in person, as its row in a list shows it: a glyph of its own
-// shape and colour (an amber spinner while the agent works, a green dot for something new, a red
-// triangle when it failed, a blue hand while it waits for them, a softer blue hand while it waits
-// for someone else), with what it means in words on hover and for screen readers, so the status
-// never rests on colour alone; nothing while there is nothing new. The spinner holds still for
-// those who ask for less motion.
+// shape and colour (an amber spinner while the agent works, a dot in the text's colour for something
+// new, a red triangle when it failed, a blue hand while it waits for them, a softer blue hand while
+// it waits for someone else), at the size a list asks for, with what it means in words on hover and
+// for screen readers, so the status never rests on colour alone; nothing while there is nothing
+// new. The spinner holds still for those who ask for less motion.
 
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
@@ -29,7 +29,7 @@ function minutesSince(iso: string) {
   return minutes < 1 ? "just now" : `${minutes} min`;
 }
 
-// What the glyph means: the status's word, then what there is to say about it.
+// What the glyph means: the status's word, then what there is to say about it; nothing for read.
 function tooltipOf(status: ThreadStatus, activity: ThreadActivity) {
   const run = activity.run;
   switch (status) {
@@ -48,22 +48,24 @@ function tooltipOf(status: ThreadStatus, activity: ThreadActivity) {
   }
 }
 
-function Glyph({ status }: { status: ThreadStatus }) {
+// The glyph in a box of the size given, as a class; the dot keeps its own size in any box.
+function Glyph({ status, size }: { status: ThreadStatus; size: string }) {
+  const box = cn(size, "shrink-0");
   switch (status) {
     case "waiting":
-      return <HandIcon className="size-4 shrink-0 text-status-waiting" />;
+      return <HandIcon className={cn(box, "text-status-waiting")} />;
     case "paused":
-      return <HandIcon className="size-4 shrink-0 text-status-paused" />;
+      return <HandIcon className={cn(box, "text-status-paused")} />;
     case "failed":
-      return <TriangleAlertIcon className="size-4 shrink-0 text-status-failed" />;
+      return <TriangleAlertIcon className={cn(box, "text-status-failed")} />;
     case "working":
       return (
-        <LoaderCircleIcon className="size-4 shrink-0 text-status-working motion-safe:animate-spin" />
+        <LoaderCircleIcon className={cn(box, "text-status-working motion-safe:animate-spin")} />
       );
     case "unread":
       return (
-        <span className="grid size-4 shrink-0 place-items-center">
-          <span className="size-2 rounded-full bg-status-unread" />
+        <span className={cn(box, "grid place-items-center")}>
+          <span className="size-2.5 rounded-full bg-status-unread" />
         </span>
       );
     case "read":
@@ -76,10 +78,13 @@ function Glyph({ status }: { status: ThreadStatus }) {
 export function StatusGlyph({
   status,
   activity,
+  size = "size-4",
   className,
 }: {
   status: ThreadStatus;
   activity: ThreadActivity;
+  // The glyph's box, as a size class.
+  size?: string;
   className?: string;
 }) {
   useMinute();
@@ -87,7 +92,7 @@ export function StatusGlyph({
   if (!tooltip) return null;
   const glyph = (
     <span role="img" aria-label={tooltip} className={cn("flex shrink-0", className)}>
-      <Glyph status={status} />
+      <Glyph status={status} size={size} />
     </span>
   );
   return (

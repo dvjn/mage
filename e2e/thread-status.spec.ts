@@ -100,9 +100,7 @@ test("opening a thread clears what is new for that person only", async ({
   await expect(page.getByRole("img", { name: "New messages" }).first()).toBeVisible();
   // The row shows who has written, whoever wrote last first, and not what they said.
   await expect(sidebarRow(page, "Engines")).not.toContainText("Looks good");
-  await expect(
-    sidebarRow(page, "Engines").getByRole("img", { name: "Grace Hopper and Ada Lovelace" }),
-  ).toBeVisible();
+  await expect(sidebarRow(page, "Engines").getByText("Grace, You", { exact: true })).toBeVisible();
 
   await sidebarRow(page, "Engines").getByRole("link").click();
   await expect(sidebarRow(page, "Engines")).toHaveAttribute("data-status", "read");

@@ -75,7 +75,7 @@
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
   --status-working: oklch(0.64 0.16 65);
-  --status-unread: oklch(0.6 0.16 150);
+  --status-unread: var(--foreground);
   --status-failed: oklch(0.577 0.245 27.325);
   --status-waiting: oklch(0.55 0.2 260);
   --status-paused: oklch(0.6 0.08 255);
@@ -116,7 +116,7 @@
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
   --status-working: oklch(0.8 0.15 75);
-  --status-unread: oklch(0.76 0.17 150);
+  --status-unread: var(--foreground);
   --status-failed: oklch(0.704 0.191 22.216);
   --status-waiting: oklch(0.7 0.15 255);
   --status-paused: oklch(0.72 0.07 255);

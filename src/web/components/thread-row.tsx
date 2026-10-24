@@ -1,35 +1,35 @@
 // One thread in a list of threads, in the sidebar or in a page's table, always two lines high
-// whatever its status, so rows never move as threads start and stop working. The first line is its
-// title, bold while something new waits there. The second line is who has written in it, whoever
-// wrote last first, as a stack of avatars named on hover, a guest's drawn with a dashed edge, then
-// where the thread is when the list mixes places, and at its end its model, as its product's mark
-// named with the model on hover. A sidebar row keeps a slot at the end of its first line holding
-// the status's glyph alone, above the model's mark, and starts its second line with how long ago
-// the thread was last active; it keeps the menu it is given, which takes the slot's place while the
-// pointer is over the row. A page's row keeps the glyph, a badge (its folder) and something about
-// time (when it was last active, or when access ends) at the end of its first line. Every list of
-// threads uses it, so they look and behave alike.
+// whatever its status, so rows never move as threads start and stop working. A tile of its model
+// leads the row, as its product's mark named with the model on hover, with the status's glyph on
+// the tile's corner. The first line is its title, bold while something new waits there. The second
+// line is who has written in it, as the first names of the one or two who wrote last and how many
+// more, all named in full on hover with a guest marked, then where the thread is when the list
+// mixes places. A sidebar row ends its second line with how long ago the thread was last active and
+// keeps the menu it is given, which the title makes room for while the pointer is over the row. A
+// page's row keeps a badge (its folder) and something about time (when it was last active, or when
+// access ends) at the end of its first line. Every list of threads uses it, so they look and behave
+// alike.
 
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import type * as React from "react";
 
+import type { ThreadStatus } from "@/shared/thread-status.ts";
 import type { ShownModel, ThreadActivity, ThreadParticipants } from "@/shared/threads.ts";
 import { ModelIcon } from "@/web/components/provider-icon";
 import { StatusGlyph, useThreadStatus } from "@/web/components/thread-status";
 import { ThreadTitle } from "@/web/components/thread-title";
 import { ShortTime } from "@/web/components/time";
-import { Avatar, AvatarFallback, AvatarGroup, AvatarGroupCount } from "@/web/components/ui/avatar";
 import { Badge } from "@/web/components/ui/badge";
 import { SidebarMenuButton, SidebarMenuItem } from "@/web/components/ui/sidebar";
 import { WithTooltip } from "@/web/components/with-tooltip";
-import { initialsOf } from "@/web/lib/initials";
+import { meQuery } from "@/web/lib/queries";
+import { writerLine, writersInFull } from "@/web/lib/writers";
 
 // The hover and focus of every row of a page's list.
 export const ROW_CLASS =
   "rounded-md px-2 py-2.5 text-sm outline-none hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/50";
-
-const names = new Intl.ListFormat(undefined, { type: "conjunction" });
 
 type Listed = {
   id: string;
@@ -43,7 +43,7 @@ type Listed = {
 
 interface RowProps {
   thread: Listed;
-  // Where the thread is, for a list that mixes places; after the avatars on the second line.
+  // Where the thread is, for a list that mixes places; after the names on the second line.
   place?: string;
 }
 
@@ -63,81 +63,68 @@ export function ThreadRow(
   return props.variant === "sidebar" ? <SidebarRow {...props} /> : <PageRow {...props} />;
 }
 
-const avatarClass = "size-4.5 text-[0.5rem] font-semibold tracking-tight";
-
-// A guest's avatar has a dashed edge.
-const guestEdge = "after:border-dashed after:border-foreground/50";
-
-// Who has written in the thread, each as their initials, a guest's with a dashed edge, and how many
-// more there are; all named on hover. The rings between the avatars take the colour the row has,
-// given as `ring`.
-function Participants({ participants, ring }: { participants: ThreadParticipants; ring: string }) {
-  const { people, total } = participants;
-  if (people.length === 0) return null;
-  const more = total - people.length;
-  const label = names.format([
-    ...people.map((person) => (person.guest ? `${person.name} (guest)` : person.name)),
-    ...(more > 0 ? [`${more} more`] : []),
-  ]);
-  return (
-    <WithTooltip label={label}>
-      <AvatarGroup
-        role="img"
-        aria-label={label}
-        className={cn("shrink-0 -space-x-0.5 *:data-[slot=avatar]:ring-[1.5px]", ring)}
-      >
-        {people.map((person) => (
-          <Avatar key={person.userId} className={cn(avatarClass, person.guest && guestEdge)}>
-            <AvatarFallback className="text-[length:inherit]">
-              {initialsOf(person.name)}
-            </AvatarFallback>
-          </Avatar>
-        ))}
-        {more > 0 && (
-          <AvatarGroupCount className={cn(avatarClass, "tabular-nums ring-[1.5px]")}>
-            +{more}
-          </AvatarGroupCount>
-        )}
-      </AvatarGroup>
-    </WithTooltip>
-  );
-}
-
-// The thread's model, as its product's mark, named with the model; a bot for a model of no provider
-// Mage knows, or for none.
-function ModelMark({ model }: { model: ShownModel | null }) {
+// The tile leading the row, though after the title for screen readers, so a row is named by its
+// title first: the model's mark, named with the model, a bot for a model of no
+// provider Mage knows or for none; and on its corner the status's glyph, on a disc of the colour
+// the row has, given as `disc`.
+function ModelTile({
+  thread,
+  status,
+  disc,
+}: {
+  thread: Listed;
+  status: ThreadStatus;
+  disc: string;
+}) {
+  const model = thread.shownModel;
   const label = model?.name ?? "No model";
   return (
-    <WithTooltip label={label}>
-      <span role="img" aria-label={label} className="flex shrink-0">
-        <ModelIcon provider={model?.provider ?? null} className="size-3!" />
-      </span>
-    </WithTooltip>
-  );
-}
-
-// The second line: what is given to lead it, who has written, where the thread is, and at its end,
-// under the first line's slot, the model.
-function Detail({
-  thread,
-  place,
-  ring,
-  lead,
-}: RowProps & { ring: string; lead?: React.ReactNode }) {
-  return (
-    <span className="flex h-4.5 min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-      {lead}
-      <Participants participants={thread.participants} ring={ring} />
-      {place && <span className="truncate">{place}</span>}
-      <span className="ml-auto flex w-4 shrink-0 justify-end">
-        <ModelMark model={thread.shownModel} />
-      </span>
+    <span className="relative order-first grid size-8 shrink-0 place-items-center overflow-visible! rounded-lg bg-muted">
+      <WithTooltip label={label}>
+        <span role="img" aria-label={label} className="flex">
+          <ModelIcon provider={model?.provider ?? null} className="size-4" />
+        </span>
+      </WithTooltip>
+      <StatusGlyph
+        status={status}
+        activity={thread.activity}
+        size="size-3"
+        className={cn(
+          "absolute -right-1.5 -bottom-1.5 grid size-5 place-items-center rounded-full",
+          disc,
+        )}
+      />
     </span>
   );
 }
 
-// The colour a page's row has, for the avatars' rings: the page's, or under the pointer, its own
-// tint over its table row's.
+// Who has written, by first name, "You" for whoever is signed in, then where the thread is, which
+// gives way first when the line is short of room.
+function Writers({ thread, place }: RowProps) {
+  const me = useQuery(meQuery);
+  const line = writerLine(thread.participants, me.data?.user.id);
+  const full = writersInFull(thread.participants);
+  return (
+    <>
+      {line && full ? (
+        <WithTooltip label={full}>
+          <span className="max-w-full shrink-0 truncate">{line}</span>
+        </WithTooltip>
+      ) : (
+        <span className="min-w-0 truncate">No messages yet</span>
+      )}
+      {place && (
+        <>
+          <span aria-hidden>·</span>
+          <span className="min-w-0 truncate">{place}</span>
+        </>
+      )}
+    </>
+  );
+}
+
+// The colour a page's row has, for the disc under the status: the page's, or under the pointer,
+// its own tint over its table row's.
 const pageRowColour =
   "[--row:var(--background)] hover:[--row:color-mix(in_oklab,var(--muted)_75%,var(--background))]";
 
@@ -148,41 +135,42 @@ function PageRow({ thread, place, badge, time }: PageRowProps) {
       to="/t/$threadId"
       params={{ threadId: thread.id }}
       data-status={status}
-      className={`grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 ${ROW_CLASS} ${pageRowColour}`}
+      className={`flex items-center gap-3 ${ROW_CLASS} ${pageRowColour}`}
     >
-      <ThreadTitle
-        thread={thread}
-        className={cn("h-5 truncate", status === "unread" ? "font-semibold" : "font-medium")}
-      />
-      <span className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums">
-        <span className="flex w-4 shrink-0 justify-end">
-          <StatusGlyph status={status} activity={thread.activity} />
+      <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3">
+        <ThreadTitle
+          thread={thread}
+          className={cn("h-5 truncate", status === "unread" ? "font-semibold" : "font-medium")}
+        />
+        <span className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums">
+          {badge && (
+            <Badge
+              variant="outline"
+              className="hidden font-normal text-muted-foreground sm:inline-flex"
+            >
+              {badge}
+            </Badge>
+          )}
+          {time}
         </span>
-        {badge && (
-          <Badge
-            variant="outline"
-            className="hidden font-normal text-muted-foreground sm:inline-flex"
-          >
-            {badge}
-          </Badge>
-        )}
-        {time}
+        <span className="col-span-2 flex h-4.5 min-w-0 items-center gap-1 text-xs text-muted-foreground">
+          <Writers thread={thread} place={place} />
+        </span>
       </span>
-      <span className="col-span-2">
-        <Detail thread={thread} place={place} ring="[--background:var(--row)]" />
-      </span>
+      <ModelTile thread={thread} status={status} disc="bg-(--row)" />
     </Link>
   );
 }
 
-// While the pointer is over a row with a menu, or the menu is in use, the menu stands where the
-// slot is; on a phone the menu always shows, beside the slot.
-export const slotUnderMenu =
-  "md:group-has-data-[sidebar=menu-action]/menu-item:group-hover/menu-item:opacity-0 md:group-has-[[data-sidebar=menu-action]:is(:focus-visible,[aria-expanded=true])]/menu-item:opacity-0";
+// The disc under the status takes the sidebar's colour, or the row's while it is under the pointer
+// or open.
+const sidebarDisc =
+  "bg-sidebar group-hover/menu-button:bg-sidebar-accent group-data-active/menu-button:bg-sidebar-accent";
 
-// The avatars' rings take the sidebar's colour, or the row's while it is under the pointer or open.
-const sidebarRing =
-  "[--background:var(--sidebar)] group-hover/menu-button:[--background:var(--sidebar-accent)] group-data-active/menu-button:[--background:var(--sidebar-accent)]";
+// The row keeps room for its menu only while the pointer is over it, or the menu is in use, so the
+// title has the full width otherwise; on a phone the menu always shows, and the room stays.
+const menuRoom =
+  "md:group-has-data-[sidebar=menu-action]/menu-item:pr-2 md:group-has-data-[sidebar=menu-action]/menu-item:group-hover/menu-item:pr-8 md:group-has-[[data-sidebar=menu-action]:is(:focus-visible,[aria-expanded=true])]/menu-item:pr-8";
 
 function SidebarRow({ thread, place, title, isActive, children }: SidebarRowProps) {
   const status = useThreadStatus(thread.activity);
@@ -190,26 +178,20 @@ function SidebarRow({ thread, place, title, isActive, children }: SidebarRowProp
     <SidebarMenuButton
       size="lg"
       isActive={isActive}
-      className="py-[5px] md:group-has-data-[sidebar=menu-action]/menu-item:pr-2"
+      className={cn("gap-2.5 py-1.5", menuRoom)}
       render={<Link to="/t/$threadId" params={{ threadId: thread.id }} />}
     >
-      <span className="grid min-w-0 flex-1 grid-cols-1 overflow-visible!">
-        <span className="flex h-5 min-w-0 items-center gap-2">
-          <ThreadTitle
-            thread={thread}
-            className={cn("min-w-0 flex-1 truncate", status === "unread" && "font-medium")}
-          />
-          <span className={cn("flex w-4 shrink-0 justify-end", slotUnderMenu)}>
-            <StatusGlyph status={status} activity={thread.activity} />
-          </span>
-        </span>
-        <Detail
+      <span className="grid min-w-0 flex-1 grid-cols-1">
+        <ThreadTitle
           thread={thread}
-          place={place}
-          ring={sidebarRing}
-          lead={<ShortTime iso={thread.updatedAt} className="w-7 shrink-0 tabular-nums" />}
+          className={cn("h-5 truncate", status === "unread" && "font-medium")}
         />
+        <span className="flex h-4 min-w-0 items-center gap-1 text-xs text-muted-foreground">
+          <Writers thread={thread} place={place} />
+          <ShortTime iso={thread.updatedAt} className="ml-auto shrink-0 pl-1 tabular-nums" />
+        </span>
       </span>
+      <ModelTile thread={thread} status={status} disc={sidebarDisc} />
     </SidebarMenuButton>
   );
   return (
