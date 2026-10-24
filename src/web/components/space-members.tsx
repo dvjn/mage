@@ -1,8 +1,8 @@
 // Who is in a shared space: everyone in the org first (None, Viewer or Messager), then the people
 // and groups given a role, searched and read a page at a time on the server, each person with the
 // role they end up with and what gives it when that is not their own. Whoever manages the space
-// adds people and groups, changes roles and removes them; removing a person a group still covers
-// says so first. Nobody changes their own role, nor the last owner's.
+// adds people and groups, changes roles and removes them after a confirmation, which says when a
+// group still covers the person. Nobody changes their own role, nor the last owner's.
 
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
@@ -70,6 +70,12 @@ const settingsRoute = getRouteApi("/_app/s/$spaceId/settings");
 
 function members(count: number | null) {
   return `${count ?? 0} ${count === 1 ? "member" : "members"}`;
+}
+
+// Of the groups that cover someone, the one whose role they keep: the highest.
+function keeping(groups: { name: string; role: SpaceRole }[]) {
+  const rank = (role: SpaceRole) => ROLES.findIndex((option) => option.value === role);
+  return groups.reduce((best, group) => (rank(group.role) < rank(best.role) ? group : best));
 }
 
 // A person at a glance: their email, their role in the org and when they joined it.
@@ -323,7 +329,7 @@ export function SpaceMembers({ space }: { space: SpaceSummary }) {
                       !row.locked && (
                         <DropdownMenuItem variant="destructive" onClick={() => setRemoving(row)}>
                           <UserMinusIcon />
-                          Remove from space
+                          Remove
                         </DropdownMenuItem>
                       )
                     }
@@ -359,15 +365,13 @@ export function SpaceMembers({ space }: { space: SpaceSummary }) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              Remove {removing?.name} from {space.name}?
-            </AlertDialogTitle>
+            <AlertDialogTitle>Remove {removing?.name}?</AlertDialogTitle>
             <AlertDialogDescription>
               {removing?.kind === "group"
-                ? "Its members keep any role given to them another way."
+                ? "Its people lose access unless they're added another way."
                 : removing && removing.coveredBy.length > 0
-                  ? `${removing.coveredBy.map((group) => group.name).join(", ")} still ${removing.coveredBy.length === 1 ? "gives" : "give"} them the ${ROLE_LABELS[removing.coveredBy[0]!.role].toLowerCase()} role. Remove them from the group too to take it away.`
-                  : "They can no longer read this space's threads, unless everyone in the organization can."}
+                  ? `They stay in through ${keeping(removing.coveredBy).name} as ${ROLE_LABELS[keeping(removing.coveredBy).role]}.`
+                  : "They lose access to this space."}
             </AlertDialogDescription>
             <FieldError>{removeError}</FieldError>
           </AlertDialogHeader>

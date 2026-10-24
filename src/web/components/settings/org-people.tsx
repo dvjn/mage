@@ -2,10 +2,11 @@
 // address: for its owners, the invites not yet used first, then its linked directory groups, then
 // its members, with their role, the group they are in through when they are, and when they joined.
 // Owners add people from the directory or invite them by email with a link shown once, link the
-// directory's groups with a role, change roles, remove members and revoke invites; nobody changes
-// their own role, and the last owner in their own right stays one. Someone in only through a group
-// leaves when the group is unlinked or the directory takes them out of it. A personal org has only
-// its person.
+// directory's groups with a role, change roles, and remove members, groups and invites, each after
+// a confirmation; nobody changes their own role, and the last owner in their own right stays one.
+// Someone in only through a group has no row of their own: the group's row stands for them, and
+// they leave when it is removed or the directory takes them out of it. A personal org has only its
+// person.
 
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
@@ -13,7 +14,6 @@ import {
   CheckIcon,
   MailIcon,
   MailXIcon,
-  UnlinkIcon,
   UserMinusIcon,
   UserPlusIcon,
   UsersIcon,
@@ -469,10 +469,7 @@ function ViaGroups({ person }: { person: Member }) {
   return (
     <>
       via{" "}
-      <Peek
-        label={`Groups of ${person.name}`}
-        trigger={`${person.viaGroup} and ${plural(person.groupCount - 1, "other", "others")}`}
-      >
+      <Peek label={`Groups of ${person.name}`} trigger={groupsOf(person)}>
         {() => (
           <PeekList
             title={`${person.name}'s groups`}
@@ -550,8 +547,7 @@ export function OrgPeople() {
     groups: (directoryGroups.data?.pages[0]?.total ?? 0) > 0,
   };
   const [adding, setAdding] = useState(false);
-  const [removing, setRemoving] = useState<Member | null>(null);
-  const [unlinking, setUnlinking] = useState<LinkedGroup | null>(null);
+  const [removing, setRemoving] = useState<OrgPerson | null>(null);
   const [error, setError] = useState<string>();
   const [removeError, setRemoveError] = useState<string>();
 
@@ -599,9 +595,14 @@ export function OrgPeople() {
   async function remove() {
     if (!removing) return;
     setRemoveError(undefined);
-    const res = await apiClient.v1.org.members[":userId"].$delete({
-      param: { userId: removing.userId },
-    });
+    const res =
+      removing.kind === "member"
+        ? await apiClient.v1.org.members[":userId"].$delete({
+            param: { userId: removing.userId },
+          })
+        : removing.kind === "group"
+          ? await apiClient.v1.org.groups[":id"].$delete({ param: { id: removing.id } })
+          : await apiClient.v1.org.invites[":id"].$delete({ param: { id: removing.id } });
     if (!res.ok) {
       setRemoveError(await errorOf(res));
       return;
@@ -610,29 +611,9 @@ export function OrgPeople() {
     await refresh();
   }
 
-  async function unlink() {
-    if (!unlinking) return;
-    setRemoveError(undefined);
-    const res = await apiClient.v1.org.groups[":id"].$delete({ param: { id: unlinking.id } });
-    if (!res.ok) {
-      setRemoveError(await errorOf(res));
-      return;
-    }
-    setUnlinking(null);
-    await refresh();
-  }
-
-  async function revoke(id: string) {
-    setError(undefined);
-    const res = await apiClient.v1.org.invites[":id"].$delete({ param: { id } });
-    if (!res.ok) setError(await errorOf(res));
-    await refresh();
-  }
-
   const rows = people.data?.pages.flatMap((page) => page.items) ?? [];
   const columns = [ROLE_COLUMN, { label: "Joined" }];
-  // Removing someone who is also in through a group only takes back their own role.
-  const keeps = removing?.viaGroup;
+  const removal = removing && removalOf(removing, me.data?.org.name ?? "");
 
   return (
     <>
@@ -715,12 +696,9 @@ export function OrgPeople() {
                     <ActionsCell
                       label={person.email}
                       destructive={
-                        <DropdownMenuItem
-                          variant="destructive"
-                          onClick={() => void revoke(person.id)}
-                        >
+                        <DropdownMenuItem variant="destructive" onClick={() => setRemoving(person)}>
                           <MailXIcon />
-                          Revoke invite
+                          Remove
                         </DropdownMenuItem>
                       }
                     />
@@ -731,7 +709,7 @@ export function OrgPeople() {
                     group={person}
                     manages={!!manages}
                     onRole={(role) => void setGroupRole(person.id, role)}
-                    onUnlink={() => setUnlinking(person)}
+                    onRemove={() => setRemoving(person)}
                   />
                 ) : (
                   <MemberRow
@@ -764,50 +742,14 @@ export function OrgPeople() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              {keeps
-                ? `Take back ${removing?.name}'s own role?`
-                : `Remove ${removing?.name} from ${me.data?.org.name}?`}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {keeps
-                ? `They stay in ${me.data?.org.name} through ${keeps}, with the role it gives.`
-                : "They lose its spaces at once, and their messages still waiting for the agent are dropped. What they wrote stays, marked as from a former member. A new invite brings them back."}
-            </AlertDialogDescription>
+            <AlertDialogTitle>{removal?.title}</AlertDialogTitle>
+            <AlertDialogDescription>{removal?.description}</AlertDialogDescription>
             <FieldError>{removeError}</FieldError>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={() => void remove()}>
-              {keeps ? "Take back role" : "Remove"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog
-        open={!!unlinking}
-        onOpenChange={(open) => {
-          if (open) return;
-          setUnlinking(null);
-          setRemoveError(undefined);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Unlink {unlinking?.name} from {me.data?.org.name}?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Its people leave at once, unless they have a role of their own or another linked
-              group; the roles its spaces gave the group go too. What they wrote stays, marked as
-              from former members. Linking it again brings them back.
-            </AlertDialogDescription>
-            <FieldError>{removeError}</FieldError>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void unlink()}>
-              Unlink
+              Remove
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -816,16 +758,45 @@ export function OrgPeople() {
   );
 }
 
+// What removing a row asks: a member who is also in through a group loses only their own role.
+function removalOf(person: OrgPerson, orgName: string) {
+  if (person.kind === "invite") {
+    return {
+      title: `Remove the invite for ${person.email}?`,
+      description: "The link stops working.",
+    };
+  }
+  if (person.kind === "group") {
+    return {
+      title: `Remove ${person.name}?`,
+      description: "Its people lose access unless they're added another way.",
+    };
+  }
+  return {
+    title: `Remove ${person.name}?`,
+    description: person.groupRole
+      ? `They stay in through ${groupsOf(person)} as ${ORG_ROLE_LABELS[person.groupRole]}.`
+      : `They lose access to ${orgName} and its spaces.`,
+  };
+}
+
+// The linked groups a member is in, as "Engineering" or "Design and 1 other".
+function groupsOf(person: Member) {
+  return person.groupCount <= 1
+    ? (person.viaGroup ?? "")
+    : `${person.viaGroup} and ${plural(person.groupCount - 1, "other", "others")}`;
+}
+
 function GroupRow({
   group,
   manages,
   onRole,
-  onUnlink,
+  onRemove,
 }: {
   group: LinkedGroup;
   manages: boolean;
   onRole: (role: OrgRole) => void;
-  onUnlink: () => void;
+  onRemove: () => void;
 }) {
   const role = { value: group.role, options: ROLE_OPTIONS, ...(manages && { onChange: onRole }) };
   return (
@@ -852,9 +823,9 @@ function GroupRow({
         role={role}
         destructive={
           manages && (
-            <DropdownMenuItem variant="destructive" onClick={onUnlink}>
-              <UnlinkIcon />
-              Unlink group
+            <DropdownMenuItem variant="destructive" onClick={onRemove}>
+              <UserMinusIcon />
+              Remove
             </DropdownMenuItem>
           )
         }
@@ -882,21 +853,10 @@ function MemberRow({
     ...(manages && { onChange: onRole }),
     ...(manages && person.locked && { locked: LOCK_REASONS.org[person.locked] }),
   };
-  const remove = !person.directRole ? (
-    // In only through a group: the directory, or unlinking the group, takes them out.
-    <DropdownMenuItem disabled className="flex-col items-start gap-0.5">
-      <span className="flex items-center gap-2">
-        <UserMinusIcon />
-        Remove from organization
-      </span>
-      <span className="text-xs text-muted-foreground">
-        In through {person.viaGroup}. Unlink the group or change it in your directory.
-      </span>
-    </DropdownMenuItem>
-  ) : (
+  const remove = (
     <DropdownMenuItem variant="destructive" onClick={onRemove}>
       <UserMinusIcon />
-      {person.viaGroup ? "Take back own role" : "Remove from organization"}
+      Remove
     </DropdownMenuItem>
   );
   return (

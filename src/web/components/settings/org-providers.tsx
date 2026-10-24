@@ -296,8 +296,6 @@ function RowDialogs({ action, onClose }: { action: RowAction | null; onClose: ()
             <AlertDialogTitle>Remove {name}?</AlertDialogTitle>
             <AlertDialogDescription>
               Threads on its models fall back to the default model.
-              {connection?.authKind === "api_key" &&
-                " The key is deleted from Mage; it still works at the provider."}
             </AlertDialogDescription>
             <FieldError>{error}</FieldError>
           </AlertDialogHeader>

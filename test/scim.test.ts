@@ -123,16 +123,16 @@ describe("org access from the directory", () => {
     await api("PATCH", `/org/groups/${looms}`, ada.cookie, { role: "member" }, orgId);
     expect(directory.roleIn(orgId, hedyId)).toBe("member");
 
+    // The group's row stands for Hedy, in only through it; Grace has a role of her own too.
     const rows = await people(workspace);
     expect(rows.map((row) => [row.kind, "name" in row ? row.name : row.email])).toEqual([
       ["group", "Looms"],
       ["member", "Ada Lovelace"],
       ["member", "Grace Hopper"],
-      ["member", "Hedy Lamarr"],
     ]);
     expect(rows.find((row) => row.kind === "group")).toMatchObject({ memberCount: 2 });
-    expect(rows.find((row) => "name" in row && row.name === "Hedy Lamarr")).toMatchObject({
-      directRole: null,
+    expect(rows.find((row) => "name" in row && row.name === "Grace Hopper")).toMatchObject({
+      directRole: "owner",
       viaGroup: "Looms",
       source: "scim",
     });

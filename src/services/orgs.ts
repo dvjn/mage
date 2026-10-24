@@ -131,6 +131,7 @@ export function createOrgs(options: OrgsOptions) {
       role: member.role,
       directRole: member.directRole,
       viaGroup: member.viaGroup,
+      groupRole: member.groupRole,
       source: member.source,
       joinedAt: member.joinedAt.toISOString(),
       groupCount: member.groupCount,
@@ -382,7 +383,7 @@ export function createOrgs(options: OrgsOptions) {
       if (!member.directRole) {
         throw new ServiceError(
           409,
-          `${member.name} is in through ${member.viaGroup ?? "a group"}. Unlink the group or change it in your directory.`,
+          `${member.name} is in through ${member.viaGroup ?? "a group"}. Remove the group or change it in your directory.`,
         );
       }
       if (member.directRole === "owner" && ownerCount(principal.orgId) === 1) {

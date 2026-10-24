@@ -54,6 +54,8 @@ export const orgMemberSchema = z.object({
   directRole: orgRoleSchema.nullable(),
   // A linked group they are in, the first by name, when they are in any.
   viaGroup: z.string().nullable(),
+  // The highest role their linked groups give, when they are in any.
+  groupRole: orgRoleSchema.nullable(),
   source: recordSourceSchema,
   joinedAt: z.iso.datetime(),
   // How many of the org's linked groups they are in.

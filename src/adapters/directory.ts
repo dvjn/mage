@@ -53,7 +53,7 @@ function memberCountOf(groupId: SQL) {
 }
 
 // A member's columns beside their user's: how many of the org's linked groups they are in, the first
-// of them by name, and their own role.
+// of them by name, the highest role those groups give, and their own role.
 const memberContext = sql`
   (select count(*) from org_group og
     where og.organization_id = m.organization_id and og.group_id in ${activeGroupsOf(sql`u.id`)})
@@ -61,12 +61,16 @@ const memberContext = sql`
   (select g.display_name from org_group og join scim_group g on g.id = og.group_id
     where og.organization_id = m.organization_id and og.group_id in ${activeGroupsOf(sql`u.id`)}
     order by lower(g.display_name) limit 1) as viaGroup,
+  (select og.role from org_group og
+    where og.organization_id = m.organization_id and og.group_id in ${activeGroupsOf(sql`u.id`)}
+    order by og.role = 'owner' desc limit 1) as groupRole,
   m.direct_role as directRole,
   ${sourceOf(sql`u.id`)} as source`;
 
 interface MemberContext {
   groupCount: number;
   viaGroup: string | null;
+  groupRole: OrgRole | null;
   directRole: OrgRole | null;
   source: RecordSource;
 }
@@ -135,7 +139,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
       const invites = params.invitesAt
         ? sql`
         select 'invite', i.id, null, i.email, i.role, i.expires_at, c.name, '0' || lower(i.email),
-               0, null, null, 'local'
+               0, null, null, null, 'local'
           from org_invite i left join user c on c.id = i.created_by
          where i.organization_id = ${orgId} and i.accepted_at is null and i.revoked_at is null
            and i.expires_at > ${params.invitesAt.getTime()}
@@ -145,7 +149,8 @@ export function createDirectory(db: Db, auth: Auth): Directory {
       const people = sql`
         select 'group' as kind, g.id, g.display_name as name, null as email, og.role,
                og.created_at as at, null as createdByName, '1' || lower(g.display_name) as sortKey,
-               ${memberCountOf(sql`g.id`)} as groupCount, null as viaGroup, null as directRole,
+               ${memberCountOf(sql`g.id`)} as groupCount, null as viaGroup, null as groupRole,
+               null as directRole,
                'scim' as source
           from org_group og join scim_group g on g.id = og.group_id
          where og.organization_id = ${orgId}
@@ -153,7 +158,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
         select 'member', u.id, u.name, u.email, m.role, m.created_at, null,
                '2' || lower(u.name), ${memberContext}
           from member m join user u on u.id = m.user_id
-         where m.organization_id = ${orgId}`;
+         where m.organization_id = ${orgId} and m.direct_role is not null`;
       const where = sql`${containing(params.q, sql`name`, sql`email`)}
         ${params.role ? sql`and role = ${params.role}` : sql``}
         ${
@@ -198,6 +203,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
                 joinedAt: new Date(row.at),
                 groupCount: row.groupCount,
                 viaGroup: row.viaGroup,
+                groupRole: row.groupRole,
                 directRole: row.directRole,
                 source: row.source,
               }

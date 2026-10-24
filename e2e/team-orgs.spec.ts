@@ -204,8 +204,11 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await page.goto("/org/people");
   await page.getByRole("row", { name: "Grace Hopper" }).hover();
   await page.getByRole("button", { name: "Actions for Grace Hopper" }).click();
-  await page.getByRole("menuitem", { name: "Remove from organization" }).click();
-  await page.getByRole("button", { name: "Remove" }).click();
+  await page.getByRole("menuitem", { name: "Remove" }).click();
+  const confirm = page.getByRole("alertdialog");
+  await expect(confirm).toContainText("Remove Grace Hopper?");
+  await expect(confirm).toContainText("They lose access to Analytical Engines and its spaces.");
+  await confirm.getByRole("button", { name: "Remove" }).click();
   await expect(page.getByRole("row", { name: "Grace Hopper" })).toBeHidden();
 
   // Her waiting message is dropped, her stream ends and she is back in her own org, and what she

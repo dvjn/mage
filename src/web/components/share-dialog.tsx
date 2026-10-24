@@ -2,8 +2,8 @@
 // the thread's header: a dialog, or a sheet from the bottom on a phone. At the top, an invite link
 // made for as long as the access it gives should last, shown once to copy; below, the thread's
 // people (the space's members who wrote, with their role, and its guests, with when their access
-// ends) and its links not yet used, each with Revoke where the signed-in person may revoke it;
-// revoking a person asks first. A long list scrolls, with a filter above it.
+// ends) and its links not yet used, each with Remove where the signed-in person may remove it;
+// removing a person asks first. A long list scrolls, with a filter above it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { LinkIcon, SearchIcon, UserPlusIcon } from "lucide-react";
@@ -96,7 +96,7 @@ function Row({
           className="ml-auto focus-visible:opacity-100 group-hover:opacity-100 md:opacity-0"
           onClick={onRevoke}
         >
-          Revoke
+          Remove
         </Button>
       )}
     </li>
@@ -306,10 +306,8 @@ function ShareBody({ threadId }: { threadId: string }) {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Revoke {confirming?.name}&apos;s access?</AlertDialogTitle>
-            <AlertDialogDescription>
-              They can no longer read or write in this thread. A new invite link lets them back in.
-            </AlertDialogDescription>
+            <AlertDialogTitle>Remove {confirming?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>They lose access to this thread.</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
@@ -320,7 +318,7 @@ function ShareBody({ threadId }: { threadId: string }) {
                 setConfirming(null);
               }}
             >
-              Revoke
+              Remove
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

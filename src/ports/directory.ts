@@ -53,6 +53,8 @@ export interface MemberRow extends OrgMember {
   directRole: OrgRole | null;
   // The name of a linked group they are in, the first by name, when they are in any.
   viaGroup: string | null;
+  // The highest role their linked groups give, when they are in any.
+  groupRole: OrgRole | null;
 }
 
 // An invite not yet used, as a row among the org's people.
@@ -114,8 +116,9 @@ export interface Directory {
   ): Page<MemberRow>;
   member(orgId: string, userId: string): OrgMember | null;
   // A page of the org's people: its invites not yet used at `invitesAt` first, by email, when asked
-  // for, then its linked groups and its members by name; matching the text in name or email, of the
-  // role and status if given.
+  // for, then its linked groups and its members with a role of their own, by name; someone in only
+  // through groups is left to their groups' rows. Matching the text in name or email, of the role
+  // and status if given.
   peoplePage(
     orgId: string,
     params: PageParams & {

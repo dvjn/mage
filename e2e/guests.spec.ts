@@ -123,8 +123,10 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
   await page.getByRole("button", { name: "Share" }).click();
   const hedy = page.getByRole("listitem", { name: "Hedy Lamarr" });
   await expect(hedy).toContainText("Ends");
-  await hedy.getByRole("button", { name: "Revoke" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Revoke" }).click();
+  await hedy.getByRole("button", { name: "Remove" }).click();
+  const confirm = page.getByRole("alertdialog");
+  await expect(confirm).toContainText("Remove Hedy Lamarr?");
+  await confirm.getByRole("button", { name: "Remove" }).click();
   await expect(hedy).toBeHidden();
 
   // The guest's open thread learns of it on its own.

@@ -69,7 +69,10 @@ test("a directory group linked to a team org lets its people in, and leaving it 
   const people = page.getByRole("table", { name: "People" });
   await expect(people.getByRole("row", { name: groupName })).toContainText("1 person");
   await expect(people.getByRole("row", { name: groupName })).toContainText("Directory");
-  await expect(people.getByRole("row", { name: "Grace Hopper" })).toContainText(`via ${groupName}`);
+  // In only through the group, Grace has no row of her own; the group's lists her.
+  await expect(people.getByRole("row", { name: "Grace Hopper" })).toHaveCount(0);
+  await people.getByRole("button", { name: `People in ${groupName}` }).hover();
+  await expect(page.locator("[data-slot=hover-card-content]")).toContainText("Grace Hopper");
 
   // Grace signs in through the identity provider and writes in General.
   await page.goto("/");
@@ -100,6 +103,5 @@ test("a directory group linked to a team org lets its people in, and leaving it 
     transcript(page).getByRole("article", { name: "Message from Grace Hopper" }),
   ).toContainText("former member");
   await page.goto("/org/people");
-  await expect(people.getByRole("row", { name: "Grace Hopper" })).toBeHidden();
   await expect(people.getByRole("row", { name: groupName })).toContainText("0 people");
 });
