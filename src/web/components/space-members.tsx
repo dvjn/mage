@@ -73,7 +73,7 @@ const EVERYONE = [
   { value: "messager" as const, label: ROLE_LABELS.messager },
 ];
 
-const settingsRoute = getRouteApi("/_app/s/$spaceId/settings");
+const settingsRoute = getRouteApi("/_app/s/$spaceId/settings/members");
 
 function members(count: number | null) {
   return `${count ?? 0} ${count === 1 ? "member" : "members"}`;

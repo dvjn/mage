@@ -156,7 +156,7 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await send(page, "Patterns on punched cards");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const loomThread = page.url();
-  await page.goto(`${loomRoom}/settings`);
+  await page.goto(`${loomRoom}/settings/members`);
   await page.getByRole("button", { name: "Add people" }).click();
   const add = page.getByRole("dialog");
   await add.getByLabel("Person").click();

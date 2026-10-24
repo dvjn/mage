@@ -343,7 +343,13 @@ function SpaceSection({ space, onNewFolder }: { space: SpaceSummary; onNewFolder
         {space.manage && (
           <SidebarMenuItem>
             <SidebarMenuButton
-              isActive={!!matchRoute({ to: "/s/$spaceId/settings", params: { spaceId: space.id } })}
+              isActive={
+                !!matchRoute({
+                  to: "/s/$spaceId/settings",
+                  params: { spaceId: space.id },
+                  fuzzy: true,
+                })
+              }
               render={<Link to="/s/$spaceId/settings" params={{ spaceId: space.id }} />}
             >
               <Settings2Icon />

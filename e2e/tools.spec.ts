@@ -106,7 +106,7 @@ test("the agent renames a thread at once when the owner alone asked", async ({ p
 
 // Sets the tool's mode in the open space's settings, from the tool's own row.
 async function setInSpace(page: Page, spaceId: string, tool: string, mode: string) {
-  await page.goto(`/s/${spaceId}/settings`);
+  await page.goto(`/s/${spaceId}/settings/tools`);
   const row = page.getByRole("listitem", { name: tool });
   await row.getByRole("button", { name: mode }).click();
   await expect(row.getByRole("button", { name: mode })).toHaveAttribute("aria-pressed", "true");
@@ -235,7 +235,7 @@ test("a space can only make a tool stricter than its org, and remembers the sect
 }) => {
   await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
-  await page.goto("/org/general");
+  await page.goto("/org/tools");
   const orgMove = page.getByRole("listitem", { name: "Move thread" });
   await orgMove.getByRole("button", { name: "Needs approval" }).click();
   await expect(orgMove.getByRole("button", { name: "Needs approval" })).toHaveAttribute(
@@ -243,7 +243,7 @@ test("a space can only make a tool stricter than its org, and remembers the sect
     "true",
   );
 
-  await page.goto(`/s/${spaceId}/settings`);
+  await page.goto(`/s/${spaceId}/settings/tools`);
   const thread = page.getByRole("region", { name: "Thread" });
   await expect(thread).toContainText("Built in");
   await expect(thread).toContainText("4 tools");
@@ -283,4 +283,28 @@ test("a space can only make a tool stricter than its org, and remembers the sect
   await page.reload();
   await expect(page.getByRole("region", { name: "Thread" })).toContainText("4 tools");
   await expect(page.getByRole("listitem", { name: "Move thread" })).toBeHidden();
+});
+
+test("tools have their own settings page in the org and in a space", async ({ page }) => {
+  await signUp(page, "Ada Lovelace");
+  const spaceId = spaceIdOf(page);
+  await page.goto("/org/general");
+  await expect(page.getByRole("region", { name: "Thread" })).toHaveCount(0);
+  await page
+    .getByRole("navigation", { name: "Organization settings" })
+    .getByRole("link", { name: "Tools" })
+    .click();
+  await expect(page).toHaveURL(/\/org\/tools$/);
+  await expect(page.getByRole("region", { name: "Thread" })).toContainText("Built in");
+
+  // A person's own space has no members to set.
+  await page.goto(`/s/${spaceId}/settings`);
+  const nav = page.getByRole("navigation", { name: "Space settings" });
+  await expect(nav.getByRole("link")).toHaveText(["General", "Tools"]);
+  await expect(page.getByRole("region", { name: "Thread" })).toHaveCount(0);
+  await nav.getByRole("link", { name: "Tools" }).click();
+  await expect(page).toHaveURL(/\/settings\/tools$/);
+  await expect(page.getByRole("region", { name: "Thread" })).toContainText("4 tools");
+  await page.goto(`/s/${spaceId}/settings/members`);
+  await expect(page).toHaveURL(/\/settings$/);
 });

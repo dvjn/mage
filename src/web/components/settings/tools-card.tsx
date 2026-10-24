@@ -140,9 +140,15 @@ function Toolsets({ toolsets, scope, canChange, onChange }: ToolsProps) {
   );
 }
 
-function Chevron() {
+// Every level starts at the same left edge; the chevron, type and borders show the nesting.
+function Chevron({ className }: { className?: string }) {
   return (
-    <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground transition-transform group-data-[panel-open]/trigger:rotate-90" />
+    <ChevronRightIcon
+      className={cn(
+        "shrink-0 text-muted-foreground transition-transform group-data-[panel-open]/trigger:rotate-90",
+        className,
+      )}
+    />
   );
 }
 
@@ -186,16 +192,16 @@ function ToolsetSection({
       render={<section aria-label={toolset.title} />}
     >
       <CollapsibleTrigger className="group/trigger flex w-full items-center gap-2 py-3 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-        <Chevron />
-        <span className="text-sm font-medium">{toolset.title}</span>
+        <Chevron className="size-4" />
+        <span className="text-base font-semibold">{toolset.title}</span>
         <Badge variant="secondary">{SOURCES[toolset.source]}</Badge>
         <span className="ml-auto text-xs text-muted-foreground">
           {count === 1 ? "1 tool" : `${count} tools`}
         </span>
       </CollapsibleTrigger>
-      <CollapsibleContent className="flex flex-col pb-2 pl-6">
+      <CollapsibleContent className="flex flex-col border-t">
         {count > FILTER_FROM && (
-          <InputGroup className="mb-2">
+          <InputGroup className="my-2">
             <InputGroupInput
               type="search"
               placeholder="Filter tools"
@@ -262,8 +268,8 @@ function ToolGroup({
       render={<div role="group" aria-label={name} />}
     >
       <div className="flex items-center gap-2 py-2">
-        <CollapsibleTrigger className="group/trigger flex flex-1 items-center gap-2 text-left text-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-          <Chevron />
+        <CollapsibleTrigger className="group/trigger flex flex-1 items-center gap-2 text-left text-sm font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+          <Chevron className="size-3.5" />
           {name}
           <Badge variant="outline">{tools.length}</Badge>
         </CollapsibleTrigger>
@@ -288,7 +294,7 @@ function ToolGroup({
         />
       </div>
       <CollapsibleContent>
-        <ul className="flex flex-col divide-y border-t pl-6">
+        <ul className="flex flex-col divide-y border-t border-dashed">
           {shown.map((tool) => (
             <ToolRow
               key={tool.id}

@@ -1,11 +1,13 @@
-// A space's settings: renaming it, unless it is a person's own space named for them, the model and
-// reasoning effort its new threads start with, or the org's, the agent's tools there and who may run
-// them, who is in a shared space, and deleting it when it is not the primary space. They are there only for those who manage it (its owners, and
-// a team org's owners). A team org's owner who manages a space without being in it reads its
-// threads once they give themselves a role in it.
+// A space's settings, in pages: General (renaming it, unless it is a person's own space named for
+// them, the model and reasoning effort its new threads start with, or the org's, and deleting it
+// when it is not the primary space), Members for a shared space, and the agent's Tools there. They
+// are there only for those who manage it (its owners, and a team org's owners). A team org's owner
+// who manages a space without being in it reads its threads once they give themselves a role in
+// it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, useNavigate } from "@tanstack/react-router";
+import { getRouteApi, Link, Navigate, Outlet, useNavigate } from "@tanstack/react-router";
+import { Settings2Icon, UsersIcon, WrenchIcon } from "lucide-react";
 import { type FormEvent, useEffect, useId, useState } from "react";
 
 import { namedForPerson, type SpaceSummary } from "@/shared/spaces.ts";
@@ -18,7 +20,8 @@ import {
   modelName,
   ModelField,
 } from "@/web/components/settings/default-fields";
-import { SettingsCard, SettingsPage } from "@/web/components/settings/layout";
+import { SettingsCard, SettingsTitle } from "@/web/components/settings/layout";
+import { SettingsShell, settingsNavLink } from "@/web/components/settings/settings-nav";
 import { SpaceToolsCard } from "@/web/components/settings/tools-card";
 import {
   AlertDialog,
@@ -205,35 +208,108 @@ function DeleteSpace({ space }: { space: SpaceSummary }) {
   );
 }
 
-export function SpaceSettings() {
+// The space whose settings are open, once the spaces are read.
+function useSettingsSpace() {
   const { spaceId } = spaceSettingsRoute.useParams();
   const spaces = useQuery(spacesQuery);
-  const space = spaces.data?.find((s) => s.id === spaceId);
+  return { spaceId, spaces, space: spaces.data?.find((s) => s.id === spaceId) };
+}
+
+// The space's settings pages, with the list of them beside the one open. Only those who manage
+// the space have them; for anyone else they are not there.
+export function SpaceSettingsShell() {
+  const { spaceId, spaces, space } = useSettingsSpace();
 
   useEffect(() => rememberSpace(spaceId), [spaceId]);
 
   if (spaces.isSuccess && !space) return <NotFound what="space" id={spaceId} />;
-  // Only those who manage the space have its settings; for anyone else they are not there.
   if (space && !space.manage) return <NotFound what="space" />;
 
+  const params = { spaceId };
   return (
-    <SettingsPage
+    <SettingsShell
       crumbs={[
-        { label: space?.name ?? "", link: { to: "/s/$spaceId", params: { spaceId } } },
+        { label: space?.name ?? "", link: { to: "/s/$spaceId", params } },
         { label: "Settings" },
       ]}
-      title="Space settings"
-      description={space ? `Settings for ${space.name} and the threads in it.` : undefined}
-    >
-      {space && (
+      label="Space settings"
+      links={
         <>
-          {!namedForPerson(space) && <SpaceName key={space.id} space={space} />}
-          <SpaceModel space={space} />
-          <SpaceToolsCard spaceId={space.id} />
-          {space.kind === "shared" && <SpaceMembers space={space} />}
-          {!space.primary && <DeleteSpace space={space} />}
+          <li className="shrink-0">
+            <Link
+              to="/s/$spaceId/settings"
+              params={params}
+              activeOptions={{ exact: true }}
+              className={settingsNavLink}
+            >
+              <Settings2Icon className="size-4" />
+              General
+            </Link>
+          </li>
+          {space?.kind === "shared" && (
+            <li className="shrink-0">
+              <Link to="/s/$spaceId/settings/members" params={params} className={settingsNavLink}>
+                <UsersIcon className="size-4" />
+                Members
+              </Link>
+            </li>
+          )}
+          <li className="shrink-0">
+            <Link to="/s/$spaceId/settings/tools" params={params} className={settingsNavLink}>
+              <WrenchIcon className="size-4" />
+              Tools
+            </Link>
+          </li>
         </>
-      )}
-    </SettingsPage>
+      }
+    >
+      {space && <Outlet />}
+    </SettingsShell>
+  );
+}
+
+// Its name, unless it is a person's own space named for them, the model and effort its new
+// threads start with, and deleting it when it is not the primary space.
+export function SpaceGeneral() {
+  const { space } = useSettingsSpace();
+  if (!space) return null;
+  return (
+    <>
+      <SettingsTitle
+        title="General"
+        description={`Settings for ${space.name} and the threads in it.`}
+      />
+      {!namedForPerson(space) && <SpaceName key={space.id} space={space} />}
+      <SpaceModel space={space} />
+      {!space.primary && <DeleteSpace space={space} />}
+    </>
+  );
+}
+
+// Who is in a shared space; a personal space has no members to set, so it opens General.
+export function SpaceMembersPage() {
+  const { spaceId, space } = useSettingsSpace();
+  if (!space) return null;
+  if (space.kind !== "shared") return <Navigate to="/s/$spaceId/settings" params={{ spaceId }} />;
+  return (
+    <>
+      <SettingsTitle title="Members" description={`Who is in ${space.name}.`} />
+      <SpaceMembers space={space} />
+    </>
+  );
+}
+
+// The agent's tools in the space's threads.
+export function SpaceTools() {
+  const { space } = useSettingsSpace();
+  if (!space) return null;
+  return (
+    <>
+      <SettingsTitle
+        title="Tools"
+        description={`What the agent can do in ${space.name}'s threads.`}
+      />
+      <SpaceToolsCard spaceId={space.id} />
+    </>
   );
 }

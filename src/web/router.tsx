@@ -20,6 +20,7 @@ import { InvitePage } from "@/web/components/invite-page";
 import { JoinPage } from "@/web/components/join-page";
 import { LoginForm } from "@/web/components/login-form";
 import { OrgGeneral } from "@/web/components/settings/org-general";
+import { OrgTools } from "@/web/components/settings/org-tools";
 import { OrgPeople, peopleSearchSchema } from "@/web/components/settings/org-people";
 import { OrgSpaces, orgSpacesSearchSchema } from "@/web/components/settings/org-spaces";
 import { OrgProviders } from "@/web/components/settings/org-providers";
@@ -28,7 +29,12 @@ import { SharedPage, sharedSearchSchema } from "@/web/components/shared-page";
 import { SignupForm } from "@/web/components/signup-form";
 import { SpacePage, spaceSearchSchema } from "@/web/components/space-page";
 import { spaceMembersSearchSchema } from "@/web/components/space-members";
-import { SpaceSettings } from "@/web/components/space-settings";
+import {
+  SpaceGeneral,
+  SpaceMembersPage,
+  SpaceSettingsShell,
+  SpaceTools,
+} from "@/web/components/space-settings";
 import { DraftThread } from "@/web/components/draft-thread";
 import { ThreadPage } from "@/web/components/thread-page";
 import { lastSpace } from "@/web/lib/last-space";
@@ -151,12 +157,31 @@ const spaceRoute = createRoute({
   component: SpacePage,
 });
 
+// A space's settings, in pages beside a list of them.
 const spaceSettingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/s/$spaceId/settings",
-  // The members' search in `?q=`, role in `?role=` and page.
+  component: SpaceSettingsShell,
+});
+
+const spaceGeneralRoute = createRoute({
+  getParentRoute: () => spaceSettingsRoute,
+  path: "/",
+  component: SpaceGeneral,
+});
+
+// The members' search in `?q=`, role in `?role=` and page.
+const spaceMembersRoute = createRoute({
+  getParentRoute: () => spaceSettingsRoute,
+  path: "/members",
   validateSearch: spaceMembersSearchSchema,
-  component: SpaceSettings,
+  component: SpaceMembersPage,
+});
+
+const spaceToolsRoute = createRoute({
+  getParentRoute: () => spaceSettingsRoute,
+  path: "/tools",
+  component: SpaceTools,
 });
 
 // A thread not made yet, at the top of the space or in `?folder=`.
@@ -201,6 +226,12 @@ const orgGeneralRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: "/general",
   component: OrgGeneral,
+});
+
+const orgToolsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: "/tools",
+  component: OrgTools,
 });
 
 const orgProvidersRoute = createRoute({
@@ -258,7 +289,7 @@ export function createAppRouter(queryClient: QueryClient) {
       appRoute.addChildren([
         homeRoute,
         spaceRoute,
-        spaceSettingsRoute,
+        spaceSettingsRoute.addChildren([spaceGeneralRoute, spaceMembersRoute, spaceToolsRoute]),
         draftRoute,
         threadRoute,
         sharedRoute,
@@ -266,6 +297,7 @@ export function createAppRouter(queryClient: QueryClient) {
           orgIndexRoute,
           orgGeneralRoute,
           orgProvidersRoute,
+          orgToolsRoute,
           orgPeopleRoute,
           orgSpacesRoute,
           orgMembersRoute,
