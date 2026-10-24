@@ -14,13 +14,16 @@
 
 import type { DeltaStore } from "@/ports/deltas.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
-import type { GuestStore } from "@/ports/guests.ts";
+import type { GuestStore, GuestThread } from "@/ports/guests.ts";
 import type { Principal } from "@/ports/identity.ts";
 import type { Run, RunStore } from "@/ports/runs.ts";
 import type { Space, SpaceStore } from "@/ports/spaces.ts";
 import type {
-  StoredEvent,
+  Listed,
+  ListedThread,
+  ListWindow,
   Thread,
+  ThreadListFilter,
   ThreadReadStore,
   ThreadStore,
   ThreadWriters,
@@ -35,18 +38,22 @@ import type { Spaces } from "@/services/spaces.ts";
 import type { ThreadAccess, ThreadAction } from "@/services/thread-access.ts";
 import { type Append, eventSummary, type ThreadLog } from "@/services/thread-log.ts";
 import type { SharedThread } from "@/shared/guests.ts";
-import { type Page, type PageParams, pageOfList } from "@/shared/paging.ts";
-import { shows, statusOf, type ThreadShow } from "@/shared/thread-status.ts";
+import type { Page, PageParams } from "@/shared/paging.ts";
+import { plainText } from "@/shared/plain-text.ts";
+import { statusOf, type ThreadShow } from "@/shared/thread-status.ts";
 import {
   type Delivery,
   type Effort,
   QUIET_PREFIX,
+  UNTITLED,
   type InboxItem,
   type ThreadActivity,
   type ThreadDetail,
   type ThreadFeedItem,
   type ThreadListItem,
   type ThreadParticipants,
+  type ThreadSidebar,
+  SIDEBAR_LIMIT,
   type ThreadSearchResult,
   type ThreadSummary,
   type ShownModel,
@@ -58,7 +65,7 @@ export interface ThreadsOptions {
   // Reads a thread's space for its defaults, whoever reads the thread.
   spaceStore: Pick<SpaceStore, "find">;
   access: Pick<ThreadAccess, "can" | "of" | "require">;
-  guests: Pick<GuestStore, "threadsOf" | "activeIn">;
+  guests: Pick<GuestStore, "threadsOf" | "sharedListed" | "activeIn">;
   folders: Pick<Folders, "requireIn">;
   threads: ThreadStore;
   // How far each person has seen each thread.
@@ -80,23 +87,10 @@ export interface ThreadsOptions {
 
 export type Threads = ReturnType<typeof createThreads>;
 
-// What an untitled thread is called, and found by.
-export const UNTITLED = "Untitled";
 const TITLE_LENGTH = 60;
 export const SEARCH_LIMIT = 50;
 // How long an inbox gathers changes before telling them.
 const INBOX_DELAY_MS = 50;
-
-// Markdown as the text it shows: without code fences, heading, quote and list markers, emphasis
-// and inline code marks, and with links and images as their text.
-export function plainText(markdown: string) {
-  return markdown
-    .replace(/^\s*(```|~~~).*$/gm, "")
-    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/^\s{0,3}(#{1,6}|>+|[-*+]|\d+[.)])\s+/gm, "")
-    .replace(/(\*\*|~~|\*|`+)(\S(?:.*?\S)?)\1/g, "$2")
-    .replace(/(^|\W)(__|_)(\S(?:.*?\S)?)\2(?=\W|$)/g, "$1$3");
-}
 
 // A thread's title from its first message: its text without markdown, on one line, cut to about
 // 60 characters.
@@ -111,17 +105,6 @@ export function titleFrom(text: string) {
 // The most people a list names of those who have written in a thread.
 const PARTICIPANT_LIMIT = 3;
 const FORMER_MEMBER = "(former member)";
-
-// The text of a message or reply without markdown, on one line.
-function textOf(event: StoredEvent) {
-  const parts =
-    event.type === "message" || event.type === "message.completed"
-      ? event.data.parts.filter((part) => part.type === "text")
-      : [];
-  return plainText(parts.map((part) => part.text).join(" "))
-    .replace(/\s+/g, " ")
-    .trim();
-}
 
 // The few who wrote in the thread most recently, each saying whether they wrote as a guest, and how
 // many have.
@@ -335,9 +318,9 @@ export function createThreads(options: ThreadsOptions) {
     return itemsOf(principal.userId, threads.listInSpace(spaceId), runs.activeInSpace(spaceId));
   }
 
-  // The threads the principal is a guest in, with their spaces' and orgs' names.
-  function sharedWith(principal: Principal): SharedThread[] {
-    const shared = guests.threadsOf(principal.userId, now());
+  // The threads the principal is a guest in, as their lists show them, with their spaces' and orgs'
+  // names.
+  function sharedItems(principal: Principal, shared: GuestThread[]): SharedThread[] {
     const items = itemsOf(
       principal.userId,
       shared.map(({ thread }) => thread),
@@ -360,6 +343,33 @@ export function createThreads(options: ThreadsOptions) {
     });
   }
 
+  // Those of a list's threads, each with whether its run waits and whether it failed since the
+  // reader looked, that the page asks for, and how many match in all. Whether the reader may decide
+  // on a waiting run, which makes it need them, is worked out here, for the few that wait.
+  function pageOfListed<T extends ListedThread>(
+    userId: string,
+    params: PageParams & { show?: ThreadShow },
+    read: (filter: ThreadListFilter, window?: ListWindow) => Listed<T>,
+  ): Listed<T> {
+    const window = { limit: params.limit, offset: params.offset ?? 0 };
+    const text = params.q;
+    if (params.show !== "needs-you") {
+      return read({ ...(text && { text }), ...(params.show && { show: params.show }) }, window);
+    }
+    const { rows } = read({ ...(text && { text }), show: "maybe-needs-you" });
+    const asking = rows.filter((row) => row.waiting && !row.failed).map((row) => row.thread);
+    const yours = new Set(
+      itemsOf(userId, asking, runs.activeIn(asking.map((thread) => thread.id)))
+        .filter((item) => statusOf(item.activity, userId) === "waiting")
+        .map((item) => item.id),
+    );
+    const needing = rows.filter((row) => row.failed || yours.has(row.thread.id));
+    return {
+      rows: needing.slice(window.offset, window.offset + window.limit),
+      total: needing.length,
+    };
+  }
+
   return {
     visible,
 
@@ -372,20 +382,36 @@ export function createThreads(options: ThreadsOptions) {
       spaceId: string,
       params: PageParams & { folder?: string; show?: ThreadShow },
     ): Page<ThreadListItem> {
-      const needle = params.q?.toLowerCase() ?? "";
-      const all = listIn(principal, spaceId);
-      const said = new Map(
-        threads
-          .lastMessagesInSpace(spaceId)
-          .map((event) => [event.threadId, textOf(event).toLowerCase()]),
+      spaces.require(principal, spaceId);
+      const { rows, total } = pageOfListed(principal.userId, params, (filter, window) =>
+        threads.listed(
+          principal.userId,
+          spaceId,
+          { ...filter, ...(params.folder && { folderId: params.folder }) },
+          window,
+        ),
       );
-      const list = all.filter(
-        (thread) =>
-          (!params.folder || thread.folderId === params.folder) &&
-          shows(params.show, statusOf(thread.activity, principal.userId)) &&
-          (thread.title.toLowerCase().includes(needle) || !!said.get(thread.id)?.includes(needle)),
-      );
-      return pageOfList(list, params);
+      const list = rows.map((row) => row.thread);
+      return {
+        items: itemsOf(principal.userId, list, runs.activeIn(list.map((thread) => thread.id))),
+        nextCursor: null,
+        total,
+      };
+    },
+
+    // The space's threads for the reader's sidebar: the newest few of each folder and of the top of
+    // the space, with those that say what each folder holds and those that need the reader; how
+    // many each folder holds and the top of the space; and how many need the reader in all.
+    sidebar(principal: Principal, spaceId: string): ThreadSidebar {
+      spaces.require(principal, spaceId);
+      const { rows, counts, failed } = threads.sidebar(principal.userId, spaceId, SIDEBAR_LIMIT);
+      const list = rows.map((row) => row.thread);
+      const items = itemsOf(principal.userId, list, runs.activeIn(list.map((thread) => thread.id)));
+      const waitingOnYou = items.filter(
+        (item) => statusOf(item.activity, principal.userId) === "waiting",
+      ).length;
+      const { null: loose = 0, ...folders } = Object.fromEntries(counts);
+      return { threads: items, loose, folders, needsYou: failed + waitingOnYou };
     },
 
     // Threads whose titles contain the text, ignoring case, untitled ones as "Untitled", in every
@@ -419,7 +445,10 @@ export function createThreads(options: ThreadsOptions) {
         .map(({ thread, spaceName, shared }) => ({ ...threadSummary(thread), spaceName, shared }));
     },
 
-    shared: sharedWith,
+    // The threads the principal is a guest in, most recently active first.
+    shared(principal: Principal): SharedThread[] {
+      return sharedItems(principal, guests.threadsOf(principal.userId, now()));
+    },
 
     // A page of the threads the principal is a guest in, narrowed to those whose title or place
     // contains the text, and to those their status shows.
@@ -427,14 +456,10 @@ export function createThreads(options: ThreadsOptions) {
       principal: Principal,
       params: PageParams & { show?: ThreadShow },
     ): Page<SharedThread> {
-      const needle = params.q?.toLowerCase() ?? "";
-      const list = sharedWith(principal).filter(
-        (thread) =>
-          shows(params.show, statusOf(thread.activity, principal.userId)) &&
-          (thread.title.toLowerCase().includes(needle) ||
-            thread.place.toLowerCase().includes(needle)),
+      const { rows, total } = pageOfListed(principal.userId, params, (filter, window) =>
+        guests.sharedListed(principal.userId, now(), filter, window),
       );
-      return pageOfList(list, params);
+      return { items: sharedItems(principal, rows), nextCursor: null, total };
     },
 
     // Starts a thread on the model and effort chosen for it, or those its space's defaults, then

@@ -18,7 +18,7 @@ import {
 } from "@/shared/models.ts";
 import { signInOptionsSchema } from "@/shared/sign-in.ts";
 import { spaceListSchema } from "@/shared/spaces.ts";
-import { type ThreadDetail, threadDetailSchema, threadListSchema } from "@/shared/threads.ts";
+import { type ThreadDetail, threadDetailSchema, threadSidebarSchema } from "@/shared/threads.ts";
 import { apiClient } from "@/web/lib/api-client";
 import { authClient } from "@/web/lib/auth-client";
 import { adoptOrg } from "@/web/lib/org-tab";
@@ -143,13 +143,16 @@ export function spaceFoldersQuery(spaceId: string) {
   });
 }
 
+// The space's threads as its sidebar lists them.
 export function spaceThreadsQuery(spaceId: string) {
   return queryOptions({
     queryKey: ["spaces", spaceId, "threads"],
     queryFn: async () => {
-      const res = await apiClient.v1.spaces[":id"].threads.$get({ param: { id: spaceId } });
+      const res = await apiClient.v1.spaces[":id"].threads.sidebar.$get({
+        param: { id: spaceId },
+      });
       if (!res.ok) throw new Error("could not read the space's threads");
-      return threadListSchema.parse(await res.json());
+      return threadSidebarSchema.parse(await res.json());
     },
   });
 }

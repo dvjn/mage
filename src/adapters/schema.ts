@@ -444,6 +444,9 @@ export const thread = sqliteTable(
     rootThreadId: text("root_thread_id"),
     // The seq of the thread's newest event; 0 before the first.
     lastEventSeq: integer("last_event_seq").default(0).notNull(),
+    // The text of its newest message or reply without markdown, on one line, which lists find it by;
+    // null before the first.
+    lastMessageText: text("last_message_text"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),
@@ -453,7 +456,7 @@ export const thread = sqliteTable(
       .notNull(),
   },
   (table) => [
-    index("thread_space_idx").on(table.spaceId),
+    index("thread_space_idx").on(table.spaceId, table.updatedAt),
     index("thread_folder_idx").on(table.folderId),
   ],
 );
@@ -476,7 +479,10 @@ export const threadEvent = sqliteTable(
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),
   },
-  (table) => [uniqueIndex("thread_event_thread_seq_idx").on(table.threadId, table.seq)],
+  (table) => [
+    uniqueIndex("thread_event_thread_seq_idx").on(table.threadId, table.seq),
+    index("thread_event_thread_type_idx").on(table.threadId, table.type, table.seq),
+  ],
 );
 
 // How far into a thread a person has seen: the seq of the newest event they saw there, and when.

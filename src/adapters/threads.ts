@@ -1,5 +1,5 @@
-// Threads and their events kept in the thread and thread_event tables, with ULID ids, and what each
-// thread's log says its readers have not seen yet.
+// Threads and their events kept in the thread and thread_event tables, with ULID ids, what each
+// thread's log says its readers have not seen yet, and a space's threads listed for a reader.
 
 import { and, asc, desc, eq, gt, inArray, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
@@ -13,8 +13,19 @@ import type {
   ThreadWriters,
 } from "@/ports/threads.ts";
 
+import { spokenText } from "@/shared/plain-text.ts";
+import { UNTITLED } from "@/shared/threads.ts";
+
 import { type Db, writeLock } from "./db.ts";
 import { orgFormerMember, space, thread, threadEvent, user } from "./schema.ts";
+import {
+  kept,
+  listedThread,
+  newestFirst,
+  statused,
+  type StatusedRow,
+  windowOf,
+} from "./thread-lists.ts";
 
 // The events a reader is told about: a person's message, a finished reply and a failed run.
 const NOTABLE = ["message", "message.completed", "run.failed"];
@@ -80,31 +91,6 @@ export function createThreadStore(db: Db): ThreadStore {
       );
   }
 
-  // The newest message or reply in each thread matching `where` that has one.
-  function lastMessages(where: SQL) {
-    const kinds = ["message", "message.completed"];
-    const latest = db
-      .select({
-        threadId: threadEvent.threadId,
-        lastSeq: sql<number>`max(${threadEvent.seq})`.as("last_seq"),
-      })
-      .from(threadEvent)
-      .innerJoin(thread, eq(thread.id, threadEvent.threadId))
-      .where(and(where, inArray(threadEvent.type, kinds)))
-      .groupBy(threadEvent.threadId)
-      .as("latest");
-    const ids = db
-      .select({ id: threadEvent.id })
-      .from(threadEvent)
-      .innerJoin(
-        latest,
-        and(eq(latest.threadId, threadEvent.threadId), eq(latest.lastSeq, threadEvent.seq)),
-      )
-      .all()
-      .map((row) => row.id);
-    return ids.length === 0 ? [] : eventsWhere(inArray(threadEvent.id, ids));
-  }
-
   return {
     create(input) {
       return db
@@ -125,10 +111,6 @@ export function createThreadStore(db: Db): ThreadStore {
         .where(eq(thread.spaceId, spaceId))
         .orderBy(desc(thread.updatedAt), desc(thread.id))
         .all();
-    },
-
-    lastMessagesInSpace(spaceId) {
-      return lastMessages(eq(thread.spaceId, spaceId));
     },
 
     facts(threadIds) {
@@ -226,6 +208,53 @@ export function createThreadStore(db: Db): ThreadStore {
       return writers;
     },
 
+    listed(reader, spaceId, filter, window) {
+      const where = sql`t.space_id = ${spaceId}
+        ${filter.folderId ? sql`and t.folder_id = ${filter.folderId}` : sql``}`;
+      const listed = statused(reader, { from: sql`from thread t`, where });
+      const keep = kept(filter, sql`coalesce(title, ${UNTITLED})`, sql`last_message_text`);
+      const rows = db.all<StatusedRow>(
+        sql`${listed} select * from statused where ${keep} ${newestFirst} ${windowOf(window)}`,
+      );
+      const total = window
+        ? (db.get<{ n: number }>(sql`${listed} select count(*) as n from statused where ${keep}`)
+            ?.n ?? 0)
+        : rows.length;
+      return { rows: rows.map(listedThread), total };
+    },
+
+    sidebar(reader, spaceId, limit) {
+      const listed = statused(reader, {
+        from: sql`from thread t`,
+        where: sql`t.space_id = ${spaceId}`,
+      });
+      const rows = db.all<StatusedRow>(sql`${listed},
+        placed as (
+          select *,
+                 row_number() over (partition by folder_id ${newestFirst}) as in_folder,
+                 row_number() over (partition by folder_id, status ${newestFirst}) as in_status,
+                 row_number() over (partition by status ${newestFirst}) as in_space
+            from statused
+        )
+        select * from placed
+         where in_folder <= ${limit}
+            or (status <> 'read' and in_status = 1)
+            or run_status = 'waiting'
+            or (status = 'failed' and in_space <= ${limit})
+         ${newestFirst}`);
+      const counts = db.all<{ folderId: string | null; n: number }>(sql`
+        select folder_id as folderId, count(*) as n from thread
+         where space_id = ${spaceId} group by folder_id`);
+      const failed = db.get<{ n: number }>(
+        sql`${listed} select count(*) as n from statused where status = 'failed'`,
+      );
+      return {
+        rows: rows.map(listedThread),
+        counts: new Map(counts.map((row) => [row.folderId, row.n])),
+        failed: failed?.n ?? 0,
+      };
+    },
+
     anyInSpace(spaceId) {
       return !!db.select({ id: thread.id }).from(thread).where(eq(thread.spaceId, spaceId)).get();
     },
@@ -272,6 +301,9 @@ export function createThreadStore(db: Db): ThreadStore {
             ...(title !== undefined && {
               title: sql`coalesce(${thread.title}, ${title})`,
               titleSource: sql`coalesce(${thread.titleSource}, 'message')`,
+            }),
+            ...((event.type === "message" || event.type === "message.completed") && {
+              lastMessageText: spokenText(event.data.parts),
             }),
           })
           .where(eq(thread.id, threadId))

@@ -493,4 +493,30 @@ describe("thread lists", () => {
     }[];
     expect(shared[0]?.activity).toMatchObject({ run: { status: "waiting" }, canApprove: true });
   });
+
+  it("list a thread waiting for a decision as needing only those who may make it", async () => {
+    const { ada, alan, hedy, post, calls, worker, start, api, space, thread, toolSettings } =
+      await toolThread();
+    toolSettings.setInSpace(space.id, ["thread.rename"], "ask");
+    start();
+    await post(ada, "Rename it");
+    await calls(["thread.rename", { title: "Looms" }]);
+    await worker.idle();
+
+    const needing = async (who: { cookie: string }, path: string) =>
+      (await (await api("GET", `${path}?show=needs-you`, who.cookie)).json()) as {
+        items: { id: string }[];
+        total: number;
+      };
+    const sidebar = async (who: { cookie: string }) =>
+      (await (await api("GET", `/spaces/${space.id}/threads/sidebar`, who.cookie)).json()) as {
+        needsYou: number;
+      };
+    const page = `/spaces/${space.id}/threads/page`;
+    expect(await needing(ada, page)).toMatchObject({ items: [{ id: thread.id }], total: 1 });
+    expect(await needing(alan, page)).toMatchObject({ items: [], total: 0 });
+    expect(await needing(hedy, "/shared-threads/page")).toMatchObject({ total: 1 });
+    expect((await sidebar(ada)).needsYou).toBe(1);
+    expect((await sidebar(alan)).needsYou).toBe(0);
+  });
 });

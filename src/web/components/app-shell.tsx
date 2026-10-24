@@ -32,7 +32,7 @@ function sidebarWasOpen() {
 
 // The tab's title, marked while some thread needs the person.
 function TitleMarker() {
-  const marked = useNeedsYou().length > 0;
+  const marked = useNeedsYou().total > 0;
   useEffect(() => {
     const title = marked ? "● Mage" : "Mage";
     if (document.title !== title) document.title = title;

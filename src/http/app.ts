@@ -663,6 +663,9 @@ function createApi(options: AppOptions) {
       .get("/v1/spaces/:id/threads", (c) => {
         return c.json(threads.list(signedIn(c.var.principal), c.req.param("id")), 200);
       })
+      .get("/v1/spaces/:id/threads/sidebar", (c) => {
+        return c.json(threads.sidebar(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
       .get("/v1/spaces/:id/threads/page", spaceThreadPageQuery, (c) => {
         const { folder, show, ...query } = c.req.valid("query");
         const params = { ...pageParams(query), ...(folder && { folder }), ...(show && { show }) };

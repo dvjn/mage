@@ -1,15 +1,24 @@
 // Thread guests and their invite links kept in the thread_guest and thread_invite tables, with ULID
-// ids for links.
+// ids for links, and the threads a person is a guest in listed for them.
 
 import { alias } from "drizzle-orm/sqlite-core";
 import { and, asc, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 
 import type { GuestStore, ThreadGuest, ThreadInvite } from "@/ports/guests.ts";
-import { spaceNameFor } from "@/shared/spaces.ts";
+import { FIRST_SPACE_NAME, spaceNameFor } from "@/shared/spaces.ts";
+import { UNTITLED } from "@/shared/threads.ts";
 
 import type { Db } from "./db.ts";
 import { organization, space, thread, threadGuest, threadInvite, user } from "./schema.ts";
+import {
+  kept,
+  listedThread,
+  newestFirst,
+  statused,
+  type StatusedRow,
+  windowOf,
+} from "./thread-lists.ts";
 
 const guestColumns = {
   threadId: threadGuest.threadId,
@@ -59,6 +68,19 @@ function active(now: Date) {
 
 // Whoever made a thread's space.
 const creator = alias(user, "creator");
+
+// What follows a person's name in the name of their own space.
+const SPACE_SUFFIX = spaceNameFor({ name: FIRST_SPACE_NAME, kind: "personal", primary: true }, "");
+
+// A shared thread's row of `statused`, with its space, org and access.
+interface SharedRow extends StatusedRow {
+  space_name: string;
+  space_kind: "personal" | "shared";
+  space_primary: number;
+  owner_name: string | null;
+  org_name: string;
+  access_until: number | null;
+}
 
 export function createGuestStore(db: Db): GuestStore {
   return {
@@ -125,6 +147,46 @@ export function createGuestStore(db: Db): GuestStore {
           const spaceName = spaceNameFor(host, ownerName ?? row.orgName);
           return { ...row, spaceName, spaceNamedForOrg: spaceName !== host.name };
         });
+    },
+
+    sharedListed(userId, now, filter, window) {
+      const listed = statused(userId, {
+        from: sql`from thread_guest g
+          join thread t on t.id = g.thread_id
+          join space s on s.id = t.space_id
+          join organization o on o.id = s.organization_id
+          left join user c on c.id = s.created_by`,
+        where: sql`g.user_id = ${userId} and g.revoked_at is null
+          and (g.access_until is null or g.access_until > ${now.getTime()})`,
+        // Where the thread is as its list says: a person's own space alone, any other with its org.
+        columns: sql`, s.name as space_name, s.kind as space_kind, s.is_primary as space_primary,
+          c.name as owner_name, o.name as org_name, g.access_until as access_until,
+          case when s.kind = 'personal' and s.is_primary = 1
+               then coalesce(c.name, o.name) || ${SPACE_SUFFIX}
+               else s.name || ' · ' || o.name end as place`,
+      });
+      const keep = kept(filter, sql`coalesce(title, ${UNTITLED})`, sql`place`);
+      const rows = db.all<SharedRow>(
+        sql`${listed} select * from statused where ${keep} ${newestFirst} ${windowOf(window)}`,
+      );
+      const total = window
+        ? (db.get<{ n: number }>(sql`${listed} select count(*) as n from statused where ${keep}`)
+            ?.n ?? 0)
+        : rows.length;
+      return {
+        rows: rows.map((row) => {
+          const host = { name: row.space_name, kind: row.space_kind, primary: !!row.space_primary };
+          const spaceName = spaceNameFor(host, row.owner_name ?? row.org_name);
+          return {
+            ...listedThread(row),
+            spaceName,
+            orgName: row.org_name,
+            spaceNamedForOrg: spaceName !== host.name,
+            accessUntil: row.access_until === null ? null : new Date(row.access_until),
+          };
+        }),
+        total,
+      };
     },
 
     hostSpaceName(threadId) {

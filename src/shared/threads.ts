@@ -85,6 +85,22 @@ export type ThreadListItem = z.infer<typeof threadListItemSchema>;
 
 export const threadListSchema = z.array(threadListItemSchema);
 
+// How many threads of each folder, and of the top of a space, its sidebar lists.
+export const SIDEBAR_LIMIT = 30;
+
+// A space's threads as its sidebar lists them for the reader: the newest of each folder and of the
+// top of the space, up to the limit, and beside them, older, those that say what a closed folder
+// holds and those that need the reader; how many threads the top of the space and each folder hold,
+// by id; and how many threads need the reader in all.
+export const threadSidebarSchema = z.object({
+  threads: z.array(threadListItemSchema),
+  loose: z.number().int(),
+  folders: z.record(z.string(), z.number().int()),
+  needsYou: z.number().int(),
+});
+
+export type ThreadSidebar = z.infer<typeof threadSidebarSchema>;
+
 export const textPartSchema = z.object({ type: z.literal("text"), text: z.string() });
 
 // What a model thought before it answered, or the provider's summary of it, and for how long.
@@ -97,6 +113,9 @@ export const reasoningPartSchema = z.object({
 export const replyPartSchema = z.discriminatedUnion("type", [textPartSchema, reasoningPartSchema]);
 
 export type ReplyPart = z.infer<typeof replyPartSchema>;
+
+// What an untitled thread is called, and found by.
+export const UNTITLED = "Untitled";
 
 // A message starting with this is an aside between people: the agent sees it in later runs, but it
 // never wakes the agent.

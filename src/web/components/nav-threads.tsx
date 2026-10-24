@@ -43,7 +43,7 @@ import type { FolderSummary } from "@/shared/folders.ts";
 import type { SharedThread } from "@/shared/guests.ts";
 import type { SpaceSummary } from "@/shared/spaces.ts";
 import { statusOf, type ThreadStatus } from "@/shared/thread-status.ts";
-import type { ThreadListItem, ThreadSummary } from "@/shared/threads.ts";
+import { SIDEBAR_LIMIT, type ThreadListItem, type ThreadSummary } from "@/shared/threads.ts";
 import { type NavAction, NavDialogs } from "@/web/components/nav-dialogs";
 import { FolderPickerDialog } from "@/web/components/folder-choice";
 import { ShortcutHint } from "@/web/components/shortcut-keys";
@@ -85,11 +85,12 @@ import {
   sharedThreadsQuery,
   spaceFoldersQuery,
   spaceThreadsQuery,
+  threadQuery,
 } from "@/web/lib/queries";
 
 // The most threads listed at the top of the space, in a folder or shared; the space's page and the
 // shared page list them all.
-const THREAD_LIMIT = 30;
+const THREAD_LIMIT = SIDEBAR_LIMIT;
 // The most threads "Needs you" lists.
 const NEEDS_YOU_LIMIT = 5;
 
@@ -110,6 +111,8 @@ export function useNewThread() {
 
 interface Nav {
   threads: Map<string | null, ThreadListItem[]>;
+  // How many threads each folder holds, by id.
+  counts: Record<string, number>;
   activeThreadId: string | undefined;
   open: Set<string>;
   setFolderOpen: (id: string, open: boolean) => void;
@@ -227,7 +230,17 @@ const slotUnderMenu =
 
 // The end of a folder's header: while it is closed, the statuses inside that say something, then
 // how many threads it holds. The menu stands over it while the pointer is over the header.
-function Rollup({ id, threads, open }: { id: string; threads: ThreadListItem[]; open: boolean }) {
+function Rollup({
+  id,
+  threads,
+  count,
+  open,
+}: {
+  id: string;
+  threads: ThreadListItem[];
+  count: number;
+  open: boolean;
+}) {
   const me = useQuery(meQuery);
   const rollup = open ? [] : rollupOf(threads, me.data?.user.id);
   return (
@@ -244,8 +257,8 @@ function Rollup({ id, threads, open }: { id: string; threads: ThreadListItem[]; 
         <StatusGlyph key={status} status={status} activity={thread.activity} />
       ))}
       <span>
-        {threads.length}
-        <span className="sr-only">{threads.length === 1 ? " thread" : " threads"}</span>
+        {count}
+        <span className="sr-only">{count === 1 ? " thread" : " threads"}</span>
       </span>
     </span>
   );
@@ -259,6 +272,8 @@ const guided =
 function FolderItem({ folder }: { folder: FolderSummary }) {
   const nav = useNav();
   const threads = nav.threads.get(folder.id) ?? [];
+  // A thread that just joined counts before the counts are read again.
+  const count = Math.max(nav.counts[folder.id] ?? 0, threads.length);
   const open = nav.open.has(folder.id);
   const rollupId = useId();
   return (
@@ -275,7 +290,7 @@ function FolderItem({ folder }: { folder: FolderSummary }) {
       >
         {open ? <FolderOpenIcon /> : <FolderIcon />}
         <span className="min-w-0 flex-1 truncate">{folder.name}</span>
-        <Rollup id={rollupId} threads={threads} open={open} />
+        <Rollup id={rollupId} threads={threads} count={count} open={open} />
       </CollapsibleTrigger>
       {nav.role !== "viewer" && (
         <ItemMenu name={folder.name}>
@@ -306,7 +321,7 @@ function FolderItem({ folder }: { folder: FolderSummary }) {
               .slice(0, THREAD_LIMIT)
               .map((thread) => <ThreadItem key={thread.id} thread={thread} />)
           )}
-          {threads.length > THREAD_LIMIT && (
+          {count > THREAD_LIMIT && (
             <ShowAll
               link={
                 <Link
@@ -425,6 +440,7 @@ function SpaceThreads({ space }: { space: SpaceSummary }) {
   const folders = useQuery(spaceFoldersQuery(space.id));
   const threads = useQuery(spaceThreadsQuery(space.id));
   const { threadId } = useParams({ strict: false });
+  const openThread = useQuery({ ...threadQuery(threadId ?? ""), enabled: threadId !== undefined });
   const newThread = useNewThread();
   const { open, setFolderOpen } = useOpenFolders();
   const toast = useToast();
@@ -438,14 +454,16 @@ function SpaceThreads({ space }: { space: SpaceSummary }) {
   });
 
   // The open thread's folder opens with it.
-  const activeFolderId = threads.data?.find((thread) => thread.id === threadId)?.folderId;
+  const activeFolderId =
+    openThread.data?.thread.spaceId === space.id ? openThread.data.thread.folderId : undefined;
   useEffect(() => {
     if (activeFolderId) setFolderOpen(activeFolderId, true);
   }, [activeFolderId, setFolderOpen]);
 
   const nav = useMemo<Nav>(
     () => ({
-      threads: groupBy(threads.data ?? [], (thread) => thread.folderId),
+      threads: groupBy(threads.data?.threads ?? [], (thread) => thread.folderId),
+      counts: threads.data?.folders ?? {},
       activeThreadId: threadId,
       open,
       setFolderOpen,
@@ -491,6 +509,7 @@ function SpaceThreads({ space }: { space: SpaceSummary }) {
     />
   );
   const loose = nav.threads.get(null) ?? [];
+  const looseCount = Math.max(threads.data?.loose ?? 0, loose.length);
   const now = new Date();
   const layout = held ?? layoutOf(loose, now);
   const shown = loose.slice(0, THREAD_LIMIT);
@@ -523,7 +542,7 @@ function SpaceThreads({ space }: { space: SpaceSummary }) {
                 </ul>
               </li>
             ))}
-            {loose.length > THREAD_LIMIT && (
+            {looseCount > THREAD_LIMIT && (
               <ShowAll link={<Link to="/s/$spaceId" params={{ spaceId: space.id }} />} />
             )}
             {threads.isPending && <MenuSkeleton />}
@@ -563,7 +582,7 @@ function NeedsYou({
   more: React.ReactElement;
   folderNames?: Map<string, string>;
 }) {
-  const items = useNeedsYou();
+  const { items, total } = useNeedsYou();
   const { threadId } = useParams({ strict: false });
   if (items.length === 0) return null;
   return (
@@ -589,10 +608,10 @@ function NeedsYou({
               />
             ),
           )}
-        {items.length > NEEDS_YOU_LIMIT && (
+        {total > NEEDS_YOU_LIMIT && (
           <SidebarMenuItem>
             <SidebarMenuButton className="text-muted-foreground" render={more}>
-              <span>{items.length - NEEDS_YOU_LIMIT} more</span>
+              <span>{total - NEEDS_YOU_LIMIT} more</span>
               <ArrowRightIcon className="ml-auto" />
             </SidebarMenuButton>
           </SidebarMenuItem>

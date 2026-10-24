@@ -162,7 +162,9 @@ function DeleteSpace({ space }: { space: SpaceSummary }) {
   const navigate = useNavigate();
   const threads = useQuery({ ...spaceThreadsQuery(space.id), enabled: space.role !== null });
   const [error, setError] = useState<string>();
-  const count = threads.data?.length ?? 0;
+  const count = threads.data
+    ? threads.data.loose + Object.values(threads.data.folders).reduce((sum, n) => sum + n, 0)
+    : 0;
 
   async function remove() {
     setError(undefined);

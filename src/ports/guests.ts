@@ -3,7 +3,7 @@
 
 import type { AccessFor } from "@/shared/guests.ts";
 
-import type { Thread } from "./threads.ts";
+import type { Listed, ListedThread, ListWindow, Thread, ThreadListFilter } from "./threads.ts";
 
 export interface ThreadGuest {
   threadId: string;
@@ -59,6 +59,14 @@ export interface GuestStore {
   ): (ThreadGuest & { name: string; invitedByName: string | null })[];
   // The threads the user is an active guest in at `now`, most recently active first.
   threadsOf(userId: string, now: Date): GuestThread[];
+  // Those of them the filter keeps, matching text in their title or the place they are in; those
+  // the window takes, every match without one.
+  sharedListed(
+    userId: string,
+    now: Date,
+    filter: ThreadListFilter,
+    window?: ListWindow,
+  ): Listed<GuestThread & ListedThread>;
   // The thread's space name as someone outside its org sees it, or null for an unknown thread.
   hostSpaceName(threadId: string): string | null;
 

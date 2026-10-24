@@ -1,5 +1,6 @@
 // The threads that need the signed-in person, among the sidebar's space and those shared with them:
-// the agent waits for their decision, or its last run failed since they looked; newest first.
+// the agent waits for their decision, or its last run failed since they looked; newest first, as
+// many as the sidebar has of the space's, and how many there are in all.
 
 import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
@@ -14,7 +15,7 @@ export type NeedsYouItem =
   | { kind: "space"; thread: ThreadListItem }
   | { kind: "shared"; thread: SharedThread };
 
-export function useNeedsYou(): NeedsYouItem[] {
+export function useNeedsYou(): { items: NeedsYouItem[]; total: number } {
   const place = usePlace();
   const me = useQuery(meQuery);
   const spaceId = place?.kind === "space" && place.space.role ? place.space.id : undefined;
@@ -22,13 +23,20 @@ export function useNeedsYou(): NeedsYouItem[] {
   const shared = useQuery(sharedThreadsQuery);
   const userId = me.data?.user.id;
   return useMemo(() => {
-    if (!userId) return [];
-    const mine = (spaceId ? (threads.data ?? []) : []).map(
-      (thread) => ({ kind: "space", thread }) as const,
+    if (!userId) return { items: [], total: 0 };
+    const sidebar = spaceId ? threads.data : undefined;
+    const needing = (item: NeedsYouItem) => needsYou(statusOf(item.thread.activity, userId));
+    const mine = (sidebar?.threads ?? [])
+      .map((thread) => ({ kind: "space", thread }) as const)
+      .filter(needing);
+    const theirs = (shared.data ?? [])
+      .map((thread) => ({ kind: "shared", thread }) as const)
+      .filter(needing);
+    const items = [...mine, ...theirs].toSorted((a, b) =>
+      b.thread.updatedAt.localeCompare(a.thread.updatedAt),
     );
-    const theirs = (shared.data ?? []).map((thread) => ({ kind: "shared", thread }) as const);
-    return [...mine, ...theirs]
-      .filter((item) => needsYou(statusOf(item.thread.activity, userId)))
-      .toSorted((a, b) => b.thread.updatedAt.localeCompare(a.thread.updatedAt));
+    // A thread that just came to need them counts before the space's count is read again.
+    const total = Math.max(sidebar?.needsYou ?? 0, mine.length) + theirs.length;
+    return { items, total };
   }, [userId, spaceId, threads.data, shared.data]);
 }

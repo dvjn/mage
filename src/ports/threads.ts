@@ -55,6 +55,46 @@ export interface ThreadFacts {
 // they still have one, and whether their last message was written as a guest of the thread.
 export type ThreadWriters = { userId: string; name: string | null; guest: boolean }[];
 
+// What a list of threads is narrowed to for its reader: those whose title, or the text named for
+// each list, contains the text, ignoring case; and those with something new for the reader, or those
+// that may need them, having failed since they looked or waiting on a decision, which may not be
+// theirs to make.
+export interface ThreadListFilter {
+  text?: string;
+  show?: "unread" | "maybe-needs-you";
+}
+
+// How many of a list's threads to take, after how many.
+export interface ListWindow {
+  limit: number;
+  offset: number;
+}
+
+// A thread in a reader's list: whether its run waits on a decision, and whether its last run failed
+// since the reader looked.
+export interface ListedThread {
+  thread: Thread;
+  waiting: boolean;
+  failed: boolean;
+}
+
+// The threads of a list a window takes, most recently active first, and how many match in all.
+export interface Listed<T> {
+  rows: T[];
+  total: number;
+}
+
+// The threads a space's sidebar lists for a reader: the newest few of each folder and of the top of
+// the space, and beside them the newest of each status the reader would see in each folder, every
+// thread whose run waits on a decision and the newest few that failed since they looked; with how
+// many threads each folder holds, the top of the space under null, and how many failed since they
+// looked in all.
+export interface SidebarThreads {
+  rows: ListedThread[];
+  counts: Map<string | null, number>;
+  failed: number;
+}
+
 export interface ThreadStore {
   create(thread: {
     spaceId: string;
@@ -67,9 +107,16 @@ export interface ThreadStore {
   // Most recently active first.
   listInSpace(spaceId: string): Thread[];
   anyInSpace(spaceId: string): boolean;
-  // The newest message from a person or reply from the agent in each of the space's threads that
-  // has one.
-  lastMessagesInSpace(spaceId: string): StoredEvent[];
+  // The space's threads for the reader, narrowed to one folder and by the filter, matching text in
+  // their title or newest message; those the window takes, every match without one.
+  listed(
+    reader: string,
+    spaceId: string,
+    filter: ThreadListFilter & { folderId?: string },
+    window?: ListWindow,
+  ): Listed<ListedThread>;
+  // The space's threads for the reader's sidebar, the newest `limit` of each kind.
+  sidebar(reader: string, spaceId: string, limit: number): SidebarThreads;
   // The facts of each of the threads named that has any events.
   facts(threadIds: string[]): Map<string, ThreadFacts>;
   // Who has written in each of the threads named that anyone has.

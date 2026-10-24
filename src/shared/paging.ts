@@ -56,9 +56,3 @@ export function pageParams(query: {
     ...(query.page && query.page > 1 && { offset: (query.page - 1) * limit }),
   };
 }
-
-// The page of a list already in hand.
-export function pageOfList<T>(list: T[], params: PageParams): Page<T> {
-  const start = params.offset ?? 0;
-  return { items: list.slice(start, start + params.limit), nextCursor: null, total: list.length };
-}
