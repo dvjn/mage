@@ -6,7 +6,7 @@
 // the agent's calls of it that wait, and while the agent waits the composer says so. A
 // guest of the thread sees its space's name alone, and cannot change its model; once their access
 // ends, they are told so. When the server cannot be reached, the thread as last read stays in view
-// while it reconnects.
+// while it reconnects. Reading it marks it seen.
 
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -51,6 +51,7 @@ import {
   ThreadNotFound,
   threadQuery,
 } from "@/web/lib/queries";
+import { useMarkRead } from "@/web/lib/inbox";
 import { mergeEvents, useThreadEvents } from "@/web/lib/thread-events";
 
 const threadRoute = getRouteApi("/_app/t/$threadId");
@@ -95,8 +96,8 @@ export function ThreadPage() {
   const { streaming, reconnecting } = useThreadEvents(
     threadId,
     !!detail.data && !notFound && !ended,
-    refreshList,
   );
+  useMarkRead(threadId, notFound || ended ? undefined : thread?.lastEventSeq);
   // The thread cannot be read or followed right now; what is shown is what was last read.
   const offline = !notFound && !ended && (detail.failureCount > 0 || reconnecting);
   const transcript = useMemo(

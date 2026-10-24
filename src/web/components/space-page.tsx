@@ -1,6 +1,7 @@
 // A space: a new thread's composer for those who can write in it, and its threads by when they were
-// last active, each with the start of its newest message, narrowed by title or that message as you
-// type, and to one folder, once there are any.
+// last active, each with its status for the reader and the start of its newest message, narrowed by
+// title or that message as you type, to one folder, once there are any, and to those that need the
+// reader or have something new for them.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
@@ -8,23 +9,26 @@ import { getRouteApi, Link } from "@tanstack/react-router";
 import { LockIcon, MessagesSquareIcon, SearchIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
+import { statusOf } from "@/shared/thread-status.ts";
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
 import { NewThreadComposer } from "@/web/components/draft-thread";
 import { EmptyState, ListSkeleton, LoadError, NotFound } from "@/web/components/page-states";
 import { Button } from "@/web/components/ui/button";
 import { FilterButton } from "@/web/components/table-toolbar";
 import { ThreadRow } from "@/web/components/thread-row";
+import { shows, ThreadShowControl } from "@/web/components/thread-show";
 import { Time } from "@/web/components/time";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
 import { rememberSpace } from "@/web/lib/last-space";
-import { spaceFoldersQuery, spaceThreadsQuery, spacesQuery } from "@/web/lib/queries";
+import { meQuery, spaceFoldersQuery, spaceThreadsQuery, spacesQuery } from "@/web/lib/queries";
 import { sectionOf, SECTIONS } from "@/web/lib/time-sections";
 
 const spaceRoute = getRouteApi("/_app/s/$spaceId");
 
 export function SpacePage() {
   const { spaceId } = spaceRoute.useParams();
-  const { folder } = spaceRoute.useSearch();
+  const { folder, show } = spaceRoute.useSearch();
+  const me = useQuery(meQuery);
   const navigate = spaceRoute.useNavigate();
   const spaces = useQuery(spacesQuery);
   const space = spaces.data?.find((s) => s.id === spaceId);
@@ -38,9 +42,11 @@ export function SpacePage() {
   useEffect(() => rememberSpace(spaceId), [spaceId]);
 
   const needle = filter.trim().toLowerCase();
+  const userId = me.data?.user.id ?? "";
   const shown = threads.data?.filter(
     (thread) =>
       (!folder || thread.folderId === folder) &&
+      shows(show, statusOf(thread.activity, userId)) &&
       (thread.title.toLowerCase().includes(needle) ||
         !!thread.preview?.text.toLowerCase().includes(needle)),
   );
@@ -79,8 +85,8 @@ export function SpacePage() {
         {writes && <NewThreadComposer spaceId={spaceId} />}
         <div className="flex flex-col gap-2">
           {!!threads.data?.length && (
-            <div className="flex gap-2">
-              <InputGroup className="flex-1">
+            <div className="flex flex-wrap gap-2">
+              <InputGroup className="min-w-60 flex-1">
                 <InputGroupInput
                   type="search"
                   placeholder="Filter threads"
@@ -92,6 +98,12 @@ export function SpacePage() {
                   <SearchIcon />
                 </InputGroupAddon>
               </InputGroup>
+              <ThreadShowControl
+                value={show}
+                onChange={(value) =>
+                  void navigate({ search: (search) => ({ ...search, show: value }), replace: true })
+                }
+              />
               {!!folders.data?.length && (
                 <FilterButton
                   filter={{
@@ -99,7 +111,10 @@ export function SpacePage() {
                     value: folder,
                     options: folders.data.map((f) => ({ value: f.id, label: f.name })),
                     onChange: (value) =>
-                      void navigate({ search: value ? { folder: value } : {}, replace: true }),
+                      void navigate({
+                        search: (search) => ({ ...search, folder: value || undefined }),
+                        replace: true,
+                      }),
                   }}
                 />
               )}

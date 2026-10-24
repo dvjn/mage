@@ -1,9 +1,10 @@
 // The signed-in app: the sidebar beside the current page, open or collapsed as it was last left,
 // the thread search and the keyboard shortcuts dialog over both, the header each page starts with, and the one column width every
-// page's content sits in.
+// page's content sits in. It follows the person's inbox to keep thread lists current, and marks the
+// tab's title while a thread needs them.
 
 import { Link, Outlet } from "@tanstack/react-router";
-import { Fragment } from "react";
+import { Fragment, useEffect } from "react";
 
 import { AppSidebar } from "@/web/components/app-sidebar";
 import { ShortcutsHelpProvider } from "@/web/components/shortcuts-help";
@@ -20,6 +21,8 @@ import { Separator } from "@/web/components/ui/separator";
 import { Kbd } from "@/web/components/ui/kbd";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/web/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/web/components/ui/tooltip";
+import { useInbox } from "@/web/lib/inbox";
+import { useNeedsYou } from "@/web/lib/needs-you";
 import { shortcutHint } from "@/web/lib/shortcuts";
 
 // The sidebar records whether it is open in this cookie each time it is toggled.
@@ -27,7 +30,18 @@ function sidebarWasOpen() {
   return !document.cookie.split("; ").includes("sidebar_state=false");
 }
 
+// The tab's title, marked while some thread needs the person.
+function TitleMarker() {
+  const marked = useNeedsYou().length > 0;
+  useEffect(() => {
+    const title = marked ? "● Mage" : "Mage";
+    if (document.title !== title) document.title = title;
+  }, [marked]);
+  return null;
+}
+
 export function AppShell() {
+  useInbox();
   return (
     <ShortcutsHelpProvider>
       <ThreadSearchProvider>
@@ -37,6 +51,7 @@ export function AppShell() {
           <SidebarInset className="min-h-0 overflow-y-auto">
             <Outlet />
           </SidebarInset>
+          <TitleMarker />
         </SidebarProvider>
       </ThreadSearchProvider>
     </ShortcutsHelpProvider>

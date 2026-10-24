@@ -1,26 +1,37 @@
-// Shared with you: the threads the signed-in person is a guest in, each with where it is and when
-// their access ends, most recently active first, narrowed by title or place as you type; and, while
-// there are none, a note on how threads come to be shared.
+// Shared with you: the threads the signed-in person is a guest in, each with its status for them,
+// where it is and when their access ends, most recently active first, narrowed by title or place as
+// you type and to those that need them or have something new for them; and, while there are none,
+// a note on how threads come to be shared.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
+import { getRouteApi } from "@tanstack/react-router";
 import { SearchIcon, UsersIcon } from "lucide-react";
 import { useState } from "react";
 
+import { statusOf } from "@/shared/thread-status.ts";
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
 import { EmptyState, ListSkeleton, LoadError } from "@/web/components/page-states";
 import { ThreadRow } from "@/web/components/thread-row";
+import { shows, ThreadShowControl } from "@/web/components/thread-show";
 import { Until } from "@/web/components/time";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
-import { sharedThreadsQuery } from "@/web/lib/queries";
+import { meQuery, sharedThreadsQuery } from "@/web/lib/queries";
+
+const sharedRoute = getRouteApi("/_app/shared");
 
 export function SharedPage() {
   const shared = useQuery(sharedThreadsQuery);
+  const me = useQuery(meQuery);
+  const { show } = sharedRoute.useSearch();
+  const navigate = sharedRoute.useNavigate();
   const [filter, setFilter] = useState("");
   const needle = filter.trim().toLowerCase();
+  const userId = me.data?.user.id ?? "";
   const shown = shared.data?.filter(
     (thread) =>
-      thread.title.toLowerCase().includes(needle) || thread.place.toLowerCase().includes(needle),
+      shows(show, statusOf(thread.activity, userId)) &&
+      (thread.title.toLowerCase().includes(needle) || thread.place.toLowerCase().includes(needle)),
   );
   return (
     <>
@@ -37,18 +48,24 @@ export function SharedPage() {
         )}
         {!!shared.data?.length && (
           <div className="flex flex-col gap-2">
-            <InputGroup>
-              <InputGroupInput
-                type="search"
-                placeholder="Filter threads"
-                aria-label="Filter threads"
-                value={filter}
-                onChange={(event) => setFilter(event.target.value)}
+            <div className="flex flex-wrap gap-2">
+              <InputGroup className="min-w-60 flex-1">
+                <InputGroupInput
+                  type="search"
+                  placeholder="Filter threads"
+                  aria-label="Filter threads"
+                  value={filter}
+                  onChange={(event) => setFilter(event.target.value)}
+                />
+                <InputGroupAddon>
+                  <SearchIcon />
+                </InputGroupAddon>
+              </InputGroup>
+              <ThreadShowControl
+                value={show}
+                onChange={(value) => void navigate({ search: { show: value }, replace: true })}
               />
-              <InputGroupAddon>
-                <SearchIcon />
-              </InputGroupAddon>
-            </InputGroup>
+            </div>
             <ul className="flex flex-col" aria-label="Shared threads">
               {shown?.length === 0 && (
                 <li className="px-2 text-sm text-muted-foreground">No thread matches.</li>

@@ -91,14 +91,14 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
   await expect(switcher).toContainText("1 thread");
   const sidebar = guest.locator("[data-sidebar=sidebar]");
   await expect(sidebar.getByRole("link", { name: "Space settings" })).toHaveCount(0);
-  const row = sidebar.getByRole("link", { name: /^How do engines compute\?/ });
+  const row = sidebar.getByRole("link", { name: /How do engines compute\?/ });
   await expect(row).toContainText("Ada Lovelace's Space");
   await row.hover();
   await expect(guest.locator("[data-slot=tooltip-content]")).toHaveText("Ada Lovelace's Space");
   await openShared(guest);
   await guest
     .getByRole("list", { name: "Shared threads" })
-    .getByRole("link", { name: /^How do engines compute\? Ada Lovelace's Space/ })
+    .getByRole("link", { name: /How do engines compute\?.*Ada Lovelace's Space/ })
     .click();
 
   await guest.getByLabel("Message", { exact: true }).fill("Can they hop frequencies?");

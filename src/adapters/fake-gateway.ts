@@ -4,8 +4,8 @@
 // still very slowly, and
 // reasons for a few words first when it asks it to think. Each `/tool <id> <json>` line in the
 // newest message makes it call that tool after its words, when it is offered, or say it cannot;
-// shown what the calls gave back, it says so. Its list stands in for an API key's: it takes any key
-// starting with `sk-`.
+// shown what the calls gave back, it says so. A `/fail <text>` line makes it fail with that text
+// after its words. Its list stands in for an API key's: it takes any key starting with `sk-`.
 
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -22,6 +22,7 @@ const FILLER = "and so the engine turns its wheels".split(" ");
 const REASONING = "Considering the gears and the levers".split(" ");
 // A line of a person's message, after the name it starts with.
 const TOOL_LINE = /^(?:\[[^\]\n]*\][ \t]*)?\/tool[ \t]+(\S+)[ \t]*(.*)$/gm;
+const FAIL_LINE = /^(?:\[[^\]\n]*\][ \t]*)?\/fail[ \t]+(.+)$/m;
 
 function wordsFor(messages: ModelMessage[]) {
   const read = messages.filter((message) => message.role === "user");
@@ -89,6 +90,8 @@ export function createFakeGateway(): ModelGateway {
           await delay(WORD_MS, undefined, { signal });
           yield { type: "delta", text: index === 0 ? word : ` ${word}` };
         }
+        const failure = last?.role === "user" ? FAIL_LINE.exec(said) : null;
+        if (failure) throw new Error(failure[1]);
         const calls: ModelToolCall[] = wanted
           .filter(({ toolId }) => offered.has(toolId))
           .map((call) => ({ callId: ulid(), ...call }));

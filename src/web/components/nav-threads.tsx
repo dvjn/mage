@@ -3,9 +3,11 @@
 // hold the open thread, then the threads at the top of the space by when they were last active
 // (today, the previous 7 days, older). Each list stops at a limit, with "Show all" leading to the
 // space's page, narrowed to the folder where it is one, for the rest. Rows stay
-// where they are while the pointer is over the list. Each row has a menu to start, rename, move or
-// delete. Nobody sees what their role never allows. In the shared context, the section lists the
-// threads shared with the person instead, each over the space it is in, up to the same limit.
+// where they are while the pointer is over the list, and never move for their status. Each row has
+// a menu to start, rename, move or delete. Nobody sees what their role never allows. In the shared
+// context, the section lists the threads shared with the person instead, each over the space it is
+// in, up to the same limit. Above either, while any thread there or shared waits on the person or
+// failed since they looked, "Needs you" lists the newest few, leading to the page for the rest.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useMatchRoute, useNavigate, useParams } from "@tanstack/react-router";
@@ -15,7 +17,6 @@ import {
   FolderOpenIcon,
   FolderInputIcon,
   FolderPlusIcon,
-  MessageSquareIcon,
   MoreHorizontalIcon,
   PencilIcon,
   PlusIcon,
@@ -34,13 +35,14 @@ import {
 } from "react";
 
 import type { FolderSummary } from "@/shared/folders.ts";
+import type { SharedThread } from "@/shared/guests.ts";
 import type { SpaceSummary } from "@/shared/spaces.ts";
-import type { ThreadSummary } from "@/shared/threads.ts";
+import type { ThreadListItem, ThreadSummary } from "@/shared/threads.ts";
 import { type NavAction, NavDialogs } from "@/web/components/nav-dialogs";
 import { FolderPickerDialog } from "@/web/components/folder-choice";
 import { ShortcutHint } from "@/web/components/shortcut-keys";
 import { useToast } from "@/web/components/toaster";
-import { ThreadTitle } from "@/web/components/thread-title";
+import { ThreadRow } from "@/web/components/thread-row";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import {
   Collapsible,
@@ -71,12 +73,15 @@ import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { useShortcut } from "@/web/lib/shortcuts";
 import { SECTIONS, type Section, sectionOf } from "@/web/lib/time-sections";
+import { type NeedsYouItem, useNeedsYou } from "@/web/lib/needs-you";
 import { useOpenFolders } from "@/web/lib/open-folders";
 import { sharedThreadsQuery, spaceFoldersQuery, spaceThreadsQuery } from "@/web/lib/queries";
 
 // The most threads listed at the top of the space, in a folder or shared; the space's page and the
 // shared page list them all.
 const THREAD_LIMIT = 30;
+// The most threads "Needs you" lists.
+const NEEDS_YOU_LIMIT = 5;
 
 // Opens a new thread's draft in the space, in a folder or at its top; the thread is made when its
 // first message is sent.
@@ -94,7 +99,7 @@ export function useNewThread() {
 }
 
 interface Nav {
-  threads: Map<string | null, ThreadSummary[]>;
+  threads: Map<string | null, ThreadListItem[]>;
   activeThreadId: string | undefined;
   open: Set<string>;
   setFolderOpen: (id: string, open: boolean) => void;
@@ -146,18 +151,21 @@ function ItemMenu({ name, children }: { name: string; children: ReactNode }) {
   );
 }
 
-function ThreadItem({ thread }: { thread: ThreadSummary }) {
+// The start of the thread's newest message or reply, with who wrote it.
+function previewOf(thread: ThreadListItem) {
+  return thread.preview ? `${thread.preview.author}: ${thread.preview.text}` : undefined;
+}
+
+function ThreadItem({ thread }: { thread: ThreadListItem }) {
   const nav = useNav();
   const [moving, setMoving] = useState(false);
   return (
-    <SidebarMenuItem>
-      <SidebarMenuButton
-        isActive={thread.id === nav.activeThreadId}
-        render={<Link to="/t/$threadId" params={{ threadId: thread.id }} />}
-      >
-        <MessageSquareIcon />
-        <ThreadTitle thread={thread} />
-      </SidebarMenuButton>
+    <ThreadRow
+      variant="sidebar"
+      thread={thread}
+      detail={previewOf(thread)}
+      isActive={thread.id === nav.activeThreadId}
+    >
       {nav.role !== "viewer" && (
         <ItemMenu name={thread.title}>
           <DropdownMenuItem onClick={() => nav.act({ kind: "rename-thread", thread })}>
@@ -191,7 +199,7 @@ function ThreadItem({ thread }: { thread: ThreadSummary }) {
         onOpenChange={setMoving}
         onChange={(folderId) => nav.move(thread, folderId)}
       />
-    </SidebarMenuItem>
+    </ThreadRow>
   );
 }
 
@@ -270,7 +278,7 @@ function layoutOf(threads: ThreadSummary[], now: Date): Layout {
 
 // The loose threads by section, in the layout given; threads it does not know yet come first in
 // Today.
-function sectioned(threads: ThreadSummary[], layout: Layout) {
+function sectioned<T extends ThreadSummary>(threads: T[], layout: Layout) {
   const placed = threads
     .map((thread) => ({ thread, at: layout.get(thread.id) ?? { section: "Today", index: -1 } }))
     .toSorted((a, b) => a.at.index - b.at.index);
@@ -410,6 +418,12 @@ function SpaceThreads({ space }: { space: SpaceSummary }) {
     ],
   );
 
+  const { isMobile } = useSidebar();
+  const needsYou = (
+    <NeedsYou
+      more={<Link to="/s/$spaceId" params={{ spaceId: space.id }} search={{ show: "needs-you" }} />}
+    />
+  );
   const loose = nav.threads.get(null) ?? [];
   const now = new Date();
   const layout = held ?? layoutOf(loose, now);
@@ -417,7 +431,10 @@ function SpaceThreads({ space }: { space: SpaceSummary }) {
   const empty = threads.isSuccess && folderList.length === 0 && loose.length === 0;
   return (
     <>
+      {/* On a phone it is the drawer's first group. */}
+      {isMobile && needsYou}
       <SpaceSection space={space} onNewFolder={() => setAction({ kind: "new-folder" })} />
+      {!isMobile && needsYou}
       <SidebarGroup
         onPointerEnter={() => setHeld(layoutOf(loose, now))}
         onPointerLeave={() => setHeld(null)}
@@ -457,6 +474,62 @@ function SpaceThreads({ space }: { space: SpaceSummary }) {
   );
 }
 
+// A thread shared with the person, over the space it is in.
+function SharedItem({ thread, isActive }: { thread: SharedThread; isActive: boolean }) {
+  return (
+    <ThreadRow
+      variant="sidebar"
+      shared
+      thread={thread}
+      detail={thread.spaceName}
+      title={thread.place}
+      isActive={isActive}
+    />
+  );
+}
+
+// The threads that wait on the person or failed since they looked, newest first, up to a few,
+// leading to the page that lists the rest; nothing while there are none.
+function NeedsYou({ more }: { more: React.ReactElement }) {
+  const items = useNeedsYou();
+  const { threadId } = useParams({ strict: false });
+  if (items.length === 0) return null;
+  return (
+    <SidebarGroup>
+      <SidebarGroupLabel>Needs you</SidebarGroupLabel>
+      <SidebarMenu aria-label="Needs you">
+        {items
+          .slice(0, NEEDS_YOU_LIMIT)
+          .map((item: NeedsYouItem) =>
+            item.kind === "shared" ? (
+              <SharedItem
+                key={item.thread.id}
+                thread={item.thread}
+                isActive={item.thread.id === threadId}
+              />
+            ) : (
+              <ThreadRow
+                key={item.thread.id}
+                variant="sidebar"
+                thread={item.thread}
+                detail={previewOf(item.thread)}
+                isActive={item.thread.id === threadId}
+              />
+            ),
+          )}
+        {items.length > NEEDS_YOU_LIMIT && (
+          <SidebarMenuItem>
+            <SidebarMenuButton className="text-muted-foreground" render={more}>
+              <span>{items.length - NEEDS_YOU_LIMIT} more</span>
+              <ArrowRightIcon className="ml-auto" />
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
+      </SidebarMenu>
+    </SidebarGroup>
+  );
+}
+
 // The threads shared with the person, most recently active first.
 function SharedThreads() {
   const shared = useQuery(sharedThreadsQuery);
@@ -467,21 +540,7 @@ function SharedThreads() {
       <SidebarGroupLabel>Shared with you</SidebarGroupLabel>
       <SidebarMenu>
         {list.slice(0, THREAD_LIMIT).map((thread) => (
-          <SidebarMenuItem key={thread.id}>
-            <WithTooltip label={thread.place}>
-              <SidebarMenuButton
-                size="lg"
-                isActive={thread.id === threadId}
-                render={<Link to="/t/$threadId" params={{ threadId: thread.id }} />}
-              >
-                <MessageSquareIcon />
-                <span className="grid min-w-0 leading-tight">
-                  <ThreadTitle thread={thread} className="truncate" />
-                  <span className="truncate text-xs text-muted-foreground">{thread.spaceName}</span>
-                </span>
-              </SidebarMenuButton>
-            </WithTooltip>
-          </SidebarMenuItem>
+          <SharedItem key={thread.id} thread={thread} isActive={thread.id === threadId} />
         ))}
         {list.length > THREAD_LIMIT && <ShowAll link={<Link to="/shared" />} />}
         {shared.isPending && <MenuSkeleton />}
@@ -498,7 +557,14 @@ function SharedThreads() {
 export function NavThreads() {
   const place = usePlace();
   if (!place) return null;
-  if (place.kind === "shared") return <SharedThreads />;
+  if (place.kind === "shared") {
+    return (
+      <>
+        <NeedsYou more={<Link to="/shared" search={{ show: "needs-you" }} />} />
+        <SharedThreads />
+      </>
+    );
+  }
   // A space its org's owner manages without being in it shows them only its settings.
   if (place.space.role === null) return <SpaceSection space={place.space} onNewFolder={() => {}} />;
   return <SpaceThreads key={place.space.id} space={place.space} />;

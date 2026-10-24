@@ -31,8 +31,10 @@ import { SpacePage } from "@/web/components/space-page";
 import { SpaceSettings } from "@/web/components/space-settings";
 import { DraftThread } from "@/web/components/draft-thread";
 import { ThreadPage } from "@/web/components/thread-page";
+import type { ThreadShow } from "@/web/components/thread-show";
 import { lastSpace } from "@/web/lib/last-space";
-import { sessionQuery, signInOptionsQuery, spacesQuery } from "@/web/lib/queries";
+import { tabOrg } from "@/web/lib/org-tab";
+import { meQuery, sessionQuery, signInOptionsQuery, spacesQuery } from "@/web/lib/queries";
 
 type Context = { context: { queryClient: QueryClient } };
 
@@ -65,6 +67,9 @@ async function redirectIfSignedIn({
 async function requireSession({ context }: Context) {
   const session = await context.queryClient.fetchQuery(sessionQuery);
   if (!session) throw redirect({ to: "/login" });
+  // A tab that does not know its org yet takes the one the server chose before anything shows, so
+  // its pages stay in that org whatever the session does next.
+  if (!tabOrg()) await context.queryClient.fetchQuery(meQuery);
   return { session };
 }
 
@@ -138,12 +143,15 @@ const homeRoute = createRoute({
   component: () => <PageHeader crumbs={[{ label: "No spaces" }]} />,
 });
 
-// The threads narrowed to the folder in `?folder=`.
+// The threads narrowed to the folder in `?folder=` and to those that need the reader or have
+// something new for them in `?show=`.
 const spaceRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/s/$spaceId",
-  validateSearch: (search: Record<string, unknown>): { folder?: string } =>
-    typeof search.folder === "string" ? { folder: search.folder } : {},
+  validateSearch: (search: Record<string, unknown>): { folder?: string; show?: ThreadShow } => ({
+    ...(typeof search.folder === "string" && { folder: search.folder }),
+    ...showOf(search),
+  }),
   component: SpacePage,
 });
 
@@ -175,9 +183,11 @@ const threadRoute = createRoute({
   component: ThreadPage,
 });
 
+// The threads narrowed as on a space's page, in `?show=`.
 const sharedRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/shared",
+  validateSearch: showOf,
   component: SharedPage,
 });
 
@@ -209,6 +219,10 @@ const orgProvidersRoute = createRoute({
 });
 
 // Text in `?q=`, or empty.
+function showOf(search: Record<string, unknown>): { show?: ThreadShow } {
+  return search.show === "needs-you" || search.show === "unread" ? { show: search.show } : {};
+}
+
 function textOf(search: Record<string, unknown>) {
   return typeof search.q === "string" && search.q ? { q: search.q } : {};
 }
