@@ -1,12 +1,20 @@
-// The agent's tools in settings, one collapsible section per toolset, its tools split into read-only
-// and interactive ones. Each group's icons set all its tools at once; each tool is allowed, asks
-// every time, or is blocked. For the org, only its owners change them; for a space, a tool can only
-// be made stricter than the org has it. Which sections are open is remembered in this browser for
-// the signed-in person.
+// The agent's tools in settings, one collapsible row per toolset with how many of its tools are
+// allowed, ask or are blocked. Inside, its tools are split under plain read-only and interactive
+// headings. Each heading's icons set all its tools at once; each tool is allowed, asks every time,
+// or is blocked. For the org, only its owners change them; for a space, a tool can only be made
+// stricter than the org has it. Which toolsets are open is remembered in this browser for the
+// signed-in person.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
-import { BanIcon, ChevronRightIcon, CircleCheckIcon, HandIcon, SearchIcon } from "lucide-react";
+import {
+  BanIcon,
+  ChevronRightIcon,
+  CircleCheckIcon,
+  HandIcon,
+  LockIcon,
+  SearchIcon,
+} from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import {
@@ -16,7 +24,7 @@ import {
   type ToolsetSetting,
   toolsetSettingListSchema,
 } from "@/shared/tools.ts";
-import { SettingsCard } from "@/web/components/settings/layout";
+import { ListSkeleton, LoadError } from "@/web/components/page-states";
 import { Badge } from "@/web/components/ui/badge";
 import {
   Collapsible,
@@ -25,6 +33,7 @@ import {
 } from "@/web/components/ui/collapsible";
 import { FieldError } from "@/web/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
+import { Popover, PopoverContent, PopoverTrigger } from "@/web/components/ui/popover";
 import { ToggleGroup, ToggleGroupItem } from "@/web/components/ui/toggle-group";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { apiClient } from "@/web/lib/api-client";
@@ -37,28 +46,43 @@ function spaceToolsKey(spaceId: string) {
   return ["spaces", spaceId, "tools"];
 }
 
-// Each mode, named for one tool and for a whole group.
-const MODES: { value: ToolMode; label: string; all: string; icon: ReactNode; tone: string }[] = [
+// Each mode, named for one tool, for a whole group and for a count of tools, with its colour when
+// pressed and in a count.
+const MODES: {
+  value: ToolMode;
+  label: string;
+  all: string;
+  counted: (count: number) => string;
+  icon: ReactNode;
+  tone: string;
+  color: string;
+}[] = [
   {
     value: "allow",
     label: "Always allow",
     all: "Allow all",
+    counted: (count) => `${count} allowed`,
     icon: <CircleCheckIcon />,
     tone: "aria-pressed:text-foreground",
+    color: "text-foreground",
   },
   {
     value: "ask",
     label: "Needs approval",
     all: "Ask for all",
+    counted: (count) => `${count} ${count === 1 ? "needs" : "need"} approval`,
     icon: <HandIcon />,
     tone: "aria-pressed:text-status-waiting",
+    color: "text-status-waiting",
   },
   {
     value: "block",
     label: "Blocked",
     all: "Block all",
+    counted: (count) => `${count} blocked`,
     icon: <BanIcon />,
     tone: "aria-pressed:text-destructive",
+    color: "text-destructive",
   },
 ];
 
@@ -79,8 +103,8 @@ function labelOf(tool: ToolSetting) {
   return tool.definition.title ?? tool.definition.name;
 }
 
-// Which sections the person has open, kept in this browser; a section never toggled is open as
-// the card says by default.
+// Which toolsets the person has open, kept in this browser; a toolset never toggled is open as the
+// list says by default.
 function useOpenSections(scope: "org" | "space") {
   const userId = useQuery(meQuery).data?.user.id ?? "";
   const key = `mage:tool-sections:${userId}:${scope}`;
@@ -96,7 +120,7 @@ function useOpenSections(scope: "org" | "space") {
       try {
         localStorage.setItem(key, JSON.stringify(all));
       } catch {
-        // Storage can be unavailable; the sections then open as they do by default.
+        // Storage can be unavailable; the toolsets then open as they do by default.
       }
     },
   };
@@ -129,8 +153,6 @@ function Toolsets({ toolsets, scope, canChange, onChange }: ToolsProps) {
           toolset={toolset}
           open={sections.isOpen(toolset.id, toolsets.length === 1)}
           onOpenChange={(open) => sections.set(toolset.id, open)}
-          groupOpen={(id) => sections.isOpen(`${toolset.id}/${id}`, true)}
-          onGroupOpenChange={(id, open) => sections.set(`${toolset.id}/${id}`, open)}
           scope={scope}
           canChange={canChange}
           onChange={onChange}
@@ -140,15 +162,30 @@ function Toolsets({ toolsets, scope, canChange, onChange }: ToolsProps) {
   );
 }
 
-// Every level starts at the same left edge; the chevron, type and borders show the nesting.
-function Chevron({ className }: { className?: string }) {
+// How many of the tools are in each mode: an icon and a number for each mode some tool is in.
+function ModeCounts({ tools }: { tools: ToolSetting[] }) {
+  const counts = MODES.map((mode) => ({
+    mode,
+    count: tools.filter((tool) => tool.mode === mode.value).length,
+  }));
   return (
-    <ChevronRightIcon
-      className={cn(
-        "shrink-0 text-muted-foreground transition-transform group-data-[panel-open]/trigger:rotate-90",
-        className,
-      )}
-    />
+    <span className="flex items-center gap-2.5">
+      <span className="sr-only">
+        {counts.map(({ mode, count }) => mode.counted(count)).join(", ")}
+      </span>
+      {counts
+        .filter(({ count }) => count > 0)
+        .map(({ mode, count }) => (
+          <span
+            key={mode.value}
+            aria-hidden
+            className={cn("flex items-center gap-1 tabular-nums [&_svg]:size-3.5", mode.color)}
+          >
+            {mode.icon}
+            {count}
+          </span>
+        ))}
+    </span>
   );
 }
 
@@ -156,8 +193,6 @@ function ToolsetSection({
   toolset,
   open,
   onOpenChange,
-  groupOpen,
-  onGroupOpenChange,
   scope,
   canChange,
   onChange,
@@ -165,8 +200,6 @@ function ToolsetSection({
   toolset: ToolsetSetting;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  groupOpen: (id: string) => boolean;
-  onGroupOpenChange: (id: string, open: boolean) => void;
 } & Omit<ToolsProps, "toolsets">) {
   const [filter, setFilter] = useState("");
   const needle = filter.trim().toLowerCase();
@@ -177,10 +210,16 @@ function ToolsetSection({
   );
   const readOnly = (tool: ToolSetting) => tool.definition.annotations?.readOnlyHint === true;
   const groups = [
-    { id: "read-only", name: "Read-only tools", tools: toolset.tools.filter(readOnly) },
+    {
+      id: "read-only",
+      name: "Read-only tools",
+      heading: "Read-only",
+      tools: toolset.tools.filter(readOnly),
+    },
     {
       id: "interactive",
       name: "Interactive tools",
+      heading: "Interactive",
       tools: toolset.tools.filter((tool) => !readOnly(tool)),
     },
   ].filter((group) => group.tools.length > 0);
@@ -191,17 +230,27 @@ function ToolsetSection({
       onOpenChange={onOpenChange}
       render={<section aria-label={toolset.title} />}
     >
-      <CollapsibleTrigger className="group/trigger flex w-full items-center gap-2 py-3 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-        <Chevron className="size-4" />
-        <span className="text-base font-semibold">{toolset.title}</span>
-        <Badge variant="secondary">{SOURCES[toolset.source]}</Badge>
-        <span className="ml-auto text-xs text-muted-foreground">
-          {count === 1 ? "1 tool" : `${count} tools`}
-        </span>
-      </CollapsibleTrigger>
-      <CollapsibleContent className="flex flex-col border-t">
+      <h2>
+        <CollapsibleTrigger className="group/trigger flex w-full items-start gap-2 py-3 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+          <span className="flex h-6 shrink-0 items-center">
+            <ChevronRightIcon className="size-4 text-muted-foreground transition-transform group-data-[panel-open]/trigger:rotate-90" />
+          </span>
+          {/* On a phone the counts go under the title. */}
+          <span className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-base leading-6 font-semibold">{toolset.title}</span>
+              <Badge variant="secondary">{SOURCES[toolset.source]}</Badge>
+            </span>
+            <span className="flex items-center gap-3 text-xs text-muted-foreground sm:ml-auto">
+              {count === 1 ? "1 tool" : `${count} tools`}
+              <ModeCounts tools={toolset.tools} />
+            </span>
+          </span>
+        </CollapsibleTrigger>
+      </h2>
+      <CollapsibleContent className="mb-3 ml-[7px] flex flex-col gap-1 border-l-2 pl-3 sm:pl-[15px]">
         {count > FILTER_FROM && (
-          <InputGroup className="my-2">
+          <InputGroup className="mb-1">
             <InputGroupInput
               type="search"
               placeholder="Filter tools"
@@ -214,23 +263,20 @@ function ToolsetSection({
             </InputGroupAddon>
           </InputGroup>
         )}
-        <div className="flex flex-col divide-y">
-          {groups.map((group) => (
-            <ToolGroup
-              key={group.id}
-              name={group.name}
-              tools={group.tools}
-              shown={group.tools.filter((tool) => shown.includes(tool))}
-              open={needle ? true : groupOpen(group.id)}
-              onOpenChange={(next) => onGroupOpenChange(group.id, next)}
-              scope={scope}
-              canChange={canChange}
-              onChange={onChange}
-            />
-          ))}
-        </div>
+        {groups.map((group) => (
+          <ToolGroup
+            key={group.id}
+            name={group.name}
+            heading={group.heading}
+            tools={group.tools}
+            shown={group.tools.filter((tool) => shown.includes(tool))}
+            scope={scope}
+            canChange={canChange}
+            onChange={onChange}
+          />
+        ))}
         {needle && shown.length === 0 && (
-          <p className="py-3 text-sm text-muted-foreground">No matches</p>
+          <p className="py-2 text-sm text-muted-foreground">No matches</p>
         )}
       </CollapsibleContent>
     </Collapsible>
@@ -239,19 +285,17 @@ function ToolsetSection({
 
 function ToolGroup({
   name,
+  heading,
   tools,
   shown,
-  open,
-  onOpenChange,
   scope,
   canChange,
   onChange,
 }: {
   name: string;
+  heading: string;
   tools: ToolSetting[];
   shown: ToolSetting[];
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
 } & Omit<ToolsProps, "toolsets">) {
   const modes = new Set(tools.map((tool) => tool.mode));
   // No mode when the group's tools differ.
@@ -261,17 +305,11 @@ function ToolGroup({
     scope === "space" && tools.every((tool) => looser(mode, tool.orgMode));
   if (shown.length === 0) return null;
   return (
-    <Collapsible
-      open={open}
-      onOpenChange={onOpenChange}
-      render={<div role="group" aria-label={name} />}
-    >
-      <div className="flex items-center gap-2 py-2">
-        <CollapsibleTrigger className="group/trigger flex flex-1 items-center gap-2 text-left text-sm font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-          <Chevron className="size-3.5" />
-          {name}
-          <Badge variant="outline">{tools.length}</Badge>
-        </CollapsibleTrigger>
+    <div role="group" aria-label={name}>
+      <div className="flex h-10 items-center justify-between gap-4">
+        <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
+          {heading} · {tools.length}
+        </h3>
         <ModeToggle
           label={`${name}: when the agent may use them`}
           value={value}
@@ -286,20 +324,18 @@ function ToolGroup({
           }
         />
       </div>
-      <CollapsibleContent>
-        <ul className="flex flex-col divide-y border-t border-dashed">
-          {shown.map((tool) => (
-            <ToolRow
-              key={tool.id}
-              tool={tool}
-              scope={scope}
-              canChange={canChange}
-              onChange={onChange}
-            />
-          ))}
-        </ul>
-      </CollapsibleContent>
-    </Collapsible>
+      <ul className="flex flex-col">
+        {shown.map((tool) => (
+          <ToolRow
+            key={tool.id}
+            tool={tool}
+            scope={scope}
+            canChange={canChange}
+            onChange={onChange}
+          />
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -355,6 +391,8 @@ function ModeToggle({
   );
 }
 
+// One tool on one line: its name, a lock where the org keeps the space from loosening it, its
+// description cut to a line, and its icons. Hovering or pressing the name shows the whole description.
 function ToolRow({
   tool,
   scope,
@@ -364,14 +402,49 @@ function ToolRow({
   tool: ToolSetting;
 } & Omit<ToolsProps, "toolsets">) {
   const label = labelOf(tool);
-  return (
-    <li aria-label={label} className="flex items-center justify-between gap-4 py-2">
-      <span className="flex min-w-0 flex-col">
-        <span className="text-sm">{label}</span>
-        {tool.definition.description && (
-          <span className="text-xs text-muted-foreground">{tool.definition.description}</span>
+  const description = tool.definition.description;
+  const locked = scope === "space" && tool.orgMode !== "allow";
+  const text = (
+    <>
+      <span className="flex min-w-0 items-center gap-1.5">
+        <span className="truncate text-sm">{label}</span>
+        {locked && (
+          <LockIcon
+            role="img"
+            aria-label={SET_BY_ORG}
+            className="size-3 shrink-0 text-muted-foreground"
+          />
         )}
       </span>
+      {description && <span className="truncate text-xs text-muted-foreground">{description}</span>}
+    </>
+  );
+  const textClass = "flex h-full min-w-0 flex-1 flex-col justify-center text-left";
+  return (
+    <li aria-label={label} className="flex h-12 items-center justify-between gap-4">
+      {description ? (
+        <Popover>
+          <PopoverTrigger
+            openOnHover
+            delay={500}
+            className={cn(
+              textClass,
+              "cursor-default rounded-sm outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+            )}
+          >
+            {text}
+          </PopoverTrigger>
+          <PopoverContent
+            side="top"
+            align="start"
+            className="w-auto max-w-[min(24rem,calc(100vw-2rem))] text-xs"
+          >
+            {description}
+          </PopoverContent>
+        </Popover>
+      ) : (
+        <span className={textClass}>{text}</span>
+      )}
       <ModeToggle
         label={`${label}: when the agent may use it`}
         value={tool.mode}
@@ -384,7 +457,28 @@ function ToolRow({
   );
 }
 
-export function OrgToolsCard({ canManage }: { canManage: boolean }) {
+// The toolsets as they are read: a placeholder while loading, and what went wrong when they could
+// not be read or changed.
+function ToolsetsState({
+  state,
+  error,
+  children,
+}: {
+  state: { isPending: boolean; error: Error | null };
+  error?: string;
+  children: ReactNode;
+}) {
+  if (state.error) return <LoadError />;
+  if (state.isPending) return <ListSkeleton />;
+  return (
+    <div className="flex flex-col gap-2">
+      {children}
+      <FieldError>{error}</FieldError>
+    </div>
+  );
+}
+
+export function OrgToolsList({ canManage }: { canManage: boolean }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string>();
   const tools = useQuery({
@@ -408,15 +502,7 @@ export function OrgToolsCard({ canManage }: { canManage: boolean }) {
   }
 
   return (
-    <SettingsCard
-      title="Tools"
-      description={
-        canManage
-          ? "What the agent can do in this organization's threads. Anyone who can message runs an allowed tool; a tool that needs approval asks each time. Spaces can only make these stricter."
-          : "What the agent can do in this organization's threads. Only the organization's owners can change this."
-      }
-      state={tools}
-    >
+    <ToolsetsState state={tools} error={error}>
       {tools.data && (
         <Toolsets
           toolsets={tools.data}
@@ -425,12 +511,11 @@ export function OrgToolsCard({ canManage }: { canManage: boolean }) {
           onChange={(toolIds, mode) => void change(toolIds, mode)}
         />
       )}
-      <FieldError>{error}</FieldError>
-    </SettingsCard>
+    </ToolsetsState>
   );
 }
 
-export function SpaceToolsCard({ spaceId }: { spaceId: string }) {
+export function SpaceToolsList({ spaceId }: { spaceId: string }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string>();
   const tools = useQuery({
@@ -459,11 +544,7 @@ export function SpaceToolsCard({ spaceId }: { spaceId: string }) {
   }
 
   return (
-    <SettingsCard
-      title="Tools"
-      description="What the agent can do in this space's threads. Anyone who can message runs an allowed tool, or decides when one needs approval. The organization sets the loosest each tool can be."
-      state={tools}
-    >
+    <ToolsetsState state={tools} error={error}>
       {tools.data && (
         <Toolsets
           toolsets={tools.data}
@@ -472,7 +553,6 @@ export function SpaceToolsCard({ spaceId }: { spaceId: string }) {
           onChange={(toolIds, mode) => void change(toolIds, mode)}
         />
       )}
-      <FieldError>{error}</FieldError>
-    </SettingsCard>
+    </ToolsetsState>
   );
 }

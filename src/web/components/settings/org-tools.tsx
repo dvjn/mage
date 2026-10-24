@@ -4,18 +4,23 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { SettingsTitle } from "@/web/components/settings/layout";
-import { OrgToolsCard } from "@/web/components/settings/tools-card";
+import { OrgToolsList } from "@/web/components/settings/tools-list";
 import { meQuery } from "@/web/lib/queries";
 
 export function OrgTools() {
   const me = useQuery(meQuery);
+  const canManage = me.data?.role === "owner";
   return (
     <>
       <SettingsTitle
         title="Tools"
-        description="What the agent can do in this organization's threads, by the toolset its tools come from."
+        description={
+          canManage
+            ? "What the agent can do in this organization's threads. Anyone who can message runs an allowed tool; a tool that needs approval asks each time. Spaces can only make these stricter."
+            : "What the agent can do in this organization's threads. Only the organization's owners can change this."
+        }
       />
-      <OrgToolsCard canManage={me.data?.role === "owner"} />
+      <OrgToolsList canManage={canManage} />
     </>
   );
 }

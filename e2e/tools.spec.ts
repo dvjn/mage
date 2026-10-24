@@ -230,7 +230,7 @@ test("a tool the space blocked is not offered, and the agent says it cannot use 
   await expect(card(page)).toHaveCount(0);
 });
 
-test("a space can only make a tool stricter than its org, and remembers the sections it closed", async ({
+test("a space can only make a tool stricter than its org, and remembers the toolsets it closed", async ({
   page,
 }) => {
   await signUp(page, "Ada Lovelace");
@@ -247,13 +247,23 @@ test("a space can only make a tool stricter than its org, and remembers the sect
   const thread = page.getByRole("region", { name: "Thread" });
   await expect(thread).toContainText("Built in");
   await expect(thread).toContainText("4 tools");
+  const toolset = thread.getByRole("button", { name: /^Thread Built in/ });
+  await expect(toolset).toContainText("3 allowed, 1 needs approval, 0 blocked");
   const move = page.getByRole("listitem", { name: "Move thread" });
   await expect(move.getByRole("button", { name: "Always allow" })).toBeDisabled();
+  await expect(move.getByRole("img", { name: "Set by the organization" })).toBeVisible();
+  await expect(
+    page
+      .getByRole("listitem", { name: "Rename thread" })
+      .getByRole("img", { name: "Set by the organization" }),
+  ).toHaveCount(0);
   await expect(move.getByRole("button", { name: "Needs approval" })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
   const interactive = page.getByRole("group", { name: "Interactive tools", exact: true });
+  // The groups are plain headings: only the toolset opens and closes.
+  await expect(thread.getByRole("button", { name: /^(Read-only|Interactive)/i })).toHaveCount(0);
   // Its tools differ, so no icon of the group is pressed.
   for (const name of ["Allow all", "Ask for all", "Block all"]) {
     await expect(interactive.getByRole("button", { name })).toHaveAttribute(
@@ -275,8 +285,9 @@ test("a space can only make a tool stricter than its org, and remembers the sect
     "aria-pressed",
     "true",
   );
+  await expect(toolset).toContainText("1 allowed, 0 need approval, 3 blocked");
 
-  await page.getByRole("button", { name: /^Thread/ }).click();
+  await toolset.click();
   await expect(move).toBeHidden();
   await page.reload();
   await expect(page.getByRole("region", { name: "Thread" })).toContainText("4 tools");
@@ -294,6 +305,9 @@ test("tools have their own settings page in the org and in a space", async ({ pa
     .click();
   await expect(page).toHaveURL(/\/org\/tools$/);
   await expect(page.getByRole("region", { name: "Thread" })).toContainText("Built in");
+  // The page's title is the only "Tools" heading; no card repeats it.
+  await expect(page.getByRole("heading", { name: "Tools", exact: true })).toHaveCount(1);
+  await expect(page.locator("[data-slot=card]")).toHaveCount(0);
 
   // A person's own space has no members to set.
   await page.goto(`/s/${spaceId}/settings`);
@@ -303,6 +317,8 @@ test("tools have their own settings page in the org and in a space", async ({ pa
   await nav.getByRole("link", { name: "Tools" }).click();
   await expect(page).toHaveURL(/\/settings\/tools$/);
   await expect(page.getByRole("region", { name: "Thread" })).toContainText("4 tools");
+  await expect(page.getByRole("heading", { name: "Tools", exact: true })).toHaveCount(1);
+  await expect(page.locator("[data-slot=card]")).toHaveCount(0);
   await page.goto(`/s/${spaceId}/settings/members`);
   await expect(page).toHaveURL(/\/settings$/);
 });

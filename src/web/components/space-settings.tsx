@@ -22,7 +22,7 @@ import {
 } from "@/web/components/settings/default-fields";
 import { SettingsCard, SettingsTitle } from "@/web/components/settings/layout";
 import { SettingsShell, settingsNavLink } from "@/web/components/settings/settings-nav";
-import { SpaceToolsCard } from "@/web/components/settings/tools-card";
+import { SpaceToolsList } from "@/web/components/settings/tools-list";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -307,9 +307,9 @@ export function SpaceTools() {
     <>
       <SettingsTitle
         title="Tools"
-        description={`What the agent can do in ${space.name}'s threads.`}
+        description={`What the agent can do in ${space.name}'s threads. Anyone who can message runs an allowed tool, or decides when one needs approval. The organization sets the loosest each tool can be.`}
       />
-      <SpaceToolsCard spaceId={space.id} />
+      <SpaceToolsList spaceId={space.id} />
     </>
   );
 }
