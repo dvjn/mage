@@ -68,7 +68,7 @@ test("a thread started in a folder stays there after a reload and moves to the t
   await page.reload();
   await expect(folder(page, "Engines").getByRole("link", { name: "Pistons" })).toBeVisible();
 
-  await itemMenu(page, "Pistons", "Move to…");
+  await itemMenu(page, "Pistons", "Move to");
   await page
     .getByRole("dialog", { name: "Move Pistons" })
     .getByRole("option", { name: "No folder" })

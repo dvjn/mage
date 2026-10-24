@@ -94,9 +94,7 @@ export function Composer({
           <PromptInputTextarea
             ref={textarea}
             aria-label="Message"
-            placeholder={
-              running ? "Steer the reply, or queue for the next one…" : "Write a message…"
-            }
+            placeholder={running ? "Steer the reply, or queue for the next one" : "Write a message"}
             onKeyDown={onKeyDown}
           />
         </PromptInputBody>

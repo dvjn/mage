@@ -211,14 +211,14 @@ function SpacesTable({
                       <div>
                         <DropdownMenuItem variant="destructive" disabled>
                           <Trash2Icon />
-                          Delete…
+                          Delete
                         </DropdownMenuItem>
                       </div>
                     </WithTooltip>
                   ) : (
                     <DropdownMenuItem variant="destructive" onClick={() => onDelete(space)}>
                       <Trash2Icon />
-                      Delete…
+                      Delete
                     </DropdownMenuItem>
                   )
                 }

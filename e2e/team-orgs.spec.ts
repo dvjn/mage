@@ -204,7 +204,7 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await page.goto("/org/people");
   await page.getByRole("row", { name: "Grace Hopper" }).hover();
   await page.getByRole("button", { name: "Actions for Grace Hopper" }).click();
-  await page.getByRole("menuitem", { name: "Remove from organization…" }).click();
+  await page.getByRole("menuitem", { name: "Remove from organization" }).click();
   await page.getByRole("button", { name: "Remove" }).click();
   await expect(page.getByRole("row", { name: "Grace Hopper" })).toBeHidden();
 

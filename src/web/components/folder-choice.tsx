@@ -1,5 +1,5 @@
 // Choosing a thread's folder, the one way everywhere: a searchable list with "No folder" pinned at
-// the top, the space's folders, the current one checked, and "New folder…" at the bottom, which
+// the top, the space's folders, the current one checked, and "New folder" at the bottom, which
 // makes a folder and chooses it. It opens from a breadcrumb or a button, or as a dialog from a menu.
 
 import { useQueryClient } from "@tanstack/react-query";
@@ -52,7 +52,7 @@ function FolderList({
     id === value && <CheckIcon className="ml-auto" aria-label="Current" />;
   return (
     <Command
-      // "No folder" and "New folder…" stay whatever is typed.
+      // "No folder" and "New folder" stay whatever is typed.
       filter={(itemValue, search) =>
         itemValue === "\u0000none" ||
         itemValue === "\u0000new" ||
@@ -84,7 +84,7 @@ function FolderList({
         <CommandGroup>
           <CommandItem value={"\u0000new"} onSelect={() => onNew(text.trim())}>
             <FolderPlusIcon />
-            New folder…
+            New folder
           </CommandItem>
         </CommandGroup>
       </CommandList>

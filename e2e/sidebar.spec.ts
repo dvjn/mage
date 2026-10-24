@@ -68,7 +68,7 @@ test("a draft's folder is picked in its breadcrumb, and a thread moves from it",
   await expect(page).toHaveURL(/\/s\/[^/]+\/new$/);
   await page.getByRole("button", { name: "Add to folder" }).click();
   await page.getByPlaceholder("Find a folder").fill("Engines");
-  await page.getByRole("option", { name: "New folder…" }).click();
+  await page.getByRole("option", { name: "New folder" }).click();
   const dialog = page.getByRole("dialog", { name: "New folder" });
   await expect(dialog.getByRole("textbox", { name: "Name" })).toHaveValue("Engines");
   await dialog.getByRole("button", { name: "Create" }).click();

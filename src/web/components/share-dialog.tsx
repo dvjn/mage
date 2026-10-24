@@ -129,7 +129,7 @@ function People({
         <InputGroup className="my-1">
           <InputGroupInput
             type="search"
-            placeholder="Filter people…"
+            placeholder="Filter people"
             aria-label="Filter people"
             value={filter}
             onChange={(event) => setFilter(event.target.value)}

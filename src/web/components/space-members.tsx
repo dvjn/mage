@@ -323,7 +323,7 @@ export function SpaceMembers({ space }: { space: SpaceSummary }) {
                       !row.locked && (
                         <DropdownMenuItem variant="destructive" onClick={() => setRemoving(row)}>
                           <UserMinusIcon />
-                          Remove from space…
+                          Remove from space
                         </DropdownMenuItem>
                       )
                     }

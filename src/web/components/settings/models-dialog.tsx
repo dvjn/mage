@@ -145,7 +145,7 @@ export function ModelsDialog({
             <Input
               type="search"
               aria-label="Filter models"
-              placeholder="Filter models…"
+              placeholder="Filter models"
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
             />

@@ -162,11 +162,11 @@ function ThreadItem({ thread }: { thread: ThreadSummary }) {
         <ItemMenu name={thread.title}>
           <DropdownMenuItem onClick={() => nav.act({ kind: "rename-thread", thread })}>
             <PencilIcon />
-            Rename…
+            Rename
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => setMoving(true)}>
             <FolderInputIcon />
-            Move to…
+            Move to
           </DropdownMenuItem>
           {nav.role === "owner" && (
             <>
@@ -216,7 +216,7 @@ function FolderItem({ folder }: { folder: FolderSummary }) {
           </DropdownMenuItem>
           <DropdownMenuItem onClick={() => nav.act({ kind: "rename-folder", folder })}>
             <PencilIcon />
-            Rename…
+            Rename
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

@@ -173,7 +173,7 @@ function OrgSubmenu({
           {canCreate && (
             <>
               <DropdownMenuSeparator />
-              <AddRow label="New organization…" onSelect={onCreate} />
+              <AddRow label="New organization" onSelect={onCreate} />
             </>
           )}
         </DropdownMenuSubContent>
@@ -352,7 +352,7 @@ export function SpaceSwitcher() {
               {canCreate && (
                 <DropdownMenuGroup className="shrink-0">
                   <DropdownMenuSeparator />
-                  <AddRow label="New space…" onSelect={() => setAdding(true)} />
+                  <AddRow label="New space" onSelect={() => setAdding(true)} />
                 </DropdownMenuGroup>
               )}
               <DropdownMenuSeparator />
@@ -384,7 +384,7 @@ export function SpaceSwitcher() {
                   <DropdownMenuGroup className="shrink-0">
                     {orgs.data.orgs.length <= 1 || orgsInline ? (
                       orgs.data.canCreate && (
-                        <AddRow label="New organization…" onSelect={() => setCreatingOrg(true)} />
+                        <AddRow label="New organization" onSelect={() => setCreatingOrg(true)} />
                       )
                     ) : (
                       <OrgSubmenu

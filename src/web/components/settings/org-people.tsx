@@ -854,7 +854,7 @@ function GroupRow({
           manages && (
             <DropdownMenuItem variant="destructive" onClick={onUnlink}>
               <UnlinkIcon />
-              Unlink group…
+              Unlink group
             </DropdownMenuItem>
           )
         }
@@ -896,7 +896,7 @@ function MemberRow({
   ) : (
     <DropdownMenuItem variant="destructive" onClick={onRemove}>
       <UserMinusIcon />
-      {person.viaGroup ? "Take back own role…" : "Remove from organization…"}
+      {person.viaGroup ? "Take back own role" : "Remove from organization"}
     </DropdownMenuItem>
   );
   return (

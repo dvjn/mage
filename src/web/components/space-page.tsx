@@ -80,7 +80,7 @@ export function SpacePage() {
             <InputGroup className="flex-1">
               <InputGroupInput
                 type="search"
-                placeholder="Filter threads…"
+                placeholder="Filter threads"
                 aria-label="Filter threads"
                 value={filter}
                 onChange={(event) => setFilter(event.target.value)}

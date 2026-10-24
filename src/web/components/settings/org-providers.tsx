@@ -100,17 +100,17 @@ function RowMenu({
       <DropdownMenuContent align="end" className="min-w-44">
         <DropdownMenuItem onClick={() => onAction({ kind: "models", connection })}>
           <ListChecksIcon />
-          Models…
+          Models
         </DropdownMenuItem>
         {key && (
           <DropdownMenuItem onClick={() => onAction({ kind: "rename", connection })}>
             <PencilIcon />
-            Rename label…
+            Rename label
           </DropdownMenuItem>
         )}
         <DropdownMenuItem onClick={() => onAction({ kind: "proxy", connection })}>
           <ServerCogIcon />
-          Proxy settings…
+          Proxy settings
         </DropdownMenuItem>
         <DropdownMenuSeparator />
         <DropdownMenuItem
