@@ -90,9 +90,16 @@ test("an API key's models become the org's and the space's defaults, which new t
   const model = page.getByRole("combobox", { name: "Model", exact: true });
   await expect(model).toContainText("Default · Echo");
   await expect(page.getByLabel("Reasoning effort")).toContainText("Default · Low");
+  // A model that can't think greys the effort, saying why.
+  await model.click();
+  await page.getByRole("listbox").getByRole("option", { name: "Echo Mini", exact: true }).click();
+  await expect(page.getByLabel("Reasoning effort")).toBeDisabled();
+  await page.getByLabel("Reasoning effort").hover({ force: true });
+  await expect(page.locator("[data-slot=tooltip-content]")).toHaveText("This model doesn't think");
   await model.click();
   await page.getByRole("listbox").getByRole("option", { name: "Echo", exact: true }).click();
   await expect(model).toContainText("Echo");
+  await expect(page.getByLabel("Reasoning effort")).toBeEnabled();
   await pickEffort(page, page, "High");
   await page.getByLabel("Message", { exact: true }).fill("How do engines compute?");
   await page.getByLabel("Message", { exact: true }).press("Enter");

@@ -1,15 +1,16 @@
 // The composer's model and reasoning effort pickers, for a thread or a thread not made yet: each
 // shows the thread's own choice, or "Default · X" while it follows its space's, then its org's, and
 // offers that default first. Model and effort go together: while the model named cannot reply,
-// both show the default that replies instead, with its effort. The effort shows only for a model
-// that can think. Both read alike, closed, hovered or open, and show a placeholder until the
-// models are known.
+// both show the default that replies instead, with its effort. The effort can be chosen only for a
+// model that can think; for any other it is greyed, saying why. Both read alike, closed, hovered or
+// open, and show a placeholder until the models are known.
 
 import type { ModelSummary } from "@/shared/models.ts";
 import type { Effort, ThreadDefaults } from "@/shared/threads.ts";
 import { EFFORT_LABELS, EffortPicker } from "@/web/components/effort-picker";
 import { fallbackReason, ModelPicker, useMissingModel } from "@/web/components/model-picker";
 import { modelName } from "@/web/components/settings/default-fields";
+import { WithTooltip } from "@/web/components/with-tooltip";
 
 // The two triggers' text, alike whatever they show.
 const TRIGGER =
@@ -60,6 +61,18 @@ export function ThreadPickers({
   // Whether the model that replies can think, so its effort can be chosen.
   const replying = used?.ref ?? (missing ? null : (model ?? defaultRef));
   const thinks = !!models.find((m) => m.ref === replying)?.reasoning;
+  const effortPicker = (
+    <EffortPicker
+      variant="compact"
+      // A thread's own effort goes with its own model, and gives way with it.
+      value={missing && used ? null : effort}
+      onChange={onEffort}
+      defaultLabel={`Default · ${defaultEffort}`}
+      disabled={!thinks}
+      loading={loading}
+      className={TRIGGER}
+    />
+  );
   return (
     <>
       <ModelPicker
@@ -88,16 +101,15 @@ export function ThreadPickers({
           },
         })}
       />
-      {(thinks || loading) && (
-        <EffortPicker
-          variant="compact"
-          // A thread's own effort goes with its own model, and gives way with it.
-          value={missing && used ? null : effort}
-          onChange={onEffort}
-          defaultLabel={`Default · ${defaultEffort}`}
-          loading={loading}
-          className={TRIGGER}
-        />
+      {thinks || loading ? (
+        effortPicker
+      ) : (
+        <WithTooltip label="This model doesn't think">
+          {/* A disabled control takes no pointer, so its wrapper holds the tooltip. */}
+          <span className="inline-flex" tabIndex={0}>
+            {effortPicker}
+          </span>
+        </WithTooltip>
       )}
     </>
   );
