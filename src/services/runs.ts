@@ -833,6 +833,8 @@ export function createRunWorker(options: RunWorkerOptions) {
       done: Promise.resolve(),
     };
     executions.set(run.id, execution);
+    // Claimed: the run's thread now shows the agent replying.
+    bus.activity({ threadId: run.threadId });
     execution.done = execute(execution);
   }
 

@@ -482,6 +482,22 @@ export const threadEvent = sqliteTable(
   (table) => [uniqueIndex("thread_event_thread_seq_idx").on(table.threadId, table.seq)],
 );
 
+// How far into a thread a person has seen: the seq of the newest event they saw there, and when.
+export const threadRead = sqliteTable(
+  "thread_read",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    lastSeenSeq: integer("last_seen_seq").notNull(),
+    seenAt: integer("seen_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.threadId] })],
+);
+
 // A wake-up of the agent in a thread. At most one run per thread is queued, running or waiting.
 export const run = sqliteTable(
   "run",

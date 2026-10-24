@@ -6,6 +6,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 
+import type { EventBus } from "@/ports/event-bus.ts";
 import type { GuestStore, ThreadInvite } from "@/ports/guests.ts";
 import type { Principal } from "@/ports/identity.ts";
 import type { SpaceRole } from "@/ports/spaces.ts";
@@ -27,6 +28,8 @@ export interface GuestsOptions {
   guests: GuestStore;
   threads: Pick<ThreadStore, "eventsAfter">;
   transact: Transact;
+  // Tells the guest's inbox when their access begins or ends.
+  bus: Pick<EventBus, "activity">;
   // Where the app is served; invite links lead there.
   baseUrl: string;
   now?: () => Date;
@@ -52,7 +55,7 @@ function mayRevoke(access: Access, principal: Principal, madeBy: string | null) 
 }
 
 export function createGuests(options: GuestsOptions) {
-  const { access, guests, threads, transact, baseUrl } = options;
+  const { access, guests, threads, transact, bus, baseUrl } = options;
   const now = options.now ?? (() => new Date());
 
   function pendingSummary(invite: ThreadInvite, canRevoke: boolean): PendingInvite {
@@ -164,6 +167,7 @@ export function createGuests(options: GuestsOptions) {
         );
       }
       guests.revoke(threadId, userId, principal.userId, at);
+      bus.activity({ threadId });
     },
 
     // Makes the principal a guest of the link's thread, or renews their access, and uses the link
@@ -204,6 +208,7 @@ export function createGuests(options: GuestsOptions) {
           accessUntil: holds ? later(current.accessUntil, until) : until,
         });
       });
+      bus.activity({ threadId });
       return { threadId };
     },
   };

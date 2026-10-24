@@ -1,4 +1,4 @@
-// Reads a thread's live event stream in the tests, one frame at a time.
+// Reads a thread's live event stream, or a person's inbox stream, in the tests, one frame at a time.
 
 import type { ThreadEventSummary } from "@/shared/threads.ts";
 
@@ -17,6 +17,31 @@ export async function openStream(
   const res = await app.request(`/api/v1/threads/${threadId}/events${query}`, {
     headers: { Cookie: cookie, ...(cursor.lastEventId && { "Last-Event-ID": cursor.lastEventId }) },
   });
+  const frames = framesOf(res);
+
+  // The next event, skipping heartbeats.
+  async function nextEvent() {
+    const frame = await frames.nextItem();
+    const event = JSON.parse(frame.data!) as ThreadEventSummary;
+    return { ...event, sseId: frame.id, sseEvent: frame.event };
+  }
+
+  return { res, ...frames, nextEvent };
+}
+
+// Opens the person's inbox stream and reads it one frame at a time.
+export async function openInbox(app: ReturnType<typeof setup>["app"], cookie: string) {
+  const res = await app.request("/api/v1/inbox/events", { headers: { Cookie: cookie } });
+  const frames = framesOf(res);
+  // The next item, skipping heartbeats, with its kind and data.
+  async function nextInbox() {
+    const frame = await frames.nextItem();
+    return { event: frame.event, data: JSON.parse(frame.data!) as Record<string, any> };
+  }
+  return { res, ...frames, nextInbox };
+}
+
+function framesOf(res: Response) {
   const reader = res.body?.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "";
 
@@ -47,12 +72,5 @@ export async function openStream(
     }
   }
 
-  // The next event, skipping heartbeats.
-  async function nextEvent() {
-    const frame = await nextItem();
-    const event = JSON.parse(frame.data!) as ThreadEventSummary;
-    return { ...event, sseId: frame.id, sseEvent: frame.event };
-  }
-
-  return { res, next, nextItem, nextEvent, close: () => reader?.cancel() };
+  return { next, nextItem, close: () => reader?.cancel() };
 }

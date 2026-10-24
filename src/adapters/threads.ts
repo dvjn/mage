@@ -1,12 +1,17 @@
-// Threads and their events kept in the thread and thread_event tables, with ULID ids.
+// Threads and their events kept in the thread and thread_event tables, with ULID ids, and what each
+// thread's log says its readers have not seen yet.
 
 import { and, asc, desc, eq, gt, inArray, type SQL, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { ulid } from "ulid";
 
-import type { StoredEvent, Thread, ThreadStore } from "@/ports/threads.ts";
+import type { StoredEvent, Thread, ThreadFacts, ThreadStore } from "@/ports/threads.ts";
 
 import { type Db, writeLock } from "./db.ts";
 import { orgFormerMember, space, thread, threadEvent, user } from "./schema.ts";
+
+// The events a reader is told about: a person's message, a finished reply and a failed run.
+const NOTABLE = ["message", "message.completed", "run.failed"];
 
 const columns = {
   id: thread.id,
@@ -69,6 +74,31 @@ export function createThreadStore(db: Db): ThreadStore {
       );
   }
 
+  // The newest message or reply in each thread matching `where` that has one.
+  function lastMessages(where: SQL) {
+    const kinds = ["message", "message.completed"];
+    const latest = db
+      .select({
+        threadId: threadEvent.threadId,
+        lastSeq: sql<number>`max(${threadEvent.seq})`.as("last_seq"),
+      })
+      .from(threadEvent)
+      .innerJoin(thread, eq(thread.id, threadEvent.threadId))
+      .where(and(where, inArray(threadEvent.type, kinds)))
+      .groupBy(threadEvent.threadId)
+      .as("latest");
+    const ids = db
+      .select({ id: threadEvent.id })
+      .from(threadEvent)
+      .innerJoin(
+        latest,
+        and(eq(latest.threadId, threadEvent.threadId), eq(latest.lastSeq, threadEvent.seq)),
+      )
+      .all()
+      .map((row) => row.id);
+    return ids.length === 0 ? [] : eventsWhere(inArray(threadEvent.id, ids));
+  }
+
   return {
     create(input) {
       return db
@@ -92,27 +122,74 @@ export function createThreadStore(db: Db): ThreadStore {
     },
 
     lastMessagesInSpace(spaceId) {
-      const kinds = ["message", "message.completed"];
+      return lastMessages(eq(thread.spaceId, spaceId));
+    },
+
+    lastMessagesOf(threadIds) {
+      return threadIds.length === 0 ? [] : lastMessages(inArray(thread.id, threadIds));
+    },
+
+    facts(threadIds) {
+      const facts = new Map<string, ThreadFacts>();
+      if (threadIds.length === 0) return facts;
+      const kinds = sql.join(
+        NOTABLE.map((kind) => sql`${kind}`),
+        sql`, `,
+      );
       const latest = db
         .select({
           threadId: threadEvent.threadId,
-          lastSeq: sql<number>`max(${threadEvent.seq})`.as("last_seq"),
+          notable: sql<
+            number | null
+          >`max(case when ${threadEvent.type} in (${kinds}) then ${threadEvent.seq} end)`.as(
+            "notable",
+          ),
+          failed: sql<
+            number | null
+          >`max(case when ${threadEvent.type} = 'run.failed' then ${threadEvent.seq} end)`.as(
+            "failed",
+          ),
+          created: sql<
+            number | null
+          >`max(case when ${threadEvent.type} = 'run.created' then ${threadEvent.seq} end)`.as(
+            "created",
+          ),
         })
         .from(threadEvent)
-        .innerJoin(thread, eq(thread.id, threadEvent.threadId))
-        .where(and(eq(thread.spaceId, spaceId), inArray(threadEvent.type, kinds)))
+        .where(inArray(threadEvent.threadId, threadIds))
         .groupBy(threadEvent.threadId)
         .as("latest");
-      const ids = db
-        .select({ id: threadEvent.id })
-        .from(threadEvent)
-        .innerJoin(
-          latest,
-          and(eq(latest.threadId, threadEvent.threadId), eq(latest.lastSeq, threadEvent.seq)),
+      const notableEvent = alias(threadEvent, "notable_event");
+      const failedEvent = alias(threadEvent, "failed_event");
+      const rows = db
+        .select({
+          threadId: latest.threadId,
+          notable: latest.notable,
+          notableBy: notableEvent.actorUserId,
+          failed: latest.failed,
+          created: latest.created,
+          failure: failedEvent.data,
+        })
+        .from(latest)
+        .leftJoin(
+          notableEvent,
+          and(eq(notableEvent.threadId, latest.threadId), eq(notableEvent.seq, latest.notable)),
         )
-        .all()
-        .map((row) => row.id);
-      return ids.length === 0 ? [] : eventsWhere(inArray(threadEvent.id, ids));
+        .leftJoin(
+          failedEvent,
+          and(eq(failedEvent.threadId, latest.threadId), eq(failedEvent.seq, latest.failed)),
+        )
+        .all();
+      for (const row of rows) {
+        const failedLast = row.failed !== null && row.failed > (row.created ?? 0);
+        facts.set(row.threadId, {
+          notable: row.notable === null ? null : { seq: row.notable, by: row.notableBy },
+          failed: failedLast
+            ? { seq: row.failed!, error: (row.failure as { error?: string } | null)?.error ?? "" }
+            : null,
+        });
+      }
+      return facts;
     },
 
     anyInSpace(spaceId) {

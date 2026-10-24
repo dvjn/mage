@@ -1,4 +1,5 @@
-// Threads and their event logs. Appending is the only way a thread's content changes.
+// Threads and their event logs, and how far into each thread each person has seen. Appending is the
+// only way a thread's content changes.
 
 import type { Effort, EventDataMap } from "@/shared/threads.ts";
 
@@ -42,6 +43,14 @@ export type StoredEvent = NewEvent & {
   createdAt: Date;
 };
 
+// What a thread's log says about what its readers have not seen: its newest notable event (a
+// person's message, a finished reply or a failed run) and who wrote it, null for the agent; and its
+// last run's failure when nothing has run since, with what went wrong.
+export interface ThreadFacts {
+  notable: { seq: number; by: string | null } | null;
+  failed: { seq: number; error: string } | null;
+}
+
 export interface ThreadStore {
   create(thread: {
     spaceId: string;
@@ -57,6 +66,10 @@ export interface ThreadStore {
   // The newest message from a person or reply from the agent in each of the space's threads that
   // has one.
   lastMessagesInSpace(spaceId: string): StoredEvent[];
+  // The same, for the threads named.
+  lastMessagesOf(threadIds: string[]): StoredEvent[];
+  // The facts of each of the threads named that has any events.
+  facts(threadIds: string[]): Map<string, ThreadFacts>;
   // Threads in the spaces whose titles contain the text, ignoring case, most recently active
   // first, at most `limit` of them.
   // Untitled threads match as `untitled`.
@@ -79,4 +92,11 @@ export interface ThreadStore {
   append(threadId: string, event: NewEvent, title?: string): StoredEvent;
   // The thread's events with seq above `after`, in order.
   eventsAfter(threadId: string, after: number): StoredEvent[];
+}
+
+export interface ThreadReadStore {
+  // The seq each of the threads named was seen up to by the user, for those they have seen.
+  seen(userId: string, threadIds: string[]): Map<string, number>;
+  // Records the user saw the thread up to `seq`, never moving back; returns how far they have now.
+  mark(userId: string, threadId: string, seq: number, at: Date): number;
 }

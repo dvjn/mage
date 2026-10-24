@@ -82,7 +82,7 @@ export const sharedThreadSchema = threadSchema.extend({
   // Where it is, as it reads: its space and org, or the space alone when it is named for the org.
   place: z.string(),
   accessUntil: z.iso.datetime().nullable(),
-  activity: threadActivitySchema.nullable(),
+  activity: threadActivitySchema,
 });
 
 export type SharedThread = z.infer<typeof sharedThreadSchema>;

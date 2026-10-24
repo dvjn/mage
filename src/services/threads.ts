@@ -5,9 +5,12 @@
 // posted while it is busy steers the run, waits for the next one, or interrupts the run, and its
 // author can change it until the agent takes it in. Anyone who can post can stop the run, or try
 // the last one again when it failed or was stopped; a run waiting for a decision on a tool call is
-// queued again to be stopped. Lists say what the agent is doing in each thread: replying, or
-// waiting for a decision. Who may do each is the thread access rule's; a thread's guests find it,
-// and post in it, beside the threads of their own spaces.
+// queued again to be stopped. Lists say what each thread holds for the reader: what the agent is
+// doing in it, whether they may decide on the call it waits for, its newest notable event, its last
+// run's failure, and how far they have seen it, which reading it and posting in it move on. Each
+// reader's inbox follows those changes for every thread they can read. Who may do each is the
+// thread access rule's; a thread's guests find it, and post in it, beside the threads of their own
+// spaces.
 
 import type { DeltaStore } from "@/ports/deltas.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
@@ -15,7 +18,7 @@ import type { GuestStore } from "@/ports/guests.ts";
 import type { Principal } from "@/ports/identity.ts";
 import type { Run, RunStore } from "@/ports/runs.ts";
 import type { SpaceStore } from "@/ports/spaces.ts";
-import type { StoredEvent, Thread, ThreadStore } from "@/ports/threads.ts";
+import type { StoredEvent, Thread, ThreadReadStore, ThreadStore } from "@/ports/threads.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Titles } from "@/services/titles.ts";
@@ -30,6 +33,7 @@ import {
   type Delivery,
   type Effort,
   QUIET_PREFIX,
+  type InboxItem,
   type ThreadActivity,
   type ThreadDetail,
   type ThreadFeedItem,
@@ -43,10 +47,12 @@ export interface ThreadsOptions {
   spaces: Spaces;
   // Reads a thread's space for its defaults, whoever reads the thread.
   spaceStore: Pick<SpaceStore, "find">;
-  access: Pick<ThreadAccess, "can" | "require">;
-  guests: Pick<GuestStore, "threadsOf">;
+  access: Pick<ThreadAccess, "can" | "of" | "require">;
+  guests: Pick<GuestStore, "threadsOf" | "activeIn">;
   folders: Pick<Folders, "requireIn">;
   threads: ThreadStore;
+  // How far each person has seen each thread.
+  reads: ThreadReadStore;
   runs: Pick<
     RunStore,
     "active" | "activeIn" | "activeInSpace" | "create" | "latest" | "requestCancel" | "resume"
@@ -68,6 +74,8 @@ export type Threads = ReturnType<typeof createThreads>;
 export const UNTITLED = "Untitled";
 const TITLE_LENGTH = 60;
 export const SEARCH_LIMIT = 50;
+// How long an inbox gathers changes before telling them.
+const INBOX_DELAY_MS = 50;
 
 // Markdown as the text it shows: without code fences, heading, quote and list markers, emphasis
 // and inline code marks, and with links and images as their text.
@@ -137,6 +145,7 @@ export function createThreads(options: ThreadsOptions) {
     bus,
     titles,
     tools,
+    reads,
   } = options;
   const now = options.now ?? (() => new Date());
 
@@ -148,27 +157,80 @@ export function createThreads(options: ThreadsOptions) {
     return run;
   }
 
-  // What the agent is doing in each of the threads with an active run, by thread.
-  function activities(active: Run[]) {
-    const byThread = new Map<string, ThreadActivity>();
-    for (const run of active) {
-      const since = (run.startedAt ?? run.createdAt).toISOString();
-      if (run.status !== "waiting") {
-        byThread.set(run.threadId, { kind: "working", since, runId: run.id });
-        continue;
-      }
-      const transcript = transcriptOf(threads.eventsAfter(run.threadId, 0).map(eventSummary));
-      const call = transcript.rows.find(
-        (row) => row.kind === "tool" && row.id === transcript.run?.waitingOn,
-      );
-      byThread.set(run.threadId, {
-        kind: "waiting",
-        since: call?.kind === "tool" ? call.requestedAt : since,
-        runId: run.id,
-        ...(call?.kind === "tool" && { toolId: call.toolId }),
-      });
+  // The thread's active run as its list shows it, and whether the reader may decide on the call it
+  // waits for.
+  function runActivity(userId: string, thread: Thread, run: Run | undefined) {
+    if (!run) return { run: null, canApprove: false };
+    const since = (run.startedAt ?? run.createdAt).toISOString();
+    if (run.status !== "waiting") {
+      return {
+        run: {
+          status: run.status === "queued" ? ("queued" as const) : ("running" as const),
+          since,
+        },
+        canApprove: false,
+      };
     }
-    return byThread;
+    const transcript = transcriptOf(threads.eventsAfter(run.threadId, 0).map(eventSummary));
+    const call = transcript.rows.find(
+      (row) => row.kind === "tool" && row.id === transcript.run?.waitingOn,
+    );
+    const toolId = call?.kind === "tool" ? call.toolId : undefined;
+    const space = toolId ? spaceStore.find(thread.spaceId) : null;
+    return {
+      run: {
+        status: "waiting" as const,
+        since: call?.kind === "tool" ? call.requestedAt : since,
+        ...(toolId && { toolId }),
+      },
+      canApprove: !!toolId && !!space && tools.levelFor(userId, thread, space, toolId) === "run",
+    };
+  }
+
+  // The threads as the reader's lists show them: each with the start of its newest message or
+  // reply among `previews`, and what it holds for them.
+  function itemsOf(
+    userId: string,
+    list: Thread[],
+    active: Run[],
+    previews: StoredEvent[],
+  ): ThreadListItem[] {
+    const ids = list.map((thread) => thread.id);
+    const facts = threads.facts(ids);
+    const seen = reads.seen(userId, ids);
+    const runOf = new Map(active.map((run) => [run.threadId, run]));
+    const previewBy = new Map(previews.map((event) => [event.threadId, previewOf(event)]));
+    return list.map((thread) => {
+      const fact = facts.get(thread.id);
+      const activity: ThreadActivity = {
+        ...runActivity(userId, thread, runOf.get(thread.id)),
+        lastNotableSeq: fact?.notable?.seq ?? 0,
+        lastNotableBy: fact?.notable?.by ?? null,
+        failed: fact?.failed ?? null,
+        lastSeenSeq: seen.get(thread.id) ?? 0,
+      };
+      return { ...threadSummary(thread), preview: previewBy.get(thread.id) ?? null, activity };
+    });
+  }
+
+  // The thread as the reader's inbox tells it, or null when they cannot read it.
+  function inboxItem(principal: Principal, id: string): InboxItem | null {
+    const thread = threads.find(id);
+    const via = thread && access.of(principal, thread);
+    if (!thread || !via) return null;
+    const [item] = itemsOf(
+      principal.userId,
+      [thread],
+      runs.activeIn([id]),
+      threads.lastMessagesOf([id]),
+    );
+    return { kind: "thread", thread: item!, shared: via.via === "guest" };
+  }
+
+  // Whether the principal may still read the thread.
+  function readable(principal: Principal, id: string) {
+    const thread = threads.find(id);
+    return !!thread && access.can(principal, thread, "read");
   }
 
   // The thread when the principal may take the action in it.
@@ -193,6 +255,8 @@ export function createThreads(options: ThreadsOptions) {
         // Names the thread when nothing has yet.
         titleFrom(text),
       );
+      // The author has seen what they answered.
+      reads.mark(principal.userId, thread.id, message.seq, now());
       if (quiet) return;
       if (!runs.active(thread.id)) {
         startRun(
@@ -237,15 +301,12 @@ export function createThreads(options: ThreadsOptions) {
     // The space's threads, each with the start of its newest message or reply.
     list(principal: Principal, spaceId: string): ThreadListItem[] {
       spaces.require(principal, spaceId);
-      const previews = new Map(
-        threads.lastMessagesInSpace(spaceId).map((event) => [event.threadId, previewOf(event)]),
+      return itemsOf(
+        principal.userId,
+        threads.listInSpace(spaceId),
+        runs.activeInSpace(spaceId),
+        threads.lastMessagesInSpace(spaceId),
       );
-      const activity = activities(runs.activeInSpace(spaceId));
-      return threads.listInSpace(spaceId).map((thread) => ({
-        ...threadSummary(thread),
-        preview: previews.get(thread.id) ?? null,
-        activity: activity.get(thread.id) ?? null,
-      }));
     },
 
     // Threads whose titles contain the text, ignoring case, untitled ones as "Untitled", in every
@@ -282,8 +343,13 @@ export function createThreads(options: ThreadsOptions) {
     // The threads the principal is a guest in, with their spaces' and orgs' names.
     shared(principal: Principal): SharedThread[] {
       const shared = guests.threadsOf(principal.userId, now());
-      const activity = activities(runs.activeIn(shared.map(({ thread }) => thread.id)));
-      return shared.map((shared) => ({
+      const items = itemsOf(
+        principal.userId,
+        shared.map(({ thread }) => thread),
+        runs.activeIn(shared.map(({ thread }) => thread.id)),
+        [],
+      );
+      return shared.map((shared, index) => ({
         ...threadSummary(shared.thread),
         spaceName: shared.spaceName,
         orgName: shared.orgName,
@@ -291,7 +357,7 @@ export function createThreads(options: ThreadsOptions) {
           ? shared.spaceName
           : `${shared.spaceName} · ${shared.orgName}`,
         accessUntil: shared.accessUntil?.toISOString() ?? null,
-        activity: activity.get(shared.thread.id) ?? null,
+        activity: items[index]!.activity,
       }));
     },
 
@@ -350,11 +416,7 @@ export function createThreads(options: ThreadsOptions) {
       };
     },
 
-    // Whether the principal may still read the thread.
-    readable(principal: Principal, id: string) {
-      const thread = threads.find(id);
-      return !!thread && access.can(principal, thread, "read");
-    },
+    readable,
 
     // A folder it moves to must be in its space; null moves it to the top of the space.
     async update(
@@ -372,18 +434,87 @@ export function createThreads(options: ThreadsOptions) {
       // Seen again after the model check, which waits on providers.
       const thread = visible(principal, id, "arrange");
       if (changes.folderId !== undefined) folders.requireIn(thread.spaceId, changes.folderId);
-      return threadSummary(
-        threads.update(id, {
-          ...changes,
-          ...(changes.title !== undefined && { titleSource: "person" as const }),
-        }),
-      );
+      const updated = threads.update(id, {
+        ...changes,
+        ...(changes.title !== undefined && { titleSource: "person" as const }),
+      });
+      bus.activity({ threadId: id });
+      return threadSummary(updated);
     },
 
     // Its events go with it.
     remove(principal: Principal, id: string) {
-      visible(principal, id, "delete");
+      const thread = visible(principal, id, "delete");
+      const guestIds = guests.activeIn(id, now()).map((guest) => guest.userId);
       threads.delete(id);
+      bus.activity({ threadId: id, gone: { spaceId: thread.spaceId, guests: guestIds } });
+    },
+
+    // Records the reader saw the thread up to `seq`, at most its newest event, never moving back,
+    // and tells their inboxes.
+    markRead(principal: Principal, id: string, seq: number) {
+      const thread = visible(principal, id);
+      const seen = reads.mark(principal.userId, id, Math.min(seq, thread.lastEventSeq), now());
+      bus.activity({ threadId: id, read: { userId: principal.userId, seq: seen } });
+      return { seq: seen };
+    },
+
+    // Delivers what changes for the principal in the threads they can read: each such thread as it
+    // now reads for them, a few at a time, how far they saw a thread, and each thread they can no
+    // longer read, deleted or with their access ended. `recheck` finds the threads they lost access
+    // to without anything happening in them. Returns the function that stops it.
+    inbox(principal: Principal, deliver: (item: InboxItem) => void) {
+      // The threads they could read when last looked at; their shared ones from the start.
+      const known = new Set(
+        guests.threadsOf(principal.userId, now()).map(({ thread }) => thread.id),
+      );
+      const pending = new Set<string>();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      function flush() {
+        timer = undefined;
+        for (const id of pending) {
+          const item = inboxItem(principal, id);
+          if (item) {
+            known.add(id);
+            deliver(item);
+          } else if (known.delete(id)) {
+            deliver({ kind: "gone", threadId: id });
+          }
+        }
+        pending.clear();
+      }
+      const unsubscribe = bus.onActivity((change) => {
+        const { threadId, read, gone } = change;
+        if (read) {
+          if (read.userId === principal.userId) deliver({ kind: "read", threadId, seq: read.seq });
+          return;
+        }
+        if (gone) {
+          pending.delete(threadId);
+          const had =
+            known.delete(threadId) ||
+            gone.guests.includes(principal.userId) ||
+            !!spaces.findVisible(principal, gone.spaceId);
+          if (had) deliver({ kind: "gone", threadId });
+          return;
+        }
+        pending.add(threadId);
+        // Changes that come together, as a run's steps do, are told once.
+        timer ??= setTimeout(flush, INBOX_DELAY_MS);
+      });
+      return {
+        stop() {
+          unsubscribe();
+          clearTimeout(timer);
+        },
+        recheck() {
+          for (const id of known) {
+            if (readable(principal, id)) continue;
+            known.delete(id);
+            deliver({ kind: "gone", threadId: id });
+          }
+        },
+      };
     },
 
     postMessage(principal: Principal, id: string, text: string, mode: Delivery = "steer") {
@@ -429,6 +560,7 @@ export function createThreads(options: ThreadsOptions) {
         throw new ServiceError(409, "The agent is not replying");
       }
       bus.wake(thread.id);
+      bus.activity({ threadId: thread.id });
     },
 
     // Starts a run that tries the thread's last run again, when it failed or was stopped and

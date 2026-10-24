@@ -73,6 +73,7 @@ import {
   newThreadSchema,
   pendingChangeSchema,
   retrySchema,
+  threadReadSchema,
   threadSearchSchema,
   threadUpdateSchema,
   toolDecisionSchema,
@@ -227,6 +228,7 @@ const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or a fo
 const message = jsonBody(messageInputSchema, "text is required; mode is steer, queue or interrupt");
 const pendingChange = jsonBody(pendingChangeSchema, "Give a text, or a mode of steer or queue");
 const retry = jsonBody(retrySchema, "runId is required");
+const threadRead = jsonBody(threadReadSchema, "seq is required");
 const toolDecision = jsonBody(toolDecisionSchema, "allow is required; scope is once or for_now");
 const orgToolChange = jsonBody(orgToolChangeSchema, "Give a toolId and enabled");
 const spaceToolChange = jsonBody(
@@ -717,6 +719,48 @@ function createApi(options: AppOptions) {
             }
             await write(() => stream.write(": heartbeat\n\n").then(() => {}));
           }
+        });
+      })
+      .put("/v1/threads/:id/read", threadRead, (c) => {
+        const { seq } = c.req.valid("json");
+        return c.json(threads.markRead(signedIn(c.var.principal), c.req.param("id"), seq), 200);
+      })
+      .get("/v1/inbox/events", (c) => {
+        const principal = signedIn(c.var.principal);
+        return streamSSE(c, async (stream) => {
+          // One write at a time, in order.
+          let writing = Promise.resolve();
+          function write(send: () => Promise<void>) {
+            writing = writing.then(send, send);
+            return writing;
+          }
+          const inbox = threads.inbox(principal, (item) => {
+            void write(() =>
+              item.kind === "thread"
+                ? stream.writeSSE({
+                    event: "thread",
+                    data: JSON.stringify({ thread: item.thread, shared: item.shared }),
+                  })
+                : item.kind === "read"
+                  ? stream.writeSSE({
+                      event: "thread-read",
+                      data: JSON.stringify({ threadId: item.threadId, seq: item.seq }),
+                    })
+                  : stream.writeSSE({
+                      event: "thread-gone",
+                      data: JSON.stringify({ threadId: item.threadId }),
+                    }),
+            );
+          });
+          stream.onAbort(() => inbox.stop());
+          while (!stream.aborted) {
+            await stream.sleep(options.heartbeatMs ?? HEARTBEAT_MS);
+            if (stream.aborted) break;
+            // Threads the reader can no longer read, as a guest whose access ended, are gone.
+            inbox.recheck();
+            await write(() => stream.write(": heartbeat\n\n").then(() => {}));
+          }
+          inbox.stop();
         });
       })
       .post("/v1/threads/:id/messages", message, (c) => {

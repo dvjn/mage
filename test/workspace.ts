@@ -21,6 +21,7 @@ import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createRunStore } from "@/adapters/runs.ts";
 import * as schema from "@/adapters/schema.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
+import { createThreadReadStore } from "@/adapters/thread-reads.ts";
 import { createThreadStore } from "@/adapters/threads.ts";
 import { createToolSettingStore } from "@/adapters/tool-settings.ts";
 import { createApp } from "@/http/app.ts";
@@ -201,6 +202,7 @@ export function setup(
     guests: guestStore,
     folders,
     threads: threadStore,
+    reads: createThreadReadStore(db),
     runs: runStore,
     deltas: deltaStore,
     models,
@@ -271,6 +273,7 @@ export function setup(
       guests: guestStore,
       threads: threadStore,
       transact,
+      bus: countingBus,
       baseUrl,
     }),
     orgs,

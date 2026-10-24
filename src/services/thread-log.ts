@@ -1,5 +1,6 @@
 // Writes to threads' event logs: appends events in one transaction, then tells the thread's
-// followers about each, so nothing is announced that was not stored.
+// followers about each, so nothing is announced that was not stored, and people's inboxes that the
+// thread may read differently now.
 
 import type { EventBus } from "@/ports/event-bus.ts";
 import type { NewEvent, StoredEvent, ThreadStore } from "@/ports/threads.ts";
@@ -57,6 +58,8 @@ export function createThreadLog(options: ThreadLogOptions) {
       );
       const events = appended.map(eventSummary);
       for (const event of events) bus.publish(threadId, { kind: "event", event });
+      // Run changes made in the write, such as waiting for a decision, show too.
+      bus.activity({ threadId });
       return { result, events };
     },
   };

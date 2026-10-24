@@ -425,7 +425,7 @@ describe("tool settings", () => {
 });
 
 describe("thread lists", () => {
-  it("say when the agent waits for a decision, and on which tool", async () => {
+  it("say when the agent waits for a decision, on which tool, and who may make it", async () => {
     const { ada, hedy, post, calls, worker, start, api, space, thread } = await toolThread();
     start();
     await post(hedy, "Rename it");
@@ -437,12 +437,15 @@ describe("thread lists", () => {
       activity: unknown;
     }[];
     expect(list.find((item) => item.id === thread.id)?.activity).toMatchObject({
-      kind: "waiting",
-      toolId: "thread.rename",
+      run: { status: "waiting", toolId: "thread.rename" },
+      canApprove: true,
     });
     const shared = (await (await api("GET", "/shared-threads", hedy.cookie)).json()) as {
       activity: unknown;
     }[];
-    expect(shared[0]?.activity).toMatchObject({ kind: "waiting" });
+    expect(shared[0]?.activity).toMatchObject({
+      run: { status: "waiting" },
+      canApprove: false,
+    });
   });
 });

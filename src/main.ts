@@ -27,6 +27,7 @@ import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createRunStore } from "@/adapters/runs.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
+import { createThreadReadStore } from "@/adapters/thread-reads.ts";
 import { createThreadStore } from "@/adapters/threads.ts";
 import { createToolSettingStore } from "@/adapters/tool-settings.ts";
 import { loadConfig } from "@/config.ts";
@@ -205,6 +206,7 @@ const app = createApp({
     guests: guestStore,
     folders,
     threads: threadStore,
+    reads: createThreadReadStore(db),
     runs: runStore,
     deltas,
     models,
@@ -234,6 +236,7 @@ const app = createApp({
     guests: guestStore,
     threads: threadStore,
     transact,
+    bus,
     baseUrl: config.baseUrl,
   }),
   logger,

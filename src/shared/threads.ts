@@ -29,22 +29,33 @@ export const threadSchema = z.object({
 
 export type ThreadSummary = z.infer<typeof threadSchema>;
 
-// What the agent is doing in a thread: replying, or waiting for a decision on a tool call, since
-// when, in which run and, while waiting, on which tool.
+// What a thread holds for one reader: the agent's active run (queued, replying, or waiting for a
+// decision on a tool call, since when and on which tool), its newest notable event (a person's
+// message, a finished reply or a failed run) and who wrote it (null for the agent), its last run's
+// failure while nothing has run since, how far the reader has seen, and whether they may decide on
+// the call the run waits for.
 export const threadActivitySchema = z.object({
-  kind: z.enum(["working", "waiting"]),
-  since: z.iso.datetime(),
-  runId: z.string(),
-  toolId: z.string().optional(),
+  run: z
+    .object({
+      status: z.enum(["queued", "running", "waiting"]),
+      since: z.iso.datetime(),
+      toolId: z.string().optional(),
+    })
+    .nullable(),
+  lastNotableSeq: z.number().int().nonnegative(),
+  lastNotableBy: z.string().nullable(),
+  failed: z.object({ seq: z.number().int().positive(), error: z.string() }).nullable(),
+  lastSeenSeq: z.number().int().nonnegative(),
+  canApprove: z.boolean(),
 });
 
 export type ThreadActivity = z.infer<typeof threadActivitySchema>;
 
 // A thread in its space's list, with the start of its newest message or reply and who wrote it,
-// and what the agent is doing in it.
+// and what it holds for the reader.
 export const threadListItemSchema = threadSchema.extend({
   preview: z.object({ author: z.string(), text: z.string() }).nullable(),
-  activity: threadActivitySchema.nullable(),
+  activity: threadActivitySchema,
 });
 
 export type ThreadListItem = z.infer<typeof threadListItemSchema>;
@@ -377,6 +388,20 @@ export const toolDecisionSchema = z.object({
   allow: z.boolean(),
   scope: toolScopeSchema.default("once"),
 });
+
+// How far into the thread the reader has seen.
+export const threadReadSchema = z.object({ seq: z.number().int().nonnegative() });
+
+// What a person's inbox stream says: a thread they can read changed, as it now reads for them and
+// whether they are its guest; they saw a thread up to a seq, here or on another device; or a thread
+// is gone for them, deleted or no longer theirs to read.
+export const inboxItemSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("thread"), thread: threadListItemSchema, shared: z.boolean() }),
+  z.object({ kind: z.literal("read"), threadId: z.string(), seq: z.number().int().nonnegative() }),
+  z.object({ kind: z.literal("gone"), threadId: z.string() }),
+]);
+
+export type InboxItem = z.infer<typeof inboxItemSchema>;
 
 // The run whose reply to try again.
 export const retrySchema = z.object({ runId: z.string().min(1) });
