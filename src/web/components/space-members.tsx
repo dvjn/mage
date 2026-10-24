@@ -1,8 +1,9 @@
-// Who is in a shared space: everyone in the org first (None, Viewer or Messager), then the people
-// and groups given a role, searched and read a page at a time on the server, each person with the
-// role they end up with and what gives it when that is not their own. Whoever manages the space
-// adds people and groups, changes roles and removes them after a confirmation, which says when a
-// group still covers the person. Nobody changes their own role, nor the last owner's.
+// Who is in a shared space, titled with how roles add up: everyone in the org first (None, Viewer
+// or Messager), then the people and groups given a role, searched and read a page at a time on the
+// server, each person with the role they end up with and what gives it when that is not their own.
+// Whoever manages the space adds people and groups, changes roles and removes them after a
+// confirmation, which says when a group still covers the person. Nobody changes their own role, nor
+// the last owner's.
 
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
@@ -30,7 +31,7 @@ import {
   RoleControl,
   Subject,
 } from "@/web/components/people-table";
-import { SettingsCard } from "@/web/components/settings/layout";
+import { SettingsCard, SettingsTitle } from "@/web/components/settings/layout";
 import { Time } from "@/web/components/time";
 import {
   AlertDialog,
@@ -330,72 +331,76 @@ export function SpaceMembers({ space }: { space: SpaceSummary }) {
   });
 
   return (
-    <SettingsCard
-      description={`Who can read and write in this space. Each person has the highest role given to them${withGroups ? ", to a group they are in," : ""} or to everyone.${manage ? "" : " Only the space's owners change this."}`}
-    >
-      <DataTable
-        table={table}
-        label="Members"
-        loading={!first}
-        failed={!!list.error}
-        empty={{ icon: <UsersIcon />, title: "Nobody is in this space" }}
-        rowProps={(row) => ({
-          label: row.kind === "everyone" ? `Everyone in ${row.orgName}` : row.name,
-        })}
-      >
-        <DataTableToolbar
-          table={table}
-          search="Search members"
-          action={
-            manage && (
-              <HeaderAction
-                icon={<UserPlusIcon />}
-                label="Add people"
-                onClick={() => setAdding(true)}
-              />
-            )
-          }
-        />
-        <FieldError>{error}</FieldError>
-      </DataTable>
-      <AddPeopleDialog
-        open={adding}
-        onOpenChange={setAdding}
-        title={`Add people to ${space.name}`}
-        kinds={["user", "group"]}
-        exclude={new Set(grants.map((row) => `${row.kind}:${row.id}`))}
-        roles={{ options: ROLES, initial: "messager" }}
-        canInvite={me.data?.role === "owner"}
-        onAdd={(option, role) => grant(option, role)}
+    <>
+      <SettingsTitle
+        title="Members"
+        description={`Who can read and write in this space. Each person has the highest role given to them${withGroups ? ", to a group they are in," : ""} or to everyone.${manage ? "" : " Only the space's owners change this."}`}
       />
-      <AlertDialog
-        open={!!removing}
-        onOpenChange={(open) => {
-          if (open) return;
-          setRemoving(null);
-          setRemoveError(undefined);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove {removing?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {removing?.kind === "group"
-                ? "Its people lose access unless they're added another way."
-                : removing && removing.coveredBy.length > 0
-                  ? `They stay in through ${keeping(removing.coveredBy).name} as ${ROLE_LABELS[keeping(removing.coveredBy).role]}.`
-                  : "They lose access to this space."}
-            </AlertDialogDescription>
-            <FieldError>{removeError}</FieldError>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void remove()}>
-              Remove
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </SettingsCard>
+      <SettingsCard>
+        <DataTable
+          table={table}
+          label="Members"
+          loading={!first}
+          failed={!!list.error}
+          empty={{ icon: <UsersIcon />, title: "Nobody is in this space" }}
+          rowProps={(row) => ({
+            label: row.kind === "everyone" ? `Everyone in ${row.orgName}` : row.name,
+          })}
+        >
+          <DataTableToolbar
+            table={table}
+            search="Search members"
+            action={
+              manage && (
+                <HeaderAction
+                  icon={<UserPlusIcon />}
+                  label="Add people"
+                  onClick={() => setAdding(true)}
+                />
+              )
+            }
+          />
+          <FieldError>{error}</FieldError>
+        </DataTable>
+        <AddPeopleDialog
+          open={adding}
+          onOpenChange={setAdding}
+          title={`Add people to ${space.name}`}
+          kinds={["user", "group"]}
+          exclude={new Set(grants.map((row) => `${row.kind}:${row.id}`))}
+          roles={{ options: ROLES, initial: "messager" }}
+          canInvite={me.data?.role === "owner"}
+          onAdd={(option, role) => grant(option, role)}
+        />
+        <AlertDialog
+          open={!!removing}
+          onOpenChange={(open) => {
+            if (open) return;
+            setRemoving(null);
+            setRemoveError(undefined);
+          }}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Remove {removing?.name}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                {removing?.kind === "group"
+                  ? "Its people lose access unless they're added another way."
+                  : removing && removing.coveredBy.length > 0
+                    ? `They stay in through ${keeping(removing.coveredBy).name} as ${ROLE_LABELS[keeping(removing.coveredBy).role]}.`
+                    : "They lose access to this space."}
+              </AlertDialogDescription>
+              <FieldError>{removeError}</FieldError>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction variant="destructive" onClick={() => void remove()}>
+                Remove
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </SettingsCard>
+    </>
   );
 }

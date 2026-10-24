@@ -291,12 +291,7 @@ export function SpaceMembersPage() {
   const { spaceId, space } = useSettingsSpace();
   if (!space) return null;
   if (space.kind !== "shared") return <Navigate to="/s/$spaceId/settings" params={{ spaceId }} />;
-  return (
-    <>
-      <SettingsTitle title="Members" description={`Who is in ${space.name}.`} />
-      <SpaceMembers space={space} />
-    </>
-  );
+  return <SpaceMembers space={space} />;
 }
 
 // The agent's tools in the space's threads.

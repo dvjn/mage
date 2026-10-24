@@ -1,8 +1,9 @@
 // The organization's model providers: a card with a table of its connections (provider and label,
 // how it connects, the account or masked key, how many of its models are on, when it was added),
 // each with a menu to choose its models, rename an API key, set its proxy or remove it, and adding
-// one through the add-provider journey. On a phone each row is two lines. The org's owners manage
-// them; its members see them. A team org connects with API keys only.
+// one through the add-provider journey, started from the empty state while there are none. On a
+// phone each row is two lines. The org's owners manage them; its members see them. A team org
+// connects with API keys only.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -333,31 +334,39 @@ export function OrgProviders() {
         }
         state={connections}
       >
-        <div className="flex flex-col gap-2">
-          {/* Where a table's search row would hold its action. */}
-          {manages && (
-            <div className="flex justify-end">
-              <HeaderAction
-                icon={<PlusIcon />}
-                label="Add provider"
-                onClick={() => setAdding(true)}
-              />
-            </div>
-          )}
-          {list.length === 0 ? (
-            <EmptyState
-              icon={<BlocksIcon />}
-              title="No model providers yet"
-              description={
-                manages
-                  ? "Add one to give this organization's threads models to reply with."
-                  : "An owner of the organization adds them."
-              }
-            />
-          ) : (
+        {list.length === 0 ? (
+          <EmptyState
+            icon={<BlocksIcon />}
+            title="No model providers yet"
+            description={
+              manages
+                ? "Add one to give this organization's threads models to reply with."
+                : "An owner of the organization adds them."
+            }
+            action={
+              manages && (
+                <Button onClick={() => setAdding(true)}>
+                  <PlusIcon />
+                  Add provider
+                </Button>
+              )
+            }
+          />
+        ) : (
+          <div className="flex flex-col gap-2">
+            {/* Where a table's search row would hold its action. */}
+            {manages && (
+              <div className="flex justify-end">
+                <HeaderAction
+                  icon={<PlusIcon />}
+                  label="Add provider"
+                  onClick={() => setAdding(true)}
+                />
+              </div>
+            )}
             <ProvidersTable connections={list} manages={manages} onAction={setAction} />
-          )}
-        </div>
+          </div>
+        )}
       </SettingsCard>
       <AddProviderDialog
         open={adding}
