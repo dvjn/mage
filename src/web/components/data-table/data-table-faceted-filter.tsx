@@ -57,7 +57,10 @@ export function DataTableFacetedFilter<TData extends RowData, TValue>({
         {title}
         {chosen && (
           <>
-            <Separator orientation="vertical" className="mx-0.5 data-vertical:h-4" />
+            <Separator
+              orientation="vertical"
+              className="mx-0.5 data-vertical:h-4 data-vertical:self-center"
+            />
             <Badge variant="secondary" className="rounded-sm px-1 font-normal">
               {chosen.label}
             </Badge>
