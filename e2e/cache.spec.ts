@@ -101,5 +101,5 @@ test("signing out leaves nothing of the user for the next one", async ({ page, c
   const sidebar = page.locator("[data-sidebar=sidebar]");
   await expect(sidebar.getByText("Grace Hopper").first()).toBeVisible();
   await expect(sidebar.getByRole("link", { name: "Ada's private notes" })).toHaveCount(0);
-  await expect(page.getByRole("list", { name: "Threads" })).toContainText("No threads yet.");
+  await expect(page.getByRole("main").getByText("No threads yet", { exact: true })).toBeVisible();
 });

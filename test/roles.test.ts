@@ -68,6 +68,25 @@ describe("space roles", () => {
     );
   });
 
+  it("keeps the space's settings to its owner", async () => {
+    const { api, ada, grace, alan, space } = await sharedSpace();
+
+    for (const cookie of [grace.cookie, alan.cookie]) {
+      const writes = [
+        api("PATCH", `/spaces/${space.id}`, cookie, { name: "Mine" }),
+        api("PATCH", `/spaces/${space.id}/defaults`, cookie, { effort: "low" }),
+        api("PUT", `/spaces/${space.id}/members`, cookie, {
+          kind: "user",
+          id: ada.userId,
+          role: null,
+        }),
+        api("PUT", `/spaces/${space.id}/everyone`, cookie, { role: "viewer" }),
+        api("DELETE", `/spaces/${space.id}`, cookie),
+      ];
+      expect((await Promise.all(writes)).map((res) => res.status)).toEqual(Array(5).fill(403));
+    }
+  });
+
   it("lets the owner manage the space", async () => {
     const { api, ada, space, thread } = await sharedSpace();
 

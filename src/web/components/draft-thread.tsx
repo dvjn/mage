@@ -2,10 +2,11 @@
 // effort pickers on the space's defaults, then its org's, which can be changed before sending;
 // sending makes the thread with them, in the folder it was started from or at the top of the
 // space, and opens it. Nothing is made until then. The folder can be changed from the breadcrumb.
+// Someone who can only view the space is sent to it instead, as they cannot start threads.
 
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, useNavigate } from "@tanstack/react-router";
+import { getRouteApi, Navigate, useNavigate } from "@tanstack/react-router";
 import { FolderIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
@@ -63,7 +64,7 @@ export function useCreateThread() {
 }
 
 // Writing a new thread's first message, on the model and effort picked beside it or the space's
-// defaults; sending makes the thread and opens it. A reader who cannot write in the space sees why.
+// defaults; sending makes the thread and opens it.
 export function NewThreadComposer({ spaceId, folderId }: { spaceId: string; folderId?: string }) {
   const spaces = useQuery(spacesQuery);
   const models = useQuery(modelsQuery);
@@ -118,7 +119,6 @@ export function NewThreadComposer({ spaceId, folderId }: { spaceId: string; fold
       <FieldError>{error}</FieldError>
       <Composer
         running={false}
-        readOnly={space?.role === "viewer"}
         sending={sending}
         stopping={false}
         onSend={send}
@@ -156,6 +156,8 @@ export function DraftThread() {
     document.querySelector<HTMLTextAreaElement>("textarea[aria-label=Message]")?.focus();
   }, [spaceId, folderId]);
 
+  if (viewer) return <Navigate to="/s/$spaceId" params={{ spaceId }} replace />;
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
@@ -186,11 +188,7 @@ export function DraftThread() {
           <ConversationEmptyState
             title={folder ? `New thread in ${folder.name}` : "New thread"}
             icon={folder && <FolderIcon className="size-5" />}
-            description={
-              viewer
-                ? "You can read this space's threads; only people who can write in it start new ones."
-                : "Write the first message below; the thread starts when you send it."
-            }
+            description="Write the first message below; the thread starts when you send it."
           />
         </ConversationContent>
       </Conversation>

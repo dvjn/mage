@@ -187,7 +187,7 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   // Grace reads the thread but cannot write in it.
   await grace.goto(loomThread);
   await expect(transcript(grace)).toContainText("Patterns on punched cards");
-  await expect(grace.getByLabel("Message", { exact: true })).toBeDisabled();
+  await expect(grace.getByText("You can view this thread")).toBeVisible();
 
   // Grace's message waits while the agent replies very slowly to Ada; then Ada removes her.
   await grace.goto(generalThread);

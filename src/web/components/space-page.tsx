@@ -1,10 +1,11 @@
-// A space: a new thread's composer, and its threads by when they were last active, each with the
-// start of its newest message, narrowed by title or that message as you type, and to one folder.
+// A space: a new thread's composer for those who can write in it, and its threads by when they were
+// last active, each with the start of its newest message, narrowed by title or that message as you
+// type, and to one folder, once there are any.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
-import { LockIcon, SearchIcon } from "lucide-react";
+import { LockIcon, MessagesSquareIcon, SearchIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
@@ -29,6 +30,7 @@ export function SpacePage() {
   const space = spaces.data?.find((s) => s.id === spaceId);
   // A team org's owner who manages the space without being in it does not see its threads.
   const reads = space?.role !== null;
+  const writes = space?.role === "owner" || space?.role === "messager";
   const threads = useQuery({ ...spaceThreadsQuery(spaceId), enabled: reads });
   const folders = useQuery({ ...spaceFoldersQuery(spaceId), enabled: reads });
   const [filter, setFilter] = useState("");
@@ -74,39 +76,49 @@ export function SpacePage() {
     <>
       <PageHeader crumbs={[{ label: space?.name ?? "" }]} />
       <div className={cn(pageWidth, "flex flex-col gap-6 p-4 pb-12")}>
-        <NewThreadComposer spaceId={spaceId} />
+        {writes && <NewThreadComposer spaceId={spaceId} />}
         <div className="flex flex-col gap-2">
-          <div className="flex gap-2">
-            <InputGroup className="flex-1">
-              <InputGroupInput
-                type="search"
-                placeholder="Filter threads"
-                aria-label="Filter threads"
-                value={filter}
-                onChange={(event) => setFilter(event.target.value)}
-              />
-              <InputGroupAddon>
-                <SearchIcon />
-              </InputGroupAddon>
-            </InputGroup>
-            {!!folders.data?.length && (
-              <FilterButton
-                filter={{
-                  label: "Folder",
-                  value: folder,
-                  options: folders.data.map((f) => ({ value: f.id, label: f.name })),
-                  onChange: (value) =>
-                    void navigate({ search: value ? { folder: value } : {}, replace: true }),
-                }}
-              />
-            )}
-          </div>
+          {!!threads.data?.length && (
+            <div className="flex gap-2">
+              <InputGroup className="flex-1">
+                <InputGroupInput
+                  type="search"
+                  placeholder="Filter threads"
+                  aria-label="Filter threads"
+                  value={filter}
+                  onChange={(event) => setFilter(event.target.value)}
+                />
+                <InputGroupAddon>
+                  <SearchIcon />
+                </InputGroupAddon>
+              </InputGroup>
+              {!!folders.data?.length && (
+                <FilterButton
+                  filter={{
+                    label: "Folder",
+                    value: folder,
+                    options: folders.data.map((f) => ({ value: f.id, label: f.name })),
+                    onChange: (value) =>
+                      void navigate({ search: value ? { folder: value } : {}, replace: true }),
+                  }}
+                />
+              )}
+            </div>
+          )}
           {threads.error && <LoadError />}
           {threads.isPending && <ListSkeleton />}
+          {threads.data?.length === 0 && (
+            <EmptyState
+              icon={<MessagesSquareIcon />}
+              title="No threads yet"
+              description={
+                writes
+                  ? "Write above to start one."
+                  : "Threads show here once someone who can write in this space starts one."
+              }
+            />
+          )}
           <ul className="flex flex-col gap-4" aria-label="Threads">
-            {threads.data?.length === 0 && (
-              <li className="px-2 text-sm text-muted-foreground">No threads yet.</li>
-            )}
             {!!threads.data?.length && shown?.length === 0 && (
               <li className="px-2 text-sm text-muted-foreground">No thread matches.</li>
             )}

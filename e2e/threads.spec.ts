@@ -132,7 +132,7 @@ test("deleting the open thread leads back to its space", async ({ page }) => {
 
   await expect(page).toHaveURL(/\/s\/[^/]+$/);
   await expect(sidebar.getByRole("link", { name: "Short lived" })).toHaveCount(0);
-  await expect(page.getByRole("list", { name: "Threads" })).toContainText("No threads yet.");
+  await expect(page.getByRole("main").getByText("No threads yet", { exact: true })).toBeVisible();
 });
 
 test("two tabs on a thread see each other's messages live", async ({ page, context }) => {

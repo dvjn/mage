@@ -40,7 +40,7 @@ test("Ctrl+O opens a draft that becomes a thread only when its first message is 
   await expect(page.getByLabel("Message", { exact: true })).toBeFocused();
   // Leaving the draft leaves nothing behind.
   await page.goBack();
-  await expect(page.getByRole("list", { name: "Threads" })).toContainText("No threads yet.");
+  await expect(page.getByRole("main").getByText("No threads yet", { exact: true })).toBeVisible();
 
   await expect(sidebar(page).getByRole("button", { name: "New thread" })).toBeVisible();
   await page.keyboard.press("Control+o");
@@ -120,7 +120,7 @@ test("a viewer sees no write actions, and a failed delete says why in its dialog
   await expect(
     sidebar(alan).getByRole("button", { name: "Actions for How do engines compute?" }),
   ).toHaveCount(0);
-  await expect(sidebar(alan).getByRole("link", { name: "Space settings" })).toBeVisible();
+  await expect(sidebar(alan).getByRole("link", { name: "Space settings" })).toHaveCount(0);
   // The shortcuts do nothing for a viewer.
   await alan.keyboard.press("Control+o");
   await alan.keyboard.press("Control+Shift+O");

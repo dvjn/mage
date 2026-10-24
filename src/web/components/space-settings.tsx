@@ -1,8 +1,7 @@
 // A space's settings: renaming it, the model and reasoning effort its new threads start with, or the
-// org's, who is in a shared space, and deleting it when it is not the primary space. Only those who
-// manage it (its owners, and a team org's owners) may change them; everyone else sees them. A team
-// org's owner who manages a space without being in it reads its threads once they give themselves
-// a role in it.
+// org's, who is in a shared space, and deleting it when it is not the primary space. They are there
+// only for those who manage it (its owners, and a team org's owners). A team org's owner who manages
+// a space without being in it reads its threads once they give themselves a role in it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
@@ -53,7 +52,6 @@ function SpaceName({ space }: { space: SpaceSummary }) {
   const [name, setName] = useState(space.name);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
-  const owner = space.manage;
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -72,10 +70,7 @@ function SpaceName({ space }: { space: SpaceSummary }) {
   }
 
   return (
-    <SettingsCard
-      title="General"
-      description={owner ? undefined : "Only the space's owner can change its settings."}
-    >
+    <SettingsCard title="General">
       <form onSubmit={(event) => void submit(event)}>
         <FieldGroup>
           <Field>
@@ -86,12 +81,11 @@ function SpaceName({ space }: { space: SpaceSummary }) {
               onChange={(event) => setName(event.target.value)}
               maxLength={80}
               required
-              disabled={!owner}
               autoComplete="off"
             />
           </Field>
           <FieldError>{error}</FieldError>
-          {owner && name.trim() !== space.name && (
+          {name.trim() !== space.name && (
             <div>
               <Button type="submit" disabled={pending || !name.trim()}>
                 Save
@@ -111,7 +105,6 @@ function SpaceModel({ space }: { space: SpaceSummary }) {
   const orgModel = useQuery(defaultModelQuery);
   const orgEffort = useQuery(defaultEffortQuery);
   const [error, setError] = useState<string>();
-  const owner = space.manage;
   const list = models.data?.models ?? [];
 
   async function change(json: { model?: string | null; effort?: Effort | null }) {
@@ -131,11 +124,7 @@ function SpaceModel({ space }: { space: SpaceSummary }) {
   return (
     <SettingsCard
       title="Models"
-      description={
-        owner
-          ? "New threads in this space start with this model and effort. Threads already started keep theirs."
-          : "Only the space's owner can change what its new threads start with."
-      }
+      description="New threads in this space start with this model and effort. Threads already started keep theirs."
       state={{
         isPending: models.isPending || orgModel.isPending || orgEffort.isPending,
         error: models.error ?? orgModel.error ?? orgEffort.error,
@@ -150,13 +139,11 @@ function SpaceModel({ space }: { space: SpaceSummary }) {
             onChange={(model) => void change({ model })}
             inherit={{ label: `Default · ${orgModelName}`, ref: orgModel.data?.ref ?? null }}
             fallback={orgModelName}
-            disabled={!owner}
           />
           <EffortField
             value={fallingBack ? null : space.defaultEffort}
             onChange={(effort) => void change({ effort })}
             defaultLabel={`Default · ${orgEffortName}`}
-            disabled={!owner}
           />
         </div>
         <FieldError>{error}</FieldError>
@@ -224,6 +211,8 @@ export function SpaceSettings() {
   useEffect(() => rememberSpace(spaceId), [spaceId]);
 
   if (spaces.isSuccess && !space) return <NotFound what="space" id={spaceId} />;
+  // Only those who manage the space have its settings; for anyone else they are not there.
+  if (space && !space.manage) return <NotFound what="space" />;
 
   return (
     <SettingsPage
@@ -239,7 +228,7 @@ export function SpaceSettings() {
           <SpaceName key={space.id} space={space} />
           <SpaceModel space={space} />
           {space.kind === "shared" && <SpaceMembers space={space} />}
-          {space.manage && !space.primary && <DeleteSpace space={space} />}
+          {!space.primary && <DeleteSpace space={space} />}
         </>
       )}
     </SettingsPage>

@@ -187,19 +187,25 @@ test("a viewer reads the thread but cannot write in it", async ({ page, browser 
   const adaEmail = await signUp(page, "Ada Lovelace");
   const alan = await someoneElse(browser, testInfo.parallelIndex, "Alan Turing");
   joinSpaceOf(adaEmail, alan.email, "viewer");
+  const spaceUrl = new URL(page.url()).pathname;
   await startThread(page, "How do engines compute?");
   await alan.page.goto(page.url());
 
   await expect(transcript(alan.page)).toContainText("How do engines compute?");
   await expect(replies(alan.page)).toContainText("I have read 1 message");
-  await expect(alan.page.getByLabel("Message", { exact: true })).toBeDisabled();
+  await expect(alan.page.getByText("You can view this thread")).toBeVisible();
+  await expect(alan.page.getByLabel("Message", { exact: true })).toHaveCount(0);
 
-  await alan.page
-    .locator("[data-sidebar=sidebar]")
-    .getByRole("link", { name: "Space settings" })
-    .click();
-  await expect(alan.page.getByRole("textbox", { name: "Name" })).toBeDisabled();
-  await expect(alan.page.getByRole("button", { name: "Rename" })).toHaveCount(0);
-  await expect(alan.page.getByRole("button", { name: "Delete space" })).toHaveCount(0);
+  // The space's settings are not there for a viewer, nor is a new thread.
+  const sidebar = alan.page.locator("[data-sidebar=sidebar]");
+  await expect(sidebar.getByRole("link", { name: "Space settings" })).toHaveCount(0);
+  await alan.page.goto(`${spaceUrl}/settings`);
+  await expect(alan.page.getByText("This space does not exist or is not yours.")).toBeVisible();
+  await alan.page.goto(`${spaceUrl}/new`);
+  await expect(alan.page).toHaveURL(spaceUrl);
+  await expect(
+    alan.page.getByRole("link", { name: "How do engines compute?" }).last(),
+  ).toBeVisible();
+  await expect(alan.page.getByLabel("Message", { exact: true })).toHaveCount(0);
   await alan.page.context().close();
 });

@@ -2,10 +2,11 @@
 // and the tray of messages waiting for it. Enter sends, or steers the reply under way; Alt/⌥+Enter
 // queues for the next reply; the split button also interrupts the reply and sends at once, and the
 // stop button stops it. Everyone sees the tray; each author can edit their own waiting messages,
-// switch them between steering and queueing, or remove them. Viewers only read.
+// switch them between steering and queueing, or remove them. Viewers only read, and a line where the
+// composer would be says so.
 
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDownIcon, SquareIcon } from "lucide-react";
+import { ChevronDownIcon, EyeIcon, SquareIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useRef, useState } from "react";
 
 import { anyThreadEventSchema, type Delivery, QUIET_PREFIX } from "@/shared/threads.ts";
@@ -44,7 +45,7 @@ export function Composer({
   tools,
 }: {
   running: boolean;
-  readOnly: boolean;
+  readOnly?: boolean;
   sending: boolean;
   stopping: boolean;
   // Throws when the message is not posted, so the composer keeps the text.
@@ -69,15 +70,10 @@ export function Composer({
 
   if (readOnly) {
     return (
-      <PromptInput onSubmit={() => {}}>
-        <PromptInputBody>
-          <PromptInputTextarea
-            aria-label="Message"
-            placeholder="You can read this thread; only people who can write in its space can post."
-            disabled
-          />
-        </PromptInputBody>
-      </PromptInput>
+      <p className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+        <EyeIcon className="size-4 shrink-0" aria-hidden />
+        You can view this thread
+      </p>
     );
   }
 

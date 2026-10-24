@@ -305,6 +305,8 @@ function SpaceSection({ space, onNewFolder }: { space: SpaceSummary; onNewFolder
   const matchRoute = useMatchRoute();
   const newThread = useNewThread();
   const writer = space.role === "owner" || space.role === "messager";
+  // A viewer has nothing to do here.
+  if (!writer && !space.manage) return null;
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Space</SidebarGroupLabel>
@@ -330,15 +332,17 @@ function SpaceSection({ space, onNewFolder }: { space: SpaceSummary; onNewFolder
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
-        <SidebarMenuItem>
-          <SidebarMenuButton
-            isActive={!!matchRoute({ to: "/s/$spaceId/settings", params: { spaceId: space.id } })}
-            render={<Link to="/s/$spaceId/settings" params={{ spaceId: space.id }} />}
-          >
-            <Settings2Icon />
-            <span>Space settings</span>
-          </SidebarMenuButton>
-        </SidebarMenuItem>
+        {space.manage && (
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              isActive={!!matchRoute({ to: "/s/$spaceId/settings", params: { spaceId: space.id } })}
+              render={<Link to="/s/$spaceId/settings" params={{ spaceId: space.id }} />}
+            >
+              <Settings2Icon />
+              <span>Space settings</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        )}
       </SidebarMenu>
     </SidebarGroup>
   );
