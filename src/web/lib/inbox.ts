@@ -1,7 +1,7 @@
 // Keeps the cached thread lists current from the signed-in person's inbox stream, one per tab: a
 // thread that changed takes its place in its space's list, most recently active first, or joins it
 // when the list is cached but does not have it yet; a shared one is changed in the shared list, which
-// is read again when it lacks the thread. How far they saw a thread, here or on another device,
+// is read again when it lacks the thread; the pages of tables of threads it is in are read again. How far they saw a thread, here or on another device,
 // clears what was new, and a thread gone for them leaves every list. After the stream was lost the
 // lists are read again. Reading a thread records how far it was seen, at once in the lists here.
 // The open thread is marked seen as it opens and as new events arrive while it is in view.
@@ -62,10 +62,17 @@ const spaceLists = {
     query.queryKey[0] === "spaces" && query.queryKey[2] === "threads",
 };
 
-// Changes every cached list, of a space's threads and of shared ones.
+// Every cached page of a table of threads.
+const threadPages = { queryKey: ["thread-pages"] };
+
+// Changes every cached list, of a space's threads and of shared ones, and every page of them.
 function eachList(queryClient: QueryClient, change: <T extends Listed>(list: T[]) => T[]) {
   queryClient.setQueriesData<ThreadListItem[]>(spaceLists, (list) => list && change(list));
   queryClient.setQueryData(sharedThreadsQuery.queryKey, (list) => list && change(list));
+  queryClient.setQueriesData<{ items: Listed[] }>(
+    threadPages,
+    (page) => page && { ...page, items: change(page.items) },
+  );
 }
 
 // Records here that the thread was seen up to `seq`.
@@ -83,6 +90,10 @@ export async function markRead(queryClient: QueryClient, threadId: string, seq: 
 }
 
 function patchThread(queryClient: QueryClient, thread: ThreadListItem, shared: boolean) {
+  // A page's rows and their order depend on its search and filters, so the server reads it again.
+  void queryClient.invalidateQueries({
+    queryKey: ["thread-pages", shared ? "shared" : thread.spaceId],
+  });
   if (shared) {
     const list = queryClient.getQueryData(sharedThreadsQuery.queryKey);
     const next = list && withSharedThread(list, thread);
@@ -112,6 +123,7 @@ export function useInbox() {
       lost = false;
       void queryClient.invalidateQueries(spaceLists);
       void queryClient.invalidateQueries({ queryKey: sharedThreadsQuery.queryKey });
+      void queryClient.invalidateQueries(threadPages);
     });
     source.addEventListener("thread", (message) => {
       const body = JSON.parse(message.data as string) as { thread: unknown; shared: boolean };
@@ -128,6 +140,7 @@ export function useInbox() {
     source.addEventListener("thread-gone", (message) => {
       const { threadId } = JSON.parse(message.data as string) as { threadId: string };
       eachList(queryClient, (list) => without(list, threadId));
+      void queryClient.invalidateQueries(threadPages);
     });
     return () => source.close();
   }, [queryClient]);

@@ -73,8 +73,14 @@ test("a folder lists its first 30 threads, then leads to the space page narrowed
   await sidebar(page).getByRole("link", { name: "Show all" }).click();
   await expect(page).toHaveURL(/\/s\/[^/]+\?folder=/);
   await expect(page.getByRole("button", { name: "Folder: Looms" })).toBeVisible();
-  const threads = page.getByRole("list", { name: "Threads" });
-  await expect(threads.getByRole("link", { name: /^Loom \d+/ })).toHaveCount(31);
+  const threads = page.getByRole("table", { name: "Threads" });
+  // A page holds 25; the footer leads to the rest.
+  await expect(threads.getByRole("link", { name: /^Loom \d+/ })).toHaveCount(25);
+  await expect(page.getByText("1–25 of 31")).toBeVisible();
+  await page.getByRole("button", { name: "Next page" }).click();
+  await expect(page).toHaveURL(/page=2/);
+  await expect(threads.getByRole("link", { name: /^Loom \d+/ })).toHaveCount(6);
+  await expect(page.getByText("Page 2 of 2")).toBeVisible();
   await expect(threads.getByRole("link", { name: /^Loose/ })).toHaveCount(0);
   // Choosing the folder again clears it.
   await page.getByRole("button", { name: "Folder: Looms" }).click();
@@ -95,16 +101,22 @@ test("shared threads: the sidebar lists 30, and the page filters by title and pl
   await expect(shared).toHaveCount(30);
   await sidebar(guest.page).getByRole("link", { name: "Show all" }).click();
   await expect(guest.page).toHaveURL(/\/shared$/);
-  const list = guest.page.getByRole("list", { name: "Shared threads" });
-  await expect(list.getByRole("listitem")).toHaveCount(31);
+  const list = guest.page.getByRole("table", { name: "Shared threads" });
+  await expect(list.getByRole("row")).toHaveCount(25);
+  await expect(guest.page.getByText("1–25 of 31")).toBeVisible();
+  // More rows a page show them all, and the footer goes once everything fits.
+  await guest.page.getByRole("combobox", { name: "Rows per page" }).click();
+  await guest.page.getByRole("option", { name: "50" }).click();
+  await expect(list.getByRole("row")).toHaveCount(31);
+  await expect(guest.page.getByText("Rows per page")).toBeHidden();
   const filter = guest.page.getByRole("searchbox", { name: "Filter threads" });
   await filter.fill("Engine 3");
-  await expect(list.getByRole("listitem")).toHaveCount(3);
+  await expect(list.getByRole("row")).toHaveCount(3);
   // The place, the host's space, matches too.
   await filter.fill("lovelace");
-  await expect(list.getByRole("listitem")).toHaveCount(31);
+  await expect(list.getByRole("row")).toHaveCount(31);
   await filter.fill("babbage");
-  await expect(list).toContainText("No thread matches.");
+  await expect(guest.page.getByText("No matches")).toBeVisible();
 });
 
 test("the share sheet filters its people once there are more than 8 rows", async ({ page }) => {

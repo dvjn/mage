@@ -80,6 +80,7 @@ import {
   threadUpdateSchema,
   toolDecisionSchema,
 } from "@/shared/threads.ts";
+import { spaceThreadPageQuerySchema, threadPageQuerySchema } from "@/shared/thread-status.ts";
 import { orgToolChangeSchema, spaceToolChangeSchema } from "@/shared/tools.ts";
 
 export interface AppOptions {
@@ -321,6 +322,8 @@ const memberQuery = queryOf(memberFilterSchema);
 const peopleQuery = queryOf(peopleFilterSchema);
 const orgSpaceQuery = queryOf(orgSpaceFilterSchema);
 const spaceMemberQuery = queryOf(spaceMemberFilterSchema);
+const threadPageQuery = queryOf(threadPageQuerySchema);
+const spaceThreadPageQuery = queryOf(spaceThreadPageQuerySchema);
 
 // `?q=` with the text to find in thread titles.
 const threadSearch = validator("query", (value: { q?: string }, c) => {
@@ -661,6 +664,11 @@ function createApi(options: AppOptions) {
       .get("/v1/spaces/:id/threads", (c) => {
         return c.json(threads.list(signedIn(c.var.principal), c.req.param("id")), 200);
       })
+      .get("/v1/spaces/:id/threads/page", spaceThreadPageQuery, (c) => {
+        const { folder, show, ...query } = c.req.valid("query");
+        const params = { ...pageParams(query), ...(folder && { folder }), ...(show && { show }) };
+        return c.json(threads.listPage(signedIn(c.var.principal), c.req.param("id"), params), 200);
+      })
       .post("/v1/spaces/:id/threads", newThread, async (c) => {
         const input = c.req.valid("json");
         const thread = await threads.create(signedIn(c.var.principal), c.req.param("id"), input);
@@ -668,6 +676,11 @@ function createApi(options: AppOptions) {
       })
       .get("/v1/shared-threads", (c) => {
         return c.json(threads.shared(signedIn(c.var.principal)), 200);
+      })
+      .get("/v1/shared-threads/page", threadPageQuery, (c) => {
+        const { show, ...query } = c.req.valid("query");
+        const params = { ...pageParams(query), ...(show && { show }) };
+        return c.json(threads.sharedPage(signedIn(c.var.principal), params), 200);
       })
       .post("/v1/invites/accept", acceptInvite, (c) => {
         const { token } = c.req.valid("json");

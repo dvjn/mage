@@ -29,6 +29,8 @@ import type { Spaces } from "@/services/spaces.ts";
 import type { ThreadAccess, ThreadAction } from "@/services/thread-access.ts";
 import { type Append, eventSummary, type ThreadLog } from "@/services/thread-log.ts";
 import type { SharedThread } from "@/shared/guests.ts";
+import { type Page, type PageParams, pageOfList } from "@/shared/paging.ts";
+import { shows, statusOf, type ThreadShow } from "@/shared/thread-status.ts";
 import {
   type Delivery,
   type Effort,
@@ -295,18 +297,57 @@ export function createThreads(options: ThreadsOptions) {
     return events[0]!;
   }
 
+  // The space's threads, each with the start of its newest message or reply.
+  function listIn(principal: Principal, spaceId: string): ThreadListItem[] {
+    spaces.require(principal, spaceId);
+    return itemsOf(
+      principal.userId,
+      threads.listInSpace(spaceId),
+      runs.activeInSpace(spaceId),
+      threads.lastMessagesInSpace(spaceId),
+    );
+  }
+
+  // The threads the principal is a guest in, with their spaces' and orgs' names.
+  function sharedWith(principal: Principal): SharedThread[] {
+    const shared = guests.threadsOf(principal.userId, now());
+    const items = itemsOf(
+      principal.userId,
+      shared.map(({ thread }) => thread),
+      runs.activeIn(shared.map(({ thread }) => thread.id)),
+      [],
+    );
+    return shared.map((shared, index) => ({
+      ...threadSummary(shared.thread),
+      spaceName: shared.spaceName,
+      orgName: shared.orgName,
+      place: shared.spaceNamedForOrg ? shared.spaceName : `${shared.spaceName} · ${shared.orgName}`,
+      accessUntil: shared.accessUntil?.toISOString() ?? null,
+      activity: items[index]!.activity,
+    }));
+  }
+
   return {
     visible,
 
-    // The space's threads, each with the start of its newest message or reply.
-    list(principal: Principal, spaceId: string): ThreadListItem[] {
-      spaces.require(principal, spaceId);
-      return itemsOf(
-        principal.userId,
-        threads.listInSpace(spaceId),
-        runs.activeInSpace(spaceId),
-        threads.lastMessagesInSpace(spaceId),
+    list: listIn,
+
+    // A page of the space's threads, by when they were last active, narrowed to one folder, to
+    // those whose title or newest message contains the text, and to those the reader's status shows.
+    listPage(
+      principal: Principal,
+      spaceId: string,
+      params: PageParams & { folder?: string; show?: ThreadShow },
+    ): Page<ThreadListItem> {
+      const needle = params.q?.toLowerCase() ?? "";
+      const list = listIn(principal, spaceId).filter(
+        (thread) =>
+          (!params.folder || thread.folderId === params.folder) &&
+          shows(params.show, statusOf(thread.activity, principal.userId)) &&
+          (thread.title.toLowerCase().includes(needle) ||
+            !!thread.preview?.text.toLowerCase().includes(needle)),
       );
+      return pageOfList(list, params);
     },
 
     // Threads whose titles contain the text, ignoring case, untitled ones as "Untitled", in every
@@ -340,25 +381,22 @@ export function createThreads(options: ThreadsOptions) {
         .map(({ thread, spaceName, shared }) => ({ ...threadSummary(thread), spaceName, shared }));
     },
 
-    // The threads the principal is a guest in, with their spaces' and orgs' names.
-    shared(principal: Principal): SharedThread[] {
-      const shared = guests.threadsOf(principal.userId, now());
-      const items = itemsOf(
-        principal.userId,
-        shared.map(({ thread }) => thread),
-        runs.activeIn(shared.map(({ thread }) => thread.id)),
-        [],
+    shared: sharedWith,
+
+    // A page of the threads the principal is a guest in, narrowed to those whose title or place
+    // contains the text, and to those their status shows.
+    sharedPage(
+      principal: Principal,
+      params: PageParams & { show?: ThreadShow },
+    ): Page<SharedThread> {
+      const needle = params.q?.toLowerCase() ?? "";
+      const list = sharedWith(principal).filter(
+        (thread) =>
+          shows(params.show, statusOf(thread.activity, principal.userId)) &&
+          (thread.title.toLowerCase().includes(needle) ||
+            thread.place.toLowerCase().includes(needle)),
       );
-      return shared.map((shared, index) => ({
-        ...threadSummary(shared.thread),
-        spaceName: shared.spaceName,
-        orgName: shared.orgName,
-        place: shared.spaceNamedForOrg
-          ? shared.spaceName
-          : `${shared.spaceName} · ${shared.orgName}`,
-        accessUntil: shared.accessUntil?.toISOString() ?? null,
-        activity: items[index]!.activity,
-      }));
+      return pageOfList(list, params);
     },
 
     // Starts a thread on the model and effort chosen for it, or those its space's defaults, then

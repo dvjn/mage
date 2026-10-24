@@ -811,22 +811,21 @@ describe("long lists", () => {
     expect((await page(workspace, ada, "/org/members?q=%25")).total).toBe(0);
   });
 
-  it("searches, narrows and pages the org's spaces", async () => {
+  it("searches, narrows and pages the org's spaces by number", async () => {
     const workspace = await withGrace();
     const { ada, api, generalId } = workspace;
     for (const name of ["Alpha", "Beta", "Gamma"]) await newSpace(workspace, ada, name);
     await api("PUT", `/spaces/${generalId}/everyone`, ada.cookie, { role: "viewer" }, ada.orgId);
 
-    const shared = await page(workspace, ada, "/org/spaces?kind=shared&limit=2");
+    const shared = await page(workspace, ada, "/org/spaces?kind=shared&perPage=2");
     expect(shared.total).toBe(4);
     expect(shared.items.map((s) => s.name)).toEqual(["Alpha", "Beta"]);
-    const rest = await page(
-      workspace,
-      ada,
-      `/org/spaces?kind=shared&limit=2&cursor=${(shared as { nextCursor: string }).nextCursor}`,
-    );
+    const rest = await page(workspace, ada, "/org/spaces?kind=shared&perPage=2&page=2");
     expect(rest.items.map((s) => s.name)).toEqual(["Gamma", "General"]);
-    expect((rest as { nextCursor: string | null }).nextCursor).toBeNull();
+    expect(rest.total).toBe(4);
+    expect((await page(workspace, ada, "/org/spaces?kind=shared&perPage=2&page=3")).items).toEqual(
+      [],
+    );
     expect(
       (await page(workspace, ada, "/org/spaces?everyone=viewer")).items.map((s) => s.name),
     ).toEqual(["General"]);

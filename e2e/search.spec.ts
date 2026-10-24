@@ -31,7 +31,7 @@ async function startThread(page: Page, text: string) {
 }
 
 function threadList(page: Page) {
-  return page.getByRole("list", { name: "Threads" });
+  return page.getByRole("table", { name: "Threads" });
 }
 
 test("a thread found with the sidebar search opens", async ({ page }) => {
@@ -71,8 +71,8 @@ test("the space page narrows its threads by title", async ({ page }) => {
   await expect(threadList(page).getByRole("link")).toContainText("Weaving with looms");
 
   await page.getByLabel("Filter threads").fill("pistons");
-  await expect(threadList(page).getByRole("link")).toHaveCount(0);
-  await expect(threadList(page)).toContainText("No thread matches.");
+  await expect(threadList(page)).toBeHidden();
+  await expect(page.getByText("No matches")).toBeVisible();
 });
 
 test("Ctrl+K searches everywhere or in this space, and finds untitled threads", async ({

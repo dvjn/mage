@@ -9,7 +9,7 @@
 // person.
 
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, useNavigate } from "@tanstack/react-router";
+import { getRouteApi } from "@tanstack/react-router";
 import {
   CheckIcon,
   MailIcon,
@@ -18,6 +18,7 @@ import {
   UserPlusIcon,
   UsersIcon,
 } from "lucide-react";
+import type * as React from "react";
 import { useId, useState } from "react";
 import * as z from "zod";
 
@@ -27,24 +28,28 @@ import {
   ORG_ROLE_LABELS,
   type OrgPerson,
   type OrgRole,
+  orgRoleSchema,
+  personStatusSchema,
 } from "@/shared/orgs.ts";
 import { cn } from "cn";
 import { CopyButton } from "@/web/components/copy-button";
-import { EmptyState, ListSkeleton, LoadError } from "@/web/components/page-states";
+import { EmptyState } from "@/web/components/page-states";
 import { Peek, PeekList } from "@/web/components/peek";
+import { DataTable } from "@/web/components/data-table/data-table";
+import { DataTableToolbar } from "@/web/components/data-table/data-table-toolbar";
 import {
-  ActionsCell,
-  ContextCell,
+  actionsColumn,
+  ActionsMenu,
+  contextColumn,
+  filterColumn,
   HeaderAction,
-  LoadMore,
-  PeopleRow,
-  PeopleTable,
-  ROLE_COLUMN,
-  RoleCell,
-  SubjectCell,
+  nameColumn,
+  type RoleChoice,
+  roleColumn,
+  RoleControl,
+  Subject,
 } from "@/web/components/people-table";
 import { SettingsTitle } from "@/web/components/settings/layout";
-import { TableToolbar, useSearchText } from "@/web/components/table-toolbar";
 import { Time } from "@/web/components/time";
 import {
   AlertDialog,
@@ -78,9 +83,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/web/components/ui/select";
+import { useDataTable } from "@/web/hooks/use-data-table";
 import { useDebounced } from "@/web/hooks/use-debounced";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
+import { type FilterOption, lenient, tableSearchSchema, withoutUnset } from "@/web/lib/data-table";
 import { initialsOf } from "@/web/lib/initials";
 import {
   directoryGroupsPages,
@@ -89,17 +96,17 @@ import {
   groupsPages,
   memberGroupsPages,
   membersPages,
-  peoplePages,
+  peoplePage,
 } from "@/web/lib/list-queries";
 import { meQuery } from "@/web/lib/queries";
 import { LOCK_REASONS } from "@/web/lib/roles";
 import { timeUntil } from "@/web/lib/time";
 
-export interface PeopleSearch {
-  q?: string;
-  role?: OrgRole;
-  status?: "member" | "invited" | "group";
-}
+// The search, role, status and page in the address.
+export const peopleSearchSchema = tableSearchSchema.extend({
+  role: lenient(orgRoleSchema),
+  status: lenient(personStatusSchema),
+});
 
 type Member = Extract<OrgPerson, { kind: "member" }>;
 type LinkedGroup = Extract<OrgPerson, { kind: "group" }>;
@@ -517,19 +524,12 @@ function GroupMembersPeek({ group }: { group: LinkedGroup }) {
 
 export function OrgPeople() {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const search = peopleRoute.useSearch();
+  const navigate = peopleRoute.useNavigate();
   const me = useQuery(meQuery);
   const team = me.data?.org.kind === "team";
   const manages = team && me.data?.role === "owner";
-  const people = useInfiniteQuery({
-    ...peoplePages({
-      q: search.q,
-      ...(search.role && { role: search.role }),
-      ...(search.status && { status: search.status }),
-    }),
-    enabled: team,
-  });
+  const people = useQuery({ ...peoplePage(search), enabled: team });
   // Groups come from a directory; while the org has none linked, its filter leaves them out.
   const groups = useInfiniteQuery({ ...groupsPages({}, 1), enabled: team });
   const withGroups = (groups.data?.pages[0]?.total ?? 0) > 0;
@@ -550,22 +550,6 @@ export function OrgPeople() {
   const [removing, setRemoving] = useState<OrgPerson | null>(null);
   const [error, setError] = useState<string>();
   const [removeError, setRemoveError] = useState<string>();
-
-  function set(changes: Partial<PeopleSearch>) {
-    const next: PeopleSearch = { ...search, ...changes };
-    void navigate({
-      to: "/org/people",
-      search: {
-        ...(next.q && { q: next.q }),
-        ...(next.role && { role: next.role }),
-        ...(next.status && { status: next.status }),
-      },
-      replace: true,
-    });
-  }
-  const [text, setText] = useSearchText(search.q ?? "", (q) => set({ q }));
-  const filtered = !!(search.q || search.role || search.status);
-  const clear = () => set({ q: undefined, role: undefined, status: undefined });
 
   async function refresh() {
     await Promise.all(
@@ -611,8 +595,35 @@ export function OrgPeople() {
     await refresh();
   }
 
-  const rows = people.data?.pages.flatMap((page) => page.items) ?? [];
-  const columns = [ROLE_COLUMN, { label: "Joined" }];
+  const statusOptions = [
+    STATUS_OPTIONS[0]!,
+    ...(manages ? [STATUS_OPTIONS[1]!] : []),
+    ...(withGroups ? [GROUP_STATUS] : []),
+  ];
+  const columns = peopleColumns({
+    you: me.data?.user.id,
+    manages: !!manages,
+    status: statusOptions.length > 1 ? statusOptions : null,
+    onRole: (person, role) => {
+      if (person.kind === "group") void setGroupRole(person.id, role);
+      if (person.kind === "member") void setRole(person.userId, role);
+    },
+    onRemove: setRemoving,
+  });
+  const table = useDataTable({
+    columns,
+    data: people.data?.items ?? [],
+    rowCount: people.data?.total,
+    getRowId: (person) => `${person.kind}:${person.kind === "member" ? person.userId : person.id}`,
+    search,
+    onSearch: (changes) =>
+      void navigate({
+        search: (previous) => withoutUnset({ ...previous, ...changes }),
+        replace: true,
+      }),
+    filters: ["role", "status"],
+    hidden: ["status"],
+  });
   const removal = removing && removalOf(removing, me.data?.org.name ?? "");
 
   return (
@@ -628,108 +639,27 @@ export function OrgPeople() {
           description="Your personal organization has only you in it. Make a new organization from the space menu to work with others."
         />
       ) : (
-        <>
-          <TableToolbar
-            search={{ label: "Search people", value: text, onChange: setText }}
-            filters={[
-              {
-                label: "Role",
-                value: search.role,
-                options: ROLE_OPTIONS,
-                onChange: (role) => set({ role: role as OrgRole | undefined }),
-              },
-              ...(manages || withGroups
-                ? [
-                    {
-                      label: "Status",
-                      value: search.status,
-                      options: [
-                        STATUS_OPTIONS[0]!,
-                        ...(manages ? [STATUS_OPTIONS[1]!] : []),
-                        ...(withGroups ? [GROUP_STATUS] : []),
-                      ],
-                      onChange: (status: string | undefined) =>
-                        set({ status: status as PeopleSearch["status"] }),
-                    },
-                  ]
-                : []),
-            ]}
-            total={people.data?.pages[0]?.total}
-            onReset={clear}
-            action={
-              manages && (
+        <DataTable
+          table={table}
+          label="People"
+          loading={!people.data}
+          failed={!!people.error}
+          empty={{ icon: <UsersIcon />, title: "Nobody is here yet" }}
+          rowProps={(person) => ({ label: person.kind === "invite" ? person.email : person.name })}
+        >
+          <DataTableToolbar table={table} search="Search people">
+            {manages && (
+              <div className="ml-auto">
                 <HeaderAction
                   icon={<UserPlusIcon />}
                   label="Add people"
                   onClick={() => setAdding(true)}
                 />
-              )
-            }
-          />
+              </div>
+            )}
+          </DataTableToolbar>
           <FieldError>{error}</FieldError>
-          {people.error ? (
-            <LoadError />
-          ) : !people.data ? (
-            <ListSkeleton />
-          ) : (
-            <PeopleTable
-              label="People"
-              columns={columns}
-              count={rows.length}
-              empty={{ icon: <UsersIcon />, title: "Nobody is here yet" }}
-              {...(filtered && { filtered: { onClear: clear } })}
-            >
-              {rows.map((person) =>
-                person.kind === "invite" ? (
-                  <PeopleRow key={person.id} label={person.email}>
-                    <SubjectCell
-                      avatar={{ icon: <MailIcon /> }}
-                      name={person.email}
-                      detail={`${person.createdByName ? `Invited by ${person.createdByName} · ` : "Invited · "}expires ${timeUntil(person.expiresAt) ?? "now"}`}
-                      folded={ORG_ROLE_LABELS[person.role]}
-                    />
-                    <RoleCell
-                      label={`Role of ${person.email}`}
-                      choice={{ value: person.role, options: ROLE_OPTIONS }}
-                    />
-                    <ContextCell>—</ContextCell>
-                    <ActionsCell
-                      label={person.email}
-                      destructive={
-                        <DropdownMenuItem variant="destructive" onClick={() => setRemoving(person)}>
-                          <MailXIcon />
-                          Remove
-                        </DropdownMenuItem>
-                      }
-                    />
-                  </PeopleRow>
-                ) : person.kind === "group" ? (
-                  <GroupRow
-                    key={person.id}
-                    group={person}
-                    manages={!!manages}
-                    onRole={(role) => void setGroupRole(person.id, role)}
-                    onRemove={() => setRemoving(person)}
-                  />
-                ) : (
-                  <MemberRow
-                    key={person.userId}
-                    person={person}
-                    you={person.userId === me.data?.user.id}
-                    manages={!!manages}
-                    onRole={(role) => void setRole(person.userId, role)}
-                    onRemove={() => setRemoving(person)}
-                  />
-                ),
-              )}
-            </PeopleTable>
-          )}
-          <LoadMore
-            more={!!people.hasNextPage}
-            loading={people.isFetchingNextPage}
-            onLoad={() => void people.fetchNextPage()}
-          />
-        </>
+        </DataTable>
       )}
       <AddPeopleDialog open={adding} onOpenChange={setAdding} directory={directory} />
       <AlertDialog
@@ -787,93 +717,113 @@ function groupsOf(person: Member) {
     : `${person.viaGroup} and ${plural(person.groupCount - 1, "other", "others")}`;
 }
 
-function GroupRow({
-  group,
-  manages,
-  onRole,
-  onRemove,
-}: {
-  group: LinkedGroup;
-  manages: boolean;
-  onRole: (role: OrgRole) => void;
-  onRemove: () => void;
-}) {
-  const role = { value: group.role, options: ROLE_OPTIONS, ...(manages && { onChange: onRole }) };
-  return (
-    <PeopleRow label={group.name}>
-      <SubjectCell
-        avatar={{ icon: <UsersIcon /> }}
-        name={
-          <>
-            {group.name}{" "}
-            <Badge variant="secondary" className="ml-1 rounded-sm px-1 align-middle font-normal">
-              Directory
-            </Badge>
-          </>
-        }
-        detail={<GroupMembersPeek group={group} />}
-        folded={ORG_ROLE_LABELS[group.role]}
-      />
-      <RoleCell label={`Role of ${group.name}`} choice={role} />
-      <ContextCell className="whitespace-nowrap">
-        <Time iso={group.linkedAt} />
-      </ContextCell>
-      <ActionsCell
-        label={group.name}
-        role={role}
-        destructive={
-          manages && (
-            <DropdownMenuItem variant="destructive" onClick={onRemove}>
-              <UserMinusIcon />
-              Remove
-            </DropdownMenuItem>
-          )
-        }
-      />
-    </PeopleRow>
-  );
-}
-
-function MemberRow({
-  person,
-  you,
-  manages,
-  onRole,
-  onRemove,
-}: {
-  person: Member;
-  you: boolean;
-  manages: boolean;
-  onRole: (role: OrgRole) => void;
-  onRemove: () => void;
-}) {
-  const role = {
+// The role a row has, and for whoever manages the org, changing it, unless it is locked.
+function roleOf(
+  person: OrgPerson,
+  manages: boolean,
+  onRole: (person: OrgPerson, role: OrgRole) => void,
+): RoleChoice<OrgRole> {
+  if (person.kind === "invite") return { value: person.role, options: ROLE_OPTIONS };
+  return {
     value: person.role,
     options: ROLE_OPTIONS,
-    ...(manages && { onChange: onRole }),
-    ...(manages && person.locked && { locked: LOCK_REASONS.org[person.locked] }),
+    ...(manages && { onChange: (role: OrgRole) => onRole(person, role) }),
+    ...(manages &&
+      person.kind === "member" &&
+      person.locked && { locked: LOCK_REASONS.org[person.locked] }),
   };
-  const remove = (
-    <DropdownMenuItem variant="destructive" onClick={onRemove}>
-      <UserMinusIcon />
+}
+
+// The invite's, group's or member's name; their role; when they joined, or the group was linked;
+// and their menu. The status, member, invited or group, only narrows them.
+function peopleColumns({
+  you,
+  manages,
+  status,
+  onRole,
+  onRemove,
+}: {
+  you: string | undefined;
+  manages: boolean;
+  status: FilterOption[] | null;
+  onRole: (person: OrgPerson, role: OrgRole) => void;
+  onRemove: (person: OrgPerson) => void;
+}) {
+  const remove = (person: OrgPerson, icon: React.ReactNode) => (
+    <DropdownMenuItem variant="destructive" onClick={() => onRemove(person)}>
+      {icon}
       Remove
     </DropdownMenuItem>
   );
-  return (
-    <PeopleRow label={person.name}>
-      <SubjectCell
-        avatar={{ initials: person.name }}
-        name={person.name}
-        you={you}
-        detail={person.email}
-        note={person.viaGroup && <ViaGroups person={person} />}
-        folded={ORG_ROLE_LABELS[person.role]}
-      />
-      <RoleCell label={`Role of ${person.name}`} choice={role} />
-      <ContextCell className="whitespace-nowrap">
-        <Time iso={person.joinedAt} />
-      </ContextCell>
-      <ActionsCell label={person.name} role={role} destructive={manages && !you && remove} />
-    </PeopleRow>
-  );
+  return [
+    nameColumn<OrgPerson>("Name", (person) =>
+      person.kind === "invite" ? (
+        <Subject
+          avatar={{ icon: <MailIcon /> }}
+          name={person.email}
+          detail={`${person.createdByName ? `Invited by ${person.createdByName} · ` : "Invited · "}expires ${timeUntil(person.expiresAt) ?? "now"}`}
+          folded={ORG_ROLE_LABELS[person.role]}
+        />
+      ) : person.kind === "group" ? (
+        <Subject
+          avatar={{ icon: <UsersIcon /> }}
+          name={
+            <>
+              {person.name}{" "}
+              <Badge variant="secondary" className="ml-1 rounded-sm px-1 align-middle font-normal">
+                Directory
+              </Badge>
+            </>
+          }
+          detail={<GroupMembersPeek group={person} />}
+          folded={ORG_ROLE_LABELS[person.role]}
+        />
+      ) : (
+        <Subject
+          avatar={{ initials: person.name }}
+          name={person.name}
+          you={person.userId === you}
+          detail={person.email}
+          note={person.viaGroup && <ViaGroups person={person} />}
+          folded={ORG_ROLE_LABELS[person.role]}
+        />
+      ),
+    ),
+    roleColumn<OrgPerson>(
+      (person) => (
+        <RoleControl
+          label={`Role of ${person.kind === "invite" ? person.email : person.name}`}
+          choice={roleOf(person, manages, onRole)}
+        />
+      ),
+      ROLE_OPTIONS,
+    ),
+    contextColumn<OrgPerson>(
+      "joined",
+      "Joined",
+      (person) =>
+        person.kind === "invite" ? (
+          "—"
+        ) : (
+          <Time iso={person.kind === "group" ? person.linkedAt : person.joinedAt} />
+        ),
+      "whitespace-nowrap",
+    ),
+    actionsColumn<OrgPerson>((person) =>
+      person.kind === "invite" ? (
+        <ActionsMenu label={person.email} destructive={remove(person, <MailXIcon />)} />
+      ) : (
+        <ActionsMenu
+          label={person.name}
+          role={roleOf(person, manages, onRole)}
+          destructive={
+            manages &&
+            !(person.kind === "member" && person.userId === you) &&
+            remove(person, <UserMinusIcon />)
+          }
+        />
+      ),
+    ),
+    ...(status ? [filterColumn<OrgPerson>("status", "Status", status)] : []),
+  ];
 }

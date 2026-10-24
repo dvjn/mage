@@ -5,7 +5,7 @@
 
 import * as z from "zod";
 
-import { pageQuerySchema, pageSchema } from "@/shared/paging.ts";
+import { pageQuerySchema, pageSchema, tableQuerySchema } from "@/shared/paging.ts";
 
 // Why a role cannot be changed by the one looking at it.
 export const lockSchema = z.enum(["self", "last_owner"]);
@@ -102,9 +102,12 @@ export type OrgPerson = z.infer<typeof orgPersonSchema>;
 
 export const orgPersonPageSchema = pageSchema(orgPersonSchema);
 
-// What the people list is narrowed by, besides its text.
-export const peopleFilterSchema = memberFilterSchema.extend({
-  status: z.enum(["member", "invited", "group"]).optional(),
+export const personStatusSchema = z.enum(["member", "invited", "group"]);
+
+// What the people table is narrowed by, besides its text, and its page.
+export const peopleFilterSchema = tableQuerySchema.extend({
+  role: orgRoleSchema.optional(),
+  status: personStatusSchema.optional(),
 });
 
 // Someone from the directory to add, with a role of their own.

@@ -189,7 +189,7 @@ test("a shared thread shows its status in the same row, also on a phone", async 
   await expect(hedy.locator("[data-slot=breadcrumb-page]")).toContainText("Gears");
   await hedy.goto("/shared");
   const row = hedy
-    .getByRole("list", { name: "Shared threads" })
+    .getByRole("table", { name: "Shared threads" })
     .getByRole("link", { name: /Gears/ });
   await expect(row).toHaveAttribute("data-status", "read");
 

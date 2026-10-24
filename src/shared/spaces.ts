@@ -4,7 +4,7 @@
 import * as z from "zod";
 
 import { lockSchema } from "@/shared/orgs.ts";
-import { pageQuerySchema, pageSchema } from "@/shared/paging.ts";
+import { pageSchema, tableQuerySchema } from "@/shared/paging.ts";
 import { effortSchema } from "@/shared/threads.ts";
 
 export const spaceRoleSchema = z.enum(["owner", "messager", "viewer"]);
@@ -45,8 +45,8 @@ export type OrgSpace = z.infer<typeof orgSpaceSchema>;
 
 export const orgSpacePageSchema = pageSchema(orgSpaceSchema);
 
-// What the org's spaces are narrowed by, besides their names.
-export const orgSpaceFilterSchema = pageQuerySchema.extend({
+// What the org's spaces are narrowed by, besides their names, and their page.
+export const orgSpaceFilterSchema = tableQuerySchema.extend({
   kind: z.enum(["personal", "shared"]).optional(),
   everyone: z.enum(["none", "viewer", "messager"]).optional(),
 });
@@ -90,7 +90,8 @@ export const spaceMembersSchema = z.object({
   grants: pageSchema(spaceGrantSchema),
 });
 
-export const spaceMemberFilterSchema = pageQuerySchema.extend({
+// What a space's members are narrowed by, besides their names, and their page.
+export const spaceMemberFilterSchema = tableQuerySchema.extend({
   role: spaceRoleSchema.optional(),
 });
 

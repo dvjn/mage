@@ -185,7 +185,7 @@ describe("thread access", () => {
     expect(listening.count).toBe(0);
   });
 
-  it("lists the threads shared with a guest and finds them by title", async () => {
+  it("lists the threads shared with a guest and finds them by title or place", async () => {
     const workspace = await sharedThread();
     const { api, ada, hedy, thread } = workspace;
     await letIn(workspace, ada, thread.id, hedy, "never");
@@ -204,6 +204,13 @@ describe("thread access", () => {
     expect(await found.json()).toEqual([
       expect.objectContaining({ id: thread.id, spaceName: "Ada Lovelace's Space", shared: true }),
     ]);
+    const pageOf = async (query: string) =>
+      (await (await api("GET", `/shared-threads/page?${query}`, hedy.cookie)).json()) as {
+        items: { id: string }[];
+        total: number;
+      };
+    expect(await pageOf("q=lovelace")).toMatchObject({ items: [{ id: thread.id }], total: 1 });
+    expect(await pageOf("q=looms")).toMatchObject({ items: [], total: 0 });
 
     expire(workspace, thread.id, hedy.userId);
     expect(await (await api("GET", "/shared-threads", hedy.cookie)).json()).toEqual([]);

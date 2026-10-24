@@ -1,5 +1,6 @@
-// Keyset pages over SQL: rows in the order of a sort key and an id, a cursor naming the last row
-// shown, and matching text case-insensitively anywhere in a field.
+// Pages over SQL: rows in the order of a sort key and an id, after a cursor naming the last row
+// shown or past the rows of earlier numbered pages, and matching text case-insensitively anywhere
+// in a field.
 
 import { type SQL, sql } from "drizzle-orm";
 
@@ -43,6 +44,11 @@ export function after(cursor: string | undefined, key: SQL, id: SQL) {
   const last = decode(cursor);
   if (!last) return sql`1 = 1`;
   return sql`(${key} > ${last[0]} or (${key} = ${last[0]} and ${id} > ${last[1]}))`;
+}
+
+// The page's rows and one more, which tells whether another page follows.
+export function pageLimit(params: PageParams) {
+  return sql`limit ${params.limit + 1} offset ${params.offset ?? 0}`;
 }
 
 // A page of `rows`, fetched one past the limit, and the count of every match.

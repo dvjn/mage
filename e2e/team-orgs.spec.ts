@@ -143,7 +143,6 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await expect(page).toHaveURL("/org/people");
   await page.getByLabel("Search people").fill("grace");
   await expect(page).toHaveURL(/q=grace/);
-  await expect(page.getByText("1 result")).toBeVisible();
   await expect(people.getByRole("row", { name: "Ada Lovelace" })).toHaveCount(0);
   await expect(people.getByRole("row", { name: "Grace Hopper" })).toBeVisible();
 

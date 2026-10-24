@@ -97,7 +97,7 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
   await expect(guest.locator("[data-slot=tooltip-content]")).toHaveText("Ada Lovelace's Space");
   await openShared(guest);
   await guest
-    .getByRole("list", { name: "Shared threads" })
+    .getByRole("table", { name: "Shared threads" })
     .getByRole("link", { name: /How do engines compute\?.*Ada Lovelace's Space/ })
     .click();
 

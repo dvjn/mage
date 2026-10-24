@@ -1,56 +1,49 @@
-// A space: a new thread's composer for those who can write in it, and its threads by when they were
-// last active, each with its status for the reader and the start of its newest message, narrowed by
-// title or that message as you type, to one folder, once there are any, and to those that need the
-// reader or have something new for them.
+// A space: a new thread's composer for those who can write in it, and its threads a page at a time
+// by when they were last active, each with its status for the reader and the start of its newest
+// message, narrowed by title or that message, to one folder, once there are any, and to those that
+// need the reader or have something new for them.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
-import { LockIcon, MessagesSquareIcon, SearchIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { LockIcon, MessagesSquareIcon } from "lucide-react";
+import { useEffect } from "react";
+import * as z from "zod";
 
-import { statusOf } from "@/shared/thread-status.ts";
+import { threadShowSchema } from "@/shared/thread-status.ts";
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
 import { NewThreadComposer } from "@/web/components/draft-thread";
-import { EmptyState, ListSkeleton, LoadError, NotFound } from "@/web/components/page-states";
-import { Button } from "@/web/components/ui/button";
-import { FilterButton } from "@/web/components/table-toolbar";
-import { ThreadRow } from "@/web/components/thread-row";
-import { shows, ThreadShowControl } from "@/web/components/thread-show";
+import { EmptyState, NotFound } from "@/web/components/page-states";
+import { ThreadTable } from "@/web/components/thread-table";
 import { Time } from "@/web/components/time";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
+import { Button } from "@/web/components/ui/button";
+import { lenient, tableSearchSchema } from "@/web/lib/data-table";
 import { rememberSpace } from "@/web/lib/last-space";
-import { meQuery, spaceFoldersQuery, spaceThreadsQuery, spacesQuery } from "@/web/lib/queries";
-import { sectionOf, SECTIONS } from "@/web/lib/time-sections";
+import { spaceThreadsPage } from "@/web/lib/list-queries";
+import { spaceFoldersQuery, spacesQuery } from "@/web/lib/queries";
 
 const spaceRoute = getRouteApi("/_app/s/$spaceId");
 
+// The folder, search, which threads show, and the page in the address.
+export const spaceSearchSchema = tableSearchSchema.extend({
+  folder: lenient(z.string().min(1).max(100)),
+  show: lenient(threadShowSchema),
+});
+
 export function SpacePage() {
   const { spaceId } = spaceRoute.useParams();
-  const { folder, show } = spaceRoute.useSearch();
-  const me = useQuery(meQuery);
+  const search = spaceRoute.useSearch();
   const navigate = spaceRoute.useNavigate();
   const spaces = useQuery(spacesQuery);
   const space = spaces.data?.find((s) => s.id === spaceId);
   // A team org's owner who manages the space without being in it does not see its threads.
   const reads = space?.role !== null;
   const writes = space?.role === "owner" || space?.role === "messager";
-  const threads = useQuery({ ...spaceThreadsQuery(spaceId), enabled: reads });
+  const page = useQuery({ ...spaceThreadsPage(spaceId)(search), enabled: reads });
   const folders = useQuery({ ...spaceFoldersQuery(spaceId), enabled: reads });
-  const [filter, setFilter] = useState("");
 
   useEffect(() => rememberSpace(spaceId), [spaceId]);
 
-  const needle = filter.trim().toLowerCase();
-  const userId = me.data?.user.id ?? "";
-  const shown = threads.data?.filter(
-    (thread) =>
-      (!folder || thread.folderId === folder) &&
-      shows(show, statusOf(thread.activity, userId)) &&
-      (thread.title.toLowerCase().includes(needle) ||
-        !!thread.preview?.text.toLowerCase().includes(needle)),
-  );
-  const now = new Date();
   const folderNames = new Map((folders.data ?? []).map((f) => [f.id, f.name]));
 
   if (spaces.isSuccess && !space) return <NotFound what="space" id={spaceId} />;
@@ -83,84 +76,25 @@ export function SpacePage() {
       <PageHeader crumbs={[{ label: space?.name ?? "" }]} />
       <div className={cn(pageWidth, "flex flex-col gap-6 p-4 pb-12")}>
         {writes && <NewThreadComposer spaceId={spaceId} />}
-        <div className="flex flex-col gap-2">
-          {!!threads.data?.length && (
-            <div className="flex flex-wrap gap-2">
-              <InputGroup className="min-w-60 flex-1">
-                <InputGroupInput
-                  type="search"
-                  placeholder="Filter threads"
-                  aria-label="Filter threads"
-                  value={filter}
-                  onChange={(event) => setFilter(event.target.value)}
-                />
-                <InputGroupAddon>
-                  <SearchIcon />
-                </InputGroupAddon>
-              </InputGroup>
-              <ThreadShowControl
-                value={show}
-                onChange={(value) =>
-                  void navigate({ search: (search) => ({ ...search, show: value }), replace: true })
-                }
-              />
-              {!!folders.data?.length && (
-                <FilterButton
-                  filter={{
-                    label: "Folder",
-                    value: folder,
-                    options: folders.data.map((f) => ({ value: f.id, label: f.name })),
-                    onChange: (value) =>
-                      void navigate({
-                        search: (search) => ({ ...search, folder: value || undefined }),
-                        replace: true,
-                      }),
-                  }}
-                />
-              )}
-            </div>
-          )}
-          {threads.error && <LoadError />}
-          {threads.isPending && <ListSkeleton />}
-          {threads.data?.length === 0 && (
-            <EmptyState
-              icon={<MessagesSquareIcon />}
-              title="No threads yet"
-              description={
-                writes
-                  ? "Write above to start one."
-                  : "Threads show here once someone who can write in this space starts one."
-              }
-            />
-          )}
-          <ul className="flex flex-col gap-4" aria-label="Threads">
-            {!!threads.data?.length && shown?.length === 0 && (
-              <li className="px-2 text-sm text-muted-foreground">No thread matches.</li>
-            )}
-            {SECTIONS.map((section) => {
-              const list = shown?.filter((t) => sectionOf(t.updatedAt, now) === section) ?? [];
-              if (list.length === 0) return null;
-              return (
-                <li key={section} className="flex flex-col gap-0.5">
-                  <h3 className="px-2 pb-1 text-xs text-muted-foreground">{section}</h3>
-                  <ul aria-label={section} className="flex flex-col">
-                    {list.map((thread) => (
-                      <ThreadRow
-                        key={thread.id}
-                        thread={thread}
-                        detail={
-                          thread.preview && `${thread.preview.author}: ${thread.preview.text}`
-                        }
-                        badge={folderNames.get(thread.folderId ?? "")}
-                        time={<Time iso={thread.updatedAt} />}
-                      />
-                    ))}
-                  </ul>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
+        <ThreadTable
+          label="Threads"
+          page={page}
+          search={search}
+          onSearch={(next) => void navigate({ search: next, replace: true })}
+          row={(thread) => ({
+            detail: thread.preview && `${thread.preview.author}: ${thread.preview.text}`,
+            badge: folderNames.get(thread.folderId ?? ""),
+            time: <Time iso={thread.updatedAt} />,
+          })}
+          folders={(folders.data ?? []).map((f) => ({ value: f.id, label: f.name }))}
+          empty={{
+            icon: <MessagesSquareIcon />,
+            title: "No threads yet",
+            description: writes
+              ? "Write above to start one."
+              : "Threads show here once someone who can write in this space starts one.",
+          }}
+        />
       </div>
     </>
   );

@@ -1,8 +1,8 @@
-// Long lists read a page at a time from the server, searched and narrowed there: the org's people,
-// groups and invites, its members, a member's groups, its groups and a group's members, the
-// directory's people and groups, its spaces and a space's members, and one member or group at a
-// glance. Every list keeps showing its last rows while the
-// next search or filter is read.
+// Long lists read from the server, searched and narrowed there: page after page for the org's
+// members, a member's groups, its groups and a group's members, and the directory's people and
+// groups; by page number for the tables of the org's people, groups and invites, its spaces, a
+// space's members, a space's threads and the threads shared with you; and one member or group at a
+// glance. Every list keeps showing its last rows while the next page, search or filter is read.
 
 import {
   infiniteQueryOptions,
@@ -23,8 +23,12 @@ import {
   orgPersonPageSchema,
 } from "@/shared/orgs.ts";
 import type { Page } from "@/shared/paging.ts";
-import { orgSpacePageSchema, type SpaceRole, spaceMembersSchema } from "@/shared/spaces.ts";
+import { orgSpacePageSchema, spaceMembersSchema } from "@/shared/spaces.ts";
+import { sharedThreadSchema } from "@/shared/guests.ts";
+import { pageSchema } from "@/shared/paging.ts";
+import { threadListItemSchema } from "@/shared/threads.ts";
 import { apiClient } from "@/web/lib/api-client";
+import { pageQueryOf } from "@/web/lib/data-table";
 
 // The query string of a page: the text, filters set, the limit and the cursor.
 function queryOf(
@@ -100,24 +104,28 @@ export function memberGroupsPages(userId: string, filters: { q?: string }, limit
   );
 }
 
+// A table's page, read again while it shows the last one read.
+function tablePage<T>(
+  key: readonly unknown[],
+  read: (query: Record<string, string>) => Promise<T>,
+) {
+  return (search: Record<string, string | number | undefined>) =>
+    queryOptions({
+      queryKey: [...key, "page", search],
+      queryFn: () => read(pageQueryOf(search)),
+      placeholderData: keepPreviousData,
+    });
+}
+
 // The org's people: for its owners, the invites not yet used first, then its linked groups and its
 // members.
-export function peoplePages(
-  filters: { q?: string; role?: OrgRole; status?: "member" | "invited" | "group" },
-  limit?: number,
-) {
-  return pages(
-    ["org-people"],
-    async (query) =>
-      json(
-        await apiClient.v1.org.people.$get({ query }),
-        (body) => orgPersonPageSchema.parse(body),
-        "the people",
-      ),
-    filters,
-    limit,
-  );
-}
+export const peoplePage = tablePage(["org-people"], async (query) =>
+  json(
+    await apiClient.v1.org.people.$get({ query }),
+    (body) => orgPersonPageSchema.parse(body),
+    "the people",
+  ),
+);
 
 export function groupsPages(filters: { q?: string }, limit?: number) {
   return pages(
@@ -189,37 +197,47 @@ export function directoryGroupsPages(filters: { q?: string }, limit?: number) {
   );
 }
 
-export function orgSpacesPages(filters: { q?: string; kind?: string; everyone?: string }) {
-  return pages(
-    ["org-spaces"],
-    async (query) =>
-      json(
-        await apiClient.v1.org.spaces.$get({ query }),
-        (body) => orgSpacePageSchema.parse(body),
-        "the organization's spaces",
-      ),
-    filters,
+export const orgSpacesPage = tablePage(["org-spaces"], async (query) =>
+  json(
+    await apiClient.v1.org.spaces.$get({ query }),
+    (body) => orgSpacePageSchema.parse(body),
+    "the organization's spaces",
+  ),
+);
+
+// The space's members; each page also says who everyone is and what they get.
+export function spaceMembersPage(spaceId: string) {
+  return tablePage(["space-members", spaceId], async (query) =>
+    json(
+      await apiClient.v1.spaces[":id"].members.$get({ param: { id: spaceId }, query }),
+      (body) => spaceMembersSchema.parse(body),
+      "who is in the space",
+    ),
   );
 }
 
-// The space's members a page at a time; each page also says who everyone is and what they get.
-export function spaceMembersPages(spaceId: string, filters: { q?: string; role?: SpaceRole }) {
-  return infiniteQueryOptions({
-    queryKey: ["space-members", spaceId, filters],
-    initialPageParam: null as string | null,
-    queryFn: async ({ pageParam }) =>
-      json(
-        await apiClient.v1.spaces[":id"].members.$get({
-          param: { id: spaceId },
-          query: queryOf(filters, pageParam),
-        }),
-        (body) => spaceMembersSchema.parse(body),
-        "who is in the space",
-      ),
-    getNextPageParam: (last) => last.grants.nextCursor,
-    placeholderData: keepPreviousData,
-  });
+const threadPageSchema = pageSchema(threadListItemSchema);
+const sharedThreadPageSchema = pageSchema(sharedThreadSchema);
+
+// The space's threads, most recently active first.
+export function spaceThreadsPage(spaceId: string) {
+  return tablePage(["thread-pages", spaceId], async (query) =>
+    json(
+      await apiClient.v1.spaces[":id"].threads.page.$get({ param: { id: spaceId }, query }),
+      (body) => threadPageSchema.parse(body),
+      "the space's threads",
+    ),
+  );
 }
+
+// The threads shared with the signed-in person, most recently active first.
+export const sharedThreadsPage = tablePage(["thread-pages", "shared"], async (query) =>
+  json(
+    await apiClient.v1["shared-threads"].page.$get({ query }),
+    (body) => sharedThreadPageSchema.parse(body),
+    "the threads shared with you",
+  ),
+);
 
 export type PagesOptions<T> = ReturnType<typeof pages<Page<T>>>;
 

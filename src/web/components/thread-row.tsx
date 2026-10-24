@@ -1,4 +1,4 @@
-// One thread in a list of threads, in the sidebar or on a page: its status for the signed-in person
+// One thread in a list of threads, in the sidebar or in a page's table: its status for the signed-in person
 // in the icon slot, its title, bold while something new waits there, and a muted line that starts
 // with what the status says, then the start of its newest message or where it is. A page's row
 // also has a badge (its folder) and something about time (when it was last active, or when access
@@ -61,46 +61,44 @@ function PageRow({ thread, detail, badge, time }: PageRowProps) {
   const label = statusLabel(status, thread.activity);
   const secondary = (label || detail) && <Secondary label={label} detail={detail} />;
   return (
-    <li>
-      <Link
-        to="/t/$threadId"
-        params={{ threadId: thread.id }}
-        data-status={status}
-        className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 ${ROW_CLASS}`}
-      >
-        <StatusGlyph status={status} activity={thread.activity} />
-        <span className="flex min-w-0 items-baseline gap-3">
-          <ThreadTitle
-            thread={thread}
-            className={cn(
-              "max-w-full shrink-0 truncate sm:max-w-[45%]",
-              status === "unread" ? "font-semibold" : "font-medium",
-            )}
-          />
-          {secondary && (
-            <span className="hidden min-w-0 flex-1 truncate text-muted-foreground sm:block">
-              {secondary}
-            </span>
+    <Link
+      to="/t/$threadId"
+      params={{ threadId: thread.id }}
+      data-status={status}
+      className={`grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 ${ROW_CLASS}`}
+    >
+      <StatusGlyph status={status} activity={thread.activity} />
+      <span className="flex min-w-0 items-baseline gap-3">
+        <ThreadTitle
+          thread={thread}
+          className={cn(
+            "max-w-full shrink-0 truncate sm:max-w-[45%]",
+            status === "unread" ? "font-semibold" : "font-medium",
           )}
-        </span>
-        <span className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums">
-          {badge && (
-            <Badge
-              variant="outline"
-              className="hidden font-normal text-muted-foreground sm:inline-flex"
-            >
-              {badge}
-            </Badge>
-          )}
-          {time}
-        </span>
+        />
         {secondary && (
-          <span className="col-span-2 col-start-2 truncate text-xs text-muted-foreground sm:hidden">
+          <span className="hidden min-w-0 flex-1 truncate text-muted-foreground sm:block">
             {secondary}
           </span>
         )}
-      </Link>
-    </li>
+      </span>
+      <span className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums">
+        {badge && (
+          <Badge
+            variant="outline"
+            className="hidden font-normal text-muted-foreground sm:inline-flex"
+          >
+            {badge}
+          </Badge>
+        )}
+        {time}
+      </span>
+      {secondary && (
+        <span className="col-span-2 col-start-2 truncate text-xs text-muted-foreground sm:hidden">
+          {secondary}
+        </span>
+      )}
+    </Link>
   );
 }
 

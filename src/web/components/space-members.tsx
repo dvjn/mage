@@ -5,27 +5,32 @@
 // group still covers the person. Nobody changes their own role, nor the last owner's.
 
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, useNavigate } from "@tanstack/react-router";
+import { getRouteApi } from "@tanstack/react-router";
 import { Building2Icon, UserMinusIcon, UserPlusIcon, UsersIcon } from "lucide-react";
 import { useState } from "react";
 
 import { ORG_ROLE_LABELS } from "@/shared/orgs.ts";
-import type { SpaceGrant, SpaceRole, SpaceSummary } from "@/shared/spaces.ts";
-import { AddPeopleDialog } from "@/web/components/add-people-dialog";
-import { ListSkeleton, LoadError } from "@/web/components/page-states";
-import { Peek, PeekList } from "@/web/components/peek";
 import {
-  ActionsCell,
+  type SpaceGrant,
+  type SpaceRole,
+  spaceRoleSchema,
+  type SpaceSummary,
+} from "@/shared/spaces.ts";
+import { AddPeopleDialog } from "@/web/components/add-people-dialog";
+import { Peek, PeekList } from "@/web/components/peek";
+import { DataTable } from "@/web/components/data-table/data-table";
+import { DataTableToolbar } from "@/web/components/data-table/data-table-toolbar";
+import {
+  actionsColumn,
+  ActionsMenu,
   HeaderAction,
-  LoadMore,
-  PeopleRow,
-  PeopleTable,
-  ROLE_COLUMN,
-  RoleCell,
-  SubjectCell,
+  nameColumn,
+  type RoleChoice,
+  roleColumn,
+  RoleControl,
+  Subject,
 } from "@/web/components/people-table";
 import { SettingsCard } from "@/web/components/settings/layout";
-import { TableToolbar, useSearchText } from "@/web/components/table-toolbar";
 import { Time } from "@/web/components/time";
 import {
   AlertDialog,
@@ -40,14 +45,16 @@ import {
 import { DropdownMenuItem } from "@/web/components/ui/dropdown-menu";
 import { FieldError } from "@/web/components/ui/field";
 import { Skeleton } from "@/web/components/ui/skeleton";
+import { useDataTable } from "@/web/hooks/use-data-table";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
+import { lenient, tableSearchSchema, withoutUnset } from "@/web/lib/data-table";
 import {
   groupMembersPages,
   groupQuery,
   groupsPages,
   memberQuery,
-  spaceMembersPages,
+  spaceMembersPage,
 } from "@/web/lib/list-queries";
 import { meQuery, spacesQuery } from "@/web/lib/queries";
 import { LOCK_REASONS, ROLE_LABELS } from "@/web/lib/roles";
@@ -155,14 +162,20 @@ function GroupMembersPeek({ row }: { row: SpaceGrant }) {
   );
 }
 
+// The everyone row, or a person's or group's.
+type MemberRow = { kind: "everyone"; orgName: string; role: Everyone } | SpaceGrant;
+
+// The search, role and page in the address.
+export const spaceMembersSearchSchema = tableSearchSchema.extend({
+  role: lenient(spaceRoleSchema),
+});
+
 export function SpaceMembers({ space }: { space: SpaceSummary }) {
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
   const search = settingsRoute.useSearch();
+  const navigate = settingsRoute.useNavigate();
   const me = useQuery(meQuery);
-  const list = useInfiniteQuery(
-    spaceMembersPages(space.id, { q: search.q, ...(search.role && { role: search.role }) }),
-  );
+  const list = useQuery(spaceMembersPage(space.id)(search));
   // Groups come from a directory; while the org has none, nothing speaks of them.
   const groups = useInfiniteQuery(groupsPages({}, 1));
   const withGroups = (groups.data?.pages[0]?.total ?? 0) > 0;
@@ -170,21 +183,6 @@ export function SpaceMembers({ space }: { space: SpaceSummary }) {
   const [error, setError] = useState<string>();
   const [removing, setRemoving] = useState<SpaceGrant | null>(null);
   const [removeError, setRemoveError] = useState<string>();
-
-  function set(changes: { q?: string; role?: SpaceRole | undefined }) {
-    void navigate({
-      to: "/s/$spaceId/settings",
-      params: { spaceId: space.id },
-      search: (() => {
-        const next: { q?: string; role?: SpaceRole } = { ...search, ...changes };
-        return { ...(next.q && { q: next.q }), ...(next.role && { role: next.role }) };
-      })(),
-      replace: true,
-    });
-  }
-  const [text, setText] = useSearchText(search.q ?? "", (q) => set({ q }));
-  const filtered = !!(search.q || search.role);
-  const clear = () => set({ q: undefined, role: undefined });
 
   async function refresh() {
     await Promise.all([
@@ -225,16 +223,111 @@ export function SpaceMembers({ space }: { space: SpaceSummary }) {
     await refresh();
   }
 
-  const first = list.data?.pages[0];
-  const rows = list.data?.pages.flatMap((page) => page.grants.items) ?? [];
+  const first = list.data;
+  const grants = first?.grants.items ?? [];
   const manage = space.manage;
-  const everyone = {
-    value: (first?.everyoneRole ?? "none") as Everyone,
-    options: EVERYONE,
-    ...(manage && { onChange: (next: Everyone) => void setEveryone(next) }),
-  };
-  // The everyone row stands above the people, unless a search or filter narrows them.
-  const showEveryone = !filtered;
+  // The everyone row stands above the people on the first page, unless a search or filter narrows
+  // them.
+  const showEveryone = !!first && !search.q && !search.role && !search.page;
+  const rows: MemberRow[] = [
+    ...(showEveryone
+      ? [
+          {
+            kind: "everyone" as const,
+            orgName: first.orgName,
+            role: (first.everyoneRole ?? "none") as Everyone,
+          },
+        ]
+      : []),
+    ...grants,
+  ];
+
+  function roleOf(row: MemberRow): RoleChoice<string> {
+    if (row.kind === "everyone") {
+      return {
+        value: row.role,
+        options: EVERYONE,
+        ...(manage && { onChange: (next: string) => void setEveryone(next as Everyone) }),
+      };
+    }
+    return {
+      value: row.role,
+      options: ROLES,
+      ...(manage && { onChange: (next: string) => void change(row, next as SpaceRole) }),
+      ...(manage && row.locked && { locked: LOCK_REASONS.space[row.locked] }),
+    };
+  }
+
+  const columns = [
+    nameColumn<MemberRow>("Name", (row) =>
+      row.kind === "everyone" ? (
+        <Subject
+          avatar={{ icon: <Building2Icon /> }}
+          name={`Everyone in ${row.orgName}`}
+          detail="Current and future members"
+          folded={EVERYONE.find((option) => option.value === row.role)?.label}
+        />
+      ) : (
+        <Subject
+          avatar={row.kind === "group" ? { icon: <UsersIcon /> } : { initials: row.name }}
+          name={row.kind === "user" ? <PersonPeek userId={row.id} name={row.name} /> : row.name}
+          you={row.kind === "user" && row.id === me.data?.user.id}
+          detail={
+            row.kind === "group" ? (
+              <>
+                Group · <GroupMembersPeek row={row} />
+              </>
+            ) : (
+              row.email
+            )
+          }
+          note={row.via && <ViaPeek grant={row} />}
+          folded={ROLE_LABELS[row.role]}
+        />
+      ),
+    ),
+    roleColumn<MemberRow>(
+      (row) => (
+        <RoleControl
+          label={row.kind === "everyone" ? "Everyone's role" : `Role of ${row.name}`}
+          choice={roleOf(row)}
+        />
+      ),
+      ROLES,
+    ),
+    actionsColumn<MemberRow>((row) =>
+      row.kind === "everyone" ? (
+        <ActionsMenu label={`Everyone in ${row.orgName}`} role={roleOf(row)} />
+      ) : (
+        <ActionsMenu
+          label={row.name}
+          role={roleOf(row)}
+          destructive={
+            manage &&
+            !row.locked && (
+              <DropdownMenuItem variant="destructive" onClick={() => setRemoving(row)}>
+                <UserMinusIcon />
+                Remove
+              </DropdownMenuItem>
+            )
+          }
+        />
+      ),
+    ),
+  ];
+  const table = useDataTable({
+    columns,
+    data: rows,
+    rowCount: first?.grants.total,
+    getRowId: (row) => (row.kind === "everyone" ? "everyone" : `${row.kind}:${row.id}`),
+    search,
+    onSearch: (changes) =>
+      void navigate({
+        search: (previous) => withoutUnset({ ...previous, ...changes }),
+        replace: true,
+      }),
+    filters: ["role"],
+  });
 
   return (
     <SettingsCard
@@ -250,107 +343,25 @@ export function SpaceMembers({ space }: { space: SpaceSummary }) {
         )
       }
     >
-      <div className="flex flex-col gap-2">
-        <TableToolbar
-          search={{ label: "Search members", value: text, onChange: setText }}
-          filters={[
-            {
-              label: "Role",
-              value: search.role,
-              options: ROLES,
-              onChange: (role) => set({ role: role as SpaceRole | undefined }),
-            },
-          ]}
-          total={first?.grants.total}
-          onReset={clear}
-        />
+      <DataTable
+        table={table}
+        label="Members"
+        loading={!first}
+        failed={!!list.error}
+        empty={{ icon: <UsersIcon />, title: "Nobody is in this space" }}
+        rowProps={(row) => ({
+          label: row.kind === "everyone" ? `Everyone in ${row.orgName}` : row.name,
+        })}
+      >
+        <DataTableToolbar table={table} search="Search members" />
         <FieldError>{error}</FieldError>
-        {list.error ? (
-          <LoadError />
-        ) : !first ? (
-          <ListSkeleton />
-        ) : (
-          <PeopleTable
-            label="Members"
-            columns={[ROLE_COLUMN]}
-            count={rows.length + (showEveryone ? 1 : 0)}
-            empty={{ icon: <UsersIcon />, title: "Nobody is in this space" }}
-            {...(filtered && { filtered: { onClear: clear } })}
-          >
-            {showEveryone && (
-              <PeopleRow label={`Everyone in ${first.orgName}`}>
-                <SubjectCell
-                  avatar={{ icon: <Building2Icon /> }}
-                  name={`Everyone in ${first.orgName}`}
-                  detail="Current and future members"
-                  folded={EVERYONE.find((option) => option.value === everyone.value)?.label}
-                />
-                <RoleCell label="Everyone's role" choice={everyone} />
-                <ActionsCell label={`Everyone in ${first.orgName}`} role={everyone} />
-              </PeopleRow>
-            )}
-            {rows.map((row) => {
-              const role = {
-                value: row.role,
-                options: ROLES,
-                ...(manage && { onChange: (next: SpaceRole) => void change(row, next) }),
-                ...(manage && row.locked && { locked: LOCK_REASONS.space[row.locked] }),
-              };
-              return (
-                <PeopleRow key={`${row.kind}:${row.id}`} label={row.name}>
-                  <SubjectCell
-                    avatar={row.kind === "group" ? { icon: <UsersIcon /> } : { initials: row.name }}
-                    name={
-                      row.kind === "user" ? (
-                        <PersonPeek userId={row.id} name={row.name} />
-                      ) : (
-                        row.name
-                      )
-                    }
-                    you={row.kind === "user" && row.id === me.data?.user.id}
-                    detail={
-                      row.kind === "group" ? (
-                        <>
-                          Group · <GroupMembersPeek row={row} />
-                        </>
-                      ) : (
-                        row.email
-                      )
-                    }
-                    note={row.via && <ViaPeek grant={row} />}
-                    folded={ROLE_LABELS[row.role]}
-                  />
-                  <RoleCell label={`Role of ${row.name}`} choice={role} />
-                  <ActionsCell
-                    label={row.name}
-                    role={role}
-                    destructive={
-                      manage &&
-                      !row.locked && (
-                        <DropdownMenuItem variant="destructive" onClick={() => setRemoving(row)}>
-                          <UserMinusIcon />
-                          Remove
-                        </DropdownMenuItem>
-                      )
-                    }
-                  />
-                </PeopleRow>
-              );
-            })}
-          </PeopleTable>
-        )}
-        <LoadMore
-          more={!!list.hasNextPage}
-          loading={list.isFetchingNextPage}
-          onLoad={() => void list.fetchNextPage()}
-        />
-      </div>
+      </DataTable>
       <AddPeopleDialog
         open={adding}
         onOpenChange={setAdding}
         title={`Add people to ${space.name}`}
         kinds={["user", "group"]}
-        exclude={new Set(rows.map((row) => `${row.kind}:${row.id}`))}
+        exclude={new Set(grants.map((row) => `${row.kind}:${row.id}`))}
         roles={{ options: ROLES, initial: "messager" }}
         canInvite={me.data?.role === "owner"}
         onAdd={(option, role) => grant(option, role)}

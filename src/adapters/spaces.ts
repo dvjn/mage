@@ -7,7 +7,7 @@ import type { Grant, Space, SpaceRole, SpaceStore, Subject } from "@/ports/space
 import { FIRST_SPACE_NAME, spaceNameFor } from "@/shared/spaces.ts";
 
 import { type Db, writeLock } from "./db.ts";
-import { after, containing, pageOf } from "./paging.ts";
+import { after, containing, pageLimit, pageOf } from "./paging.ts";
 
 // What follows a person's name in their first space's name, as the one naming function gives it.
 const SPACE_SUFFIX = spaceNameFor({ name: FIRST_SPACE_NAME, kind: "personal", primary: true }, "");
@@ -171,7 +171,7 @@ export function createSpaceStore(db: Db): SpaceStore {
         select kind, id, name, email, role, created_at as createdAt, sortKey from (${grants})
          where ${where} and ${after(params.cursor, sql`sortKey`, sql`id`)}
          order by sortKey, id
-         limit ${params.limit + 1}`);
+         ${pageLimit(params)}`);
       const total = db.get<{ n: number }>(
         sql`select count(*) as n from (${grants}) where ${where}`,
       );
@@ -210,7 +210,7 @@ export function createSpaceStore(db: Db): SpaceStore {
         select id, displayName, ownerName from (${named})
          where ${where} and ${after(params.cursor, sql`lower(displayName)`, sql`id`)}
          order by lower(displayName), id
-         limit ${params.limit + 1}`);
+         ${pageLimit(params)}`);
       const total = db.get<{ n: number }>(sql`select count(*) as n from (${named}) where ${where}`);
       const page = pageOf(rows, params, total?.n ?? 0, (row) => [
         row.displayName.toLowerCase(),

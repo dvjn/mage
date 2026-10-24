@@ -6,7 +6,6 @@
 
 import type { QueryClient } from "@tanstack/react-query";
 
-import type { SpaceRole } from "@/shared/spaces.ts";
 import {
   createRootRouteWithContext,
   createRoute,
@@ -21,17 +20,17 @@ import { InvitePage } from "@/web/components/invite-page";
 import { JoinPage } from "@/web/components/join-page";
 import { LoginForm } from "@/web/components/login-form";
 import { OrgGeneral } from "@/web/components/settings/org-general";
-import { OrgPeople, type PeopleSearch } from "@/web/components/settings/org-people";
-import { OrgSpaces, type OrgSpacesSearch } from "@/web/components/settings/org-spaces";
+import { OrgPeople, peopleSearchSchema } from "@/web/components/settings/org-people";
+import { OrgSpaces, orgSpacesSearchSchema } from "@/web/components/settings/org-spaces";
 import { OrgProviders } from "@/web/components/settings/org-providers";
 import { OrgShell } from "@/web/components/settings/org-shell";
-import { SharedPage } from "@/web/components/shared-page";
+import { SharedPage, sharedSearchSchema } from "@/web/components/shared-page";
 import { SignupForm } from "@/web/components/signup-form";
-import { SpacePage } from "@/web/components/space-page";
+import { SpacePage, spaceSearchSchema } from "@/web/components/space-page";
+import { spaceMembersSearchSchema } from "@/web/components/space-members";
 import { SpaceSettings } from "@/web/components/space-settings";
 import { DraftThread } from "@/web/components/draft-thread";
 import { ThreadPage } from "@/web/components/thread-page";
-import type { ThreadShow } from "@/web/components/thread-show";
 import { lastSpace } from "@/web/lib/last-space";
 import { tabOrg } from "@/web/lib/org-tab";
 import { meQuery, sessionQuery, signInOptionsQuery, spacesQuery } from "@/web/lib/queries";
@@ -143,28 +142,20 @@ const homeRoute = createRoute({
   component: () => <PageHeader crumbs={[{ label: "No spaces" }]} />,
 });
 
-// The threads narrowed to the folder in `?folder=` and to those that need the reader or have
-// something new for them in `?show=`.
+// The threads narrowed to the folder in `?folder=`, to those that need the reader or have something
+// new for them in `?show=`, and by `?q=`, on the page in `?page=` of `?perPage=`.
 const spaceRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/s/$spaceId",
-  validateSearch: (search: Record<string, unknown>): { folder?: string; show?: ThreadShow } => ({
-    ...(typeof search.folder === "string" && { folder: search.folder }),
-    ...showOf(search),
-  }),
+  validateSearch: spaceSearchSchema,
   component: SpacePage,
 });
 
 const spaceSettingsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/s/$spaceId/settings",
-  // The members' search in `?q=` and role in `?role=`.
-  validateSearch: (search: Record<string, unknown>): { q?: string; role?: SpaceRole } => ({
-    ...textOf(search),
-    ...((search.role === "owner" || search.role === "messager" || search.role === "viewer") && {
-      role: search.role,
-    }),
-  }),
+  // The members' search in `?q=`, role in `?role=` and page.
+  validateSearch: spaceMembersSearchSchema,
   component: SpaceSettings,
 });
 
@@ -183,11 +174,11 @@ const threadRoute = createRoute({
   component: ThreadPage,
 });
 
-// The threads narrowed as on a space's page, in `?show=`.
+// The threads narrowed as on a space's page, in `?show=` and `?q=`, and their page.
 const sharedRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/shared",
-  validateSearch: showOf,
+  validateSearch: sharedSearchSchema,
   component: SharedPage,
 });
 
@@ -218,42 +209,19 @@ const orgProvidersRoute = createRoute({
   component: OrgProviders,
 });
 
-// Text in `?q=`, or empty.
-function showOf(search: Record<string, unknown>): { show?: ThreadShow } {
-  return search.show === "needs-you" || search.show === "unread" ? { show: search.show } : {};
-}
-
-function textOf(search: Record<string, unknown>) {
-  return typeof search.q === "string" && search.q ? { q: search.q } : {};
-}
-
-// Its people: the search in `?q=`, and the role and status in `?role=` and `?status=`.
+// Its people: the search in `?q=`, the role and status in `?role=` and `?status=`, and the page.
 const orgPeopleRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: "/people",
-  validateSearch: (search: Record<string, unknown>): PeopleSearch => ({
-    ...textOf(search),
-    ...((search.role === "owner" || search.role === "member") && { role: search.role }),
-    ...((search.status === "member" ||
-      search.status === "invited" ||
-      search.status === "group") && {
-      status: search.status,
-    }),
-  }),
+  validateSearch: peopleSearchSchema,
   component: OrgPeople,
 });
 
-// The search in `?q=`, and the kind and everyone's role in `?kind=` and `?everyone=`.
+// The search in `?q=`, the kind and everyone's role in `?kind=` and `?everyone=`, and the page.
 const orgSpacesRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: "/spaces",
-  validateSearch: (search: Record<string, unknown>): OrgSpacesSearch => ({
-    ...textOf(search),
-    ...((search.kind === "shared" || search.kind === "personal") && { kind: search.kind }),
-    ...((search.everyone === "none" ||
-      search.everyone === "viewer" ||
-      search.everyone === "messager") && { everyone: search.everyone }),
-  }),
+  validateSearch: orgSpacesSearchSchema,
   component: OrgSpaces,
 });
 

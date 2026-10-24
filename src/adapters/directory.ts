@@ -10,7 +10,7 @@ import { ulid } from "ulid";
 import type { Directory, OrgRole, RecordSource, Settled } from "@/ports/directory.ts";
 
 import type { Auth } from "./auth.ts";
-import { after, containing, pageOf } from "./paging.ts";
+import { after, containing, pageLimit, pageOf } from "./paging.ts";
 import { type Db, writeLock } from "./db.ts";
 import {
   member,
@@ -124,7 +124,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
           from member m join user u on u.id = m.user_id
          where ${where} and ${after(params.cursor, sql`lower(u.name)`, sql`u.id`)}
          order by lower(u.name), u.id
-         limit ${params.limit + 1}`);
+         ${pageLimit(params)}`);
       const total = db.get<{ n: number }>(sql`
         select count(*) as n from member m join user u on u.id = m.user_id where ${where}`);
       return pageOf(
@@ -185,7 +185,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
         select * from (${people})
          where ${where} and ${after(params.cursor, sql`sortKey`, sql`id`)}
          order by sortKey, id
-         limit ${params.limit + 1}`);
+         ${pageLimit(params)}`);
       const total = db.get<{ n: number }>(
         sql`select count(*) as n from (${people}) where ${where}`,
       );
@@ -289,7 +289,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
           from org_group og join scim_group g on g.id = og.group_id
          where ${where} and ${after(params.cursor, sql`lower(g.display_name)`, sql`g.id`)}
          order by lower(g.display_name), g.id
-         limit ${params.limit + 1}`);
+         ${pageLimit(params)}`);
       const total = db.get<{ n: number }>(sql`
         select count(*) as n from org_group og join scim_group g on g.id = og.group_id
          where ${where}`);
@@ -315,7 +315,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
         select u.id, u.name, u.email from user u
          where ${where} and ${after(params.cursor, sql`lower(u.name)`, sql`u.id`)}
          order by lower(u.name), u.id
-         limit ${params.limit + 1}`);
+         ${pageLimit(params)}`);
       const total = db.get<{ n: number }>(sql`select count(*) as n from user u where ${where}`);
       return pageOf(
         rows.map((row) => ({ ...row, source: "scim" as const })),
@@ -347,7 +347,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
           from user u
          where ${where} and ${after(params.cursor, sql`lower(u.name)`, sql`u.id`)}
          order by lower(u.name), u.id
-         limit ${params.limit + 1}`);
+         ${pageLimit(params)}`);
       const total = db.get<{ n: number }>(sql`select count(*) as n from user u where ${where}`);
       return pageOf(
         rows.map((row) => ({ ...row, source: "scim" as const })),
@@ -374,7 +374,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
           from scim_group g
          where ${where} and ${after(params.cursor, sql`lower(g.display_name)`, sql`g.id`)}
          order by lower(g.display_name), g.id
-         limit ${params.limit + 1}`);
+         ${pageLimit(params)}`);
       const total = db.get<{ n: number }>(
         sql`select count(*) as n from scim_group g where ${where}`,
       );

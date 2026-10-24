@@ -1,86 +1,46 @@
-// Shared with you: the threads the signed-in person is a guest in, each with its status for them,
-// where it is and when their access ends, most recently active first, narrowed by title or place as
-// you type and to those that need them or have something new for them; and, while there are none,
-// a note on how threads come to be shared.
+// Shared with you: the threads the signed-in person is a guest in, a page at a time, each with its
+// status for them, where it is and when their access ends, most recently active first, narrowed by
+// title or place and to those that need them or have something new for them; and, while there are
+// none, a note on how threads come to be shared.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
-import { SearchIcon, UsersIcon } from "lucide-react";
-import { useState } from "react";
+import { UsersIcon } from "lucide-react";
 
-import { statusOf } from "@/shared/thread-status.ts";
+import { threadShowSchema } from "@/shared/thread-status.ts";
 import { PageHeader, pageWidth } from "@/web/components/app-shell";
-import { EmptyState, ListSkeleton, LoadError } from "@/web/components/page-states";
-import { ThreadRow } from "@/web/components/thread-row";
-import { shows, ThreadShowControl } from "@/web/components/thread-show";
+import { ThreadTable } from "@/web/components/thread-table";
 import { Until } from "@/web/components/time";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
-import { meQuery, sharedThreadsQuery } from "@/web/lib/queries";
+import { lenient, tableSearchSchema } from "@/web/lib/data-table";
+import { sharedThreadsPage } from "@/web/lib/list-queries";
+
+// The search, which threads show, and the page in the address.
+export const sharedSearchSchema = tableSearchSchema.extend({ show: lenient(threadShowSchema) });
 
 const sharedRoute = getRouteApi("/_app/shared");
 
 export function SharedPage() {
-  const shared = useQuery(sharedThreadsQuery);
-  const me = useQuery(meQuery);
-  const { show } = sharedRoute.useSearch();
+  const search = sharedRoute.useSearch();
   const navigate = sharedRoute.useNavigate();
-  const [filter, setFilter] = useState("");
-  const needle = filter.trim().toLowerCase();
-  const userId = me.data?.user.id ?? "";
-  const shown = shared.data?.filter(
-    (thread) =>
-      shows(show, statusOf(thread.activity, userId)) &&
-      (thread.title.toLowerCase().includes(needle) || thread.place.toLowerCase().includes(needle)),
-  );
+  const page = useQuery(sharedThreadsPage(search));
   return (
     <>
       <PageHeader crumbs={[{ label: "Shared with you" }]} />
       <div className={cn(pageWidth, "flex flex-col gap-6 p-4 pb-12")}>
-        {shared.error && <LoadError />}
-        {shared.isPending && <ListSkeleton />}
-        {shared.data?.length === 0 && (
-          <EmptyState
-            icon={<UsersIcon />}
-            title="Nothing is shared with you yet"
-            description="Threads that people outside your spaces share with you appear here. They arrive as invite links; open one to join the thread."
-          />
-        )}
-        {!!shared.data?.length && (
-          <div className="flex flex-col gap-2">
-            <div className="flex flex-wrap gap-2">
-              <InputGroup className="min-w-60 flex-1">
-                <InputGroupInput
-                  type="search"
-                  placeholder="Filter threads"
-                  aria-label="Filter threads"
-                  value={filter}
-                  onChange={(event) => setFilter(event.target.value)}
-                />
-                <InputGroupAddon>
-                  <SearchIcon />
-                </InputGroupAddon>
-              </InputGroup>
-              <ThreadShowControl
-                value={show}
-                onChange={(value) => void navigate({ search: { show: value }, replace: true })}
-              />
-            </div>
-            <ul className="flex flex-col" aria-label="Shared threads">
-              {shown?.length === 0 && (
-                <li className="px-2 text-sm text-muted-foreground">No thread matches.</li>
-              )}
-              {shown?.map((thread) => (
-                <ThreadRow
-                  key={thread.id}
-                  thread={thread}
-                  detail={thread.place}
-                  time={<Until iso={thread.accessUntil} />}
-                />
-              ))}
-            </ul>
-          </div>
-        )}
+        <ThreadTable
+          label="Shared threads"
+          page={page}
+          search={search}
+          onSearch={(next) => void navigate({ search: next, replace: true })}
+          row={(thread) => ({ detail: thread.place, time: <Until iso={thread.accessUntil} /> })}
+          empty={{
+            icon: <UsersIcon />,
+            title: "Nothing is shared with you yet",
+            description:
+              "Threads that people outside your spaces share with you appear here. They arrive as invite links; open one to join the thread.",
+          }}
+        />
       </div>
     </>
   );

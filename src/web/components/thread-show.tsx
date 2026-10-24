@@ -1,16 +1,8 @@
-// Which of a page's threads it lists: all of them, those that need the reader (the agent waits for
-// their decision, or failed since they looked), or those with something new for them.
+// Chooses which of a page's threads it lists: all of them, those that need the reader (the agent
+// waits for their decision, or failed since they looked), or those with something new for them.
 
-import { needsYou, type ThreadStatus } from "@/shared/thread-status.ts";
+import type { ThreadShow } from "@/shared/thread-status.ts";
 import { SegmentedControl } from "@/web/components/segmented-control";
-
-export type ThreadShow = "needs-you" | "unread";
-
-export function shows(show: ThreadShow | undefined, status: ThreadStatus) {
-  if (show === "needs-you") return needsYou(status);
-  if (show === "unread") return status === "unread";
-  return true;
-}
 
 export function ThreadShowControl({
   value,
