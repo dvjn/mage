@@ -253,14 +253,26 @@ test("a space can only make a tool stricter than its org, and remembers the sect
     "aria-pressed",
     "true",
   );
-  const interactive = page.getByRole("combobox", { name: "Interactive tools" });
-  await expect(interactive).toContainText("Custom");
-  await expect(page.getByRole("combobox", { name: "Read-only tools" })).toContainText(
-    "Always allow",
+  const interactive = page.getByRole("group", { name: "Interactive tools", exact: true });
+  // Its tools differ, so no icon of the group is pressed.
+  await expect(interactive.getByText("Mixed", { exact: true })).toBeVisible();
+  for (const name of ["Allow all", "Ask for all", "Block all"]) {
+    await expect(interactive.getByRole("button", { name })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+  }
+  await expect(
+    page
+      .getByRole("group", { name: "Read-only tools", exact: true })
+      .getByRole("button", { name: "Allow all" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await interactive.getByRole("button", { name: "Block all" }).click();
+  await expect(interactive.getByRole("button", { name: "Block all" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
   );
-  await interactive.click();
-  await page.getByRole("option", { name: "Blocked" }).click();
-  await expect(interactive).toContainText("Blocked");
+  await expect(interactive.getByText("Mixed", { exact: true })).toHaveCount(0);
   await expect(move.getByRole("button", { name: "Blocked" })).toHaveAttribute(
     "aria-pressed",
     "true",

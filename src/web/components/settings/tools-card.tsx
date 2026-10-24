@@ -1,13 +1,13 @@
 // The agent's tools in settings, one collapsible section per toolset, its tools split into read-only
-// and interactive ones. Each group sets all its tools at once; each tool is allowed, asks every
-// time, or is blocked. For the org, only its owners change them; for a space, a tool can only be
-// made stricter than the org has it. Which sections are open is remembered in this browser for the
-// signed-in person.
+// and interactive ones. Each group's icons set all its tools at once; each tool is allowed, asks
+// every time, or is blocked. For the org, only its owners change them; for a space, a tool can only
+// be made stricter than the org has it. Which sections are open is remembered in this browser for
+// the signed-in person.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
 import { BanIcon, ChevronRightIcon, CircleCheckIcon, HandIcon, SearchIcon } from "lucide-react";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useId, useState } from "react";
 
 import {
   strictest,
@@ -25,13 +25,6 @@ import {
 } from "@/web/components/ui/collapsible";
 import { FieldError } from "@/web/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/web/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/web/components/ui/toggle-group";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { apiClient } from "@/web/lib/api-client";
@@ -44,26 +37,30 @@ function spaceToolsKey(spaceId: string) {
   return ["spaces", spaceId, "tools"];
 }
 
-const MODES: { value: ToolMode; label: string; icon: ReactNode; tone: string }[] = [
+// Each mode, named for one tool and for a whole group.
+const MODES: { value: ToolMode; label: string; all: string; icon: ReactNode; tone: string }[] = [
   {
     value: "allow",
     label: "Always allow",
+    all: "Allow all",
     icon: <CircleCheckIcon />,
     tone: "aria-pressed:text-foreground",
   },
   {
     value: "ask",
     label: "Needs approval",
+    all: "Ask for all",
     icon: <HandIcon />,
     tone: "aria-pressed:text-status-waiting",
   },
-  { value: "block", label: "Blocked", icon: <BanIcon />, tone: "aria-pressed:text-destructive" },
+  {
+    value: "block",
+    label: "Blocked",
+    all: "Block all",
+    icon: <BanIcon />,
+    tone: "aria-pressed:text-destructive",
+  },
 ];
-
-const LABELS = Object.fromEntries(MODES.map((mode) => [mode.value, mode.label])) as Record<
-  ToolMode,
-  string
->;
 
 const SOURCES: Record<ToolsetSetting["source"], string> = { builtin: "Built in", mcp: "MCP" };
 
@@ -250,8 +247,10 @@ function ToolGroup({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 } & Omit<ToolsProps, "toolsets">) {
+  const mixedId = useId();
   const modes = new Set(tools.map((tool) => tool.mode));
-  const value = modes.size === 1 ? [...modes][0]! : "custom";
+  // No mode when the group's tools differ.
+  const value = modes.size === 1 ? [...modes][0]! : null;
   // In a space, a mode no tool in the group may take there.
   const unavailable = (mode: ToolMode) =>
     scope === "space" && tools.every((tool) => looser(mode, tool.orgMode));
@@ -268,34 +267,25 @@ function ToolGroup({
           {name}
           <Badge variant="outline">{tools.length}</Badge>
         </CollapsibleTrigger>
-        <Select
+        {!value && (
+          <span id={mixedId} className="text-xs text-muted-foreground">
+            Mixed
+          </span>
+        )}
+        <ModeToggle
+          label={`${name}: when the agent may use them`}
           value={value}
-          disabled={!canChange}
-          onValueChange={(next) =>
-            next &&
-            next !== "custom" &&
+          describedBy={value ? undefined : mixedId}
+          canChange={canChange}
+          labelOf={(mode) => mode.all}
+          setByOrg={unavailable}
+          onChange={(mode) =>
             onChange(
               tools.map((tool) => tool.id),
-              next as ToolMode,
+              mode,
             )
           }
-        >
-          <SelectTrigger size="sm" aria-label={name} className="w-40">
-            <SelectValue>{() => (value === "custom" ? "Custom" : LABELS[value])}</SelectValue>
-          </SelectTrigger>
-          <SelectContent alignItemWithTrigger={false}>
-            {MODES.map((mode) => (
-              <SelectItem key={mode.value} value={mode.value} disabled={unavailable(mode.value)}>
-                <span className="flex flex-col">
-                  {mode.label}
-                  {unavailable(mode.value) && (
-                    <span className="text-xs text-muted-foreground">{SET_BY_ORG}</span>
-                  )}
-                </span>
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        />
       </div>
       <CollapsibleContent>
         <ul className="flex flex-col divide-y border-t pl-6">
@@ -311,6 +301,61 @@ function ToolGroup({
         </ul>
       </CollapsibleContent>
     </Collapsible>
+  );
+}
+
+// The three modes as icons, one pressed, or none for a group whose tools differ.
+function ModeToggle({
+  label,
+  value,
+  describedBy,
+  canChange,
+  labelOf,
+  setByOrg,
+  onChange,
+}: {
+  label: string;
+  value: ToolMode | null;
+  describedBy?: string;
+  canChange: boolean;
+  labelOf: (mode: (typeof MODES)[number]) => string;
+  setByOrg: (mode: ToolMode) => boolean;
+  onChange: (mode: ToolMode) => void;
+}) {
+  return (
+    <ToggleGroup
+      aria-label={label}
+      aria-describedby={describedBy}
+      size="sm"
+      spacing={0.5}
+      value={value ? [value] : []}
+      disabled={!canChange}
+      onValueChange={(next: string[]) => {
+        const chosen = next.find((mode) => mode !== value);
+        if (chosen) onChange(chosen as ToolMode);
+      }}
+      className="shrink-0 rounded-lg border p-0.5"
+    >
+      {MODES.map((mode) => {
+        const disabled = setByOrg(mode.value);
+        const item = (
+          <ToggleGroupItem
+            value={mode.value}
+            aria-label={labelOf(mode)}
+            disabled={disabled}
+            className={cn("text-muted-foreground", mode.tone)}
+          >
+            {mode.icon}
+          </ToggleGroupItem>
+        );
+        return (
+          <WithTooltip key={mode.value} label={disabled ? SET_BY_ORG : labelOf(mode)}>
+            {/* A disabled control takes no pointer, so its wrapper holds the tooltip. */}
+            {disabled ? <span className="inline-flex">{item}</span> : item}
+          </WithTooltip>
+        );
+      })}
+    </ToggleGroup>
   );
 }
 
@@ -331,38 +376,14 @@ function ToolRow({
           <span className="text-xs text-muted-foreground">{tool.definition.description}</span>
         )}
       </span>
-      <ToggleGroup
-        aria-label={`${label}: when the agent may use it`}
-        size="sm"
-        spacing={0.5}
-        value={[tool.mode]}
-        disabled={!canChange}
-        onValueChange={(next: string[]) => {
-          const chosen = next.find((mode) => mode !== tool.mode);
-          if (chosen) onChange([tool.id], chosen as ToolMode);
-        }}
-        className="shrink-0 rounded-lg border p-0.5"
-      >
-        {MODES.map((mode) => {
-          const setByOrg = scope === "space" && looser(mode.value, tool.orgMode);
-          const item = (
-            <ToggleGroupItem
-              value={mode.value}
-              aria-label={mode.label}
-              disabled={setByOrg}
-              className={cn("text-muted-foreground", mode.tone)}
-            >
-              {mode.icon}
-            </ToggleGroupItem>
-          );
-          return (
-            <WithTooltip key={mode.value} label={setByOrg ? SET_BY_ORG : mode.label}>
-              {/* A disabled control takes no pointer, so its wrapper holds the tooltip. */}
-              {setByOrg ? <span className="inline-flex">{item}</span> : item}
-            </WithTooltip>
-          );
-        })}
-      </ToggleGroup>
+      <ModeToggle
+        label={`${label}: when the agent may use it`}
+        value={tool.mode}
+        canChange={canChange}
+        labelOf={(mode) => mode.label}
+        setByOrg={(mode) => scope === "space" && looser(mode, tool.orgMode)}
+        onChange={(mode) => onChange([tool.id], mode)}
+      />
     </li>
   );
 }
