@@ -74,13 +74,13 @@ test("a folder lists its first 30 threads, then leads to the space page narrowed
   await expect(page).toHaveURL(/\/s\/[^/]+\?folder=/);
   await expect(page.getByRole("button", { name: "Folder: Looms" })).toBeVisible();
   const threads = page.getByRole("table", { name: "Threads" });
-  // A page holds 25; the footer leads to the rest.
-  await expect(threads.getByRole("link", { name: /^Loom \d+/ })).toHaveCount(25);
-  await expect(page.getByText("1–25 of 31")).toBeVisible();
+  // A page holds 10; the footer leads to the rest.
+  await expect(threads.getByRole("link", { name: /^Loom \d+/ })).toHaveCount(10);
+  await expect(page.getByText("1–10 of 31")).toBeVisible();
   await page.getByRole("button", { name: "Next page" }).click();
   await expect(page).toHaveURL(/page=2/);
-  await expect(threads.getByRole("link", { name: /^Loom \d+/ })).toHaveCount(6);
-  await expect(page.getByText("Page 2 of 2")).toBeVisible();
+  await expect(threads.getByRole("link", { name: /^Loom \d+/ })).toHaveCount(10);
+  await expect(page.getByText("Page 2 of 4")).toBeVisible();
   await expect(threads.getByRole("link", { name: /^Loose/ })).toHaveCount(0);
   // Choosing the folder again clears it.
   await page.getByRole("button", { name: "Folder: Looms" }).click();
@@ -102,8 +102,8 @@ test("shared threads: the sidebar lists 30, and the page filters by title and pl
   await sidebar(guest.page).getByRole("link", { name: "Show all" }).click();
   await expect(guest.page).toHaveURL(/\/shared$/);
   const list = guest.page.getByRole("table", { name: "Shared threads" });
-  await expect(list.getByRole("row")).toHaveCount(25);
-  await expect(guest.page.getByText("1–25 of 31")).toBeVisible();
+  await expect(list.getByRole("row")).toHaveCount(10);
+  await expect(guest.page.getByText("1–10 of 31")).toBeVisible();
   // More rows a page show them all, and the footer goes once everything fits.
   await guest.page.getByRole("combobox", { name: "Rows per page" }).click();
   await guest.page.getByRole("option", { name: "50" }).click();

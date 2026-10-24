@@ -1,4 +1,4 @@
-// A table's footer: which rows of how many the page shows ("26–50 of 312"), how many rows a page
+// A table's footer: which rows of how many the page shows ("11–20 of 312"), how many rows a page
 // holds, which page of how many this is, and the first, previous, next and last pages. Hidden while
 // every row fits on the first page.
 

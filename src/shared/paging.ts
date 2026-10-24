@@ -7,7 +7,7 @@ import * as z from "zod";
 export const PAGE_LIMIT = 50;
 
 // How many rows a table's page may hold.
-export const PER_PAGE_OPTIONS = [25, 50, 100] as const;
+export const PER_PAGE_OPTIONS = [10, 25, 50] as const;
 
 export const pageQuerySchema = z.object({
   q: z.string().max(200).optional(),
