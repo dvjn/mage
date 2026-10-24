@@ -1,7 +1,8 @@
 // A thread's status for the signed-in person, as its row in a list shows it: a glyph of its own
-// shape and colour, with what it means in words on hover and for screen readers, so the status
-// never rests on colour alone; nothing while there is nothing new. The spinner holds still for
-// those who ask for less motion.
+// shape and colour (amber while the agent works, green for something new, red when it failed, blue
+// while it waits for them, a softer blue while it waits for someone else), with what it means in
+// words on hover and for screen readers, so the status never rests on colour alone; nothing while
+// there is nothing new. The spinner holds still for those who ask for less motion.
 
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
@@ -55,17 +56,17 @@ function Glyph({ status }: { status: ThreadStatus }) {
         </span>
       );
     case "paused":
-      return <HandIcon className="size-4 shrink-0 text-muted-foreground" />;
+      return <HandIcon className="size-4 shrink-0 text-status-paused" />;
     case "failed":
-      return <CircleAlertIcon className="size-4 shrink-0 text-destructive" />;
+      return <CircleAlertIcon className="size-4 shrink-0 text-status-failed" />;
     case "working":
       return (
-        <LoaderCircleIcon className="size-4 shrink-0 text-foreground/70 motion-safe:animate-spin" />
+        <LoaderCircleIcon className="size-4 shrink-0 text-status-working motion-safe:animate-spin" />
       );
     case "unread":
       return (
         <span className="grid size-4 shrink-0 place-items-center">
-          <span className="size-2 rounded-full bg-primary" />
+          <span className="size-2 rounded-full bg-status-unread" />
         </span>
       );
     case "read":

@@ -72,8 +72,8 @@ const MODES: {
     all: "Ask for all",
     counted: (count) => `${count} ${count === 1 ? "needs" : "need"} approval`,
     icon: <HandIcon />,
-    tone: "aria-pressed:text-status-waiting",
-    color: "text-status-waiting",
+    tone: "aria-pressed:text-tool-ask",
+    color: "text-tool-ask",
   },
   {
     value: "block",
