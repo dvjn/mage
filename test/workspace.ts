@@ -22,6 +22,7 @@ import { createRunStore } from "@/adapters/runs.ts";
 import * as schema from "@/adapters/schema.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
 import { createThreadStore } from "@/adapters/threads.ts";
+import { createToolSettingStore } from "@/adapters/tool-settings.ts";
 import { createApp } from "@/http/app.ts";
 import type { OrgRole } from "@/ports/directory.ts";
 import type { Space, SpaceRole } from "@/ports/spaces.ts";
@@ -35,10 +36,12 @@ import { createGuests } from "@/services/guests.ts";
 import { createOrgs } from "@/services/orgs.ts";
 import { createRunWorker, dropRefusedWaiting, type RunWorkerOptions } from "@/services/runs.ts";
 import { createSpaces } from "@/services/spaces.ts";
+import { createSystemTools } from "@/services/system-tools.ts";
 import { createThreadAccess } from "@/services/thread-access.ts";
 import { createThreadLog } from "@/services/thread-log.ts";
 import { createThreads } from "@/services/threads.ts";
 import { createTitles } from "@/services/titles.ts";
+import { createToolDecisions, createTools } from "@/services/tools.ts";
 import type { Effort } from "@/shared/threads.ts";
 
 import { scimClient } from "../e2e/scim-client.ts";
@@ -148,12 +151,25 @@ export function setup(
     settings: settingStore,
     accessChanged,
   });
-  const folders = createFolders({ spaces, folders: createFolderStore(db) });
+  const folderStore = createFolderStore(db);
+  const folders = createFolders({ spaces, folders: folderStore });
   const guestStore = createGuestStore(db);
   const access = createThreadAccess({
     spaces,
     threads: threadStore,
     guests: guestStore,
+  });
+  const toolSettings = createToolSettingStore(db);
+  const tools = createTools({
+    specs: createSystemTools({
+      threads: threadStore,
+      spaceStore,
+      folders: folderStore,
+      guests: guestStore,
+      models: { replyModel, requireModel: models.requireModel },
+    }),
+    settings: toolSettings,
+    access,
   });
   const bus = createEventBus();
   // Subscriptions still open.
@@ -190,6 +206,7 @@ export function setup(
     models,
     log,
     bus: countingBus,
+    tools,
     ...(titles && {
       titles: createTitles({
         models: {
@@ -221,6 +238,7 @@ export function setup(
       transact,
       flushMs: 1,
       models: { open: () => model.open(), replyModel },
+      tools,
       logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
       ...workerOptions,
       ...options,
@@ -257,6 +275,17 @@ export function setup(
     }),
     orgs,
     groups: createGroups({ directory }),
+    tools: createToolDecisions({
+      tools,
+      access,
+      threads: threadStore,
+      spaceStore,
+      runs: runStore,
+      spaces,
+      settings: toolSettings,
+      log,
+      bus: countingBus,
+    }),
     logger,
     signInOptions: { oidc: null },
     pingDatabase: () => Promise.resolve(true),
@@ -388,6 +417,7 @@ export function setup(
     directory,
     settingStore,
     guestStore,
+    toolSettings,
     signUp,
     join,
     api,

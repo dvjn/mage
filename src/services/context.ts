@@ -1,11 +1,12 @@
 // What the agent is given to reply from: a short system prompt naming Mage and the people in the
 // thread, and the thread's messages in the order the agent saw them, each person's prefixed with
-// their name. Quiet asides are included; replies still being written, and replies cut short that
-// were tried again, are not.
+// their name, each reply with the tool calls it asked for and what they gave back. Quiet asides are
+// included; replies still being written, and replies cut short that were tried again, are not. A
+// call that did not run gives back only that it was not approved.
 
-import type { ModelMessage } from "@/ports/model-gateway.ts";
+import type { ModelMessage, ModelToolResult } from "@/ports/model-gateway.ts";
 import { QUIET_PREFIX } from "@/shared/threads.ts";
-import type { HumanRow, TranscriptRow } from "@/shared/transcript.ts";
+import type { HumanRow, ToolRow, TranscriptRow } from "@/shared/transcript.ts";
 
 export interface Context {
   instructions: string;
@@ -26,15 +27,54 @@ export function instructionsFor(people: string[]) {
   ].join("\n");
 }
 
+export const NOT_APPROVED = "This action was not approved.";
+
+// What a settled call gave back; null while it is still to be decided or run.
+function resultOf(row: ToolRow): ModelToolResult | null {
+  const { id: callId, toolId } = row;
+  switch (row.state) {
+    case "pending":
+    case "allowed":
+      return null;
+    case "ran":
+    case "failed":
+      return row.output && { callId, toolId, output: row.output };
+    default:
+      return { callId, toolId, output: { ok: false, error: NOT_APPROVED } };
+  }
+}
+
 export function contextOf(rows: readonly TranscriptRow[]): Context {
   const people = new Set<string>();
   const messages: ModelMessage[] = [];
+  const calls = new Map<string, ToolRow[]>();
+  for (const row of rows) {
+    if (row.kind !== "tool") continue;
+    calls.set(row.messageId, [...(calls.get(row.messageId) ?? []), row]);
+  }
   for (const row of rows) {
     if (row.kind === "human") {
       people.add(row.author.name);
       messages.push(humanMessage(row));
-    } else if (row.kind === "agent" && row.status !== "streaming" && !row.retried && row.text) {
-      messages.push({ role: "assistant", text: row.text });
+    } else if (row.kind === "agent" && row.status !== "streaming" && !row.retried) {
+      const settled = (calls.get(row.id) ?? [])
+        .map((call) => ({ call, result: resultOf(call) }))
+        .filter((settled) => settled.result !== null);
+      if (!row.text && settled.length === 0) continue;
+      messages.push({
+        role: "assistant",
+        text: row.text,
+        ...(settled.length > 0 && {
+          toolCalls: settled.map(({ call }) => ({
+            callId: call.id,
+            toolId: call.toolId,
+            input: call.input,
+          })),
+        }),
+      });
+      if (settled.length > 0) {
+        messages.push({ role: "tool", results: settled.map(({ result }) => result!) });
+      }
     }
   }
   return { instructions: instructionsFor([...people]), messages };

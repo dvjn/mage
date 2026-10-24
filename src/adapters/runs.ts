@@ -7,7 +7,7 @@ import { ulid } from "ulid";
 import { type Lease, LeaseLost, type Run, type RunStore } from "@/ports/runs.ts";
 
 import type { Db } from "./db.ts";
-import { run } from "./schema.ts";
+import { run, thread } from "./schema.ts";
 
 const columns = {
   id: run.id,
@@ -108,6 +108,24 @@ export function createRunStore(db: Db): RunStore {
         .map((row) => row.threadId);
     },
 
+    activeInSpace(spaceId) {
+      return db
+        .select(columns)
+        .from(run)
+        .innerJoin(thread, eq(thread.id, run.threadId))
+        .where(and(eq(thread.spaceId, spaceId), inArray(run.status, ACTIVE)))
+        .all();
+    },
+
+    activeIn(threadIds) {
+      if (threadIds.length === 0) return [];
+      return db
+        .select(columns)
+        .from(run)
+        .where(and(inArray(run.threadId, threadIds), inArray(run.status, ACTIVE)))
+        .all();
+    },
+
     requestCancel(threadId, userId, at) {
       db.update(run)
         .set({ cancelRequestedAt: at, cancelRequestedBy: userId, updatedAt: at })
@@ -179,6 +197,27 @@ export function createRunStore(db: Db): RunStore {
         .returning({ id: run.id })
         .get();
       if (!row) throw new LeaseLost(lease.runId);
+    },
+
+    wait(lease) {
+      const row = db
+        .update(run)
+        .set({ status: "waiting", leaseOwner: null, leaseExpiresAt: null, updatedAt: new Date() })
+        .where(held(lease))
+        .returning(columns)
+        .get();
+      if (!row) throw new LeaseLost(lease.runId);
+      return row;
+    },
+
+    resume(runId) {
+      const row = db
+        .update(run)
+        .set({ status: "queued", updatedAt: new Date() })
+        .where(and(eq(run.id, runId), eq(run.status, "waiting")))
+        .returning({ id: run.id })
+        .get();
+      return !!row;
     },
 
     end(lease, { status, error, errorKind, errorDetail, usage }): Run {

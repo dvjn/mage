@@ -8,17 +8,24 @@
 // works. Runs left running by a stopped server are failed with their partial reply rebuilt from its
 // stored pieces, and tried again until the same input has failed too many times. A run that fails
 // says why in a way people can act on: the provider's failure kind, what it said and, for a limit,
-// when it resets.
+// when it resets. A step that calls tools ends the model call; each call is recorded and decided
+// before any result goes back: it runs at once, or the run waits for a person's decision, letting
+// its lease go and keeping nothing in memory. A decision queues the run again, and the worker that
+// claims it reads the thread's log to see where its calls stand, checks each approval still holds,
+// runs what it may and goes on; a restart takes the same path.
 
 import { ulid } from "ulid";
 
 import type { DeltaStore } from "@/ports/deltas.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
 import type { Logger } from "@/ports/logger.ts";
+import * as z from "zod";
+
 import {
   ModelError,
   type ModelErrorKind,
   type ModelMessage,
+  type ModelToolCall,
   type ModelUsage,
 } from "@/ports/model-gateway.ts";
 import {
@@ -29,16 +36,18 @@ import {
   type Run,
   type RunStore,
 } from "@/ports/runs.ts";
-import type { SpaceStore } from "@/ports/spaces.ts";
-import type { ThreadStore } from "@/ports/threads.ts";
+import type { Space, SpaceStore } from "@/ports/spaces.ts";
+import type { Thread, ThreadStore } from "@/ports/threads.ts";
+import type { ToolOutput } from "@/ports/tools.ts";
 import type { Transact } from "@/ports/transaction.ts";
 import { ConnectionError } from "@/services/connections.ts";
 import { contextOf, humanMessage } from "@/services/context.ts";
-import type { Models } from "@/services/models.ts";
+import type { Models, OpenModel } from "@/services/models.ts";
 import type { ThreadAccess } from "@/services/thread-access.ts";
 import { type Append, eventSummary, type ThreadLog } from "@/services/thread-log.ts";
+import type { AnyToolSpec, Tools } from "@/services/tools.ts";
 import type { EventDataMap, ReplyPart, ReplyStatus } from "@/shared/threads.ts";
-import { type PendingMessage, transcriptOf } from "@/shared/transcript.ts";
+import { type PendingMessage, type ToolRow, transcriptOf } from "@/shared/transcript.ts";
 
 export interface RunWorkerOptions {
   runs: RunStore;
@@ -50,6 +59,7 @@ export interface RunWorkerOptions {
   bus: EventBus;
   transact: Transact;
   models: Pick<Models, "open" | "replyModel">;
+  tools: Pick<Tools, "offered" | "forModel" | "decide" | "approvalHolds">;
   logger: Logger;
   now?: () => Date;
   // How long reply pieces gather before they are stored and announced together.
@@ -118,6 +128,21 @@ function failureOf(err: unknown, ref: string | null): RunFailure {
 
 // Why a run was aborted from outside its stream.
 type Abort = { kind: "lease" } | { kind: "shutdown" } | { kind: "cancel" };
+
+// Thrown once the run waits for a decision on a tool call, its lease let go.
+class Waiting extends Error {}
+
+// The model a run replies with, and the thread's own model and effort it was chosen from.
+interface Replying {
+  model: OpenModel;
+  effort: Thread["effort"];
+  own: Pick<Thread, "model" | "effort">;
+}
+
+// Whether a tool call has not been settled yet.
+function open(row: ToolRow) {
+  return row.state === "pending" || row.state === "allowed";
+}
 
 interface Execution {
   run: Run;
@@ -220,7 +245,8 @@ function messageOf(err: unknown) {
 }
 
 export function createRunWorker(options: RunWorkerOptions) {
-  const { runs, threads, spaceStore, access, deltas, log, bus, transact, models, logger } = options;
+  const { runs, threads, spaceStore, access, deltas, log, bus, transact, models, tools, logger } =
+    options;
   const now = options.now ?? (() => new Date());
   const leaseMs = options.leaseMs ?? 30_000;
   const pollMs = options.pollMs ?? 5_000;
@@ -271,6 +297,15 @@ export function createRunWorker(options: RunWorkerOptions) {
     retry = false,
   ) {
     const { status, failure, usage } = outcome;
+    // Its calls still open will not run.
+    for (const row of transcript(run.threadId).rows) {
+      if (row.kind !== "tool" || row.runId !== run.id || !open(row)) continue;
+      append({
+        type: "tool.denied",
+        actor: AGENT,
+        data: { runId: run.id, callId: row.id, reason: "stopped" },
+      });
+    }
     const ended = runs.end(lease, {
       status,
       usage,
@@ -408,6 +443,7 @@ export function createRunWorker(options: RunWorkerOptions) {
         reasoningFrom: null,
         reasoningMs: null,
       };
+      return id;
     }
 
     return {
@@ -469,55 +505,223 @@ export function createRunWorker(options: RunWorkerOptions) {
     return admitted.map(humanMessage);
   }
 
-  // Adds each step's token use to `usage`.
-  async function drive(execution: Execution, reply: ReturnType<typeof replies>, usage: ModelUsage) {
-    const { run, lease, controller } = execution;
-    const thread = threads.find(run.threadId);
-    const space = thread && spaceStore.find(thread.spaceId);
-    if (!thread || !space) throw new LeaseLost(run.id);
+  // The model the thread replies with now, opened.
+  async function replying(execution: Execution, space: Space, thread: Thread): Promise<Replying> {
     // A model turned off, or gone with its provider, gives way to the space's default, then the
     // org's, each with its own effort; opening the one named fails the run saying why when none
     // can reply.
-    const replying = await models.replyModel(space, { model: thread.model, effort: thread.effort });
-    if (!replying) throw new RunFailure("Pick a model for this thread.");
-    const ref = replying.used?.ref ?? replying.chosen.ref;
-    const { effort } = replying;
+    const own = { model: thread.model, effort: thread.effort };
+    const picked = await models.replyModel(space, own);
+    if (!picked) throw new RunFailure("Pick a model for this thread.");
+    const ref = picked.used?.ref ?? picked.chosen.ref;
     execution.ref = ref;
     const model = await models.open(space.orgId, ref);
-    runs.setModel(lease, ref);
+    runs.setModel(execution.lease, ref);
+    return { model, effort: picked.effort, own };
+  }
+
+  // Records the calls a model step asked for, each with whether it waits for a decision. A call of
+  // a tool not offered, or with input the tool does not take, fails at once.
+  function request(
+    execution: Execution,
+    space: Space,
+    calls: (ModelToolCall & { messageId: string })[],
+  ) {
+    const { run, lease } = execution;
+    write(lease, run.threadId, (append) => {
+      const thread = threads.find(run.threadId);
+      if (!thread) throw new LeaseLost(run.id);
+      const { rows } = transcript(run.threadId);
+      const offered = tools.offered(space.orgId, space.id);
+      for (const call of calls) {
+        const { callId, toolId, input, messageId } = call;
+        const spec = offered.find((candidate) => candidate.id === toolId);
+        const parsed = spec?.input.safeParse(input);
+        const risk =
+          spec && parsed?.success ? spec.risk(parsed.data, { model: execution.ref }) : "normal";
+        const waits =
+          !!spec && !!parsed?.success && tools.decide(rows, thread, space, toolId, risk) === "wait";
+        append({
+          type: "tool.requested",
+          actor: AGENT,
+          data: { runId: run.id, callId, messageId, toolId, input, risk, waits },
+        });
+        if (spec && parsed?.success) continue;
+        append({
+          type: "tool.ran",
+          actor: AGENT,
+          data: {
+            runId: run.id,
+            callId,
+            ok: false,
+            error: spec
+              ? `The input is not valid: ${z.prettifyError(parsed!.error!)}`
+              : `No tool is named ${toolId} here.`,
+            ms: 0,
+          },
+        });
+      }
+    });
+  }
+
+  // The run's first open call that may run now, after denying those whose approval no longer
+  // holds or whose tool is gone; when none may and some wait for a decision, the run waits.
+  function nextCall(execution: Execution, space: Space) {
+    const { run, lease, controller } = execution;
+    const next = write(lease, run.threadId, (append) => {
+      stopIfAsked(execution, runs.hold(lease));
+      if (controller.signal.aborted) return null;
+      const thread = threads.find(run.threadId);
+      if (!thread) throw new LeaseLost(run.id);
+      const { rows } = transcript(run.threadId);
+      const calls = rows.filter(
+        (row): row is ToolRow => row.kind === "tool" && row.runId === run.id && open(row),
+      );
+      const offered = tools.offered(space.orgId, space.id);
+      let waiting = false;
+      for (const call of calls) {
+        const spec = offered.find((candidate) => candidate.id === call.toolId);
+        const parsed = spec?.input.safeParse(call.input);
+        let allowed = false;
+        if (spec && parsed?.success) {
+          if (call.state === "allowed") {
+            allowed = tools.approvalHolds(call, rows, thread, space);
+          } else {
+            const risk = spec.risk(parsed.data, { model: execution.ref });
+            allowed = tools.decide(rows, thread, space, call.toolId, risk) !== "wait";
+            if (!allowed && call.waits) {
+              waiting = true;
+              continue;
+            }
+          }
+        }
+        if (allowed) return { call, spec: spec!, input: parsed!.data as unknown };
+        append({
+          type: "tool.denied",
+          actor: AGENT,
+          data: { runId: run.id, callId: call.id, reason: "stale" },
+        });
+      }
+      if (waiting) runs.wait(lease);
+      return waiting ? ("wait" as const) : null;
+    });
+    if (controller.signal.aborted) throw controller.signal.reason;
+    if (next === "wait") throw new Waiting();
+    return next;
+  }
+
+  // Runs the run's open calls that may run, one at a time in order, until none is left; throws
+  // Waiting when some wait for a decision.
+  async function settle(execution: Execution, space: Space) {
+    const { run, lease } = execution;
+    for (let next = nextCall(execution, space); next; next = nextCall(execution, space)) {
+      const { call, spec, input } = next;
+      const started = now().getTime();
+      let output: ToolOutput;
+      try {
+        output = await (spec as AnyToolSpec).run(input, {
+          threadId: run.threadId,
+          spaceId: space.id,
+          orgId: space.orgId,
+          runId: run.id,
+          callId: call.id,
+          actor: AGENT,
+          model: execution.ref,
+          write: (work) => write(lease, run.threadId, (append) => work(append)),
+        });
+      } catch (err) {
+        if (err instanceof LeaseLost) throw err;
+        logger.warn({ err, runId: run.id, toolId: call.toolId }, "tool failed");
+        output = { ok: false, error: messageOf(err) };
+      }
+      const ms = Math.max(0, now().getTime() - started);
+      write(lease, run.threadId, (append) =>
+        append({
+          type: "tool.ran",
+          actor: AGENT,
+          data: {
+            runId: run.id,
+            callId: call.id,
+            ms,
+            ...(output.ok ? { ok: true, value: output.value } : { ok: false, error: output.error }),
+          },
+        }),
+      );
+    }
+  }
+
+  // Adds each step's token use to `usage`.
+  async function drive(execution: Execution, reply: ReturnType<typeof replies>, usage: ModelUsage) {
+    const { run, controller } = execution;
+    const thread = threads.find(run.threadId);
+    const space = thread && spaceStore.find(thread.spaceId);
+    if (!thread || !space) throw new LeaseLost(run.id);
+    let model = await replying(execution, space, thread);
+    // A run queued again after a decision takes in only the messages sent to steer it.
+    const resumed = transcript(thread.id).rows.some(
+      (row) => row.kind === "tool" && row.runId === run.id,
+    );
 
     let steps = 0;
-    // Each model call is followed by another while steering messages keep arriving.
+    // What the calls gave back goes to the model before the run ends.
+    let answer = resumed;
+    // Each model call is followed by another while steering messages keep arriving, or while
+    // tool calls have results to give back.
     for (let call = 0; steps < maxSteps; call += 1) {
-      const admitted = boundary(execution, call === 0);
-      if (call > 0 && admitted.length === 0) break;
+      const admitted = boundary(execution, call === 0 && !resumed);
+      await settle(execution, space);
+      if (call > 0 && admitted.length === 0 && !answer) break;
+      answer = false;
+      // A tool that changed the thread's model or effort changes what replies from here.
+      const current = threads.find(thread.id) ?? thread;
+      if (current.model !== model.own.model || current.effort !== model.own.effort) {
+        model = await replying(execution, space, current);
+      }
       const { instructions, messages } = contextOf(transcript(thread.id).rows);
-      const stream = model.stream(
+      const calls: (ModelToolCall & { messageId: string })[] = [];
+      let messageId = "";
+      const stream = model.model.stream(
         {
           instructions,
           messages,
           maxSteps: maxSteps - steps,
           sessionId: thread.id,
-          ...(effort && { effort }),
+          ...(model.effort && { effort: model.effort }),
           beforeStep: () => boundary(execution, false),
+          tools: tools.forModel(tools.offered(space.orgId, space.id)),
         },
         controller.signal,
       );
       for await (const event of stream) {
-        if (event.type === "step-start") {
-          steps += 1;
-          reply.start();
-        } else if (event.type === "delta") {
-          reply.add(event.text);
-        } else if (event.type === "reasoning") {
-          reply.add(event.text, "reasoning");
-        } else {
-          usage.inputTokens += event.usage.inputTokens;
-          usage.outputTokens += event.usage.outputTokens;
-          reply.complete(event.usage);
+        switch (event.type) {
+          case "step-start":
+            steps += 1;
+            messageId = reply.start();
+            break;
+          case "delta":
+            reply.add(event.text);
+            break;
+          case "reasoning":
+            reply.add(event.text, "reasoning");
+            break;
+          case "tool-call": {
+            const { type: _type, ...asked } = event;
+            calls.push({ ...asked, messageId });
+            break;
+          }
+          case "step-end":
+            usage.inputTokens += event.usage.inputTokens;
+            usage.outputTokens += event.usage.outputTokens;
+            reply.complete(event.usage);
+            break;
         }
       }
       if (controller.signal.aborted) throw controller.signal.reason;
+      if (calls.length > 0) {
+        request(execution, space, calls);
+        await settle(execution, space);
+        answer = true;
+      }
     }
   }
 
@@ -541,6 +745,10 @@ export function createRunWorker(options: RunWorkerOptions) {
         end(lease, run, append, { status: "completed", usage });
       });
     } catch (err) {
+      if (err instanceof Waiting) {
+        logger.info({ runId: run.id }, "run waits for a decision");
+        return;
+      }
       const abort = controller.signal.aborted ? (controller.signal.reason as Abort) : null;
       if (abort?.kind === "cancel") {
         try {

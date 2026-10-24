@@ -1,14 +1,19 @@
 // Streams a reply with the AI SDK from a provider's language model, turns the SDK's stream parts
 // into our model events, and sorts the provider's failures into our error kinds, with what the
-// provider said and the response headers that explain a limit.
+// provider said and the response headers that explain a limit. Tools go to the model without a way
+// to run them, so a step that calls any ends the request with its calls; their ids become names
+// providers accept, and back.
 
 import {
   APICallError,
   isStepCount,
+  jsonSchema,
+  type JSONSchema7,
   type LanguageModel,
   RetryError,
   type ModelMessage as SdkMessage,
   streamText,
+  type ToolSet,
 } from "ai";
 
 import {
@@ -29,12 +34,43 @@ export interface ProviderErrors {
   resetsAt?(headers: Record<string, string>, body: unknown, now: Date): Date | null;
 }
 
+// A tool id as a function name providers accept: letters, digits, `_` and `-`.
+export function toolName(id: string) {
+  return id.replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
 function sdkMessages(messages: ModelMessage[]): SdkMessage[] {
-  return messages.map((message) =>
-    message.role === "user"
-      ? { role: "user", content: message.text }
-      : { role: "assistant", content: [{ type: "text", text: message.text }] },
-  );
+  return messages.map((message): SdkMessage => {
+    switch (message.role) {
+      case "user":
+        return { role: "user", content: message.text };
+      case "assistant":
+        return {
+          role: "assistant",
+          content: [
+            ...(message.text ? [{ type: "text" as const, text: message.text }] : []),
+            ...(message.toolCalls ?? []).map((call) => ({
+              type: "tool-call" as const,
+              toolCallId: call.callId,
+              toolName: toolName(call.toolId),
+              input: call.input,
+            })),
+          ],
+        };
+      case "tool":
+        return {
+          role: "tool",
+          content: message.results.map((result) => ({
+            type: "tool-result" as const,
+            toolCallId: result.callId,
+            toolName: toolName(result.toolId),
+            output: result.output.ok
+              ? { type: "json" as const, value: (result.output.value ?? null) as never }
+              : { type: "error-text" as const, value: result.output.error },
+          })),
+        };
+    }
+  });
 }
 
 function parseJson(body: string | undefined): unknown {
@@ -156,13 +192,26 @@ export async function* streamReply(
     errors: ProviderErrors;
   },
 ): AsyncIterable<ModelEvent> {
+  // The tools by the names the model knows them by.
+  const ids = new Map((request.tools ?? []).map((tool) => [toolName(tool.id), tool.id]));
+  const tools: ToolSet = Object.fromEntries(
+    (request.tools ?? []).map((tool) => [
+      toolName(tool.id),
+      { description: tool.description, inputSchema: jsonSchema(tool.inputSchema as JSONSchema7) },
+    ]),
+  );
   const result = streamText({
     model,
     ...(options.system !== undefined && { system: options.system }),
     ...(options.reasoning && { reasoning: options.reasoning }),
     messages: sdkMessages(request.messages),
     ...(options.providerOptions && { providerOptions: options.providerOptions }),
-    stopWhen: isStepCount(request.maxSteps),
+    ...(ids.size > 0 && { tools }),
+    // A step with tool calls ends the request: the calls run elsewhere.
+    stopWhen: [
+      isStepCount(request.maxSteps),
+      ({ steps }) => (steps.at(-1)?.toolCalls.length ?? 0) > 0,
+    ],
     // Messages taken in at a step boundary join the conversation before the next step.
     prepareStep: ({ stepNumber, messages }) => {
       if (stepNumber === 0 || !request.beforeStep) return undefined;
@@ -193,6 +242,14 @@ export async function* streamReply(
         break;
       case "text-delta":
         if (part.text) yield { type: "delta", text: part.text };
+        break;
+      case "tool-call":
+        yield {
+          type: "tool-call",
+          callId: part.toolCallId,
+          toolId: ids.get(part.toolName) ?? part.toolName,
+          input: part.input,
+        };
         break;
       case "finish-step":
         yield {

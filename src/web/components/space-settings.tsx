@@ -1,6 +1,6 @@
 // A space's settings: renaming it, unless it is a person's own space named for them, the model and
-// reasoning effort its new threads start with, or the org's, who is in a shared space, and deleting
-// it when it is not the primary space. They are there only for those who manage it (its owners, and
+// reasoning effort its new threads start with, or the org's, the agent's tools there and who may run
+// them, who is in a shared space, and deleting it when it is not the primary space. They are there only for those who manage it (its owners, and
 // a team org's owners). A team org's owner who manages a space without being in it reads its
 // threads once they give themselves a role in it.
 
@@ -19,6 +19,7 @@ import {
   ModelField,
 } from "@/web/components/settings/default-fields";
 import { SettingsCard, SettingsPage } from "@/web/components/settings/layout";
+import { SpaceToolsCard } from "@/web/components/settings/tools-card";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -228,6 +229,7 @@ export function SpaceSettings() {
         <>
           {!namedForPerson(space) && <SpaceName key={space.id} space={space} />}
           <SpaceModel space={space} />
+          <SpaceToolsCard spaceId={space.id} />
           {space.kind === "shared" && <SpaceMembers space={space} />}
           {!space.primary && <DeleteSpace space={space} />}
         </>

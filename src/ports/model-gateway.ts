@@ -16,10 +16,32 @@ export interface ModelToken {
   proxy?: ProviderProxy | null;
 }
 
-export interface ModelMessage {
-  role: "user" | "assistant";
-  text: string;
+// A tool the model may call, with its input as a JSON schema.
+export interface ModelTool {
+  id: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
 }
+
+// A call the model asked for; `input` is whatever it sent, checked later.
+export interface ModelToolCall {
+  callId: string;
+  toolId: string;
+  input: unknown;
+}
+
+// What a call gave back to the model.
+export interface ModelToolResult {
+  callId: string;
+  toolId: string;
+  output: { ok: true; value: unknown } | { ok: false; error: string };
+}
+
+// A person's words, the model's answer with the calls it asked for, or what those calls gave back.
+export type ModelMessage =
+  | { role: "user"; text: string }
+  | { role: "assistant"; text: string; toolCalls?: ModelToolCall[] }
+  | { role: "tool"; results: ModelToolResult[] };
 
 export interface ModelUsage {
   inputTokens: number;
@@ -43,6 +65,9 @@ export interface ModelRequest {
   // Called at each step boundary after the first; the messages it returns join the conversation
   // before the next step.
   beforeStep?: () => ModelMessage[];
+  // The tools the model may call. A step that calls any ends the request; whoever asked runs them
+  // and asks again with what they gave back.
+  tools?: ModelTool[];
 }
 
 export type ModelEvent =
@@ -50,6 +75,8 @@ export type ModelEvent =
   | { type: "delta"; text: string }
   // A piece of the model's reasoning, or of the provider's summary of it, before its answer.
   | { type: "reasoning"; text: string }
+  // A tool call the step asks for; it comes before the step's end.
+  | ({ type: "tool-call" } & ModelToolCall)
   | { type: "step-end"; usage: ModelUsage };
 
 export interface ModelGateway {

@@ -8,6 +8,7 @@ import type { Connections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Guests } from "@/services/guests.ts";
 import type { Groups } from "@/services/groups.ts";
+import type { ToolDecisions } from "@/services/tools.ts";
 import type { Orgs } from "@/services/orgs.ts";
 import type { Models } from "@/services/models.ts";
 import type { Spaces } from "@/services/spaces.ts";
@@ -42,6 +43,7 @@ function setup(options: Pick<AuthOptions, "oidc"> = {}, db = openDatabase(":memo
     guests: unusedGuests,
     orgs: {} as Orgs,
     groups: {} as Groups,
+    tools: {} as ToolDecisions,
     logger,
     signInOptions,
     pingDatabase: () => Promise.resolve(true),

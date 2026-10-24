@@ -70,6 +70,9 @@ export interface RunStore {
   active(threadId: string): Run | null;
   // The threads with a queued, running or waiting run.
   activeThreadIds(): string[];
+  // The queued, running and waiting runs of the space's threads, or of the threads named.
+  activeInSpace(spaceId: string): Run[];
+  activeIn(threadIds: string[]): Run[];
   // Asks the thread's active run to stop, unless someone already has; null when there is none.
   requestCancel(threadId: string, userId: string, at: Date): Run | null;
   // Takes the oldest queued run for the owner until `expiresAt`.
@@ -84,6 +87,10 @@ export interface RunStore {
   renew(lease: Lease, expiresAt: Date): Run;
   // Records the model the run replies with.
   setModel(lease: Lease, model: string): void;
+  // Lets the lease go while the run waits for a person's decision; nothing holds it meanwhile.
+  wait(lease: Lease): Run;
+  // Queues a waiting run again, to be claimed like any other; false when it was not waiting.
+  resume(runId: string): boolean;
   // Ends the run and lets its lease go.
   end(
     lease: Lease,

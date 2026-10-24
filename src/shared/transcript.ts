@@ -2,7 +2,8 @@
 // the messages it has not taken in yet, and the run under way. A person's message takes its place
 // when the agent takes it in, or where it was posted when it is a quiet aside; an agent reply takes
 // the place its run reserved when the reply began. A reply cut short and then tried again stays in
-// view but is left out of what the agent reads.
+// view but is left out of what the agent reads. A tool call the agent asked for sits where it asked,
+// and carries how it was decided and what it gave back.
 
 import {
   type ActorSummary,
@@ -13,6 +14,8 @@ import {
   type ReplyStatus,
   type RunReason,
   threadEventSchema,
+  type ToolRisk,
+  type ToolScope,
   type Usage,
 } from "@/shared/threads.ts";
 
@@ -74,6 +77,33 @@ export interface StopRow {
   by: string | null;
 }
 
+// Where a tool call stands: waiting for a decision, approved and about to run, denied, ran or
+// failed, denied because its approval no longer held, or left when its run ended.
+export type ToolState = "pending" | "allowed" | "denied" | "ran" | "failed" | "stale" | "stopped";
+
+// A tool call the agent asked for.
+export interface ToolRow {
+  kind: "tool";
+  // The call's id.
+  id: string;
+  seq: number;
+  runId: string;
+  // The reply whose model step asked for it.
+  messageId: string;
+  toolId: string;
+  input: unknown;
+  risk: ToolRisk;
+  // It needed a person's approval when asked for.
+  waits: boolean;
+  requestedAt: string;
+  state: ToolState;
+  // Who approved or denied it, how, and where in the thread.
+  decision: { allow: boolean; scope: ToolScope; by: Person; seq: number } | null;
+  // What it gave back, or why it failed, once it ran, and how long that took.
+  output: { ok: true; value: unknown } | { ok: false; error: string } | null;
+  ms: number | null;
+}
+
 // An event this client does not know how to show.
 export interface UnknownRow {
   kind: "unknown";
@@ -82,7 +112,7 @@ export interface UnknownRow {
   type: string;
 }
 
-export type TranscriptRow = HumanRow | AgentRow | FailureRow | StopRow | UnknownRow;
+export type TranscriptRow = HumanRow | AgentRow | ToolRow | FailureRow | StopRow | UnknownRow;
 
 // A message posted while the agent was busy, waiting to be taken in.
 export interface PendingMessage {
@@ -102,6 +132,8 @@ export interface ActiveRun {
   startedBy: string | null;
   reason: RunReason | null;
   createdAt: string;
+  // The tool call it waits on a decision for, if any.
+  waitingOn: string | null;
 }
 
 export interface Transcript {
@@ -133,6 +165,7 @@ export function transcriptOf(
   const rows: TranscriptRow[] = [];
   const pending = new Map<string, PendingMessage>();
   const replies = new Map<string, AgentRow>();
+  const calls = new Map<string, ToolRow>();
   let run: ActiveRun | null = null;
   const usage: Usage = { inputTokens: 0, outputTokens: 0 };
 
@@ -225,6 +258,7 @@ export function transcriptOf(
           startedBy: event.actor.kind === "user" ? event.actor.name : null,
           reason: event.data.reason,
           createdAt: event.createdAt,
+          waitingOn: null,
         };
         break;
       case "run.failed": {
@@ -241,6 +275,57 @@ export function transcriptOf(
           ...(resetsAt && { resetsAt }),
         });
         if (run?.id === event.data.runId) run = null;
+        break;
+      }
+      case "tool.requested": {
+        const { runId, callId, messageId, toolId, input, risk, waits } = event.data;
+        const call: ToolRow = {
+          kind: "tool",
+          id: callId,
+          seq: event.seq,
+          runId,
+          messageId,
+          toolId,
+          input,
+          risk,
+          waits,
+          requestedAt: event.createdAt,
+          state: "pending",
+          decision: null,
+          output: null,
+          ms: null,
+        };
+        calls.set(callId, call);
+        rows.push(call);
+        break;
+      }
+      case "tool.approved":
+      case "tool.denied": {
+        const call = calls.get(event.data.callId);
+        if (!call || (call.state !== "pending" && call.state !== "allowed")) break;
+        if (event.type === "tool.approved") {
+          call.state = "allowed";
+        } else {
+          call.state = event.data.reason === "denied" ? "denied" : event.data.reason;
+        }
+        if (event.actor.kind === "user") {
+          call.decision = {
+            allow: event.type === "tool.approved",
+            scope: event.type === "tool.approved" ? event.data.scope : "once",
+            by: event.actor,
+            seq: event.seq,
+          };
+        }
+        break;
+      }
+      case "tool.ran": {
+        const call = calls.get(event.data.callId);
+        if (!call) break;
+        call.state = event.data.ok ? "ran" : "failed";
+        call.output = event.data.ok
+          ? { ok: true, value: event.data.value ?? null }
+          : { ok: false, error: event.data.error ?? "The tool failed." };
+        call.ms = event.data.ms;
         break;
       }
       case "thread.renamed":
@@ -265,5 +350,12 @@ export function transcriptOf(
     }
   }
 
+  if (run) {
+    const runId = run.id;
+    run.waitingOn =
+      [...calls.values()].find(
+        (call) => call.runId === runId && call.waits && call.state === "pending",
+      )?.id ?? null;
+  }
   return { rows, pending: [...pending.values()], run, usage };
 }

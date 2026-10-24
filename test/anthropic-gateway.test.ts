@@ -108,7 +108,92 @@ async function collect(stream: AsyncIterable<ModelEvent>) {
   return events;
 }
 
+// A reply that calls a tool after a few words.
+function toolUse(name: string, json: string) {
+  const [start, ...rest] = reply(["On it."]);
+  const ending = rest.slice(-2);
+  return [
+    start!,
+    ...rest.slice(0, -2),
+    {
+      type: "content_block_start",
+      index: 1,
+      content_block: { type: "tool_use", id: "toolu_1", name, input: {} },
+    },
+    {
+      type: "content_block_delta",
+      index: 1,
+      delta: { type: "input_json_delta", partial_json: json },
+    },
+    { type: "content_block_stop", index: 1 },
+    { ...ending[0]!, delta: { stop_reason: "tool_use", stop_sequence: null } },
+    ending[1]!,
+  ];
+}
+
 describe("Anthropic API key gateway", () => {
+  it("offers tools by names the API takes, and ends the request with the calls asked for", async () => {
+    const { fetchFn, requests } = recordingFetch([
+      sse(toolUse("thread_rename", '{"title":"Engines"}')),
+    ]);
+    const tools = [
+      {
+        id: "thread.rename",
+        description: "Rename this thread.",
+        inputSchema: { type: "object", properties: { title: { type: "string" } } },
+      },
+    ];
+
+    const events = await collect(
+      createAnthropicKeyGateway(fetchFn).stream(
+        token,
+        {
+          ...request,
+          tools,
+          messages: [
+            ...request.messages,
+            {
+              role: "assistant",
+              text: "",
+              toolCalls: [{ callId: "toolu_0", toolId: "thread.info", input: {} }],
+            },
+            {
+              role: "tool",
+              results: [
+                { callId: "toolu_0", toolId: "thread.info", output: { ok: false, error: "No." } },
+              ],
+            },
+          ],
+        },
+        new AbortController().signal,
+      ),
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.body.tools).toEqual([
+      expect.objectContaining({ name: "thread_rename", description: "Rename this thread." }),
+    ]);
+    expect((requests[0]!.body.messages as unknown[]).slice(-2)).toEqual([
+      {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "toolu_0", name: "thread_info", input: {} }],
+      },
+      {
+        role: "user",
+        content: [
+          expect.objectContaining({ type: "tool_result", tool_use_id: "toolu_0", is_error: true }),
+        ],
+      },
+    ]);
+    expect(events).toContainEqual({
+      type: "tool-call",
+      callId: "toolu_1",
+      toolId: "thread.rename",
+      input: { title: "Engines" },
+    });
+    expect(events.at(-1)).toMatchObject({ type: "step-end" });
+  });
+
   it("asks the Messages API with the key", async () => {
     const { fetchFn, requests } = recordingFetch([sse(reply(["Punched", " cards."]))]);
 

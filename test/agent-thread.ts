@@ -1,5 +1,5 @@
-// A thread in Ada's space, where Grace can post too, with an agent on a model the test drives, and
-// ways to read back what happened in it.
+// A thread in Ada's space, where Grace can post too and Alan can read, with an agent on a model the
+// test drives, and ways to read back what happened in it.
 
 import { expect, onTestFinished } from "vite-plus/test";
 
@@ -47,7 +47,9 @@ export async function agentThread(options: Parameters<typeof setup>[0] = {}) {
           ? `Agent (${row.status}): ${row.text}`
           : row.kind === "stop"
             ? `stopped by ${row.by}`
-            : row.kind,
+            : row.kind === "tool"
+              ? `${row.toolId} (${row.state}${row.decision ? ` by ${row.decision.by.name}` : ""})`
+              : row.kind,
     );
   }
   function runs() {

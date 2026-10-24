@@ -27,6 +27,7 @@ import { createConnections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Guests } from "@/services/guests.ts";
 import type { Groups } from "@/services/groups.ts";
+import type { ToolDecisions } from "@/services/tools.ts";
 import type { Orgs } from "@/services/orgs.ts";
 import { createModels, pickReplyModel } from "@/services/models.ts";
 import { replyCandidates } from "@/shared/models.ts";
@@ -207,6 +208,7 @@ function setup() {
     guests: unusedGuests,
     orgs: {} as Orgs,
     groups: {} as Groups,
+    tools: {} as ToolDecisions,
     logger,
     signInOptions: { oidc: null },
     pingDatabase: () => Promise.resolve(true),

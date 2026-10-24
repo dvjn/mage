@@ -5,15 +5,32 @@
 // names the model that wrote it and shows what the model thought first, folded away once it
 // answers. An agent reply that was cut short says so, a run that failed says why and what to do
 // about it, the last run that failed or was stopped can be tried again, and an event this client
-// does not know yet gets a labelled placeholder.
+// does not know yet gets a labelled placeholder. A tool call waiting for a decision is a card from
+// the agent with Allow, Allow for now and Deny, enabled for the people who may run the tool and
+// marked paused for everyone else; every other call is a line saying what happened, which opens on
+// its input and output.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { RotateCcwIcon } from "lucide-react";
-import type { ReactNode } from "react";
+import { CheckIcon, ChevronRightIcon, RotateCcwIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import { type ReactNode, useState } from "react";
 
-import type { AgentRow, FailureRow, HumanRow, TranscriptRow } from "@/shared/transcript.ts";
+import type { ToolScope } from "@/shared/threads.ts";
+import type {
+  AgentRow,
+  FailureRow,
+  HumanRow,
+  ToolRow,
+  TranscriptRow,
+} from "@/shared/transcript.ts";
+import {
+  Confirmation,
+  ConfirmationAction,
+  ConfirmationActions,
+  ConfirmationRequest,
+  ConfirmationTitle,
+} from "@/web/components/ai-elements/confirmation";
 import { MessageResponse } from "@/web/components/ai-elements/message";
 import { CopyButton } from "@/web/components/copy-button";
 import {
@@ -25,10 +42,18 @@ import { CONNECTION_LABELS } from "@/web/components/model-picker";
 import { Time } from "@/web/components/time";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
 import { Button } from "@/web/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/web/components/ui/collapsible";
+import { Spinner } from "@/web/components/ui/spinner";
+import { WithTooltip } from "@/web/components/with-tooltip";
 import { useMinute } from "@/web/hooks/use-minute";
 import { initialsOf } from "@/web/lib/initials";
 import { meQuery, modelsQuery } from "@/web/lib/queries";
 import { timeUntil } from "@/web/lib/time";
+import { toolCopy } from "@/web/lib/tool-copy";
 
 // A row of the transcript: the avatar beside a header with the author and the time, and the body
 // flush with the header.
@@ -184,10 +209,162 @@ export function AgentStarting({ at }: { at: string }) {
   );
 }
 
-// What can be done from a row: try its run again, or open the model picker.
+// What can be done from a row: try its run again, open the model picker, or decide on a tool call
+// for those who may.
 export interface RowActions {
   retry?: () => void;
   pickModel?: () => void;
+  decide?: (allow: boolean, scope: ToolScope) => Promise<void>;
+}
+
+const ONLY_RUNNERS = "Only people who can run this here can decide";
+
+// A tool call waiting for a decision: what the agent wants to do, and the buttons to decide.
+function ToolCard({
+  row,
+  decide,
+  modelName,
+}: {
+  row: ToolRow;
+  decide?: RowActions["decide"];
+  modelName: (ref: string) => string;
+}) {
+  const copy = toolCopy(row, modelName);
+  const [deciding, setDeciding] = useState(false);
+  function button(label: string, allow: boolean, scope: ToolScope, variant: "default" | "outline") {
+    const action = (
+      <ConfirmationAction
+        variant={variant}
+        className="w-full sm:w-auto"
+        disabled={!decide || deciding}
+        onClick={() => {
+          if (!decide) return;
+          setDeciding(true);
+          void decide(allow, scope).finally(() => setDeciding(false));
+        }}
+      >
+        {label}
+      </ConfirmationAction>
+    );
+    if (decide) return action;
+    return (
+      <WithTooltip label={ONLY_RUNNERS}>
+        {/* A disabled control takes no pointer, so its wrapper holds the tooltip. */}
+        <span className="inline-flex w-full sm:w-auto" tabIndex={0}>
+          {action}
+        </span>
+      </WithTooltip>
+    );
+  }
+  return (
+    <TranscriptRowFrame
+      avatar={agentAvatar}
+      author="Agent"
+      at={row.requestedAt}
+      label="Approval request"
+      note={!decide && <span>Paused</span>}
+    >
+      <Confirmation approval={{ id: row.id }} state="approval-requested" className="gap-3">
+        <ConfirmationTitle className="flex flex-col gap-0.5">
+          <span className="font-medium text-foreground">{copy.ask}</span>
+          <span className="truncate">{copy.detail}</span>
+          <span>
+            <span className="sm:hidden">Needs approval.</span>
+            <span className="hidden sm:inline">Needs approval before it runs.</span>
+          </span>
+        </ConfirmationTitle>
+        <ConfirmationRequest>
+          <ConfirmationActions className="w-full flex-col items-stretch self-stretch sm:flex-row sm:items-center sm:justify-start">
+            {button("Allow", true, "once", "default")}
+            {row.risk === "normal" && button("Allow for now", true, "for_now", "outline")}
+            {button("Deny", false, "once", "outline")}
+          </ConfirmationActions>
+        </ConfirmationRequest>
+      </Confirmation>
+    </TranscriptRowFrame>
+  );
+}
+
+// How long a call took to run, when it took long enough to say.
+function duration(ms: number | null) {
+  return ms !== null && ms >= 1000 ? `${Math.round(ms / 1000)}s` : "—";
+}
+
+// A tool call that ran, is running or did not run, as one line that opens on its input and output.
+function ToolLine({ row, modelName }: { row: ToolRow; modelName: (ref: string) => string }) {
+  const copy = toolCopy(row, modelName);
+  const by = row.decision?.by.name;
+  const allowedBy =
+    by && (row.decision?.scope === "for_now" ? `allowed for now by ${by}` : `allowed by ${by}`);
+  let icon: ReactNode;
+  let text: string;
+  switch (row.state) {
+    case "ran":
+      icon = <CheckIcon className="text-foreground" />;
+      text = [copy.done, allowedBy].filter(Boolean).join(" · ");
+      break;
+    case "failed":
+      icon = <XIcon />;
+      text = `${copy.notDone} · ${row.output && !row.output.ok ? row.output.error : "it failed"}`;
+      break;
+    case "denied":
+      icon = <XIcon />;
+      text = by ? `${copy.notDone} · denied by ${by}` : copy.notDone;
+      break;
+    case "stale":
+      icon = <TriangleAlertIcon />;
+      text = `${copy.notDone} · the approval no longer held`;
+      break;
+    case "stopped":
+      icon = <XIcon />;
+      text = `${copy.notDone} · no longer needed`;
+      break;
+    default:
+      icon = <Spinner />;
+      text = [copy.ask.replace(/^Wants to/, "Going to"), allowedBy].filter(Boolean).join(" · ");
+  }
+  const output = row.output && (row.output.ok ? row.output.value : row.output.error);
+  return (
+    <Collapsible className="pl-9 text-xs text-muted-foreground">
+      <CollapsibleTrigger
+        aria-label={text}
+        className="group/tool flex w-full items-center gap-1.5 rounded-md py-0.5 text-left hover:text-foreground [&_svg]:size-3.5 [&_svg]:shrink-0"
+      >
+        <ChevronRightIcon className="transition-transform group-data-[panel-open]/tool:rotate-90" />
+        {icon}
+        <span className="min-w-0 flex-1 truncate">{text}</span>
+        <span className="shrink-0 tabular-nums">{duration(row.ms)}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="mt-1 flex flex-col gap-2 rounded-md bg-muted px-3 py-2">
+        <div className="flex flex-col gap-1">
+          <span className="font-medium">Input</span>
+          <pre className="font-mono break-words whitespace-pre-wrap">
+            {JSON.stringify(row.input, null, 2)}
+          </pre>
+        </div>
+        {row.output && (
+          <div className="flex flex-col gap-1">
+            <span className="font-medium">{row.output.ok ? "Output" : "Error"}</span>
+            <pre className="font-mono break-words whitespace-pre-wrap">
+              {typeof output === "string" ? output : JSON.stringify(output, null, 2)}
+            </pre>
+          </div>
+        )}
+      </CollapsibleContent>
+    </Collapsible>
+  );
+}
+
+function ToolCall({ row, decide }: { row: ToolRow; decide?: RowActions["decide"] }) {
+  const models = useQuery(modelsQuery);
+  function modelName(ref: string) {
+    const listed = [...(models.data?.models ?? []), ...(models.data?.turnedOff ?? [])];
+    return listed.find((model) => model.ref === ref)?.name ?? (ref.split("/").pop() || ref);
+  }
+  if (row.state === "pending" && row.waits) {
+    return <ToolCard row={row} decide={decide} modelName={modelName} />;
+  }
+  return <ToolLine row={row} modelName={modelName} />;
 }
 
 function RetryButton({ onRetry }: { onRetry: () => void }) {
@@ -271,7 +448,11 @@ export function TranscriptItem({
     case "human":
       return <HumanMessage row={row} />;
     case "agent":
+      // A step that only called tools shows as its calls.
+      if (row.status === "completed" && !row.text && !row.reasoning) return null;
       return <AgentReply row={row} />;
+    case "tool":
+      return <ToolCall row={row} decide={actions.decide} />;
     case "failure":
       return <FailureNotice row={row} actions={actions} />;
     case "stop":

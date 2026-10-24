@@ -4,19 +4,22 @@
 // reply pieces as they are stored. A message posted while the agent is idle wakes it at once; one
 // posted while it is busy steers the run, waits for the next one, or interrupts the run, and its
 // author can change it until the agent takes it in. Anyone who can post can stop the run, or try
-// the last one again when it failed or was stopped. Who may do each is the thread access rule's;
-// a thread's guests find it, and post in it, beside the threads of their own spaces.
+// the last one again when it failed or was stopped; a run waiting for a decision on a tool call is
+// queued again to be stopped. Lists say what the agent is doing in each thread: replying, or
+// waiting for a decision. Who may do each is the thread access rule's; a thread's guests find it,
+// and post in it, beside the threads of their own spaces.
 
 import type { DeltaStore } from "@/ports/deltas.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
 import type { GuestStore } from "@/ports/guests.ts";
 import type { Principal } from "@/ports/identity.ts";
-import type { RunStore } from "@/ports/runs.ts";
+import type { Run, RunStore } from "@/ports/runs.ts";
 import type { SpaceStore } from "@/ports/spaces.ts";
 import type { StoredEvent, Thread, ThreadStore } from "@/ports/threads.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Titles } from "@/services/titles.ts";
+import type { Tools } from "@/services/tools.ts";
 import type { Models } from "@/services/models.ts";
 import { startRun } from "@/services/runs.ts";
 import type { Spaces } from "@/services/spaces.ts";
@@ -27,6 +30,7 @@ import {
   type Delivery,
   type Effort,
   QUIET_PREFIX,
+  type ThreadActivity,
   type ThreadDetail,
   type ThreadFeedItem,
   type ThreadListItem,
@@ -43,13 +47,18 @@ export interface ThreadsOptions {
   guests: Pick<GuestStore, "threadsOf">;
   folders: Pick<Folders, "requireIn">;
   threads: ThreadStore;
-  runs: Pick<RunStore, "active" | "create" | "latest" | "requestCancel">;
+  runs: Pick<
+    RunStore,
+    "active" | "activeIn" | "activeInSpace" | "create" | "latest" | "requestCancel" | "resume"
+  >;
   deltas: Pick<DeltaStore, "inThread">;
   models: Pick<Models, "defaults" | "requireModel" | "replyModel">;
   log: ThreadLog;
   bus: EventBus;
   // Names threads after their first message, when given.
   titles?: Pick<Titles, "name">;
+  // The agent's tools, for each reader's level for them.
+  tools: Pick<Tools, "ids" | "levelFor">;
   now?: () => Date;
 }
 
@@ -127,8 +136,40 @@ export function createThreads(options: ThreadsOptions) {
     log,
     bus,
     titles,
+    tools,
   } = options;
   const now = options.now ?? (() => new Date());
+
+  // Asks the thread's active run to stop, queueing it again when it waits for a decision so that a
+  // worker ends it; null when there is none.
+  function stopRun(threadId: string, userId: string) {
+    const run = runs.requestCancel(threadId, userId, new Date());
+    if (run?.status === "waiting") runs.resume(run.id);
+    return run;
+  }
+
+  // What the agent is doing in each of the threads with an active run, by thread.
+  function activities(active: Run[]) {
+    const byThread = new Map<string, ThreadActivity>();
+    for (const run of active) {
+      const since = (run.startedAt ?? run.createdAt).toISOString();
+      if (run.status !== "waiting") {
+        byThread.set(run.threadId, { kind: "working", since, runId: run.id });
+        continue;
+      }
+      const transcript = transcriptOf(threads.eventsAfter(run.threadId, 0).map(eventSummary));
+      const call = transcript.rows.find(
+        (row) => row.kind === "tool" && row.id === transcript.run?.waitingOn,
+      );
+      byThread.set(run.threadId, {
+        kind: "waiting",
+        since: call?.kind === "tool" ? call.requestedAt : since,
+        runId: run.id,
+        ...(call?.kind === "tool" && { toolId: call.toolId }),
+      });
+    }
+    return byThread;
+  }
 
   // The thread when the principal may take the action in it.
   function visible(principal: Principal, id: string, action: ThreadAction = "read"): Thread {
@@ -161,7 +202,7 @@ export function createThreads(options: ThreadsOptions) {
           [message.id],
         );
       } else if (mode === "interrupt") {
-        runs.requestCancel(thread.id, principal.userId, new Date());
+        stopRun(thread.id, principal.userId);
       }
     });
     if (!quiet) bus.wake(thread.id);
@@ -199,9 +240,12 @@ export function createThreads(options: ThreadsOptions) {
       const previews = new Map(
         threads.lastMessagesInSpace(spaceId).map((event) => [event.threadId, previewOf(event)]),
       );
-      return threads
-        .listInSpace(spaceId)
-        .map((thread) => ({ ...threadSummary(thread), preview: previews.get(thread.id) ?? null }));
+      const activity = activities(runs.activeInSpace(spaceId));
+      return threads.listInSpace(spaceId).map((thread) => ({
+        ...threadSummary(thread),
+        preview: previews.get(thread.id) ?? null,
+        activity: activity.get(thread.id) ?? null,
+      }));
     },
 
     // Threads whose titles contain the text, ignoring case, untitled ones as "Untitled", in every
@@ -237,7 +281,9 @@ export function createThreads(options: ThreadsOptions) {
 
     // The threads the principal is a guest in, with their spaces' and orgs' names.
     shared(principal: Principal): SharedThread[] {
-      return guests.threadsOf(principal.userId, now()).map((shared) => ({
+      const shared = guests.threadsOf(principal.userId, now());
+      const activity = activities(runs.activeIn(shared.map(({ thread }) => thread.id)));
+      return shared.map((shared) => ({
         ...threadSummary(shared.thread),
         spaceName: shared.spaceName,
         orgName: shared.orgName,
@@ -245,6 +291,7 @@ export function createThreads(options: ThreadsOptions) {
           ? shared.spaceName
           : `${shared.spaceName} · ${shared.orgName}`,
         accessUntil: shared.accessUntil?.toISOString() ?? null,
+        activity: activity.get(shared.thread.id) ?? null,
       }));
     },
 
@@ -288,6 +335,13 @@ export function createThreads(options: ThreadsOptions) {
         thread: threadSummary(thread),
         events: threads.eventsAfter(id, 0).map(eventSummary),
         access: via,
+        levels: Object.fromEntries(
+          space
+            ? tools
+                .ids()
+                .map((toolId) => [toolId, tools.levelFor(principal.userId, thread, space, toolId)])
+            : [],
+        ),
         defaults: { ...defaults, used: used && { ...used.used, effort: used.effort } },
         // The thread's own org decides, whoever reads it.
         model: space
@@ -371,7 +425,7 @@ export function createThreads(options: ThreadsOptions) {
     // Asks the run under way to stop; the agent keeps what it has written.
     stop(principal: Principal, id: string) {
       const thread = visible(principal, id, "post");
-      if (!runs.requestCancel(thread.id, principal.userId, new Date())) {
+      if (!stopRun(thread.id, principal.userId)) {
         throw new ServiceError(409, "The agent is not replying");
       }
       bus.wake(thread.id);

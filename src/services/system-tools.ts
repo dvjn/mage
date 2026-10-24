@@ -1,0 +1,147 @@
+// Mage's own tools, which act on the thread the agent replies in: reading its details, renaming it,
+// moving it to one of its space's folders, and changing the model and effort it replies with. Each
+// is cheap, undone as easily, and shows in the thread. Changing the model asks first when the new
+// one comes through another connection than the one replying now, since the whole thread then goes
+// to another provider.
+
+import * as z from "zod";
+
+import type { FolderStore } from "@/ports/folders.ts";
+import type { GuestStore } from "@/ports/guests.ts";
+import type { SpaceStore } from "@/ports/spaces.ts";
+import type { ThreadStore } from "@/ports/threads.ts";
+import type { ToolSpec } from "@/ports/tools.ts";
+import { ServiceError } from "@/services/errors.ts";
+import type { Models } from "@/services/models.ts";
+import { eventSummary } from "@/services/thread-log.ts";
+import { effortSchema } from "@/shared/threads.ts";
+import { transcriptOf } from "@/shared/transcript.ts";
+
+export interface SystemToolsOptions {
+  threads: Pick<ThreadStore, "find" | "update" | "eventsAfter">;
+  spaceStore: Pick<SpaceStore, "find">;
+  folders: Pick<FolderStore, "find" | "listInSpace">;
+  guests: Pick<GuestStore, "activeIn">;
+  models: Pick<Models, "replyModel" | "requireModel">;
+  now?: () => Date;
+}
+
+// The connection part of a model ref.
+function connectionOf(ref: string) {
+  return ref.slice(0, ref.indexOf("/"));
+}
+
+export function createSystemTools(options: SystemToolsOptions) {
+  const { threads, spaceStore, folders, guests, models } = options;
+  const now = options.now ?? (() => new Date());
+
+  function threadOf(id: string) {
+    const thread = threads.find(id);
+    if (!thread) throw new Error("the thread is gone");
+    return thread;
+  }
+
+  const info: ToolSpec<Record<string, never>> = {
+    id: "thread.info",
+    source: "system",
+    description:
+      "Read this thread's title, folder, the model and effort it is set to and the one replying, and the people in it. Check it before changing any of them.",
+    input: z.object({}).strict() as z.ZodType<Record<string, never>>,
+    risk: () => "normal",
+    async run(_input, ctx) {
+      const thread = threadOf(ctx.threadId);
+      const space = spaceStore.find(thread.spaceId);
+      const model = space
+        ? await models.replyModel(space, { model: thread.model, effort: thread.effort })
+        : null;
+      const writers = new Set<string>();
+      for (const row of transcriptOf(threads.eventsAfter(thread.id, 0).map(eventSummary)).rows) {
+        if (row.kind === "human" && !row.guest) writers.add(row.author.name);
+      }
+      return {
+        ok: true,
+        value: {
+          title: thread.title,
+          folder: thread.folderId ? (folders.find(thread.folderId)?.name ?? null) : null,
+          model: {
+            chosen: { ref: thread.model ?? model?.chosen.ref ?? null, effort: thread.effort },
+            replying: model?.used
+              ? { ref: model.used.ref, name: model.used.name, effort: model.effort }
+              : null,
+          },
+          people: [
+            ...[...writers].map((name) => ({ name, guest: false })),
+            ...guests
+              .activeIn(thread.id, now())
+              .map((guest) => ({ name: guest.name, guest: true })),
+          ],
+        },
+      };
+    },
+  };
+
+  const rename: ToolSpec<{ title: string }> = {
+    id: "thread.rename",
+    source: "system",
+    description: "Rename this thread.",
+    input: z.object({ title: z.string().trim().min(1).max(200) }),
+    risk: () => "normal",
+    run({ title }, ctx) {
+      ctx.write((append) => {
+        threads.update(ctx.threadId, { title, titleSource: "agent" });
+        append({ type: "thread.renamed", actor: ctx.actor, data: { title } });
+      });
+      return Promise.resolve({ ok: true, value: { title } });
+    },
+  };
+
+  const move: ToolSpec<{ folder: string | null }> = {
+    id: "thread.move",
+    source: "system",
+    description:
+      "Move this thread to one of its space's folders, by name, or to the top of the space with null. It does not make folders.",
+    input: z.object({ folder: z.string().trim().min(1).nullable() }),
+    risk: () => "normal",
+    run({ folder }, ctx) {
+      const found =
+        folder === null
+          ? null
+          : folders
+              .listInSpace(ctx.spaceId)
+              .find((candidate) => candidate.name.toLowerCase() === folder.toLowerCase());
+      if (found === undefined) {
+        const names = folders.listInSpace(ctx.spaceId).map((candidate) => candidate.name);
+        return Promise.resolve({
+          ok: false,
+          error: names.length
+            ? `No folder is named ${folder}. The folders here: ${names.join(", ")}.`
+            : `No folder is named ${folder}. This space has no folders.`,
+        });
+      }
+      ctx.write(() => threads.update(ctx.threadId, { folderId: found?.id ?? null }));
+      return Promise.resolve({ ok: true, value: { folder: found?.name ?? null } });
+    },
+  };
+
+  const setModel: ToolSpec<{ model: string; effort: "low" | "medium" | "high" | null }> = {
+    id: "thread.set_model",
+    source: "system",
+    description:
+      "Set the model this thread replies with and its reasoning effort, together; null effort uses the model's usual one. Takes effect from your next step.",
+    input: z.object({ model: z.string().min(1), effort: effortSchema.nullable() }),
+    risk: ({ model }, ctx) =>
+      ctx.model && connectionOf(model) !== connectionOf(ctx.model) ? "ask" : "normal",
+    async run({ model, effort }, ctx) {
+      try {
+        await models.requireModel(ctx.orgId, model);
+      } catch (err) {
+        if (err instanceof ServiceError) return { ok: false, error: err.message };
+        throw err;
+      }
+      ctx.write(() => threads.update(ctx.threadId, { model, effort }));
+      return { ok: true, value: { model, effort } };
+    },
+  };
+
+  return [info, rename, move, setModel];
+}

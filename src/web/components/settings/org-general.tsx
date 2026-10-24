@@ -1,6 +1,6 @@
 // The organization's general settings: its name, which a team org's owners change, a team org's
 // first steps until it has a model provider, the models its threads start with and that name them,
-// and deleting a team org.
+// the agent's tools it turns on and off, and deleting a team org.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -9,6 +9,7 @@ import { type FormEvent, useId, useState } from "react";
 
 import { SettingsCard, SettingsTitle } from "@/web/components/settings/layout";
 import { ModelsCard } from "@/web/components/settings/models-card";
+import { OrgToolsCard } from "@/web/components/settings/tools-card";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -203,6 +204,7 @@ export function OrgGeneral() {
         {me.data && <OrgName key={me.data.org.name} name={me.data.org.name} canManage={!!owner} />}
       </SettingsCard>
       <ModelsCard canManage={role === "owner"} />
+      <OrgToolsCard canManage={role === "owner"} />
       {owner && me.data && <DeleteOrg name={me.data.org.name} />}
     </>
   );

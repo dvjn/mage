@@ -1,6 +1,7 @@
 // Keeps a thread's cached events current and its replies in progress streaming: follows its live
 // event stream from the newest event already cached, merges each event in once, in seq order, shows
-// a title the agent gives the thread, and gathers the pieces of each reply still being written. The
+// a title the agent gives the thread, reads the thread again after a tool call ran, as it may have
+// moved it or changed its model, and gathers the pieces of each reply still being written. The
 // browser reconnects on its own and resumes after the last event it saw; the server sends each
 // reply's pieces again from the start, and the ones already here are skipped. When the server says
 // the reader's guest access has ended, following stops and the thread is read again, which tells
@@ -94,6 +95,9 @@ export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () =
       if (!event.success) return;
       mergeEvents(queryClient, threadId, [event.data]);
       if (event.data.type === "thread.renamed") renamed(queryClient, threadId, event.data.data);
+      if (event.data.type === "tool.ran") {
+        void queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
+      }
       onEvent?.();
     });
     source.addEventListener("access-ended", () => {

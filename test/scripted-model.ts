@@ -1,5 +1,5 @@
 // A model the tests drive by hand: each request to it is a call whose events the test sends one at
-// a time, so a test can act between any two of them.
+// a time, so a test can act between any two of them, tool calls among them.
 
 import type { ModelEvent, ModelMessage, ModelRequest } from "@/ports/model-gateway.ts";
 import type { OpenModel } from "@/services/models.ts";
@@ -55,9 +55,28 @@ export class Call {
     }
   }
 
-  // The texts of the messages the call was given.
+  // The texts of the messages the call was given; a reply's tool calls, and what they gave back,
+  // as `tool <id> <input>` and `result <id> <output>`.
   get texts() {
-    return this.request.messages.map((message: ModelMessage) => `${message.role}: ${message.text}`);
+    return this.request.messages.flatMap((message: ModelMessage) => {
+      if (message.role === "tool") {
+        return message.results.map(
+          (result) => `result ${result.toolId}: ${JSON.stringify(result.output)}`,
+        );
+      }
+      const calls =
+        message.role === "assistant"
+          ? (message.toolCalls ?? []).map(
+              (call) => `tool ${call.toolId}: ${JSON.stringify(call.input)}`,
+            )
+          : [];
+      return [...(message.text ? [`${message.role}: ${message.text}`] : []), ...calls];
+    });
+  }
+
+  // The ids of the tools the call offered the model.
+  get tools() {
+    return (this.request.tools ?? []).map((tool) => tool.id);
   }
 
   startStep() {
@@ -70,6 +89,11 @@ export class Call {
 
   reason(text: string) {
     this.push({ type: "reasoning", text });
+  }
+
+  // A call of the tool in the step under way.
+  toolCall(callId: string, toolId: string, input: unknown) {
+    this.push({ type: "tool-call", callId, toolId, input });
   }
 
   endStep(usage = { inputTokens: 3, outputTokens: 2 }) {

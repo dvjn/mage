@@ -29,9 +29,22 @@ export const threadSchema = z.object({
 
 export type ThreadSummary = z.infer<typeof threadSchema>;
 
-// A thread in its space's list, with the start of its newest message or reply and who wrote it.
+// What the agent is doing in a thread: replying, or waiting for a decision on a tool call, since
+// when, in which run and, while waiting, on which tool.
+export const threadActivitySchema = z.object({
+  kind: z.enum(["working", "waiting"]),
+  since: z.iso.datetime(),
+  runId: z.string(),
+  toolId: z.string().optional(),
+});
+
+export type ThreadActivity = z.infer<typeof threadActivitySchema>;
+
+// A thread in its space's list, with the start of its newest message or reply and who wrote it,
+// and what the agent is doing in it.
 export const threadListItemSchema = threadSchema.extend({
   preview: z.object({ author: z.string(), text: z.string() }).nullable(),
+  activity: threadActivitySchema.nullable(),
 });
 
 export type ThreadListItem = z.infer<typeof threadListItemSchema>;
@@ -99,6 +112,22 @@ export const usageSchema = z.object({
 
 export type Usage = z.infer<typeof usageSchema>;
 
+// How much a tool call can do: run when everyone the agent read may run it, or ask a person who may
+// every time. Reviews by someone outside the thread come later.
+export const toolRiskSchema = z.enum(["normal", "ask", "review"]);
+
+export type ToolRisk = z.infer<typeof toolRiskSchema>;
+
+// Why a tool call did not run: someone denied it, the approval no longer held when it was to run,
+// or the run ended first.
+export const toolDenialSchema = z.enum(["denied", "stale", "stopped"]);
+
+// An approval for this call alone, or for later calls of the tool in the thread until input that
+// needs approval arrives.
+export const toolScopeSchema = z.enum(["once", "for_now"]);
+
+export type ToolScope = z.infer<typeof toolScopeSchema>;
+
 // Each event type's data.
 export const eventDataSchemas = {
   // A person's message.
@@ -152,6 +181,30 @@ export const eventDataSchemas = {
   }),
   // The actor stopped the run.
   "run.cancelled": z.object({ runId: z.string() }),
+  // The agent asked to call a tool in the reply begun as messageId; `waits` when it needs a
+  // person's approval first.
+  "tool.requested": z.object({
+    runId: z.string(),
+    callId: z.string(),
+    messageId: z.string(),
+    toolId: z.string(),
+    input: z.unknown(),
+    risk: toolRiskSchema,
+    waits: z.boolean(),
+  }),
+  // The actor approved the call.
+  "tool.approved": z.object({ runId: z.string(), callId: z.string(), scope: toolScopeSchema }),
+  // The call will not run, and why.
+  "tool.denied": z.object({ runId: z.string(), callId: z.string(), reason: toolDenialSchema }),
+  // The call ran, with what it gave back or why it failed, in milliseconds.
+  "tool.ran": z.object({
+    runId: z.string(),
+    callId: z.string(),
+    ok: z.boolean(),
+    value: z.unknown().optional(),
+    error: z.string().optional(),
+    ms: z.number().int().nonnegative(),
+  }),
 };
 
 export type EventDataMap = {
@@ -199,6 +252,10 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("run.failed"),
   eventSchema("run.cancelled"),
   eventSchema("thread.renamed"),
+  eventSchema("tool.requested"),
+  eventSchema("tool.approved"),
+  eventSchema("tool.denied"),
+  eventSchema("tool.ran"),
 ]);
 
 export type ThreadEventSummary = z.infer<typeof threadEventSchema>;
@@ -263,6 +320,8 @@ export const threadDetailSchema = z.object({
   thread: threadSchema,
   events: z.array(anyThreadEventSchema),
   access: threadAccessSchema,
+  // The reader's level for each tool here: whether they may run it, and so decide on its calls.
+  levels: z.record(z.string(), z.enum(["run", "approve"])),
   defaults: threadDefaultsSchema,
   // The model it names, its own or the default, and the one that replies: the same, or while that
   // one is turned off or gone, the space's default, then the org's; null when none can. Null with
@@ -311,6 +370,12 @@ export const threadUpdateSchema = z.object({
   effort: effortSchema.nullable().optional(),
   // Null moves the thread to the top of its space.
   folderId: z.string().min(1).nullable().optional(),
+});
+
+// A person's decision on a tool call waiting for one.
+export const toolDecisionSchema = z.object({
+  allow: z.boolean(),
+  scope: toolScopeSchema.default("once"),
 });
 
 // The run whose reply to try again.

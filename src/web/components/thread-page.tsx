@@ -2,7 +2,8 @@
 // the messages waiting for it, a composer to post, steer, queue, interrupt and stop, trying the
 // last reply again when it failed or was stopped, and the thread's model with, for a model that can
 // think, its reasoning effort, or the defaults it follows, named as such, with a way back to them.
-// Its space's owners and messagers can share it from its header. A
+// Its space's owners and messagers can share it from its header. Those who may run a tool decide on
+// the agent's calls of it that wait, and while the agent waits the composer says so. A
 // guest of the thread sees its space's name alone, and cannot change its model; once their access
 // ends, they are told so. When the server cannot be reached, the thread as last read stays in view
 // while it reconnects.
@@ -17,6 +18,7 @@ import {
   type Delivery,
   type Effort,
   threadSchema,
+  type ToolScope,
 } from "@/shared/threads.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 import {
@@ -153,6 +155,15 @@ export function ThreadPage() {
     mergeEvents(queryClient, threadId, [anyThreadEventSchema.parse(await res.json())]);
   }
 
+  // Approves or denies a tool call; the decision arrives with the thread's events.
+  async function decide(callId: string, allow: boolean, scope: ToolScope) {
+    const res = await apiClient.v1.threads[":id"].tools[":callId"].decision.$post({
+      param: { id: threadId, callId },
+      json: { allow, scope },
+    });
+    if (!res.ok) toast(await errorOf(res));
+  }
+
   // The last row, when it ends a run that failed or was stopped and nothing has run since.
   const last = transcript.rows.at(-1);
   const canRetry = role !== "viewer" && !run && transcript.pending.length === 0;
@@ -250,11 +261,16 @@ export function ThreadPage() {
                 actions={{
                   ...(row === retryable && { retry: () => void retry(retryable.runId) }),
                   ...(!guest && { pickModel: () => setPicking(true) }),
+                  ...(row.kind === "tool" &&
+                    detail.data?.levels[row.toolId] === "run" && {
+                      decide: (allow: boolean, scope: ToolScope) => decide(row.id, allow, scope),
+                    }),
                 }}
               />
             ))
           )}
           {run &&
+            !run.waitingOn &&
             !transcript.rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
               <AgentStarting at={run.createdAt} />
             )}
@@ -278,6 +294,7 @@ export function ThreadPage() {
           <FieldError>{error}</FieldError>
           <Composer
             running={!!run}
+            waiting={!!run?.waitingOn}
             readOnly={role === "viewer"}
             sending={sending}
             stopping={!!run && run.id === stopped}

@@ -28,6 +28,7 @@ import { createRunStore } from "@/adapters/runs.ts";
 import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
 import { createThreadStore } from "@/adapters/threads.ts";
+import { createToolSettingStore } from "@/adapters/tool-settings.ts";
 import { loadConfig } from "@/config.ts";
 import { createApp } from "@/http/app.ts";
 import { createConnections } from "@/services/connections.ts";
@@ -38,10 +39,12 @@ import { createModels, type Models } from "@/services/models.ts";
 import { createOrgs } from "@/services/orgs.ts";
 import { createRunWorker, dropRefusedWaiting, type RunWorker } from "@/services/runs.ts";
 import { createSpaces } from "@/services/spaces.ts";
+import { createSystemTools } from "@/services/system-tools.ts";
 import { createThreadAccess } from "@/services/thread-access.ts";
 import { createThreadLog } from "@/services/thread-log.ts";
 import { createThreads } from "@/services/threads.ts";
 import { createTitles } from "@/services/titles.ts";
+import { createToolDecisions, createTools } from "@/services/tools.ts";
 
 const config = loadConfig();
 const logger = createLogger(
@@ -120,9 +123,22 @@ const spaces = createSpaces({
   settings: settingStore,
   accessChanged,
 });
-const folders = createFolders({ spaces, folders: createFolderStore(db) });
+const folderStore = createFolderStore(db);
+const folders = createFolders({ spaces, folders: folderStore });
 const guestStore = createGuestStore(db);
 const access = createThreadAccess({ spaces, threads: threadStore, guests: guestStore });
+const toolSettings = createToolSettingStore(db);
+const tools = createTools({
+  specs: createSystemTools({
+    threads: threadStore,
+    spaceStore,
+    folders: folderStore,
+    guests: guestStore,
+    models,
+  }),
+  settings: toolSettings,
+  access,
+});
 
 // The stand-in model answers every thread, whatever model it names.
 const fakeGateway = createFakeGateway();
@@ -157,6 +173,7 @@ const worker = createRunWorker({
   bus,
   transact,
   models: runModels,
+  tools,
   logger,
 });
 
@@ -193,6 +210,7 @@ const app = createApp({
     models,
     log,
     bus,
+    tools,
     // The stand-in model answers every request alike, so it names no threads.
     ...(!config.fakeModels && {
       titles: createTitles({ models, threads: threadStore, log, logger }),
@@ -200,6 +218,17 @@ const app = createApp({
   }),
   orgs,
   groups: createGroups({ directory }),
+  tools: createToolDecisions({
+    tools,
+    access,
+    threads: threadStore,
+    spaceStore,
+    runs: runStore,
+    spaces,
+    settings: toolSettings,
+    log,
+    bus,
+  }),
   guests: createGuests({
     access,
     guests: guestStore,

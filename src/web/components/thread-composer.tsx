@@ -2,8 +2,9 @@
 // and the tray of messages waiting for it. Enter sends, or steers the reply under way; Alt/⌥+Enter
 // queues for the next reply; the split button also interrupts the reply and sends at once, and the
 // stop button stops it. Everyone sees the tray; each author can edit their own waiting messages,
-// switch them between steering and queueing, or remove them. Viewers only read, and a line where the
-// composer would be says so.
+// switch them between steering and queueing, or remove them. While the agent waits for a decision
+// on a tool call, the composer says so. Viewers only read, and a line where the composer would be
+// says so.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDownIcon, EyeIcon, SquareIcon } from "lucide-react";
@@ -37,6 +38,7 @@ import { mergeEvents } from "@/web/lib/thread-events";
 
 export function Composer({
   running,
+  waiting,
   readOnly,
   sending,
   stopping,
@@ -45,6 +47,8 @@ export function Composer({
   tools,
 }: {
   running: boolean;
+  // The agent waits for a decision on a tool call.
+  waiting?: boolean;
   readOnly?: boolean;
   sending: boolean;
   stopping: boolean;
@@ -90,7 +94,13 @@ export function Composer({
           <PromptInputTextarea
             ref={textarea}
             aria-label="Message"
-            placeholder={running ? "Steer the reply, or queue for the next one" : "Write a message"}
+            placeholder={
+              waiting
+                ? "The agent is waiting for a decision above; you can still steer or queue."
+                : running
+                  ? "Steer the reply, or queue for the next one"
+                  : "Write a message"
+            }
             onKeyDown={onKeyDown}
           />
         </PromptInputBody>

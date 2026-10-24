@@ -21,6 +21,7 @@ import type { ConnectionModel, Models } from "@/services/models.ts";
 import type { Orgs } from "@/services/orgs.ts";
 import type { Spaces, SpaceView } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
+import type { ToolDecisions } from "@/services/tools.ts";
 import {
   apiKeyInputSchema,
   type AttemptSummary,
@@ -74,7 +75,9 @@ import {
   retrySchema,
   threadSearchSchema,
   threadUpdateSchema,
+  toolDecisionSchema,
 } from "@/shared/threads.ts";
+import { orgToolChangeSchema, spaceToolChangeSchema } from "@/shared/tools.ts";
 
 export interface AppOptions {
   // Answers every request under /api/auth.
@@ -93,6 +96,8 @@ export interface AppOptions {
   threads: Threads;
   // Invite links to threads and the guests they let in.
   guests: Guests;
+  // Decisions on the agent's tool calls, and the tools orgs and spaces turn on and off.
+  tools: ToolDecisions;
   // The orgs people are in, their members and invites, and creating team orgs.
   orgs: Orgs;
   // A team org's groups, as a directory brings them.
@@ -222,6 +227,12 @@ const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or a fo
 const message = jsonBody(messageInputSchema, "text is required; mode is steer, queue or interrupt");
 const pendingChange = jsonBody(pendingChangeSchema, "Give a text, or a mode of steer or queue");
 const retry = jsonBody(retrySchema, "runId is required");
+const toolDecision = jsonBody(toolDecisionSchema, "allow is required; scope is once or for_now");
+const orgToolChange = jsonBody(orgToolChangeSchema, "Give a toolId and enabled");
+const spaceToolChange = jsonBody(
+  spaceToolChangeSchema,
+  "Give a toolId and enabled, or a messager or guest level of run or approve",
+);
 const newInvite = jsonBody(newInviteSchema, "accessFor is 1h, 1d, 7d or never");
 const acceptInvite = jsonBody(acceptInviteSchema, "token is required");
 const orgName = jsonBody(orgNameSchema, "A name of 1 to 80 characters is required");
@@ -340,7 +351,8 @@ const eventCursor = validator("query", (value: { after?: string }, c) => {
 
 // The typed API routes, mounted under /api.
 function createApi(options: AppOptions) {
-  const { identity, connections, models, spaces, folders, threads, guests, orgs, groups } = options;
+  const { identity, connections, models, spaces, folders, threads, guests, orgs, groups, tools } =
+    options;
   return (
     new Hono<ApiEnv>()
       .get("/sign-in-options", (c) => c.json(options.signInOptions, 200))
@@ -724,6 +736,29 @@ function createApi(options: AppOptions) {
       .post("/v1/threads/:id/stop", (c) => {
         threads.stop(signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 202);
+      })
+      .post("/v1/threads/:id/tools/:callId/decision", toolDecision, (c) => {
+        const { id, callId } = c.req.param();
+        const decision = c.req.valid("json");
+        tools.decide(signedIn(c.var.principal), id, callId, decision);
+        return c.json({ ok: true }, 200);
+      })
+      .get("/v1/org/tools", (c) => {
+        return c.json(tools.orgTools(signedIn(c.var.principal)), 200);
+      })
+      .patch("/v1/org/tools", orgToolChange, (c) => {
+        const principal = signedIn(c.var.principal);
+        const { toolId, enabled } = c.req.valid("json");
+        tools.setOrgTool(principal, toolId, enabled);
+        return c.json(tools.orgTools(principal), 200);
+      })
+      .get("/v1/spaces/:id/tools", (c) => {
+        return c.json(tools.spaceTools(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .patch("/v1/spaces/:id/tools", spaceToolChange, (c) => {
+        const principal = signedIn(c.var.principal);
+        tools.setSpaceTool(principal, c.req.param("id"), c.req.valid("json"));
+        return c.json(tools.spaceTools(principal, c.req.param("id")), 200);
       })
       .post("/v1/threads/:id/retry", retry, (c) => {
         const { runId } = c.req.valid("json");

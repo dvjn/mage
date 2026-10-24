@@ -289,6 +289,35 @@ export const space = sqliteTable(
   (table) => [index("space_org_idx").on(table.organizationId)],
 );
 
+// A tool an org turned off, or back on, for all its spaces.
+export const orgToolSetting = sqliteTable(
+  "org_tool_setting",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    toolId: text("tool_id").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.organizationId, table.toolId] })],
+);
+
+// A space's choices for a tool: off there, and the level its messagers and guests get; null keeps
+// the usual level.
+export const spaceToolSetting = sqliteTable(
+  "space_tool_setting",
+  {
+    spaceId: text("space_id")
+      .notNull()
+      .references(() => space.id, { onDelete: "cascade" }),
+    toolId: text("tool_id").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).default(true).notNull(),
+    messagerLevel: text("messager_level", { enum: ["run", "approve"] }),
+    guestLevel: text("guest_level", { enum: ["run", "approve"] }),
+  },
+  (table) => [primaryKey({ columns: [table.spaceId, table.toolId] })],
+);
+
 // A person's or a group's role in a space.
 export const spaceMember = sqliteTable(
   "space_member",
