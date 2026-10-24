@@ -332,15 +332,6 @@ export function SpaceMembers({ space }: { space: SpaceSummary }) {
   return (
     <SettingsCard
       description={`Who can read and write in this space. Each person has the highest role given to them${withGroups ? ", to a group they are in," : ""} or to everyone.${manage ? "" : " Only the space's owners change this."}`}
-      action={
-        manage && (
-          <HeaderAction
-            icon={<UserPlusIcon />}
-            label="Add people"
-            onClick={() => setAdding(true)}
-          />
-        )
-      }
     >
       <DataTable
         table={table}
@@ -352,7 +343,19 @@ export function SpaceMembers({ space }: { space: SpaceSummary }) {
           label: row.kind === "everyone" ? `Everyone in ${row.orgName}` : row.name,
         })}
       >
-        <DataTableToolbar table={table} search="Search members" />
+        <DataTableToolbar
+          table={table}
+          search="Search members"
+          action={
+            manage && (
+              <HeaderAction
+                icon={<UserPlusIcon />}
+                label="Add people"
+                onClick={() => setAdding(true)}
+              />
+            )
+          }
+        />
         <FieldError>{error}</FieldError>
       </DataTable>
       <AddPeopleDialog

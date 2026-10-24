@@ -331,30 +331,33 @@ export function OrgProviders() {
         description={
           me.data && !manages && "Only the organization's owners manage its model providers."
         }
-        action={
-          manages && (
-            <HeaderAction
-              icon={<PlusIcon />}
-              label="Add provider"
-              onClick={() => setAdding(true)}
-            />
-          )
-        }
         state={connections}
       >
-        {list.length === 0 ? (
-          <EmptyState
-            icon={<BlocksIcon />}
-            title="No model providers yet"
-            description={
-              manages
-                ? "Add one to give this organization's threads models to reply with."
-                : "An owner of the organization adds them."
-            }
-          />
-        ) : (
-          <ProvidersTable connections={list} manages={manages} onAction={setAction} />
-        )}
+        <div className="flex flex-col gap-2">
+          {/* Where a table's search row would hold its action. */}
+          {manages && (
+            <div className="flex justify-end">
+              <HeaderAction
+                icon={<PlusIcon />}
+                label="Add provider"
+                onClick={() => setAdding(true)}
+              />
+            </div>
+          )}
+          {list.length === 0 ? (
+            <EmptyState
+              icon={<BlocksIcon />}
+              title="No model providers yet"
+              description={
+                manages
+                  ? "Add one to give this organization's threads models to reply with."
+                  : "An owner of the organization adds them."
+              }
+            />
+          ) : (
+            <ProvidersTable connections={list} manages={manages} onAction={setAction} />
+          )}
+        </div>
       </SettingsCard>
       <AddProviderDialog
         open={adding}

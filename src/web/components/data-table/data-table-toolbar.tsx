@@ -1,6 +1,6 @@
 // Narrows a table: a search, one filter per column that has options, and Reset while anything is
-// set; what the caller adds (other narrowing, then the table's one action) follows. On a phone the
-// search takes the row and the filters sit below it.
+// set, then what the caller adds as other narrowing; the table's one action sits at the row's right
+// end. On a phone the search shares the first line with the action and the filters sit below it.
 
 import type { ReactTable, RowData } from "@tanstack/react-table";
 import { cn } from "cn";
@@ -16,11 +16,13 @@ interface DataTableToolbarProps<TData extends RowData> extends React.ComponentPr
   table: ReactTable<DataTableFeatures, TData>;
   // The search's label and placeholder.
   search: string;
+  action?: React.ReactNode;
 }
 
 export function DataTableToolbar<TData extends RowData>({
   table,
   search,
+  action,
   children,
   className,
   ...props
@@ -39,36 +41,39 @@ export function DataTableToolbar<TData extends RowData>({
   return (
     <div
       data-slot="data-table-toolbar"
-      className={cn("flex flex-wrap items-center gap-2", className)}
+      className={cn("flex items-start gap-2", className)}
       {...props}
     >
-      <InputGroup className="h-8 w-full sm:w-56">
-        <InputGroupInput
-          type="search"
-          aria-label={search}
-          placeholder={search}
-          value={text}
-          onChange={(event) => table.setGlobalFilter(event.target.value)}
-        />
-        <InputGroupAddon>
-          <SearchIcon />
-        </InputGroupAddon>
-      </InputGroup>
-      {columns.map((column) => (
-        <DataTableFacetedFilter
-          key={column.id}
-          column={column}
-          title={column.columnDef.meta?.label ?? column.id}
-          options={column.columnDef.meta?.options ?? []}
-        />
-      ))}
-      {filtered && (
-        <Button variant="ghost" onClick={reset}>
-          <XIcon />
-          Reset
-        </Button>
-      )}
-      {children}
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+        <InputGroup className="h-8 w-full sm:w-56">
+          <InputGroupInput
+            type="search"
+            aria-label={search}
+            placeholder={search}
+            value={text}
+            onChange={(event) => table.setGlobalFilter(event.target.value)}
+          />
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+        </InputGroup>
+        {columns.map((column) => (
+          <DataTableFacetedFilter
+            key={column.id}
+            column={column}
+            title={column.columnDef.meta?.label ?? column.id}
+            options={column.columnDef.meta?.options ?? []}
+          />
+        ))}
+        {filtered && (
+          <Button variant="ghost" onClick={reset}>
+            <XIcon />
+            Reset
+          </Button>
+        )}
+        {children}
+      </div>
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   );
 }

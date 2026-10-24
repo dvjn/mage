@@ -639,17 +639,7 @@ export function OrgPeople() {
           description="Your personal organization has only you in it. Make a new organization from the space menu to work with others."
         />
       ) : (
-        <SettingsCard
-          action={
-            manages && (
-              <HeaderAction
-                icon={<UserPlusIcon />}
-                label="Add people"
-                onClick={() => setAdding(true)}
-              />
-            )
-          }
-        >
+        <SettingsCard>
           <DataTable
             table={table}
             label="People"
@@ -660,7 +650,19 @@ export function OrgPeople() {
               label: person.kind === "invite" ? person.email : person.name,
             })}
           >
-            <DataTableToolbar table={table} search="Search people" />
+            <DataTableToolbar
+              table={table}
+              search="Search people"
+              action={
+                manages && (
+                  <HeaderAction
+                    icon={<UserPlusIcon />}
+                    label="Add people"
+                    onClick={() => setAdding(true)}
+                  />
+                )
+              }
+            />
             <FieldError>{error}</FieldError>
           </DataTable>
         </SettingsCard>
