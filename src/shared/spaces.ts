@@ -105,16 +105,20 @@ export const setSpaceMemberSchema = z.object({
 
 export const setEveryoneSchema = z.object({ role: everyoneRoleSchema.nullable() });
 
-// What a member's first space is stored as until it is renamed; it is shown named for its person.
+// What a member's first space is stored as; it is shown named for its person.
 export const FIRST_SPACE_NAME = "Your space";
 
-// A space's name as everyone sees it: a member's first space, until someone renames it, is named
-// for its person, following their name; any other space goes by its own.
+// A person's own space, the first of their personal org or the private one a team org gives them:
+// it is named for them and cannot be renamed.
+export function namedForPerson(space: { kind: "personal" | "shared"; primary: boolean }) {
+  return space.kind === "personal" && space.primary;
+}
+
+// A space's name as everyone sees it: a person's own space is named for them, following their name;
+// any other space goes by its own.
 export function spaceNameFor(
   space: { name: string; kind: "personal" | "shared"; primary: boolean },
   ownerName: string,
 ) {
-  return space.kind === "personal" && space.primary && space.name === FIRST_SPACE_NAME
-    ? `${ownerName}'s Space`
-    : space.name;
+  return namedForPerson(space) ? `${ownerName}'s Space` : space.name;
 }

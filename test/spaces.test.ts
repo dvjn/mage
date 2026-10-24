@@ -40,14 +40,16 @@ describe("spaces", () => {
     expect((await listSpaces(cookie)).map((space) => space.name)).toEqual(["Ada Lovelace's Space"]);
   });
 
-  it("renames the first space but does not delete it", async () => {
+  it("neither renames nor deletes the first space, which is named for its person", async () => {
     const { api, signUp, listSpaces } = setup();
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
     const [yours] = await listSpaces(cookie);
 
-    expect((await api("PATCH", `/spaces/${yours?.id}`, cookie, { name: "Home" })).status).toBe(200);
+    expect((await api("PATCH", `/spaces/${yours?.id}`, cookie, { name: "Home" })).status).toBe(409);
     expect((await api("DELETE", `/spaces/${yours?.id}`, cookie)).status).toBe(409);
-    expect(await listSpaces(cookie)).toEqual([expect.objectContaining({ name: "Home" })]);
+    expect(await listSpaces(cookie)).toEqual([
+      expect.objectContaining({ name: "Ada Lovelace's Space" }),
+    ]);
   });
 
   it("needs a name of 1 to 80 characters", async () => {

@@ -189,10 +189,10 @@ export function createSpaceStore(db: Db): SpaceStore {
     },
 
     catalogPage(orgId, params) {
-      // The name everyone sees: a member's untouched first space is named for its person.
+      // The name everyone sees: a person's own space is named for them.
       const named = sql`
         select s.*, u.name as ownerName,
-               case when s.kind = 'personal' and s.is_primary = 1 and s.name = ${FIRST_SPACE_NAME}
+               case when s.kind = 'personal' and s.is_primary = 1
                     then coalesce(u.name, 'A former member') || ${SPACE_SUFFIX} else s.name end
                  as displayName
           from space s left join user u on u.id = s.created_by

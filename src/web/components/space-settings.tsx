@@ -1,13 +1,14 @@
-// A space's settings: renaming it, the model and reasoning effort its new threads start with, or the
-// org's, who is in a shared space, and deleting it when it is not the primary space. They are there
-// only for those who manage it (its owners, and a team org's owners). A team org's owner who manages
-// a space without being in it reads its threads once they give themselves a role in it.
+// A space's settings: renaming it, unless it is a person's own space named for them, the model and
+// reasoning effort its new threads start with, or the org's, who is in a shared space, and deleting
+// it when it is not the primary space. They are there only for those who manage it (its owners, and
+// a team org's owners). A team org's owner who manages a space without being in it reads its
+// threads once they give themselves a role in it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
 import { type FormEvent, useEffect, useId, useState } from "react";
 
-import type { SpaceSummary } from "@/shared/spaces.ts";
+import { namedForPerson, type SpaceSummary } from "@/shared/spaces.ts";
 import { useMissingModel } from "@/web/components/model-picker";
 import { NotFound } from "@/web/components/page-states";
 import { SpaceMembers } from "@/web/components/space-members";
@@ -225,7 +226,7 @@ export function SpaceSettings() {
     >
       {space && (
         <>
-          <SpaceName key={space.id} space={space} />
+          {!namedForPerson(space) && <SpaceName key={space.id} space={space} />}
           <SpaceModel space={space} />
           {space.kind === "shared" && <SpaceMembers space={space} />}
           {!space.primary && <DeleteSpace space={space} />}

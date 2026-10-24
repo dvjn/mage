@@ -13,7 +13,12 @@ import type { ThreadStore } from "@/ports/threads.ts";
 import type { PageParams } from "@/shared/paging.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Models } from "@/services/models.ts";
-import { FIRST_SPACE_NAME, type SpaceMembers, spaceNameFor } from "@/shared/spaces.ts";
+import {
+  FIRST_SPACE_NAME,
+  namedForPerson,
+  type SpaceMembers,
+  spaceNameFor,
+} from "@/shared/spaces.ts";
 import type { Effort } from "@/shared/threads.ts";
 
 export interface SpacesOptions {
@@ -196,8 +201,12 @@ export function createSpaces(options: SpacesOptions) {
       );
     },
 
+    // A person's own space keeps their name.
     rename(principal: Principal, id: string, name: string) {
-      require(principal, id, "manage");
+      const space = require(principal, id, "manage");
+      if (namedForPerson(space)) {
+        throw new ServiceError(409, "A personal space is named for its person");
+      }
       return view(principal, spaces.rename(id, name));
     },
 

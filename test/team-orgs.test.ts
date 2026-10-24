@@ -689,12 +689,18 @@ describe("naming spaces", () => {
       .run();
     const renamed = (await spacesOf(workspace, grace)).find((space) => space.kind === "personal");
     expect(renamed?.name).toBe("Grace B. Hopper's Space");
+    // It keeps her name.
+    expect(
+      (await api("PATCH", `/spaces/${own?.id}`, grace.cookie, { name: "Mine" }, grace.orgId))
+        .status,
+    ).toBe(409);
   });
 
-  it("names only an untouched first space for its person", () => {
+  it("names only a person's own space for them", () => {
     const first = { name: FIRST_SPACE_NAME, kind: "personal" as const, primary: true };
     expect(spaceNameFor(first, "Grace Hopper")).toBe("Grace Hopper's Space");
-    expect(spaceNameFor({ ...first, name: "Notes" }, "Grace Hopper")).toBe("Notes");
+    expect(spaceNameFor({ ...first, name: "Notes" }, "Grace Hopper")).toBe("Grace Hopper's Space");
+    expect(spaceNameFor({ ...first, primary: false, name: "Notes" }, "Grace Hopper")).toBe("Notes");
     expect(spaceNameFor({ ...first, kind: "shared" }, "Grace Hopper")).toBe(FIRST_SPACE_NAME);
   });
 });

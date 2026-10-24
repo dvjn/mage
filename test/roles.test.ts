@@ -91,9 +91,9 @@ describe("space roles", () => {
     const { api, ada, space, thread } = await sharedSpace();
 
     expect((await api("DELETE", `/threads/${thread.id}`, ada.cookie)).status).toBe(200);
-    expect((await api("PATCH", `/spaces/${space.id}`, ada.cookie, { name: "Ours" })).status).toBe(
-      200,
-    );
+    expect(
+      (await api("PATCH", `/spaces/${space.id}/defaults`, ada.cookie, { effort: "low" })).status,
+    ).toBe(200);
   });
 });
 
