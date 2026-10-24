@@ -72,6 +72,10 @@ function primarySpaceOf(db: Database.Database, email: string) {
   );
 }
 
+// When the last thread added here was last active; each one added after it is newer, so lists
+// sorted by it come out the same every time.
+let lastAdded = 0;
+
 // Adds `count` threads, titled `${prefix} 1` and on, to the primary space of the user with `email`,
 // in the folder named `folder` (made if missing) when one is given.
 export function addThreads(
@@ -102,10 +106,19 @@ export function addThreads(
         }
       }
       const insert = db.prepare(
-        "insert into thread (id, space_id, title, title_source, created_by, folder_id) values (?, ?, ?, 'message', ?, ?)",
+        "insert into thread (id, space_id, title, title_source, created_by, folder_id, created_at, updated_at) values (?, ?, ?, 'message', ?, ?, ?, ?)",
       );
       for (let index = 1; index <= count; index += 1) {
-        insert.run(randomUUID(), space.id, `${prefix} ${index}`, space.userId, folderId);
+        lastAdded = Math.max(Date.now(), lastAdded + 1);
+        insert.run(
+          randomUUID(),
+          space.id,
+          `${prefix} ${index}`,
+          space.userId,
+          folderId,
+          lastAdded,
+          lastAdded,
+        );
       }
     }).immediate();
   } finally {
