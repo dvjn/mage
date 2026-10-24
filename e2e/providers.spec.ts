@@ -110,7 +110,7 @@ test("Amazon Bedrock connects with access keys in a region, Claude marked as ser
   await expect(tile.locator("[data-host]")).toHaveAttribute("data-host", "bedrock");
   await expect(
     thread.getByRole("img", {
-      name: /^(Claude Echo|us.anthropic.claude-echo-5) · Amazon Bedrock$/,
+      name: "Claude Echo · Amazon Bedrock",
     }),
   ).toBeAttached();
 

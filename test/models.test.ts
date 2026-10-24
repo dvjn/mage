@@ -455,6 +455,19 @@ describe("model lists", () => {
     expect(requests).toHaveLength(2);
   });
 
+  it("keeps each org's lists while other orgs read theirs", async () => {
+    const { models, requests, ready, signUp, connect } = setup();
+    const { orgId, anthropicId } = await ready();
+    await models.resolveModels(orgId);
+    const grace = await signUp("Grace Hopper", "grace@example.com");
+    connect(grace, "anthropic");
+    await models.resolveModels(grace.orgId);
+
+    expect(models.shownModels(orgId)(`${anthropicId}/claude-big`).name).toBe("Claude Big");
+    await models.resolveModels(orgId);
+    expect(requests).toHaveLength(3);
+  });
+
   it("keeps a list for an hour and reads it again on refresh or after the hour", async () => {
     const { models, requests, clock, ready } = setup();
     const { orgId } = await ready();

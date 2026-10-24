@@ -142,7 +142,8 @@ export async function pickReplyModel(
 export function createModels(options: ModelsOptions) {
   const { connections, tokens, catalogs, settings, choices, spaces, gateways, logger } = options;
   const now = options.now ?? (() => new Date());
-  const cache = new Map<string, { at: number; models: CatalogModel[] }>();
+  // Each connection's list, by connection, with its org, so one org's lists never drop another's.
+  const cache = new Map<string, { orgId: string; at: number; models: CatalogModel[] }>();
 
   async function listOf(orgId: string, connection: Connection, refresh: boolean) {
     const { id, host } = connection;
@@ -150,7 +151,7 @@ export function createModels(options: ModelsOptions) {
     if (!refresh && cached && now().getTime() - cached.at < CACHE_MS) return cached.models;
     try {
       const models = await tokens.withFreshToken(orgId, id, (token) => catalogs[host].list(token));
-      cache.set(id, { at: now().getTime(), models });
+      cache.set(id, { orgId, at: now().getTime(), models });
       return models;
     } catch (err) {
       if (err instanceof ConnectionError) throw err;
@@ -200,7 +201,9 @@ export function createModels(options: ModelsOptions) {
   async function resolveModels(orgId: string, { refresh = false } = {}): Promise<ModelList> {
     const list = connections.list(orgId);
     const ids = new Set(list.map((c) => c.id));
-    for (const id of cache.keys()) if (!ids.has(id)) cache.delete(id);
+    for (const [id, cached] of cache) {
+      if (cached.orgId === orgId && !ids.has(id)) cache.delete(id);
+    }
 
     const results = await Promise.allSettled(list.map((c) => listOf(orgId, c, refresh)));
     const result: ModelList = { models: [], errors: [], turnedOff: [] };
@@ -341,7 +344,7 @@ export function createModels(options: ModelsOptions) {
         throw new ConnectionError(400, `${hostOf(host).label} lists no models; give their ids.`);
       }
       const connection = tokens.add(owner, input);
-      cache.set(connection.id, { at: now().getTime(), models: list });
+      cache.set(connection.id, { orgId: owner.orgId, at: now().getTime(), models: list });
       return connection;
     },
 
