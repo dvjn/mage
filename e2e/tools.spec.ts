@@ -255,7 +255,6 @@ test("a space can only make a tool stricter than its org, and remembers the sect
   );
   const interactive = page.getByRole("group", { name: "Interactive tools", exact: true });
   // Its tools differ, so no icon of the group is pressed.
-  await expect(interactive.getByText("Mixed", { exact: true })).toBeVisible();
   for (const name of ["Allow all", "Ask for all", "Block all"]) {
     await expect(interactive.getByRole("button", { name })).toHaveAttribute(
       "aria-pressed",
@@ -272,7 +271,6 @@ test("a space can only make a tool stricter than its org, and remembers the sect
     "aria-pressed",
     "true",
   );
-  await expect(interactive.getByText("Mixed", { exact: true })).toHaveCount(0);
   await expect(move.getByRole("button", { name: "Blocked" })).toHaveAttribute(
     "aria-pressed",
     "true",

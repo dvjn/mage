@@ -7,7 +7,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
 import { BanIcon, ChevronRightIcon, CircleCheckIcon, HandIcon, SearchIcon } from "lucide-react";
-import { type ReactNode, useId, useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import {
   strictest,
@@ -253,7 +253,6 @@ function ToolGroup({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 } & Omit<ToolsProps, "toolsets">) {
-  const mixedId = useId();
   const modes = new Set(tools.map((tool) => tool.mode));
   // No mode when the group's tools differ.
   const value = modes.size === 1 ? [...modes][0]! : null;
@@ -273,15 +272,9 @@ function ToolGroup({
           {name}
           <Badge variant="outline">{tools.length}</Badge>
         </CollapsibleTrigger>
-        {!value && (
-          <span id={mixedId} className="text-xs text-muted-foreground">
-            Mixed
-          </span>
-        )}
         <ModeToggle
           label={`${name}: when the agent may use them`}
           value={value}
-          describedBy={value ? undefined : mixedId}
           canChange={canChange}
           labelOf={(mode) => mode.all}
           setByOrg={unavailable}
@@ -314,7 +307,6 @@ function ToolGroup({
 function ModeToggle({
   label,
   value,
-  describedBy,
   canChange,
   labelOf,
   setByOrg,
@@ -322,7 +314,6 @@ function ModeToggle({
 }: {
   label: string;
   value: ToolMode | null;
-  describedBy?: string;
   canChange: boolean;
   labelOf: (mode: (typeof MODES)[number]) => string;
   setByOrg: (mode: ToolMode) => boolean;
@@ -331,7 +322,6 @@ function ModeToggle({
   return (
     <ToggleGroup
       aria-label={label}
-      aria-describedby={describedBy}
       size="sm"
       spacing={0.5}
       value={value ? [value] : []}
