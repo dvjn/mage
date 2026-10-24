@@ -5,9 +5,10 @@
 // posted while it is busy steers the run, waits for the next one, or interrupts the run, and its
 // author can change it until the agent takes it in. Anyone who can post can stop the run, or try
 // the last one again when it failed or was stopped; a run waiting for a decision on a tool call is
-// queued again to be stopped. Lists say what each thread holds for the reader: what the agent is
-// doing in it, whether they may decide on the call it waits for, its newest notable event, its last
-// run's failure, and how far they have seen it, which reading it and posting in it move on. Each
+// queued again to be stopped. Lists say who has written in each thread and what it holds for the
+// reader: what the agent is doing in it, whether they may decide on the call it waits for, its
+// newest notable event, its last run's failure, and how far they have seen it, which reading it and
+// posting in it move on. Each
 // reader's inbox follows those changes for every thread they can read. Who may do each is the
 // thread access rule's; a thread's guests find it, and post in it, beside the threads of their own
 // spaces.
@@ -18,7 +19,13 @@ import type { GuestStore } from "@/ports/guests.ts";
 import type { Principal } from "@/ports/identity.ts";
 import type { Run, RunStore } from "@/ports/runs.ts";
 import type { SpaceStore } from "@/ports/spaces.ts";
-import type { StoredEvent, Thread, ThreadReadStore, ThreadStore } from "@/ports/threads.ts";
+import type {
+  StoredEvent,
+  Thread,
+  ThreadReadStore,
+  ThreadStore,
+  ThreadWriters,
+} from "@/ports/threads.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Titles } from "@/services/titles.ts";
@@ -40,6 +47,7 @@ import {
   type ThreadDetail,
   type ThreadFeedItem,
   type ThreadListItem,
+  type ThreadParticipants,
   type ThreadSearchResult,
   type ThreadSummary,
 } from "@/shared/threads.ts";
@@ -101,6 +109,9 @@ export function titleFrom(text: string) {
 }
 
 const PREVIEW_LENGTH = 120;
+// The most people a list names of those who have written in a thread.
+const PARTICIPANT_LIMIT = 3;
+const FORMER_MEMBER = "(former member)";
 
 // Who wrote a message or reply, by first name, and the start of its text on one line.
 function previewOf(event: StoredEvent) {
@@ -113,8 +124,20 @@ function previewOf(event: StoredEvent) {
     .trim()
     .slice(0, PREVIEW_LENGTH);
   const author =
-    event.actor.kind === "agent" ? "Agent" : (event.actorName ?? "(former member)").split(" ")[0]!;
+    event.actor.kind === "agent" ? "Agent" : (event.actorName ?? FORMER_MEMBER).split(" ")[0]!;
   return { author, text };
+}
+
+// The first few who have written in the thread, and how many have.
+function participantsOf(writers: ThreadWriters | undefined): ThreadParticipants {
+  const people = writers?.people ?? [];
+  return {
+    people: people
+      .slice(0, PARTICIPANT_LIMIT)
+      .map(({ userId, name }) => ({ userId, name: name ?? FORMER_MEMBER })),
+    total: people.length,
+    agent: writers?.agent ?? false,
+  };
 }
 
 export function threadSummary(thread: Thread): ThreadSummary {
@@ -190,7 +213,7 @@ export function createThreads(options: ThreadsOptions) {
   }
 
   // The threads as the reader's lists show them: each with the start of its newest message or
-  // reply among `previews`, and what it holds for them.
+  // reply among `previews`, who has written in it, and what it holds for them.
   function itemsOf(
     userId: string,
     list: Thread[],
@@ -199,6 +222,7 @@ export function createThreads(options: ThreadsOptions) {
   ): ThreadListItem[] {
     const ids = list.map((thread) => thread.id);
     const facts = threads.facts(ids);
+    const writers = threads.writers(ids);
     const seen = reads.seen(userId, ids);
     const runOf = new Map(active.map((run) => [run.threadId, run]));
     const previewBy = new Map(previews.map((event) => [event.threadId, previewOf(event)]));
@@ -211,7 +235,12 @@ export function createThreads(options: ThreadsOptions) {
         failed: fact?.failed ?? null,
         lastSeenSeq: seen.get(thread.id) ?? 0,
       };
-      return { ...threadSummary(thread), preview: previewBy.get(thread.id) ?? null, activity };
+      return {
+        ...threadSummary(thread),
+        preview: previewBy.get(thread.id) ?? null,
+        participants: participantsOf(writers.get(thread.id)),
+        activity,
+      };
     });
   }
 
@@ -311,20 +340,28 @@ export function createThreads(options: ThreadsOptions) {
   // The threads the principal is a guest in, with their spaces' and orgs' names.
   function sharedWith(principal: Principal): SharedThread[] {
     const shared = guests.threadsOf(principal.userId, now());
+    const ids = shared.map(({ thread }) => thread.id);
     const items = itemsOf(
       principal.userId,
       shared.map(({ thread }) => thread),
-      runs.activeIn(shared.map(({ thread }) => thread.id)),
-      [],
+      runs.activeIn(ids),
+      threads.lastMessagesOf(ids),
     );
-    return shared.map((shared, index) => ({
-      ...threadSummary(shared.thread),
-      spaceName: shared.spaceName,
-      orgName: shared.orgName,
-      place: shared.spaceNamedForOrg ? shared.spaceName : `${shared.spaceName} · ${shared.orgName}`,
-      accessUntil: shared.accessUntil?.toISOString() ?? null,
-      activity: items[index]!.activity,
-    }));
+    return shared.map((shared, index) => {
+      const { preview, participants, activity } = items[index]!;
+      return {
+        ...threadSummary(shared.thread),
+        spaceName: shared.spaceName,
+        orgName: shared.orgName,
+        place: shared.spaceNamedForOrg
+          ? shared.spaceName
+          : `${shared.spaceName} · ${shared.orgName}`,
+        accessUntil: shared.accessUntil?.toISOString() ?? null,
+        preview,
+        participants,
+        activity,
+      };
+    });
   }
 
   return {

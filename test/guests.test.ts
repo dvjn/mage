@@ -198,6 +198,12 @@ describe("thread access", () => {
         spaceName: "Ada Lovelace's Space",
         orgName: "Ada Lovelace",
         accessUntil: null,
+        preview: { author: "Ada", text: "// Engines" },
+        participants: {
+          people: [{ userId: ada.userId, name: "Ada Lovelace" }],
+          total: 1,
+          agent: false,
+        },
       }),
     ]);
     const found = await api("GET", "/threads/search?q=engi", hedy.cookie);

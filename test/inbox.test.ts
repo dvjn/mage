@@ -21,6 +21,7 @@ function item(
     createdAt: "2026-10-01T00:00:00.000Z",
     updatedAt,
     preview: null,
+    participants: { people: [], total: 0, agent: false },
     activity: {
       run: null,
       lastNotableSeq: 1,

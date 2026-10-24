@@ -5,7 +5,13 @@ import { and, asc, desc, eq, gt, inArray, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { ulid } from "ulid";
 
-import type { StoredEvent, Thread, ThreadFacts, ThreadStore } from "@/ports/threads.ts";
+import type {
+  StoredEvent,
+  Thread,
+  ThreadFacts,
+  ThreadStore,
+  ThreadWriters,
+} from "@/ports/threads.ts";
 
 import { type Db, writeLock } from "./db.ts";
 import { orgFormerMember, space, thread, threadEvent, user } from "./schema.ts";
@@ -190,6 +196,40 @@ export function createThreadStore(db: Db): ThreadStore {
         });
       }
       return facts;
+    },
+
+    writers(threadIds) {
+      const writers = new Map<string, ThreadWriters>();
+      if (threadIds.length === 0) return writers;
+      const rows = db
+        .select({
+          threadId: threadEvent.threadId,
+          actorKind: threadEvent.actorKind,
+          userId: threadEvent.actorUserId,
+          name: user.name,
+          first: sql<number>`min(${threadEvent.seq})`,
+        })
+        .from(threadEvent)
+        .leftJoin(user, eq(user.id, threadEvent.actorUserId))
+        .where(
+          and(
+            inArray(threadEvent.threadId, threadIds),
+            inArray(threadEvent.type, ["message", "message.completed"]),
+          ),
+        )
+        .groupBy(threadEvent.threadId, threadEvent.actorKind, threadEvent.actorUserId)
+        .all()
+        .toSorted((a, b) => a.first - b.first);
+      for (const row of rows) {
+        const of = writers.get(row.threadId) ?? { people: [], agent: false };
+        if (row.actorKind === "user" && row.userId) {
+          of.people.push({ userId: row.userId, name: row.name });
+        } else {
+          of.agent = true;
+        }
+        writers.set(row.threadId, of);
+      }
+      return writers;
     },
 
     anyInSpace(spaceId) {

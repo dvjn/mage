@@ -4,7 +4,12 @@
 
 import * as z from "zod";
 
-import { threadActivitySchema, threadSchema } from "@/shared/threads.ts";
+import {
+  threadActivitySchema,
+  threadParticipantsSchema,
+  threadPreviewSchema,
+  threadSchema,
+} from "@/shared/threads.ts";
 
 // How long a guest's access lasts from accepting the link: an hour, a day, a week or for good.
 export const accessForSchema = z.enum(["1h", "1d", "7d", "never"]);
@@ -75,13 +80,16 @@ export const inviteRefusalSchema = z.object({
 
 export type InviteRefusal = z.infer<typeof inviteRefusalSchema>;
 
-// A thread the signed-in user is a guest in, with the space and org it belongs to.
+// A thread the signed-in user is a guest in, with the space and org it belongs to, and what its
+// space's list would say of it.
 export const sharedThreadSchema = threadSchema.extend({
   spaceName: z.string(),
   orgName: z.string(),
   // Where it is, as it reads: its space and org, or the space alone when it is named for the org.
   place: z.string(),
   accessUntil: z.iso.datetime().nullable(),
+  preview: threadPreviewSchema.nullable(),
+  participants: threadParticipantsSchema,
   activity: threadActivitySchema,
 });
 

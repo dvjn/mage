@@ -301,6 +301,48 @@ describe("a space's thread list", () => {
     expect(preview?.text.startsWith("Engines and looms looms")).toBe(true);
     expect(preview?.text).toHaveLength(120);
   });
+
+  it("names the first few people who wrote in each thread, and whether the agent replied", async () => {
+    const { api, signUp, join, yourSpace, createThread, threadStore } = setup();
+    const { cookie, userId } = await signUp("Ada Lovelace", "ada@example.com");
+    const space = await yourSpace(cookie);
+    const others = [];
+    for (const name of ["Grace Hopper", "Alan Turing", "Hedy Lamarr"]) {
+      const member = await signUp(name, `${name.split(" ")[0]!.toLowerCase()}@example.com`);
+      others.push(join(member, space.id, "messager"));
+    }
+    const blank = await createThread(cookie, space.id);
+    const talk = await createThread(cookie, space.id, "// Engines");
+    for (const member of others) {
+      await api("POST", `/threads/${talk.id}/messages`, member.cookie, { text: "// Looms" });
+    }
+    // Writing again does not list anyone twice.
+    await api("POST", `/threads/${talk.id}/messages`, others[0]!.cookie, { text: "// Again" });
+    threadStore.append(talk.id, {
+      type: "message.completed",
+      actor: { kind: "agent" },
+      data: { messageId: "m1", runId: "r1", parts: [], status: "completed" },
+    });
+
+    const list = (await (await api("GET", `/spaces/${space.id}/threads`, cookie)).json()) as {
+      id: string;
+      participants: { people: { userId: string; name: string }[]; total: number; agent: boolean };
+    }[];
+    expect(list.find((t) => t.id === blank.id)?.participants).toEqual({
+      people: [],
+      total: 0,
+      agent: false,
+    });
+    expect(list.find((t) => t.id === talk.id)?.participants).toEqual({
+      people: [
+        { userId, name: "Ada Lovelace" },
+        { userId: others[0]!.userId, name: "Grace Hopper" },
+        { userId: others[1]!.userId, name: "Alan Turing" },
+      ],
+      total: 4,
+      agent: true,
+    });
+  });
 });
 
 describe("a space's thread table", () => {

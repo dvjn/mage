@@ -39,8 +39,7 @@ export function withSharedThread(
   thread: ThreadListItem,
 ): SharedThread[] | null {
   if (!list.some((item) => item.id === thread.id)) return null;
-  const { preview: _preview, ...changes } = thread;
-  return newestFirst(list.map((item) => (item.id === thread.id ? { ...item, ...changes } : item)));
+  return newestFirst(list.map((item) => (item.id === thread.id ? { ...item, ...thread } : item)));
 }
 
 // The list with the thread seen up to `seq`, never moving back.
