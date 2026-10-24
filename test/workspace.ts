@@ -260,6 +260,8 @@ export function setup(
     teamOrgs,
     operatorEmails,
   });
+  // Stands for the server stopping.
+  const shutdown = new AbortController();
   const app = createApp({
     handleAuth: auth.handler,
     identity: createIdentity(auth, db),
@@ -293,6 +295,7 @@ export function setup(
     signInOptions: { oidc: null },
     pingDatabase: () => Promise.resolve(true),
     heartbeatMs: 20,
+    shutdown: shutdown.signal,
   });
 
   async function signUp(name: string, email: string) {
@@ -398,6 +401,7 @@ export function setup(
   return {
     db,
     app,
+    shutdown,
     scim,
     org,
     spaceStore,

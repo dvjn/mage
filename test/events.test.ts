@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
-import { openStream } from "./sse.ts";
+import { openInbox, openStream } from "./sse.ts";
 import { setup } from "./workspace.ts";
 
 // Posts quiet asides, which wake no agent, so the log holds only these messages.
@@ -84,6 +84,19 @@ describe("live thread events", () => {
 
     expect(frame.event).toBe("access-ended");
     await expect(stream.next()).rejects.toThrow("stream ended");
+    expect(listening.count).toBe(0);
+  });
+
+  it("ends the open streams when the server stops", async () => {
+    const { app, ada, thread, listening, shutdown } = await withThread(["one"]);
+
+    const stream = await openStream(app, ada.cookie, thread.id);
+    const inbox = await openInbox(app, ada.cookie);
+    await Promise.all([stream.nextEvent(), inbox.next()]);
+    shutdown.abort();
+
+    await expect(stream.nextItem()).rejects.toThrow("stream ended");
+    await expect(inbox.nextItem()).rejects.toThrow("stream ended");
     expect(listening.count).toBe(0);
   });
 

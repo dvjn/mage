@@ -1,5 +1,7 @@
 // Composition root: starts the server when run; when imported, only exports the app.
 
+import type { Server } from "node:http";
+
 import { serve } from "@hono/node-server";
 
 import { createAnthropicKeyCatalog, createAnthropicKeyGateway } from "@/adapters/anthropic-api.ts";
@@ -192,6 +194,9 @@ const orgs = createOrgs({
   operatorEmails: config.operatorEmails,
 });
 
+// Aborted on a stop signal, which ends the live event streams.
+const shutdown = new AbortController();
+
 const app = createApp({
   handleAuth: auth.handler,
   identity: createIdentity(auth, db),
@@ -243,6 +248,7 @@ const app = createApp({
   signInOptions: { oidc: config.oidc && { name: config.oidc.name } },
   pingDatabase: () => pingDatabase(db),
   webRoot: import.meta.main ? config.webRoot : undefined,
+  shutdown: shutdown.signal,
 });
 
 export default app;
@@ -262,10 +268,18 @@ if (import.meta.main || developing) {
 if (import.meta.main) {
   const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
     logger.info({ port: info.port, baseUrl: config.baseUrl }, "listening");
-  });
+  }) as Server;
+  // On a stop signal the server takes no new connections, ends the live event streams and stops
+  // its runs; connections still open after a few seconds are cut.
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
-      void worker.stop().then(() => server.close(() => process.exit(0)));
+      logger.info({ signal }, "stopping");
+      shutdown.abort();
+      const closed = new Promise((resolve) => server.close(resolve));
+      // Ended streams leave their connections idle.
+      setImmediate(() => server.closeIdleConnections());
+      setTimeout(() => server.closeAllConnections(), 3000).unref();
+      void Promise.all([worker.stop(), closed]).then(() => process.exit(0));
     });
   }
 }

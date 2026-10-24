@@ -1,5 +1,7 @@
 // API routes under /api and, in production, the built web client.
 
+import { setTimeout as sleep } from "node:timers/promises";
+
 import { serveStatic } from "@hono/node-server/serve-static";
 import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
@@ -107,6 +109,8 @@ export interface AppOptions {
   // How often a live event stream sends a comment to keep the connection open, and checks the
   // reader may still read the thread.
   heartbeatMs?: number;
+  // Aborted when the server stops, which ends the live event streams.
+  shutdown?: AbortSignal;
   // The ways to sign in this server offers, for the sign-in page.
   signInOptions: SignInOptions;
   // Reports whether the database answers a query.
@@ -339,6 +343,11 @@ function requireAdmin(principal: Principal) {
 
 // Also how often a stream checks its reader may still read the thread.
 const HEARTBEAT_MS = 15_000;
+
+// Waits until a stream's next heartbeat, or until the server stops.
+function heartbeat({ heartbeatMs = HEARTBEAT_MS, shutdown }: AppOptions) {
+  return sleep(heartbeatMs, undefined, { signal: shutdown }).catch(() => {});
+}
 
 // Where a live event stream resumes: after the Last-Event-ID a reconnecting browser sends, or
 // `?after=`, or from the start.
@@ -707,9 +716,9 @@ function createApi(options: AppOptions) {
             );
           });
           stream.onAbort(unsubscribe);
-          while (!stream.aborted) {
-            await stream.sleep(options.heartbeatMs ?? HEARTBEAT_MS);
-            if (stream.aborted) break;
+          while (!stream.aborted && !options.shutdown?.aborted) {
+            await heartbeat(options);
+            if (stream.aborted || options.shutdown?.aborted) break;
             // Whoever may no longer read the thread, as a guest whose access ended or a member who
             // left its space, is told so, and the stream ends.
             if (!threads.readable(principal, id)) {
@@ -719,6 +728,8 @@ function createApi(options: AppOptions) {
             }
             await write(() => stream.write(": heartbeat\n\n").then(() => {}));
           }
+          // The server is stopping.
+          if (!stream.aborted && options.shutdown?.aborted) unsubscribe();
         });
       })
       .put("/v1/threads/:id/read", threadRead, (c) => {
@@ -753,9 +764,9 @@ function createApi(options: AppOptions) {
             );
           });
           stream.onAbort(() => inbox.stop());
-          while (!stream.aborted) {
-            await stream.sleep(options.heartbeatMs ?? HEARTBEAT_MS);
-            if (stream.aborted) break;
+          while (!stream.aborted && !options.shutdown?.aborted) {
+            await heartbeat(options);
+            if (stream.aborted || options.shutdown?.aborted) break;
             // Threads the reader can no longer read, as a guest whose access ended, are gone.
             inbox.recheck();
             await write(() => stream.write(": heartbeat\n\n").then(() => {}));
