@@ -1,7 +1,5 @@
-// Signing in: at the identity provider when there is one, and with an email and password for whom
-// password sign-in is open, tucked behind a disclosure when only the operators may use it. Creating
-// an account is offered while password sign-up is open. A sign-in the provider sent back says what
-// went wrong.
+// Signing in: at the identity provider when there is one, and otherwise with an email and password,
+// with a way to create an account. A sign-in the provider sent back says what went wrong.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
@@ -10,17 +8,11 @@ import { type FormEvent, useState } from "react";
 import { AuthCard, ContinueWith } from "@/web/components/auth-frame";
 import { Button } from "@/web/components/ui/button";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/web/components/ui/collapsible";
-import {
   Field,
   FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
-  FieldSeparator,
 } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
 import { authClient } from "@/web/lib/auth-client";
@@ -32,64 +24,28 @@ export function LoginForm() {
   if (!options) return <AuthCard title="Sign in" />;
 
   const oidc = options.oidc;
-  const password = options.password;
-  const form = (
-    <PasswordForm redirect={redirect} invited={invited} canSignUp={password === "everyone"} />
-  );
+  if (!oidc) {
+    return (
+      <AuthCard title="Sign in" description="Use the email and password of your Mage account.">
+        <PasswordForm redirect={redirect} invited={invited} />
+      </AuthCard>
+    );
+  }
   return (
-    <AuthCard
-      title="Sign in"
-      description={
-        !oidc
-          ? "Use the email and password of your Mage account."
-          : password === "everyone"
-            ? `Use your ${oidc.name} account, or the email and password of your Mage account.`
-            : `Use your ${oidc.name} account.`
-      }
-    >
-      {oidc ? (
-        <FieldGroup>
-          <Field>
-            <ContinueWith name={oidc.name} redirect={redirect} />
-            {refused && (
-              <FieldError>
-                Signing in with {oidc.name} did not work ({refused.replaceAll("_", " ")}).
-              </FieldError>
-            )}
-          </Field>
-          {password === "everyone" && (
-            <>
-              <FieldSeparator className="*:data-[slot=field-separator-content]:bg-card">
-                or
-              </FieldSeparator>
-              {form}
-            </>
-          )}
-          {password === "operator" && (
-            <Collapsible>
-              <CollapsibleTrigger render={<Button variant="link" size="sm" className="w-full" />}>
-                Sign in with password
-              </CollapsibleTrigger>
-              <CollapsibleContent className="pt-4">{form}</CollapsibleContent>
-            </Collapsible>
-          )}
-        </FieldGroup>
-      ) : (
-        form
-      )}
+    <AuthCard title="Sign in" description={`Use your ${oidc.name} account.`}>
+      <Field>
+        <ContinueWith name={oidc.name} redirect={redirect} primary />
+        {refused && (
+          <FieldError>
+            Signing in with {oidc.name} did not work ({refused.replaceAll("_", " ")}).
+          </FieldError>
+        )}
+      </Field>
     </AuthCard>
   );
 }
 
-function PasswordForm({
-  redirect,
-  invited,
-  canSignUp,
-}: {
-  redirect?: string;
-  invited?: string;
-  canSignUp: boolean;
-}) {
+function PasswordForm({ redirect, invited }: { redirect?: string; invited?: string }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [error, setError] = useState<string>();
@@ -139,14 +95,12 @@ function PasswordForm({
           <Button type="submit" disabled={pending}>
             Sign in
           </Button>
-          {canSignUp && (
-            <FieldDescription className="text-center">
-              New to Mage?{" "}
-              <Link to="/signup" search={{ redirect, email: invited }}>
-                Create account
-              </Link>
-            </FieldDescription>
-          )}
+          <FieldDescription className="text-center">
+            New to Mage?{" "}
+            <Link to="/signup" search={{ redirect, email: invited }}>
+              Create account
+            </Link>
+          </FieldDescription>
         </Field>
       </FieldGroup>
     </form>

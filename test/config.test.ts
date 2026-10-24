@@ -32,13 +32,6 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...valid, TEAM_ORGS: "admins" })).toThrow(/TEAM_ORGS/);
   });
 
-  it("lets everyone sign in with a password unless only the operators may", () => {
-    expect(loadConfig(valid).passwordSignIn).toBe("everyone");
-    expect(loadConfig({ ...valid, PASSWORD_SIGN_IN: "operator" }).passwordSignIn).toBe("operator");
-    expect(() => loadConfig({ ...valid, PASSWORD_SIGN_IN: "admins" })).toThrow(/PASSWORD_SIGN_IN/);
-    expect(() => loadConfig({ ...valid, PASSWORD_SIGN_IN: "off" })).toThrow(/PASSWORD_SIGN_IN/);
-  });
-
   it("reads an OpenID Connect provider from all three of its variables, or none", () => {
     const oidc = {
       OIDC_ISSUER: "https://id.example.com/application/o/mage/",
@@ -58,7 +51,6 @@ describe("loadConfig", () => {
     expect(() => loadConfig({ ...valid, ...oidc, OIDC_ISSUER: "id.example.com" })).toThrow(
       /OIDC_ISSUER/,
     );
-    expect(loadConfig({ ...valid, ...oidc, PASSWORD_SIGN_IN: "off" }).passwordSignIn).toBe("off");
   });
 
   it("rejects a non-numeric PORT", () => {

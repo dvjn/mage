@@ -1,8 +1,8 @@
 // The one frame of the pages around getting in: signing in or up, opening an invite and a thread
 // whose access ended. The wordmark over one card, centred: its title, what it says, then its form
 // or its actions. On its own it fills the screen; inside the app, the space beside the sidebar.
-// Pages that ask the person to get in first offer the same ways in, the identity provider first
-// when there is one.
+// Pages that ask the person to get in first offer the same ways in: the identity provider when there
+// is one, or else creating an account and signing in with a password.
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -59,9 +59,10 @@ export function AuthCard({
   );
 }
 
-// Whether people can create an account here with a password.
+// Whether people can create an account here, which they do with a password when there is no
+// identity provider.
 export function useCanSignUp() {
-  return useQuery(signInOptionsQuery).data?.password === "everyone";
+  return useQuery(signInOptionsQuery).data?.oidc === null;
 }
 
 // Signs in at the identity provider, which sends the person on to `redirect`, or back to sign-in
@@ -101,32 +102,22 @@ export function ContinueWith({
   );
 }
 
-// The ways in from a page that sends the person back to it once they are in: the identity
-// provider, creating an account while password sign-up is open, and signing in with a password.
+// The ways in from a page that sends the person back to it once they are in: the identity provider,
+// or else creating an account and signing in with a password.
 export function SignInActions({ back }: { back: { redirect: string; email?: string } }) {
   const options = useQuery(signInOptionsQuery).data;
-  const canSignUp = options?.password === "everyone";
+  if (!options) return null;
+  if (options.oidc) {
+    return <ContinueWith name={options.oidc.name} redirect={back.redirect} primary />;
+  }
   return (
     <>
-      {options?.oidc && <ContinueWith name={options.oidc.name} redirect={back.redirect} primary />}
-      {canSignUp && (
-        <Button
-          variant={options?.oidc ? "outline" : "default"}
-          render={<Link to="/signup" search={back} />}
-          nativeButton={false}
-        >
-          Create account
-        </Button>
-      )}
-      {options?.password !== "off" && (
-        <Button
-          variant={canSignUp || options?.oidc ? "outline" : "default"}
-          render={<Link to="/login" search={back} />}
-          nativeButton={false}
-        >
-          {options?.oidc ? "Sign in with password" : "Sign in"}
-        </Button>
-      )}
+      <Button render={<Link to="/signup" search={back} />} nativeButton={false}>
+        Create account
+      </Button>
+      <Button variant="outline" render={<Link to="/login" search={back} />} nativeButton={false}>
+        Sign in
+      </Button>
     </>
   );
 }

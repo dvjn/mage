@@ -3,9 +3,8 @@
 import * as z from "zod";
 
 export const signInOptionsSchema = z.object({
-  // Who may sign in with a password: everyone, only the operators, or nobody.
-  password: z.enum(["everyone", "operator", "off"]),
-  // The identity provider people can sign in with, by the name its button shows.
+  // The identity provider people sign in with, by the name its button shows. With one, it is the
+  // only way in; without one, people sign in and up with a password.
   oidc: z.object({ name: z.string() }).nullable(),
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { type AuthOptions, createAuth, createIdentity } from "@/adapters/auth.ts";
+import { type AuthOptions, createAuth, createIdentity, OIDC_PROVIDER } from "@/adapters/auth.ts";
 import { openDatabase } from "@/adapters/db.ts";
 import { createLogger } from "@/adapters/logger.ts";
 import { createApp } from "@/http/app.ts";
@@ -24,17 +24,13 @@ const unusedGuests = {} as Guests;
 
 const baseUrl = "http://localhost:4783";
 
-function setup(
-  options: Pick<AuthOptions, "passwordSignIn" | "operatorEmails"> = {},
-  db = openDatabase(":memory:"),
-) {
+const oidc = { issuer: "https://id.example.com", clientId: "mage", clientSecret: "s3cret" };
+
+function setup(options: Pick<AuthOptions, "oidc"> = {}, db = openDatabase(":memory:")) {
   const logger = createLogger({ write() {} });
   const secret = "test-secret-that-is-long-enough-1234567890";
   const auth = createAuth({ db, logger, secret, baseUrl, trustedOrigins: [], ...options });
-  const signInOptions: SignInOptions = {
-    password: options.passwordSignIn ?? "everyone",
-    oidc: null,
-  };
+  const signInOptions: SignInOptions = { oidc: options.oidc ? { name: "SSO" } : null };
   const app = createApp({
     handleAuth: auth.handler,
     identity: createIdentity(auth, db),
@@ -60,6 +56,7 @@ function setup(
   }
   return {
     app,
+    auth,
     signUp: (email: string) =>
       post("/sign-up/email", { name: "Ada Lovelace", email, password: "correct horse battery" }),
     signIn: (email: string, password = "correct horse battery") =>
@@ -78,41 +75,29 @@ describe("/api/auth", () => {
   });
 });
 
-describe("password sign-in for the operators alone", () => {
-  // Accounts made while everyone could sign up.
-  async function withAccounts() {
+describe("with an identity provider", () => {
+  it("refuses password sign-in, to accounts made before it too, and password sign-up", async () => {
     const db = openDatabase(":memory:");
-    const open = setup({}, db);
-    for (const email of ["Grace@Example.com", "ada@example.com"]) {
-      expect((await open.signUp(email)).status).toBe(200);
-    }
-    return setup({ passwordSignIn: "operator", operatorEmails: ["grace@example.com"] }, db);
-  }
-
-  it("lets an operator in with their password", async () => {
-    const { signIn } = await withAccounts();
-    expect((await signIn("grace@example.com")).status).toBe(200);
-  });
-
-  it("refuses anyone else as a wrong password would", async () => {
-    const { signIn } = await withAccounts();
-    const refused = await signIn("ada@example.com");
-    const wrong = await signIn("grace@example.com", "not the password");
-    expect(refused.status).toBe(401);
-    expect(await refused.json()).toEqual(await wrong.json());
-  });
-
-  it("refuses password sign-up, an operator's too", async () => {
-    const { signUp } = setup({ passwordSignIn: "operator", operatorEmails: ["grace@example.com"] });
+    expect((await setup({}, db).signUp("ada@example.com")).status).toBe(200);
+    const { signIn, signUp } = setup({ oidc }, db);
+    expect((await signIn("ada@example.com")).status).toBe(400);
     expect((await signUp("grace@example.com")).status).toBe(400);
+  });
+
+  it("trusts the provider's email to join the account that has it", () => {
+    const { auth } = setup({ oidc });
+    expect(auth.options.account?.accountLinking).toMatchObject({
+      trustedProviders: [OIDC_PROVIDER],
+      requireLocalEmailVerified: false,
+    });
   });
 });
 
 describe("GET /api/sign-in-options", () => {
-  it("says who may sign in with a password, signed out", async () => {
-    const { app } = setup({ passwordSignIn: "operator" });
+  it("names the identity provider, signed out", async () => {
+    const { app } = setup({ oidc });
     const res = await app.request("/api/sign-in-options");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ password: "operator", oidc: null });
+    expect(await res.json()).toEqual({ oidc: { name: "SSO" } });
   });
 });

@@ -55,8 +55,6 @@ const auth = createAuth({
   secret: config.authSecret,
   baseUrl: config.baseUrl,
   trustedOrigins: config.authTrustedOrigins,
-  passwordSignIn: config.passwordSignIn,
-  operatorEmails: config.operatorEmails,
   oidc: config.oidc,
   // The directory's changes settle the orgs the person is in, or could be through a group.
   scim: config.scimToken
@@ -210,10 +208,7 @@ const app = createApp({
     baseUrl: config.baseUrl,
   }),
   logger,
-  signInOptions: {
-    password: config.passwordSignIn,
-    oidc: config.oidc && { name: config.oidc.name },
-  },
+  signInOptions: { oidc: config.oidc && { name: config.oidc.name } },
   pingDatabase: () => pingDatabase(db),
   webRoot: import.meta.main ? config.webRoot : undefined,
 });

@@ -16,6 +16,17 @@ function open() {
   return new Database(databasePath, { timeout: 5000 });
 }
 
+// A row the server is still committing, such as the primary space of someone who has just signed
+// up: their page can see it a moment before the sign-up's transaction ends.
+function eventually<T>(read: () => T | undefined): T {
+  const until = Date.now() + 2000;
+  for (;;) {
+    const row = read();
+    if (row !== undefined || Date.now() > until) return row as T;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+  }
+}
+
 // Makes the user with `email` a member of the primary space of the user with `ownerEmail`, with
 // the role, acting from then on in that space's org.
 export function joinSpaceOf(ownerEmail: string, email: string, role: "messager" | "viewer") {
@@ -25,11 +36,14 @@ export function joinSpaceOf(ownerEmail: string, email: string, role: "messager" 
       (db.prepare("select id from user where email = ?").get(email) as { id: string }).id;
     const owner = userId(ownerEmail);
     const member = userId(email);
-    const space = db
-      .prepare(
-        "select id, organization_id as orgId from space where created_by = ? and is_primary = 1",
-      )
-      .get(owner) as { id: string; orgId: string };
+    const space = eventually(
+      () =>
+        db
+          .prepare(
+            "select id, organization_id as orgId from space where created_by = ? and is_primary = 1",
+          )
+          .get(owner) as { id: string; orgId: string } | undefined,
+    );
     db.transaction(() => {
       db.prepare(
         "insert into member (id, organization_id, user_id, role, direct_role, created_at) values (?, ?, ?, 'member', 'member', ?)",
@@ -48,11 +62,14 @@ export function joinSpaceOf(ownerEmail: string, email: string, role: "messager" 
 }
 
 function primarySpaceOf(db: Database.Database, email: string) {
-  return db
-    .prepare(
-      "select space.id as id, user.id as userId from space join user on space.created_by = user.id where user.email = ? and space.is_primary = 1",
-    )
-    .get(email) as { id: string; userId: string };
+  return eventually(
+    () =>
+      db
+        .prepare(
+          "select space.id as id, user.id as userId from space join user on space.created_by = user.id where user.email = ? and space.is_primary = 1",
+        )
+        .get(email) as { id: string; userId: string } | undefined,
+  );
 }
 
 // Adds `count` threads, titled `${prefix} 1` and on, to the primary space of the user with `email`,

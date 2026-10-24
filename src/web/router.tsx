@@ -90,14 +90,14 @@ const loginRoute = createRoute({
   component: LoginForm,
 });
 
-// Password sign-up is open only when everyone may sign in with a password.
+// Password sign-up is open only while there is no identity provider.
 const signupRoute = createRoute({
   getParentRoute: () => signedOutRoute,
   path: "/signup",
   validateSearch: afterSignIn,
   beforeLoad: async ({ context, search }) => {
     const options = await context.queryClient.fetchQuery(signInOptionsQuery);
-    if (options.password !== "everyone") throw redirect({ to: "/login", search });
+    if (options.oidc) throw redirect({ to: "/login", search });
   },
   component: SignupForm,
 });

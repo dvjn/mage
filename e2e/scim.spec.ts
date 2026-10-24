@@ -21,6 +21,17 @@ function transcript(page: Page) {
   return page.getByRole("log", { name: "Events" });
 }
 
+// Signs in at the stand-in provider as the person with `email`.
+async function continueWithIdp(page: Page, name: string, email: string) {
+  await page.goto("/login");
+  await page.getByRole("button", { name: "Continue with Test IdP" }).click();
+  await expect(page.getByRole("heading", { name: "Test IdP" })).toBeVisible();
+  await page.getByLabel("Email").fill(email);
+  await page.getByLabel("Name").fill(name);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(/\/s\/[^/]+$/);
+}
+
 async function send(page: Page, text: string) {
   await page.getByLabel("Message", { exact: true }).fill(text);
   await page.getByLabel("Message", { exact: true }).press("Enter");
@@ -38,13 +49,7 @@ test("a directory group linked to a team org lets its people in, and leaving it 
   const directory = scimClient({ baseUrl: baseURL ?? "", token: JOURNEY_SCIM_TOKEN });
 
   // Ada makes a team org and starts a thread in its General space.
-  await page.goto("/signup");
-  await page.getByLabel("Name", { exact: true }).fill("Ada Lovelace");
-  await page.getByLabel("Email").fill(`ada-${unique}@example.com`);
-  await page.getByLabel("Password", { exact: true }).fill("correct horse battery");
-  await page.getByLabel("Confirm password").fill("correct horse battery");
-  await page.getByRole("button", { name: "Create account" }).click();
-  await expect(page).toHaveURL(/\/s\/[^/]+$/);
+  await continueWithIdp(page, "Ada Lovelace", `ada-${unique}@example.com`);
   await page.getByRole("button", { name: "Switch space" }).click();
   await page.getByRole("menuitem", { name: "New organization" }).click();
   await page.getByLabel("Organization name").fill("Analytical Engines");
@@ -74,13 +79,7 @@ test("a directory group linked to a team org lets its people in, and leaving it 
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const generalThread = page.url();
   const graceTab = await someoneElse(browser, testInfo.parallelIndex);
-  await graceTab.goto("/login");
-  await graceTab.getByRole("button", { name: "Continue with Test IdP" }).click();
-  await expect(graceTab.getByRole("heading", { name: "Test IdP" })).toBeVisible();
-  await graceTab.getByLabel("Email").fill(graceEmail);
-  await graceTab.getByLabel("Name").fill("Grace Hopper");
-  await graceTab.getByRole("button", { name: "Sign in" }).click();
-  await expect(graceTab).toHaveURL(/\/s\/[^/]+$/);
+  await continueWithIdp(graceTab, "Grace Hopper", graceEmail);
   await graceTab.goto(generalThread);
   await expect(graceTab.getByRole("button", { name: "Switch space" })).toContainText(
     "Analytical Engines",

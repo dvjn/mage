@@ -1,6 +1,8 @@
-// Browser journeys against the production build, served on its own port with a fresh database and
-// the stand-in model, which production refuses, beside a stand-in OpenID Connect provider. The
-// journeys provision people and groups over SCIM themselves, as a directory would.
+// Browser journeys against the production build with a fresh database and the stand-in model, which
+// production refuses. It is served twice on the one database: with passwords, and signing in only
+// through a stand-in OpenID Connect provider, as an instance that later turned one on. The identity
+// provider and directory journeys run against the second; they provision people and groups over
+// SCIM themselves, as a directory would.
 
 import { rmSync } from "node:fs";
 
@@ -8,13 +10,21 @@ import { defineConfig, devices } from "@playwright/test";
 
 import { databasePath, dataDir } from "./e2e/database.ts";
 import { JOURNEY_SCIM_TOKEN } from "./e2e/scim-client.ts";
+import { issuer, passwordServer, ssoServer } from "./e2e/servers.ts";
 
-const port = 4793;
-const baseURL = `http://localhost:${port}`;
-const issuerPort = 4794;
+// The journeys that sign in through the identity provider.
+const ssoJourneys = ["**/oidc.spec.ts", "**/scim.spec.ts"];
 const oidcClient = { id: "mage", secret: "mage-browser-journeys-oidc-secret" };
 
-// Workers load this file too; only the runner, before the server starts, clears the data.
+const serverEnv = {
+  NODE_ENV: "test",
+  MODEL_GATEWAY: "fake",
+  AUTH_SECRET: "mage-browser-journeys-secret-0123456789",
+  CREDENTIAL_KEY: "WFnQPvVJ7j8limmjR6tFVpYWlTRqy8Rf8i6UJnaIaQg=",
+  DATABASE_PATH: databasePath,
+};
+
+// Workers load this file too; only the runner, before the servers start, clears the data.
 if (!process.env.TEST_WORKER_INDEX) {
   rmSync(dataDir, { recursive: true, force: true });
 }
@@ -25,34 +35,44 @@ export default defineConfig({
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
   use: {
-    baseURL,
+    baseURL: passwordServer,
     trace: "on-first-retry",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  projects: [
+    { name: "chromium", use: { ...devices["Desktop Chrome"] }, testIgnore: ssoJourneys },
+    {
+      name: "sso",
+      use: { ...devices["Desktop Chrome"], baseURL: ssoServer },
+      testMatch: ssoJourneys,
+    },
+  ],
   webServer: [
     {
       command: "node e2e/oidc-issuer.ts",
-      url: `http://localhost:${issuerPort}/.well-known/openid-configuration`,
+      url: `${issuer}/.well-known/openid-configuration`,
       reuseExistingServer: false,
       env: {
-        PORT: String(issuerPort),
+        PORT: new URL(issuer).port,
         CLIENT_ID: oidcClient.id,
         CLIENT_SECRET: oidcClient.secret,
       },
     },
     {
       command: "pnpm build && node --enable-source-maps dist/server/main.js",
-      url: `${baseURL}/api/health`,
+      url: `${passwordServer}/api/health`,
+      reuseExistingServer: false,
+      env: { ...serverEnv, PORT: new URL(passwordServer).port, BASE_URL: passwordServer },
+    },
+    // Starts once the build above is done, on the database the server above made.
+    {
+      command: "node --enable-source-maps dist/server/main.js",
+      url: `${ssoServer}/api/health`,
       reuseExistingServer: false,
       env: {
-        NODE_ENV: "test",
-        MODEL_GATEWAY: "fake",
-        PORT: String(port),
-        BASE_URL: baseURL,
-        AUTH_SECRET: "mage-browser-journeys-secret-0123456789",
-        CREDENTIAL_KEY: "WFnQPvVJ7j8limmjR6tFVpYWlTRqy8Rf8i6UJnaIaQg=",
-        DATABASE_PATH: databasePath,
-        OIDC_ISSUER: `http://localhost:${issuerPort}`,
+        ...serverEnv,
+        PORT: new URL(ssoServer).port,
+        BASE_URL: ssoServer,
+        OIDC_ISSUER: issuer,
         OIDC_CLIENT_ID: oidcClient.id,
         OIDC_CLIENT_SECRET: oidcClient.secret,
         OIDC_NAME: "Test IdP",

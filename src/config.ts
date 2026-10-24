@@ -16,10 +16,8 @@ export interface Config {
   teamOrgs: "everyone" | "operator";
   // The accounts that run this server, by lower-cased email.
   operatorEmails: string[];
-  // Who may sign in with a password: every account, only the operators (with no password sign-up),
-  // or nobody, which needs an identity provider.
-  passwordSignIn: "everyone" | "operator" | "off";
-  // The OpenID Connect provider people can sign in with, and the name its button shows.
+  // The OpenID Connect provider people sign in with, and the name its button shows. With one, it is
+  // the only way in; without one, people sign in and up with a password.
   oidc: Oidc | null;
   // The bearer token a SCIM directory provisions people and groups with; none turns SCIM off.
   scimToken: string | null;
@@ -98,10 +96,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     .split(",")
     .map((value) => value.trim().toLowerCase())
     .filter(Boolean);
-  const passwordSignIn = env.PASSWORD_SIGN_IN ?? "everyone";
-  if (passwordSignIn !== "everyone" && passwordSignIn !== "operator" && passwordSignIn !== "off") {
-    throw new Error("PASSWORD_SIGN_IN must be everyone, operator or off");
-  }
   const oidcVars = [env.OIDC_ISSUER, env.OIDC_CLIENT_ID, env.OIDC_CLIENT_SECRET];
   if (oidcVars.some(Boolean) && !oidcVars.every(Boolean)) {
     throw new Error(
@@ -113,9 +107,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error("OIDC_ISSUER must be an http(s) URL");
   }
   const oidc = issuer ? { issuer, clientId, clientSecret, name: env.OIDC_NAME || "SSO" } : null;
-  if (passwordSignIn === "off" && !oidc) {
-    throw new Error("PASSWORD_SIGN_IN=off needs OIDC_ISSUER, so people can still sign in");
-  }
   const scimToken = env.SCIM_TOKEN || null;
   if (scimToken && (scimToken.length < 32 || /\s/.test(scimToken))) {
     throw new Error("SCIM_TOKEN must be at least 32 characters with no spaces");
@@ -132,7 +123,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     fakeModels: gateway === "fake",
     teamOrgs,
     operatorEmails,
-    passwordSignIn,
     oidc,
     scimToken,
   };

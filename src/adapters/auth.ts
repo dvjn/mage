@@ -1,8 +1,7 @@
-// Email and password accounts with cookie sessions, served under /api/auth. Password sign-in is
-// open to everyone (the default), to the operators alone with no password sign-up, or to nobody.
-// With an OpenID Connect provider, people also sign in there: a returning person by their subject
-// at the provider, someone new to it by their email, joining an account they already have, or else
-// getting a new one.
+// Accounts with cookie sessions, served under /api/auth. People sign in and up with an email and a
+// password, or, with an OpenID Connect provider, only there: a returning person by their subject at
+// the provider, someone new to it by their email, joining an account they already have, password
+// or not, or else getting a new one.
 // Every user gets a personal org with its first space at sign-up, and new sessions act in it. Orgs
 // and their members are changed only through Mage's own API, so the library's org routes are off.
 // With a SCIM token, a directory provisions people and groups under /api/auth/scim/v2: someone it
@@ -11,7 +10,7 @@
 
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
-import { APIError, createAuthMiddleware } from "better-auth/api";
+import { APIError } from "better-auth/api";
 import { genericOAuth, organization } from "better-auth/plugins";
 import { scim } from "@better-auth/scim";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
@@ -31,9 +30,6 @@ export interface AuthOptions {
   secret: string;
   baseUrl: string;
   trustedOrigins: string[];
-  passwordSignIn?: "everyone" | "operator" | "off";
-  // The operators' lower-cased emails.
-  operatorEmails?: string[];
   oidc?: { issuer: string; clientId: string; clientSecret: string } | null;
   // The bearer token a SCIM directory provisions with, and what to tell when the directory changed
   // a person or the groups they are in; `active` is false once it turned them off or deleted them.
@@ -49,7 +45,7 @@ export const OIDC_PROVIDER = "oidc";
 export type Auth = ReturnType<typeof createAuth>;
 
 export function createAuth(options: AuthOptions) {
-  const { db, passwordSignIn = "everyone", operatorEmails = [], oidc, scim: directory } = options;
+  const { db, oidc, scim: directory } = options;
   const spaces = createSpaceStore(db);
 
   function personalOrgOf(userId: string) {
@@ -136,25 +132,8 @@ export function createAuth(options: AuthOptions) {
       // has it, though Mage never verified that account's email.
       accountLinking: { trustedProviders: [OIDC_PROVIDER], requireLocalEmailVerified: false },
     },
-    emailAndPassword: {
-      enabled: passwordSignIn !== "off",
-      disableSignUp: passwordSignIn !== "everyone",
-    },
-    hooks: {
-      // Someone other than an operator is told what a wrong password tells them, so the operators'
-      // emails stay unknown.
-      before: createAuthMiddleware(async (ctx) => {
-        if (ctx.path !== "/sign-in/email" || passwordSignIn !== "operator") return;
-        const email = (ctx.body as { email?: unknown } | undefined)?.email;
-        if (typeof email === "string" && operatorEmails.includes(email.toLowerCase())) {
-          return;
-        }
-        throw new APIError("UNAUTHORIZED", {
-          code: "INVALID_EMAIL_OR_PASSWORD",
-          message: "Invalid email or password",
-        });
-      }),
-    },
+    // Passwords are the way in only while there is no identity provider.
+    emailAndPassword: { enabled: !oidc },
     databaseHooks: {
       user: {
         create: {
