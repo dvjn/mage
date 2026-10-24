@@ -259,6 +259,7 @@ export function ThreadPage() {
               <TranscriptItem
                 key={row.id}
                 row={row}
+                tools={detail.data?.tools}
                 actions={{
                   ...(row === retryable && { retry: () => void retry(retryable.runId) }),
                   ...(!guest && { pickModel: () => setPicking(true) }),

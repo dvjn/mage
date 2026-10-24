@@ -406,7 +406,9 @@ describe("tool settings", () => {
       toolId: "thread.move",
       enabled: false,
     });
-    expect(await org.json()).toContainEqual({ id: "thread.move", enabled: false });
+    expect(await org.json()).toContainEqual(
+      expect.objectContaining({ id: "thread.move", enabled: false }),
+    );
 
     const changed = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
       toolId: "thread.rename",
@@ -415,9 +417,27 @@ describe("tool settings", () => {
     });
     expect(await changed.json()).toEqual(
       expect.arrayContaining([
-        { id: "thread.move", enabled: true, orgEnabled: false, messager: "run", guest: "approve" },
-        { id: "thread.rename", enabled: true, orgEnabled: true, messager: "approve", guest: "run" },
-        { id: "thread.info", enabled: true, orgEnabled: true, messager: "run", guest: "run" },
+        expect.objectContaining({
+          id: "thread.move",
+          enabled: true,
+          orgEnabled: false,
+          messager: "run",
+          guest: "approve",
+        }),
+        expect.objectContaining({
+          id: "thread.rename",
+          enabled: true,
+          orgEnabled: true,
+          messager: "approve",
+          guest: "run",
+        }),
+        expect.objectContaining({
+          id: "thread.info",
+          enabled: true,
+          orgEnabled: true,
+          messager: "run",
+          guest: "run",
+        }),
       ]),
     );
     expect((await api("GET", `/spaces/${space.id}/tools`, grace.cookie)).status).toBe(403);

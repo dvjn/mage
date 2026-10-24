@@ -1,4 +1,5 @@
-// The agent's tools in settings. For the org: a switch for each tool, which only its owners change.
+// The agent's tools in settings, each by its title, or name, and description from its definition.
+// For the org: a switch for each tool, which only its owners change.
 // For a space: a switch for each tool, off and disabled where the org turned it off, and whether
 // its messagers and guests run each one or need approval. Owners always run; viewers always need
 // approval.
@@ -9,7 +10,7 @@ import { useState } from "react";
 import {
   orgToolListSchema,
   spaceToolListSchema,
-  TOOL_LABELS,
+  type ToolDefinition,
   type ToolLevel,
 } from "@/shared/tools.ts";
 import { SettingsCard } from "@/web/components/settings/layout";
@@ -34,8 +35,20 @@ function spaceToolsKey(spaceId: string) {
 
 const LEVELS: Record<ToolLevel, string> = { run: "Run", approve: "Need approval" };
 
-function labelOf(id: string) {
-  return TOOL_LABELS[id] ?? id;
+// A tool's title, or its name where it has none.
+function labelOf(definition: ToolDefinition) {
+  return definition.title ?? definition.name;
+}
+
+function ToolLabel({ definition }: { definition: ToolDefinition }) {
+  return (
+    <span className="flex flex-col">
+      <span className="text-sm">{labelOf(definition)}</span>
+      {definition.description && (
+        <span className="text-xs text-muted-foreground">{definition.description}</span>
+      )}
+    </span>
+  );
 }
 
 export function OrgToolsCard({ canManage }: { canManage: boolean }) {
@@ -74,12 +87,9 @@ export function OrgToolsCard({ canManage }: { canManage: boolean }) {
       <ul aria-label="Tools" className="flex flex-col divide-y">
         {tools.data?.map((tool) => (
           <li key={tool.id} className="flex items-center justify-between gap-4 py-2.5">
-            <span className="flex flex-col">
-              <span className="text-sm">{labelOf(tool.id)}</span>
-              <span className="font-mono text-xs text-muted-foreground">{tool.id}</span>
-            </span>
+            <ToolLabel definition={tool.definition} />
             <Switch
-              aria-label={labelOf(tool.id)}
+              aria-label={labelOf(tool.definition)}
               checked={tool.enabled}
               disabled={!canManage}
               onCheckedChange={(checked) => void change(tool.id, checked)}
@@ -158,7 +168,7 @@ export function SpaceToolsCard({ spaceId }: { spaceId: string }) {
     >
       <ul aria-label="Tools" className="flex flex-col divide-y">
         {tools.data?.map((tool) => {
-          const label = labelOf(tool.id);
+          const label = labelOf(tool.definition);
           const toggle = (
             <Switch
               aria-label={label}
@@ -170,10 +180,7 @@ export function SpaceToolsCard({ spaceId }: { spaceId: string }) {
           return (
             <li key={tool.id} aria-label={label} className="flex flex-col gap-2 py-3">
               <div className="flex items-center justify-between gap-4">
-                <span className="flex flex-col">
-                  <span className="text-sm">{label}</span>
-                  <span className="font-mono text-xs text-muted-foreground">{tool.id}</span>
-                </span>
+                <ToolLabel definition={tool.definition} />
                 {tool.orgEnabled ? (
                   toggle
                 ) : (

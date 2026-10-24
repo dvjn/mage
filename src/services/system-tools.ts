@@ -42,8 +42,9 @@ export function createSystemTools(options: SystemToolsOptions) {
   }
 
   const info: ToolSpec<Record<string, never>> = {
-    id: "thread.info",
+    name: "thread.info",
     source: "system",
+    title: "Thread details",
     description:
       "Read this thread's title, folder, the model and effort it is set to and the one replying, and the people in it. Check it before changing any of them.",
     input: z.object({}).strict() as z.ZodType<Record<string, never>>,
@@ -81,10 +82,13 @@ export function createSystemTools(options: SystemToolsOptions) {
   };
 
   const rename: ToolSpec<{ title: string }> = {
-    id: "thread.rename",
+    name: "thread.rename",
     source: "system",
+    title: "Rename thread",
     description: "Rename this thread.",
-    input: z.object({ title: z.string().trim().min(1).max(200) }),
+    input: z.object({
+      title: z.string().trim().min(1).max(200).meta({ title: "Title" }),
+    }),
     risk: () => "normal",
     run({ title }, ctx) {
       ctx.write((append) => {
@@ -96,11 +100,19 @@ export function createSystemTools(options: SystemToolsOptions) {
   };
 
   const move: ToolSpec<{ folder: string | null }> = {
-    id: "thread.move",
+    name: "thread.move",
     source: "system",
+    title: "Move thread",
     description:
       "Move this thread to one of its space's folders, by name, or to the top of the space with null. It does not make folders.",
-    input: z.object({ folder: z.string().trim().min(1).nullable() }),
+    input: z.object({
+      folder: z
+        .string()
+        .trim()
+        .min(1)
+        .nullable()
+        .meta({ title: "Folder", description: "Its name; null for the top of the space" }),
+    }),
     risk: () => "normal",
     run({ folder }, ctx) {
       const found =
@@ -124,11 +136,15 @@ export function createSystemTools(options: SystemToolsOptions) {
   };
 
   const setModel: ToolSpec<{ model: string; effort: "low" | "medium" | "high" | null }> = {
-    id: "thread.set_model",
+    name: "thread.set_model",
     source: "system",
+    title: "Change model",
     description:
       "Set the model this thread replies with and its reasoning effort, together; null effort uses the model's usual one. Takes effect from your next step.",
-    input: z.object({ model: z.string().min(1), effort: effortSchema.nullable() }),
+    input: z.object({
+      model: z.string().min(1).meta({ title: "Model", description: "A model ref" }),
+      effort: effortSchema.nullable().meta({ title: "Effort" }),
+    }),
     risk: ({ model }, ctx) =>
       ctx.model && connectionOf(model) !== connectionOf(ctx.model) ? "ask" : "normal",
     async run({ model, effort }, ctx) {

@@ -4,6 +4,8 @@
 
 import * as z from "zod";
 
+import { toolDefinitionSchema } from "@/shared/tools.ts";
+
 // How hard a model that can think does so before it answers.
 export const effortSchema = z.enum(["low", "medium", "high"]);
 
@@ -333,6 +335,8 @@ export const threadDetailSchema = z.object({
   access: threadAccessSchema,
   // The reader's level for each tool here: whether they may run it, and so decide on its calls.
   levels: z.record(z.string(), z.enum(["run", "approve"])),
+  // Every tool's definition, by which its calls show.
+  tools: z.array(toolDefinitionSchema),
   defaults: threadDefaultsSchema,
   // The model it names, its own or the default, and the one that replies: the same, or while that
   // one is turned off or gone, the space's default, then the org's; null when none can. Null with

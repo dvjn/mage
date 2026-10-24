@@ -24,11 +24,25 @@ import {
   levelOf,
 } from "@/services/tool-authority.ts";
 import type { ToolRisk, ToolScope } from "@/shared/threads.ts";
-import type { OrgTool, SpaceTool } from "@/shared/tools.ts";
+import type { OrgTool, SpaceTool, ToolDefinition } from "@/shared/tools.ts";
 import { type ToolRow, type TranscriptRow, transcriptOf } from "@/shared/transcript.ts";
 
 // Any tool, whatever its input.
 export type AnyToolSpec = ToolSpec<any>;
+
+// The tool as MCP defines one.
+export function definitionOf(spec: AnyToolSpec): ToolDefinition {
+  return {
+    name: spec.name,
+    ...(spec.title && { title: spec.title }),
+    description: spec.description,
+    inputSchema: z.toJSONSchema(spec.input, { io: "input" }) as Record<string, unknown>,
+    ...(spec.output && {
+      outputSchema: z.toJSONSchema(spec.output, { io: "output" }) as Record<string, unknown>,
+    }),
+    ...(spec.annotations && { annotations: spec.annotations }),
+  };
+}
 
 export interface ToolsOptions {
   specs: AnyToolSpec[];
@@ -40,14 +54,14 @@ export type Tools = ReturnType<typeof createTools>;
 
 export function createTools(options: ToolsOptions) {
   const { specs, settings, access } = options;
-  const byId = new Map(specs.map((spec) => [spec.id, spec]));
+  const byId = new Map(specs.map((spec) => [spec.name, spec]));
 
   // The tools on in the space: on in its org, and not turned off there.
   function offered(orgId: string, spaceId: string) {
     const offInOrg = settings.offInOrg(orgId);
     const inSpace = settings.inSpace(spaceId);
     return specs.filter(
-      (spec) => !offInOrg.has(spec.id) && inSpace.get(spec.id)?.enabled !== false,
+      (spec) => !offInOrg.has(spec.name) && inSpace.get(spec.name)?.enabled !== false,
     );
   }
 
@@ -96,7 +110,12 @@ export function createTools(options: ToolsOptions) {
     },
 
     ids() {
-      return specs.map((spec) => spec.id);
+      return specs.map((spec) => spec.name);
+    },
+
+    // Every tool's definition, as people see it.
+    definitions(): ToolDefinition[] {
+      return specs.map(definitionOf);
     },
 
     offered,
@@ -105,9 +124,9 @@ export function createTools(options: ToolsOptions) {
     // The tools as the model is told about them.
     forModel(tools: AnyToolSpec[]): ModelTool[] {
       return tools.map((spec) => ({
-        id: spec.id,
+        id: spec.name,
         description: spec.description,
-        inputSchema: z.toJSONSchema(spec.input, { io: "input" }) as Record<string, unknown>,
+        inputSchema: definitionOf(spec).inputSchema,
       }));
     },
 
@@ -138,7 +157,7 @@ export function createTools(options: ToolsOptions) {
 }
 
 export interface ToolDecisionsOptions {
-  tools: Pick<Tools, "find" | "levelFor" | "ids">;
+  tools: Pick<Tools, "find" | "levelFor" | "ids" | "definitions">;
   access: Pick<ThreadAccess, "require">;
   threads: Pick<ThreadStore, "eventsAfter">;
   spaceStore: Pick<SpaceStore, "find">;
@@ -213,7 +232,11 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
     // Every tool with whether the org has it on.
     orgTools(principal: Principal): OrgTool[] {
       const off = settings.offInOrg(principal.orgId);
-      return allIds().map((id) => ({ id, enabled: !off.has(id) }));
+      return tools.definitions().map((definition) => ({
+        id: definition.name,
+        enabled: !off.has(definition.name),
+        definition,
+      }));
     },
 
     setOrgTool(principal: Principal, toolId: string, enabled: boolean) {
@@ -229,10 +252,12 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
       const space = spaces.require(principal, spaceId, "manage");
       const off = settings.offInOrg(space.orgId);
       const inSpace = settings.inSpace(space.id);
-      return allIds().map((id) => {
+      return tools.definitions().map((definition) => {
+        const id = definition.name;
         const setting = inSpace.get(id);
         return {
           id,
+          definition,
           enabled: setting?.enabled ?? true,
           orgEnabled: !off.has(id),
           messager: setting?.messager ?? "run",
@@ -252,8 +277,4 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
       settings.setInSpace(space.id, toolId, changes);
     },
   };
-
-  function allIds() {
-    return tools.ids();
-  }
 }

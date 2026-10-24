@@ -1,23 +1,25 @@
-// The agent's tools as the API shows them, shared by the server and the web client: Mage's own
-// tools, the switches and levels orgs and spaces set for them, and the bodies that change those.
+// The agent's tools as the API shows them, shared by the server and the web client: their
+// definitions, the switches and levels orgs and spaces set for them, and the bodies that change
+// those.
 
 import * as z from "zod";
 
-// Mage's own tools, in the order settings list them.
-export const SYSTEM_TOOL_IDS = [
-  "thread.info",
-  "thread.rename",
-  "thread.move",
-  "thread.set_model",
-] as const;
+// A JSON Schema, as tools describe what they take and give back.
+export type JsonSchema = Record<string, unknown>;
 
-// What each of Mage's own tools does, as settings name it.
-export const TOOL_LABELS: Record<string, string> = {
-  "thread.info": "Read the thread's details",
-  "thread.rename": "Rename the thread",
-  "thread.move": "Move the thread to a folder",
-  "thread.set_model": "Change the thread's model",
-};
+// A tool as MCP defines one: its name, which is its id, an optional title and description, and the
+// JSON Schemas of its input and, where it says, its output. Mage's own tools come the same way, so
+// nothing shows a tool from anything else.
+export const toolDefinitionSchema = z.object({
+  name: z.string(),
+  title: z.string().optional(),
+  description: z.string().optional(),
+  inputSchema: z.record(z.string(), z.unknown()),
+  outputSchema: z.record(z.string(), z.unknown()).optional(),
+  annotations: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type ToolDefinition = z.infer<typeof toolDefinitionSchema>;
 
 // Whether a person may run a tool, or needs approval for each call.
 export const toolLevelSchema = z.enum(["run", "approve"]);
@@ -25,7 +27,11 @@ export const toolLevelSchema = z.enum(["run", "approve"]);
 export type ToolLevel = z.infer<typeof toolLevelSchema>;
 
 // A tool in the org's settings: on or off for all its spaces.
-export const orgToolSchema = z.object({ id: z.string(), enabled: z.boolean() });
+export const orgToolSchema = z.object({
+  id: z.string(),
+  enabled: z.boolean(),
+  definition: toolDefinitionSchema,
+});
 
 export type OrgTool = z.infer<typeof orgToolSchema>;
 
@@ -37,6 +43,7 @@ export const orgToolChangeSchema = z.object({ toolId: z.string().min(1), enabled
 // and guests get.
 export const spaceToolSchema = z.object({
   id: z.string(),
+  definition: toolDefinitionSchema,
   enabled: z.boolean(),
   orgEnabled: z.boolean(),
   messager: toolLevelSchema,

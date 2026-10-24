@@ -535,7 +535,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       const offered = tools.offered(space.orgId, space.id);
       for (const call of calls) {
         const { callId, toolId, input, messageId } = call;
-        const spec = offered.find((candidate) => candidate.id === toolId);
+        const spec = offered.find((candidate) => candidate.name === toolId);
         const parsed = spec?.input.safeParse(input);
         const risk =
           spec && parsed?.success ? spec.risk(parsed.data, { model: execution.ref }) : "normal";
@@ -580,7 +580,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       const offered = tools.offered(space.orgId, space.id);
       let waiting = false;
       for (const call of calls) {
-        const spec = offered.find((candidate) => candidate.id === call.toolId);
+        const spec = offered.find((candidate) => candidate.name === call.toolId);
         const parsed = spec?.input.safeParse(call.input);
         let allowed = false;
         if (spec && parsed?.success) {

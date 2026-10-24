@@ -5,10 +5,11 @@
 // names the model that wrote it and shows what the model thought first, folded away once it
 // answers. An agent reply that was cut short says so, a run that failed says why and what to do
 // about it, the last run that failed or was stopped can be tried again, and an event this client
-// does not know yet gets a labelled placeholder. A tool call waiting for a decision is a card from
-// the agent with Allow, Allow for now and Deny, enabled for the people who may run the tool and
-// marked paused for everyone else; every other call is a line saying what happened, which opens on
-// its input and output.
+// does not know yet gets a labelled placeholder. Tool calls show by their tool's definition alone,
+// its title or else its name, as for any tool. One waiting for a decision is a card from the agent
+// with what the tool does, the input, and Allow, Allow for now and Deny, enabled for the people who
+// may run the tool and marked paused for everyone else; every other call is a line with the tool
+// and what became of the call, which opens on its input and output.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
@@ -17,6 +18,7 @@ import { CheckIcon, ChevronRightIcon, RotateCcwIcon, TriangleAlertIcon, XIcon } 
 import { type ReactNode, useState } from "react";
 
 import type { ToolScope } from "@/shared/threads.ts";
+import type { ToolDefinition } from "@/shared/tools.ts";
 import type {
   AgentRow,
   FailureRow,
@@ -40,6 +42,7 @@ import {
 } from "@/web/components/ai-elements/reasoning";
 import { CONNECTION_LABELS } from "@/web/components/model-picker";
 import { Time } from "@/web/components/time";
+import { ToolInput, ToolResult } from "@/web/components/tool-value";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
 import { Button } from "@/web/components/ui/button";
 import {
@@ -53,7 +56,7 @@ import { useMinute } from "@/web/hooks/use-minute";
 import { initialsOf } from "@/web/lib/initials";
 import { meQuery, modelsQuery } from "@/web/lib/queries";
 import { timeUntil } from "@/web/lib/time";
-import { toolCopy } from "@/web/lib/tool-copy";
+import { callResultOf } from "@/web/lib/tool-value";
 
 // A row of the transcript: the avatar beside a header with the author and the time, and the body
 // flush with the header.
@@ -219,17 +222,22 @@ export interface RowActions {
 
 const ONLY_RUNNERS = "Only people who can run this here can decide";
 
-// A tool call waiting for a decision: what the agent wants to do, and the buttons to decide.
+// What a tool is called: its title, or its name where it has none.
+function toolName(row: ToolRow, definition: ToolDefinition | undefined) {
+  return definition?.title ?? row.toolId;
+}
+
+// A tool call waiting for a decision: the tool the agent wants to use, what it does, the input, and
+// the buttons to decide.
 function ToolCard({
   row,
+  definition,
   decide,
-  modelName,
 }: {
   row: ToolRow;
+  definition: ToolDefinition | undefined;
   decide?: RowActions["decide"];
-  modelName: (ref: string) => string;
 }) {
-  const copy = toolCopy(row, modelName);
   const [deciding, setDeciding] = useState(false);
   function button(label: string, allow: boolean, scope: ToolScope, variant: "default" | "outline") {
     const action = (
@@ -266,13 +274,14 @@ function ToolCard({
     >
       <Confirmation approval={{ id: row.id }} state="approval-requested" className="gap-3">
         <ConfirmationTitle className="flex flex-col gap-0.5">
-          <span className="font-medium text-foreground">{copy.ask}</span>
-          <span className="truncate">{copy.detail}</span>
-          <span>
-            <span className="sm:hidden">Needs approval.</span>
-            <span className="hidden sm:inline">Needs approval before it runs.</span>
+          <span className="font-medium text-foreground">
+            The agent wants to use {toolName(row, definition)}
           </span>
+          {definition?.description && <span>{definition.description}</span>}
         </ConfirmationTitle>
+        <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+          <ToolInput value={row.input} schema={definition?.inputSchema} />
+        </div>
         <ConfirmationRequest>
           <ConfirmationActions className="w-full flex-col items-stretch self-stretch sm:flex-row sm:items-center sm:justify-start">
             {button("Allow", true, "once", "default")}
@@ -285,45 +294,49 @@ function ToolCard({
   );
 }
 
-// How long a call took to run, when it took long enough to say.
+// How long a call took to run, from a second on; nothing below that.
 function duration(ms: number | null) {
-  return ms !== null && ms >= 1000 ? `${Math.round(ms / 1000)}s` : "—";
+  return ms !== null && ms >= 1000 ? `${Math.round(ms / 1000)}s` : null;
 }
 
-// A tool call that ran, is running or did not run, as one line that opens on its input and output.
-function ToolLine({ row, modelName }: { row: ToolRow; modelName: (ref: string) => string }) {
-  const copy = toolCopy(row, modelName);
+// A tool call that ran, is running or did not run, as one line with the tool and what became of
+// the call, and who decided on it, which opens on its input and output.
+function ToolLine({ row, definition }: { row: ToolRow; definition: ToolDefinition | undefined }) {
   const by = row.decision?.by.name;
-  const allowedBy =
-    by && (row.decision?.scope === "for_now" ? `allowed for now by ${by}` : `allowed by ${by}`);
   let icon: ReactNode;
-  let text: string;
+  let status: string;
+  let who: string | undefined;
   switch (row.state) {
     case "ran":
       icon = <CheckIcon className="text-foreground" />;
-      text = [copy.done, allowedBy].filter(Boolean).join(" · ");
+      status = "Ran";
+      who =
+        by && (row.decision?.scope === "for_now" ? `allowed for now by ${by}` : `allowed by ${by}`);
       break;
     case "failed":
       icon = <XIcon />;
-      text = `${copy.notDone} · ${row.output && !row.output.ok ? row.output.error : "it failed"}`;
+      status = "Failed";
       break;
     case "denied":
       icon = <XIcon />;
-      text = by ? `${copy.notDone} · denied by ${by}` : copy.notDone;
+      status = "Denied";
+      who = by && `by ${by}`;
       break;
     case "stale":
       icon = <TriangleAlertIcon />;
-      text = `${copy.notDone} · the approval no longer held`;
+      status = "Denied";
+      who = "the approval no longer held";
       break;
     case "stopped":
       icon = <XIcon />;
-      text = `${copy.notDone} · no longer needed`;
+      status = "Stopped";
       break;
     default:
       icon = <Spinner />;
-      text = [copy.ask.replace(/^Wants to/, "Going to"), allowedBy].filter(Boolean).join(" · ");
+      status = row.waits && row.state === "pending" ? "Waiting" : "Running";
   }
-  const output = row.output && (row.output.ok ? row.output.value : row.output.error);
+  const text = [toolName(row, definition), status, who].filter(Boolean).join(" · ");
+  const took = duration(row.ms);
   return (
     <Collapsible className="pl-9 text-xs text-muted-foreground">
       <CollapsibleTrigger
@@ -333,38 +346,31 @@ function ToolLine({ row, modelName }: { row: ToolRow; modelName: (ref: string) =
         <ChevronRightIcon className="transition-transform group-data-[panel-open]/tool:rotate-90" />
         {icon}
         <span className="min-w-0 flex-1 truncate">{text}</span>
-        <span className="shrink-0 tabular-nums">{duration(row.ms)}</span>
+        {took && <span className="shrink-0 tabular-nums">{took}</span>}
       </CollapsibleTrigger>
-      <CollapsibleContent className="mt-1 flex flex-col gap-2 rounded-md bg-muted px-3 py-2">
-        <div className="flex flex-col gap-1">
-          <span className="font-medium">Input</span>
-          <pre className="font-mono break-words whitespace-pre-wrap">
-            {JSON.stringify(row.input, null, 2)}
-          </pre>
-        </div>
+      <CollapsibleContent className="mt-1 flex flex-col gap-3 rounded-md bg-muted px-3 py-2">
+        <ToolInput value={row.input} schema={definition?.inputSchema} />
         {row.output && (
-          <div className="flex flex-col gap-1">
-            <span className="font-medium">{row.output.ok ? "Output" : "Error"}</span>
-            <pre className="font-mono break-words whitespace-pre-wrap">
-              {typeof output === "string" ? output : JSON.stringify(output, null, 2)}
-            </pre>
-          </div>
+          <ToolResult result={callResultOf(row.output)} schema={definition?.outputSchema} />
         )}
       </CollapsibleContent>
     </Collapsible>
   );
 }
 
-function ToolCall({ row, decide }: { row: ToolRow; decide?: RowActions["decide"] }) {
-  const models = useQuery(modelsQuery);
-  function modelName(ref: string) {
-    const listed = [...(models.data?.models ?? []), ...(models.data?.turnedOff ?? [])];
-    return listed.find((model) => model.ref === ref)?.name ?? (ref.split("/").pop() || ref);
-  }
+function ToolCall({
+  row,
+  definition,
+  decide,
+}: {
+  row: ToolRow;
+  definition: ToolDefinition | undefined;
+  decide?: RowActions["decide"];
+}) {
   if (row.state === "pending" && row.waits) {
-    return <ToolCard row={row} decide={decide} modelName={modelName} />;
+    return <ToolCard row={row} definition={definition} decide={decide} />;
   }
-  return <ToolLine row={row} modelName={modelName} />;
+  return <ToolLine row={row} definition={definition} />;
 }
 
 function RetryButton({ onRetry }: { onRetry: () => void }) {
@@ -440,9 +446,12 @@ function FailureNotice({ row, actions }: { row: FailureRow; actions: RowActions 
 export function TranscriptItem({
   row,
   actions = {},
+  tools = [],
 }: {
   row: TranscriptRow;
   actions?: RowActions;
+  // The tools' definitions, by which their calls show.
+  tools?: ToolDefinition[];
 }) {
   switch (row.kind) {
     case "human":
@@ -452,7 +461,13 @@ export function TranscriptItem({
       if (row.status === "completed" && !row.text && !row.reasoning) return null;
       return <AgentReply row={row} />;
     case "tool":
-      return <ToolCall row={row} decide={actions.decide} />;
+      return (
+        <ToolCall
+          row={row}
+          definition={tools.find((tool) => tool.name === row.toolId)}
+          decide={actions.decide}
+        />
+      );
     case "failure":
       return <FailureNotice row={row} actions={actions} />;
     case "stop":

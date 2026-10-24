@@ -32,6 +32,7 @@ function detail(seqs: number[], title = "Engines"): ThreadDetail {
     events: seqs.map(event),
     access: { via: "space", role: "owner" },
     levels: {},
+    tools: [],
     defaults: { model: null, effort: null },
     model: null,
   };

@@ -64,7 +64,7 @@ export interface ThreadsOptions {
   // Names threads after their first message, when given.
   titles?: Pick<Titles, "name">;
   // The agent's tools, for each reader's level for them.
-  tools: Pick<Tools, "ids" | "levelFor">;
+  tools: Pick<Tools, "ids" | "levelFor" | "definitions">;
   now?: () => Date;
 }
 
@@ -408,6 +408,7 @@ export function createThreads(options: ThreadsOptions) {
                 .map((toolId) => [toolId, tools.levelFor(principal.userId, thread, space, toolId)])
             : [],
         ),
+        tools: tools.definitions(),
         defaults: { ...defaults, used: used && { ...used.used, effort: used.effort } },
         // The thread's own org decides, whoever reads it.
         model: space

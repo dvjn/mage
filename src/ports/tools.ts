@@ -1,5 +1,5 @@
-// Tools the agent can call, each with what the model reads about it, the input it takes, how much a
-// call can do, and running it; and the switches and levels orgs and spaces set for them. A tool's id
+// Tools the agent can call, each with its definition (what people and the model read about it, the
+// input it takes and what it gives back), how much a call can do, and running it; and the switches and levels orgs and spaces set for them. A tool's id
 // names where it comes from: `thread.rename` for Mage's own, later `mcp:<server>/<tool>` and
 // `skill:<name>`.
 
@@ -26,12 +26,18 @@ export interface ToolContext {
   write<T>(work: (append: (event: NewEvent, title?: string) => void) => T): T;
 }
 
+// A tool as MCP defines one: its name (the tool's id), what it is called and does, and the JSON
+// Schemas of what it takes and gives back. People and the model see it the same.
 export interface ToolSpec<I = unknown> {
-  id: string;
+  name: string;
   source: "system" | "mcp" | "skill";
+  title?: string;
   // What the model reads; the same for everyone.
   description: string;
   input: z.ZodType<I>;
+  // What a call gives back when it succeeds, where the tool says.
+  output?: z.ZodType;
+  annotations?: Record<string, unknown>;
   risk(input: I, ctx: Pick<ToolContext, "model">): ToolRisk;
   run(input: I, ctx: ToolContext): Promise<ToolOutput>;
 }
