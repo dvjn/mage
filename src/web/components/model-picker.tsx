@@ -1,8 +1,9 @@
 // The one model picker: a button opening a searchable list of the models the org can use, grouped
-// by the provider they come through, with the default the level above chose offered first where
-// there is one, and a model that is turned off or gone shown as a warning with what stands in.
-// With no models at all, it points to adding a model provider. As a form field it is outlined, full
-// width and opens below; compact, it is a composer button that opens above.
+// by the provider they come through, each group and the model shown marked with its provider, with
+// the default the level above chose offered first where there is one, and a model that is turned
+// off or gone shown as a warning with what stands in. With no models at all, it points to adding a
+// model provider. As a form field it is outlined, full width and opens below; compact, it is a
+// composer button that opens above.
 
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -11,8 +12,10 @@ import type * as React from "react";
 
 import { cn } from "cn";
 
+import type { Provider } from "@/shared/connections.ts";
 import type { ModelSummary } from "@/shared/models.ts";
 import { promptInputSelectTriggerClassName } from "@/web/components/ai-elements/prompt-input";
+import { ProviderIcon } from "@/web/components/provider-icon";
 import {
   Combobox,
   ComboboxCollection,
@@ -45,6 +48,7 @@ export const CONNECTION_LABELS: Record<"codex" | "claude", string> = {
 interface Group {
   value: string;
   label: string;
+  provider: Provider;
   items: ModelSummary[];
 }
 
@@ -54,6 +58,7 @@ function groupsOf(models: ModelSummary[]): Group[] {
     const group = groups.get(model.connectionId) ?? {
       value: model.connectionId,
       label: model.connectionLabel,
+      provider: model.provider,
       items: [],
     };
     group.items.push(model);
@@ -145,8 +150,10 @@ export function ModelPicker({
   loading?: boolean;
 }) {
   const selected = models.find((model) => model.ref === value) ?? null;
+  const shownRef = value ?? (inherit?.active ? inherit.ref : null);
   // The model shown, chosen or followed, when it cannot be picked.
-  const missing = useMissingModel(models, value ?? (inherit?.active ? inherit.ref : null), loading);
+  const missing = useMissingModel(models, shownRef, loading);
+  const shown = models.find((model) => model.ref === shownRef);
   const label = missing
     ? (fallback?.label ?? missing.name)
     : selected
@@ -189,7 +196,11 @@ export function ModelPicker({
               <Skeleton className="h-3.5 w-24" />
             ) : (
               <>
-                {missing && <TriangleAlertIcon className="size-3.5 shrink-0" />}
+                {missing ? (
+                  <TriangleAlertIcon className="size-3.5 shrink-0" />
+                ) : (
+                  shown && <ProviderIcon provider={shown.provider} className="size-3.5" />
+                )}
                 <span
                   className={cn(
                     "truncate",
@@ -255,7 +266,10 @@ export function ModelPicker({
         <ComboboxList>
           {(group: Group, index: number) => (
             <ComboboxGroup key={group.value} items={group.items}>
-              <ComboboxLabel>{group.label}</ComboboxLabel>
+              <ComboboxLabel className="flex items-center gap-1.5">
+                <ProviderIcon provider={group.provider} className="size-3" />
+                {group.label}
+              </ComboboxLabel>
               <ComboboxCollection>
                 {(model: ModelSummary) => (
                   <ComboboxItem key={model.ref} value={model}>

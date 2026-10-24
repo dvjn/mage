@@ -1,8 +1,8 @@
-// The organization's model providers: a card with a table of its connections (provider and label,
-// how it connects, the account or masked key, how many of its models are on, when it was added),
-// each with a menu to choose its models, rename an API key, set its proxy or remove it, and adding
-// one through the add-provider journey, started from the empty state while there are none. On a
-// phone each row is two lines. The org's owners manage them; its members see them. A team org
+// The organization's model providers: a card with a table of its connections (provider's mark and
+// label, how it connects, the account or masked key, how many of its models are on, when it was
+// added), each with a menu to choose its models, rename an API key, set its proxy or remove it, and
+// adding one through the add-provider journey, started from the empty state while there are none.
+// On a phone each row is two lines. The org's owners manage them; its members see them. A team org
 // connects with API keys only.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -20,6 +20,7 @@ import { useState } from "react";
 import { type ConnectionSummary, connectionLabel } from "@/shared/connections.ts";
 import { EmptyState } from "@/web/components/page-states";
 import { HeaderAction } from "@/web/components/people-table";
+import { ProviderIcon } from "@/web/components/provider-icon";
 import { Time } from "@/web/components/time";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { NameDialog } from "@/web/components/name-dialog";
@@ -179,7 +180,10 @@ function ProvidersTable({
           return (
             <TableRow key={connection.id} aria-label={name} className="group">
               <TableCell className="w-full max-w-0 px-3 py-2.5">
-                <div className="truncate font-medium">{name}</div>
+                <div className="flex min-w-0 items-center gap-2 font-medium">
+                  <ProviderIcon provider={connection.provider} />
+                  <span className="truncate">{name}</span>
+                </div>
                 {/* On a phone the other columns fold into this line. */}
                 <div className="truncate text-xs text-muted-foreground sm:hidden">
                   {METHODS[connection.authKind]} ·{" "}

@@ -35,6 +35,7 @@ import type { Effort, ShownModel } from "@/shared/threads.ts";
 export interface Model extends CatalogModel {
   ref: string;
   connectionId: string;
+  provider: Connection["provider"];
   authKind: Connection["authKind"];
   // How people know the connection it comes through.
   connectionLabel: string;
@@ -176,6 +177,7 @@ export function createModels(options: ModelsOptions) {
       ...model,
       ref: modelRef(connection, model.id),
       connectionId: connection.id,
+      provider: connection.provider,
       authKind: connection.authKind,
       connectionLabel: connectionLabel(connection),
       enabled: chosen.get(model.id)?.enabled ?? connection.autoEnableModels,

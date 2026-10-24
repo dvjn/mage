@@ -7,7 +7,7 @@ import type { ColumnDef } from "@tanstack/react-table";
 import type * as React from "react";
 
 import type { ThreadShow } from "@/shared/thread-status.ts";
-import type { ThreadActivity, ThreadParticipants } from "@/shared/threads.ts";
+import type { ShownModel, ThreadActivity, ThreadParticipants } from "@/shared/threads.ts";
 import { DataTable, type Empty } from "@/web/components/data-table/data-table";
 import { DataTableToolbar } from "@/web/components/data-table/data-table-toolbar";
 import { filterColumn } from "@/web/components/people-table";
@@ -26,6 +26,7 @@ type Thread = {
   title: string;
   untitled: boolean;
   updatedAt: string;
+  shownModel: ShownModel | null;
   participants: ThreadParticipants;
   activity: ThreadActivity;
 };

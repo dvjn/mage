@@ -22,6 +22,7 @@ import {
 } from "@/shared/connections.ts";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { ModelPicker } from "@/web/components/model-picker";
+import { ProviderIcon } from "@/web/components/provider-icon";
 import { CodexSignIn } from "@/web/components/settings/codex-sign-in";
 import {
   emptyProxy,
@@ -379,6 +380,7 @@ export function AddProviderDialog({
               <Choice
                 key={provider}
                 title={BACKEND_LABELS[provider]}
+                icon={<ProviderIcon provider={provider} />}
                 description={description}
                 onSelect={() =>
                   setStep(

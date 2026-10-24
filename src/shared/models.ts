@@ -4,6 +4,7 @@
 
 import * as z from "zod";
 
+import { providerSchema } from "@/shared/connections.ts";
 import { type Effort, effortSchema } from "@/shared/threads.ts";
 
 export const modelSchema = z.object({
@@ -11,6 +12,7 @@ export const modelSchema = z.object({
   id: z.string(),
   name: z.string(),
   connectionId: z.string(),
+  provider: providerSchema,
   authKind: z.enum(["codex", "api_key"]),
   // How people know the connection it comes through.
   connectionLabel: z.string(),
