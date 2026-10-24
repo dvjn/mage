@@ -3,14 +3,13 @@
 // makes a folder and chooses it. It opens from a breadcrumb or a button, or as a dialog from a menu.
 
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDownIcon, FolderPlusIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, FolderIcon, FolderPlusIcon } from "lucide-react";
 import type * as React from "react";
 import { useState } from "react";
 
 import { folderSchema, type FolderSummary } from "@/shared/folders.ts";
 import type { Crumb } from "@/web/components/app-shell";
 import { NameDialog } from "@/web/components/name-dialog";
-import { Button } from "@/web/components/ui/button";
 import {
   Command,
   CommandEmpty,
@@ -223,8 +222,8 @@ export function FolderPickerDialog({
 }
 
 // The breadcrumb that stands for a thread's folder, between its space and its title. Whoever may
-// move the thread gets the folder's name with a chevron, or a "+" to add it to one; anyone else the
-// folder's name, or nothing.
+// move the thread gets a folder icon and the folder's name with a chevron, or the icon and chevron
+// alone to add it to one; anyone else the folder's name, or nothing.
 export function folderCrumb({
   spaceId,
   folders,
@@ -252,17 +251,23 @@ export function folderCrumb({
       {children}
     </FolderPicker>
   );
+  // Looks like the crumbs beside it: muted text that brightens on hover.
+  const crumb = (label: string) => (
+    <button
+      type="button"
+      aria-label={label}
+      className="inline-flex max-w-48 items-center gap-1 rounded-sm text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 aria-expanded:text-foreground [&_svg]:size-3.5 [&_svg]:shrink-0"
+    />
+  );
   if (!current) {
     return {
       label: "Add to folder",
       control: picker(
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="Add to folder"
-          className="text-muted-foreground"
-        />,
-        <PlusIcon />,
+        crumb("Add to folder"),
+        <>
+          <FolderIcon />
+          <ChevronDownIcon />
+        </>,
         "Add to folder",
       ),
     };
@@ -270,13 +275,9 @@ export function folderCrumb({
   return {
     label: current.name,
     control: picker(
-      <Button
-        size="xs"
-        variant="ghost"
-        aria-label={`Folder: ${current.name}`}
-        className="-mx-1.5 max-w-40 font-normal text-muted-foreground hover:text-foreground"
-      />,
+      crumb(`Folder: ${current.name}`),
       <>
+        <FolderIcon />
         <span className="truncate">{current.name}</span>
         <ChevronDownIcon />
       </>,
