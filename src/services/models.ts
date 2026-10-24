@@ -30,7 +30,7 @@ import {
   connectionLabel,
 } from "@/shared/connections.ts";
 import { type ModelPair, replyCandidates } from "@/shared/models.ts";
-import type { Effort } from "@/shared/threads.ts";
+import type { Effort, ShownModel } from "@/shared/threads.ts";
 
 export interface Model extends CatalogModel {
   ref: string;
@@ -189,13 +189,16 @@ export function createModels(options: ModelsOptions) {
     return connection;
   }
 
+  // The connection of the list that a ref's prefix names, or null.
+  function namedBy(list: Connection[], prefix: string) {
+    return (
+      list.find((c) => (c.authKind === "api_key" ? c.id === prefix : c.authKind === prefix)) ?? null
+    );
+  }
+
   // The connection a ref names, or null.
   function connectionOf(orgId: string, prefix: string) {
-    return (
-      connections
-        .list(orgId)
-        .find((c) => (c.authKind === "api_key" ? c.id === prefix : c.authKind === prefix)) ?? null
-    );
+    return namedBy(connections.list(orgId), prefix);
   }
 
   // The one place that decides which models exist for an org.
@@ -437,6 +440,20 @@ export function createModels(options: ModelsOptions) {
     // Null goes back to each model's usual effort.
     setDefaultEffort(orgId: string, effort: Effort | null) {
       settings.setDefaultEffort(orgId, effort);
+    },
+
+    // The org's models as lists show them, by ref: the provider of the connection each comes
+    // through, null when the org has none such, and the name its last list gave it, else its id.
+    // Reads the org's connections once and asks no provider.
+    shownModels(orgId: string): (ref: string) => ShownModel {
+      const list = connections.list(orgId);
+      return (ref) => {
+        const slash = ref.indexOf("/");
+        const id = ref.slice(slash + 1);
+        const connection = namedBy(list, ref.slice(0, slash));
+        const listed = connection && cache.get(connection.id)?.models.find((m) => m.id === id);
+        return { ref, name: listed?.name ?? id, provider: connection?.provider ?? null };
+      };
     },
 
     defaults(space: Pick<Space, "orgId" | "defaultModel" | "defaultEffort">): Defaults {

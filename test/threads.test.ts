@@ -317,6 +317,35 @@ describe("a space's thread list", () => {
       total: 1,
     });
   });
+
+  it("shows each thread's model and its provider, its own or the default it follows", async () => {
+    const { api, org, signUp, yourSpace, createThread } = setup();
+    org.models.push("claude/claude-big");
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const space = await yourSpace(cookie);
+    const own = await createThread(cookie, space.id);
+    await api("PATCH", `/threads/${own.id}`, cookie, { model: "codex/gpt-big" });
+    const following = await createThread(cookie, space.id);
+    const list = async () =>
+      (await (await api("GET", `/spaces/${space.id}/threads`, cookie)).json()) as {
+        id: string;
+        shownModel: unknown;
+      }[];
+    expect((await list()).find((t) => t.id === following.id)?.shownModel).toBeNull();
+
+    await api("PATCH", `/spaces/${space.id}/defaults`, cookie, { model: "claude/claude-big" });
+    const shown = await list();
+    expect(shown.find((t) => t.id === own.id)?.shownModel).toEqual({
+      ref: "codex/gpt-big",
+      name: "gpt-big",
+      provider: "openai",
+    });
+    expect(shown.find((t) => t.id === following.id)?.shownModel).toEqual({
+      ref: "claude/claude-big",
+      name: "claude-big",
+      provider: "anthropic",
+    });
+  });
 });
 
 describe("a space's thread table", () => {

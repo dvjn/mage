@@ -4,6 +4,7 @@
 
 import * as z from "zod";
 
+import { providerSchema } from "@/shared/connections.ts";
 import { toolDefinitionSchema } from "@/shared/tools.ts";
 
 // How hard a model that can think does so before it answers.
@@ -62,8 +63,20 @@ export const threadParticipantsSchema = z.object({
 
 export type ThreadParticipants = z.infer<typeof threadParticipantsSchema>;
 
-// A thread in its space's list, with who has written in it, and what it holds for the reader.
+// The model a list shows for a thread, its own or the default it follows: its name, and the
+// provider it comes through, null when the org has no connection for it.
+export const shownModelSchema = z.object({
+  ref: z.string(),
+  name: z.string(),
+  provider: providerSchema.nullable(),
+});
+
+export type ShownModel = z.infer<typeof shownModelSchema>;
+
+// A thread in its space's list, with the model it shows (null with none at all), who has written
+// in it, and what it holds for the reader.
 export const threadListItemSchema = threadSchema.extend({
+  shownModel: shownModelSchema.nullable(),
   participants: threadParticipantsSchema,
   activity: threadActivitySchema,
 });

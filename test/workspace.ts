@@ -124,6 +124,12 @@ export function setup(
         name: ref.slice(ref.indexOf("/") + 1),
         status: org.off.includes(ref) ? ("off" as const) : ("ok" as const),
       }),
+    // A ref's provider by its prefix, as a sign-in's is: codex for OpenAI, claude for Anthropic.
+    shownModels: () => (ref: string) => {
+      const prefix = ref.slice(0, ref.indexOf("/"));
+      const provider = prefix === "codex" ? "openai" : prefix === "claude" ? "anthropic" : null;
+      return { ref, name: ref.slice(ref.indexOf("/") + 1), provider } as const;
+    },
     requireModel: (_orgId: string, ref: string) =>
       org.models.includes(ref)
         ? Promise.resolve()

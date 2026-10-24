@@ -400,6 +400,27 @@ describe("model lists", () => {
     );
   });
 
+  it("shows a model by its connection's provider and its listed name, without asking again", async () => {
+    const { models, requests, ready } = setup();
+    const { orgId, anthropicId } = await ready();
+    const before = models.shownModels(orgId);
+    expect(before(`${anthropicId}/claude-big`)).toEqual({
+      ref: `${anthropicId}/claude-big`,
+      name: "claude-big",
+      provider: "anthropic",
+    });
+
+    await models.resolveModels(orgId);
+    const shown = models.shownModels(orgId);
+    expect(shown("codex/gpt-big")).toMatchObject({ name: "GPT Big", provider: "openai" });
+    expect(shown(`${anthropicId}/claude-big`)).toMatchObject({
+      name: "Claude Big",
+      provider: "anthropic",
+    });
+    expect(shown("gone/echo")).toEqual({ ref: "gone/echo", name: "echo", provider: null });
+    expect(requests).toHaveLength(2);
+  });
+
   it("keeps a list for an hour and reads it again on refresh or after the hour", async () => {
     const { models, requests, clock, ready } = setup();
     const { orgId } = await ready();

@@ -13,9 +13,14 @@ export const proxySummarySchema = z.object({
 
 export type ProxySummary = z.infer<typeof proxySummarySchema>;
 
+// Who makes the models a connection reaches.
+export const providerSchema = z.enum(["openai", "anthropic"]);
+
+export type Provider = z.infer<typeof providerSchema>;
+
 export const connectionSchema = z.object({
   id: z.string(),
-  provider: z.enum(["openai", "anthropic"]),
+  provider: providerSchema,
   authKind: z.enum(["codex", "api_key"]),
   // The provider account, or an API key's masked hint.
   account: z.string(),
@@ -56,7 +61,7 @@ export const connectionListSchema = z.array(connectionSchema);
 // An API key to add: its provider, an optional name, the key, which is never shown again, and the
 // proxy its requests go through, if any, given as `proxyInputSchema` below with every value.
 export const apiKeyInputSchema = z.object({
-  provider: z.enum(["openai", "anthropic"]),
+  provider: providerSchema,
   label: z
     .string()
     .trim()

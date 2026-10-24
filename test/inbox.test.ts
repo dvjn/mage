@@ -20,6 +20,7 @@ function item(
     lastEventSeq: 1,
     createdAt: "2026-10-01T00:00:00.000Z",
     updatedAt,
+    shownModel: null,
     participants: { people: [], total: 0 },
     activity: {
       run: null,

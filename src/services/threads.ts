@@ -5,20 +5,19 @@
 // posted while it is busy steers the run, waits for the next one, or interrupts the run, and its
 // author can change it until the agent takes it in. Anyone who can post can stop the run, or try
 // the last one again when it failed or was stopped; a run waiting for a decision on a tool call is
-// queued again to be stopped. Lists say who has written in each thread and what it holds for the
-// reader: what the agent is doing in it, whether they may decide on the call it waits for, its
-// newest notable event, its last run's failure, and how far they have seen it, which reading it and
-// posting in it move on. Each
-// reader's inbox follows those changes for every thread they can read. Who may do each is the
-// thread access rule's; a thread's guests find it, and post in it, beside the threads of their own
-// spaces.
+// queued again to be stopped. Lists say each thread's model and its provider, who has written in
+// it and what it holds for the reader: what the agent is doing in it, whether they may decide on
+// the call it waits for, its newest notable event, its last run's failure, and how far they have
+// seen it, which reading it and posting in it move on. Each reader's inbox follows those changes
+// for every thread they can read. Who may do each is the thread access rule's; a thread's guests
+// find it, and post in it, beside the threads of their own spaces.
 
 import type { DeltaStore } from "@/ports/deltas.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
 import type { GuestStore } from "@/ports/guests.ts";
 import type { Principal } from "@/ports/identity.ts";
 import type { Run, RunStore } from "@/ports/runs.ts";
-import type { SpaceStore } from "@/ports/spaces.ts";
+import type { Space, SpaceStore } from "@/ports/spaces.ts";
 import type {
   StoredEvent,
   Thread,
@@ -50,6 +49,7 @@ import {
   type ThreadParticipants,
   type ThreadSearchResult,
   type ThreadSummary,
+  type ShownModel,
 } from "@/shared/threads.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
@@ -68,7 +68,7 @@ export interface ThreadsOptions {
     "active" | "activeIn" | "activeInSpace" | "create" | "latest" | "requestCancel" | "resume"
   >;
   deltas: Pick<DeltaStore, "inThread">;
-  models: Pick<Models, "defaults" | "requireModel" | "replyModel">;
+  models: Pick<Models, "defaults" | "requireModel" | "replyModel" | "shownModels">;
   log: ThreadLog;
   bus: EventBus;
   // Names threads after their first message, when given.
@@ -206,10 +206,30 @@ export function createThreads(options: ThreadsOptions) {
     };
   }
 
-  // The threads as the reader's lists show them: each with who has written in it, and what it holds
-  // for them.
+  // The model each thread's row shows, its own or the default it follows; reads each space and
+  // each org's connections once.
+  function shownModelOf() {
+    const spacesById = new Map<string, Space | null>();
+    const byOrg = new Map<string, (ref: string) => ShownModel>();
+    return (thread: Thread): ShownModel | null => {
+      if (!spacesById.has(thread.spaceId)) {
+        spacesById.set(thread.spaceId, spaceStore.find(thread.spaceId));
+      }
+      const space = spacesById.get(thread.spaceId);
+      if (!space) return null;
+      const ref = thread.model ?? models.defaults(space).model;
+      if (!ref) return null;
+      const shown = byOrg.get(space.orgId) ?? models.shownModels(space.orgId);
+      byOrg.set(space.orgId, shown);
+      return shown(ref);
+    };
+  }
+
+  // The threads as the reader's lists show them: each with its model, who has written in it, and
+  // what it holds for them.
   function itemsOf(userId: string, list: Thread[], active: Run[]): ThreadListItem[] {
     const ids = list.map((thread) => thread.id);
+    const shownModel = shownModelOf();
     const facts = threads.facts(ids);
     const writers = threads.writers(ids);
     const seen = reads.seen(userId, ids);
@@ -225,6 +245,7 @@ export function createThreads(options: ThreadsOptions) {
       };
       return {
         ...threadSummary(thread),
+        shownModel: shownModel(thread),
         participants: participantsOf(writers.get(thread.id)),
         activity,
       };
@@ -323,7 +344,7 @@ export function createThreads(options: ThreadsOptions) {
       runs.activeIn(shared.map(({ thread }) => thread.id)),
     );
     return shared.map((shared, index) => {
-      const { participants, activity } = items[index]!;
+      const { shownModel, participants, activity } = items[index]!;
       return {
         ...threadSummary(shared.thread),
         spaceName: shared.spaceName,
@@ -332,6 +353,7 @@ export function createThreads(options: ThreadsOptions) {
           ? shared.spaceName
           : `${shared.spaceName} · ${shared.orgName}`,
         accessUntil: shared.accessUntil?.toISOString() ?? null,
+        shownModel,
         participants,
         activity,
       };
