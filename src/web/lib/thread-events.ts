@@ -3,7 +3,8 @@
 // a title the agent gives the thread, reads the thread again after a tool call ran, as it may have
 // moved it or changed its model, and gathers the pieces of each reply still being written. The
 // browser reconnects on its own and resumes after the last event it saw; the server sends each
-// reply's pieces again from the start, and the ones already here are skipped. When the server says
+// reply's pieces again from the start, and the ones already here are skipped. A lost stream asks
+// whether the server answers at all; when it does not, the app is offline. When the server says
 // the reader's guest access has ended, following stops and the thread is read again, which tells
 // them so.
 
@@ -16,7 +17,7 @@ import {
   type DeltaBatch,
   deltaBatchSchema,
 } from "@/shared/threads.ts";
-import { useOnline } from "@/web/lib/online";
+import { checkServer, useOnline } from "@/web/lib/online";
 import { sharedThreadsQuery, threadQuery } from "@/web/lib/queries";
 import { tabOrg } from "@/web/lib/org-tab";
 import { withEvents } from "@/web/lib/thread-detail";
@@ -64,7 +65,7 @@ export function withPieces(
 }
 
 // The text so far of each reply in progress, by message id, and whether the stream is lost and
-// being reconnected. Once it is back, the thread is read again.
+// being reconnected while the server answers. Once it is back, the thread is read again.
 export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () => void) {
   const queryClient = useQueryClient();
   const online = useOnline();
@@ -82,9 +83,13 @@ export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () =
       `/api/v1/threads/${threadId}/events?after=${after ?? 0}${org ? `&org=${org}` : ""}`,
     );
     let lost = false;
+    let closed = false;
     source.addEventListener("error", () => {
       lost = true;
-      setReconnecting(true);
+      // A server that does not answer takes the app offline, which the header says instead.
+      void checkServer().then((answered) => {
+        if (answered && lost && !closed) setReconnecting(true);
+      });
     });
     source.addEventListener("open", () => {
       if (!lost) return;
@@ -112,7 +117,10 @@ export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () =
       const batch = deltaBatchSchema.safeParse(JSON.parse(message.data as string));
       if (batch.success) setStreaming((current) => withPieces(current, batch.data));
     });
-    return () => source.close();
+    return () => {
+      closed = true;
+      source.close();
+    };
   }, [queryClient, threadId, ready, online, onEvent]);
 
   return { streaming, reconnecting };

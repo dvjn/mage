@@ -4,7 +4,7 @@
 // stop button stops it. Everyone sees the tray; each author can edit their own waiting messages,
 // switch them between steering and queueing, or remove them. While the agent waits for a decision
 // on a tool call, the composer says so. Viewers only read, and a line where the composer would be
-// says so. Offline, nothing sends or stops until the browser is back online.
+// says so. Offline, nothing sends or stops until the app is back online.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDownIcon, EyeIcon, SquareIcon } from "lucide-react";

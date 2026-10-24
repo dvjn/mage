@@ -1,13 +1,14 @@
 // The signed-in app: the sidebar beside the current page, open or collapsed as it was last left,
 // the thread search and the keyboard shortcuts dialog over both, the header each page starts with,
-// which says when the browser is offline, and the one column width every page's content sits in. It follows the person's inbox to keep thread lists current, and marks the
-// tab's title while a thread needs them.
+// which says when the app is offline while the sidebar is out of sight, and the one column width
+// every page's content sits in. It follows the person's inbox to keep thread lists current, and
+// marks the tab's title while a thread needs them.
 
 import { Link, Outlet } from "@tanstack/react-router";
-import { CloudOffIcon } from "lucide-react";
 import { Fragment, useEffect } from "react";
 
 import { AppSidebar } from "@/web/components/app-sidebar";
+import { HeaderOfflineStatus } from "@/web/components/offline-status";
 import { ShortcutsHelpProvider } from "@/web/components/shortcuts-help";
 import { ThreadSearchProvider } from "@/web/components/thread-search";
 import {
@@ -18,14 +19,12 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/web/components/ui/breadcrumb";
-import { Badge } from "@/web/components/ui/badge";
 import { Separator } from "@/web/components/ui/separator";
 import { Kbd } from "@/web/components/ui/kbd";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/web/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/web/components/ui/tooltip";
 import { useInbox } from "@/web/lib/inbox";
 import { useNeedsYou } from "@/web/lib/needs-you";
-import { useOnline } from "@/web/lib/online";
 import { shortcutHint } from "@/web/lib/shortcuts";
 
 // The sidebar records whether it is open in this cookie each time it is toggled.
@@ -62,26 +61,6 @@ export function AppShell() {
 }
 
 export const pageWidth = "mx-auto w-full max-w-3xl";
-
-// Says the browser is offline, so what shows is what this device kept and nothing can be sent or
-// changed.
-function OfflineIndicator() {
-  const online = useOnline();
-  if (online) return null;
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={<Badge variant="outline" role="status" className="text-muted-foreground" />}
-      >
-        <CloudOffIcon data-icon="inline-start" aria-hidden />
-        Offline
-      </TooltipTrigger>
-      <TooltipContent>
-        Showing what this device kept. You can send and change things once you are back online.
-      </TooltipContent>
-    </Tooltip>
-  );
-}
 
 export interface Crumb {
   label: string;
@@ -130,7 +109,7 @@ export function PageHeader({ crumbs, children }: { crumbs: Crumb[]; children?: R
           </BreadcrumbList>
         </Breadcrumb>
         <div className="ml-auto flex items-center gap-2">
-          <OfflineIndicator />
+          <HeaderOfflineStatus />
           {children}
         </div>
       </div>

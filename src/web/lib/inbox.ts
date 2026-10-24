@@ -4,7 +4,7 @@
 // counts; a shared one is changed in the shared list, which
 // is read again when it lacks the thread; the pages of tables of threads it is in are read again. How far they saw a thread, here or on another device,
 // clears what was new, and a thread gone for them leaves every list. After the stream was lost the
-// lists are read again, as they are once the browser is back online; offline it does not follow.
+// lists are read again, as they are once the app is back online; offline it does not follow.
 // Reading a thread records how far it was seen, at once in the lists here.
 // The open thread is marked seen as it opens and as new events arrive while it is in view.
 
@@ -19,7 +19,7 @@ import {
   type ThreadSidebar,
 } from "@/shared/threads.ts";
 import { apiClient } from "@/web/lib/api-client";
-import { useOnline } from "@/web/lib/online";
+import { checkServer, useOnline } from "@/web/lib/online";
 import { tabOrg } from "@/web/lib/org-tab";
 import { sharedThreadsQuery, spaceThreadsQuery } from "@/web/lib/queries";
 
@@ -138,6 +138,8 @@ export function useInbox() {
     let lost = false;
     source.addEventListener("error", () => {
       lost = true;
+      // A server that does not answer takes the app offline.
+      void checkServer();
     });
     source.addEventListener("open", () => {
       if (!lost) return;

@@ -101,7 +101,7 @@ export function ThreadPage() {
   );
   useMarkRead(threadId, notFound || ended ? undefined : thread?.lastEventSeq);
   // The thread cannot be read or followed right now; what is shown is what was last read. Offline,
-  // the header says so instead.
+  // the sidebar says so instead.
   const offline = online && !notFound && !ended && (detail.failureCount > 0 || reconnecting);
   const transcript = useMemo(
     () =>
