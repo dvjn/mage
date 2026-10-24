@@ -1,11 +1,11 @@
 // One thread in a list of threads, in the sidebar or in a page's table, always two lines high
 // whatever its status, so rows never move as threads start and stop working. The first line is its
-// title, bold while something new waits there. The second line is the provider of its model, as its
-// mark in a disc the size of an avatar named with the model on hover, then who has written in it,
-// whoever wrote last first, as a stack of avatars named on hover, a guest's drawn with a dashed
-// edge, then where the thread is when the list mixes places. A sidebar row keeps a slot at the end
-// of its first line holding the status's glyph alone, and how long ago the thread was last active
-// at the end of its second; it keeps the menu it is given, which takes the slot's place while the
+// title, bold while something new waits there. The second line is who has written in it, whoever
+// wrote last first, as a stack of avatars named on hover, a guest's drawn with a dashed edge, then
+// where the thread is when the list mixes places, and at its end its model, as its product's mark
+// named with the model on hover. A sidebar row keeps a slot at the end of its first line holding
+// the status's glyph alone, above the model's mark, and starts its second line with how long ago
+// the thread was last active; it keeps the menu it is given, which takes the slot's place while the
 // pointer is over the row. A page's row keeps the glyph, a badge (its folder) and something about
 // time (when it was last active, or when access ends) at the end of its first line. Every list of
 // threads uses it, so they look and behave alike.
@@ -14,9 +14,8 @@ import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import type * as React from "react";
 
-import { BACKEND_LABELS } from "@/shared/connections.ts";
 import type { ShownModel, ThreadActivity, ThreadParticipants } from "@/shared/threads.ts";
-import { ProviderIcon } from "@/web/components/provider-icon";
+import { ModelIcon } from "@/web/components/provider-icon";
 import { StatusGlyph, useThreadStatus } from "@/web/components/thread-status";
 import { ThreadTitle } from "@/web/components/thread-title";
 import { ShortTime } from "@/web/components/time";
@@ -104,39 +103,35 @@ function Participants({ participants, ring }: { participants: ThreadParticipants
   );
 }
 
-// The thread's model, as its provider's mark in a disc like an avatar's, named with the model; a bot
-// for a model of no provider Mage knows, or for none.
-function ModelChip({ model }: { model: ShownModel | null }) {
-  const label = !model
-    ? "No model"
-    : model.provider
-      ? `${BACKEND_LABELS[model.provider]} · ${model.name}`
-      : model.name;
+// The thread's model, as its product's mark, named with the model; a bot for a model of no provider
+// Mage knows, or for none.
+function ModelMark({ model }: { model: ShownModel | null }) {
+  const label = model?.name ?? "No model";
   return (
     <WithTooltip label={label}>
-      <Avatar role="img" aria-label={label} className={avatarClass}>
-        <AvatarFallback>
-          <ProviderIcon provider={model?.provider ?? null} className="size-2.5!" />
-        </AvatarFallback>
-      </Avatar>
+      <span role="img" aria-label={label} className="flex shrink-0">
+        <ModelIcon provider={model?.provider ?? null} className="size-3!" />
+      </span>
     </WithTooltip>
   );
 }
 
-// The second line: the model's provider, who has written, then where the thread is, then what is
-// given for its end.
+// The second line: what is given to lead it, who has written, where the thread is, and at its end,
+// under the first line's slot, the model.
 function Detail({
   thread,
   place,
   ring,
-  children,
-}: RowProps & { ring: string; children?: React.ReactNode }) {
+  lead,
+}: RowProps & { ring: string; lead?: React.ReactNode }) {
   return (
     <span className="flex h-4.5 min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-      <ModelChip model={thread.shownModel} />
+      {lead}
       <Participants participants={thread.participants} ring={ring} />
       {place && <span className="truncate">{place}</span>}
-      {children}
+      <span className="ml-auto flex w-4 shrink-0 justify-end">
+        <ModelMark model={thread.shownModel} />
+      </span>
     </span>
   );
 }
@@ -208,9 +203,12 @@ function SidebarRow({ thread, place, title, isActive, children }: SidebarRowProp
             <StatusGlyph status={status} activity={thread.activity} />
           </span>
         </span>
-        <Detail thread={thread} place={place} ring={sidebarRing}>
-          <ShortTime iso={thread.updatedAt} className="ml-auto shrink-0 tabular-nums" />
-        </Detail>
+        <Detail
+          thread={thread}
+          place={place}
+          ring={sidebarRing}
+          lead={<ShortTime iso={thread.updatedAt} className="w-7 shrink-0 tabular-nums" />}
+        />
       </span>
     </SidebarMenuButton>
   );

@@ -1,9 +1,9 @@
 // The one model picker: a button opening a searchable list of the models the org can use, grouped
-// by the provider they come through, each group and the model shown marked with its provider, with
-// the default the level above chose offered first where there is one, and a model that is turned
-// off or gone shown as a warning with what stands in. With no models at all, it points to adding a
-// model provider. As a form field it is outlined, full width and opens below; compact, it is a
-// composer button that opens above.
+// by the provider they come through, each group marked with its provider's company and each model
+// with its product, with the default the level above chose offered first where there is one, and a
+// model that is turned off or gone shown as a warning with what stands in. With no models at all,
+// it points to adding a model provider. As a form field it is outlined, full width and opens below;
+// compact, it is a composer button that opens above.
 
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
@@ -15,7 +15,7 @@ import { cn } from "cn";
 import type { Provider } from "@/shared/connections.ts";
 import type { ModelSummary } from "@/shared/models.ts";
 import { promptInputSelectTriggerClassName } from "@/web/components/ai-elements/prompt-input";
-import { ProviderIcon } from "@/web/components/provider-icon";
+import { ModelIcon, ProviderIcon } from "@/web/components/provider-icon";
 import {
   Combobox,
   ComboboxCollection,
@@ -199,7 +199,7 @@ export function ModelPicker({
                 {missing ? (
                   <TriangleAlertIcon className="size-3.5 shrink-0" />
                 ) : (
-                  shown && <ProviderIcon provider={shown.provider} className="size-3.5" />
+                  shown && <ModelIcon provider={shown.provider} className="size-3.5" />
                 )}
                 <span
                   className={cn(
@@ -273,6 +273,7 @@ export function ModelPicker({
               <ComboboxCollection>
                 {(model: ModelSummary) => (
                   <ComboboxItem key={model.ref} value={model}>
+                    <ModelIcon provider={model.provider} className="size-3.5" />
                     {model.name}
                   </ComboboxItem>
                 )}
