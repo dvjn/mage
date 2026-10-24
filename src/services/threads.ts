@@ -123,12 +123,13 @@ function textOf(event: StoredEvent) {
     .trim();
 }
 
-// The few who wrote in the thread most recently, and how many have.
+// The few who wrote in the thread most recently, each saying whether they wrote as a guest, and how
+// many have.
 function participantsOf(writers: ThreadWriters = []): ThreadParticipants {
   return {
     people: writers
       .slice(0, PARTICIPANT_LIMIT)
-      .map(({ userId, name }) => ({ userId, name: name ?? FORMER_MEMBER })),
+      .map(({ userId, name, guest }) => ({ userId, name: name ?? FORMER_MEMBER, guest })),
     total: writers.length,
   };
 }

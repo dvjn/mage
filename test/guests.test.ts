@@ -118,6 +118,25 @@ describe("thread access", () => {
     expect([stop.status, retry.status, change.status]).toEqual([409, 409, 409]);
   });
 
+  it("says which of the thread's writers wrote as its guest", async () => {
+    const workspace = await sharedThread();
+    const { api, ada, hedy, space, thread } = workspace;
+    await letIn(workspace, ada, thread.id, hedy);
+    await api("POST", `/threads/${thread.id}/messages`, hedy.cookie, { text: "// Hello" });
+
+    const list = (await (await api("GET", `/spaces/${space.id}/threads`, ada.cookie)).json()) as {
+      id: string;
+      participants: unknown;
+    }[];
+    expect(list.find((t) => t.id === thread.id)?.participants).toEqual({
+      people: [
+        { userId: hedy.userId, name: "Hedy Lamarr", guest: true },
+        { userId: ada.userId, name: "Ada Lovelace", guest: false },
+      ],
+      total: 2,
+    });
+  });
+
   it("refuses a guest the thread's settings, its sharing and its space", async () => {
     const workspace = await sharedThread();
     const { api, ada, hedy, space, thread } = workspace;
@@ -198,7 +217,10 @@ describe("thread access", () => {
         spaceName: "Ada Lovelace's Space",
         orgName: "Ada Lovelace",
         accessUntil: null,
-        participants: { people: [{ userId: ada.userId, name: "Ada Lovelace" }], total: 1 },
+        participants: {
+          people: [{ userId: ada.userId, name: "Ada Lovelace", guest: false }],
+          total: 1,
+        },
       }),
     ]);
     const found = await api("GET", "/threads/search?q=engi", hedy.cookie);

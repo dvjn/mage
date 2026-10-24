@@ -52,8 +52,8 @@ export interface ThreadFacts {
 }
 
 // The people who have written in a thread, whoever wrote last first, each with their name while
-// they still have one.
-export type ThreadWriters = { userId: string; name: string | null }[];
+// they still have one, and whether their last message was written as a guest of the thread.
+export type ThreadWriters = { userId: string; name: string | null; guest: boolean }[];
 
 export interface ThreadStore {
   create(thread: {

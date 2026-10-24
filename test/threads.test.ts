@@ -284,9 +284,9 @@ describe("a space's thread list", () => {
     expect(list.find((t) => t.id === blank.id)?.participants).toEqual({ people: [], total: 0 });
     expect(list.find((t) => t.id === talk.id)?.participants).toEqual({
       people: [
-        { userId: grace.userId, name: "Grace Hopper" },
-        { userId: hedy.userId, name: "Hedy Lamarr" },
-        { userId: alan.userId, name: "Alan Turing" },
+        { userId: grace.userId, name: "Grace Hopper", guest: false },
+        { userId: hedy.userId, name: "Hedy Lamarr", guest: false },
+        { userId: alan.userId, name: "Alan Turing", guest: false },
       ],
       total: 4,
     });
@@ -313,7 +313,7 @@ describe("a space's thread list", () => {
       participants: unknown;
     }[];
     expect(list.find((t) => t.id === talk.id)?.participants).toEqual({
-      people: [{ userId, name: "Ada Lovelace" }],
+      people: [{ userId, name: "Ada Lovelace", guest: false }],
       total: 1,
     });
   });
