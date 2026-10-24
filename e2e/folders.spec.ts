@@ -64,6 +64,9 @@ test("a thread started in a folder stays there after a reload and moves to the t
   await nameIt(page, "Engines", "Create");
   await newThreadIn(page, "Engines", "Pistons");
   await expect(folder(page, "Engines").getByRole("link", { name: "Pistons" })).toBeVisible();
+  // The header keeps the folder's name and says how many threads it holds.
+  const header = sidebar(page).getByRole("button", { name: "Engines", exact: true });
+  await expect(header).toHaveAccessibleDescription("1 thread");
 
   await page.reload();
   await expect(folder(page, "Engines").getByRole("link", { name: "Pistons" })).toBeVisible();
@@ -75,6 +78,7 @@ test("a thread started in a folder stays there after a reload and moves to the t
     .click();
   await expect(sidebar(page).getByRole("link", { name: "Pistons" })).toBeVisible();
   await expect(folder(page, "Engines").getByRole("link", { name: "Pistons" })).toHaveCount(0);
+  await expect(header).toHaveAccessibleDescription("0 threads");
 });
 
 test("deleting a folder moves its threads to the top of the space", async ({ page }) => {

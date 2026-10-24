@@ -107,6 +107,12 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
   await expect(
     transcript(page).getByRole("article", { name: "Message from Hedy Lamarr" }),
   ).toContainText("Guest");
+  // The host's row names her as the thread's guest among those who wrote.
+  await expect(
+    page
+      .locator("[data-sidebar=sidebar]")
+      .getByRole("img", { name: "Hedy Lamarr (guest) and Ada Lovelace" }),
+  ).toBeVisible();
 
   // The space itself stays out of reach.
   await guest.goto(hostSpace);

@@ -1,19 +1,18 @@
 // One thread in a list of threads, in the sidebar or in a page's table, always two lines high
 // whatever its status, so rows never move as threads start and stop working. The first line is its
-// title, bold while something new waits there, and a slot at its end holding the status's glyph
-// alone, or, while there is nothing new, how long ago the thread was last active, in a few
-// characters. The second line is who has written in it, whoever wrote last first, as a stack of
-// avatars named on hover, then where the thread is when it comes from another space. A page's row
-// keeps a badge (its folder) and something about time (when it was last active, or when access
-// ends) at the end of its first line; a sidebar row keeps the menu it is given, which takes the
-// slot's place while the pointer is over the row. Every list of threads uses it, so they look and
-// behave alike.
+// title, bold while something new waits there. The second line is who has written in it, whoever
+// wrote last first, as a stack of avatars named on hover, a guest's drawn with a dashed edge, then
+// where the thread is when the list mixes places. A sidebar row keeps a slot at the end of its
+// first line holding the status's glyph alone, and how long ago the thread was last active at the
+// end of its second; it keeps the menu it is given, which takes the slot's place while the pointer
+// is over the row. A page's row keeps the glyph, a badge (its folder) and something about time
+// (when it was last active, or when access ends) at the end of its first line. Every list of
+// threads uses it, so they look and behave alike.
 
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import type * as React from "react";
 
-import type { ThreadStatus } from "@/shared/thread-status.ts";
 import type { ThreadActivity, ThreadParticipants } from "@/shared/threads.ts";
 import { StatusGlyph, useThreadStatus } from "@/web/components/thread-status";
 import { ThreadTitle } from "@/web/components/thread-title";
@@ -41,7 +40,7 @@ type Listed = {
 
 interface RowProps {
   thread: Listed;
-  // Where the thread is, for one from another space; after the avatars on the second line.
+  // Where the thread is, for a list that mixes places; after the avatars on the second line.
   place?: string;
 }
 
@@ -63,14 +62,18 @@ export function ThreadRow(
 
 const avatarClass = "size-4.5 text-[0.5rem] font-semibold tracking-tight";
 
-// Who has written in the thread, each as their initials, and how many more there are; all named on
-// hover. The rings between the avatars take the colour the row has, given as `ring`.
+// A guest's avatar has a dashed edge.
+const guestEdge = "after:border-dashed after:border-foreground/50";
+
+// Who has written in the thread, each as their initials, a guest's with a dashed edge, and how many
+// more there are; all named on hover. The rings between the avatars take the colour the row has,
+// given as `ring`.
 function Participants({ participants, ring }: { participants: ThreadParticipants; ring: string }) {
   const { people, total } = participants;
   if (people.length === 0) return null;
   const more = total - people.length;
   const label = names.format([
-    ...people.map((person) => person.name),
+    ...people.map((person) => (person.guest ? `${person.name} (guest)` : person.name)),
     ...(more > 0 ? [`${more} more`] : []),
   ]);
   return (
@@ -81,7 +84,7 @@ function Participants({ participants, ring }: { participants: ThreadParticipants
         className={cn("shrink-0 -space-x-0.5 *:data-[slot=avatar]:ring-[1.5px]", ring)}
       >
         {people.map((person) => (
-          <Avatar key={person.userId} className={avatarClass}>
+          <Avatar key={person.userId} className={cn(avatarClass, person.guest && guestEdge)}>
             <AvatarFallback className="text-[length:inherit]">
               {initialsOf(person.name)}
             </AvatarFallback>
@@ -97,39 +100,18 @@ function Participants({ participants, ring }: { participants: ThreadParticipants
   );
 }
 
-// The second line: who has written, then where the thread is.
-function Detail({ thread, place, ring }: RowProps & { ring: string }) {
+// The second line: who has written, then where the thread is, then what is given for its end.
+function Detail({
+  thread,
+  place,
+  ring,
+  children,
+}: RowProps & { ring: string; children?: React.ReactNode }) {
   return (
     <span className="flex h-4.5 min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
       <Participants participants={thread.participants} ring={ring} />
       {place && <span className="truncate">{place}</span>}
-    </span>
-  );
-}
-
-// The end of the first line: the status's glyph, or how long ago the thread was last active while
-// there is nothing new.
-function Slot({
-  status,
-  thread,
-  className,
-}: {
-  status: ThreadStatus;
-  thread: Listed;
-  className?: string;
-}) {
-  return (
-    <span
-      className={cn(
-        "flex w-7 shrink-0 justify-end text-xs text-muted-foreground tabular-nums",
-        className,
-      )}
-    >
-      {status === "read" ? (
-        <ShortTime iso={thread.updatedAt} />
-      ) : (
-        <StatusGlyph status={status} activity={thread.activity} />
-      )}
+      {children}
     </span>
   );
 }
@@ -175,7 +157,7 @@ function PageRow({ thread, place, badge, time }: PageRowProps) {
 
 // While the pointer is over a row with a menu, or the menu is in use, the menu stands where the
 // slot is; on a phone the menu always shows, beside the slot.
-const slotUnderMenu =
+export const slotUnderMenu =
   "md:group-has-data-[sidebar=menu-action]/menu-item:group-hover/menu-item:opacity-0 md:group-has-[[data-sidebar=menu-action]:is(:focus-visible,[aria-expanded=true])]/menu-item:opacity-0";
 
 // The avatars' rings take the sidebar's colour, or the row's while it is under the pointer or open.
@@ -197,9 +179,13 @@ function SidebarRow({ thread, place, title, isActive, children }: SidebarRowProp
             thread={thread}
             className={cn("min-w-0 flex-1 truncate", status === "unread" && "font-medium")}
           />
-          <Slot status={status} thread={thread} className={slotUnderMenu} />
+          <span className={cn("flex w-4 shrink-0 justify-end", slotUnderMenu)}>
+            <StatusGlyph status={status} activity={thread.activity} />
+          </span>
         </span>
-        <Detail thread={thread} place={place} ring={sidebarRing} />
+        <Detail thread={thread} place={place} ring={sidebarRing}>
+          <ShortTime iso={thread.updatedAt} className="ml-auto shrink-0 tabular-nums" />
+        </Detail>
       </span>
     </SidebarMenuButton>
   );

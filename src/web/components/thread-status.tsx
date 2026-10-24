@@ -1,12 +1,13 @@
 // A thread's status for the signed-in person, as its row in a list shows it: a glyph of its own
-// shape and colour (amber while the agent works, green for something new, red when it failed, blue
-// while it waits for them, a softer blue while it waits for someone else), with what it means in
-// words on hover and for screen readers, so the status never rests on colour alone; nothing while
-// there is nothing new. The spinner holds still for those who ask for less motion.
+// shape and colour (an amber spinner while the agent works, a green dot for something new, a red
+// triangle when it failed, a blue hand while it waits for them, a softer blue hand while it waits
+// for someone else), with what it means in words on hover and for screen readers, so the status
+// never rests on colour alone; nothing while there is nothing new. The spinner holds still for
+// those who ask for less motion.
 
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
-import { CircleAlertIcon, HandIcon, LoaderCircleIcon } from "lucide-react";
+import { HandIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
 
 import { statusOf, type ThreadStatus } from "@/shared/thread-status.ts";
 import type { ThreadActivity } from "@/shared/threads.ts";
@@ -50,15 +51,11 @@ function tooltipOf(status: ThreadStatus, activity: ThreadActivity) {
 function Glyph({ status }: { status: ThreadStatus }) {
   switch (status) {
     case "waiting":
-      return (
-        <span className="grid size-4 shrink-0 place-items-center rounded-full bg-status-waiting">
-          <HandIcon className="size-2.5! text-background" strokeWidth={2.5} />
-        </span>
-      );
+      return <HandIcon className="size-4 shrink-0 text-status-waiting" />;
     case "paused":
       return <HandIcon className="size-4 shrink-0 text-status-paused" />;
     case "failed":
-      return <CircleAlertIcon className="size-4 shrink-0 text-status-failed" />;
+      return <TriangleAlertIcon className="size-4 shrink-0 text-status-failed" />;
     case "working":
       return (
         <LoaderCircleIcon className="size-4 shrink-0 text-status-working motion-safe:animate-spin" />
