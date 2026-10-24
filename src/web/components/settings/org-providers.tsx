@@ -1,8 +1,8 @@
-// The organization's model providers: a table of its connections (provider and label, how it
-// connects, the account or masked key, how many of its models are on, when it was added), each
-// with a menu to choose its models, rename an API key, set its proxy or remove it, and adding one
-// through the add-provider journey. On a phone each row is two lines. The org's owners manage them;
-// its members see them. A team org connects with API keys only.
+// The organization's model providers: a card with a table of its connections (provider and label,
+// how it connects, the account or masked key, how many of its models are on, when it was added),
+// each with a menu to choose its models, rename an API key, set its proxy or remove it, and adding
+// one through the add-provider journey. On a phone each row is two lines. The org's owners manage
+// them; its members see them. A team org connects with API keys only.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -17,12 +17,13 @@ import {
 import { useState } from "react";
 
 import { type ConnectionSummary, connectionLabel } from "@/shared/connections.ts";
-import { EmptyState, ListSkeleton, LoadError } from "@/web/components/page-states";
+import { EmptyState } from "@/web/components/page-states";
+import { HeaderAction } from "@/web/components/people-table";
 import { Time } from "@/web/components/time";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { NameDialog } from "@/web/components/name-dialog";
 import { AddProviderDialog } from "@/web/components/settings/add-provider";
-import { SettingsTitle } from "@/web/components/settings/layout";
+import { SettingsCard, SettingsTitle } from "@/web/components/settings/layout";
 import { connectionModelsQuery, ModelsDialog } from "@/web/components/settings/models-dialog";
 import { ProxyForm } from "@/web/components/settings/proxy-settings";
 import {
@@ -320,43 +321,41 @@ export function OrgProviders() {
   const [action, setAction] = useState<RowAction | null>(null);
   const list = connections.data ?? [];
 
-  const addButton = (
-    <Button onClick={() => setAdding(true)}>
-      <PlusIcon />
-      Add provider
-    </Button>
-  );
-
   return (
     <>
       <SettingsTitle
         title="Model providers"
         description="The accounts and keys this organization's threads are answered through."
-        action={manages && list.length > 0 && addButton}
       />
-      {me.data && !manages && (
-        <p className="text-sm text-muted-foreground">
-          Only the organization&apos;s owners manage its model providers.
-        </p>
-      )}
-      {connections.error ? (
-        <LoadError />
-      ) : !connections.data ? (
-        <ListSkeleton />
-      ) : list.length === 0 ? (
-        <EmptyState
-          icon={<BlocksIcon />}
-          title="No model providers yet"
-          description={
-            manages
-              ? "Add one to give this organization's threads models to reply with."
-              : "An owner of the organization adds them."
-          }
-          action={manages && addButton}
-        />
-      ) : (
-        <ProvidersTable connections={list} manages={manages} onAction={setAction} />
-      )}
+      <SettingsCard
+        description={
+          me.data && !manages && "Only the organization's owners manage its model providers."
+        }
+        action={
+          manages && (
+            <HeaderAction
+              icon={<PlusIcon />}
+              label="Add provider"
+              onClick={() => setAdding(true)}
+            />
+          )
+        }
+        state={connections}
+      >
+        {list.length === 0 ? (
+          <EmptyState
+            icon={<BlocksIcon />}
+            title="No model providers yet"
+            description={
+              manages
+                ? "Add one to give this organization's threads models to reply with."
+                : "An owner of the organization adds them."
+            }
+          />
+        ) : (
+          <ProvidersTable connections={list} manages={manages} onAction={setAction} />
+        )}
+      </SettingsCard>
       <AddProviderDialog
         open={adding}
         onOpenChange={setAdding}

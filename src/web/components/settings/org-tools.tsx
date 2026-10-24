@@ -16,8 +16,8 @@ export function OrgTools() {
         title="Tools"
         description={
           canManage
-            ? "What the agent can do in this organization's threads. Anyone who can message runs an allowed tool; a tool that needs approval asks each time. Spaces can only make these stricter."
-            : "What the agent can do in this organization's threads. Only the organization's owners can change this."
+            ? "The tools the agent can use, and whether each runs, asks first, or is off. Spaces can only make these stricter."
+            : "The tools the agent can use, and whether each runs, asks first, or is off. Only the organization's owners change this."
         }
       />
       <OrgToolsList canManage={canManage} />

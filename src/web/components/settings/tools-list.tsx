@@ -1,5 +1,5 @@
-// The agent's tools in settings, one collapsible row per toolset with how many of its tools are
-// allowed, ask or are blocked. Inside, its tools are split under plain read-only and interactive
+// The agent's tools in settings, a card for each source of toolsets (built in, MCP servers) and in
+// it one collapsible row per toolset with how many of its tools are allowed, ask or are blocked. Inside, its tools are split under plain read-only and interactive
 // headings. Each heading's icons set all its tools at once; each tool is allowed, asks every time,
 // or is blocked. For the org, only its owners change them; for a space, a tool can only be made
 // stricter than the org has it. Which toolsets are open is remembered in this browser for the
@@ -25,7 +25,7 @@ import {
   toolsetSettingListSchema,
 } from "@/shared/tools.ts";
 import { ListSkeleton, LoadError } from "@/web/components/page-states";
-import { Badge } from "@/web/components/ui/badge";
+import { SettingsCard } from "@/web/components/settings/layout";
 import {
   Collapsible,
   CollapsibleContent,
@@ -86,7 +86,11 @@ const MODES: {
   },
 ];
 
-const SOURCES: Record<ToolsetSetting["source"], string> = { builtin: "Built in", mcp: "MCP" };
+// Each source's card title, in the order the cards show.
+const SOURCES: Record<ToolsetSetting["source"], string> = {
+  builtin: "Built in",
+  mcp: "MCP servers",
+};
 
 const SET_BY_ORG = "Set by the organization";
 
@@ -145,21 +149,27 @@ interface ToolsProps {
 
 function Toolsets({ toolsets, scope, canChange, onChange }: ToolsProps) {
   const sections = useOpenSections(scope);
-  return (
-    <div className="flex flex-col divide-y border-y">
-      {toolsets.map((toolset) => (
-        <ToolsetSection
-          key={toolset.id}
-          toolset={toolset}
-          open={sections.isOpen(toolset.id, toolsets.length === 1)}
-          onOpenChange={(open) => sections.set(toolset.id, open)}
-          scope={scope}
-          canChange={canChange}
-          onChange={onChange}
-        />
-      ))}
-    </div>
-  );
+  // A card only for a source that has toolsets.
+  const sources = (Object.keys(SOURCES) as ToolsetSetting["source"][])
+    .map((source) => ({ source, toolsets: toolsets.filter((t) => t.source === source) }))
+    .filter((group) => group.toolsets.length > 0);
+  return sources.map(({ source, toolsets: inSource }) => (
+    <SettingsCard key={source} title={SOURCES[source]}>
+      <div className="-my-3 flex flex-col divide-y">
+        {inSource.map((toolset) => (
+          <ToolsetSection
+            key={toolset.id}
+            toolset={toolset}
+            open={sections.isOpen(toolset.id, toolsets.length === 1)}
+            onOpenChange={(open) => sections.set(toolset.id, open)}
+            scope={scope}
+            canChange={canChange}
+            onChange={onChange}
+          />
+        ))}
+      </div>
+    </SettingsCard>
+  ));
 }
 
 // How many of the tools are in each mode: an icon and a number for each mode some tool is in.
@@ -237,10 +247,7 @@ function ToolsetSection({
           </span>
           {/* On a phone the counts go under the title. */}
           <span className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-base leading-6 font-semibold">{toolset.title}</span>
-              <Badge variant="secondary">{SOURCES[toolset.source]}</Badge>
-            </span>
+            <span className="truncate text-base leading-6 font-semibold">{toolset.title}</span>
             <span className="flex items-center gap-3 text-xs text-muted-foreground sm:ml-auto">
               {count === 1 ? "1 tool" : `${count} tools`}
               <ModeCounts tools={toolset.tools} />
@@ -471,10 +478,10 @@ function ToolsetsState({
   if (state.error) return <LoadError />;
   if (state.isPending) return <ListSkeleton />;
   return (
-    <div className="flex flex-col gap-2">
+    <>
       {children}
       <FieldError>{error}</FieldError>
-    </div>
+    </>
   );
 }
 

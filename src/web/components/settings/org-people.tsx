@@ -49,7 +49,7 @@ import {
   RoleControl,
   Subject,
 } from "@/web/components/people-table";
-import { SettingsTitle } from "@/web/components/settings/layout";
+import { SettingsCard, SettingsTitle } from "@/web/components/settings/layout";
 import { Time } from "@/web/components/time";
 import {
   AlertDialog,
@@ -639,27 +639,31 @@ export function OrgPeople() {
           description="Your personal organization has only you in it. Make a new organization from the space menu to work with others."
         />
       ) : (
-        <DataTable
-          table={table}
-          label="People"
-          loading={!people.data}
-          failed={!!people.error}
-          empty={{ icon: <UsersIcon />, title: "Nobody is here yet" }}
-          rowProps={(person) => ({ label: person.kind === "invite" ? person.email : person.name })}
+        <SettingsCard
+          action={
+            manages && (
+              <HeaderAction
+                icon={<UserPlusIcon />}
+                label="Add people"
+                onClick={() => setAdding(true)}
+              />
+            )
+          }
         >
-          <DataTableToolbar table={table} search="Search people">
-            {manages && (
-              <div className="ml-auto">
-                <HeaderAction
-                  icon={<UserPlusIcon />}
-                  label="Add people"
-                  onClick={() => setAdding(true)}
-                />
-              </div>
-            )}
-          </DataTableToolbar>
-          <FieldError>{error}</FieldError>
-        </DataTable>
+          <DataTable
+            table={table}
+            label="People"
+            loading={!people.data}
+            failed={!!people.error}
+            empty={{ icon: <UsersIcon />, title: "Nobody is here yet" }}
+            rowProps={(person) => ({
+              label: person.kind === "invite" ? person.email : person.name,
+            })}
+          >
+            <DataTableToolbar table={table} search="Search people" />
+            <FieldError>{error}</FieldError>
+          </DataTable>
+        </SettingsCard>
       )}
       <AddPeopleDialog open={adding} onOpenChange={setAdding} directory={directory} />
       <AlertDialog

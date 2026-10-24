@@ -47,6 +47,13 @@ function card(page: Page) {
   return transcript(page).getByRole("article", { name: "Approval request" });
 }
 
+// The settings card of the built-in toolsets.
+function builtIn(page: Page) {
+  return page.locator("[data-slot=card]").filter({
+    has: page.locator("[data-slot=card-title]", { hasText: /^Built in$/ }),
+  });
+}
+
 // The line a tool call that is not waiting shows as.
 function line(page: Page, text: string | RegExp) {
   return transcript(page).getByRole("button", { name: text });
@@ -245,9 +252,8 @@ test("a space can only make a tool stricter than its org, and remembers the tool
 
   await page.goto(`/s/${spaceId}/settings/tools`);
   const thread = page.getByRole("region", { name: "Thread" });
-  await expect(thread).toContainText("Built in");
   await expect(thread).toContainText("4 tools");
-  const toolset = thread.getByRole("button", { name: /^Thread Built in/ });
+  const toolset = thread.getByRole("button", { name: /^Thread 4 tools/ });
   await expect(toolset).toContainText("3 allowed, 1 needs approval, 0 blocked");
   const move = page.getByRole("listitem", { name: "Move thread" });
   await expect(move.getByRole("button", { name: "Always allow" })).toBeDisabled();
@@ -304,10 +310,10 @@ test("tools have their own settings page in the org and in a space", async ({ pa
     .getByRole("link", { name: "Tools" })
     .click();
   await expect(page).toHaveURL(/\/org\/tools$/);
-  await expect(page.getByRole("region", { name: "Thread" })).toContainText("Built in");
-  // The page's title is the only "Tools" heading; no card repeats it.
+  // The page's title is the only "Tools" heading; the toolsets are in a card for their source.
   await expect(page.getByRole("heading", { name: "Tools", exact: true })).toHaveCount(1);
-  await expect(page.locator("[data-slot=card]")).toHaveCount(0);
+  await expect(builtIn(page)).toHaveCount(1);
+  await expect(builtIn(page).getByRole("region", { name: "Thread" })).toContainText("4 tools");
 
   // A person's own space has no members to set.
   await page.goto(`/s/${spaceId}/settings`);
@@ -318,7 +324,7 @@ test("tools have their own settings page in the org and in a space", async ({ pa
   await expect(page).toHaveURL(/\/settings\/tools$/);
   await expect(page.getByRole("region", { name: "Thread" })).toContainText("4 tools");
   await expect(page.getByRole("heading", { name: "Tools", exact: true })).toHaveCount(1);
-  await expect(page.locator("[data-slot=card]")).toHaveCount(0);
+  await expect(builtIn(page).getByRole("region", { name: "Thread" })).toHaveCount(1);
   await page.goto(`/s/${spaceId}/settings/members`);
   await expect(page).toHaveURL(/\/settings$/);
 });

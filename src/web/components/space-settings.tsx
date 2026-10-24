@@ -75,7 +75,7 @@ function SpaceName({ space }: { space: SpaceSummary }) {
   }
 
   return (
-    <SettingsCard title="General">
+    <SettingsCard title="Name">
       <form onSubmit={(event) => void submit(event)}>
         <FieldGroup>
           <Field>
@@ -307,7 +307,7 @@ export function SpaceTools() {
     <>
       <SettingsTitle
         title="Tools"
-        description={`What the agent can do in ${space.name}'s threads. Anyone who can message runs an allowed tool, or decides when one needs approval. The organization sets the loosest each tool can be.`}
+        description="The tools the agent can use in this space, and whether each runs, asks first, or is off. The organization sets the loosest each can be."
       />
       <SpaceToolsList spaceId={space.id} />
     </>

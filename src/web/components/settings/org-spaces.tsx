@@ -298,19 +298,21 @@ export function OrgSpaces() {
       ) : (
         <>
           <SpaceSettingsCard />
-          <DataTable
-            table={table}
-            label="Spaces"
-            loading={!spaces.data}
-            failed={!!spaces.error}
-            empty={{ icon: <LayoutGridIcon />, title: "No spaces yet" }}
-            rowProps={(space) => ({
-              label: space.name,
-              ...(space.kind === "shared" && { onOpen: () => settings(space) }),
-            })}
-          >
-            <DataTableToolbar table={table} search="Search spaces" />
-          </DataTable>
+          <SettingsCard>
+            <DataTable
+              table={table}
+              label="Spaces"
+              loading={!spaces.data}
+              failed={!!spaces.error}
+              empty={{ icon: <LayoutGridIcon />, title: "No spaces yet" }}
+              rowProps={(space) => ({
+                label: space.name,
+                ...(space.kind === "shared" && { onOpen: () => settings(space) }),
+              })}
+            >
+              <DataTableToolbar table={table} search="Search spaces" />
+            </DataTable>
+          </SettingsCard>
         </>
       )}
       <AlertDialog

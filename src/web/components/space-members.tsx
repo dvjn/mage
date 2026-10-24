@@ -331,7 +331,6 @@ export function SpaceMembers({ space }: { space: SpaceSummary }) {
 
   return (
     <SettingsCard
-      title="Members"
       description={`Who can read and write in this space. Each person has the highest role given to them${withGroups ? ", to a group they are in," : ""} or to everyone.${manage ? "" : " Only the space's owners change this."}`}
       action={
         manage && (

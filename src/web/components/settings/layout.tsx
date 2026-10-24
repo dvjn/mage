@@ -1,6 +1,7 @@
 // The one look every settings page shares: the page header, a title with what the page is for and
 // an action beside it, and cards with a title, a description, an action beside the title, and a
-// placeholder while what they show is loading or could not be read.
+// placeholder while what they show is loading or could not be read. A card that only holds a page's
+// table or list goes without a title, which would repeat the page's.
 
 import { cn } from "cn";
 import type * as React from "react";
@@ -71,7 +72,7 @@ export function SettingsCard({
   children,
   className,
 }: {
-  title: string;
+  title?: string;
   description?: React.ReactNode;
   action?: React.ReactNode;
   footer?: React.ReactNode;
@@ -91,11 +92,13 @@ export function SettingsCard({
   );
   return (
     <Card className={className}>
-      <CardHeader>
-        <CardTitle>{title}</CardTitle>
-        {description && <CardDescription>{description}</CardDescription>}
-        {action && <CardAction>{action}</CardAction>}
-      </CardHeader>
+      {(title || description || action) && (
+        <CardHeader>
+          {title && <CardTitle>{title}</CardTitle>}
+          {description && <CardDescription>{description}</CardDescription>}
+          {action && <CardAction>{action}</CardAction>}
+        </CardHeader>
+      )}
       {body && <CardContent>{body}</CardContent>}
       {footer && !state?.error && !state?.isPending && <CardFooter>{footer}</CardFooter>}
     </Card>
