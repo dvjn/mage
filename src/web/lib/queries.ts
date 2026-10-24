@@ -35,8 +35,11 @@ export const signInOptionsQuery = queryOptions({
   },
 });
 
+// Asked for even offline, so that pages waiting on it learn at once that the server cannot be
+// reached.
 export const sessionQuery = queryOptions({
   queryKey: ["session"],
+  networkMode: "always",
   queryFn: async () => {
     const { data, error } = await authClient.getSession();
     if (error) throw new Error(error.message ?? "could not read the session");

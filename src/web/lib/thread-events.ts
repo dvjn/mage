@@ -16,6 +16,7 @@ import {
   type DeltaBatch,
   deltaBatchSchema,
 } from "@/shared/threads.ts";
+import { useOnline } from "@/web/lib/online";
 import { sharedThreadsQuery, threadQuery } from "@/web/lib/queries";
 import { tabOrg } from "@/web/lib/org-tab";
 import { withEvents } from "@/web/lib/thread-detail";
@@ -66,13 +67,14 @@ export function withPieces(
 // being reconnected. Once it is back, the thread is read again.
 export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () => void) {
   const queryClient = useQueryClient();
+  const online = useOnline();
   const [streaming, setStreaming] = useState<ReadonlyMap<string, Streaming>>(new Map());
   const [reconnecting, setReconnecting] = useState(false);
 
   useEffect(() => {
     setStreaming(new Map());
     setReconnecting(false);
-    if (!ready) return;
+    if (!ready || !online) return;
     const after = queryClient.getQueryData(threadQuery(threadId).queryKey)?.thread.lastEventSeq;
     // A stream cannot send headers, so it names the tab's org in its address.
     const org = tabOrg();
@@ -111,7 +113,7 @@ export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () =
       if (batch.success) setStreaming((current) => withPieces(current, batch.data));
     });
     return () => source.close();
-  }, [queryClient, threadId, ready, onEvent]);
+  }, [queryClient, threadId, ready, online, onEvent]);
 
   return { streaming, reconnecting };
 }

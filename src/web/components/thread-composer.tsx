@@ -4,7 +4,7 @@
 // stop button stops it. Everyone sees the tray; each author can edit their own waiting messages,
 // switch them between steering and queueing, or remove them. While the agent waits for a decision
 // on a tool call, the composer says so. Viewers only read, and a line where the composer would be
-// says so.
+// says so. Offline, nothing sends or stops until the browser is back online.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDownIcon, EyeIcon, SquareIcon } from "lucide-react";
@@ -34,6 +34,7 @@ import { Spinner } from "@/web/components/ui/spinner";
 import { Textarea } from "@/web/components/ui/textarea";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
+import { useOnline } from "@/web/lib/online";
 import { mergeEvents } from "@/web/lib/thread-events";
 
 export function Composer({
@@ -59,6 +60,7 @@ export function Composer({
 }) {
   const mode = useRef<Delivery>("steer");
   const textarea = useRef<HTMLTextAreaElement>(null);
+  const online = useOnline();
 
   function submitAs(next: Delivery) {
     mode.current = next;
@@ -95,11 +97,13 @@ export function Composer({
             ref={textarea}
             aria-label="Message"
             placeholder={
-              waiting
-                ? "The agent is waiting for a decision above; you can still steer or queue."
-                : running
-                  ? "Steer the reply, or queue for the next one"
-                  : "Write a message"
+              !online
+                ? "You are offline"
+                : waiting
+                  ? "The agent is waiting for a decision above; you can still steer or queue."
+                  : running
+                    ? "Steer the reply, or queue for the next one"
+                    : "Write a message"
             }
             onKeyDown={onKeyDown}
           />
@@ -114,7 +118,7 @@ export function Composer({
                 aria-label="Stop"
                 title="Stop"
                 onClick={onStop}
-                disabled={stopping}
+                disabled={stopping || !online}
               >
                 <SquareIcon className="size-3 fill-current" />
               </InputGroupButton>
@@ -122,7 +126,7 @@ export function Composer({
             <PromptInputSubmit
               aria-label={running ? "Steer" : "Send"}
               status={sending ? "submitted" : undefined}
-              disabled={sending}
+              disabled={sending || !online}
             />
             {running && (
               <DropdownMenu>
@@ -132,7 +136,7 @@ export function Composer({
                       size="icon-sm"
                       variant="default"
                       aria-label="More ways to send"
-                      disabled={sending}
+                      disabled={sending || !online}
                     />
                   }
                 >
@@ -151,10 +155,14 @@ export function Composer({
           </ButtonGroup>
         </PromptInputFooter>
       </PromptInput>
-      <p className="px-1 text-xs text-muted-foreground">
-        {running ? "Enter steers the reply · Alt/⌥+Enter queues it · " : "Enter sends · "}
-        Start with <code>{QUIET_PREFIX}</code> to write without waking the agent.
-      </p>
+      {online ? (
+        <p className="px-1 text-xs text-muted-foreground">
+          {running ? "Enter steers the reply · Alt/⌥+Enter queues it · " : "Enter sends · "}
+          Start with <code>{QUIET_PREFIX}</code> to write without waking the agent.
+        </p>
+      ) : (
+        <p className="px-1 text-xs text-muted-foreground">You can send once you are back online.</p>
+      )}
     </div>
   );
 }

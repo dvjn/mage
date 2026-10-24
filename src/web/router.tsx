@@ -4,7 +4,7 @@
 // Each side redirects to the other; signing in or up goes back to the page that asked for it, such
 // as an invite link, which is open either way.
 
-import type { QueryClient } from "@tanstack/react-query";
+import { onlineManager, type QueryClient } from "@tanstack/react-query";
 
 import {
   createRootRouteWithContext,
@@ -39,6 +39,7 @@ import { DraftThread } from "@/web/components/draft-thread";
 import { ThreadPage } from "@/web/components/thread-page";
 import { lastSpace } from "@/web/lib/last-space";
 import { tabOrg } from "@/web/lib/org-tab";
+import { lastSignedIn, restored } from "@/web/lib/query-cache";
 import { meQuery, sessionQuery, signInOptionsQuery, spacesQuery } from "@/web/lib/queries";
 
 type Context = { context: { queryClient: QueryClient } };
@@ -64,18 +65,22 @@ async function redirectIfSignedIn({
   context,
   location,
 }: Context & { location: { search: Record<string, unknown> } }) {
-  if (!(await context.queryClient.fetchQuery(sessionQuery))) return;
+  // Offline, whoever signed in last reads what was kept for them.
+  const signedIn = await context.queryClient
+    .fetchQuery(sessionQuery)
+    .catch((error: unknown) => lastSignedIn(error).catch(() => null));
+  if (!signedIn) return;
   const { redirect: back } = afterSignIn(location.search);
   throw back ? redirect({ href: back }) : redirect({ to: "/" });
 }
 
+// While the server cannot be reached, whoever signed in last reads what was kept for them.
 async function requireSession({ context }: Context) {
-  const session = await context.queryClient.fetchQuery(sessionQuery);
+  const session = await context.queryClient.fetchQuery(sessionQuery).catch(lastSignedIn);
   if (!session) throw redirect({ to: "/login" });
   // A tab that does not know its org yet takes the one the server chose before anything shows, so
   // its pages stay in that org whatever the session does next.
   if (!tabOrg()) await context.queryClient.fetchQuery(meQuery);
-  return { session };
 }
 
 const signedOutRoute = createRoute({
@@ -140,7 +145,12 @@ const homeRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/",
   beforeLoad: async ({ context }) => {
-    const spaces = (await context.queryClient.fetchQuery(spacesQuery)).filter((s) => s.role);
+    // Offline, the spaces kept from before.
+    const spaces = (
+      onlineManager.isOnline()
+        ? await context.queryClient.fetchQuery(spacesQuery)
+        : await restored.then(() => context.queryClient.getQueryData(spacesQuery.queryKey) ?? [])
+    ).filter((s) => s.role);
     const last = lastSpace();
     const space = spaces.find((s) => s.id === last) ?? spaces[0];
     if (space) throw redirect({ to: "/s/$spaceId", params: { spaceId: space.id } });

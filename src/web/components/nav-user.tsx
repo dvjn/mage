@@ -1,10 +1,11 @@
 // The signed-in user at the foot of the sidebar, with a menu for the theme, the keyboard shortcuts
 // and signing out.
 
-import { useQueryClient } from "@tanstack/react-query";
+import { onlineManager, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import { ChevronsUpDownIcon, KeyboardIcon, LogOutIcon, SunMoonIcon } from "lucide-react";
 
+import { useToast } from "@/web/components/toaster";
 import { Kbd } from "@/web/components/ui/kbd";
 import { useOpenShortcutsHelp } from "@/web/components/shortcuts-help";
 import { type Theme, THEMES, useTheme } from "@/web/components/theme-provider";
@@ -32,6 +33,7 @@ import {
 import { authClient } from "@/web/lib/auth-client";
 import { shortcutHint } from "@/web/lib/shortcuts";
 import { initialsOf } from "@/web/lib/initials";
+import { OFFLINE_ERROR } from "@/web/lib/online";
 import { forgetCache } from "@/web/lib/query-cache";
 
 export function NavUser({ user }: { user: { name: string; email: string } }) {
@@ -40,8 +42,14 @@ export function NavUser({ user }: { user: { name: string; email: string } }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const openHelp = useOpenShortcutsHelp();
+  const toast = useToast();
 
   async function signOut() {
+    // Signing out needs the server, which forgets the session.
+    if (!onlineManager.isOnline()) {
+      toast(OFFLINE_ERROR);
+      return;
+    }
     await authClient.signOut();
     await forgetCache(queryClient);
     await navigate({ to: "/login" });

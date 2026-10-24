@@ -7,7 +7,8 @@ import { createRoot } from "react-dom/client";
 import { ThemeProvider } from "@/web/components/theme-provider";
 import { Toaster } from "@/web/components/toaster";
 import { startTab } from "@/web/lib/org-tab";
-import { cacheMaxAge, cacheOptions } from "@/web/lib/query-cache";
+import "@/web/lib/online";
+import { cacheMaxAge, cacheOptions, cacheRestored } from "@/web/lib/query-cache";
 import { createAppRouter } from "@/web/router";
 
 import "./index.css";
@@ -24,7 +25,12 @@ if (!root) throw new Error("missing #root");
 createRoot(root).render(
   <StrictMode>
     <ThemeProvider defaultTheme="system">
-      <PersistQueryClientProvider client={queryClient} persistOptions={cacheOptions(queryClient)}>
+      <PersistQueryClientProvider
+        client={queryClient}
+        persistOptions={cacheOptions(queryClient)}
+        onSuccess={cacheRestored}
+        onError={cacheRestored}
+      >
         <Toaster>
           <RouterProvider router={router} />
         </Toaster>

@@ -4,7 +4,8 @@
 // counts; a shared one is changed in the shared list, which
 // is read again when it lacks the thread; the pages of tables of threads it is in are read again. How far they saw a thread, here or on another device,
 // clears what was new, and a thread gone for them leaves every list. After the stream was lost the
-// lists are read again. Reading a thread records how far it was seen, at once in the lists here.
+// lists are read again, as they are once the browser is back online; offline it does not follow.
+// Reading a thread records how far it was seen, at once in the lists here.
 // The open thread is marked seen as it opens and as new events arrive while it is in view.
 
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
@@ -18,6 +19,7 @@ import {
   type ThreadSidebar,
 } from "@/shared/threads.ts";
 import { apiClient } from "@/web/lib/api-client";
+import { useOnline } from "@/web/lib/online";
 import { tabOrg } from "@/web/lib/org-tab";
 import { sharedThreadsQuery, spaceThreadsQuery } from "@/web/lib/queries";
 
@@ -116,7 +118,20 @@ function patchThread(queryClient: QueryClient, thread: ThreadListItem, shared: b
 // Follows the inbox while the signed-in app is open.
 export function useInbox() {
   const queryClient = useQueryClient();
+  const online = useOnline();
+  const wasOffline = useRef(false);
   useEffect(() => {
+    // Offline there is nothing to follow; back online, the lists are read again.
+    if (!online) {
+      wasOffline.current = true;
+      return;
+    }
+    if (wasOffline.current) {
+      wasOffline.current = false;
+      void queryClient.invalidateQueries(spaceLists);
+      void queryClient.invalidateQueries({ queryKey: sharedThreadsQuery.queryKey });
+      void queryClient.invalidateQueries(threadPages);
+    }
     // A stream cannot send headers, so it names the tab's org in its address.
     const org = tabOrg();
     const source = new EventSource(`/api/v1/inbox/events${org ? `?org=${org}` : ""}`);
@@ -152,7 +167,7 @@ export function useInbox() {
       void queryClient.invalidateQueries(threadPages);
     });
     return () => source.close();
-  }, [queryClient]);
+  }, [queryClient, online]);
 }
 
 // How long new events wait to be marked seen, so a reply as it streams is told once.

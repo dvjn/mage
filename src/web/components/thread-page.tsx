@@ -52,6 +52,7 @@ import {
   threadQuery,
 } from "@/web/lib/queries";
 import { useMarkRead } from "@/web/lib/inbox";
+import { useOnline } from "@/web/lib/online";
 import { mergeEvents, useThreadEvents } from "@/web/lib/thread-events";
 
 const threadRoute = getRouteApi("/_app/t/$threadId");
@@ -63,6 +64,7 @@ export function ThreadPage() {
   const spaces = useQuery(spacesQuery);
   const models = useQuery(modelsQuery);
   const me = useQuery(meQuery);
+  const online = useOnline();
   // A message that could not be posted, said above the composer; other failures are toasts.
   const [error, setError] = useState<string>();
   const toast = useToast();
@@ -98,8 +100,9 @@ export function ThreadPage() {
     !!detail.data && !notFound && !ended,
   );
   useMarkRead(threadId, notFound || ended ? undefined : thread?.lastEventSeq);
-  // The thread cannot be read or followed right now; what is shown is what was last read.
-  const offline = !notFound && !ended && (detail.failureCount > 0 || reconnecting);
+  // The thread cannot be read or followed right now; what is shown is what was last read. Offline,
+  // the header says so instead.
+  const offline = online && !notFound && !ended && (detail.failureCount > 0 || reconnecting);
   const transcript = useMemo(
     () =>
       transcriptOf(
