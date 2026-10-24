@@ -3,7 +3,7 @@
 // makes a folder and chooses it. It opens from a breadcrumb or a button, or as a dialog from a menu.
 
 import { useQueryClient } from "@tanstack/react-query";
-import { CheckIcon, ChevronDownIcon, FolderPlusIcon, PlusIcon } from "lucide-react";
+import { ChevronDownIcon, FolderPlusIcon, PlusIcon } from "lucide-react";
 import type * as React from "react";
 import { useState } from "react";
 
@@ -48,8 +48,8 @@ function FolderList({
   onNew: (name: string) => void;
 }) {
   const [text, setText] = useState("");
-  const check = (id: string | null) =>
-    id === value && <CheckIcon className="ml-auto" aria-label="Current" />;
+  // The item's own check shows on the current one.
+  const checked = (id: string | null) => id === value || undefined;
   return (
     <Command
       // "No folder" and "New folder" stay whatever is typed.
@@ -65,18 +65,21 @@ function FolderList({
       <CommandList>
         <CommandEmpty>No folder matches.</CommandEmpty>
         <CommandGroup>
-          <CommandItem value={"\u0000none"} onSelect={() => onChange(null)}>
+          <CommandItem
+            value={"\u0000none"}
+            data-checked={checked(null)}
+            onSelect={() => onChange(null)}
+          >
             {NO_FOLDER}
-            {check(null)}
           </CommandItem>
           {folders.map((folder) => (
             <CommandItem
               key={folder.id}
               value={`${folder.name}\u0000${folder.id}`}
+              data-checked={checked(folder.id)}
               onSelect={() => onChange(folder.id)}
             >
               <span className="truncate">{folder.name}</span>
-              {check(folder.id)}
             </CommandItem>
           ))}
         </CommandGroup>
@@ -252,7 +255,6 @@ export function folderCrumb({
   if (!current) {
     return {
       label: "Add to folder",
-      joined: true,
       control: picker(
         <Button
           size="icon-xs"

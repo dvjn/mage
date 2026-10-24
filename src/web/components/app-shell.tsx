@@ -52,8 +52,6 @@ export interface Crumb {
   link?: { to: "/s/$spaceId"; params: { spaceId: string } };
   // Shown in place of the label, on a phone too, as a menu to change what the crumb names.
   control?: React.ReactNode;
-  // Sits beside the next crumb with no separator between them.
-  joined?: boolean;
 }
 
 export function PageHeader({ crumbs, children }: { crumbs: Crumb[]; children?: React.ReactNode }) {
@@ -75,9 +73,7 @@ export function PageHeader({ crumbs, children }: { crumbs: Crumb[]; children?: R
           <BreadcrumbList>
             {crumbs.map((crumb, index) => (
               <Fragment key={index}>
-                {index > 0 && !crumbs[index - 1]?.joined && (
-                  <BreadcrumbSeparator className="hidden md:block" />
-                )}
+                {index > 0 && <BreadcrumbSeparator className="hidden md:block" />}
                 {crumb.control ? (
                   <BreadcrumbItem className="min-w-0">{crumb.control}</BreadcrumbItem>
                 ) : crumb.link ? (

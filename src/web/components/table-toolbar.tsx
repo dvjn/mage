@@ -6,7 +6,7 @@
 // address, so links and back keep them.
 
 import { cn } from "cn";
-import { CheckIcon, PlusCircleIcon, SearchIcon } from "lucide-react";
+import { PlusCircleIcon, SearchIcon } from "lucide-react";
 import type * as React from "react";
 import { useEffect, useState } from "react";
 
@@ -82,16 +82,6 @@ export function FilterButton({ filter }: { filter: Filter }) {
                       setOpen(false);
                     }}
                   >
-                    <span
-                      className={cn(
-                        "flex size-4 items-center justify-center rounded-sm border",
-                        selected
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "opacity-50",
-                      )}
-                    >
-                      {selected && <CheckIcon className="size-3 text-current" />}
-                    </span>
                     {option.label}
                   </CommandItem>
                 );
