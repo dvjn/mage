@@ -219,6 +219,8 @@ export function ActionsMenu<T extends string>({
 }) {
   const changesRole = !!role?.onChange && !role.locked;
   if (!changesRole && !children && !destructive) return null;
+  // Changing the role is in the menu only on a phone; wider, the role column does it.
+  const phoneOnly = !children && !destructive;
   return (
     <DropdownMenu>
       <WithTooltip label="Actions">
@@ -228,7 +230,10 @@ export function ActionsMenu<T extends string>({
               size="icon-sm"
               variant="ghost"
               aria-label={`Actions for ${label}`}
-              className="group-hover:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100 pointer-fine:opacity-0"
+              className={cn(
+                "group-hover:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100 pointer-fine:opacity-0",
+                phoneOnly && "sm:hidden",
+              )}
             />
           }
         >

@@ -167,6 +167,10 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await add.getByRole("button", { name: "Add", exact: true }).click();
   const spaceMembers = page.getByRole("table", { name: "Members" });
   await expect(spaceMembers.getByRole("row", { name: "Grace Hopper" })).toBeVisible();
+  // Wide, the role column changes everyone's role, so their row has no menu.
+  await expect(
+    spaceMembers.getByRole("button", { name: /^Actions for Everyone in / }),
+  ).toBeHidden();
   // A glance at a name says who they are.
   await spaceMembers.getByRole("button", { name: "About Grace Hopper" }).hover();
   await expect(page.getByText(graceEmail).last()).toBeVisible();
