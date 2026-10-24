@@ -1,7 +1,10 @@
 // Orgs and who is in them: the orgs a person belongs to, creating team orgs, a team org's members
 // and their roles, inviting people by email with single-use links shown once, taking the links
-// back, joining through one, removing members, the settings owners choose for the org's spaces, and
-// renaming and deleting a team org. A team org keeps at least one owner.
+// back, joining through one, adding people and linking groups from the directory, removing members,
+// the settings owners choose for the org's spaces, and renaming and deleting a team org. A member's
+// role is the highest of their own and their linked groups'; whenever one of those changes, the org
+// is settled, and people who joined get their own space and those who left lose what they had. A
+// team org keeps at least one owner in their own right, so the directory cannot leave it without.
 
 import { createHash, randomBytes } from "node:crypto";
 
@@ -88,23 +91,53 @@ export function createOrgs(options: OrgsOptions) {
   }
 
   function ownerCount(orgId: string) {
-    return directory.memberPage(orgId, { role: "owner", limit: 1 }).total;
+    return directory.directOwnerCount(orgId);
+  }
+
+  // Brings the org's members, or only the users', in line with their roles; those who joined get
+  // their own space, and if anyone lost a role their waiting messages are checked.
+  function settle(orgId: string, userIds?: string[]) {
+    const settled = directory.settle(orgId, now(), userIds);
+    for (const userId of settled.joined) spaces.ensureMemberSpace(orgId, userId);
+    if (settled.changed) accessChanged(orgId);
+  }
+
+  function requireDirectoryPerson(userId: string) {
+    if (directory.user(userId)?.source !== "scim") {
+      throw new ServiceError(404, "Nobody by that id in the directory");
+    }
+  }
+
+  function requireLinked(orgId: string, groupId: string) {
+    const role = directory.linkedRole(orgId, groupId);
+    if (!role) throw new ServiceError(404, "Group not found");
+    return role;
+  }
+
+  // The member's role of their own, and the linked group they are in, if any.
+  function standing(orgId: string, userId: string) {
+    const row = directory.memberPage(orgId, { limit: 1, userId }).items[0];
+    if (!row) throw new ServiceError(404, "Member not found");
+    return row;
   }
 
   // A member as the asker sees them, and why the asker may not change their role: it is their own,
-  // or the last owner's.
+  // or the last owner's in their own right.
   function memberSummary(principal: Principal, member: MemberRow, owners: number): OrgMember {
     return {
       userId: member.id,
       name: member.name,
       email: member.email,
       role: member.role,
+      directRole: member.directRole,
+      viaGroup: member.viaGroup,
+      source: member.source,
       joinedAt: member.joinedAt.toISOString(),
       groupCount: member.groupCount,
       locked:
         member.id === principal.userId
           ? "self"
-          : member.role === "owner" && owners <= 1
+          : member.directRole === "owner" && owners <= 1
             ? "last_owner"
             : null,
     };
@@ -202,11 +235,11 @@ export function createOrgs(options: OrgsOptions) {
       return directory.groupPage(principal.orgId, { ...params, userId });
     },
 
-    // A page of the org's people: for its owners, the invites not yet used first, then its
-    // members by name.
+    // A page of the org's people: for its owners, the invites not yet used first, then its linked
+    // groups and its members by name.
     people(
       principal: Principal,
-      params: PageParams & { role?: OrgRole; status?: "member" | "invited" },
+      params: PageParams & { role?: OrgRole; status?: "member" | "invited" | "group" },
     ): Page<OrgPerson> {
       const owner = principal.role === "owner" && directory.org(principal.orgId)?.kind === "team";
       const page = directory.peoplePage(principal.orgId, {
@@ -219,14 +252,23 @@ export function createOrgs(options: OrgsOptions) {
         items: page.items.map((row) =>
           row.kind === "member"
             ? { kind: "member", ...memberSummary(principal, row, owners) }
-            : {
-                kind: "invite",
-                id: row.id,
-                email: row.email,
-                role: row.role,
-                createdByName: row.createdByName,
-                expiresAt: row.expiresAt.toISOString(),
-              },
+            : row.kind === "group"
+              ? {
+                  kind: "group",
+                  id: row.id,
+                  name: row.name,
+                  role: row.role,
+                  memberCount: row.memberCount,
+                  linkedAt: row.linkedAt.toISOString(),
+                }
+              : {
+                  kind: "invite",
+                  id: row.id,
+                  email: row.email,
+                  role: row.role,
+                  createdByName: row.createdByName,
+                  expiresAt: row.expiresAt.toISOString(),
+                },
         ),
       };
     },
@@ -321,25 +363,87 @@ export function createOrgs(options: OrgsOptions) {
       return landing();
     },
 
+    // Gives the member a role of their own; their role is then the higher of it and their groups'.
     setRole(principal: Principal, userId: string, role: OrgRole) {
       requireOwner(principal);
-      const current = requireMember(principal.orgId, userId);
-      if (current === "owner" && role !== "owner" && ownerCount(principal.orgId) === 1) {
+      const member = standing(principal.orgId, userId);
+      if (member.directRole === "owner" && role !== "owner" && ownerCount(principal.orgId) === 1) {
         throw new ServiceError(409, "An organization needs at least one owner");
       }
-      directory.setRole(principal.orgId, userId, role);
+      directory.setDirectRole(principal.orgId, userId, role);
+      settle(principal.orgId, [userId]);
     },
 
-    // Takes the member out of the org with their groups and their roles in its spaces; their
-    // waiting messages there are dropped.
+    // Takes back the member's own role. Without a linked group to keep them in, they leave the org
+    // with their roles in its spaces, and their waiting messages there are dropped.
     removeMember(principal: Principal, userId: string) {
       requireOwner(principal);
-      const current = requireMember(principal.orgId, userId);
-      if (current === "owner" && ownerCount(principal.orgId) === 1) {
+      const member = standing(principal.orgId, userId);
+      if (!member.directRole) {
+        throw new ServiceError(
+          409,
+          `${member.name} is in through ${member.viaGroup ?? "a group"}. Unlink the group or change it in your directory.`,
+        );
+      }
+      if (member.directRole === "owner" && ownerCount(principal.orgId) === 1) {
         throw new ServiceError(409, "An organization needs at least one owner");
       }
-      directory.removeMember(principal.orgId, userId, now());
-      accessChanged(principal.orgId);
+      directory.setDirectRole(principal.orgId, userId, null);
+      settle(principal.orgId, [userId]);
+    },
+
+    // Adds someone from the directory with a role of their own.
+    addMember(principal: Principal, userId: string, role: OrgRole) {
+      requireOwner(principal);
+      requireDirectoryPerson(userId);
+      directory.setDirectRole(principal.orgId, userId, role);
+      settle(principal.orgId, [userId]);
+    },
+
+    // Links a directory group: everyone active in it is a member with at least the role.
+    linkGroup(principal: Principal, groupId: string, role: OrgRole) {
+      requireOwner(principal);
+      if (!directory.group(groupId)) throw new ServiceError(404, "Group not found");
+      if (directory.linkedRole(principal.orgId, groupId)) {
+        throw new ServiceError(409, "That group is already linked");
+      }
+      directory.linkGroup(principal.orgId, groupId, role);
+      settle(principal.orgId);
+    },
+
+    setGroupRole(principal: Principal, groupId: string, role: OrgRole) {
+      requireOwner(principal);
+      requireLinked(principal.orgId, groupId);
+      directory.linkGroup(principal.orgId, groupId, role);
+      settle(principal.orgId);
+    },
+
+    // Unlinks the group with the roles the org's spaces gave it; people in only through it leave.
+    unlinkGroup(principal: Principal, groupId: string) {
+      requireOwner(principal);
+      requireLinked(principal.orgId, groupId);
+      directory.unlinkGroup(principal.orgId, groupId);
+      settle(principal.orgId);
+    },
+
+    // A page of the directory's people by name, with their role in the org, for adding them.
+    directoryPeople(principal: Principal, params: PageParams) {
+      requireOwner(principal);
+      return directory.directoryPeoplePage(principal.orgId, params);
+    },
+
+    // A page of the directory's groups by name, with the role each is linked with, for linking.
+    directoryGroups(principal: Principal, params: PageParams) {
+      requireOwner(principal);
+      return directory.directoryGroupPage(principal.orgId, params);
+    },
+
+    // The directory changed the person or the groups they are in. Once it turned them off or
+    // deleted them, their own roles in team orgs go, except where they are the last owner in their
+    // own right. Each team org they are in, or could be through a group, is settled for them.
+    directoryChanged(userId: string, active: boolean) {
+      if (!active) directory.clearDirectRoles(userId);
+      for (const orgId of directory.orgsToSettle(userId)) settle(orgId, [userId]);
     },
 
     rename(principal: Principal, name: string) {

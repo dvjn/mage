@@ -1,8 +1,8 @@
-// A team org's groups, as everyone in it sees them: a page at a time, one at a glance, and their
-// members. Spaces give roles to groups as to people. Groups come from a directory; Mage keeps no
-// way to make or change them by hand.
+// A team org's linked groups, as everyone in it sees them: a page at a time, one at a glance, and
+// their members. Spaces give roles to groups as to people. Groups come from the directory; Mage
+// keeps no way to make or change them by hand.
 
-import type { Directory, GroupRow } from "@/ports/directory.ts";
+import type { Directory, LinkedGroupRow } from "@/ports/directory.ts";
 import type { Principal } from "@/ports/identity.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { GroupMember, GroupSummary } from "@/shared/orgs.ts";
@@ -19,15 +19,17 @@ export function createGroups(options: GroupsOptions) {
 
   function requireGroup(principal: Principal, id: string) {
     const group = directory.group(id);
-    if (!group || group.orgId !== principal.orgId) throw new ServiceError(404, "Group not found");
-    return group;
+    const role = directory.linkedRole(principal.orgId, id);
+    if (!group || !role) throw new ServiceError(404, "Group not found");
+    return { ...group, role, linkedAt: group.createdAt };
   }
 
-  function summaryOf(group: GroupRow): GroupSummary {
+  function summaryOf(group: LinkedGroupRow): GroupSummary {
     return {
       id: group.id,
       name: group.name,
       source: group.source,
+      role: group.role,
       memberCount: group.memberCount,
       createdAt: group.createdAt.toISOString(),
     };

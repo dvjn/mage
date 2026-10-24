@@ -11,7 +11,7 @@ import { after, containing, pageOf } from "./paging.ts";
 
 // What follows a person's name in their first space's name, as the one naming function gives it.
 const SPACE_SUFFIX = spaceNameFor({ name: FIRST_SPACE_NAME, kind: "personal", primary: true }, "");
-import { group, space, spaceMember, user } from "./schema.ts";
+import { scimGroup, space, spaceMember, user } from "./schema.ts";
 
 const columns = {
   id: space.id,
@@ -52,7 +52,9 @@ export function createSpaceStore(db: Db): SpaceStore {
        where ${scope}
          and ((sm.subject_kind = 'user' and sm.subject_id = ${userId})
            or (sm.subject_kind = 'group' and sm.subject_id in
-                 (select group_id from group_member where user_id = ${userId})))
+                 (select gm.group_id from scim_group_member gm
+                    join scim_user su on su.id = gm.scim_user_id
+                   where su.user_id = ${userId} and su.active = 1)))
       union all
       select s.id as spaceId, s.everyone_role as role
         from space s
@@ -128,15 +130,15 @@ export function createSpaceStore(db: Db): SpaceStore {
         .map(({ id, ...row }) => ({ subject: { kind: "user", id }, ...row }));
       const groups: Grant[] = db
         .select({
-          id: group.id,
-          name: group.name,
+          id: scimGroup.id,
+          name: scimGroup.displayName,
           role: spaceMember.role,
           createdAt: spaceMember.createdAt,
         })
         .from(spaceMember)
-        .innerJoin(group, eq(group.id, spaceMember.subjectId))
+        .innerJoin(scimGroup, eq(scimGroup.id, spaceMember.subjectId))
         .where(and(eq(spaceMember.spaceId, spaceId), eq(spaceMember.subjectKind, "group")))
-        .orderBy(asc(group.name))
+        .orderBy(asc(scimGroup.displayName))
         .all()
         .map(({ id, ...row }) => ({ subject: { kind: "group", id }, email: null, ...row }));
       return [...people, ...groups];
@@ -153,9 +155,9 @@ export function createSpaceStore(db: Db): SpaceStore {
           from space_member sm join user u on u.id = sm.subject_id
          where sm.subject_kind = 'user'
         union all
-        select sm.space_id, 'group', g.id, g.name, null, sm.role, sm.created_at,
-               '1' || lower(g.name)
-          from space_member sm join "group" g on g.id = sm.subject_id
+        select sm.space_id, 'group', g.id, g.display_name, null, sm.role, sm.created_at,
+               '1' || lower(g.display_name)
+          from space_member sm join scim_group g on g.id = sm.subject_id
          where sm.subject_kind = 'group'`;
       const rows = db.all<{
         kind: "user" | "group";

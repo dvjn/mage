@@ -116,7 +116,11 @@ export const member = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
+    // The role they have in the org: the highest of their own and their linked groups'.
     role: text("role").default("member").notNull(),
+    // The role given to them in the org itself, apart from any group; null when they are in only
+    // through groups.
+    directRole: text("direct_role", { enum: ["owner", "member"] }),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   },
   (table) => [
@@ -292,7 +296,7 @@ export const spaceMember = sqliteTable(
     spaceId: text("space_id")
       .notNull()
       .references(() => space.id, { onDelete: "cascade" }),
-    // Who holds the role: a user, or every member of a group.
+    // Who holds the role: a user, or everyone active in a directory group linked to the org.
     subjectKind: text("subject_kind", { enum: ["user", "group"] }).notNull(),
     subjectId: text("subject_id").notNull(),
     // Owners manage the space; messagers and owners post; viewers only read.
@@ -309,43 +313,24 @@ export const spaceMember = sqliteTable(
   ],
 );
 
-// A named set of an org's members that spaces give roles to. Mage keeps local groups; a directory
-// may later bring its own, named by their id there.
-export const group = sqliteTable(
-  "group",
+// A directory group linked to a team org: everyone active in it is a member with the role.
+export const orgGroup = sqliteTable(
+  "org_group",
   {
-    id: text("id").primaryKey(),
     organizationId: text("organization_id")
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
-    name: text("name").notNull(),
-    source: text("source", { enum: ["local", "scim"] })
-      .default("local")
-      .notNull(),
-    externalId: text("external_id"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-      .notNull(),
-  },
-  (table) => [uniqueIndex("group_org_name_idx").on(table.organizationId, table.name)],
-);
-
-export const groupMember = sqliteTable(
-  "group_member",
-  {
     groupId: text("group_id")
       .notNull()
-      .references(() => group.id, { onDelete: "cascade" }),
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
+      .references(() => scimGroup.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["owner", "member"] }).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),
   },
   (table) => [
-    primaryKey({ columns: [table.groupId, table.userId] }),
-    index("group_member_user_idx").on(table.userId),
+    primaryKey({ columns: [table.organizationId, table.groupId] }),
+    index("org_group_group_idx").on(table.groupId),
   ],
 );
 
@@ -593,6 +578,176 @@ export const threadInvite = sqliteTable(
     revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
   },
   (table) => [index("thread_invite_thread_idx").on(table.threadId)],
+);
+
+// The SCIM directory's tables, as its library keeps them: the connection a directory provisions
+// through, the people and groups it brings, who is in which group, and what it remembers of people
+// it deleted. A directory person is linked to one user.
+
+export const scimConnectionBinding = sqliteTable(
+  "scim_connection_binding",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id").notNull(),
+    connectionKey: text("connection_key").notNull().unique(),
+    provisioningDomainId: text("provisioning_domain_id").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    decommissionedAt: integer("decommissioned_at", { mode: "timestamp_ms" }),
+    decommissionStatus: text("decommission_status").default("active").notNull(),
+    decommissionCursorUserId: text("decommission_cursor_user_id"),
+    decommissionReconciledUserCount: integer("decommission_reconciled_user_count")
+      .default(0)
+      .notNull(),
+    decommissionBatchCount: integer("decommission_batch_count").default(0).notNull(),
+    decommissionRevision: integer("decommission_revision").default(0).notNull(),
+    decommissionCompletedAt: integer("decommission_completed_at", { mode: "timestamp_ms" }),
+    decommissionLeaseId: text("decommission_lease_id"),
+    decommissionLeaseExpiresAt: integer("decommission_lease_expires_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [index("scim_connection_binding_connection_idx").on(table.connectionId)],
+);
+
+export const scimIdentityTombstone = sqliteTable(
+  "scim_identity_tombstone",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id").notNull(),
+    provisioningDomainId: text("provisioning_domain_id").notNull(),
+    externalId: text("external_id").notNull(),
+    externalIdKey: text("external_id_key").notNull().unique(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    profile: text("profile").notNull(),
+    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("scim_identity_tombstone_connection_idx").on(table.connectionId),
+    index("scim_identity_tombstone_domain_idx").on(table.provisioningDomainId),
+    index("scim_identity_tombstone_user_idx").on(table.userId),
+  ],
+);
+
+// A user a directory has provisioned, whether or not it still does.
+export const scimSubject = sqliteTable(
+  "scim_subject",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .unique()
+      .references(() => user.id, { onDelete: "cascade" }),
+    profileSourceId: text("profile_source_id"),
+    revision: integer("revision").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [index("scim_subject_profile_source_idx").on(table.profileSourceId)],
+);
+
+export const scimUser = sqliteTable(
+  "scim_user",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id").notNull(),
+    provisioningDomainId: text("provisioning_domain_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    connectionUserKey: text("connection_user_key").notNull().unique(),
+    userName: text("user_name").notNull(),
+    userNameKey: text("user_name_key").notNull().unique(),
+    primaryEmail: text("primary_email").notNull(),
+    workEmailValueIndex: text("work_email_value_index").notNull(),
+    emailValueIndex: text("email_value_index").notNull(),
+    displayName: text("display_name").notNull(),
+    formattedName: text("formatted_name").notNull(),
+    givenName: text("given_name"),
+    familyName: text("family_name"),
+    serializedEmails: text("serialized_emails").notNull(),
+    serializedAttributes: text("serialized_attributes"),
+    externalId: text("external_id"),
+    externalIdKey: text("external_id_key").unique(),
+    active: integer("active", { mode: "boolean" }).notNull(),
+    orderKey: text("order_key").notNull().unique(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("scim_user_connection_idx").on(table.connectionId),
+    index("scim_user_domain_idx").on(table.provisioningDomainId),
+    index("scim_user_user_idx").on(table.userId),
+  ],
+);
+
+export const scimProjectionGrant = sqliteTable(
+  "scim_projection_grant",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id").notNull(),
+    provisioningDomainId: text("provisioning_domain_id").notNull(),
+    scimUserId: text("scim_user_id")
+      .notNull()
+      .references(() => scimUser.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    sourceKind: text("source_kind").notNull(),
+    sourceId: text("source_id").notNull(),
+    sourceValue: text("source_value"),
+    role: text("role").notNull(),
+    grantKey: text("grant_key").notNull().unique(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("scim_projection_grant_connection_idx").on(table.connectionId),
+    index("scim_projection_grant_domain_idx").on(table.provisioningDomainId),
+    index("scim_projection_grant_scim_user_idx").on(table.scimUserId),
+    index("scim_projection_grant_user_idx").on(table.userId),
+  ],
+);
+
+export const scimGroup = sqliteTable(
+  "scim_group",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id").notNull(),
+    provisioningDomainId: text("provisioning_domain_id").notNull(),
+    revision: integer("revision").default(0).notNull(),
+    displayName: text("display_name").notNull(),
+    displayNameKey: text("display_name_key").notNull().unique(),
+    externalId: text("external_id"),
+    externalIdKey: text("external_id_key").unique(),
+    orderKey: text("order_key").notNull().unique(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("scim_group_connection_idx").on(table.connectionId),
+    index("scim_group_domain_idx").on(table.provisioningDomainId),
+  ],
+);
+
+export const scimGroupMember = sqliteTable(
+  "scim_group_member",
+  {
+    id: text("id").primaryKey(),
+    connectionId: text("connection_id").notNull(),
+    groupId: text("group_id")
+      .notNull()
+      .references(() => scimGroup.id, { onDelete: "cascade" }),
+    scimUserId: text("scim_user_id")
+      .notNull()
+      .references(() => scimUser.id, { onDelete: "cascade" }),
+    membershipKey: text("membership_key").notNull().unique(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [
+    index("scim_group_member_connection_idx").on(table.connectionId),
+    index("scim_group_member_group_idx").on(table.groupId),
+    index("scim_group_member_scim_user_idx").on(table.scimUserId),
+  ],
 );
 
 export const userRelations = relations(user, ({ many }) => ({

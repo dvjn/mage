@@ -1,11 +1,13 @@
 // Browser journeys against the production build, served on its own port with a fresh database and
-// the stand-in model, which production refuses, beside a stand-in OpenID Connect provider.
+// the stand-in model, which production refuses, beside a stand-in OpenID Connect provider. The
+// journeys provision people and groups over SCIM themselves, as a directory would.
 
 import { rmSync } from "node:fs";
 
 import { defineConfig, devices } from "@playwright/test";
 
 import { databasePath, dataDir } from "./e2e/database.ts";
+import { JOURNEY_SCIM_TOKEN } from "./e2e/scim-client.ts";
 
 const port = 4793;
 const baseURL = `http://localhost:${port}`;
@@ -54,6 +56,7 @@ export default defineConfig({
         OIDC_CLIENT_ID: oidcClient.id,
         OIDC_CLIENT_SECRET: oidcClient.secret,
         OIDC_NAME: "Test IdP",
+        SCIM_TOKEN: JOURNEY_SCIM_TOKEN,
       },
     },
   ],

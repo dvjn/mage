@@ -129,6 +129,14 @@ describe("loadConfig", () => {
     );
   });
 
+  it("turns SCIM on with a token of at least 32 characters", () => {
+    expect(loadConfig(valid).scimToken).toBeNull();
+    const token = "a".repeat(32);
+    expect(loadConfig({ ...valid, SCIM_TOKEN: token }).scimToken).toBe(token);
+    expect(() => loadConfig({ ...valid, SCIM_TOKEN: "short" })).toThrow(/SCIM_TOKEN/);
+    expect(() => loadConfig({ ...valid, SCIM_TOKEN: `${token} b` })).toThrow(/SCIM_TOKEN/);
+  });
+
   it("rejects auth library variables that would bypass this config", () => {
     expect(() =>
       loadConfig({ ...valid, BETTER_AUTH_TRUSTED_ORIGINS: "https://evil.example" }),

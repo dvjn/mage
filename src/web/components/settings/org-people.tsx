@@ -1,9 +1,11 @@
 // A team org's people in one table, searched and narrowed on the server with the values in the
-// address: for its owners, the invites not yet used first, then its members, with their role, the
-// groups they are in when the org has groups, and when they joined. Owners add people, which in
-// this local directory means inviting them by email with a link shown once, change roles, remove
-// members and revoke invites; nobody changes their own role, and the last owner stays one. A
-// personal org has only its person.
+// address: for its owners, the invites not yet used first, then its linked directory groups, then
+// its members, with their role, the group they are in through when they are, and when they joined.
+// Owners add people from the directory or invite them by email with a link shown once, link the
+// directory's groups with a role, change roles, remove members and revoke invites; nobody changes
+// their own role, and the last owner in their own right stays one. Someone in only through a group
+// leaves when the group is unlinked or the directory takes them out of it. A personal org has only
+// its person.
 
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useNavigate } from "@tanstack/react-router";
@@ -11,6 +13,7 @@ import {
   CheckIcon,
   MailIcon,
   MailXIcon,
+  UnlinkIcon,
   UserMinusIcon,
   UserPlusIcon,
   UsersIcon,
@@ -25,6 +28,7 @@ import {
   type OrgPerson,
   type OrgRole,
 } from "@/shared/orgs.ts";
+import { cn } from "cn";
 import { CopyButton } from "@/web/components/copy-button";
 import { EmptyState, ListSkeleton, LoadError } from "@/web/components/page-states";
 import { Peek, PeekList } from "@/web/components/peek";
@@ -53,6 +57,7 @@ import {
   AlertDialogTitle,
 } from "@/web/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
+import { Badge } from "@/web/components/ui/badge";
 import { Button } from "@/web/components/ui/button";
 import {
   Dialog,
@@ -77,7 +82,15 @@ import { useDebounced } from "@/web/hooks/use-debounced";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { initialsOf } from "@/web/lib/initials";
-import { groupsPages, memberGroupsPages, membersPages, peoplePages } from "@/web/lib/list-queries";
+import {
+  directoryGroupsPages,
+  directoryPeoplePages,
+  groupMembersPages,
+  groupsPages,
+  memberGroupsPages,
+  membersPages,
+  peoplePages,
+} from "@/web/lib/list-queries";
 import { meQuery } from "@/web/lib/queries";
 import { LOCK_REASONS } from "@/web/lib/roles";
 import { timeUntil } from "@/web/lib/time";
@@ -85,8 +98,11 @@ import { timeUntil } from "@/web/lib/time";
 export interface PeopleSearch {
   q?: string;
   role?: OrgRole;
-  status?: "member" | "invited";
+  status?: "member" | "invited" | "group";
 }
+
+type Member = Extract<OrgPerson, { kind: "member" }>;
+type LinkedGroup = Extract<OrgPerson, { kind: "group" }>;
 
 const peopleRoute = getRouteApi("/_app/org/people");
 
@@ -97,6 +113,9 @@ const STATUS_OPTIONS = [
   { value: "member", label: "Member" },
   { value: "invited", label: "Invited" },
 ];
+
+// With linked groups, they can be narrowed to as well.
+const GROUP_STATUS = { value: "group", label: "Group" };
 
 function plural(count: number, one: string, many: string) {
   return `${count} ${count === 1 ? one : many}`;
@@ -129,29 +148,125 @@ function OrgRoleSelect({
   );
 }
 
-// Adds people to the org. With no directory to pick from, everyone is added by inviting their
-// email: the text searches who is in already, and an email not among them can be invited with a
-// role, which makes a link shown once.
+// What the add dialog has picked from the directory.
+type Pick = { kind: "user" | "group"; id: string; name: string };
+
+// A suggestion in the add dialog: an avatar, a name with a muted line, and on the right what can
+// be done with it. A pickable one is a button; once picked it holds the role to give.
+function Suggestion({
+  avatar,
+  name,
+  detail,
+  picked,
+  onPick,
+  children,
+}: {
+  avatar: React.ReactNode;
+  name: React.ReactNode;
+  detail?: string;
+  picked?: boolean;
+  onPick?: () => void;
+  children?: React.ReactNode;
+}) {
+  const body = (
+    <>
+      <Avatar size="sm">
+        <AvatarFallback className="text-[0.625rem] font-medium [&_svg]:size-3">
+          {avatar}
+        </AvatarFallback>
+      </Avatar>
+      <span className="grid min-w-0 flex-1 text-left leading-tight">
+        <span className="truncate text-sm">{name}</span>
+        {detail && <span className="truncate text-xs text-muted-foreground">{detail}</span>}
+      </span>
+    </>
+  );
+  return (
+    <li
+      className={cn(
+        "flex min-w-0 items-center gap-2.5 rounded-md py-1.5",
+        onPick && "-mx-2 px-2",
+        picked && "bg-muted",
+      )}
+    >
+      {onPick ? (
+        <button
+          type="button"
+          aria-pressed={picked}
+          onClick={onPick}
+          className="flex min-w-0 flex-1 items-center gap-2.5 rounded-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        >
+          {body}
+        </button>
+      ) : (
+        body
+      )}
+      {children}
+    </li>
+  );
+}
+
+function Already({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="flex shrink-0 items-center gap-1 text-xs text-muted-foreground">
+      <CheckIcon className="size-3" />
+      {children}
+    </span>
+  );
+}
+
+// Adds people to the org. The text searches the directory's groups and people and who is in the
+// org already; a group or person picked from the directory is linked or added with a role, and an
+// email not among them can be invited with a role, which makes a link shown once. Without a
+// directory, everyone is added by inviting their email.
 function AddPeopleDialog({
   open,
   onOpenChange,
+  directory,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  // The server is connected to a directory with people or groups in it.
+  directory: { people: boolean; groups: boolean };
 }) {
   const queryClient = useQueryClient();
   const inputId = useId();
   const [text, setText] = useState("");
   const q = useDebounced(text.trim());
   const [role, setRole] = useState<OrgRole>("member");
+  const [picked, setPicked] = useState<Pick | null>(null);
   const [created, setCreated] = useState<CreatedOrgInvite>();
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
   const found = useInfiniteQuery({ ...membersPages({ q }, 6), enabled: open && !!q });
-  const matches = found.data?.pages[0]?.items ?? [];
+  const people = useInfiniteQuery({
+    ...directoryPeoplePages({ q }, 6),
+    enabled: open && !!q && directory.people,
+  });
+  const groups = useInfiniteQuery({
+    ...directoryGroupsPages({ q }, 4),
+    enabled: open && !!q && directory.groups,
+  });
+  const fromDirectory = people.data?.pages[0]?.items ?? [];
+  const inDirectory = new Set(fromDirectory.map((person) => person.userId));
+  const matches = (found.data?.pages[0]?.items ?? []).filter(
+    (member) => !inDirectory.has(member.userId),
+  );
+  const groupMatches = groups.data?.pages[0]?.items ?? [];
   const email = text.trim().toLowerCase();
   const isEmail = emailSchema.safeParse(email).success;
-  const member = matches.find((person) => person.email.toLowerCase() === email);
+  const known = [...matches, ...fromDirectory].find(
+    (person) => person.email.toLowerCase() === email,
+  );
+  const inviting = !picked && isEmail && !known;
+  const nothing =
+    !!q &&
+    !isEmail &&
+    !!found.data &&
+    matches.length === 0 &&
+    fromDirectory.length === 0 &&
+    groupMatches.length === 0;
+  const anyDirectory = directory.people || directory.groups;
 
   function change(next: boolean) {
     onOpenChange(next);
@@ -160,20 +275,46 @@ function AddPeopleDialog({
     setCreated(undefined);
     setError(undefined);
     setRole("member");
+    setPicked(null);
   }
 
-  async function invite() {
+  function pick(next: Pick) {
+    setPicked((current) => (current?.kind === next.kind && current.id === next.id ? null : next));
+  }
+
+  async function refresh() {
+    await Promise.all(
+      ["org-people", "org-members", "org-groups", "directory"].map((key) =>
+        queryClient.invalidateQueries({ queryKey: [key] }),
+      ),
+    );
+  }
+
+  async function submit() {
     setPending(true);
     setError(undefined);
-    const res = await apiClient.v1.org.invites.$post({ json: { email, role } });
+    const res = picked
+      ? picked.kind === "group"
+        ? await apiClient.v1.org.groups.$post({ json: { groupId: picked.id, role } })
+        : await apiClient.v1.org.members.$post({ json: { userId: picked.id, role } })
+      : await apiClient.v1.org.invites.$post({ json: { email, role } });
     setPending(false);
     if (!res.ok) {
       setError(await errorOf(res));
       return;
     }
+    if (picked) {
+      await refresh();
+      change(false);
+      return;
+    }
     setCreated(createdOrgInviteSchema.parse(await res.json()));
-    await queryClient.invalidateQueries({ queryKey: ["org-people"] });
+    await refresh();
   }
+
+  const roleSelect = (label: string) => (
+    <OrgRoleSelect value={role} onChange={setRole} label={label} />
+  );
 
   return (
     <Dialog open={open} onOpenChange={change}>
@@ -208,58 +349,99 @@ function AddPeopleDialog({
             className="flex min-w-0 flex-col gap-4"
             onSubmit={(event) => {
               event.preventDefault();
-              if (isEmail && !member) void invite();
+              if (picked || inviting) void submit();
             }}
           >
             <DialogHeader>
               <DialogTitle>Add people</DialogTitle>
               <DialogDescription>
-                Invite someone by their email. Mage sends no emails; you share the link it makes.
+                {anyDirectory
+                  ? `Add ${directory.groups ? "people and groups" : "people"} from your directory, or invite someone by their email. Mage sends no emails; you share the link it makes.`
+                  : "Invite someone by their email. Mage sends no emails; you share the link it makes."}
               </DialogDescription>
             </DialogHeader>
             <div className="flex min-w-0 flex-col gap-2">
-              <FieldLabel htmlFor={inputId}>Name or email</FieldLabel>
+              <FieldLabel htmlFor={inputId}>
+                {directory.groups ? "Name, email or group" : "Name or email"}
+              </FieldLabel>
               <InputGroup>
                 <InputGroupInput
                   id={inputId}
                   value={text}
-                  onChange={(event) => setText(event.target.value)}
+                  onChange={(event) => {
+                    setText(event.target.value);
+                    setPicked(null);
+                  }}
                   placeholder="name@example.com"
                   autoComplete="off"
                 />
               </InputGroup>
               <ul aria-label="Suggestions" className="flex flex-col">
-                {isEmail && !member && (
-                  <li className="flex min-w-0 flex-wrap items-center gap-2.5 py-1.5">
-                    <Avatar size="sm">
-                      <AvatarFallback>
-                        <MailIcon className="size-3" />
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="min-w-0 flex-1 truncate text-sm">
-                      Invite <span className="font-medium">{email}</span> as
-                    </span>
-                    <OrgRoleSelect value={role} onChange={setRole} label="Role to invite as" />
-                  </li>
+                {inviting && (
+                  <Suggestion
+                    avatar={<MailIcon />}
+                    name={
+                      <>
+                        Invite <span className="font-medium">{email}</span> as
+                      </>
+                    }
+                  >
+                    {roleSelect("Role to invite as")}
+                  </Suggestion>
                 )}
+                {groupMatches.map((group) => {
+                  const chosen = picked?.kind === "group" && picked.id === group.id;
+                  return (
+                    <Suggestion
+                      key={`group:${group.id}`}
+                      avatar={<UsersIcon />}
+                      name={group.name}
+                      detail={`Directory group · ${plural(group.memberCount, "person", "people")}`}
+                      {...(!group.role && {
+                        picked: chosen,
+                        onPick: () => pick({ kind: "group", id: group.id, name: group.name }),
+                      })}
+                    >
+                      {group.role ? (
+                        <Already>Linked as {ORG_ROLE_LABELS[group.role].toLowerCase()}</Already>
+                      ) : (
+                        chosen && roleSelect(`Role for ${group.name}`)
+                      )}
+                    </Suggestion>
+                  );
+                })}
+                {fromDirectory.map((person) => {
+                  const chosen = picked?.kind === "user" && picked.id === person.userId;
+                  return (
+                    <Suggestion
+                      key={`user:${person.userId}`}
+                      avatar={initialsOf(person.name)}
+                      name={person.name}
+                      detail={person.email}
+                      {...(!person.role && {
+                        picked: chosen,
+                        onPick: () => pick({ kind: "user", id: person.userId, name: person.name }),
+                      })}
+                    >
+                      {person.role ? (
+                        <Already>Already a member</Already>
+                      ) : (
+                        chosen && roleSelect(`Role for ${person.name}`)
+                      )}
+                    </Suggestion>
+                  );
+                })}
                 {matches.map((person) => (
-                  <li key={person.userId} className="flex items-center gap-2.5 py-1.5">
-                    <Avatar size="sm">
-                      <AvatarFallback className="text-[0.625rem] font-medium">
-                        {initialsOf(person.name)}
-                      </AvatarFallback>
-                    </Avatar>
-                    <span className="grid min-w-0 flex-1 leading-tight">
-                      <span className="truncate text-sm">{person.name}</span>
-                      <span className="truncate text-xs text-muted-foreground">{person.email}</span>
-                    </span>
-                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <CheckIcon className="size-3" />
-                      Already a member
-                    </span>
-                  </li>
+                  <Suggestion
+                    key={person.userId}
+                    avatar={initialsOf(person.name)}
+                    name={person.name}
+                    detail={person.email}
+                  >
+                    <Already>Already a member</Already>
+                  </Suggestion>
                 ))}
-                {q && !isEmail && found.data && matches.length === 0 && (
+                {nothing && (
                   <li className="py-1.5 text-sm text-muted-foreground">
                     Nobody here by that name. Type their email to invite them.
                   </li>
@@ -269,8 +451,8 @@ function AddPeopleDialog({
             <FieldError>{error}</FieldError>
             <DialogFooter>
               <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-              <Button type="submit" disabled={!isEmail || !!member || pending}>
-                Invite
+              <Button type="submit" disabled={!(picked || inviting) || pending}>
+                {picked ? (picked.kind === "group" ? "Link group" : "Add") : "Invite"}
               </Button>
             </DialogFooter>
           </form>
@@ -280,25 +462,56 @@ function AddPeopleDialog({
   );
 }
 
-// A member's groups, at a glance.
-function GroupsPeek({ person }: { person: Extract<OrgPerson, { kind: "member" }> }) {
-  if (person.groupCount === 0) return <>—</>;
+// The linked group a member is in through, and at a glance every one of them when there are more.
+function ViaGroups({ person }: { person: Member }) {
+  if (!person.viaGroup) return null;
+  if (person.groupCount <= 1) return <>via {person.viaGroup}</>;
   return (
-    <Peek label={`Groups of ${person.name}`} trigger={plural(person.groupCount, "group", "groups")}>
+    <>
+      via{" "}
+      <Peek
+        label={`Groups of ${person.name}`}
+        trigger={`${person.viaGroup} and ${plural(person.groupCount - 1, "other", "others")}`}
+      >
+        {() => (
+          <PeekList
+            title={`${person.name}'s groups`}
+            query={(q) => memberGroupsPages(person.userId, { q }, 20)}
+            rowKey={(group) => group.id}
+            row={(group) => (
+              <span className="flex items-baseline justify-between gap-2">
+                <span className="truncate">{group.name}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {ORG_ROLE_LABELS[group.role]}
+                </span>
+              </span>
+            )}
+            empty="In no groups"
+          />
+        )}
+      </Peek>
+    </>
+  );
+}
+
+// A group's people, at a glance.
+function GroupMembersPeek({ group }: { group: LinkedGroup }) {
+  const count = plural(group.memberCount, "person", "people");
+  if (group.memberCount === 0) return <>{count}</>;
+  return (
+    <Peek label={`People in ${group.name}`} trigger={count}>
       {() => (
         <PeekList
-          title={`${person.name}'s groups`}
-          query={(q) => memberGroupsPages(person.userId, { q }, 20)}
-          rowKey={(group) => group.id}
-          row={(group) => (
-            <span className="flex items-baseline justify-between gap-2">
-              <span className="truncate">{group.name}</span>
-              <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                {group.memberCount}
-              </span>
+          title={`People in ${group.name}`}
+          query={(q) => groupMembersPages(group.id, { q }, 20)}
+          rowKey={(member) => member.userId}
+          row={(member) => (
+            <span className="grid leading-tight">
+              <span className="truncate">{member.name}</span>
+              <span className="truncate text-xs text-muted-foreground">{member.email}</span>
             </span>
           )}
-          empty="In no groups"
+          empty="Nobody yet"
         />
       )}
     </Peek>
@@ -320,11 +533,25 @@ export function OrgPeople() {
     }),
     enabled: team,
   });
-  // Groups come from a directory; while the org has none, nothing speaks of them.
+  // Groups come from a directory; while the org has none linked, its filter leaves them out.
   const groups = useInfiniteQuery({ ...groupsPages({}, 1), enabled: team });
   const withGroups = (groups.data?.pages[0]?.total ?? 0) > 0;
+  // What the directory offers owners to add, if the server has one.
+  const directoryPeople = useInfiniteQuery({
+    ...directoryPeoplePages({}, 1),
+    enabled: !!manages,
+  });
+  const directoryGroups = useInfiniteQuery({
+    ...directoryGroupsPages({}, 1),
+    enabled: !!manages,
+  });
+  const directory = {
+    people: (directoryPeople.data?.pages[0]?.total ?? 0) > 0,
+    groups: (directoryGroups.data?.pages[0]?.total ?? 0) > 0,
+  };
   const [adding, setAdding] = useState(false);
-  const [removing, setRemoving] = useState<Extract<OrgPerson, { kind: "member" }> | null>(null);
+  const [removing, setRemoving] = useState<Member | null>(null);
+  const [unlinking, setUnlinking] = useState<LinkedGroup | null>(null);
   const [error, setError] = useState<string>();
   const [removeError, setRemoveError] = useState<string>();
 
@@ -345,10 +572,11 @@ export function OrgPeople() {
   const clear = () => set({ q: undefined, role: undefined, status: undefined });
 
   async function refresh() {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["org-people"] }),
-      queryClient.invalidateQueries({ queryKey: ["org-members"] }),
-    ]);
+    await Promise.all(
+      ["org-people", "org-members", "org-groups", "directory"].map((key) =>
+        queryClient.invalidateQueries({ queryKey: [key] }),
+      ),
+    );
   }
 
   async function setRole(userId: string, role: OrgRole) {
@@ -357,6 +585,13 @@ export function OrgPeople() {
       param: { userId },
       json: { role },
     });
+    if (!res.ok) setError(await errorOf(res));
+    await refresh();
+  }
+
+  async function setGroupRole(id: string, role: OrgRole) {
+    setError(undefined);
+    const res = await apiClient.v1.org.groups[":id"].$patch({ param: { id }, json: { role } });
     if (!res.ok) setError(await errorOf(res));
     await refresh();
   }
@@ -375,6 +610,18 @@ export function OrgPeople() {
     await refresh();
   }
 
+  async function unlink() {
+    if (!unlinking) return;
+    setRemoveError(undefined);
+    const res = await apiClient.v1.org.groups[":id"].$delete({ param: { id: unlinking.id } });
+    if (!res.ok) {
+      setRemoveError(await errorOf(res));
+      return;
+    }
+    setUnlinking(null);
+    await refresh();
+  }
+
   async function revoke(id: string) {
     setError(undefined);
     const res = await apiClient.v1.org.invites[":id"].$delete({ param: { id } });
@@ -383,7 +630,9 @@ export function OrgPeople() {
   }
 
   const rows = people.data?.pages.flatMap((page) => page.items) ?? [];
-  const columns = [ROLE_COLUMN, ...(withGroups ? [{ label: "Groups" }] : []), { label: "Joined" }];
+  const columns = [ROLE_COLUMN, { label: "Joined" }];
+  // Removing someone who is also in through a group only takes back their own role.
+  const keeps = removing?.viaGroup;
 
   return (
     <>
@@ -408,12 +657,16 @@ export function OrgPeople() {
                 options: ROLE_OPTIONS,
                 onChange: (role) => set({ role: role as OrgRole | undefined }),
               },
-              ...(manages
+              ...(manages || withGroups
                 ? [
                     {
                       label: "Status",
                       value: search.status,
-                      options: STATUS_OPTIONS,
+                      options: [
+                        STATUS_OPTIONS[0]!,
+                        ...(manages ? [STATUS_OPTIONS[1]!] : []),
+                        ...(withGroups ? [GROUP_STATUS] : []),
+                      ],
                       onChange: (status: string | undefined) =>
                         set({ status: status as PeopleSearch["status"] }),
                     },
@@ -458,7 +711,6 @@ export function OrgPeople() {
                       label={`Role of ${person.email}`}
                       choice={{ value: person.role, options: ROLE_OPTIONS }}
                     />
-                    {withGroups && <ContextCell>—</ContextCell>}
                     <ContextCell>—</ContextCell>
                     <ActionsCell
                       label={person.email}
@@ -473,13 +725,20 @@ export function OrgPeople() {
                       }
                     />
                   </PeopleRow>
+                ) : person.kind === "group" ? (
+                  <GroupRow
+                    key={person.id}
+                    group={person}
+                    manages={!!manages}
+                    onRole={(role) => void setGroupRole(person.id, role)}
+                    onUnlink={() => setUnlinking(person)}
+                  />
                 ) : (
                   <MemberRow
                     key={person.userId}
                     person={person}
                     you={person.userId === me.data?.user.id}
                     manages={!!manages}
-                    withGroups={withGroups}
                     onRole={(role) => void setRole(person.userId, role)}
                     onRemove={() => setRemoving(person)}
                   />
@@ -494,7 +753,7 @@ export function OrgPeople() {
           />
         </>
       )}
-      <AddPeopleDialog open={adding} onOpenChange={setAdding} />
+      <AddPeopleDialog open={adding} onOpenChange={setAdding} directory={directory} />
       <AlertDialog
         open={!!removing}
         onOpenChange={(open) => {
@@ -506,19 +765,49 @@ export function OrgPeople() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Remove {removing?.name} from {me.data?.org.name}?
+              {keeps
+                ? `Take back ${removing?.name}'s own role?`
+                : `Remove ${removing?.name} from ${me.data?.org.name}?`}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              They lose its spaces at once, and their messages still waiting for the agent are
-              dropped. What they wrote stays, marked as from a former member. A new invite brings
-              them back.
+              {keeps
+                ? `They stay in ${me.data?.org.name} through ${keeps}, with the role it gives.`
+                : "They lose its spaces at once, and their messages still waiting for the agent are dropped. What they wrote stays, marked as from a former member. A new invite brings them back."}
             </AlertDialogDescription>
             <FieldError>{removeError}</FieldError>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction variant="destructive" onClick={() => void remove()}>
-              Remove
+              {keeps ? "Take back role" : "Remove"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      <AlertDialog
+        open={!!unlinking}
+        onOpenChange={(open) => {
+          if (open) return;
+          setUnlinking(null);
+          setRemoveError(undefined);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Unlink {unlinking?.name} from {me.data?.org.name}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Its people leave at once, unless they have a role of their own or another linked
+              group; the roles its spaces gave the group go too. What they wrote stays, marked as
+              from former members. Linking it again brings them back.
+            </AlertDialogDescription>
+            <FieldError>{removeError}</FieldError>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction variant="destructive" onClick={() => void unlink()}>
+              Unlink
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -527,18 +816,63 @@ export function OrgPeople() {
   );
 }
 
+function GroupRow({
+  group,
+  manages,
+  onRole,
+  onUnlink,
+}: {
+  group: LinkedGroup;
+  manages: boolean;
+  onRole: (role: OrgRole) => void;
+  onUnlink: () => void;
+}) {
+  const role = { value: group.role, options: ROLE_OPTIONS, ...(manages && { onChange: onRole }) };
+  return (
+    <PeopleRow label={group.name}>
+      <SubjectCell
+        avatar={{ icon: <UsersIcon /> }}
+        name={
+          <>
+            {group.name}{" "}
+            <Badge variant="secondary" className="ml-1 rounded-sm px-1 align-middle font-normal">
+              Directory
+            </Badge>
+          </>
+        }
+        detail={<GroupMembersPeek group={group} />}
+        folded={ORG_ROLE_LABELS[group.role]}
+      />
+      <RoleCell label={`Role of ${group.name}`} choice={role} />
+      <ContextCell className="whitespace-nowrap">
+        <Time iso={group.linkedAt} />
+      </ContextCell>
+      <ActionsCell
+        label={group.name}
+        role={role}
+        destructive={
+          manages && (
+            <DropdownMenuItem variant="destructive" onClick={onUnlink}>
+              <UnlinkIcon />
+              Unlink group…
+            </DropdownMenuItem>
+          )
+        }
+      />
+    </PeopleRow>
+  );
+}
+
 function MemberRow({
   person,
   you,
   manages,
-  withGroups,
   onRole,
   onRemove,
 }: {
-  person: Extract<OrgPerson, { kind: "member" }>;
+  person: Member;
   you: boolean;
   manages: boolean;
-  withGroups: boolean;
   onRole: (role: OrgRole) => void;
   onRemove: () => void;
 }) {
@@ -548,6 +882,23 @@ function MemberRow({
     ...(manages && { onChange: onRole }),
     ...(manages && person.locked && { locked: LOCK_REASONS.org[person.locked] }),
   };
+  const remove = !person.directRole ? (
+    // In only through a group: the directory, or unlinking the group, takes them out.
+    <DropdownMenuItem disabled className="flex-col items-start gap-0.5">
+      <span className="flex items-center gap-2">
+        <UserMinusIcon />
+        Remove from organization
+      </span>
+      <span className="text-xs text-muted-foreground">
+        In through {person.viaGroup}. Unlink the group or change it in your directory.
+      </span>
+    </DropdownMenuItem>
+  ) : (
+    <DropdownMenuItem variant="destructive" onClick={onRemove}>
+      <UserMinusIcon />
+      {person.viaGroup ? "Take back own role…" : "Remove from organization…"}
+    </DropdownMenuItem>
+  );
   return (
     <PeopleRow label={person.name}>
       <SubjectCell
@@ -555,40 +906,14 @@ function MemberRow({
         name={person.name}
         you={you}
         detail={person.email}
-        folded={
-          <>
-            {ORG_ROLE_LABELS[person.role]}
-            {withGroups && person.groupCount > 0 && (
-              <>
-                {" · "}
-                <GroupsPeek person={person} />
-              </>
-            )}
-          </>
-        }
+        note={person.viaGroup && <ViaGroups person={person} />}
+        folded={ORG_ROLE_LABELS[person.role]}
       />
       <RoleCell label={`Role of ${person.name}`} choice={role} />
-      {withGroups && (
-        <ContextCell className="whitespace-nowrap">
-          <GroupsPeek person={person} />
-        </ContextCell>
-      )}
       <ContextCell className="whitespace-nowrap">
         <Time iso={person.joinedAt} />
       </ContextCell>
-      <ActionsCell
-        label={person.name}
-        role={role}
-        destructive={
-          manages &&
-          !you && (
-            <DropdownMenuItem variant="destructive" onClick={onRemove}>
-              <UserMinusIcon />
-              Remove from organization…
-            </DropdownMenuItem>
-          )
-        }
-      />
+      <ActionsCell label={person.name} role={role} destructive={manages && !you && remove} />
     </PeopleRow>
   );
 }

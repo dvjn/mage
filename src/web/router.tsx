@@ -220,7 +220,11 @@ const orgPeopleRoute = createRoute({
   validateSearch: (search: Record<string, unknown>): PeopleSearch => ({
     ...textOf(search),
     ...((search.role === "owner" || search.role === "member") && { role: search.role }),
-    ...((search.status === "member" || search.status === "invited") && { status: search.status }),
+    ...((search.status === "member" ||
+      search.status === "invited" ||
+      search.status === "group") && {
+      status: search.status,
+    }),
   }),
   component: OrgPeople,
 });

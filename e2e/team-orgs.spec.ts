@@ -79,7 +79,8 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await nav.getByRole("link", { name: "People" }).click();
   await expect(page).toHaveURL("/org/people");
   await page.getByRole("button", { name: "Add people" }).click();
-  await page.getByLabel("Name or email").fill(graceEmail);
+  // The directory other journeys fill may name groups here too.
+  await page.getByLabel(/^Name(, email or group| or email)$/).fill(graceEmail);
   await expect(page.getByRole("list", { name: "Suggestions" })).toContainText(
     `Invite ${graceEmail} as`,
   );

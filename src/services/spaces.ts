@@ -20,7 +20,10 @@ export interface SpacesOptions {
   spaces: SpaceStore;
   threads: Pick<ThreadStore, "anyInSpace">;
   models: Pick<Models, "requireModel">;
-  directory: Pick<Directory, "org" | "roleIn" | "group" | "groupIdsOf" | "memberCount" | "user">;
+  directory: Pick<
+    Directory,
+    "org" | "roleIn" | "linkedRole" | "groupIdsOf" | "memberCount" | "user"
+  >;
   settings: Pick<OrgSettingStore, "get">;
   // Told when people may have lost a role in the org's spaces.
   accessChanged?: (orgId: string) => void;
@@ -298,7 +301,7 @@ export function createSpaces(options: SpacesOptions) {
       if (subject.kind === "user" && !directory.roleIn(space.orgId, subject.id)) {
         throw new ServiceError(404, "Member not found");
       }
-      if (subject.kind === "group" && directory.group(subject.id)?.orgId !== space.orgId) {
+      if (subject.kind === "group" && !directory.linkedRole(space.orgId, subject.id)) {
         throw new ServiceError(404, "Group not found");
       }
       if (role) spaces.grant(id, subject, role);

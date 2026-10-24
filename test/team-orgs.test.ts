@@ -69,11 +69,33 @@ function setMember(
   return workspace.api("PUT", `/spaces/${spaceId}/members`, who.cookie, body, who.orgId);
 }
 
-// A group as a directory would bring it, with the members.
+// The person's id at the directory, provisioning them first if it has not brought them yet.
+async function inDirectory(workspace: Workspace, userId: string) {
+  const known = workspace.db
+    .select({ id: schema.scimUser.id })
+    .from(schema.scimUser)
+    .where(eq(schema.scimUser.userId, userId))
+    .get();
+  if (known) return known.id;
+  const user = workspace.directory.user(userId);
+  if (!user) throw new Error("no user");
+  return workspace.scim.createUser({ name: user.name, email: user.email });
+}
+
+// A group the directory brings with the members, linked to the org with the member role.
 async function newGroup(workspace: Workspace, who: Person, name: string, members: string[]) {
-  const group = workspace.directory.createGroup(who.orgId, name);
-  for (const userId of members) workspace.directory.addToGroup(group.id, userId);
-  return group.id;
+  const ids = [];
+  for (const userId of members) ids.push(await inDirectory(workspace, userId));
+  const groupId = await workspace.scim.createGroup(name, ids);
+  const res = await workspace.api(
+    "POST",
+    "/org/groups",
+    who.cookie,
+    { groupId, role: "member" },
+    who.orgId,
+  );
+  expect(res.status).toBe(200);
+  return groupId;
 }
 
 describe("team orgs", () => {
@@ -312,10 +334,9 @@ describe("org members", () => {
     ).toBe(200);
   });
 
-  it("removing a member takes away their groups, space roles and waiting messages", async () => {
+  it("removing a member takes away their space roles and waiting messages", async () => {
     const workspace = await withGrace();
     const { api, ada, grace, db, generalId, orgId, spaceStore } = workspace;
-    const looms = await newGroup(workspace, ada, "Looms", [grace.userId]);
     const engines = await newSpace(workspace, ada, "Engines");
     expect(
       (
@@ -346,7 +367,6 @@ describe("org members", () => {
       (await api("DELETE", `/org/members/${grace.userId}`, ada.cookie, undefined, orgId)).status,
     ).toBe(200);
 
-    expect(db.select().from(schema.groupMember).all()).toEqual([]);
     expect(
       db
         .select()
@@ -362,7 +382,6 @@ describe("org members", () => {
     expect(transcriptOf(detail.events).pending).toEqual([]);
     expect(detail.events.map((event) => event.type)).toContain("message.dropped");
     expect((await api("GET", "/spaces", grace.cookie, undefined, orgId)).status).toBe(404);
-    void looms;
   });
 });
 
@@ -563,8 +582,7 @@ describe("renaming and deleting a team org", () => {
         .map((org) => org.kind),
     ).toEqual(["personal", "personal", "personal"]);
     for (const table of [
-      schema.group,
-      schema.groupMember,
+      schema.orgGroup,
       schema.orgInvite,
       schema.threadInvite,
       schema.connection,
@@ -693,7 +711,9 @@ describe("the org's people", () => {
       people.items.map((person) =>
         person.kind === "invite"
           ? ["invite", person.email, person.role]
-          : ["member", person.name, person.locked],
+          : person.kind === "group"
+            ? ["group", person.name, person.role]
+            : ["member", person.name, person.locked],
       ),
     ).toEqual([
       ["invite", "joan@example.com", "owner"],

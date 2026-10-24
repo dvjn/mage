@@ -5,19 +5,23 @@
 // getting a new one.
 // Every user gets a personal org with its first space at sign-up, and new sessions act in it. Orgs
 // and their members are changed only through Mage's own API, so the library's org routes are off.
+// With a SCIM token, a directory provisions people and groups under /api/auth/scim/v2: someone it
+// brings who already has an account by that email is linked to it, each change to a person or their
+// groups is passed on to settle their org access, and someone it turns off or deletes cannot sign in.
 
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { APIError, createAuthMiddleware } from "better-auth/api";
 import { genericOAuth, organization } from "better-auth/plugins";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { scim } from "@better-auth/scim";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 
 import type { OrgRole } from "@/ports/directory.ts";
 import type { Identity, Principal } from "@/ports/identity.ts";
 import type { Logger } from "@/ports/logger.ts";
 import { FIRST_SPACE_NAME } from "@/shared/spaces.ts";
 
-import type { Db } from "./db.ts";
+import { type Db, withAsyncTransactions } from "./db.ts";
 import * as schema from "./schema.ts";
 import { createSpaceStore } from "./spaces.ts";
 
@@ -31,7 +35,13 @@ export interface AuthOptions {
   // The operators' lower-cased emails.
   operatorEmails?: string[];
   oidc?: { issuer: string; clientId: string; clientSecret: string } | null;
+  // The bearer token a SCIM directory provisions with, and what to tell when the directory changed
+  // a person or the groups they are in; `active` is false once it turned them off or deleted them.
+  scim?: { token: string; changed: (userId: string, active: boolean) => void } | null;
 }
+
+// The one SCIM connection, the server's directory.
+export const SCIM_CONNECTION = "directory";
 
 // The id people sign in with the OpenID Connect provider under, in the callback's path too.
 export const OIDC_PROVIDER = "oidc";
@@ -39,7 +49,7 @@ export const OIDC_PROVIDER = "oidc";
 export type Auth = ReturnType<typeof createAuth>;
 
 export function createAuth(options: AuthOptions) {
-  const { db, passwordSignIn = "everyone", operatorEmails = [], oidc } = options;
+  const { db, passwordSignIn = "everyone", operatorEmails = [], oidc, scim: directory } = options;
   const spaces = createSpaceStore(db);
 
   function personalOrgOf(userId: string) {
@@ -57,6 +67,22 @@ export function createAuth(options: AuthOptions) {
       .from(schema.member)
       .where(eq(schema.member.organizationId, orgId))
       .get();
+  }
+
+  function userIdByEmail(email: string) {
+    return db
+      .select({ id: schema.user.id })
+      .from(schema.user)
+      .where(eq(sql`lower(${schema.user.email})`, email.toLowerCase()))
+      .get()?.id;
+  }
+
+  // The directory brought them and no longer has them active.
+  function turnedOff(userId: string) {
+    return !!db.get(sql`
+      select 1 from scim_subject s
+       where s.user_id = ${userId}
+         and not exists (select 1 from scim_user u where u.user_id = s.user_id and u.active = 1)`);
   }
 
   function rejectPersonal(org: Record<string, unknown>, message: string) {
@@ -100,7 +126,11 @@ export function createAuth(options: AuthOptions) {
     trustedOrigins: [options.baseUrl, ...options.trustedOrigins],
     telemetry: { enabled: false, debug: false },
     advanced: { cookiePrefix: "mage", disableOriginCheck: false, disableCSRFCheck: false },
-    database: drizzleAdapter(db, { provider: "sqlite", schema }),
+    database: drizzleAdapter(withAsyncTransactions(db), {
+      provider: "sqlite",
+      schema,
+      transaction: true,
+    }),
     account: {
       // The operator chose the provider, so the email it gives is trusted to join an account that
       // has it, though Mage never verified that account's email.
@@ -132,6 +162,10 @@ export function createAuth(options: AuthOptions) {
             const org = await auth.api.createOrganization({
               body: { name: user.name, slug: user.id, userId: user.id, kind: "personal" },
             });
+            db.update(schema.member)
+              .set({ directRole: "owner" })
+              .where(eq(schema.member.organizationId, org.id))
+              .run();
             spaces.create({
               orgId: org.id,
               kind: "personal",
@@ -155,6 +189,12 @@ export function createAuth(options: AuthOptions) {
       session: {
         create: {
           before: async (session) => {
+            if (turnedOff(session.userId)) {
+              throw new APIError("FORBIDDEN", {
+                code: "ACCOUNT_TURNED_OFF",
+                message: "Your account was turned off in your organization's directory",
+              });
+            }
             if (session.activeOrganizationId) return;
             const org = personalOrgOf(session.userId);
             if (!org) return;
@@ -180,6 +220,36 @@ export function createAuth(options: AuthOptions) {
             ]
           : [],
       }),
+      ...(directory
+        ? [
+            scim({
+              connections: [
+                {
+                  id: SCIM_CONNECTION,
+                  credentials: [{ type: "bearer", id: "token", token: directory.token }],
+                },
+              ],
+              identity: {
+                // The operator connected the directory, so the email it gives is trusted to join the
+                // account that has it, which it manages from then on.
+                resolveUser: ({ resource }) => {
+                  const userId = userIdByEmail(resource.primaryEmail);
+                  return userId
+                    ? { action: "link", userId, profile: "manage" }
+                    : { action: "create" };
+                },
+              },
+              projection: {
+                reconcileUser: ({ userId, active }) => {
+                  if (!active) {
+                    db.delete(schema.session).where(eq(schema.session.userId, userId)).run();
+                  }
+                  directory.changed(userId, active);
+                },
+              },
+            }),
+          ]
+        : []),
     ],
     disabledPaths: Object.values(orgs.endpoints).map((endpoint) => endpoint.path),
     logger: {

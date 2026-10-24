@@ -1,7 +1,8 @@
 // A signed-up app with real spaces, folders, threads, guests and runs over an in-memory database,
 // for the tests of spaces, folders, threads, their guests, their events and the agent's runs. The
 // agent replies through a model the test drives, once the test starts the worker; threads are
-// named, when asked for, through another.
+// named, when asked for, through another. A stand-in directory provisions people and groups over
+// SCIM.
 
 import { eq } from "drizzle-orm";
 import { ulid } from "ulid";
@@ -40,6 +41,7 @@ import { createThreads } from "@/services/threads.ts";
 import { createTitles } from "@/services/titles.ts";
 import type { Effort } from "@/shared/threads.ts";
 
+import { scimClient } from "../e2e/scim-client.ts";
 import { scriptedModel } from "./scripted-model.ts";
 
 // Never called by these tests.
@@ -47,6 +49,8 @@ const unusedConnections = {} as Connections;
 const unusedModels = {} as Models;
 
 const baseUrl = "http://localhost:4783";
+
+export const SCIM_TOKEN = "test-scim-token-that-is-long-enough-0123456789";
 
 export type SpaceBody = {
   id: string;
@@ -82,7 +86,17 @@ export function setup(
   const db = openDatabase(":memory:");
   const logger = createLogger({ write() {} });
   const secret = "test-secret-that-is-long-enough-1234567890";
-  const auth = createAuth({ db, logger, secret, baseUrl, trustedOrigins: [] });
+  const auth = createAuth({
+    db,
+    logger,
+    secret,
+    baseUrl,
+    trustedOrigins: [],
+    scim: {
+      token: SCIM_TOKEN,
+      changed: (userId, active) => orgs.directoryChanged(userId, active),
+    },
+  });
   const spaceStore = createSpaceStore(db);
   const threadStore = createThreadStore(db);
   // The models the org can use, and its defaults.
@@ -213,6 +227,19 @@ export function setup(
     });
   }
   const worker = makeWorker();
+  const orgs = createOrgs({
+    directory,
+    invites: createOrgInviteStore(db),
+    spaces,
+    spaceStore,
+    threads: threadStore,
+    runs: runStore,
+    settings: settingStore,
+    accessChanged,
+    baseUrl,
+    teamOrgs,
+    operatorEmails,
+  });
   const app = createApp({
     handleAuth: auth.handler,
     identity: createIdentity(auth, db),
@@ -228,19 +255,7 @@ export function setup(
       transact,
       baseUrl,
     }),
-    orgs: createOrgs({
-      directory,
-      invites: createOrgInviteStore(db),
-      spaces,
-      spaceStore,
-      threads: threadStore,
-      runs: runStore,
-      settings: settingStore,
-      accessChanged,
-      baseUrl,
-      teamOrgs,
-      operatorEmails,
-    }),
+    orgs,
     groups: createGroups({ directory }),
     logger,
     signInOptions: { password: "everyone", oidc: null },
@@ -279,6 +294,7 @@ export function setup(
         organizationId: space.orgId,
         userId: user.userId,
         role: "member",
+        directRole: "member",
         createdAt: new Date(),
       })
       .run();
@@ -341,9 +357,16 @@ export function setup(
     return (await res.json()) as FolderBody[];
   }
 
+  const scim = scimClient({
+    baseUrl,
+    token: SCIM_TOKEN,
+    fetch: (url, init) => app.request(url, init),
+  });
+
   return {
     db,
     app,
+    scim,
     org,
     spaceStore,
     threadStore,

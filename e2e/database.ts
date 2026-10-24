@@ -32,7 +32,7 @@ export function joinSpaceOf(ownerEmail: string, email: string, role: "messager" 
       .get(owner) as { id: string; orgId: string };
     db.transaction(() => {
       db.prepare(
-        "insert into member (id, organization_id, user_id, role, created_at) values (?, ?, ?, 'member', ?)",
+        "insert into member (id, organization_id, user_id, role, direct_role, created_at) values (?, ?, ?, 'member', 'member', ?)",
       ).run(randomUUID(), space.orgId, member, Date.now());
       db.prepare("update session set active_organization_id = ? where user_id = ?").run(
         space.orgId,

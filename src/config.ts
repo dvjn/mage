@@ -21,6 +21,8 @@ export interface Config {
   passwordSignIn: "everyone" | "operator" | "off";
   // The OpenID Connect provider people can sign in with, and the name its button shows.
   oidc: Oidc | null;
+  // The bearer token a SCIM directory provisions people and groups with; none turns SCIM off.
+  scimToken: string | null;
 }
 
 export interface Oidc {
@@ -114,6 +116,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (passwordSignIn === "off" && !oidc) {
     throw new Error("PASSWORD_SIGN_IN=off needs OIDC_ISSUER, so people can still sign in");
   }
+  const scimToken = env.SCIM_TOKEN || null;
+  if (scimToken && (scimToken.length < 32 || /\s/.test(scimToken))) {
+    throw new Error("SCIM_TOKEN must be at least 32 characters with no spaces");
+  }
   return {
     baseUrl,
     authSecret,
@@ -128,5 +134,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     operatorEmails,
     passwordSignIn,
     oidc,
+    scimToken,
   };
 }

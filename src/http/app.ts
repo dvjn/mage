@@ -49,7 +49,9 @@ import {
   acceptOrgInviteSchema,
   ORG_NOT_FOUND,
   memberFilterSchema,
+  newGroupLinkSchema,
   newOrgInviteSchema,
+  newOrgMemberSchema,
   peopleFilterSchema,
   orgNameSchema,
   setOrgRoleSchema,
@@ -225,6 +227,8 @@ const acceptInvite = jsonBody(acceptInviteSchema, "token is required");
 const orgName = jsonBody(orgNameSchema, "A name of 1 to 80 characters is required");
 const newOrgInvite = jsonBody(newOrgInviteSchema, "Give an email address and a role");
 const setOrgRole = jsonBody(setOrgRoleSchema, "role is owner or member");
+const newOrgMember = jsonBody(newOrgMemberSchema, "Give a directory person's id and a role");
+const newGroupLink = jsonBody(newGroupLinkSchema, "Give a directory group's id and a role");
 const acceptOrgInvite = jsonBody(acceptOrgInviteSchema, "token is required");
 const teamSettingsChange = jsonBody(teamSettingsChangeSchema, "Give spaceCreation or memberSpaces");
 const setSpaceMember = jsonBody(
@@ -429,6 +433,7 @@ function createApi(options: AppOptions) {
               id: group.id,
               name: group.name,
               source: group.source,
+              role: group.role,
               memberCount: group.memberCount,
               createdAt: group.createdAt.toISOString(),
             })),
@@ -449,6 +454,60 @@ function createApi(options: AppOptions) {
       .delete("/v1/org/members/:userId", (c) => {
         orgs.removeMember(signedIn(c.var.principal), c.req.param("userId"));
         return c.json({ ok: true }, 200);
+      })
+      .post("/v1/org/members", newOrgMember, (c) => {
+        const { userId, role } = c.req.valid("json");
+        orgs.addMember(signedIn(c.var.principal), userId, role);
+        return c.json({ ok: true }, 200);
+      })
+      .post("/v1/org/groups", newGroupLink, (c) => {
+        const { groupId, role } = c.req.valid("json");
+        orgs.linkGroup(signedIn(c.var.principal), groupId, role);
+        return c.json({ ok: true }, 200);
+      })
+      .patch("/v1/org/groups/:id", setOrgRole, (c) => {
+        orgs.setGroupRole(signedIn(c.var.principal), c.req.param("id"), c.req.valid("json").role);
+        return c.json({ ok: true }, 200);
+      })
+      .delete("/v1/org/groups/:id", (c) => {
+        orgs.unlinkGroup(signedIn(c.var.principal), c.req.param("id"));
+        return c.json({ ok: true }, 200);
+      })
+      .get("/v1/directory/people", pageQuery, (c) => {
+        const page = orgs.directoryPeople(
+          signedIn(c.var.principal),
+          pageParams(c.req.valid("query")),
+        );
+        return c.json(
+          {
+            ...page,
+            items: page.items.map(({ id, name, email, role }) => ({
+              userId: id,
+              name,
+              email,
+              role,
+            })),
+          },
+          200,
+        );
+      })
+      .get("/v1/directory/groups", pageQuery, (c) => {
+        const page = orgs.directoryGroups(
+          signedIn(c.var.principal),
+          pageParams(c.req.valid("query")),
+        );
+        return c.json(
+          {
+            ...page,
+            items: page.items.map(({ id, name, memberCount, role }) => ({
+              id,
+              name,
+              memberCount,
+              role,
+            })),
+          },
+          200,
+        );
       })
       .post("/v1/org/invites", newOrgInvite, (c) => {
         const { email, role } = c.req.valid("json");
@@ -810,6 +869,8 @@ export function createApp(options: AppOptions): App {
 
   app.route("/api", createApi(options));
   app.on(["GET", "POST"], "/api/auth/*", (c) => options.handleAuth(c.req.raw));
+  // A SCIM directory also replaces, patches and deletes what it provisioned.
+  app.on(["PUT", "PATCH", "DELETE"], "/api/auth/scim/v2/*", (c) => options.handleAuth(c.req.raw));
   app.all("/api/*", (c) => c.json({ error: "not found" }, 404));
 
   if (options.webRoot) {

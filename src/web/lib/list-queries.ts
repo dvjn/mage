@@ -1,6 +1,7 @@
-// Long lists read a page at a time from the server, searched and narrowed there: the org's people
-// and invites, its members, a member's groups, its groups and a group's members, its spaces and a space's
-// members, and one member or group at a glance. Every list keeps showing its last rows while the
+// Long lists read a page at a time from the server, searched and narrowed there: the org's people,
+// groups and invites, its members, a member's groups, its groups and a group's members, the
+// directory's people and groups, its spaces and a space's members, and one member or group at a
+// glance. Every list keeps showing its last rows while the
 // next search or filter is read.
 
 import {
@@ -11,6 +12,8 @@ import {
 } from "@tanstack/react-query";
 
 import {
+  directoryGroupPageSchema,
+  directoryPersonPageSchema,
   groupMemberPageSchema,
   groupPageSchema,
   groupSchema,
@@ -97,9 +100,10 @@ export function memberGroupsPages(userId: string, filters: { q?: string }, limit
   );
 }
 
-// The org's people: for its owners, the invites not yet used first, then its members.
+// The org's people: for its owners, the invites not yet used first, then its linked groups and its
+// members.
 export function peoplePages(
-  filters: { q?: string; role?: OrgRole; status?: "member" | "invited" },
+  filters: { q?: string; role?: OrgRole; status?: "member" | "invited" | "group" },
   limit?: number,
 ) {
   return pages(
@@ -149,6 +153,36 @@ export function groupMembersPages(groupId: string, filters: { q?: string }, limi
         await apiClient.v1.org.groups[":id"].members.$get({ param: { id: groupId }, query }),
         (body) => groupMemberPageSchema.parse(body),
         "the group's members",
+      ),
+    filters,
+    limit,
+  );
+}
+
+// The directory's people, with their role in the org, for its owners to add.
+export function directoryPeoplePages(filters: { q?: string }, limit?: number) {
+  return pages(
+    ["directory", "people"],
+    async (query) =>
+      json(
+        await apiClient.v1.directory.people.$get({ query }),
+        (body) => directoryPersonPageSchema.parse(body),
+        "the directory's people",
+      ),
+    filters,
+    limit,
+  );
+}
+
+// The directory's groups, with the role each is linked to the org with, for its owners to link.
+export function directoryGroupsPages(filters: { q?: string }, limit?: number) {
+  return pages(
+    ["directory", "groups"],
+    async (query) =>
+      json(
+        await apiClient.v1.directory.groups.$get({ query }),
+        (body) => directoryGroupPageSchema.parse(body),
+        "the directory's groups",
       ),
     filters,
     limit,

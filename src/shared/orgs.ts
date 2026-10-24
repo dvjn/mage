@@ -1,6 +1,7 @@
-// Orgs as the API shows them: the orgs a person is in, a team org's members, groups and invites,
-// joining through an invite, and the settings owners choose for its spaces, with the bodies that
-// change them, shared by the server and the web client.
+// Orgs as the API shows them: the orgs a person is in, a team org's members, linked groups and
+// invites, the directory's people and groups to add, joining through an invite, and the settings
+// owners choose for its spaces, with the bodies that change them, shared by the server and the web
+// client.
 
 import * as z from "zod";
 
@@ -40,13 +41,22 @@ export const orgNameSchema = z.object({ name: z.string().trim().min(1).max(80) }
 // A new team org and the space to open in it.
 export const createdOrgSchema = z.object({ orgId: z.string(), spaceId: z.string() });
 
+// Where a person or group comes from: Mage itself, or the directory, which alone changes them.
+export const recordSourceSchema = z.enum(["local", "scim"]);
+
 export const orgMemberSchema = z.object({
   userId: z.string(),
   name: z.string(),
   email: z.string(),
+  // The role they have: the higher of their own and their linked groups'.
   role: orgRoleSchema,
+  // The role given to them in the org itself; null when they are in only through groups.
+  directRole: orgRoleSchema.nullable(),
+  // A linked group they are in, the first by name, when they are in any.
+  viaGroup: z.string().nullable(),
+  source: recordSourceSchema,
   joinedAt: z.iso.datetime(),
-  // How many of the org's groups they are in.
+  // How many of the org's linked groups they are in.
   groupCount: z.number().int(),
   // Why the asker may not change their role: it is theirs, or the org's last owner's.
   locked: lockSchema.nullable(),
@@ -70,10 +80,20 @@ export const pendingOrgInviteSchema = z.object({
 
 export type PendingOrgInvite = z.infer<typeof pendingOrgInviteSchema>;
 
-// One of the org's people: a member, or someone invited who has not joined yet.
+// A directory group linked to the org: everyone active in it is a member with at least its role.
+export const linkedGroupSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  role: orgRoleSchema,
+  memberCount: z.number().int(),
+  linkedAt: z.iso.datetime(),
+});
+
+// One of the org's people: a member, someone invited who has not joined yet, or a linked group.
 export const orgPersonSchema = z.discriminatedUnion("kind", [
   orgMemberSchema.extend({ kind: z.literal("member") }),
   pendingOrgInviteSchema.extend({ kind: z.literal("invite") }),
+  linkedGroupSchema.extend({ kind: z.literal("group") }),
 ]);
 
 export type OrgPerson = z.infer<typeof orgPersonSchema>;
@@ -82,8 +102,38 @@ export const orgPersonPageSchema = pageSchema(orgPersonSchema);
 
 // What the people list is narrowed by, besides its text.
 export const peopleFilterSchema = memberFilterSchema.extend({
-  status: z.enum(["member", "invited"]).optional(),
+  status: z.enum(["member", "invited", "group"]).optional(),
 });
+
+// Someone from the directory to add, with a role of their own.
+export const newOrgMemberSchema = z.object({ userId: z.string().min(1), role: orgRoleSchema });
+
+// A directory group to link, with the role it gives.
+export const newGroupLinkSchema = z.object({ groupId: z.string().min(1), role: orgRoleSchema });
+
+// A person the directory brought, and their role in the org, if any.
+export const directoryPersonSchema = z.object({
+  userId: z.string(),
+  name: z.string(),
+  email: z.string(),
+  role: orgRoleSchema.nullable(),
+});
+
+export type DirectoryPerson = z.infer<typeof directoryPersonSchema>;
+
+export const directoryPersonPageSchema = pageSchema(directoryPersonSchema);
+
+// A directory group, and the role it is linked to the org with, if any.
+export const directoryGroupSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  memberCount: z.number().int(),
+  role: orgRoleSchema.nullable(),
+});
+
+export type DirectoryGroup = z.infer<typeof directoryGroupSchema>;
+
+export const directoryGroupPageSchema = pageSchema(directoryGroupSchema);
 
 export const newOrgInviteSchema = z.object({ email: z.email().max(254), role: orgRoleSchema });
 
@@ -129,10 +179,12 @@ export const joinRefusalSchema = z.object({
   reason: z.enum(["used", "expired", "revoked", "not_found", "wrong_account"]),
 });
 
+// A group linked to the org, with the role it gives.
 export const groupSchema = z.object({
   id: z.string(),
   name: z.string(),
-  source: z.enum(["local", "scim"]),
+  source: recordSourceSchema,
+  role: orgRoleSchema,
   memberCount: z.number().int(),
   createdAt: z.iso.datetime(),
 });

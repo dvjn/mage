@@ -58,6 +58,13 @@ const auth = createAuth({
   passwordSignIn: config.passwordSignIn,
   operatorEmails: config.operatorEmails,
   oidc: config.oidc,
+  // The directory's changes settle the orgs the person is in, or could be through a group.
+  scim: config.scimToken
+    ? {
+        token: config.scimToken,
+        changed: (userId, active) => orgs.directoryChanged(userId, active),
+      }
+    : null,
 });
 
 // CREDENTIAL_KEY is key version 1.
@@ -155,6 +162,20 @@ const worker = createRunWorker({
   logger,
 });
 
+const orgs = createOrgs({
+  directory,
+  invites: createOrgInviteStore(db),
+  spaces,
+  spaceStore,
+  threads: threadStore,
+  runs: runStore,
+  settings: settingStore,
+  accessChanged,
+  baseUrl: config.baseUrl,
+  teamOrgs: config.teamOrgs,
+  operatorEmails: config.operatorEmails,
+});
+
 const app = createApp({
   handleAuth: auth.handler,
   identity: createIdentity(auth, db),
@@ -179,19 +200,7 @@ const app = createApp({
       titles: createTitles({ models, threads: threadStore, log, logger }),
     }),
   }),
-  orgs: createOrgs({
-    directory,
-    invites: createOrgInviteStore(db),
-    spaces,
-    spaceStore,
-    threads: threadStore,
-    runs: runStore,
-    settings: settingStore,
-    accessChanged,
-    baseUrl: config.baseUrl,
-    teamOrgs: config.teamOrgs,
-    operatorEmails: config.operatorEmails,
-  }),
+  orgs,
   groups: createGroups({ directory }),
   guests: createGuests({
     access,
