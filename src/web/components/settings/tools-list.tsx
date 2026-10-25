@@ -1,9 +1,10 @@
 // The agent's tools in settings, a card for each source of toolsets (built in, MCP servers) and in
-// it one collapsible row per toolset with how many of its tools are allowed, ask or are blocked. Inside, its tools are split under plain read-only and interactive
-// headings. Each heading's icons set all its tools at once; each tool is allowed, asks every time,
-// or is blocked. For the org, only its owners change them; for a space, a tool can only be made
-// stricter than the org has it. Which toolsets are open is remembered in this browser for the
-// signed-in person.
+// it one collapsible row per toolset with how many of its tools are allowed, ask or are blocked.
+// Inside, its tools are split under plain read-only and interactive headings. Each heading's icons
+// set all its tools at once; each tool is allowed, asks every time, or is blocked. For the org,
+// only its owners change them; for a space, a tool can only be made stricter than the org has it,
+// but for the space's own toolsets. Which toolsets are open is remembered in this browser for the
+// signed-in person. The toolsets an MCP server card shows are handed to it as they are read.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
@@ -40,9 +41,9 @@ import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { meQuery } from "@/web/lib/queries";
 
-const orgToolsKey = ["org-tools"];
+export const orgToolsKey = ["org-tools"];
 
-function spaceToolsKey(spaceId: string) {
+export function spaceToolsKey(spaceId: string) {
   return ["spaces", spaceId, "tools"];
 }
 
@@ -138,7 +139,7 @@ function storedSections(key: string): Record<string, boolean> {
   }
 }
 
-type Change = (toolIds: string[], mode: ToolMode) => void;
+export type Change = (toolIds: string[], mode: ToolMode) => void;
 
 interface ToolsProps {
   toolsets: ToolsetSetting[];
@@ -154,7 +155,12 @@ function Toolsets({ toolsets, scope, canChange, onChange }: ToolsProps) {
     .map((source) => ({ source, toolsets: toolsets.filter((t) => t.source === source) }))
     .filter((group) => group.toolsets.length > 0);
   return sources.map(({ source, toolsets: inSource }) => (
-    <SettingsCard key={source} title={SOURCES[source]}>
+    <SettingsCard
+      key={source}
+      title={
+        scope === "space" && source === "mcp" ? "The organization's MCP servers" : SOURCES[source]
+      }
+    >
       <div className="-my-3 flex flex-col divide-y">
         {inSource.map((toolset) => (
           <ToolsetSection
@@ -173,7 +179,7 @@ function Toolsets({ toolsets, scope, canChange, onChange }: ToolsProps) {
 }
 
 // How many of the tools are in each mode: an icon and a number for each mode some tool is in.
-function ModeCounts({ tools }: { tools: ToolSetting[] }) {
+export function ModeCounts({ tools }: { tools: ToolSetting[] }) {
   const counts = MODES.map((mode) => ({
     mode,
     count: tools.filter((tool) => tool.mode === mode.value).length,
@@ -211,28 +217,6 @@ function ToolsetSection({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 } & Omit<ToolsProps, "toolsets">) {
-  const [filter, setFilter] = useState("");
-  const needle = filter.trim().toLowerCase();
-  const shown = toolset.tools.filter((tool) =>
-    [labelOf(tool), tool.definition.name, tool.definition.description ?? ""].some((text) =>
-      text.toLowerCase().includes(needle),
-    ),
-  );
-  const readOnly = (tool: ToolSetting) => tool.definition.annotations?.readOnlyHint === true;
-  const groups = [
-    {
-      id: "read-only",
-      name: "Read-only tools",
-      heading: "Read-only",
-      tools: toolset.tools.filter(readOnly),
-    },
-    {
-      id: "interactive",
-      name: "Interactive tools",
-      heading: "Interactive",
-      tools: toolset.tools.filter((tool) => !readOnly(tool)),
-    },
-  ].filter((group) => group.tools.length > 0);
   const count = toolset.tools.length;
   return (
     <Collapsible
@@ -255,38 +239,76 @@ function ToolsetSection({
           </span>
         </CollapsibleTrigger>
       </h2>
-      <CollapsibleContent className="mb-3 ml-[7px] flex flex-col gap-1 border-l-2 pl-3 sm:pl-[15px]">
-        {count > FILTER_FROM && (
-          <InputGroup className="mb-1">
-            <InputGroupInput
-              type="search"
-              placeholder="Filter tools"
-              aria-label={`Filter ${toolset.title} tools`}
-              value={filter}
-              onChange={(event) => setFilter(event.target.value)}
-            />
-            <InputGroupAddon>
-              <SearchIcon />
-            </InputGroupAddon>
-          </InputGroup>
-        )}
-        {groups.map((group) => (
-          <ToolGroup
-            key={group.id}
-            name={group.name}
-            heading={group.heading}
-            tools={group.tools}
-            shown={group.tools.filter((tool) => shown.includes(tool))}
-            scope={scope}
-            canChange={canChange}
-            onChange={onChange}
-          />
-        ))}
-        {needle && shown.length === 0 && (
-          <p className="py-2 text-sm text-muted-foreground">No matches</p>
-        )}
+      <CollapsibleContent className="mb-3 ml-[7px] border-l-2 pl-3 sm:pl-[15px]">
+        <ToolsetTools toolset={toolset} scope={scope} canChange={canChange} onChange={onChange} />
       </CollapsibleContent>
     </Collapsible>
+  );
+}
+
+// A toolset's tools under their read-only and interactive headings, with a filter for many.
+export function ToolsetTools({
+  toolset,
+  scope,
+  canChange,
+  onChange,
+}: { toolset: ToolsetSetting } & Omit<ToolsProps, "toolsets">) {
+  const [filter, setFilter] = useState("");
+  const needle = filter.trim().toLowerCase();
+  const shown = toolset.tools.filter((tool) =>
+    [labelOf(tool), tool.definition.name, tool.definition.description ?? ""].some((text) =>
+      text.toLowerCase().includes(needle),
+    ),
+  );
+  const readOnly = (tool: ToolSetting) => tool.definition.annotations?.readOnlyHint === true;
+  const groups = [
+    {
+      id: "read-only",
+      name: "Read-only tools",
+      heading: "Read-only",
+      tools: toolset.tools.filter(readOnly),
+    },
+    {
+      id: "interactive",
+      name: "Interactive tools",
+      heading: "Interactive",
+      tools: toolset.tools.filter((tool) => !readOnly(tool)),
+    },
+  ].filter((group) => group.tools.length > 0);
+  // A space's own toolsets are not the org's to bound.
+  const bounded = scope === "space" && toolset.scope === "org" ? "space" : "org";
+  return (
+    <div className="flex flex-col gap-1">
+      {toolset.tools.length > FILTER_FROM && (
+        <InputGroup className="mb-1">
+          <InputGroupInput
+            type="search"
+            placeholder="Filter tools"
+            aria-label={`Filter ${toolset.title} tools`}
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+          />
+          <InputGroupAddon>
+            <SearchIcon />
+          </InputGroupAddon>
+        </InputGroup>
+      )}
+      {groups.map((group) => (
+        <ToolGroup
+          key={group.id}
+          name={group.name}
+          heading={group.heading}
+          tools={group.tools}
+          shown={group.tools.filter((tool) => shown.includes(tool))}
+          scope={bounded}
+          canChange={canChange}
+          onChange={onChange}
+        />
+      ))}
+      {needle && shown.length === 0 && (
+        <p className="py-2 text-sm text-muted-foreground">No matches</p>
+      )}
+    </div>
   );
 }
 
@@ -485,7 +507,8 @@ function ToolsetsState({
   );
 }
 
-export function OrgToolsList({ canManage }: { canManage: boolean }) {
+// The org's toolsets as they are read, and changing their tools' modes.
+export function useOrgTools() {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string>();
   const tools = useQuery({
@@ -508,21 +531,15 @@ export function OrgToolsList({ canManage }: { canManage: boolean }) {
     await queryClient.invalidateQueries({ queryKey: ["spaces"] });
   }
 
-  return (
-    <ToolsetsState state={tools} error={error}>
-      {tools.data && (
-        <Toolsets
-          toolsets={tools.data}
-          scope="org"
-          canChange={canManage}
-          onChange={(toolIds, mode) => void change(toolIds, mode)}
-        />
-      )}
-    </ToolsetsState>
-  );
+  return {
+    tools,
+    error,
+    change: (toolIds: string[], mode: ToolMode) => void change(toolIds, mode),
+  };
 }
 
-export function SpaceToolsList({ spaceId }: { spaceId: string }) {
+// The space's toolsets as they are read, and changing their tools' modes.
+export function useSpaceTools(spaceId: string) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string>();
   const tools = useQuery({
@@ -550,15 +567,62 @@ export function SpaceToolsList({ spaceId }: { spaceId: string }) {
     );
   }
 
+  return {
+    tools,
+    error,
+    change: (toolIds: string[], mode: ToolMode) => void change(toolIds, mode),
+  };
+}
+
+// The org's built-in toolsets in their cards; its MCP servers' toolsets go to `mcp`.
+export function OrgToolsList({
+  canManage,
+  mcp,
+}: {
+  canManage: boolean;
+  mcp: (toolsets: ToolsetSetting[]) => ReactNode;
+}) {
+  const { tools, error, change } = useOrgTools();
   return (
     <ToolsetsState state={tools} error={error}>
       {tools.data && (
-        <Toolsets
-          toolsets={tools.data}
-          scope="space"
-          canChange
-          onChange={(toolIds, mode) => void change(toolIds, mode)}
-        />
+        <>
+          <Toolsets
+            toolsets={tools.data.filter((toolset) => toolset.source !== "mcp")}
+            scope="org"
+            canChange={canManage}
+            onChange={change}
+          />
+          {mcp(tools.data.filter((toolset) => toolset.source === "mcp"))}
+        </>
+      )}
+    </ToolsetsState>
+  );
+}
+
+// The space's toolsets the org has, in their cards; the space's own go to `own`.
+export function SpaceToolsList({
+  spaceId,
+  own,
+}: {
+  spaceId: string;
+  own: (toolsets: ToolsetSetting[]) => ReactNode;
+}) {
+  const { tools, error, change } = useSpaceTools(spaceId);
+  return (
+    <ToolsetsState state={tools} error={error}>
+      {tools.data && (
+        <>
+          <Toolsets
+            toolsets={tools.data.filter(
+              (toolset) => toolset.scope === "org" && toolset.tools.length > 0,
+            )}
+            scope="space"
+            canChange
+            onChange={change}
+          />
+          {own(tools.data.filter((toolset) => toolset.scope === "space"))}
+        </>
       )}
     </ToolsetsState>
   );

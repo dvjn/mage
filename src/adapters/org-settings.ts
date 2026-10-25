@@ -27,6 +27,7 @@ export function createOrgSettingStore(db: Db): OrgSettingStore {
           defaultEffort: orgSetting.defaultEffort,
           spaceCreation: orgSetting.spaceCreation,
           memberSpaces: orgSetting.memberSpaces,
+          spaceMcpServers: orgSetting.spaceMcpServers,
         })
         .from(orgSetting)
         .where(eq(orgSetting.organizationId, orgId))
@@ -37,6 +38,7 @@ export function createOrgSettingStore(db: Db): OrgSettingStore {
         defaultEffort: row?.defaultEffort ?? null,
         spaceCreation: row?.spaceCreation ?? "members",
         memberSpaces: row?.memberSpaces ?? true,
+        spaceMcpServers: row?.spaceMcpServers ?? true,
       };
     },
 
@@ -54,6 +56,10 @@ export function createOrgSettingStore(db: Db): OrgSettingStore {
 
     setTeamSettings(orgId, changes) {
       set(orgId, changes);
+    },
+
+    setSpaceMcpServers(orgId, allowed) {
+      set(orgId, { spaceMcpServers: allowed });
     },
   };
 }

@@ -19,6 +19,7 @@ import { ServiceError } from "@/services/errors.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Groups } from "@/services/groups.ts";
 import type { Guests } from "@/services/guests.ts";
+import type { McpServers } from "@/services/mcp-servers.ts";
 import type { ConnectionModel, Models } from "@/services/models.ts";
 import type { Orgs } from "@/services/orgs.ts";
 import type { Spaces, SpaceView } from "@/services/spaces.ts";
@@ -34,6 +35,12 @@ import {
 import { type FolderSummary, folderNameSchema } from "@/shared/folders.ts";
 import { connectionInputSchema, splitValues } from "@/shared/hosts.ts";
 import { acceptInviteSchema, newInviteSchema } from "@/shared/guests.ts";
+import {
+  mcpServerChangeSchema,
+  type McpServerSummary,
+  newMcpServerSchema,
+  spaceServersChangeSchema,
+} from "@/shared/mcp.ts";
 import type { Me } from "@/shared/me.ts";
 import type { SignInOptions } from "@/shared/sign-in.ts";
 import {
@@ -101,6 +108,8 @@ export interface AppOptions {
   guests: Guests;
   // Decisions on the agent's tool calls, and the tools orgs and spaces turn on and off.
   tools: ToolDecisions;
+  // The MCP servers orgs and spaces add, and authorizing Mage with them.
+  mcp: McpServers;
   // The orgs people are in, their members and invites, and creating team orgs.
   orgs: Orgs;
   // A team org's groups, as a directory brings them.
@@ -237,6 +246,29 @@ const pendingChange = jsonBody(pendingChangeSchema, "Give a text, or a mode of s
 const retry = jsonBody(retrySchema, "runId is required");
 const threadRead = jsonBody(threadReadSchema, "seq is required");
 const toolDecision = jsonBody(toolDecisionSchema, "allow is required; scope is once or for_now");
+// A body that must match the schema; otherwise 400 with what is wrong first.
+function checkedBody<T extends z.ZodType>(schema: T) {
+  return validator("json", (value, c) => {
+    const parsed = schema.safeParse(value);
+    if (!parsed.success) {
+      return c.json({ error: parsed.error.issues[0]?.message ?? "The body is not valid" }, 400);
+    }
+    return parsed.data as z.output<T>;
+  });
+}
+
+const newMcpServer = checkedBody(newMcpServerSchema);
+const mcpServerChange = checkedBody(mcpServerChangeSchema);
+const spaceServersChange = jsonBody(spaceServersChangeSchema, "allowed is true or false");
+
+// Where the browser goes back to once an authorization finishes: the server's page.
+function mcpServerPage(server: Pick<McpServerSummary, "id" | "spaceId"> | null) {
+  if (!server) return "/org/tools";
+  return server.spaceId
+    ? `/s/${server.spaceId}/settings/tools/mcp/${server.id}`
+    : `/org/tools/mcp/${server.id}`;
+}
+
 const toolModeChange = jsonBody(
   toolModeChangeSchema,
   "Give toolIds and a mode of allow, ask or block",
@@ -364,8 +396,19 @@ const eventCursor = validator("query", (value: { after?: string }, c) => {
 
 // The typed API routes, mounted under /api.
 function createApi(options: AppOptions) {
-  const { identity, connections, models, spaces, folders, threads, guests, orgs, groups, tools } =
-    options;
+  const {
+    identity,
+    connections,
+    models,
+    spaces,
+    folders,
+    threads,
+    guests,
+    orgs,
+    groups,
+    tools,
+    mcp,
+  } = options;
   return (
     new Hono<ApiEnv>()
       .get("/sign-in-options", (c) => c.json(options.signInOptions, 200))
@@ -373,6 +416,18 @@ function createApi(options: AppOptions) {
       .get("/org-invites/:token", async (c) => {
         const account = await identity.resolve(c.req.raw.headers, null);
         return c.json(orgs.preview(c.req.param("token"), account && accountOf(account)), 200);
+      })
+      // Where an MCP server's authorization server sends the browser back, for whoever began it.
+      .get("/mcp/oauth/callback", async (c) => {
+        const account = await identity.resolve(c.req.raw.headers, null);
+        const { state, code, iss, error } = c.req.query();
+        const { server } = await mcp.finishAuthorization(account?.userId ?? null, {
+          state,
+          code,
+          iss,
+          error,
+        });
+        return c.redirect(mcpServerPage(server), 302);
       })
       .use("/v1/*", async (c, next) => {
         const named = c.req.header(ORG_HEADER) ?? c.req.query("org") ?? null;
@@ -828,6 +883,41 @@ function createApi(options: AppOptions) {
         const principal = signedIn(c.var.principal);
         tools.setSpaceTools(principal, c.req.param("id"), c.req.valid("json"));
         return c.json(tools.spaceTools(principal, c.req.param("id")), 200);
+      })
+      .get("/v1/org/mcp-servers", (c) => {
+        return c.json(mcp.orgServers(signedIn(c.var.principal)), 200);
+      })
+      .post("/v1/org/mcp-servers", newMcpServer, async (c) => {
+        return c.json(await mcp.addToOrg(signedIn(c.var.principal), c.req.valid("json")), 200);
+      })
+      .put("/v1/org/mcp-servers/space-servers", spaceServersChange, (c) => {
+        const principal = signedIn(c.var.principal);
+        mcp.setSpaceServers(principal, c.req.valid("json").allowed);
+        return c.json(mcp.orgServers(principal), 200);
+      })
+      .get("/v1/spaces/:id/mcp-servers", (c) => {
+        return c.json(mcp.spaceServers(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .post("/v1/spaces/:id/mcp-servers", newMcpServer, async (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(await mcp.addToSpace(principal, c.req.param("id"), c.req.valid("json")), 200);
+      })
+      .get("/v1/mcp-servers/:id", (c) => {
+        return c.json(mcp.get(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .patch("/v1/mcp-servers/:id", mcpServerChange, async (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(await mcp.change(principal, c.req.param("id"), c.req.valid("json")), 200);
+      })
+      .post("/v1/mcp-servers/:id/refresh", async (c) => {
+        return c.json(await mcp.refresh(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .post("/v1/mcp-servers/:id/authorize", async (c) => {
+        return c.json(await mcp.authorize(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .delete("/v1/mcp-servers/:id", (c) => {
+        mcp.remove(signedIn(c.var.principal), c.req.param("id"));
+        return c.json({ ok: true }, 200);
       })
       .post("/v1/threads/:id/retry", retry, (c) => {
         const { runId } = c.req.valid("json");

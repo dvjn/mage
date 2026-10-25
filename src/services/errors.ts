@@ -2,7 +2,7 @@
 // page explains in its own words, a reason it can tell apart.
 
 export class ServiceError extends Error {
-  readonly status: 400 | 403 | 404 | 409 | 410;
+  readonly status: 400 | 403 | 404 | 409 | 410 | 502;
   readonly reason?: string;
 
   constructor(status: ServiceError["status"], message: string, reason?: string) {

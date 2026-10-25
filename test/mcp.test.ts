@@ -1,0 +1,495 @@
+import { eq } from "drizzle-orm";
+import { describe, expect, it } from "vite-plus/test";
+
+import * as schema from "@/adapters/schema.ts";
+import { mergeHeaders, outputOf, riskOfAnnotations, secretHint } from "@/services/mcp-servers.ts";
+import { mcpHeadersInputSchema, type McpServerSummary } from "@/shared/mcp.ts";
+import type { ToolsetSetting } from "@/shared/tools.ts";
+import { transcriptOf } from "@/shared/transcript.ts";
+
+import { MCP_API_KEY, MCP_BEARER_TOKEN, mcpStandIn } from "../e2e/mcp-server.ts";
+import { agentThread } from "./agent-thread.ts";
+import { MCP_ORIGIN, setup } from "./workspace.ts";
+
+const bearer = [{ name: "Authorization", value: `Bearer ${MCP_BEARER_TOKEN}` }];
+
+describe("headers", () => {
+  it("are named once each in lower case, on one line, never ones the transport sets", () => {
+    expect(mcpHeadersInputSchema.parse([{ name: "X-Api-Key", value: "k" }])).toEqual([
+      { name: "x-api-key", value: "k" },
+    ]);
+    const refused = (headers: { name: string; value: string | null }[]) =>
+      mcpHeadersInputSchema.safeParse(headers).error?.issues[0]?.message;
+    expect(
+      refused([
+        { name: "X-Key", value: "a" },
+        { name: "x-key", value: "b" },
+      ]),
+    ).toBe("Give each header once");
+    expect(refused([{ name: "Mcp-Session-Id", value: "a" }])).toBe(
+      "Mage sets mcp-session-id itself",
+    );
+    expect(refused([{ name: "bad name", value: "a" }])).toBe("bad name is not a header name");
+    expect(refused([{ name: "x-key", value: "a\r\nb" }])).toBe("Header values are one line");
+    expect(refused([{ name: "Authorization", value: "Bearer t" }])).toBeUndefined();
+  });
+
+  it("keep a stored value where none is given, and need one for a new name", () => {
+    const stored = { "x-api-key": "old-secret-value" };
+    expect(mergeHeaders([{ name: "x-api-key", value: null }], stored)).toEqual(stored);
+    expect(mergeHeaders([{ name: "x-api-key", value: "new" }], stored)).toEqual({
+      "x-api-key": "new",
+    });
+    expect(() => mergeHeaders([{ name: "x-other", value: null }], stored)).toThrow(
+      "Give a value for x-other",
+    );
+  });
+
+  it("show only the end of a long value", () => {
+    expect(secretHint("Bearer mcp-journey-token")).toBe("…oken");
+    expect(secretHint("short")).toBe("••••");
+  });
+});
+
+describe("a tool's result", () => {
+  it("keeps structured content, else the text, and an error as its text", () => {
+    expect(
+      outputOf({ content: [{ type: "text", text: "{}" }], structuredContent: { id: "n" } }),
+    ).toEqual({ ok: true, value: { id: "n" } });
+    expect(
+      outputOf({
+        content: [
+          { type: "text", text: "Here" },
+          { type: "image", mimeType: "image/png", data: "…" },
+          { type: "resource_link", name: "Spec", uri: "file:///spec.md" },
+        ],
+      }),
+    ).toEqual({ ok: true, value: "Here\n[image image/png]\nSpec file:///spec.md" });
+    expect(outputOf({ content: [{ type: "text", text: "No note" }], isError: true })).toEqual({
+      ok: false,
+      error: "No note",
+    });
+  });
+
+  it("asks each time for a tool its server marks destructive, and not for a read-only one", () => {
+    expect(riskOfAnnotations({ destructiveHint: true })).toBe("ask");
+    expect(riskOfAnnotations({ readOnlyHint: true, destructiveHint: true })).toBe("normal");
+    expect(riskOfAnnotations({ destructiveHint: false })).toBe("normal");
+    expect(riskOfAnnotations(undefined)).toBe("normal");
+  });
+});
+
+// Ada's org, with helpers to add servers and read them.
+async function orgWithServers() {
+  const workspace = setup();
+  const ada = await workspace.signUp("Ada Lovelace", "ada@example.com");
+  async function add(body: object, path = "/org/mcp-servers", who = ada) {
+    const res = await workspace.api("POST", path, who.cookie, body);
+    return { status: res.status, body: (await res.json()) as McpServerSummary & { error: string } };
+  }
+  async function orgTools(who = ada) {
+    const res = await workspace.api("GET", "/org/tools", who.cookie);
+    expect(res.status).toBe(200);
+    return (await res.json()) as ToolsetSetting[];
+  }
+  async function spaceTools(spaceId: string, who = ada) {
+    const res = await workspace.api("GET", `/spaces/${spaceId}/tools`, who.cookie);
+    expect(res.status).toBe(200);
+    return (await res.json()) as ToolsetSetting[];
+  }
+  return { ...workspace, ada, add, orgTools, spaceTools };
+}
+
+describe("an org's MCP servers", () => {
+  it("list their tools over Streamable HTTP with headers that are never given back", async () => {
+    const { ada, add, orgTools, api, db, mcpNetwork } = await orgWithServers();
+
+    const { status, body } = await add({
+      name: "Notes",
+      url: `${MCP_ORIGIN}/headers/mcp`,
+      auth: { kind: "headers", headers: bearer },
+    });
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      name: "Notes",
+      status: "ok",
+      error: null,
+      transport: "streamable-http",
+      serverInfo: { name: "Notes", version: "1.0.0" },
+      toolCount: 3,
+      auth: { kind: "headers", headers: [{ name: "authorization", hint: "…oken" }] },
+    });
+    const listed = await api("GET", "/org/mcp-servers", ada.cookie);
+    expect(JSON.stringify(await listed.json())).not.toContain(MCP_BEARER_TOKEN);
+    const sealed = db.select().from(schema.mcpCredential).all();
+    expect(sealed).toHaveLength(1);
+    expect(sealed[0]!.sealed.toString("latin1")).not.toContain(MCP_BEARER_TOKEN);
+    expect(mcpNetwork.requests.every((req) => req.headers.get("authorization"))).toBe(true);
+
+    const notes = (await orgTools()).find((toolset) => toolset.id === `mcp:${body.id}`);
+    expect(notes).toMatchObject({ title: "Notes", source: "mcp", scope: "org" });
+    expect(notes?.tools.map((tool) => [tool.id, tool.mode, tool.definition.title])).toEqual([
+      [`mcp:${body.id}/echo`, "allow", "Echo"],
+      [`mcp:${body.id}/add_note`, "allow", "Add note"],
+      [`mcp:${body.id}/delete_note`, "allow", "Delete note"],
+    ]);
+    expect(notes?.tools[0]?.definition.annotations).toEqual({ readOnlyHint: true });
+  });
+
+  it("say when the server does not take the headers, and read it again once they change", async () => {
+    const { ada, add, api } = await orgWithServers();
+    const { body } = await add({
+      name: "Notes",
+      url: `${MCP_ORIGIN}/headers/mcp`,
+      auth: { kind: "headers", headers: [{ name: "X-Api-Key", value: "wrong-key-value" }] },
+    });
+    expect(body).toMatchObject({
+      status: "error",
+      error: "The server did not accept the headers (HTTP 401).",
+      toolCount: 0,
+    });
+
+    const res = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {
+      headers: [{ name: "x-api-key", value: MCP_API_KEY }],
+    });
+    expect(await res.json()).toMatchObject({ status: "ok", error: null, toolCount: 3 });
+    const kept = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {
+      name: "Team notes",
+      headers: [{ name: "x-api-key", value: null }],
+    });
+    expect(await kept.json()).toMatchObject({ name: "Team notes", status: "ok" });
+  });
+
+  it("fall back to HTTP+SSE for a server that only speaks it", async () => {
+    const { add } = await orgWithServers();
+    const { body } = await add({ name: "Old", url: `${MCP_ORIGIN}/sse`, auth: { kind: "none" } });
+    expect(body).toMatchObject({ status: "ok", transport: "sse", toolCount: 3 });
+  });
+
+  it("keep their tools while the server is down, and say why until it answers", async () => {
+    const { ada, add, api, mcpNetwork, orgTools } = await orgWithServers();
+    const { body } = await add({ name: "Open", url: `${MCP_ORIGIN}/mcp`, auth: { kind: "none" } });
+    mcpNetwork.up = false;
+
+    const down = await api("POST", `/mcp-servers/${body.id}/refresh`, ada.cookie);
+    expect(await down.json()).toMatchObject({
+      status: "error",
+      error: "Could not reach localhost:4791 (ECONNREFUSED).",
+      toolCount: 3,
+    });
+    expect((await orgTools()).find((t) => t.id === `mcp:${body.id}`)?.tools).toHaveLength(3);
+
+    mcpNetwork.up = true;
+    const back = await api("POST", `/mcp-servers/${body.id}/refresh`, ada.cookie);
+    expect(await back.json()).toMatchObject({ status: "ok", error: null });
+  });
+
+  it("refuse addresses that are not http(s), and only the org's owners manage them", async () => {
+    const { add, signUp, join, yourSpace, ada, api } = await orgWithServers();
+    const bad = await add({ name: "X", url: "file:///etc/passwd", auth: { kind: "none" } });
+    expect(bad).toMatchObject({ status: 400, body: { error: "Give an http or https address" } });
+
+    const { body } = await add({ name: "Open", url: `${MCP_ORIGIN}/mcp`, auth: { kind: "none" } });
+    const space = await yourSpace(ada.cookie);
+    const grace = join(await signUp("Grace Hopper", "grace@example.com"), space.id, "messager");
+    const refused = await add(
+      { name: "Mine", url: `${MCP_ORIGIN}/mcp`, auth: { kind: "none" } },
+      "/org/mcp-servers",
+      grace,
+    );
+    expect(refused.status).toBe(403);
+    expect((await api("DELETE", `/mcp-servers/${body.id}`, grace.cookie)).status).toBe(403);
+    expect((await api("GET", `/mcp-servers/${body.id}`, grace.cookie)).status).toBe(200);
+    expect((await api("DELETE", `/mcp-servers/${body.id}`, ada.cookie)).status).toBe(200);
+    expect((await api("GET", `/mcp-servers/${body.id}`, ada.cookie)).status).toBe(404);
+  });
+});
+
+// Follows the authorization server's page back to Mage's callback, as the browser would.
+async function authorizeInBrowser(
+  workspace: Awaited<ReturnType<typeof orgWithServers>>,
+  serverId: string,
+  who = workspace.ada,
+) {
+  const res = await workspace.api("POST", `/mcp-servers/${serverId}/authorize`, who.cookie);
+  const started = (await res.json()) as { status: string; url: string };
+  expect(started.status).toBe("redirect");
+  const page = await workspace.mcpNetwork.handle(new Request(started.url));
+  expect(page.status).toBe(302);
+  const back = new URL(page.headers.get("location")!);
+  return {
+    started: new URL(started.url),
+    callback: await workspace.app.request(`${back.pathname}${back.search}`, {
+      headers: { Cookie: who.cookie },
+    }),
+  };
+}
+
+describe("OAuth", () => {
+  it("registers Mage, authorizes it with PKCE for the server, and keeps the tokens sealed", async () => {
+    const workspace = await orgWithServers();
+    const { add, db } = workspace;
+    const { body } = await add({
+      name: "Notes",
+      url: `${MCP_ORIGIN}/oauth/mcp`,
+      auth: { kind: "oauth", clientId: null, clientSecret: null },
+    });
+    expect(body).toMatchObject({
+      status: "needs_auth",
+      auth: { kind: "oauth", authorized: false, registration: null },
+    });
+
+    const { started, callback } = await authorizeInBrowser(workspace, body.id);
+    expect(started.origin + started.pathname).toBe(`${MCP_ORIGIN}/authorize`);
+    expect(started.searchParams.get("code_challenge_method")).toBe("S256");
+    expect(started.searchParams.get("resource")).toBe(`${MCP_ORIGIN}/oauth/mcp`);
+    expect(started.searchParams.get("redirect_uri")).toBe(
+      "http://localhost:4783/api/mcp/oauth/callback",
+    );
+    expect(callback.status).toBe(302);
+    expect(callback.headers.get("location")).toBe(`/org/tools/mcp/${body.id}`);
+
+    const res = await workspace.api("GET", `/mcp-servers/${body.id}`, workspace.ada.cookie);
+    const server = (await res.json()) as McpServerSummary;
+    expect(server).toMatchObject({
+      status: "ok",
+      toolCount: 3,
+      auth: { kind: "oauth", authorized: true, registration: "dynamic", issuer: MCP_ORIGIN },
+    });
+    expect(server.auth.kind === "oauth" && server.auth.clientId).toMatch(/^client-/);
+    const sealed = db.select().from(schema.mcpCredential).all()[0]!.sealed.toString("latin1");
+    expect(sealed).not.toContain("access_token");
+  });
+
+  it("ignores a callback for someone else, and asks to reconnect once the tokens are revoked", async () => {
+    const workspace = await orgWithServers();
+    const { add, api, ada, mcpNetwork, signUp } = workspace;
+    const { body } = await add({
+      name: "Notes",
+      url: `${MCP_ORIGIN}/oauth/mcp`,
+      auth: { kind: "oauth", clientId: null, clientSecret: null },
+    });
+    const started = (await (
+      await api("POST", `/mcp-servers/${body.id}/authorize`, ada.cookie)
+    ).json()) as { url: string };
+    const page = await mcpNetwork.handle(new Request(started.url));
+    const back = new URL(page.headers.get("location")!);
+    const eve = await signUp("Eve", "eve@example.com");
+    const theirs = await workspace.app.request(`${back.pathname}${back.search}`, {
+      headers: { Cookie: eve.cookie },
+    });
+    expect(theirs.headers.get("location")).toBe("/org/tools");
+    const still = await api("GET", `/mcp-servers/${body.id}`, ada.cookie);
+    expect(await still.json()).toMatchObject({ status: "needs_auth" });
+
+    await authorizeInBrowser(workspace, body.id);
+    await mcpNetwork.handle(new Request(`${MCP_ORIGIN}/control/revoke`, { method: "POST" }));
+    const refreshed = await api("POST", `/mcp-servers/${body.id}/refresh`, ada.cookie);
+    expect(await refreshed.json()).toMatchObject({
+      status: "needs_auth",
+      error: "The server needs Mage authorized again.",
+      toolCount: 3,
+    });
+    const again = await authorizeInBrowser(workspace, body.id);
+    expect(again.callback.status).toBe(302);
+    const ok = await api("GET", `/mcp-servers/${body.id}`, ada.cookie);
+    expect(await ok.json()).toMatchObject({ status: "ok", error: null });
+  });
+
+  it("uses a client people entered where the server registers none, and says so without one", async () => {
+    const workspace = await orgWithServers();
+    workspace.mcpNetwork.handle = mcpStandIn({
+      origin: MCP_ORIGIN,
+      registration: false,
+      clients: [{ id: "mage-app", secret: "app-secret-0123456789" }],
+    });
+    const { body: bare } = await workspace.add({
+      name: "Bare",
+      url: `${MCP_ORIGIN}/oauth/mcp`,
+      auth: { kind: "oauth", clientId: null, clientSecret: null },
+    });
+    const refused = await workspace.api(
+      "POST",
+      `/mcp-servers/${bare.id}/authorize`,
+      workspace.ada.cookie,
+    );
+    expect(refused.status).toBe(502);
+    expect(((await refused.json()) as { error: string }).error).toMatch(/registration/i);
+
+    const { body } = await workspace.add({
+      name: "Notes",
+      url: `${MCP_ORIGIN}/oauth/mcp`,
+      auth: { kind: "oauth", clientId: "mage-app", clientSecret: "app-secret-0123456789" },
+    });
+    const { started } = await authorizeInBrowser(workspace, body.id);
+    expect(started.searchParams.get("client_id")).toBe("mage-app");
+    const res = await workspace.api("GET", `/mcp-servers/${body.id}`, workspace.ada.cookie);
+    const server = await res.json();
+    expect(server).toMatchObject({
+      status: "ok",
+      auth: { kind: "oauth", clientId: "mage-app", registration: "manual", authorized: true },
+    });
+    expect(JSON.stringify(server)).not.toContain("app-secret");
+  });
+});
+
+describe("a space's MCP servers", () => {
+  it("are added by its managers, for its threads alone, while the org lets spaces have them", async () => {
+    const workspace = await orgWithServers();
+    const { ada, add, api, createSpace, join, signUp, orgTools, spaceTools, yourSpace } = workspace;
+    const own = await yourSpace(ada.cookie);
+    const lab = await createSpace(ada.cookie, "Lab");
+    const grace = join(await signUp("Grace Hopper", "grace@example.com"), lab.id, "owner");
+    const alan = join(await signUp("Alan Turing", "alan@example.com"), lab.id, "messager");
+    const server = { name: "Lab notes", url: `${MCP_ORIGIN}/mcp`, auth: { kind: "none" } };
+
+    expect((await add(server, `/spaces/${lab.id}/mcp-servers`, alan)).status).toBe(403);
+    const { status, body } = await add(server, `/spaces/${lab.id}/mcp-servers`, grace);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ spaceId: lab.id, status: "ok", toolCount: 3 });
+
+    const inLab = (await spaceTools(lab.id)).find((t) => t.id === `mcp:${body.id}`);
+    expect(inLab).toMatchObject({ scope: "space", title: "Lab notes" });
+    expect(inLab?.tools.map((tool) => [tool.orgMode, tool.mode])).toEqual([
+      ["allow", "allow"],
+      ["allow", "allow"],
+      ["allow", "allow"],
+    ]);
+    expect((await spaceTools(own.id)).some((t) => t.id === `mcp:${body.id}`)).toBe(false);
+    expect((await orgTools()).some((t) => t.id === `mcp:${body.id}`)).toBe(false);
+    const listed = await api("GET", `/spaces/${lab.id}/mcp-servers`, grace.cookie);
+    expect(await listed.json()).toMatchObject({ allowed: true, servers: [{ id: body.id }] });
+
+    // A space sets its own servers' tools as it likes.
+    const set = await api("PATCH", `/spaces/${lab.id}/tools`, grace.cookie, {
+      toolIds: [`mcp:${body.id}/add_note`],
+      mode: "ask",
+    });
+    expect(set.status).toBe(200);
+    const unknown = await api("PATCH", `/spaces/${own.id}/tools`, ada.cookie, {
+      toolIds: [`mcp:${body.id}/add_note`],
+      mode: "ask",
+    });
+    expect(unknown.status).toBe(404);
+
+    const off = await api("PUT", "/org/mcp-servers/space-servers", ada.cookie, { allowed: false });
+    expect(await off.json()).toMatchObject({ spaceServers: false });
+    expect((await spaceTools(lab.id)).some((t) => t.id === `mcp:${body.id}`)).toBe(false);
+    const again = await add(server, `/spaces/${lab.id}/mcp-servers`, grace);
+    expect(again).toMatchObject({
+      status: 403,
+      body: { error: "The organization does not let spaces add MCP servers" },
+    });
+    const policy = await api("PUT", "/org/mcp-servers/space-servers", grace.cookie, {
+      allowed: true,
+    });
+    expect(policy.status).toBe(403);
+  });
+});
+
+describe("MCP tools in a thread", () => {
+  async function mcpThread() {
+    const workspace = await agentThread();
+    const { ada, api, model, events } = workspace;
+    const res = await api("POST", "/org/mcp-servers", ada.cookie, {
+      name: "Notes",
+      url: `${MCP_ORIGIN}/headers/mcp`,
+      auth: { kind: "headers", headers: bearer },
+    });
+    const server = (await res.json()) as McpServerSummary;
+    const id = (tool: string) => `mcp:${server.id}/${tool}`;
+    async function calls(toolId: string, input: unknown) {
+      const call = await model.next();
+      call.startStep();
+      call.toolCall(`call-${model.calls.length}`, toolId, input);
+      call.endStep();
+      call.end();
+      return call;
+    }
+    function toolRows() {
+      return transcriptOf(events()).rows.filter((row) => row.kind === "tool");
+    }
+    return { ...workspace, server, id, calls, toolRows };
+  }
+
+  it("run through the server with its headers, and give back its structured content", async () => {
+    const { ada, post, calls, model, worker, start, id, toolRows } = await mcpThread();
+    start();
+
+    await post(ada, "Write a note");
+    const first = await calls(id("add_note"), { title: "Engines", body: "They compute" });
+    const next = await model.next();
+    next.reply("Written.");
+    await worker.idle();
+
+    expect(first.tools).toEqual(expect.arrayContaining([id("echo"), id("add_note")]));
+    expect(first.request.tools?.find((tool) => tool.id === id("add_note"))?.inputSchema).toEqual(
+      expect.objectContaining({ required: ["title"] }),
+    );
+    expect(toolRows().map((row) => [row.state, row.risk])).toEqual([["ran", "normal"]]);
+    expect(next.texts.at(-1)).toBe(
+      `result ${id("add_note")}: {"ok":true,"value":{"id":"note-1","title":"Engines","words":2}}`,
+    );
+  });
+
+  it("ask before one the server marks destructive, and fail clearly when the server is down", async () => {
+    const workspace = await mcpThread();
+    const { ada, post, calls, model, worker, start, id, toolRows, api, thread, mcpNetwork } =
+      workspace;
+    start();
+
+    await post(ada, "Delete note-9");
+    await calls(id("delete_note"), { id: "note-9" });
+    await worker.idle();
+    expect(toolRows().map((row) => [row.state, row.risk])).toEqual([["pending", "ask"]]);
+
+    mcpNetwork.up = false;
+    const callId = toolRows()[0]!.id;
+    const decided = await api(
+      "POST",
+      `/threads/${thread.id}/tools/${callId}/decision`,
+      ada.cookie,
+      {
+        allow: true,
+        scope: "once",
+      },
+    );
+    expect(decided.status).toBe(200);
+    const next = await model.next();
+    next.reply("It is down.");
+    await worker.idle();
+
+    expect(toolRows().map((row) => row.state)).toEqual(["failed"]);
+    expect(next.texts.at(-1)).toContain("Notes: Could not reach localhost:4791 (ECONNREFUSED).");
+    const server = await api("GET", `/mcp-servers/${workspace.server.id}`, ada.cookie);
+    expect(await server.json()).toMatchObject({ status: "error" });
+  });
+
+  it("are not offered when blocked, and a removed server's tools go with it", async () => {
+    const { ada, post, model, worker, start, id, api, server, db } = await mcpThread();
+    await api("PATCH", "/org/tools", ada.cookie, { toolIds: [id("echo")], mode: "block" });
+    start();
+
+    await post(ada, "Hello");
+    const first = await model.next();
+    first.reply("Hi.");
+    await worker.idle();
+    expect(first.tools).not.toContain(id("echo"));
+    expect(first.tools).toContain(id("add_note"));
+
+    await api("DELETE", `/mcp-servers/${server.id}`, ada.cookie);
+    expect(
+      db
+        .select()
+        .from(schema.mcpCredential)
+        .where(eq(schema.mcpCredential.serverId, server.id))
+        .all(),
+    ).toEqual([]);
+    await post(ada, "Again");
+    const second = await model.next();
+    second.reply("Hi.");
+    await worker.idle();
+    expect(second.tools.some((tool) => tool.startsWith("mcp:"))).toBe(false);
+  });
+});

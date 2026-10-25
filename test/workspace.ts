@@ -2,13 +2,14 @@
 // for the tests of spaces, folders, threads, their guests, their events and the agent's runs. The
 // agent replies through a model the test drives, once the test starts the worker; threads are
 // named, when asked for, through another. A stand-in directory provisions people and groups over
-// SCIM.
+// SCIM, and a stand-in MCP server answers at its address, unless the test takes it down.
 
 import { eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import { expect } from "vite-plus/test";
 
 import { createAuth, createIdentity } from "@/adapters/auth.ts";
+import { createCipher } from "@/adapters/cipher.ts";
 import { createTransact, openDatabase } from "@/adapters/db.ts";
 import { createDeltaStore } from "@/adapters/deltas.ts";
 import { createDirectory } from "@/adapters/directory.ts";
@@ -16,6 +17,8 @@ import { createEventBus } from "@/adapters/event-bus.ts";
 import { createFolderStore } from "@/adapters/folders.ts";
 import { createGuestStore } from "@/adapters/guests.ts";
 import { createLogger } from "@/adapters/logger.ts";
+import { createMcpClient } from "@/adapters/mcp-client.ts";
+import { createMcpCredentialStore, createMcpServerStore } from "@/adapters/mcp-servers.ts";
 import { createOrgInviteStore } from "@/adapters/org-invites.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createRunStore } from "@/adapters/runs.ts";
@@ -34,6 +37,7 @@ import { ServiceError } from "@/services/errors.ts";
 import { createFolders } from "@/services/folders.ts";
 import { createGroups } from "@/services/groups.ts";
 import { createGuests } from "@/services/guests.ts";
+import { createMcpServers } from "@/services/mcp-servers.ts";
 import { createOrgs } from "@/services/orgs.ts";
 import { createRunWorker, dropRefusedWaiting, type RunWorkerOptions } from "@/services/runs.ts";
 import { createSpaces } from "@/services/spaces.ts";
@@ -45,6 +49,7 @@ import { createTitles } from "@/services/titles.ts";
 import { createToolDecisions, createTools } from "@/services/tools.ts";
 import type { Effort } from "@/shared/threads.ts";
 
+import { mcpStandIn } from "../e2e/mcp-server.ts";
 import { scimClient } from "../e2e/scim-client.ts";
 import { scriptedModel } from "./scripted-model.ts";
 
@@ -55,6 +60,9 @@ const unusedModels = {} as Models;
 const baseUrl = "http://localhost:4783";
 
 export const SCIM_TOKEN = "test-scim-token-that-is-long-enough-0123456789";
+
+// Where the stand-in MCP server answers.
+export const MCP_ORIGIN = "http://localhost:4791";
 
 export type SpaceBody = {
   id: string;
@@ -170,6 +178,37 @@ export function setup(
     guests: guestStore,
   });
   const toolSettings = createToolSettingStore(db);
+  // The stand-in MCP server, reached while it is up; anything else cannot be reached.
+  const mcpNetwork = {
+    up: true,
+    handle: mcpStandIn({ origin: MCP_ORIGIN }),
+    // Each request it was sent.
+    requests: [] as Request[],
+  };
+  const mcpFetch = async (input: string | URL, init?: RequestInit) => {
+    const request = new Request(input, init);
+    if (!mcpNetwork.up || new URL(request.url).origin !== MCP_ORIGIN) {
+      throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
+    }
+    mcpNetwork.requests.push(request.clone());
+    return mcpNetwork.handle(request);
+  };
+  const mcpServerStore = createMcpServerStore(db);
+  const mcp = createMcpServers({
+    servers: mcpServerStore,
+    credentials: createMcpCredentialStore(
+      db,
+      createCipher({ version: 1, key: Buffer.alloc(32, 7) }),
+    ),
+    client: createMcpClient({
+      fetch: mcpFetch,
+      oauth: { clientName: "Mage", redirectUrl: `${baseUrl}/api/mcp/oauth/callback` },
+      version: "test",
+    }),
+    spaces,
+    settings: settingStore,
+    logger,
+  });
   const tools = createTools({
     toolsets: [
       createSystemTools({
@@ -180,6 +219,10 @@ export function setup(
         models: { replyModel, requireModel: models.requireModel },
       }),
     ],
+    scoped: {
+      inOrg: (orgId) => mcp.toolsetsInOrg(orgId),
+      inSpace: (space) => mcp.toolsetsInSpace(space),
+    },
     settings: toolSettings,
     access,
   });
@@ -302,6 +345,7 @@ export function setup(
       log,
       bus: countingBus,
     }),
+    mcp,
     logger,
     signInOptions: { oidc: null },
     pingDatabase: () => Promise.resolve(true),
@@ -436,6 +480,9 @@ export function setup(
     settingStore,
     guestStore,
     toolSettings,
+    mcp,
+    mcpNetwork,
+    mcpServerStore,
     signUp,
     join,
     api,

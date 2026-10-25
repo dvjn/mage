@@ -1,7 +1,9 @@
 // The agent's tools in each thread: which ones its space offers, each person's level for them, and
 // whether a call runs now, runs on a standing approval or waits; people's decisions on calls that
-// wait; and the mode orgs and spaces set for each tool. An org allows a tool, has it ask each time,
-// or blocks it, for all its spaces; a space can only make that stricter for itself.
+// wait; and the mode orgs and spaces set for each tool. Mage's own tools and the toolsets an org
+// adds are in every space of the org; a space may add toolsets of its own. An org allows a tool,
+// has it ask each time, or blocks it, for all its spaces; a space can only make that stricter for
+// itself, and sets its own toolsets' tools as it likes.
 
 import * as z from "zod";
 
@@ -11,7 +13,14 @@ import type { ModelTool } from "@/ports/model-gateway.ts";
 import type { RunStore } from "@/ports/runs.ts";
 import type { Space, SpaceStore } from "@/ports/spaces.ts";
 import type { Thread, ThreadStore } from "@/ports/threads.ts";
-import type { AnyToolSpec, ToolLevel, ToolMode, ToolSettingStore, Toolset } from "@/ports/tools.ts";
+import type {
+  AnyToolSpec,
+  ScopedToolsets,
+  ToolLevel,
+  ToolMode,
+  ToolSettingStore,
+  Toolset,
+} from "@/ports/tools.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import type { ThreadAccess } from "@/services/thread-access.ts";
@@ -40,16 +49,22 @@ export function definitionOf(spec: AnyToolSpec): ToolDefinition {
     name: spec.name,
     ...(spec.title && { title: spec.title }),
     description: spec.description,
-    inputSchema: z.toJSONSchema(spec.input, { io: "input" }) as Record<string, unknown>,
-    ...(spec.output && {
-      outputSchema: z.toJSONSchema(spec.output, { io: "output" }) as Record<string, unknown>,
-    }),
+    inputSchema:
+      spec.inputSchema ?? (z.toJSONSchema(spec.input, { io: "input" }) as Record<string, unknown>),
+    ...(spec.outputSchema && { outputSchema: spec.outputSchema }),
+    ...(!spec.outputSchema &&
+      spec.output && {
+        outputSchema: z.toJSONSchema(spec.output, { io: "output" }) as Record<string, unknown>,
+      }),
     ...(spec.annotations && { annotations: spec.annotations }),
   };
 }
 
 export interface ToolsOptions {
+  // Mage's own.
   toolsets: Toolset[];
+  // Those orgs and spaces add.
+  scoped?: ScopedToolsets;
   settings: ToolSettingStore;
   access: Pick<ThreadAccess, "of">;
 }
@@ -58,23 +73,39 @@ export type Tools = ReturnType<typeof createTools>;
 
 export function createTools(options: ToolsOptions) {
   const { toolsets, settings, access } = options;
-  const specs = toolsets.flatMap((toolset) => toolset.tools);
-  const byId = new Map(specs.map((spec) => [spec.name, spec]));
+  const scoped = options.scoped ?? { inOrg: () => [], inSpace: () => [] };
+
+  // The toolsets every space of the org has.
+  function inOrg(orgId: string) {
+    return [...toolsets, ...scoped.inOrg(orgId)];
+  }
+
+  // The toolsets the space has: the org's, and its own.
+  function inSpace(space: Pick<Space, "id" | "orgId">) {
+    return [...inOrg(space.orgId), ...scoped.inSpace(space)];
+  }
+
+  function specsOf(sets: Toolset[]) {
+    return sets.flatMap((toolset) => toolset.tools);
+  }
 
   // Each tool's mode in the org: as it set, else allowed.
   function orgModes(orgId: string) {
     const set = settings.inOrg(orgId);
-    return new Map(specs.map((spec) => [spec.name, set.get(spec.name) ?? ("allow" as ToolMode)]));
+    return new Map(
+      specsOf(inOrg(orgId)).map((spec) => [spec.name, set.get(spec.name) ?? ("allow" as ToolMode)]),
+    );
   }
 
-  // Each tool's mode in the space: the org's, made stricter where the space set one.
+  // Each tool's mode in the space: the org's, made stricter where the space set one. The space's
+  // own tools are the org's to allow.
   function spaceModes(space: Pick<Space, "id" | "orgId">) {
     const org = orgModes(space.orgId);
     const set = settings.inSpace(space.id);
     return new Map(
-      specs.map((spec) => {
+      specsOf(inSpace(space)).map((spec) => {
         const own = set.get(spec.name);
-        const inOrg = org.get(spec.name)!;
+        const inOrg = org.get(spec.name) ?? "allow";
         return [spec.name, own ? strictest(inOrg, own) : inOrg];
       }),
     );
@@ -83,7 +114,7 @@ export function createTools(options: ToolsOptions) {
   // The tools the space offers: those not blocked there.
   function offered(space: Pick<Space, "id" | "orgId">) {
     const modes = spaceModes(space);
-    return specs.filter((spec) => modes.get(spec.name) !== "block");
+    return specsOf(inSpace(space)).filter((spec) => modes.get(spec.name) !== "block");
   }
 
   // How much a call can do: as the tool says, or always asking where the space has it ask.
@@ -127,18 +158,29 @@ export function createTools(options: ToolsOptions) {
     };
   }
 
+  // The toolsets with each tool's definition, and whether the org or the space has them.
+  function withDefinitions(sets: Toolset[], scope: "org" | "space") {
+    return sets.map(({ tools, ...toolset }) => ({
+      ...toolset,
+      scope,
+      tools: tools.map(definitionOf),
+    }));
+  }
+
   return {
-    find(id: string) {
-      return byId.get(id) ?? null;
+    // The tool in the org's toolsets, or in the space's when one is given.
+    find(orgId: string, id: string, space?: Pick<Space, "id" | "orgId">) {
+      const sets = space ? inSpace(space) : inOrg(orgId);
+      return specsOf(sets).find((spec) => spec.name === id) ?? null;
     },
 
-    ids() {
-      return specs.map((spec) => spec.name);
+    ids(space: Pick<Space, "id" | "orgId">) {
+      return specsOf(inSpace(space)).map((spec) => spec.name);
     },
 
-    // Every tool's definition, as people see it.
-    definitions(): ToolDefinition[] {
-      return specs.map(definitionOf);
+    // Every tool's definition in the space, as people see it.
+    definitions(space: Pick<Space, "id" | "orgId">): ToolDefinition[] {
+      return specsOf(inSpace(space)).map(definitionOf);
     },
 
     offered,
@@ -147,12 +189,17 @@ export function createTools(options: ToolsOptions) {
     orgModes,
     spaceModes,
 
-    // The toolsets with each tool's definition.
-    toolsets(): (Omit<Toolset, "tools"> & { tools: ToolDefinition[] })[] {
-      return toolsets.map(({ tools, ...toolset }) => ({
-        ...toolset,
-        tools: tools.map(definitionOf),
-      }));
+    // The toolsets of the org, with each tool's definition.
+    toolsetsInOrg(orgId: string) {
+      return withDefinitions(inOrg(orgId), "org");
+    },
+
+    // The space's, the org's first and then its own.
+    toolsetsInSpace(space: Pick<Space, "id" | "orgId">) {
+      return [
+        ...withDefinitions(inOrg(space.orgId), "org"),
+        ...withDefinitions(scoped.inSpace(space), "space"),
+      ];
     },
 
     // The tools as the model is told about them.
@@ -191,7 +238,10 @@ export function createTools(options: ToolsOptions) {
 }
 
 export interface ToolDecisionsOptions {
-  tools: Pick<Tools, "find" | "levelFor" | "toolsets" | "orgModes" | "spaceModes">;
+  tools: Pick<
+    Tools,
+    "find" | "levelFor" | "toolsetsInOrg" | "toolsetsInSpace" | "orgModes" | "spaceModes"
+  >;
   access: Pick<ThreadAccess, "require">;
   threads: Pick<ThreadStore, "eventsAfter">;
   spaceStore: Pick<SpaceStore, "find">;
@@ -210,13 +260,16 @@ const ONLY_RUNNERS = "Only people who can run this here can decide";
 export function createToolDecisions(options: ToolDecisionsOptions) {
   const { tools, access, threads, spaceStore, runs, spaces, settings, log, bus } = options;
 
-  function known(toolId: string) {
-    if (!tools.find(toolId)) throw new ServiceError(404, "Tool not found");
+  function known(orgId: string, toolId: string, space?: Space) {
+    if (!tools.find(orgId, toolId, space)) throw new ServiceError(404, "Tool not found");
   }
 
   // The toolsets as settings show them, with each tool's modes.
-  function settingsOf(modesOf: (toolId: string) => { orgMode: ToolMode; mode: ToolMode }) {
-    return tools.toolsets().map((toolset) => ({
+  function settingsOf(
+    toolsets: ReturnType<Tools["toolsetsInSpace"]>,
+    modesOf: (toolId: string) => { orgMode: ToolMode; mode: ToolMode },
+  ) {
+    return toolsets.map((toolset) => ({
       ...toolset,
       tools: toolset.tools.map((definition) => ({
         id: definition.name,
@@ -278,14 +331,17 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
     // The toolsets with each tool's mode in the org.
     orgTools(principal: Principal): ToolsetSetting[] {
       const modes = tools.orgModes(principal.orgId);
-      return settingsOf((id) => ({ orgMode: modes.get(id)!, mode: modes.get(id)! }));
+      return settingsOf(tools.toolsetsInOrg(principal.orgId), (id) => ({
+        orgMode: modes.get(id)!,
+        mode: modes.get(id)!,
+      }));
     },
 
     setOrgTools(principal: Principal, change: ToolModeChange) {
       if (principal.role !== "owner") {
         throw new ServiceError(403, "Only the organization's owners can do this");
       }
-      change.toolIds.forEach(known);
+      for (const id of change.toolIds) known(principal.orgId, id);
       settings.setInOrg(principal.orgId, change.toolIds, change.mode);
     },
 
@@ -294,12 +350,15 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
       const space = spaces.require(principal, spaceId, "manage");
       const org = tools.orgModes(space.orgId);
       const modes = tools.spaceModes(space);
-      return settingsOf((id) => ({ orgMode: org.get(id)!, mode: modes.get(id)! }));
+      return settingsOf(tools.toolsetsInSpace(space), (id) => ({
+        orgMode: org.get(id) ?? "allow",
+        mode: modes.get(id)!,
+      }));
     },
 
     setSpaceTools(principal: Principal, spaceId: string, change: ToolModeChange) {
       const space = spaces.require(principal, spaceId, "manage");
-      change.toolIds.forEach(known);
+      for (const id of change.toolIds) known(space.orgId, id, space);
       settings.setInSpace(space.id, change.toolIds, change.mode);
     },
   };

@@ -257,6 +257,8 @@ export const orgSetting = sqliteTable("org_setting", {
     .notNull(),
   // Whether each member of a team org gets a private space of their own on joining.
   memberSpaces: integer("member_spaces", { mode: "boolean" }).default(true).notNull(),
+  // Whether a space's managers may add MCP servers for it, and its threads use them.
+  spaceMcpServers: integer("space_mcp_servers", { mode: "boolean" }).default(true).notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
     .notNull(),
@@ -293,6 +295,69 @@ export const space = sqliteTable(
       .notNull(),
   },
   (table) => [index("space_org_idx").on(table.organizationId)],
+);
+
+// An MCP server an org's owners added for all its spaces, or a space's managers for that space
+// alone, with the tools it last listed.
+export const mcpServer = sqliteTable(
+  "mcp_server",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    // The space it was added for; null for the whole org.
+    spaceId: text("space_id").references(() => space.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    url: text("url").notNull(),
+    // How it is authorized: not at all, by headers, or by OAuth.
+    authKind: text("auth_kind", { enum: ["none", "headers", "oauth"] }).notNull(),
+    // What is not secret about its authorization, as JSON: header names with hints, the OAuth
+    // client and authorization server.
+    settings: text("settings", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
+    // The transport it last answered on; null until it has.
+    transport: text("transport", { enum: ["streamable-http", "sse"] }),
+    // Whether it answered when last reached, needs authorizing again, or failed, and why.
+    status: text("status", { enum: ["ok", "needs_auth", "error"] }).notNull(),
+    error: text("error"),
+    // The name and version it gave, and the tools it listed, as JSON.
+    serverInfo: text("server_info", { mode: "json" }).$type<{ name: string; version: string }>(),
+    tools: text("tools", { mode: "json" }).$type<unknown[]>().notNull(),
+    toolsReadAt: integer("tools_read_at", { mode: "timestamp_ms" }),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    index("mcp_server_org_idx").on(table.organizationId),
+    index("mcp_server_space_idx").on(table.spaceId),
+  ],
+);
+
+// An MCP server's secrets sealed by the cipher: its headers or OAuth client and tokens, shared by
+// everyone who uses the server, or later one person's own.
+export const mcpCredential = sqliteTable(
+  "mcp_credential",
+  {
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServer.id, { onDelete: "cascade" }),
+    holderKind: text("holder_kind", { enum: ["shared", "user"] }).notNull(),
+    // The user whose they are; empty when shared.
+    holderId: text("holder_id").notNull(),
+    keyVersion: integer("key_version").notNull(),
+    sealed: blob("sealed", { mode: "buffer" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.serverId, table.holderKind, table.holderId] })],
 );
 
 // The mode an org set for a tool, for all its spaces.

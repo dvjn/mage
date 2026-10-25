@@ -8,6 +8,7 @@ import type { Connections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Guests } from "@/services/guests.ts";
 import type { Groups } from "@/services/groups.ts";
+import type { McpServers } from "@/services/mcp-servers.ts";
 import type { ToolDecisions } from "@/services/tools.ts";
 import type { Orgs } from "@/services/orgs.ts";
 import type { Models } from "@/services/models.ts";
@@ -44,6 +45,7 @@ describe("GET /api/health", () => {
       orgs: {} as Orgs,
       groups: {} as Groups,
       tools: {} as ToolDecisions,
+      mcp: {} as McpServers,
       logger,
       signInOptions: { oidc: null },
       pingDatabase: () => pingDatabase(db),
@@ -65,6 +67,7 @@ describe("GET /api/health", () => {
       orgs: {} as Orgs,
       groups: {} as Groups,
       tools: {} as ToolDecisions,
+      mcp: {} as McpServers,
       logger,
       signInOptions: { oidc: null },
       pingDatabase: () => Promise.resolve(false),

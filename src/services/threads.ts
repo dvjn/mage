@@ -504,10 +504,12 @@ export function createThreads(options: ThreadsOptions) {
         access: via,
         levels: Object.fromEntries(
           space
-            ? tools.ids().map((toolId) => [toolId, tools.levelFor(principal.userId, thread, space)])
+            ? tools
+                .ids(space)
+                .map((toolId) => [toolId, tools.levelFor(principal.userId, thread, space)])
             : [],
         ),
-        tools: tools.definitions(),
+        tools: space ? tools.definitions(space) : [],
         defaults: { ...defaults, used: used && { ...used.used, effort: used.effort } },
         // The thread's own org decides, whoever reads it.
         model: space

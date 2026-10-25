@@ -13,6 +13,8 @@ export interface OrgSettings {
   spaceCreation: "members" | "owners";
   // Whether each member of a team org gets a private space of their own on joining.
   memberSpaces: boolean;
+  // Whether a space's managers may add MCP servers for it, and its threads use them.
+  spaceMcpServers: boolean;
 }
 
 export interface OrgSettingStore {
@@ -24,4 +26,5 @@ export interface OrgSettingStore {
     orgId: string,
     changes: Partial<Pick<OrgSettings, "spaceCreation" | "memberSpaces">>,
   ): void;
+  setSpaceMcpServers(orgId: string, allowed: boolean): void;
 }

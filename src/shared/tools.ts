@@ -54,11 +54,13 @@ export const toolSettingSchema = z.object({
 
 export type ToolSetting = z.infer<typeof toolSettingSchema>;
 
-// A toolset in settings: what it is, where it comes from, and its tools.
+// A toolset in settings: what it is, where it comes from, whether the org or the space has it, and
+// its tools.
 export const toolsetSettingSchema = z.object({
   id: z.string(),
   title: z.string(),
   source: toolsetSourceSchema,
+  scope: z.enum(["org", "space"]),
   tools: z.array(toolSettingSchema),
 });
 

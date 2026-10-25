@@ -629,6 +629,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           callId: call.id,
           actor: AGENT,
           model: execution.ref,
+          approvedBy: call.decision?.allow ? call.decision.by.userId : null,
           write: (work) => write(lease, run.threadId, (append) => work(append)),
         });
       } catch (err) {

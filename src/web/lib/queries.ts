@@ -1,13 +1,14 @@
 // Server state the web client reads: the ways to sign in, the current session, who is signed in, the orgs they are in,
 // the tab org's members, groups and settings, their connections, the models the org can use, its
-// default model and effort and title model, their spaces with who is in them, their folders and
-// threads, the threads shared with them, and who is in a thread.
+// default model and effort and title model, its MCP servers and its spaces', their spaces with who
+// is in them, their folders and threads, the threads shared with them, and who is in a thread.
 
 import { queryOptions } from "@tanstack/react-query";
 
 import { connectionListSchema } from "@/shared/connections.ts";
 import { folderListSchema } from "@/shared/folders.ts";
 import { sharedThreadListSchema, threadPeopleSchema } from "@/shared/guests.ts";
+import { mcpServerSchema, orgMcpServersSchema, spaceMcpServersSchema } from "@/shared/mcp.ts";
 import { meSchema } from "@/shared/me.ts";
 import { orgListSchema, teamSettingsSchema } from "@/shared/orgs.ts";
 import {
@@ -68,6 +69,37 @@ export const orgsQuery = queryOptions({
     return orgListSchema.parse(await res.json());
   },
 });
+
+export const orgMcpServersQuery = queryOptions({
+  queryKey: ["mcp-servers", "org"],
+  queryFn: async () => {
+    const res = await apiClient.v1.org["mcp-servers"].$get();
+    if (!res.ok) throw new Error("could not read the MCP servers");
+    return orgMcpServersSchema.parse(await res.json());
+  },
+});
+
+export function spaceMcpServersQuery(spaceId: string) {
+  return queryOptions({
+    queryKey: ["mcp-servers", "space", spaceId],
+    queryFn: async () => {
+      const res = await apiClient.v1.spaces[":id"]["mcp-servers"].$get({ param: { id: spaceId } });
+      if (!res.ok) throw new Error("could not read the space's MCP servers");
+      return spaceMcpServersSchema.parse(await res.json());
+    },
+  });
+}
+
+export function mcpServerQuery(id: string) {
+  return queryOptions({
+    queryKey: ["mcp-servers", "one", id],
+    queryFn: async () => {
+      const res = await apiClient.v1["mcp-servers"][":id"].$get({ param: { id } });
+      if (!res.ok) throw new Error("could not read the MCP server");
+      return mcpServerSchema.parse(await res.json());
+    },
+  });
+}
 
 export const teamSettingsQuery = queryOptions({
   queryKey: ["team-settings"],

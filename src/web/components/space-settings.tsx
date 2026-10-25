@@ -1,6 +1,7 @@
 // A space's settings, in pages: General (renaming it, unless it is a person's own space named for
 // them, the model and reasoning effort its new threads start with, or the org's, and deleting it
-// when it is not the primary space), Members for a shared space, and the agent's Tools there. They
+// when it is not the primary space), Members for a shared space, and the agent's Tools there, with
+// the space's own MCP servers and a page for each. They
 // are there only for those who manage it (its owners, and a team org's owners). A team org's owner
 // who manages a space without being in it reads its threads once they give themselves a role in
 // it.
@@ -22,6 +23,7 @@ import {
 } from "@/web/components/settings/default-fields";
 import { SettingsCard, SettingsTitle } from "@/web/components/settings/layout";
 import { SettingsShell, settingsNavLink } from "@/web/components/settings/settings-nav";
+import { McpServerPage, McpServersCard } from "@/web/components/settings/mcp-servers";
 import { SpaceToolsList } from "@/web/components/settings/tools-list";
 import {
   AlertDialog,
@@ -304,9 +306,25 @@ export function SpaceTools() {
     <>
       <SettingsTitle
         title="Tools"
-        description="The tools the agent can use in this space, and whether each runs, asks first, or is off. The organization sets the loosest each can be."
+        description="The tools the agent can use in this space, and whether each runs, asks first, or is off. The organization sets the loosest each can be, but for the space's own servers."
       />
-      <SpaceToolsList spaceId={space.id} />
+      <SpaceToolsList
+        spaceId={space.id}
+        own={(toolsets) => (
+          <McpServersCard
+            scope={{ kind: "space", spaceId: space.id }}
+            toolsets={toolsets}
+            canManage
+          />
+        )}
+      />
     </>
   );
+}
+
+const spaceServerRoute = getRouteApi("/_app/s/$spaceId/settings/tools/mcp/$serverId");
+
+export function SpaceMcpServer() {
+  const { spaceId, serverId } = spaceServerRoute.useParams();
+  return <McpServerPage scope={{ kind: "space", spaceId }} serverId={serverId} />;
 }

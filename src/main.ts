@@ -16,6 +16,8 @@ import { createFakeCatalogs, createFakeGateway, FAKE_MODEL_REF } from "@/adapter
 import { createFolderStore } from "@/adapters/folders.ts";
 import { createGuestStore } from "@/adapters/guests.ts";
 import { createLogger, createPrettyDestination } from "@/adapters/logger.ts";
+import { createMcpClient } from "@/adapters/mcp-client.ts";
+import { createMcpCredentialStore, createMcpServerStore } from "@/adapters/mcp-servers.ts";
 import { createModelChoiceStore } from "@/adapters/model-choices.ts";
 import { createHostAdapters } from "@/adapters/hosts.ts";
 import { createCodexOAuth } from "@/adapters/openai-codex.ts";
@@ -32,6 +34,7 @@ import { createConnections } from "@/services/connections.ts";
 import { createFolders } from "@/services/folders.ts";
 import { createGroups } from "@/services/groups.ts";
 import { createGuests } from "@/services/guests.ts";
+import { createMcpServers } from "@/services/mcp-servers.ts";
 import { createModels, type Models } from "@/services/models.ts";
 import { createOrgs } from "@/services/orgs.ts";
 import { createRunWorker, dropRefusedWaiting, type RunWorker } from "@/services/runs.ts";
@@ -116,6 +119,18 @@ const folders = createFolders({ spaces, folders: folderStore });
 const guestStore = createGuestStore(db);
 const access = createThreadAccess({ spaces, threads: threadStore, guests: guestStore });
 const toolSettings = createToolSettingStore(db);
+const mcp = createMcpServers({
+  servers: createMcpServerStore(db),
+  credentials: createMcpCredentialStore(db, cipher),
+  client: createMcpClient({
+    fetch,
+    oauth: { clientName: "Mage", redirectUrl: `${config.baseUrl}/api/mcp/oauth/callback` },
+    version: "0.0.0",
+  }),
+  spaces,
+  settings: settingStore,
+  logger,
+});
 const tools = createTools({
   toolsets: [
     createSystemTools({
@@ -126,6 +141,10 @@ const tools = createTools({
       models,
     }),
   ],
+  scoped: {
+    inOrg: (orgId) => mcp.toolsetsInOrg(orgId),
+    inSpace: (space) => mcp.toolsetsInSpace(space),
+  },
   settings: toolSettings,
   access,
 });
@@ -223,6 +242,7 @@ const app = createApp({
     log,
     bus,
   }),
+  mcp,
   guests: createGuests({
     access,
     guests: guestStore,

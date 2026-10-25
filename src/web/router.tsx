@@ -20,7 +20,7 @@ import { InvitePage } from "@/web/components/invite-page";
 import { JoinPage } from "@/web/components/join-page";
 import { LoginForm } from "@/web/components/login-form";
 import { OrgGeneral } from "@/web/components/settings/org-general";
-import { OrgTools } from "@/web/components/settings/org-tools";
+import { OrgMcpServer, OrgTools } from "@/web/components/settings/org-tools";
 import { OrgPeople, peopleSearchSchema } from "@/web/components/settings/org-people";
 import { OrgSpaces, orgSpacesSearchSchema } from "@/web/components/settings/org-spaces";
 import { OrgProviders } from "@/web/components/settings/org-providers";
@@ -32,6 +32,7 @@ import { spaceMembersSearchSchema } from "@/web/components/space-members";
 import {
   SpaceGeneral,
   SpaceMembersPage,
+  SpaceMcpServer,
   SpaceSettingsShell,
   SpaceTools,
 } from "@/web/components/space-settings";
@@ -194,6 +195,13 @@ const spaceToolsRoute = createRoute({
   component: SpaceTools,
 });
 
+// One of the space's own MCP servers.
+const spaceMcpServerRoute = createRoute({
+  getParentRoute: () => spaceSettingsRoute,
+  path: "/tools/mcp/$serverId",
+  component: SpaceMcpServer,
+});
+
 // A thread not made yet, at the top of the space or in `?folder=`.
 const draftRoute = createRoute({
   getParentRoute: () => appRoute,
@@ -242,6 +250,13 @@ const orgToolsRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: "/tools",
   component: OrgTools,
+});
+
+// One of the org's MCP servers.
+const orgMcpServerRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: "/tools/mcp/$serverId",
+  component: OrgMcpServer,
 });
 
 const orgProvidersRoute = createRoute({
@@ -299,7 +314,12 @@ export function createAppRouter(queryClient: QueryClient) {
       appRoute.addChildren([
         homeRoute,
         spaceRoute,
-        spaceSettingsRoute.addChildren([spaceGeneralRoute, spaceMembersRoute, spaceToolsRoute]),
+        spaceSettingsRoute.addChildren([
+          spaceGeneralRoute,
+          spaceMembersRoute,
+          spaceToolsRoute,
+          spaceMcpServerRoute,
+        ]),
         draftRoute,
         threadRoute,
         sharedRoute,
@@ -308,6 +328,7 @@ export function createAppRouter(queryClient: QueryClient) {
           orgGeneralRoute,
           orgProvidersRoute,
           orgToolsRoute,
+          orgMcpServerRoute,
           orgPeopleRoute,
           orgSpacesRoute,
           orgMembersRoute,
