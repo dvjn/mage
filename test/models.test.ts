@@ -14,7 +14,6 @@ import { createHostAdapters } from "@/adapters/hosts.ts";
 import { createCodexCatalog } from "@/adapters/openai-codex.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import * as schema from "@/adapters/schema.ts";
-import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
 import { createApp } from "@/http/app.ts";
 import {
@@ -23,7 +22,7 @@ import {
   type ModelRequest,
   type ModelToken,
 } from "@/ports/model-gateway.ts";
-import type { BrowserOAuth } from "@/ports/oauth.ts";
+import type { DeviceOAuth } from "@/ports/oauth.ts";
 import { createConnections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Guests } from "@/services/guests.ts";
@@ -156,12 +155,11 @@ function setup() {
     return Promise.resolve(new Response(null, { status: 404 }));
   };
 
-  function refresher(prefix: string): BrowserOAuth {
+  function refresher(prefix: string): DeviceOAuth {
     return {
-      authorize: () => {
-        throw new Error("not used");
-      },
-      exchange: () => Promise.reject(new Error("not used")),
+      startDevice: () => Promise.reject(new Error("not used")),
+      pollDevice: () => Promise.reject(new Error("not used")),
+      exchangeDevice: () => Promise.reject(new Error("not used")),
       refresh: (refreshToken) => {
         refreshes.push(refreshToken);
         return Promise.resolve({
@@ -179,9 +177,8 @@ function setup() {
   const connections = createConnections({
     connections: connectionStore,
     credentials,
-    attempts: createSignInAttemptStore(db),
     providers: {
-      codex: { label: "Codex", browser: refresher("codex") },
+      codex: { label: "Codex", oauth: refresher("codex") },
     },
     logger,
     now: () => clock.now,
@@ -555,6 +552,17 @@ describe("/api/v1/models and the default model", () => {
 
     expect((await api("GET", "/models", "")).status).toBe(401);
     expect((await api("GET", "/settings/default-model", "")).status).toBe(401);
+  });
+
+  it("says why a connection's own list could not be read", async () => {
+    const { api, replies, ready } = setup();
+    const { cookie, codexId } = await ready();
+    replies.codex = { status: 401 };
+
+    const res = await api("GET", `/connections/${codexId}/models`, cookie);
+
+    expect(res.status).toBe(502);
+    expect(await res.json()).toEqual({ error: "Could not read the ChatGPT models. Try again." });
   });
 
   it("lists models and bypasses the cache with ?refresh=1", async () => {

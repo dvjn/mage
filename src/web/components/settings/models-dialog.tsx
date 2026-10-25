@@ -2,15 +2,15 @@
 // each model with a switch for whether people can pick it, marked when it thinks and with how
 // much it reads, narrowed by a filter, with one switch for all of those shown. Changes save as
 // they are made; the organization's default model stays on, marked as such, and spaces that start
-// threads on a model turned off are named.
+// threads on a model turned off are named. A list that could not be read says why, to try again.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "cn";
+import { RotateCcwIcon } from "lucide-react";
 import { useId, useState } from "react";
 
 import { type ConnectionSummary, connectionLabel } from "@/shared/connections.ts";
 import { type ConnectionModels, connectionModelsSchema } from "@/shared/models.ts";
-import { LoadError } from "@/web/components/page-states";
 import { Badge } from "@/web/components/ui/badge";
 import { Button } from "@/web/components/ui/button";
 import {
@@ -30,9 +30,12 @@ import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { modelsQuery } from "@/web/lib/queries";
 
+// A connection's models; a list the server could not read says why at once rather than being
+// asked for again.
 export function connectionModelsQuery(connectionId: string) {
   return {
     queryKey: ["connection-models", connectionId],
+    retry: false,
     queryFn: async () => {
       const res = await apiClient.v1.connections[":id"].models.$get({
         param: { id: connectionId },
@@ -123,7 +126,20 @@ export function ModelsDialog({
           </DialogDescription>
         </DialogHeader>
         {list.error ? (
-          <LoadError />
+          <div className="flex flex-col items-start gap-3">
+            <p role="alert" className="text-sm text-destructive">
+              {list.error.message}
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={list.isFetching}
+              onClick={() => void list.refetch()}
+            >
+              <RotateCcwIcon />
+              Try again
+            </Button>
+          </div>
         ) : !list.data ? (
           <Skeleton className="h-40 w-full" />
         ) : (

@@ -1,8 +1,8 @@
 // Adding a model provider, step by step in one dialog: the host, found in a searchable grid by
 // kind, then how to connect to it where there is more than one way, then the fields that way asks
 // for (with an optional name, and a proxy it is checked through) or the sign-in, and finally how
-// many models it brought, with a shortcut to make one of them the default. Back goes a step back;
-// refused details say why on their step.
+// many models it brought, with a shortcut to make one of them the default, or why they could not
+// be read. Back goes a step back; refused details say why on their step.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -12,6 +12,7 @@ import {
   CloudIcon,
   KeyRoundIcon,
   LogInIcon,
+  RotateCcwIcon,
   ServerIcon,
 } from "lucide-react";
 import { cn } from "cn";
@@ -372,6 +373,7 @@ function DoneStep({ connection, onClose }: { connection: ConnectionSummary; onCl
   const [error, setError] = useState<string>();
   const theirs = (models.data?.models ?? []).filter((m) => m.connectionId === connection.id);
   const count = theirs.length;
+  const failed = models.data?.errors.find((e) => e.connectionId === connection.id);
 
   async function makeDefault(ref: string) {
     setError(undefined);
@@ -391,9 +393,25 @@ function DoneStep({ connection, onClose }: { connection: ConnectionSummary; onCl
           Connected ·{" "}
           {models.isPending
             ? "reading models…"
-            : `${count} ${count === 1 ? "model" : "models"} found`}
+            : failed
+              ? "couldn't load its models"
+              : `${count} ${count === 1 ? "model" : "models"} found`}
         </span>
       </div>
+      {failed && (
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">{failed.message}</p>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={models.isFetching}
+            onClick={() => void models.refetch()}
+          >
+            <RotateCcwIcon />
+            Try again
+          </Button>
+        </div>
+      )}
       {count > 0 && (
         <Field>
           <FieldLabel htmlFor={`${id}-default`}>Set as default model (optional)</FieldLabel>

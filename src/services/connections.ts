@@ -1,8 +1,7 @@
 // An org's connections: made by signing in to a provider account the way the provider's own
-// coding app does, with a device code or a browser authorization whose result the user pastes
-// back, kept usable by renewing their tokens, or by adding a key, cloud credentials or a server's
-// address for a host, and optionally sending their requests through a proxy, kept sealed with the
-// tokens or the secrets.
+// coding app does, with a device code, kept usable by renewing their tokens, or by adding a key,
+// cloud credentials or a server's address for a host, and optionally sending their requests
+// through a proxy, kept sealed with the tokens or the secrets.
 
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -13,8 +12,7 @@ import type { Connection, ConnectionStore } from "@/ports/connections.ts";
 import type { CredentialStore } from "@/ports/credentials.ts";
 import type { Logger } from "@/ports/logger.ts";
 import type { ProviderProxy } from "@/ports/model-gateway.ts";
-import type { BrowserOAuth, DeviceCode, DeviceOAuth, OAuthTokens } from "@/ports/oauth.ts";
-import type { SignInAttemptStore } from "@/ports/sign-in-attempts.ts";
+import type { DeviceCode, DeviceOAuth, OAuthTokens } from "@/ports/oauth.ts";
 import type { ProxyInput, ProxySummary } from "@/shared/connections.ts";
 import type { AuthKind, HostId } from "@/shared/hosts.ts";
 
@@ -39,14 +37,12 @@ export interface Owner {
 export interface AccountProvider {
   // How people know the sign-in, as in "Sign in with Codex".
   label: string;
-  browser: BrowserOAuth;
-  device?: DeviceOAuth;
+  oauth: DeviceOAuth;
 }
 
 export interface ConnectionsOptions {
   connections: ConnectionStore;
   credentials: CredentialStore;
-  attempts: SignInAttemptStore;
   providers: Record<AccountKind, AccountProvider>;
   logger: Logger;
   now?: () => Date;
@@ -79,7 +75,6 @@ export interface FreshToken {
   secrets?: Record<string, string>;
 }
 
-const BROWSER_TTL_MS = 10 * 60 * 1000;
 const DEVICE_TTL_MS = 15 * 60 * 1000;
 // How long a finished device sign-in stays readable.
 const DEVICE_KEEP_MS = 5 * 60 * 1000;
@@ -153,27 +148,8 @@ export function accountOf(settings: Record<string, string>, secrets: Record<stri
   return "—";
 }
 
-// The code and state in what the user pasted: the callback address, its query, `code#state` or
-// the bare code.
-function parsePasted(input: string) {
-  const value = input.trim();
-  const url = URL.parse(value);
-  let params: URLSearchParams | null = null;
-  if (url && (url.protocol === "http:" || url.protocol === "https:")) params = url.searchParams;
-  else if (value.includes("code=")) params = new URLSearchParams(value);
-  if (params) {
-    return {
-      code: params.get("code") || null,
-      state: params.get("state") || null,
-      error: params.get("error") || null,
-    };
-  }
-  const [code, state] = value.split("#", 2);
-  return { code: code || null, state: state || null, error: null };
-}
-
 export function createConnections(options: ConnectionsOptions) {
-  const { connections, credentials, attempts, providers, logger } = options;
+  const { connections, credentials, providers, logger } = options;
   const now = options.now ?? (() => new Date());
   const sleep =
     options.sleep ?? ((ms: number, signal: AbortSignal) => delay(ms, undefined, { signal }));
@@ -279,7 +255,7 @@ export function createConnections(options: ConnectionsOptions) {
     if (!force && saved.expires - REFRESH_SKEW_MS > now().getTime()) return saved;
     let tokens: OAuthTokens;
     try {
-      tokens = await providers[kind].browser.refresh(saved.refresh);
+      tokens = await providers[kind].oauth.refresh(saved.refresh);
     } catch (err) {
       logger.warn({ err, kind }, "account token refresh failed");
       throw new ConnectionError(
@@ -341,8 +317,7 @@ export function createConnections(options: ConnectionsOptions) {
 
     // Starts a device code sign-in that the server waits on until it is approved or expires.
     async startDevice(kind: AccountKind, owner: Owner) {
-      const oauth = providers[kind].device;
-      if (!oauth) throw new ConnectionError(404, "This sign-in has no device code");
+      const { oauth } = providers[kind];
       rejectIfConnected(kind, owner.orgId);
       for (const attempt of deviceAttempts.values()) {
         if (attempt.expiresAt.getTime() + DEVICE_KEEP_MS <= now().getTime()) {
@@ -361,7 +336,7 @@ export function createConnections(options: ConnectionsOptions) {
         logger.warn({ err, kind }, "device code request failed");
         throw new ConnectionError(
           502,
-          `Could not get a code from ${providers[kind].label}. Try again or use the browser.`,
+          `Could not get a code from ${providers[kind].label}. Try again.`,
         );
       }
       const attempt: DeviceAttempt = {
@@ -387,63 +362,11 @@ export function createConnections(options: ConnectionsOptions) {
       return attempt.result;
     },
 
-    // Stops a device code sign-in, or drops a browser one.
+    // Stops a device code sign-in.
     cancel(kind: AccountKind, owner: Owner, id: string) {
-      const device = findDevice(kind, owner, id);
-      if (device) cancelDevice(device);
-      else if (!attempts.take({ kind, state: id, ...owner })) {
-        throw new ConnectionError(404, "Sign-in not found");
-      }
-    },
-
-    // Begins a browser sign-in; its state is the attempt id.
-    startBrowser(kind: AccountKind, owner: Owner) {
-      rejectIfConnected(kind, owner.orgId);
-      attempts.deleteExpired(now());
-      const { state, codeVerifier, authorizeUrl } = providers[kind].browser.authorize();
-      attempts.create({
-        kind,
-        state,
-        codeVerifier,
-        ...owner,
-        expiresAt: new Date(now().getTime() + BROWSER_TTL_MS),
-      });
-      return { attemptId: state, authorizeUrl };
-    },
-
-    // Completes a browser sign-in from the callback address, or the code, the user pasted.
-    async finishBrowser(
-      kind: AccountKind,
-      owner: Owner,
-      input: { attemptId?: string; callbackUrl: string },
-    ): Promise<Connection> {
-      const pasted = parsePasted(input.callbackUrl);
-      if (pasted.state && input.attemptId && pasted.state !== input.attemptId) {
-        throw new ConnectionError(400, "This is from a different sign-in. Start again.");
-      }
-      const state = pasted.state ?? input.attemptId;
-      if (!state) throw new ConnectionError(400, "Paste the full address. Start again if needed.");
-      const attempt = attempts.take({ kind, state, ...owner });
-      if (!attempt) {
-        throw new ConnectionError(400, "This sign-in is unknown or was already used. Start again.");
-      }
-      if (attempt.expiresAt <= now()) {
-        throw new ConnectionError(400, "This sign-in has expired. Start again.");
-      }
-      if (pasted.error) throw new ConnectionError(400, "The sign-in was declined. Start again.");
-      if (!pasted.code) throw new ConnectionError(400, "No code found in what you pasted.");
-
-      let tokens: OAuthTokens;
-      try {
-        tokens = await providers[kind].browser.exchange({
-          code: pasted.code,
-          codeVerifier: attempt.codeVerifier,
-          state,
-        });
-      } catch (err) {
-        throw rejected(kind, err);
-      }
-      return save(kind, owner, tokens);
+      const attempt = findDevice(kind, owner, id);
+      if (!attempt) throw new ConnectionError(404, "Sign-in not found");
+      cancelDevice(attempt);
     },
 
     // Runs `use` with the connection's access token, renewing it first when it is about to

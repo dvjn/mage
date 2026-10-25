@@ -32,38 +32,77 @@ async function addProvider(page: Page, provider: string, method?: string) {
   return dialog;
 }
 
-test("settings offers the Codex sign-in and rejects a pasted address from another sign-in", async ({
+test("ChatGPT connects with a device code, and says when its models cannot be read", async ({
   page,
-  context,
 }) => {
-  // The authorize page is never loaded from OpenAI.
-  await context.route("https://auth.openai.com/**", (route) =>
-    route.fulfill({ contentType: "text/html", body: "<title>OpenAI</title>" }),
+  // Stands in for OpenAI's device sign-in, which needs a real account: the code is approved once
+  // the journey says so, and the account's models then cannot be read.
+  const connection = {
+    id: "c1",
+    host: "codex",
+    authKind: "oauth",
+    account: "ada@chatgpt.example",
+    label: null,
+    settings: {},
+    proxy: null,
+    createdAt: "2026-10-21T00:00:00.000Z",
+  };
+  const failure = "Could not read the ChatGPT models. Try again.";
+  let approved = false;
+  let reads = 0;
+  await page.route("**/api/v1/connections/codex/device", (route) =>
+    route.fulfill({
+      json: {
+        attemptId: "a1",
+        verificationUrl: "https://auth.openai.com/codex/device",
+        userCode: "ABCD-EFGH",
+      },
+    }),
   );
+  await page.route("**/api/v1/connections/codex/attempts/a1", (route) =>
+    route.fulfill({ json: approved ? { status: "connected", connection } : { status: "pending" } }),
+  );
+  await page.route("**/api/v1/connections", (route) =>
+    approved ? route.fulfill({ json: [connection] }) : route.fallback(),
+  );
+  await page.route(/\/api\/v1\/models(\?.*)?$/, (route) =>
+    approved
+      ? route.fulfill({
+          json: { models: [], errors: [{ connectionId: "c1", message: failure }], turnedOff: [] },
+        })
+      : route.fallback(),
+  );
+  await page.route("**/api/v1/connections/c1/models*", (route) => {
+    reads += 1;
+    return route.fulfill({ status: 502, json: { error: failure } });
+  });
 
   await signUpToSettings(page);
-  await addProvider(page, "ChatGPT");
-  await expect(page.getByRole("button", { name: "Device code" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
+  const dialog = await addProvider(page, "ChatGPT");
+  await expect(dialog.getByRole("heading", { name: "Sign in with ChatGPT" })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Browser" })).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Get a code" }).click();
+  await expect(dialog.getByText("ABCD-EFGH")).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Copy code" })).toBeVisible();
+  await expect(dialog.getByRole("link", { name: "auth.openai.com/codex/device" })).toHaveAttribute(
+    "href",
+    "https://auth.openai.com/codex/device",
   );
-  await expect(page.getByRole("button", { name: "Get a code" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Browser" }).click();
-  const [popup] = await Promise.all([
-    page.waitForEvent("popup"),
-    page.getByRole("button", { name: "Open the Codex sign-in" }).click(),
-  ]);
-  await popup.waitForURL(/^https:\/\/auth\.openai\.com\/oauth\/authorize\?/);
-  const authorize = new URL(popup.url());
-  expect(authorize.searchParams.get("client_id")).toBe("app_EMoamEEZ73f0CkXaXp7hrann");
-  expect(authorize.searchParams.get("redirect_uri")).toBe("http://localhost:1455/auth/callback");
+  approved = true;
+  await expect(dialog.getByRole("status")).toContainText("Connected · couldn't load its models");
+  await expect(dialog.getByText(failure)).toBeVisible();
+  await dialog.getByRole("button", { name: "Done" }).click();
 
-  await page
-    .getByLabel("Callback URL")
-    .fill("http://localhost:1455/auth/callback?code=abc&state=another-sign-in");
-  await page.getByRole("button", { name: "Connect" }).click();
-  await expect(page.getByRole("alert")).toContainText("different sign-in");
+  const row = page.getByRole("row", { name: "ChatGPT" });
+  await expect(row).toContainText("Sign in with ChatGPT");
+  await expect(row.getByText("Couldn't load")).toBeVisible();
+  await row.getByText("Couldn't load").hover();
+  await expect(page.locator("[data-slot=tooltip-content]")).toHaveText(failure);
+  const before = reads;
+  await row.getByRole("button", { name: "Read the models of ChatGPT again" }).click();
+  await expect.poll(() => reads).toBe(before + 1);
+  await expect(row.getByText("Couldn't load")).toBeVisible();
 });
 
 test("Anthropic connects with an API key, with no sign-in to choose", async ({ page }) => {

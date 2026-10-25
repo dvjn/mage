@@ -1,6 +1,5 @@
-// What signing in to a provider account needs from the provider's OAuth server: a browser
-// authorization whose result the user pastes back, a device code where the provider offers one,
-// and token refresh.
+// What signing in to a provider account needs from the provider's OAuth server: a device code the
+// person enters at the provider, and token refresh.
 
 export interface OAuthTokens {
   access: string;
@@ -9,22 +8,6 @@ export interface OAuthTokens {
   accountId: string | null;
   email: string | null;
   plan: string | null;
-}
-
-export interface Authorization {
-  state: string;
-  codeVerifier: string;
-  authorizeUrl: string;
-}
-
-export interface BrowserOAuth {
-  // A fresh authorization with its own state and PKCE verifier.
-  authorize(): Authorization;
-  exchange(
-    grant: { code: string; codeVerifier: string; state: string },
-    signal?: AbortSignal,
-  ): Promise<OAuthTokens>;
-  refresh(refreshToken: string): Promise<OAuthTokens>;
 }
 
 export interface DeviceCode {
@@ -47,4 +30,5 @@ export interface DeviceOAuth {
     approval: { code: string; codeVerifier: string },
     signal?: AbortSignal,
   ): Promise<OAuthTokens>;
+  refresh(refreshToken: string): Promise<OAuthTokens>;
 }

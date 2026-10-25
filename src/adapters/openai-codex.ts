@@ -1,10 +1,7 @@
-// Signs in to a ChatGPT account with the Codex CLI's OAuth client: a device code, or a browser
-// authorization whose callback the user pastes back, and token refresh. Lists the models the
-// account can use from the Codex backend, and streams replies from it with the AI SDK's OpenAI
-// Responses provider, shaped the way the Codex CLI asks. A connection's proxy takes the place of
-// the backend for both, with its headers added.
-
-import { createHash, randomBytes } from "node:crypto";
+// Signs in to a ChatGPT account with the Codex CLI's OAuth client by device code, and renews its
+// tokens. Lists the models the account can use from the Codex backend, and streams replies from it
+// with the AI SDK's OpenAI Responses provider, shaped the way the Codex CLI asks. A connection's
+// proxy takes the place of the backend for both, with its headers added.
 
 import { createOpenAI } from "@ai-sdk/openai";
 import { decodeJwt } from "jose";
@@ -13,18 +10,15 @@ import * as z from "zod";
 import { type ProviderErrors, streamReply } from "@/adapters/ai-sdk-stream.ts";
 import type { Catalog } from "@/ports/catalog.ts";
 import type { ModelGateway } from "@/ports/model-gateway.ts";
-import type { BrowserOAuth, DeviceOAuth, OAuthTokens } from "@/ports/oauth.ts";
+import type { DeviceOAuth, OAuthTokens } from "@/ports/oauth.ts";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER = "https://auth.openai.com";
-const AUTHORIZE_URL = `${ISSUER}/oauth/authorize`;
 const TOKEN_URL = `${ISSUER}/oauth/token`;
-const REDIRECT_URI = "http://localhost:1455/auth/callback";
 const DEVICE_USER_CODE_URL = `${ISSUER}/api/accounts/deviceauth/usercode`;
 const DEVICE_TOKEN_URL = `${ISSUER}/api/accounts/deviceauth/token`;
 const DEVICE_VERIFICATION_URL = `${ISSUER}/codex/device`;
 const DEVICE_REDIRECT_URI = `${ISSUER}/deviceauth/callback`;
-const SCOPES = "openid profile email offline_access";
 const ORIGINATOR = "mage";
 const CODEX_URL = "https://chatgpt.com/backend-api/codex";
 // The Codex CLI release whose model list we ask for; the backend leaves out models it is too old for.
@@ -105,11 +99,7 @@ function tokensFrom(body: z.infer<typeof tokenResponseSchema>): OAuthTokens {
   };
 }
 
-function randomValue() {
-  return randomBytes(32).toString("base64url");
-}
-
-export function createCodexOAuth(fetchFn: typeof fetch = fetch): BrowserOAuth & DeviceOAuth {
+export function createCodexOAuth(fetchFn: typeof fetch = fetch): DeviceOAuth {
   async function postForm(params: Record<string, string>, signal?: AbortSignal) {
     const res = await fetchFn(TOKEN_URL, {
       method: "POST",
@@ -133,38 +123,6 @@ export function createCodexOAuth(fetchFn: typeof fetch = fetch): BrowserOAuth & 
   }
 
   return {
-    authorize() {
-      const state = randomValue();
-      const codeVerifier = randomValue();
-      const params = new URLSearchParams({
-        response_type: "code",
-        client_id: CLIENT_ID,
-        redirect_uri: REDIRECT_URI,
-        scope: SCOPES,
-        code_challenge: createHash("sha256").update(codeVerifier).digest("base64url"),
-        code_challenge_method: "S256",
-        state,
-        id_token_add_organizations: "true",
-        codex_cli_simplified_flow: "true",
-        originator: ORIGINATOR,
-      });
-      // Spaces as %20 rather than +.
-      const query = params.toString().replaceAll("+", "%20");
-      return { state, codeVerifier, authorizeUrl: `${AUTHORIZE_URL}?${query}` };
-    },
-
-    exchange({ code, codeVerifier }, signal) {
-      return postForm(
-        {
-          grant_type: "authorization_code",
-          code,
-          code_verifier: codeVerifier,
-          redirect_uri: REDIRECT_URI,
-        },
-        signal,
-      );
-    },
-
     refresh(refreshToken) {
       return postForm({ grant_type: "refresh_token", refresh_token: refreshToken });
     },

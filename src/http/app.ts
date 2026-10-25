@@ -26,7 +26,6 @@ import type { Threads } from "@/services/threads.ts";
 import type { ToolDecisions } from "@/services/tools.ts";
 import {
   type AttemptSummary,
-  browserFinishSchema,
   connectionLabelSchema,
   type ConnectionSummary,
   proxyInputSchema,
@@ -209,12 +208,6 @@ function attemptSummary(attempt: AttemptStatus): AttemptSummary {
     ? { status: "connected", connection: summary(attempt.connection) }
     : attempt;
 }
-
-const browserFinish = validator("json", (value, c) => {
-  const parsed = browserFinishSchema.safeParse(value);
-  if (!parsed.success) return c.json({ error: "callbackUrl is required" }, 400);
-  return parsed.data;
-});
 
 // A JSON body that must match the schema; otherwise 400 with the error given.
 function jsonBody<T extends z.ZodType>(schema: T, error: string) {
@@ -935,14 +928,6 @@ function createApi(options: AppOptions) {
       })
       .post("/v1/connections/codex/device", async (c) => {
         return c.json(await connections.startDevice("codex", signedIn(c.var.principal)), 200);
-      })
-      .post("/v1/connections/codex/browser", (c) => {
-        return c.json(connections.startBrowser("codex", signedIn(c.var.principal)), 200);
-      })
-      .post("/v1/connections/codex/browser/finish", browserFinish, async (c) => {
-        const owner = signedIn(c.var.principal);
-        const connection = await connections.finishBrowser("codex", owner, c.req.valid("json"));
-        return c.json(summary(connection), 200);
       })
       .get("/v1/connections/codex/attempts/:id", (c) => {
         const owner = signedIn(c.var.principal);

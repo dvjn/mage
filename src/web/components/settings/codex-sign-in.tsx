@@ -1,19 +1,11 @@
-// The Codex sign-in: a device code entered at OpenAI from any device, or a browser sign-in whose
-// final address the person pastes back; says which connection it made.
+// The ChatGPT sign-in: a device code entered at OpenAI from any device; says which connection it
+// made.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import {
-  attemptSchema,
-  browserStartSchema,
-  connectionSchema,
-  type ConnectionSummary,
-  deviceStartSchema,
-} from "@/shared/connections.ts";
+import { attemptSchema, type ConnectionSummary, deviceStartSchema } from "@/shared/connections.ts";
 import { CopyButton } from "@/web/components/copy-button";
-import { openInNewTab, PasteBack } from "@/web/components/settings/sign-in";
-import { SegmentedControl } from "@/web/components/segmented-control";
 import { Button } from "@/web/components/ui/button";
 import {
   Field,
@@ -26,17 +18,13 @@ import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
 import { connectionsQuery, modelsQuery } from "@/web/lib/queries";
 
-type Method = "device" | "browser";
-
 export function CodexSignIn({
   onConnected,
 }: {
   onConnected: (connection: ConnectionSummary) => void;
 }) {
   const queryClient = useQueryClient();
-  const [method, setMethod] = useState<Method>("device");
   const [device, setDevice] = useState<{ attemptId: string; userCode: string; url: string }>();
-  const [browserAttempt, setBrowserAttempt] = useState<string>();
   const [error, setError] = useState<string>();
 
   const attempt = useQuery({
@@ -62,7 +50,6 @@ export function CodexSignIn({
 
   function reset() {
     setDevice(undefined);
-    setBrowserAttempt(undefined);
     setError(undefined);
   }
 
@@ -88,35 +75,6 @@ export function CodexSignIn({
       });
     }
     reset();
-  }
-
-  async function startBrowser() {
-    reset();
-    await openInNewTab(async () => {
-      const res = await apiClient.v1.connections.codex.browser.$post();
-      if (!res.ok) {
-        setError(await errorOf(res));
-        return null;
-      }
-      const { attemptId, authorizeUrl } = browserStartSchema.parse(await res.json());
-      setBrowserAttempt(attemptId);
-      return authorizeUrl;
-    });
-  }
-
-  async function finishBrowser(callbackUrl: string) {
-    const res = await apiClient.v1.connections.codex.browser.finish.$post({
-      json: { attemptId: browserAttempt, callbackUrl },
-    });
-    if (!res.ok) {
-      setError(await errorOf(res));
-      return;
-    }
-    const connection = connectionSchema.parse(await res.json());
-    reset();
-    await queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
-    await queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
-    onConnected(connection);
   }
 
   return (
@@ -148,39 +106,11 @@ export function CodexSignIn({
       ) : (
         <FieldGroup>
           <Field>
-            <SegmentedControl
-              label="Sign-in method"
-              options={[
-                { value: "device", label: "Device code" },
-                { value: "browser", label: "Browser" },
-              ]}
-              value={method}
-              onChange={(option) => {
-                setMethod(option);
-                reset();
-              }}
-            />
-            {method === "device" ? (
-              <>
-                <Button onClick={() => void startDevice()}>Get a code</Button>
-                <FieldDescription>
-                  Enter a code at OpenAI from any device. Works wherever Mage runs.
-                </FieldDescription>
-              </>
-            ) : (
-              <>
-                <Button onClick={() => void startBrowser()}>Open the Codex sign-in</Button>
-                <FieldDescription>When the code does not work.</FieldDescription>
-              </>
-            )}
+            <Button onClick={() => void startDevice()}>Get a code</Button>
+            <FieldDescription>
+              Enter a code at OpenAI from any device. Works wherever Mage runs.
+            </FieldDescription>
           </Field>
-          {method === "browser" && browserAttempt && (
-            <PasteBack
-              label="Callback URL"
-              description="After you sign in, your browser opens a localhost page that does not load. Copy its full address and paste it here."
-              onSubmit={finishBrowser}
-            />
-          )}
         </FieldGroup>
       )}
       <FieldError className="mt-4">{shownError}</FieldError>

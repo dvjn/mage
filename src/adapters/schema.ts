@@ -225,7 +225,8 @@ export const credential = sqliteTable("credential", {
     .notNull(),
 });
 
-// A browser sign-in a user has started and not yet finished; each is used once.
+// A browser sign-in a user started and had not finished, from when Mage offered them; nothing
+// writes it now.
 export const signInAttempt = sqliteTable("sign_in_attempt", {
   state: text("state").primaryKey(),
   kind: text("kind", { enum: ["codex"] }).notNull(),

@@ -60,14 +60,6 @@ export const deviceStartSchema = z.object({
   userCode: z.string(),
 });
 
-export const browserStartSchema = z.object({ attemptId: z.string(), authorizeUrl: z.url() });
-
-// The callback address or the code; the attempt id finds the sign-in when there is no state.
-export const browserFinishSchema = z.object({
-  attemptId: z.string().min(1).optional(),
-  callbackUrl: z.string().min(1),
-});
-
 export const attemptSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("pending") }),
   z.object({ status: z.literal("connected"), connection: connectionSchema }),

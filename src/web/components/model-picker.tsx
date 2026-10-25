@@ -2,8 +2,9 @@
 // by the connection they come through, each group marked with its host and each model with its
 // maker, found by its name, its maker's or its host's, with the default the level above chose
 // offered first where there is one, and a
-// model that is turned off or gone shown as a warning with what stands in. With no models at all,
-// it points to adding a model provider. As a form field it is outlined, full width and opens below;
+// model that is turned off or gone shown as a warning with what stands in. Connections whose models
+// could not be read follow, each saying so with why. With no models at all, it points to adding a
+// model provider. As a form field it is outlined, full width and opens below;
 // compact, it is a composer button that opens above.
 
 import { Link } from "@tanstack/react-router";
@@ -13,6 +14,7 @@ import type * as React from "react";
 
 import { cn } from "cn";
 
+import { connectionLabel } from "@/shared/connections.ts";
 import { type HostId, hostOf } from "@/shared/hosts.ts";
 import { MAKERS } from "@/shared/makers.ts";
 import type { ModelSummary } from "@/shared/models.ts";
@@ -34,7 +36,7 @@ import {
 import { selectTriggerClassName } from "@/web/components/ui/select";
 import { Skeleton } from "@/web/components/ui/skeleton";
 import { WithTooltip } from "@/web/components/with-tooltip";
-import { modelsQuery } from "@/web/lib/queries";
+import { connectionsQuery, modelsQuery } from "@/web/lib/queries";
 
 // A tooltip when there is something to say.
 function MaybeTooltip({ label, children }: { label?: string; children: React.ReactElement }) {
@@ -85,6 +87,19 @@ function matches(model: ModelSummary, query: string) {
     .toLowerCase()
     .split(/\s+/)
     .every((word) => text.includes(word));
+}
+
+// The org's connections whose models could not be read, with why.
+function useFailedConnections() {
+  const list = useQuery(modelsQuery);
+  const connections = useQuery(connectionsQuery);
+  return (list.data?.errors ?? []).flatMap(({ connectionId, message }) => {
+    const connection = connections.data?.find((c) => c.id === connectionId);
+    if (!connection) return [];
+    return [
+      { id: connectionId, host: connection.host, label: connectionLabel(connection), message },
+    ];
+  });
 }
 
 export interface MissingModel {
@@ -182,6 +197,7 @@ export function ModelPicker({
         ? inherit.label
         : placeholder;
   const groups = groupsOf(models);
+  const failed = useFailedConnections();
   const compact = variant === "compact";
   return (
     <Combobox
@@ -303,6 +319,26 @@ export function ModelPicker({
             </ComboboxGroup>
           )}
         </ComboboxList>
+        {failed.length > 0 && (
+          <ul aria-label="Not loaded" className="border-t p-1">
+            {failed.map(({ id, host, label, message }) => (
+              <li key={id}>
+                <WithTooltip label={message}>
+                  <span
+                    tabIndex={0}
+                    className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground"
+                  >
+                    <HostMark host={host} label={givenName(label)} className="size-3" />
+                    <span className="truncate">{label}</span>
+                    <span className="ml-auto pl-3 whitespace-nowrap">
+                      Couldn&apos;t load<span className="sr-only">: {message}</span>
+                    </span>
+                  </span>
+                </WithTooltip>
+              </li>
+            ))}
+          </ul>
+        )}
       </ComboboxContent>
     </Combobox>
   );

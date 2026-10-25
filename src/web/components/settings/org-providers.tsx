@@ -1,9 +1,10 @@
 // The organization's model providers: a card with a table of its connections (the host's mark and
-// label, how it connects, the account, masked key or server with its region, the makers of its
-// models, how many of its models are on, when it was added), each with a menu to choose its models,
-// rename it, set its proxy or remove it, and adding one through the add-provider journey, started
-// from the empty state while there are none. On a phone each row is two lines. The org's owners
-// manage them; its members see them. A team org connects with no subscription sign-ins.
+// label over how it connects, the account, masked key or server with its region, the makers of its
+// models, how many of its models are on or why they could not be read, when it was added), each
+// with a menu to choose its models, rename it, set its proxy or remove it, and adding one through
+// the add-provider journey, started from the empty state while there are none. On a phone the
+// account joins how it connects. The org's owners manage them; its members see them. A team org
+// connects with no subscription sign-ins.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -12,6 +13,7 @@ import {
   MoreHorizontalIcon,
   PencilIcon,
   PlusIcon,
+  RotateCcwIcon,
   ServerCogIcon,
   Trash2Icon,
 } from "lucide-react";
@@ -162,7 +164,8 @@ function RowMenu({
   );
 }
 
-// "12 of 15 on", opening the provider's models.
+// "12 of 15 on", opening the provider's models; when its list could not be read, saying so with
+// why, and reading it again on asking.
 function ModelsCount({
   connection,
   onOpen,
@@ -170,17 +173,44 @@ function ModelsCount({
   connection: ConnectionSummary;
   onOpen: () => void;
 }) {
+  const queryClient = useQueryClient();
   const list = useQuery(connectionModelsQuery(connection.id));
+  const name = connectionLabel(connection);
+  if (list.error && !list.isFetching) {
+    return (
+      <span className="flex items-center gap-1 whitespace-nowrap">
+        <WithTooltip label={list.error.message}>
+          <span tabIndex={0} className="text-xs text-muted-foreground">
+            Couldn&apos;t load
+            <span className="sr-only">: {list.error.message}</span>
+          </span>
+        </WithTooltip>
+        <WithTooltip label="Try again">
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label={`Read the models of ${name} again`}
+            onClick={() => {
+              void list.refetch();
+              void queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
+            }}
+          >
+            <RotateCcwIcon />
+          </Button>
+        </WithTooltip>
+      </span>
+    );
+  }
   const on = list.data?.models.filter((m) => m.enabled).length ?? 0;
   return (
     <Button
       size="xs"
       variant="ghost"
       className="-ml-2 font-normal"
-      aria-label={`Models of ${connectionLabel(connection)}`}
+      aria-label={`Models of ${name}`}
       onClick={onOpen}
     >
-      {list.data ? `${on} of ${list.data.models.length} on` : list.error ? "Unavailable" : "…"}
+      {list.data ? `${on} of ${list.data.models.length} on` : "…"}
     </Button>
   );
 }
@@ -199,7 +229,6 @@ function ProvidersTable({
       <TableHeader className="hidden sm:table-header-group">
         <TableRow className="hover:bg-transparent">
           <TableHead className="px-3 text-xs text-muted-foreground">Provider</TableHead>
-          <TableHead className="px-3 text-xs text-muted-foreground">Method</TableHead>
           <TableHead className="px-3 text-xs text-muted-foreground">Account</TableHead>
           <TableHead className="px-3 text-xs text-muted-foreground">Makers</TableHead>
           <TableHead className="px-3 text-xs text-muted-foreground">Models</TableHead>
@@ -217,20 +246,20 @@ function ProvidersTable({
           return (
             <TableRow key={connection.id} aria-label={name} className="group">
               <TableCell className="w-full max-w-0 min-w-36 px-3 py-2.5">
-                <div className="flex min-w-0 items-center gap-2 font-medium">
-                  <HostMark host={connection.host} label={connection.label} />
-                  <span className="truncate">{name}</span>
+                <div className="flex min-w-0 items-start gap-2 font-medium">
+                  <HostMark host={connection.host} label={connection.label} className="mt-0.5" />
+                  <span className="line-clamp-2 break-words whitespace-normal">{name}</span>
                 </div>
-                {/* On a phone the other columns fold into this line. */}
-                <div className="truncate text-xs text-muted-foreground sm:hidden">
-                  {methodTitle(connection)} ·{" "}
-                  <span className={connection.authKind === "api_key" ? "font-mono" : undefined}>
-                    {accountLine(connection)}
+                {/* Under the name; on a phone the account joins it. */}
+                <div className="truncate pl-6 text-xs text-muted-foreground">
+                  {methodTitle(connection)}
+                  <span className="sm:hidden">
+                    {" · "}
+                    <span className={connection.authKind === "api_key" ? "font-mono" : undefined}>
+                      {accountLine(connection)}
+                    </span>
                   </span>
                 </div>
-              </TableCell>
-              <TableCell className="hidden px-3 py-2.5 whitespace-nowrap text-muted-foreground sm:table-cell">
-                {methodTitle(connection)}
               </TableCell>
               <TableCell className="hidden max-w-40 truncate px-3 py-2.5 sm:table-cell">
                 <span className={connection.authKind === "api_key" ? "font-mono" : undefined}>

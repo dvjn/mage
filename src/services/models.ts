@@ -156,7 +156,7 @@ export function createModels(options: ModelsOptions) {
     } catch (err) {
       if (err instanceof ConnectionError) throw err;
       logger.warn({ err, host }, "model list failed");
-      throw new Error(`Could not read the ${hostOf(host).label} models. Try again.`);
+      throw new ConnectionError(502, `Could not read the ${hostOf(host).label} models. Try again.`);
     }
   }
 

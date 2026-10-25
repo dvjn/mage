@@ -1,5 +1,3 @@
-import { createHash } from "node:crypto";
-
 import { eq } from "drizzle-orm";
 import { UnsecuredJWT } from "jose";
 import { describe, expect, it } from "vite-plus/test";
@@ -12,7 +10,6 @@ import { openDatabase } from "@/adapters/db.ts";
 import { createLogger } from "@/adapters/logger.ts";
 import { createCodexOAuth } from "@/adapters/openai-codex.ts";
 import * as schema from "@/adapters/schema.ts";
-import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { createApp } from "@/http/app.ts";
 import { createConnections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
@@ -25,7 +22,6 @@ import type { Spaces } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
 
 const baseUrl = "http://localhost:4783";
-const callbackBase = "http://localhost:1455/auth/callback";
 const tokenUrl = "https://auth.openai.com/oauth/token";
 const userCodeUrl = "https://auth.openai.com/api/accounts/deviceauth/usercode";
 const deviceTokenUrl = "https://auth.openai.com/api/accounts/deviceauth/token";
@@ -118,9 +114,8 @@ function setup() {
   const connections = createConnections({
     connections: createConnectionStore(db),
     credentials,
-    attempts: createSignInAttemptStore(db),
     providers: {
-      codex: { label: "Codex", browser: codex, device: codex },
+      codex: { label: "Codex", oauth: codex },
     },
     logger,
     now: () => clock.now,
@@ -175,33 +170,6 @@ function setup() {
     });
   }
 
-  async function startBrowser(cookie: string) {
-    const res = await api("POST", "/connections/codex/browser", cookie);
-    expect(res.status).toBe(200);
-    const { attemptId, authorizeUrl } = (await res.json()) as {
-      attemptId: string;
-      authorizeUrl: string;
-    };
-    return { attemptId, authorizeUrl, params: new URL(authorizeUrl).searchParams };
-  }
-
-  // The address the browser lands on after the user approves.
-  async function approve(cookie: string, extra: Record<string, string> = {}) {
-    const { attemptId } = await startBrowser(cookie);
-    const query = new URLSearchParams({ code: `code-${attemptId}`, state: attemptId, ...extra });
-    return { attemptId, callbackUrl: `${callbackBase}?${query.toString()}` };
-  }
-
-  function finish(cookie: string, body: { attemptId?: string; callbackUrl: string }) {
-    return api("POST", "/connections/codex/browser/finish", cookie, body);
-  }
-
-  async function connect(cookie: string) {
-    const res = await finish(cookie, await approve(cookie));
-    expect(res.status).toBe(200);
-    return (await res.json()) as { id: string };
-  }
-
   async function startDevice(cookie: string) {
     const res = await api("POST", "/connections/codex/device", cookie);
     expect(res.status).toBe(200);
@@ -210,6 +178,17 @@ function setup() {
 
   function attempt(cookie: string, id: string) {
     return api("GET", `/connections/codex/attempts/${id}`, cookie);
+  }
+
+  // A ChatGPT account connected with a code approved at once.
+  async function connect(cookie: string) {
+    openai.polls = [
+      { status: 200, body: { authorization_code: "device-code", code_verifier: "their-verifier" } },
+    ];
+    const { attemptId } = await startDevice(cookie);
+    const result = await settled(cookie, attemptId);
+    expect(result.status).toBe("connected");
+    return result.connection as { id: string };
   }
 
   // The attempt once the server has stopped waiting on it.
@@ -241,9 +220,6 @@ function setup() {
     connections,
     signUp,
     api,
-    startBrowser,
-    approve,
-    finish,
     connect,
     startDevice,
     attempt,
@@ -257,208 +233,10 @@ async function rejected(res: Response, status: number, message: RegExp) {
   expect(((await res.json()) as { error: string }).error).toMatch(message);
 }
 
-describe("browser sign-in", () => {
-  it("returns an authorize URL with the Codex client's parameters", async () => {
-    const { db, signUp, startBrowser } = setup();
-    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
-
-    const { attemptId, authorizeUrl, params } = await startBrowser(cookie);
-
-    expect(authorizeUrl).toMatch(/^https:\/\/auth\.openai\.com\/oauth\/authorize\?/);
-    expect(authorizeUrl).not.toContain("+");
-    const saved = db.select().from(schema.signInAttempt).get();
-    expect(Object.fromEntries(params)).toEqual({
-      response_type: "code",
-      client_id: clientId,
-      redirect_uri: callbackBase,
-      scope: "openid profile email offline_access",
-      code_challenge: createHash("sha256")
-        .update(saved?.codeVerifier ?? "")
-        .digest("base64url"),
-      code_challenge_method: "S256",
-      state: attemptId,
-      id_token_add_organizations: "true",
-      codex_cli_simplified_flow: "true",
-      originator: "mage",
-    });
-    expect(saved).toMatchObject({ kind: "codex", state: attemptId });
-  });
-
-  it("exchanges the code and stores the connection with its credential sealed", async () => {
-    const { db, requests, credentials, signUp, approve, finish } = setup();
-    const { userId, cookie } = await signUp("Ada Lovelace", "ada@example.com");
-    const { attemptId, callbackUrl } = await approve(cookie);
-    const verifier = db.select().from(schema.signInAttempt).get()?.codeVerifier;
-
-    const res = await finish(cookie, { attemptId, callbackUrl });
-
-    expect(res.status).toBe(200);
-    const text = await res.text();
-    expect(text).not.toMatch(/secret|token|acct/);
-    const summary = JSON.parse(text) as { id: string };
-    expect(summary).toEqual({
-      id: expect.any(String),
-      host: "codex",
-      authKind: "oauth",
-      account: "ada@chatgpt.example",
-      label: null,
-      settings: {},
-      proxy: null,
-      createdAt: expect.any(String),
-    });
-    expect(requests).toEqual([
-      {
-        url: tokenUrl,
-        body: {
-          client_id: clientId,
-          grant_type: "authorization_code",
-          code: `code-${attemptId}`,
-          code_verifier: verifier,
-          redirect_uri: callbackBase,
-        },
-      },
-    ]);
-    expect(db.select().from(schema.connection).all()).toEqual([
-      expect.objectContaining({ id: summary.id, createdBy: userId }),
-    ]);
-    expect(db.select().from(schema.credential).get()?.sealed.toString("latin1")).not.toContain(
-      "secret-refresh",
-    );
-    expect(credentials.get(summary.id)).toEqual({
-      access: accessToken(1),
-      refresh: "secret-refresh-1",
-      expires: new Date("2026-10-21T11:00:00Z").getTime(),
-      accountId: "acct-123",
-      email: "ada@chatgpt.example",
-      plan: "plus",
-    });
-  });
-
-  it("accepts the bare code with the attempt id, the query or code#state", async () => {
-    const { signUp, startBrowser, finish, api } = setup();
-    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
-
-    for (const pasted of [
-      (id: string) => ({ attemptId: id, callbackUrl: " the-code " }),
-      (id: string) => ({ callbackUrl: `code=the-code&state=${id}` }),
-      (id: string) => ({ callbackUrl: `the-code#${id}` }),
-    ]) {
-      const { attemptId } = await startBrowser(cookie);
-      const res = await finish(cookie, pasted(attemptId));
-      expect(res.status).toBe(200);
-      const { id } = (await res.json()) as { id: string };
-      await api("DELETE", `/connections/${id}`, cookie);
-    }
-  });
-
-  it("rejects a callback from a different sign-in and keeps the attempt", async () => {
-    const { requests, signUp, startBrowser, approve, finish } = setup();
-    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
-    const first = await startBrowser(cookie);
-    const second = await approve(cookie);
-
-    await rejected(
-      await finish(cookie, { attemptId: first.attemptId, callbackUrl: second.callbackUrl }),
-      400,
-      /different sign-in/,
-    );
-    expect(requests).toEqual([]);
-    expect((await finish(cookie, second)).status).toBe(200);
-  });
-
-  it("rejects a pasted code without a sign-in to match", async () => {
-    const { requests, signUp, finish } = setup();
-    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
-
-    await rejected(await finish(cookie, { callbackUrl: "the-code" }), 400, /full address/);
-    await rejected(
-      await finish(cookie, { attemptId: "made-up", callbackUrl: "the-code" }),
-      400,
-      /unknown/,
-    );
-    expect(requests).toEqual([]);
-  });
-
-  it("rejects a sign-in that was already used", async () => {
-    const { requests, signUp, approve, finish, api } = setup();
-    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
-    const approved = await approve(cookie);
-    const { id } = (await (await finish(cookie, approved)).json()) as { id: string };
-    await api("DELETE", `/connections/${id}`, cookie);
-
-    await rejected(await finish(cookie, approved), 400, /unknown or was already used/);
-    expect(requests).toHaveLength(1);
-  });
-
-  it("rejects a sign-in another user started", async () => {
-    const { signUp, approve, finish } = setup();
-    const ada = await signUp("Ada Lovelace", "ada@example.com");
-    const grace = await signUp("Grace Hopper", "grace@example.com");
-    const approved = await approve(ada.cookie);
-
-    await rejected(await finish(grace.cookie, approved), 400, /unknown/);
-    expect((await finish(ada.cookie, approved)).status).toBe(200);
-  });
-
-  it("rejects an expired sign-in", async () => {
-    const { clock, requests, signUp, approve, finish } = setup();
-    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
-    const approved = await approve(cookie);
-
-    clock.now = new Date(clock.now.getTime() + 10 * 60 * 1000);
-
-    await rejected(await finish(cookie, approved), 400, /expired/);
-    expect(requests).toEqual([]);
-  });
-
-  it("stops when the user declined", async () => {
-    const { requests, signUp, approve, finish } = setup();
-    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
-
-    await rejected(
-      await finish(cookie, await approve(cookie, { error: "access_denied", code: "" })),
-      400,
-      /declined/,
-    );
-    expect(requests).toEqual([]);
-  });
-
-  it("reports an exchange OpenAI refuses or answers without an account", async () => {
-    const { db, openai, signUp, approve, finish } = setup();
-    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
-
-    openai.exchange = { status: 400, body: { error: "invalid_grant" } };
-    await rejected(await finish(cookie, await approve(cookie)), 502, /did not accept/);
-    openai.exchange = { status: 200, body: { access_token: "only-this" } };
-    await rejected(await finish(cookie, await approve(cookie)), 502, /did not accept/);
-    openai.exchange = { status: 200 };
-    openai.accountId = null;
-    await rejected(await finish(cookie, await approve(cookie)), 502, /did not accept/);
-
-    expect(db.select().from(schema.connection).all()).toEqual([]);
-    expect(db.select().from(schema.credential).all()).toEqual([]);
-  });
-
-  it("drops a cancelled browser sign-in", async () => {
-    const { signUp, approve, finish, api } = setup();
-    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
-    const approved = await approve(cookie);
-
-    const res = await api(
-      "POST",
-      `/connections/codex/attempts/${approved.attemptId}/cancel`,
-      cookie,
-    );
-
-    expect(res.status).toBe(200);
-    await rejected(await finish(cookie, approved), 400, /unknown/);
-  });
-});
-
 describe("device code sign-in", () => {
   it("polls until approved, slowing down when asked, then exchanges the code", async () => {
-    const { requests, openai, sleeps, credentials, signUp, startDevice, settled } = setup();
-    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const { db, requests, openai, sleeps, credentials, signUp, startDevice, settled } = setup();
+    const { userId, cookie } = await signUp("Ada Lovelace", "ada@example.com");
     openai.polls = [
       { status: 403 },
       { status: 400, body: { error: { code: "deviceauth_authorization_pending" } } },
@@ -502,10 +280,48 @@ describe("device code sign-in", () => {
         redirect_uri: "https://auth.openai.com/deviceauth/callback",
       },
     });
-    expect(credentials.get(result.connection?.id ?? "")).toMatchObject({
+    expect(db.select().from(schema.connection).all()).toEqual([
+      expect.objectContaining({ id: result.connection?.id, createdBy: userId }),
+    ]);
+    expect(db.select().from(schema.credential).get()?.sealed.toString("latin1")).not.toContain(
+      "secret-refresh",
+    );
+    expect(credentials.get(result.connection?.id ?? "")).toEqual({
+      access: accessToken(1),
       refresh: "secret-refresh-1",
+      expires: new Date("2026-10-21T11:00:20Z").getTime(),
       accountId: "acct-123",
+      email: "ada@chatgpt.example",
+      plan: "plus",
     });
+  });
+
+  it("reports an exchange OpenAI refuses or answers without an account", async () => {
+    const { db, openai, signUp, startDevice, settled } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const approved = {
+      status: 200,
+      body: { authorization_code: "device-code", code_verifier: "their-verifier" },
+    };
+
+    for (const answer of [
+      () => (openai.exchange = { status: 400, body: { error: "invalid_grant" } }),
+      () => (openai.exchange = { status: 200, body: { access_token: "only-this" } }),
+      () => {
+        openai.exchange = { status: 200 };
+        openai.accountId = null;
+      },
+    ]) {
+      answer();
+      openai.polls = [approved];
+      const { attemptId } = await startDevice(cookie);
+      expect(await settled(cookie, attemptId)).toEqual({
+        status: "failed",
+        error: expect.stringMatching(/did not accept/),
+      });
+    }
+    expect(db.select().from(schema.connection).all()).toEqual([]);
+    expect(db.select().from(schema.credential).all()).toEqual([]);
   });
 
   it("gives up when the code expires", async () => {
@@ -573,7 +389,7 @@ describe("device code sign-in", () => {
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
     openai.userCode = { status: 404 };
 
-    await rejected(await api("POST", "/connections/codex/device", cookie), 502, /use the browser/);
+    await rejected(await api("POST", "/connections/codex/device", cookie), 502, /Try again\.$/);
   });
 
   it("shows a sign-in only to the user who started it", async () => {
@@ -678,7 +494,6 @@ describe("/api/v1/connections", () => {
     const { api } = setup();
     expect((await api("GET", "/connections", "")).status).toBe(401);
     expect((await api("POST", "/connections/codex/device", "")).status).toBe(401);
-    expect((await api("POST", "/connections/codex/browser", "")).status).toBe(401);
   });
 
   it("lists connections without their credentials", async () => {
@@ -710,7 +525,6 @@ describe("/api/v1/connections", () => {
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
     await connect(cookie);
 
-    await rejected(await api("POST", "/connections/codex/browser", cookie), 409, /already/);
     await rejected(await api("POST", "/connections/codex/device", cookie), 409, /already/);
   });
 
@@ -747,7 +561,6 @@ describe("/api/v1/connections", () => {
 
     expect((await api("GET", "/connections", cookie)).status).toBe(200);
     expect((await api("POST", "/connections/codex/device", cookie)).status).toBe(403);
-    expect((await api("POST", "/connections/codex/browser", cookie)).status).toBe(403);
   });
 
   it("shows a member who is not an owner the connections, and refuses their changes", async () => {
@@ -776,6 +589,5 @@ describe("/api/v1/connections", () => {
     expect((await api("GET", "/connections", grace.cookie)).status).toBe(200);
     expect((await api("DELETE", "/connections/missing", grace.cookie)).status).toBe(403);
     expect((await api("POST", "/connections/codex/device", grace.cookie)).status).toBe(403);
-    expect((await api("POST", "/connections/codex/browser", grace.cookie)).status).toBe(403);
   });
 });

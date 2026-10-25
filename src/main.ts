@@ -22,7 +22,6 @@ import { createCodexOAuth } from "@/adapters/openai-codex.ts";
 import { createOrgInviteStore } from "@/adapters/org-invites.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createRunStore } from "@/adapters/runs.ts";
-import { createSignInAttemptStore } from "@/adapters/sign-in-attempts.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
 import { createThreadReadStore } from "@/adapters/thread-reads.ts";
 import { createThreadStore } from "@/adapters/threads.ts";
@@ -68,14 +67,12 @@ const auth = createAuth({
 
 // CREDENTIAL_KEY is key version 1.
 const cipher = createCipher({ version: 1, key: config.credentialKey });
-const codex = createCodexOAuth(fetch);
 const connectionStore = createConnectionStore(db);
 const connections = createConnections({
   connections: connectionStore,
   credentials: createCredentialStore(db, cipher),
-  attempts: createSignInAttemptStore(db),
   providers: {
-    codex: { label: "ChatGPT", browser: codex, device: codex },
+    codex: { label: "ChatGPT", oauth: createCodexOAuth(fetch) },
   },
   logger,
 });
