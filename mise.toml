@@ -8,13 +8,42 @@ AUTH_SECRET = "mage-development-secret-do-not-use-in-production"
 CREDENTIAL_KEY = "bWFnZS1kZXZlbG9wbWVudC1vbmx5LWNyZWRlbnRpYWw="
 LOG_FORMAT = "pretty"
 
+[vars]
+# Extra arguments for the dev server.
+dev_args = ""
+
 [tasks.setup]
 description = "Install dependencies and the browser for the journeys"
 run = ["pnpm install", "pnpm exec playwright install chromium"]
 
 [tasks.dev]
-description = "Run API and web client with hot reload on :4783"
-run = "pnpm dev"
+description = "Run API and web client with hot reload on :4783, signing in through the dev identity provider"
+depends = ["deps:up"]
+env = { _.file = "configs/.dev.env" }
+run = "pnpm dev {{vars.dev_args}}"
+
+[tasks."deps:up"]
+description = "Start the dev identity provider on :9000 (Authentik: akadmin, ada, grace, alice, bob)"
+run = """
+set -eu
+compose="$(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml"
+$compose up -d
+until curl -fs -o /dev/null http://localhost:9000/application/o/mage/.well-known/openid-configuration; do
+  sleep 3
+done
+"""
+
+[tasks."deps:down"]
+description = "Stop the dev identity provider, keeping its database"
+run = "$(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml down"
+
+[tasks."deps:reset"]
+description = "Stop the dev identity provider and remove its database"
+run = "$(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml down --volumes"
+
+[tasks."deps:logs"]
+description = "Follow the dev identity provider's logs"
+run = "$(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml logs -f"
 
 [tasks.build]
 description = "Build the web client and the server into dist"
