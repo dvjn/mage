@@ -64,8 +64,8 @@ export function createConnectionStore(db: Db): ConnectionStore {
       return row ? connectionOf(row) : null;
     },
 
-    setLabel(id, label) {
-      db.update(connection).set({ label }).where(eq(connection.id, id)).run();
+    update(id, changes) {
+      db.update(connection).set(changes).where(eq(connection.id, id)).run();
     },
 
     setAutoEnableModels(id, on) {

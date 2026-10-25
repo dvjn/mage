@@ -119,7 +119,7 @@ test("an API key's models become the org's and the space's defaults, which new t
   await expect(page.getByLabel("Reasoning effort")).toContainText("Default · Low");
 });
 
-test("a provider is renamed and removed from its row", async ({ page }) => {
+test("a provider is relabelled and removed from its row", async ({ page }) => {
   await signUp(page, "Ada Lovelace");
   await page.goto("/org/providers");
   await page.getByRole("button", { name: "Add provider" }).click();
@@ -131,7 +131,7 @@ test("a provider is renamed and removed from its row", async ({ page }) => {
 
   const row = page.getByRole("row", { name: "OpenAI API key" });
   await row.getByRole("button", { name: "Actions for OpenAI API key" }).click();
-  await page.getByRole("menuitem", { name: "Rename label" }).click();
+  await page.getByRole("menuitem", { name: "Edit" }).click();
   await page.getByRole("dialog").getByLabel("Label").fill("Team");
   await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
   const renamed = page.getByRole("row", { name: "OpenAI · Team" });

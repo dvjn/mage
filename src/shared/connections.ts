@@ -25,6 +25,8 @@ export const connectionSchema = z.object({
   label: z.string().nullable(),
   // What is not secret about how it connects: the way it does, and fields such as its region.
   settings: z.record(z.string(), z.string()),
+  // The ends of its secrets by field name, as people may see them again.
+  hints: z.record(z.string(), z.string()),
   // Null when its requests go to the host as usual.
   proxy: proxySummarySchema.nullable(),
   createdAt: z.iso.datetime(),
@@ -43,16 +45,6 @@ export function connectionLabel(connection: ConnectionKind) {
 }
 
 export const connectionListSchema = z.array(connectionSchema);
-
-// A new name for a connection; empty leaves it unnamed.
-export const connectionLabelSchema = z.object({
-  label: z
-    .string()
-    .trim()
-    .max(80)
-    .nullable()
-    .transform((label) => label || null),
-});
 
 export const deviceStartSchema = z.object({
   attemptId: z.string(),

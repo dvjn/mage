@@ -32,12 +32,16 @@ export type NewConnection = Omit<
   settings?: Record<string, string>;
 };
 
+export type ConnectionChanges = Partial<
+  Pick<Connection, "authKind" | "account" | "label" | "settings">
+>;
+
 export interface ConnectionStore {
   create(connection: NewConnection): Connection;
   list(orgId: string): Connection[];
   // The connection with this id when it belongs to the org.
   find(orgId: string, id: string): Connection | null;
-  setLabel(id: string, label: string | null): void;
+  update(id: string, changes: ConnectionChanges): void;
   setAutoEnableModels(id: string, on: boolean): void;
   delete(id: string): void;
 }

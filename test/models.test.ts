@@ -137,8 +137,8 @@ function setup() {
         Response.json({ error: { type: "authentication_error" } }, { status: 401 }),
       );
     }
-    // A server people run, which needs no key.
-    if (request.url === "http://llm.local/v1/models") {
+    // A server people run, which needs no key, at either of two addresses.
+    if (["http://llm.local/v1/models", "http://llm2.local/v1/models"].includes(request.url)) {
       return Promise.resolve(
         Response.json({ data: [{ id: "llama-4-scout" }, { id: "nomic-embed-text" }] }),
       );
@@ -1046,7 +1046,7 @@ describe("API keys", () => {
     });
   });
 
-  it("are checked through the proxy given with them, which they keep, and can be renamed", async () => {
+  it("are checked through the proxy given with them, which they keep, and can be relabelled", async () => {
     const { api, requests, signUp } = setup();
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
 
@@ -1071,9 +1071,15 @@ describe("API keys", () => {
     } as never);
     expect(bad.status).toBe(400);
 
-    const renamed = await api("PATCH", `/connections/${added.id}/label`, cookie, { label: "Team" });
-    expect(await renamed.json()).toMatchObject({ label: "Team" });
-    const cleared = await api("PATCH", `/connections/${added.id}/label`, cookie, { label: " " });
+    const renamed = await api("PATCH", `/connections/${added.id}`, cookie, { label: "Team" });
+    expect(await renamed.json()).toMatchObject({
+      label: "Team",
+      hints: { apiKey: "sk-ant-…abcd" },
+      proxy: { baseUrl: "https://proxy.example.com/v1" },
+    });
+    expect(requests.at(-1)?.url).toBe("https://proxy.example.com/v1/models?limit=1000");
+    expect(requests.at(-1)?.headers.get("x-api-key")).toBe(key);
+    const cleared = await api("PATCH", `/connections/${added.id}`, cookie, { label: " " });
     expect(await cleared.json()).toMatchObject({ label: null });
   });
 
@@ -1146,6 +1152,89 @@ describe("connections to other hosts", () => {
     });
     expect(signIn.status).toBe(400);
     expect(await (await api("GET", "/connections", cookie)).json()).toEqual([]);
+  });
+});
+
+describe("changing a connection", () => {
+  async function labBox() {
+    const workspace = setup();
+    const owner = await workspace.signUp("Ada Lovelace", "ada@example.com");
+    const { cookie } = owner;
+    const res = await workspace.api("POST", "/connections", cookie, {
+      host: "custom",
+      method: "endpoint",
+      label: "Lab box",
+      values: { baseUrl: "http://llm.local/v1", apiKey: "lab-secret-key", models: "my-tune" },
+    });
+    const { id } = (await res.json()) as { id: string };
+    return { ...workspace, owner, cookie, id };
+  }
+
+  it("keeps a secret left blank, and its refs, and reads its list again", async () => {
+    const { api, cookie, id, requests } = await labBox();
+    const ref = `${id}/llama-4-scout`;
+    await api("PUT", "/settings/default-model", cookie, { ref });
+
+    const res = await api("PATCH", `/connections/${id}`, cookie, {
+      method: "endpoint",
+      label: "Lab",
+      values: { baseUrl: "http://llm2.local/v1/", apiKey: "", models: "other-tune" },
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).not.toContain("lab-secret-key");
+    expect(JSON.parse(text)).toMatchObject({
+      id,
+      label: "Lab",
+      account: "llm2.local",
+      settings: { method: "endpoint", baseUrl: "http://llm2.local/v1", models: "other-tune" },
+      hints: { apiKey: "lab-secret-…-key" },
+    });
+    expect(requests.at(-1)?.url).toBe("http://llm2.local/v1/models");
+    expect(requests.at(-1)?.headers.get("authorization")).toBe("Bearer lab-secret-key");
+
+    const { models } = (await (await api("GET", "/models", cookie)).json()) as {
+      models: { ref: string; connectionLabel: string }[];
+    };
+    expect(models.map((model) => [model.ref, model.connectionLabel])).toEqual([
+      [ref, "OpenAI-compatible · Lab"],
+      [`${id}/other-tune`, "OpenAI-compatible · Lab"],
+    ]);
+    expect(await (await api("GET", "/settings/default-model", cookie)).json()).toMatchObject({
+      ref,
+    });
+
+    // A secret typed replaces the stored one.
+    await api("PATCH", `/connections/${id}`, cookie, { values: { apiKey: "new-lab-key-0001" } });
+    expect(requests.at(-1)?.headers.get("authorization")).toBe("Bearer new-lab-key-0001");
+  });
+
+  it("refuses details the host does not take, and keeps what it had", async () => {
+    const { api, cookie, id } = await labBox();
+    const refused = await api("PATCH", `/connections/${id}`, cookie, {
+      values: { baseUrl: "http://elsewhere.local/v1", models: "" },
+    });
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toMatch(
+      /^OpenAI-compatible did not accept these details/,
+    );
+    const missing = await api("PATCH", `/connections/${id}`, cookie, { values: { baseUrl: "" } });
+    expect(await missing.json()).toEqual({ error: "Give the base url" });
+    const [kept] = (await (await api("GET", "/connections", cookie)).json()) as object[];
+    expect(kept).toMatchObject({ account: "llm.local", label: "Lab box" });
+  });
+
+  it("is for the org's owners, and not for a sign-in", async () => {
+    const { api, cookie, db, id, connect, owner } = await labBox();
+    const signIn = connect(owner, "codex");
+    const refused = await api("PATCH", `/connections/${signIn}`, cookie, { label: "Mine" });
+    expect(await refused.json()).toEqual({ error: "A sign-in has nothing to change" });
+
+    db.update(schema.member)
+      .set({ role: "member" })
+      .where(eq(schema.member.userId, owner.userId))
+      .run();
+    expect((await api("PATCH", `/connections/${id}`, cookie, { label: "Mine" })).status).toBe(403);
   });
 });
 

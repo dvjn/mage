@@ -1,7 +1,7 @@
 // The organization's model providers: a card with a table of its connections (the host's mark and
 // label over how it connects, the account, masked key or server with its region, the makers of its
 // models, how many of its models are on or why they could not be read, when it was added), each
-// with a menu to choose its models, rename it, set its proxy or remove it, and adding one through
+// with a menu to choose its models, edit it, set its proxy or remove it, and adding one through
 // the add-provider journey, started from the empty state while there are none. On a phone the
 // account joins how it connects. The org's owners manage them; its members see them. A team org
 // connects with no subscription sign-ins.
@@ -27,8 +27,7 @@ import { EmptyState } from "@/web/components/page-states";
 import { HeaderAction } from "@/web/components/people-table";
 import { Time } from "@/web/components/time";
 import { WithTooltip } from "@/web/components/with-tooltip";
-import { NameDialog } from "@/web/components/name-dialog";
-import { AddProviderDialog } from "@/web/components/settings/add-provider";
+import { AddProviderDialog, EditProviderDialog } from "@/web/components/settings/add-provider";
 import { SettingsCard, SettingsTitle } from "@/web/components/settings/layout";
 import { connectionModelsQuery, ModelsDialog } from "@/web/components/settings/models-dialog";
 import { ProxyForm } from "@/web/components/settings/proxy-settings";
@@ -108,7 +107,7 @@ function Makers({ connection }: { connection: ConnectionSummary }) {
 }
 
 type RowAction = {
-  kind: "models" | "rename" | "proxy" | "remove";
+  kind: "models" | "edit" | "proxy" | "remove";
   connection: ConnectionSummary;
 };
 
@@ -142,9 +141,9 @@ function RowMenu({
           Models
         </DropdownMenuItem>
         {named && (
-          <DropdownMenuItem onClick={() => onAction({ kind: "rename", connection })}>
+          <DropdownMenuItem onClick={() => onAction({ kind: "edit", connection })}>
             <PencilIcon />
-            Rename label
+            Edit
           </DropdownMenuItem>
         )}
         <DropdownMenuItem onClick={() => onAction({ kind: "proxy", connection })}>
@@ -307,17 +306,6 @@ function RowDialogs({ action, onClose }: { action: RowAction | null; onClose: ()
     await queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
   }
 
-  async function rename(label: string) {
-    if (!connection) return undefined;
-    const res = await apiClient.v1.connections[":id"].label.$patch({
-      param: { id: connection.id },
-      json: { label },
-    });
-    if (!res.ok) return errorOf(res);
-    await refresh();
-    return undefined;
-  }
-
   async function remove() {
     if (!connection) return;
     const res = await apiClient.v1.connections[":id"].$delete({ param: { id: connection.id } });
@@ -339,17 +327,10 @@ function RowDialogs({ action, onClose }: { action: RowAction | null; onClose: ()
   return (
     <>
       <ModelsDialog connection={connection} open={action?.kind === "models"} onOpenChange={close} />
-      <NameDialog
-        key={connection?.id ?? "rename"}
-        title="Rename label"
-        action="Save"
-        maxLength={80}
-        label="Label"
-        required={false}
-        initialName={connection?.label ?? ""}
-        open={action?.kind === "rename"}
+      <EditProviderDialog
+        connection={connection}
+        open={action?.kind === "edit"}
         onOpenChange={close}
-        onSubmit={rename}
       />
       <Dialog open={action?.kind === "proxy"} onOpenChange={close}>
         <DialogContent>

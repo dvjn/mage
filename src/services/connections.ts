@@ -1,7 +1,8 @@
 // An org's connections: made by signing in to a provider account the way the provider's own
 // coding app does, with a device code, kept usable by renewing their tokens, or by adding a key,
 // cloud credentials or a server's address for a host, and optionally sending their requests
-// through a proxy, kept sealed with the tokens or the secrets.
+// through a proxy, kept sealed with the tokens or the secrets. Those not signed in to can be changed
+// later, a secret left blank keeping the stored one.
 
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -66,6 +67,9 @@ export interface NewHostConnection {
   secrets: Record<string, string>;
   proxy?: ProviderProxy | null;
 }
+
+// A connection's new label, way of connecting and fields, its host and proxy staying.
+export type HostConnectionChange = Omit<NewHostConnection, "host" | "proxy">;
 
 export interface FreshToken {
   access: string;
@@ -146,6 +150,20 @@ export function accountOf(settings: Record<string, string>, secrets: Record<stri
   }
   if (settings.clientId) return settings.clientId;
   return "—";
+}
+
+// The end of a secret as people may see it again: a key's hint, a service account's address, or
+// the last four characters of a long value.
+export function secretHint(name: string, value: string) {
+  if (name === "apiKey") return keyHint(value);
+  if (name === "serviceAccount") {
+    try {
+      return (JSON.parse(value) as { client_email?: string }).client_email ?? "Service account";
+    } catch {
+      return "Service account";
+    }
+  }
+  return value.length >= 12 ? `…${value.slice(-4)}` : "••••";
 }
 
 export function createConnections(options: ConnectionsOptions) {
@@ -295,15 +313,62 @@ export function createConnections(options: ConnectionsOptions) {
       return connection;
     },
 
-    // Names a connection; null leaves it unnamed. A sign-in goes by its account.
-    rename(owner: Owner, id: string, label: string | null): Connection {
+    // The values a change of the connection is checked with: its settings and secrets by field
+    // name, with the values given over them; a secret left blank keeps the stored one.
+    editValues(owner: Owner, id: string, values: Record<string, string>) {
       const connection = connections.find(owner.orgId, id);
       if (!connection) throw new ConnectionError(404, "Connection not found");
       if (connection.authKind === "oauth") {
-        throw new ConnectionError(400, "A sign-in has no label");
+        throw new ConnectionError(400, "A sign-in has nothing to change");
       }
-      connections.setLabel(id, label);
-      return { ...connection, label };
+      const saved = secretsCredentialSchema.parse(credentials.get(id) ?? {});
+      const stored: Record<string, string> = {
+        ...saved.secrets,
+        ...(saved.apiKey && { apiKey: saved.apiKey }),
+      };
+      const merged: Record<string, string> = { ...connection.settings, ...stored };
+      for (const [name, value] of Object.entries(values)) {
+        if (!value.trim() && name in stored) continue;
+        merged[name] = value;
+      }
+      return { connection, values: merged };
+    },
+
+    // Saves a connection's new label, way of connecting and fields, with its secrets sealed and
+    // its proxy kept. The caller has checked the host takes them.
+    edit(owner: Owner, id: string, change: HostConnectionChange): Connection {
+      const connection = connections.find(owner.orgId, id);
+      if (!connection) throw new ConnectionError(404, "Connection not found");
+      const saved = savedAny(id);
+      const { apiKey, ...secrets } = change.secrets;
+      const changes = {
+        authKind: change.authKind,
+        account: accountOf(change.settings, change.secrets),
+        label: change.label,
+        settings: change.settings,
+      };
+      connections.update(id, changes);
+      credentials.put(id, {
+        ...(apiKey && { apiKey }),
+        ...(Object.keys(secrets).length > 0 && { secrets }),
+        ...(saved.proxy && { proxy: saved.proxy }),
+      });
+      return { ...connection, ...changes };
+    },
+
+    // The ends of the connection's secrets by field name, as people may see them again.
+    hintsOf(owner: Owner, id: string): Record<string, string> {
+      const connection = connections.find(owner.orgId, id);
+      if (!connection || connection.authKind === "oauth") return {};
+      const saved = secretsCredentialSchema.safeParse(credentials.get(id) ?? {});
+      if (!saved.success) return {};
+      const { apiKey, secrets = {} } = saved.data;
+      return Object.fromEntries(
+        Object.entries({ ...secrets, ...(apiKey && { apiKey }) }).map(([name, value]) => [
+          name,
+          secretHint(name, value),
+        ]),
+      );
     },
 
     // Removes a connection of the org with its credential. The provider is not told: these

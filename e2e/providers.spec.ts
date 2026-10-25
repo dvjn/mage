@@ -68,6 +68,45 @@ test("a server people run connects at its address, its models marked by maker an
   ).toBeAttached();
 });
 
+test("a provider's label and server address are changed in the form it was added with", async ({
+  page,
+}) => {
+  await signUpToProviders(page);
+  await page.getByRole("button", { name: "Add provider" }).click();
+  const adding = page.getByRole("dialog");
+  await adding.getByPlaceholder("Search providers").fill("compatible");
+  await adding.getByRole("option", { name: /^OpenAI-compatible ·/ }).click();
+  await adding.getByLabel("Base URL").fill(`${modelServer}/v1`);
+  await adding.getByLabel("Label").fill("Lab box");
+  await adding.getByRole("button", { name: "Connect" }).click();
+  await expect(adding.getByRole("status")).toContainText("Connected · 2 models found");
+  await adding.getByRole("button", { name: "Done" }).click();
+
+  const row = page.getByRole("row", { name: "OpenAI-compatible · Lab box" });
+  await row.getByRole("button", { name: "Actions for OpenAI-compatible · Lab box" }).click();
+  await page.getByRole("menuitem", { name: "Edit" }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit OpenAI-compatible · Lab box" });
+  await expect(dialog.getByLabel("Label")).toHaveValue("Lab box");
+  await expect(dialog.getByLabel("Base URL")).toHaveValue(`${modelServer}/v1`);
+  await dialog.getByLabel("Label").fill("Lab");
+  await dialog.getByLabel("Base URL").fill(`${modelServer}/nowhere`);
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog.getByRole("alert")).toContainText("did not accept these details");
+
+  // The same server by another address, with a model it does not list.
+  const moved = `http://127.0.0.1:${new URL(modelServer).port}/v1`;
+  await dialog.getByLabel("Base URL").fill(moved);
+  await dialog.getByLabel("Model ids").fill("my-tune");
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog).toBeHidden();
+
+  const changed = page.getByRole("row", { name: "OpenAI-compatible · Lab", exact: true });
+  await expect(changed).toContainText(new URL(moved).host);
+  await expect(
+    changed.getByRole("button", { name: "Models of OpenAI-compatible · Lab" }),
+  ).toHaveText("3 of 3 on");
+});
+
 test("Amazon Bedrock connects with access keys in a region, Claude marked as served by Bedrock", async ({
   page,
 }) => {

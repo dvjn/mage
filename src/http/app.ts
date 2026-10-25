@@ -27,13 +27,17 @@ import type { Threads } from "@/services/threads.ts";
 import type { ToolDecisions } from "@/services/tools.ts";
 import {
   type AttemptSummary,
-  connectionLabelSchema,
   type ConnectionSummary,
   proxyInputSchema,
   type ProxySummary,
 } from "@/shared/connections.ts";
 import { type FolderSummary, folderNameSchema } from "@/shared/folders.ts";
-import { connectionInputSchema, splitValues } from "@/shared/hosts.ts";
+import {
+  connectionChangeSchema,
+  connectionInputSchema,
+  methodOf,
+  splitValues,
+} from "@/shared/hosts.ts";
 import { acceptInviteSchema, newInviteSchema } from "@/shared/guests.ts";
 import {
   mcpServerChangeSchema,
@@ -156,7 +160,11 @@ const PERSONAL_ROUTES = [
   "/v1/invites/",
 ];
 
-function summary(connection: Connection, proxy: ProxySummary | null = null): ConnectionSummary {
+function summary(
+  connection: Connection,
+  proxy: ProxySummary | null = null,
+  hints: Record<string, string> = {},
+): ConnectionSummary {
   const { id, host, authKind, account, label, settings, createdAt } = connection;
   return {
     id,
@@ -165,6 +173,7 @@ function summary(connection: Connection, proxy: ProxySummary | null = null): Con
     account,
     label,
     settings,
+    hints,
     proxy,
     createdAt: createdAt.toISOString(),
   };
@@ -324,7 +333,10 @@ const connectionModelsChange = jsonBody(
   "Give autoEnable, or set with model ids and enabled",
 );
 
-const connectionLabel = jsonBody(connectionLabelSchema, "label must be at most 80 characters");
+const connectionChange = jsonBody(
+  connectionChangeSchema,
+  "Give a way to connect, a label of at most 80 characters, and its fields",
+);
 
 // A proxy body, refused with what is wrong with it.
 const proxyInput = validator("json", (value, c) => {
@@ -409,6 +421,16 @@ function createApi(options: AppOptions) {
     tools,
     mcp,
   } = options;
+
+  // A connection as the API shows it, with its proxy and the ends of its secrets.
+  function shown(owner: Principal, connection: Connection) {
+    return summary(
+      connection,
+      connections.proxyOf(owner, connection.id),
+      connections.hintsOf(owner, connection.id),
+    );
+  }
+
   return (
     new Hono<ApiEnv>()
       .get("/sign-in-options", (c) => c.json(options.signInOptions, 200))
@@ -966,7 +988,7 @@ function createApi(options: AppOptions) {
         const owner = signedIn(c.var.principal);
         const list = connections.list(owner);
         return c.json(
-          list.map((connection) => summary(connection, connections.proxyOf(owner, connection.id))),
+          list.map((connection) => shown(owner, connection)),
           200,
         );
       })
@@ -977,7 +999,7 @@ function createApi(options: AppOptions) {
         models.invalidate(id);
         const connection = connections.list(owner).find((found) => found.id === id);
         if (!connection) throw new ConnectionError(404, "Connection not found");
-        return c.json(summary(connection, connections.proxyOf(owner, id)), 200);
+        return c.json(shown(owner, connection), 200);
       })
       .post("/v1/connections", connectionInput, async (c) => {
         const owner = signedIn(c.var.principal);
@@ -994,7 +1016,25 @@ function createApi(options: AppOptions) {
           secrets,
           proxy,
         });
-        return c.json(summary(connection, connections.proxyOf(owner, connection.id)), 200);
+        return c.json(shown(owner, connection), 200);
+      })
+      .patch("/v1/connections/:id", connectionChange, async (c) => {
+        const owner = signedIn(c.var.principal);
+        const id = c.req.param("id");
+        const { method: methodId, label, values } = c.req.valid("json");
+        const { connection, values: merged } = connections.editValues(owner, id, values);
+        const current = methodOf(connection.host, connection.settings.method, connection.authKind);
+        const split = splitValues(connection.host, methodId ?? current?.id ?? "", merged);
+        if (!split.ok) return c.json({ error: split.error }, 400);
+        const { method, settings, secrets } = split;
+        if (method.authKind === "oauth") return c.json({ error: "Sign in instead" }, 400);
+        const changed = await models.edit(owner, id, {
+          authKind: method.authKind,
+          label: label === undefined ? connection.label : label,
+          settings,
+          secrets,
+        });
+        return c.json(shown(owner, changed), 200);
       })
       .get("/v1/connections/:id/models", refreshQuery, async (c) => {
         const { orgId } = signedIn(c.var.principal);
@@ -1009,12 +1049,6 @@ function createApi(options: AppOptions) {
           c.req.valid("json"),
         );
         return c.json(connectionModelsBody(result), 200);
-      })
-      .patch("/v1/connections/:id/label", connectionLabel, (c) => {
-        const owner = signedIn(c.var.principal);
-        const { label } = c.req.valid("json");
-        const connection = connections.rename(owner, c.req.param("id"), label);
-        return c.json(summary(connection, connections.proxyOf(owner, connection.id)), 200);
       })
       .post("/v1/connections/codex/device", async (c) => {
         return c.json(await connections.startDevice("codex", signedIn(c.var.principal)), 200);

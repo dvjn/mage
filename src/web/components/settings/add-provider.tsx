@@ -2,7 +2,9 @@
 // kind, then how to connect to it where there is more than one way, then the fields that way asks
 // for (with an optional name, and a proxy it is checked through) or the sign-in, and finally how
 // many models it brought, with a shortcut to make one of them the default, or why they could not
-// be read. Back goes a step back; refused details say why on their step.
+// be read. Back goes a step back; refused details say why on their step. Changing a connection
+// later uses the same fields in a dialog of its own, filled in with its settings, its secrets
+// showing only their ends and kept unless typed again.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -28,6 +30,7 @@ import {
   type HostId,
   hostOf,
   type Method,
+  methodOf,
 } from "@/shared/hosts.ts";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { HostMark } from "@/web/components/marks";
@@ -241,6 +244,54 @@ function FieldInput({
   }
 }
 
+// The fields a way of connecting asks for, each with its label and description; a secret already
+// stored shows its end and may be left blank.
+function MethodFields({
+  id,
+  method,
+  values,
+  onChange,
+  hints = {},
+  autoFocus = true,
+}: {
+  id: string;
+  method: Method;
+  values: Record<string, string>;
+  onChange: (values: Record<string, string>) => void;
+  hints?: Record<string, string>;
+  autoFocus?: boolean;
+}) {
+  const first = method.fields.findIndex((f) => !f.initial);
+  return method.fields.map((field, index) => {
+    const hint = isSecret(field) ? hints[field.name] : undefined;
+    return (
+      <Field key={field.name}>
+        <FieldLabel htmlFor={`${id}-${field.name}`}>{field.label}</FieldLabel>
+        <FieldInput
+          id={`${id}-${field.name}`}
+          field={hint ? { ...field, required: false, placeholder: hint } : field}
+          value={values[field.name] ?? ""}
+          onChange={(value) => onChange({ ...values, [field.name]: value })}
+          autoFocus={autoFocus && index === first}
+        />
+        {field.description && <FieldDescription>{field.description}</FieldDescription>}
+      </Field>
+    );
+  });
+}
+
+function isSecret(field: HostField) {
+  return field.kind === "secret" || field.kind === "json";
+}
+
+// Whether a required field has no value, nor a stored one to keep.
+function missingIn(method: Method, values: Record<string, string>, hints: Record<string, string>) {
+  return method.fields.some(
+    (field) =>
+      field.required && !values[field.name]?.trim() && !(isSecret(field) && hints[field.name]),
+  );
+}
+
 function CredentialsStep({
   host,
   method,
@@ -260,7 +311,7 @@ function CredentialsStep({
   const [proxy, setProxy] = useState<ProxyDraft>(emptyProxy);
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState(false);
-  const missing = method.fields.some((field) => field.required && !values[field.name]?.trim());
+  const missing = missingIn(method, values, {});
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -296,30 +347,8 @@ function CredentialsStep({
   return (
     <form onSubmit={(event) => void submit(event)}>
       <FieldGroup>
-        {method.fields.map((field, index) => (
-          <Field key={field.name}>
-            <FieldLabel htmlFor={`${id}-${field.name}`}>{field.label}</FieldLabel>
-            <FieldInput
-              id={`${id}-${field.name}`}
-              field={field}
-              value={values[field.name] ?? ""}
-              onChange={(value) => setValues((current) => ({ ...current, [field.name]: value }))}
-              autoFocus={index === method.fields.findIndex((f) => !f.initial)}
-            />
-            {field.description && <FieldDescription>{field.description}</FieldDescription>}
-          </Field>
-        ))}
-        <Field>
-          <FieldLabel htmlFor={`${id}-label`}>Label</FieldLabel>
-          <Input
-            id={`${id}-label`}
-            value={label}
-            onChange={(event) => setLabel(event.target.value)}
-            placeholder="Optional"
-            maxLength={80}
-            autoComplete="off"
-          />
-        </Field>
+        <MethodFields id={id} method={method} values={values} onChange={setValues} />
+        <LabelField id={id} value={label} onChange={setLabel} />
         <div>
           <button
             type="button"
@@ -357,6 +386,172 @@ function CredentialsStep({
         </Button>
       </DialogFooter>
     </form>
+  );
+}
+
+function LabelField({
+  id,
+  value,
+  onChange,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Field>
+      <FieldLabel htmlFor={`${id}-label`}>Label</FieldLabel>
+      <Input
+        id={`${id}-label`}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder="Optional"
+        maxLength={80}
+        autoComplete="off"
+      />
+    </Field>
+  );
+}
+
+// The values a connection's fields start with when changing it: its settings, and every secret
+// blank.
+function storedValues(connection: ConnectionSummary, methods: Method[]) {
+  const values: Record<string, string> = {};
+  for (const field of methods.flatMap((method) => method.fields)) {
+    values[field.name] = isSecret(field)
+      ? ""
+      : (connection.settings[field.name] ?? field.initial ?? "");
+  }
+  return values;
+}
+
+// Changing a connection that is not a sign-in: its label, the way it connects where its host has
+// more than one, and that way's fields. Saving checks them by reading its models again.
+export function EditProviderDialog({
+  connection,
+  open,
+  onOpenChange,
+}: {
+  connection: ConnectionSummary | undefined;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        {connection && connection.authKind !== "oauth" && (
+          <EditProviderForm
+            key={connection.id}
+            connection={connection}
+            onDone={() => onOpenChange(false)}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditProviderForm({
+  connection,
+  onDone,
+}: {
+  connection: ConnectionSummary;
+  onDone: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const id = useId();
+  const methods = hostOf(connection.host).methods.filter((method) => method.authKind !== "oauth");
+  const [methodId, setMethodId] = useState(
+    () =>
+      methodOf(connection.host, connection.settings.method, connection.authKind)?.id ??
+      methods[0]!.id,
+  );
+  const method = methods.find((found) => found.id === methodId) ?? methods[0]!;
+  const [values, setValues] = useState(() => storedValues(connection, methods));
+  const [label, setLabel] = useState(connection.label ?? "");
+  const [error, setError] = useState<string>();
+  const [pending, setPending] = useState(false);
+  const missing = missingIn(method, values, connection.hints);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setPending(true);
+    setError(undefined);
+    const res = await apiClient.v1.connections[":id"].$patch({
+      param: { id: connection.id },
+      json: {
+        method: method.id,
+        label: label.trim() || null,
+        values: Object.fromEntries(
+          method.fields.map((field) => [field.name, values[field.name] ?? ""]),
+        ),
+      },
+    });
+    setPending(false);
+    if (!res.ok) {
+      setError(await errorOf(res));
+      return;
+    }
+    await queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+    await queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
+    await queryClient.invalidateQueries({ queryKey: ["connection-models", connection.id] });
+    onDone();
+  }
+
+  return (
+    <>
+      <DialogHeader>
+        <div className="flex items-center gap-2">
+          <HostMark host={connection.host} />
+          <DialogTitle>Edit {connectionLabel(connection)}</DialogTitle>
+        </div>
+        <DialogDescription>
+          Secrets left blank keep the ones stored. Saving checks the details by reading its models
+          again.
+        </DialogDescription>
+      </DialogHeader>
+      <form onSubmit={(event) => void submit(event)}>
+        <FieldGroup>
+          <LabelField id={id} value={label} onChange={setLabel} />
+          {methods.length > 1 && (
+            <Field>
+              <FieldLabel htmlFor={`${id}-method`}>Connects with</FieldLabel>
+              <Select
+                value={method.id}
+                onValueChange={(next) => setMethodId(String(next ?? method.id))}
+              >
+                <SelectTrigger id={`${id}-method`} className="w-full">
+                  <SelectValue>{method.title}</SelectValue>
+                </SelectTrigger>
+                <SelectContent alignItemWithTrigger={false}>
+                  {methods.map((option) => (
+                    <SelectItem key={option.id} value={option.id}>
+                      {option.title}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FieldDescription>{method.description}</FieldDescription>
+            </Field>
+          )}
+          <MethodFields
+            id={id}
+            method={method}
+            values={values}
+            onChange={setValues}
+            hints={connection.hints}
+            autoFocus={false}
+          />
+          <FieldError>{error}</FieldError>
+        </FieldGroup>
+        <DialogFooter className="mt-4">
+          <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
+          <Button type="submit" disabled={pending || missing}>
+            {pending ? "Checking…" : "Save"}
+          </Button>
+        </DialogFooter>
+      </form>
+    </>
   );
 }
 

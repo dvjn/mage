@@ -44,6 +44,7 @@ test("ChatGPT connects with a device code, and says when its models cannot be re
     account: "ada@chatgpt.example",
     label: null,
     settings: {},
+    hints: {},
     proxy: null,
     createdAt: "2026-10-21T00:00:00.000Z",
   };
@@ -123,6 +124,7 @@ test("a connection's proxy is set from its row, its header values never shown", 
     account: "ada@chatgpt.example",
     label: null,
     settings: {},
+    hints: {},
     createdAt: "2026-10-21T00:00:00.000Z",
   };
   let proxy: { baseUrl: string | null; headerNames: string[] } | null = null;

@@ -709,3 +709,17 @@ export const connectionInputSchema = z.object({
   values: z.record(z.string(), z.string().max(20000)),
   proxy: z.unknown().optional(),
 });
+
+// A change of a connection: another of its host's ways to connect, a new label, and the values
+// given; a value left out keeps the stored one, as does a secret left blank.
+export const connectionChangeSchema = z.object({
+  method: z.string().min(1).optional(),
+  label: z
+    .string()
+    .trim()
+    .max(80)
+    .nullable()
+    .transform((label) => label || null)
+    .optional(),
+  values: z.record(z.string(), z.string().max(20000)).default({}),
+});

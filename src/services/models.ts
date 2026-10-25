@@ -3,7 +3,8 @@
 // with who makes it, the defaults new threads start with, chosen from them, and opening a model to
 // stream a reply from through its connection, and the model that names threads: the org's choice,
 // or a small model of its first connection that has one. A key, cloud credentials or a server is
-// added only once its host lists models with them. Each connection's models can be turned off, and
+// added, or changed, only once its host lists models with them; a change keeps the connection's
+// refs, as they are named by its id. Each connection's models can be turned off, and
 // those it lists for the first time are turned on or not as the connection says; a model turned off
 // is in no picker and does not reply.
 
@@ -17,12 +18,14 @@ import {
   type ModelEvent,
   type ModelGateway,
   type ModelRequest,
+  type ProviderProxy,
 } from "@/ports/model-gateway.ts";
 import type { OrgSettings, OrgSettingStore } from "@/ports/org-settings.ts";
 import type { Space, SpaceStore } from "@/ports/spaces.ts";
 import {
   ConnectionError,
   type Connections,
+  type HostConnectionChange,
   type NewHostConnection,
   type Owner,
 } from "@/services/connections.ts";
@@ -83,7 +86,7 @@ export interface ModelList {
 export interface ModelsOptions {
   connections: ConnectionStore;
   // Reads each connection's token, renewed when it is about to expire, and adds connections.
-  tokens: Pick<Connections, "withFreshToken" | "add">;
+  tokens: Pick<Connections, "withFreshToken" | "add" | "edit">;
   catalogs: Record<HostId, Catalog>;
   settings: OrgSettingStore;
   choices: ModelChoiceStore;
@@ -309,6 +312,33 @@ export function createModels(options: ModelsOptions) {
     }
   }
 
+  // The models the host lists with these details, or why it refused them.
+  async function checked(
+    host: HostId,
+    input: Pick<NewHostConnection, "settings" | "secrets">,
+    proxy: ProviderProxy | null,
+  ) {
+    const { apiKey = "", ...secrets } = input.secrets;
+    let list: CatalogModel[];
+    try {
+      list = await catalogs[host].list({
+        access: apiKey,
+        accountId: null,
+        proxy,
+        settings: input.settings,
+        secrets,
+      });
+    } catch (err) {
+      logger.info({ err, host }, "connection refused");
+      const said = err instanceof Error && err.message ? ` (${err.message})` : "";
+      throw new ConnectionError(400, `${hostOf(host).label} did not accept these details${said}.`);
+    }
+    if (list.length === 0) {
+      throw new ConnectionError(400, `${hostOf(host).label} lists no models; give their ids.`);
+    }
+    return list;
+  }
+
   return {
     resolveModels,
     requireModel,
@@ -321,30 +351,22 @@ export function createModels(options: ModelsOptions) {
     // Adds the connection once its host, or the proxy given for it, lists models with what it was
     // given, which become the connection's list.
     async add(owner: Owner, input: NewHostConnection): Promise<Connection> {
-      const { host } = input;
-      const { apiKey = "", ...secrets } = input.secrets;
-      let list: CatalogModel[];
-      try {
-        list = await catalogs[host].list({
-          access: apiKey,
-          accountId: null,
-          proxy: input.proxy ?? null,
-          settings: input.settings,
-          secrets,
-        });
-      } catch (err) {
-        logger.info({ err, host }, "connection refused");
-        const said = err instanceof Error && err.message ? ` (${err.message})` : "";
-        throw new ConnectionError(
-          400,
-          `${hostOf(host).label} did not accept these details${said}.`,
-        );
-      }
-      if (list.length === 0) {
-        throw new ConnectionError(400, `${hostOf(host).label} lists no models; give their ids.`);
-      }
+      const list = await checked(input.host, input, input.proxy ?? null);
       const connection = tokens.add(owner, input);
       cache.set(connection.id, { orgId: owner.orgId, at: now().getTime(), models: list });
+      return connection;
+    },
+
+    // Changes the connection once its host, through its proxy, lists models with what it now
+    // has, which become its list.
+    async edit(owner: Owner, id: string, change: HostConnectionChange): Promise<Connection> {
+      const { host } = connectionIn(owner.orgId, id);
+      const proxy = await tokens.withFreshToken(owner.orgId, id, (token) =>
+        Promise.resolve(token.proxy),
+      );
+      const list = await checked(host, change, proxy);
+      const connection = tokens.edit(owner, id, change);
+      cache.set(id, { orgId: owner.orgId, at: now().getTime(), models: list });
       return connection;
     },
 
