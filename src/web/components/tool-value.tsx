@@ -1,7 +1,6 @@
-// A tool call's input or result, laid out from the value and the tool's schema: labelled fields
-// with their hints, plain values inline, lists and nested lists, and the JSON past two levels; a
-// result's text parts as text, in the destructive tone when the call failed. "Raw" shows the exact
-// JSON instead.
+// A tool call's input or result, laid out from the value and the tool's schema: labelled fields,
+// plain values inline, lists and nested lists, and the JSON past two levels; a result's text parts
+// as text, in the destructive tone when the call failed.
 
 import { cn } from "cn";
 import { useState } from "react";
@@ -73,10 +72,7 @@ function Layout({ layout }: { layout: ValueLayout }) {
         <dl className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-3 gap-y-1.5">
           {layout.fields.map((field) => (
             <div key={field.key} className="col-span-2 grid grid-cols-subgrid">
-              <dt className="flex flex-col">
-                <span className="font-medium text-foreground">{field.label}</span>
-                {field.hint && <span className="text-muted-foreground">{field.hint}</span>}
-              </dt>
+              <dt className="font-medium text-foreground">{field.label}</dt>
               <dd className="min-w-0 text-foreground">
                 <Layout layout={field.value} />
               </dd>
@@ -93,45 +89,19 @@ function Layout({ layout }: { layout: ValueLayout }) {
   }
 }
 
-// A titled block with its laid-out view, or the exact JSON while "Raw" is pressed.
-function Block({
-  title,
-  raw,
-  children,
-}: {
-  title: string;
-  raw: unknown;
-  children: React.ReactNode;
-}) {
-  const [showRaw, setShowRaw] = useState(false);
+// A titled block with its laid-out view.
+function Block({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section aria-label={title} className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-medium">{title}</span>
-        <Button
-          size="xs"
-          variant="ghost"
-          aria-pressed={showRaw}
-          className="h-5 px-1.5 text-muted-foreground aria-pressed:text-foreground"
-          onClick={() => setShowRaw(!showRaw)}
-        >
-          Raw
-        </Button>
-      </div>
-      {showRaw ? (
-        <pre className="font-mono break-words whitespace-pre-wrap">
-          {JSON.stringify(raw, null, 2)}
-        </pre>
-      ) : (
-        children
-      )}
+      <span className="font-medium">{title}</span>
+      {children}
     </section>
   );
 }
 
 export function ToolInput({ value, schema }: { value: unknown; schema?: JsonSchema }) {
   return (
-    <Block title="Input" raw={value}>
+    <Block title="Input">
       <Layout layout={layoutOf(value, schema)} />
     </Block>
   );
@@ -140,7 +110,7 @@ export function ToolInput({ value, schema }: { value: unknown; schema?: JsonSche
 export function ToolResult({ result, schema }: { result: CallToolResult; schema?: JsonSchema }) {
   const text = result.content.map((part) => part.text).join("\n");
   return (
-    <Block title={result.isError ? "Error" : "Output"} raw={result}>
+    <Block title={result.isError ? "Error" : "Output"}>
       {result.isError ? (
         <span className="break-words whitespace-pre-wrap text-destructive">{text}</span>
       ) : result.structuredContent ? (

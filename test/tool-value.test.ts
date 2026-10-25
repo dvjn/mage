@@ -11,11 +11,11 @@ describe("laying out a tool's value", () => {
     expect(layoutOf(["a", 1, null])).toEqual({ kind: "list", items: ["a", 1, null] });
   });
 
-  it("labels fields by their schema in its order, hints them, and keeps other keys after", () => {
+  it("labels fields by their schema in its order and keeps other keys after", () => {
     const schema = {
       type: "object",
       properties: {
-        model: { type: "string", title: "Model", description: "A model ref" },
+        model: { type: "string", title: "Model" },
         effort: { anyOf: [{ type: "string" }, { type: "null" }], title: "Effort" },
       },
     };
@@ -25,7 +25,6 @@ describe("laying out a tool's value", () => {
         {
           key: "model",
           label: "Model",
-          hint: "A model ref",
           value: { kind: "text", text: "codex/gpt" },
         },
         { key: "effort", label: "Effort", value: { kind: "none" } },

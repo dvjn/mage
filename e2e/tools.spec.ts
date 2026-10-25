@@ -102,12 +102,14 @@ test("the agent renames a thread at once when the owner alone asked", async ({ p
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Engines");
   await expect(card(page)).toHaveCount(0);
 
+  // The call and the reply are one turn of the agent's, under one header.
+  await expect(replies(page)).toHaveCount(2);
+  await expect(replies(page).first().getByText("Agent", { exact: true })).toBeVisible();
+  await expect(replies(page).last().getByText("Agent", { exact: true })).toHaveCount(0);
+
   await line(page, /^Rename thread · Ran$/).click();
   const input = transcript(page).getByRole("region", { name: "Input" });
-  await expect(input).toContainText("Title");
-  await expect(input).toContainText("Engines");
-  await input.getByRole("button", { name: "Raw" }).click();
-  await expect(input).toContainText('"title": "Engines"');
+  await expect(input).toHaveText("InputTitleEngines");
   await expect(transcript(page).getByRole("region", { name: "Output" })).toContainText("Engines");
 });
 

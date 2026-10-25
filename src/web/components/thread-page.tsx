@@ -20,7 +20,7 @@ import {
   threadSchema,
   type ToolScope,
 } from "@/shared/threads.ts";
-import { opensAgentTurn, transcriptOf } from "@/shared/transcript.ts";
+import { agentTurnOf, transcriptOf } from "@/shared/transcript.ts";
 import {
   Conversation,
   ConversationContent,
@@ -262,7 +262,7 @@ export function ThreadPage() {
               <TranscriptItem
                 key={row.id}
                 row={row}
-                opensTurn={opensAgentTurn(transcript.rows, index)}
+                turn={agentTurnOf(transcript.rows, index)}
                 tools={detail.data?.tools}
                 actions={{
                   ...(row === retryable && { retry: () => void retry(retryable.runId) }),
@@ -278,7 +278,10 @@ export function ThreadPage() {
           {run &&
             !run.waitingOn &&
             !transcript.rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
-              <AgentStarting at={run.createdAt} />
+              <AgentStarting
+                at={run.createdAt}
+                continued={agentTurnOf(transcript.rows, transcript.rows.length - 1) !== null}
+              />
             )}
         </ConversationContent>
         <ConversationScrollButton />

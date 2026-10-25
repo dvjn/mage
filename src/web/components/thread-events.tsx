@@ -1,15 +1,15 @@
 // How each row of a thread's transcript looks. A message is an avatar, who wrote it and when, noted
 // when its author was a guest of the thread or was removed from its org, then its text as markdown,
 // with a copy button on hover; the signed-in person's own rows carry their avatar in the accent
-// colour. An agent reply
-// names the model that wrote it and shows what the model thought first, folded away once it
+// colour. An agent's turn, its tool calls and its reply, sits under one Agent header that names the
+// model that wrote the reply; the reply shows what the model thought first, folded away once it
 // answers. An agent reply that was cut short says so, a run that failed says why and what to do
 // about it, the last run that failed or was stopped can be tried again, and an event this client
 // does not know yet gets a labelled placeholder. Tool calls show by their tool's definition alone,
 // its title or else its name, as for any tool. One waiting for a decision is a card from the agent
-// with what the tool does, the input, and Allow, Allow for now and Deny, enabled for the people who
-// may run the tool and marked paused for everyone else; every other call is a line with the tool
-// and what became of the call, which opens on its input and output.
+// with the tool, the input, and Allow, Allow for now and Deny, enabled for the people who may run
+// the tool and marked paused for everyone else; every other call is a line with the tool and what
+// became of the call, which opens on its input and output.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
@@ -21,6 +21,7 @@ import type { ToolScope } from "@/shared/threads.ts";
 import type { ToolDefinition } from "@/shared/tools.ts";
 import type {
   AgentRow,
+  AgentTurn,
   FailureRow,
   HumanRow,
   ToolRow,
@@ -67,6 +68,7 @@ function TranscriptRowFrame({
   label,
   note,
   actions,
+  continued,
   children,
 }: {
   avatar: ReactNode;
@@ -76,8 +78,26 @@ function TranscriptRowFrame({
   note?: ReactNode;
   // Shown beside the author while the row is hovered or focused.
   actions?: ReactNode;
+  // Follows another row of the same author's turn: its body alone, under that row's header, with
+  // any note of its own above.
+  continued?: boolean;
   children: ReactNode;
 }) {
+  if (continued) {
+    return (
+      <article aria-label={label} className="group/row relative flex flex-col gap-1 pl-9">
+        {note && (
+          <div className="flex items-baseline gap-2 text-xs text-muted-foreground">{note}</div>
+        )}
+        {children}
+        {actions && (
+          <div className="absolute top-0 right-0 flex items-center gap-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100">
+            {actions}
+          </div>
+        )}
+      </article>
+    );
+  }
   return (
     <article aria-label={label} className="group/row flex gap-3">
       <div className="mt-0.5 shrink-0">{avatar}</div>
@@ -159,7 +179,7 @@ function useModelName(ref: string | null) {
   return listed.find((model) => model.ref === ref)?.name ?? (ref.split("/").pop() || null);
 }
 
-function AgentReply({ row }: { row: AgentRow }) {
+function AgentReply({ row, continued }: { row: AgentRow; continued: boolean }) {
   const ending = ENDINGS[row.status];
   const streaming = row.status === "streaming";
   const model = useModelName(row.model);
@@ -169,11 +189,15 @@ function AgentReply({ row }: { row: AgentRow }) {
       author="Agent"
       at={row.startedAt}
       label="Message from Agent"
+      continued={continued}
+      // The turn's header names the model.
       note={
-        <>
-          {model && <span>{model}</span>}
-          {ending && <span>{ending}</span>}
-        </>
+        (!continued || ending) && (
+          <>
+            {!continued && model && <span>{model}</span>}
+            {ending && <span>{ending}</span>}
+          </>
+        )
       }
       actions={!streaming && <CopyButton label="Copy message" value={row.text} />}
     >
@@ -201,10 +225,17 @@ function AgentReply({ row }: { row: AgentRow }) {
   );
 }
 
-// The agent's row while a run has started but no words have arrived yet.
-export function AgentStarting({ at }: { at: string }) {
+// The agent's row while a run has started but no words have arrived yet; continued when it follows
+// the agent's own rows.
+export function AgentStarting({ at, continued }: { at: string; continued?: boolean }) {
   return (
-    <TranscriptRowFrame avatar={agentAvatar} author="Agent" at={at} label="Message from Agent">
+    <TranscriptRowFrame
+      avatar={agentAvatar}
+      author="Agent"
+      at={at}
+      label="Message from Agent"
+      continued={continued}
+    >
       <div className="flex text-sm" aria-busy>
         {caret}
       </div>
@@ -227,16 +258,18 @@ function toolName(row: ToolRow, definition: ToolDefinition | undefined) {
   return definition?.title ?? row.toolId;
 }
 
-// A tool call waiting for a decision: the tool the agent wants to use, what it does, the input, and
-// the buttons to decide.
+// A tool call waiting for a decision: the tool the agent wants to use, the input, and the buttons
+// to decide.
 function ToolCard({
   row,
   definition,
   decide,
+  continued,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
   decide?: RowActions["decide"];
+  continued: boolean;
 }) {
   const [deciding, setDeciding] = useState(false);
   function button(label: string, allow: boolean, scope: ToolScope, variant: "default" | "outline") {
@@ -271,13 +304,11 @@ function ToolCard({
       at={row.requestedAt}
       label="Approval request"
       note={!decide && <span>Paused</span>}
+      continued={continued}
     >
       <Confirmation approval={{ id: row.id }} state="approval-requested" className="gap-3">
-        <ConfirmationTitle className="flex flex-col gap-0.5">
-          <span className="font-medium text-foreground">
-            The agent wants to use {toolName(row, definition)}
-          </span>
-          {definition?.description && <span>{definition.description}</span>}
+        <ConfirmationTitle className="font-medium text-foreground">
+          The agent wants to use {toolName(row, definition)}
         </ConfirmationTitle>
         <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
           <ToolInput value={row.input} schema={definition?.inputSchema} />
@@ -308,7 +339,7 @@ function ToolLine({
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
-  // Under its own Agent header, rather than aligned with the text of the rows around it.
+  // Directly under an Agent header, rather than aligned with the text beside its avatar.
   framed?: boolean;
 }) {
   const by = row.decision?.by.name;
@@ -367,32 +398,48 @@ function ToolLine({
   );
 }
 
+// A tool call that opens the agent's turn: the Agent header, naming the model the turn's reply was
+// written with, over the call's line.
+function ToolOpening({
+  row,
+  definition,
+  turn,
+}: {
+  row: ToolRow;
+  definition: ToolDefinition | undefined;
+  turn: AgentTurn;
+}) {
+  const model = useModelName(turn.model);
+  return (
+    <TranscriptRowFrame
+      avatar={agentAvatar}
+      author="Agent"
+      at={row.requestedAt}
+      label="Message from Agent"
+      note={model && <span>{model}</span>}
+    >
+      <ToolLine row={row} definition={definition} framed />
+    </TranscriptRowFrame>
+  );
+}
+
 function ToolCall({
   row,
   definition,
   decide,
-  opensTurn,
+  turn,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
   decide?: RowActions["decide"];
-  opensTurn?: boolean;
+  turn: AgentTurn;
 }) {
   if (row.state === "pending" && row.waits) {
-    return <ToolCard row={row} definition={definition} decide={decide} />;
-  }
-  if (opensTurn) {
     return (
-      <TranscriptRowFrame
-        avatar={agentAvatar}
-        author="Agent"
-        at={row.requestedAt}
-        label="Message from Agent"
-      >
-        <ToolLine row={row} definition={definition} framed />
-      </TranscriptRowFrame>
+      <ToolCard row={row} definition={definition} decide={decide} continued={turn.continued} />
     );
   }
+  if (!turn.continued) return <ToolOpening row={row} definition={definition} turn={turn} />;
   return <ToolLine row={row} definition={definition} />;
 }
 
@@ -470,28 +517,29 @@ export function TranscriptItem({
   row,
   actions = {},
   tools = [],
-  opensTurn,
+  turn,
 }: {
   row: TranscriptRow;
   actions?: RowActions;
-  opensTurn?: boolean;
   // The tools' definitions, by which their calls show.
   tools?: ToolDefinition[];
+  // Where the row sits in the agent's turn, for the agent's own rows.
+  turn: AgentTurn | null;
 }) {
   switch (row.kind) {
     case "human":
       return <HumanMessage row={row} />;
     case "agent":
       // A step that only called tools shows as its calls.
-      if (row.status === "completed" && !row.text && !row.reasoning) return null;
-      return <AgentReply row={row} />;
+      if (!turn) return null;
+      return <AgentReply row={row} continued={turn.continued} />;
     case "tool":
       return (
         <ToolCall
           row={row}
           definition={tools.find((tool) => tool.name === row.toolId)}
           decide={actions.decide}
-          opensTurn={opensTurn}
+          turn={turn ?? { continued: false, model: null }}
         />
       );
     case "failure":

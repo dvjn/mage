@@ -360,15 +360,39 @@ export function transcriptOf(
   return { rows, pending: [...pending.values()], run, usage };
 }
 
-// Whether the row at the index is a tool call that follows someone else's row, so that it needs the
-// Agent header the agent's own words would have given it.
-export function opensAgentTurn(rows: TranscriptRow[], index: number) {
-  if (rows[index]?.kind !== "tool") return false;
+// Whether an agent row shows: one that only called tools shows as its calls.
+function showsAgent(row: AgentRow) {
+  return !(row.status === "completed" && !row.text && !row.reasoning);
+}
+
+// Where a row sits in the agent's turn.
+export interface AgentTurn {
+  // It follows another of the agent's rows, so the turn's first row alone carries the Agent header.
+  continued: boolean;
+  // The model the turn's reply was written with, when known.
+  model: string | null;
+}
+
+// For a row of the agent's, a tool call or a reply that shows, what turn it belongs to. Null for
+// any other row.
+export function agentTurnOf(rows: TranscriptRow[], index: number): AgentTurn | null {
+  const row = rows[index];
+  if (!row || (row.kind !== "tool" && !(row.kind === "agent" && showsAgent(row)))) return null;
+  let continued = false;
   for (let i = index - 1; i >= 0; i--) {
     const before = rows[i]!;
-    if (before.kind === "tool") return false;
-    if (before.kind !== "agent") return true;
-    if (before.status !== "completed" || before.text || before.reasoning) return false;
+    if (before.kind === "agent" && !showsAgent(before)) continue;
+    continued = before.kind === "tool" || before.kind === "agent";
+    break;
   }
-  return true;
+  let model: string | null = null;
+  for (let i = index; i < rows.length; i++) {
+    const next = rows[i]!;
+    if (next.kind === "agent" && showsAgent(next)) {
+      model = next.model;
+      break;
+    }
+    if (next.kind !== "tool" && next.kind !== "agent") break;
+  }
+  return { continued, model };
 }

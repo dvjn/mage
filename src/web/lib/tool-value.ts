@@ -1,6 +1,6 @@
 // How a tool call's input or output is laid out, from the value and its JSON Schema alone: an object
 // as labelled fields in the schema's order, then any other keys, each labelled with its schema
-// title or else its key and hinted with its description; text, numbers, yes or no, and none
+// title or else its key; text, numbers, yes or no, and none
 // inline; a list of plain values as one list, a list of objects as nested ones; and past two levels
 // of nesting under its fields, the JSON itself. A call's result is read as MCP's CallToolResult: its structured
 // content laid out the same, its text parts as text, and an error as its text.
@@ -22,7 +22,6 @@ export type ValueLayout =
 export interface FieldLayout {
   key: string;
   label: string;
-  hint?: string;
   value: ValueLayout;
 }
 
@@ -76,11 +75,9 @@ export function layoutOf(value: unknown, schema?: JsonSchema, depth = 0): ValueL
     fields: keys.map((key) => {
       const property = concrete(isObject(properties[key]) ? properties[key] : undefined);
       const title = property?.title;
-      const hint = property?.description;
       return {
         key,
         label: typeof title === "string" ? title : key,
-        ...(typeof hint === "string" && { hint }),
         value: layoutOf(value[key], property, depth + 1),
       };
     }),
