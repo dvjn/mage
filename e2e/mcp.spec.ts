@@ -94,10 +94,13 @@ test("an org's header-authorized MCP server lists its tools, and a call that ask
   await write(page, `/tool mcp:${serverId}/add_note {"title":"Engines","body":"They compute"}`);
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const card = transcript(page).getByRole("article", { name: "Approval request" });
+  await expect(card).toContainText("Notes");
   await expect(card).toContainText("Add note");
   await card.getByRole("button", { name: "Allow", exact: true }).click();
 
-  const line = transcript(page).getByRole("button", { name: /^Add note · Ran · allowed by/ });
+  const line = transcript(page).getByRole("button", {
+    name: /^Notes · Add note · Ran · allowed by/,
+  });
   await expect(line).toBeVisible();
   await line.click();
   const output = transcript(page).getByRole("region", { name: "Output" });
@@ -163,7 +166,9 @@ test("a space's own MCP server is used in that space's threads alone", async ({ 
 
   await page.goto(`/s/${lab}`);
   await write(page, `/tool mcp:${serverId}/echo {"text":"hello lab"}`);
-  await expect(transcript(page).getByRole("button", { name: /^Echo · Ran/ })).toBeVisible();
+  await expect(
+    transcript(page).getByRole("button", { name: /^Lab notes · Echo · Ran/ }),
+  ).toBeVisible();
 
   await page.goto(`/s/${own}`);
   await write(page, `/tool mcp:${serverId}/echo {"text":"hello"}`);

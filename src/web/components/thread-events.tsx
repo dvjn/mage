@@ -6,11 +6,12 @@
 // answers. An agent reply that was cut short says so, a run that failed says why and what to do
 // about it, the last run that failed or was stopped can be tried again, and an event this client
 // does not know yet gets a labelled placeholder. Tool calls show by their tool's definition alone,
-// its title or else its name, as for any tool. One waiting for a decision is a card from the agent
-// headed by the tool's name under a hand, tagged when the call asks each time, with the input and
-// Allow, Allow for now and Deny in a row, enabled for the people who may run the tool and marked
-// paused for everyone else; every other call is a line with the tool and what became of the call,
-// which opens on its input and output.
+// its title or else its name, as for any tool, and an MCP server's tool names its server too. One
+// waiting for a decision is a card from the agent headed by the tool's name under a hand, its server
+// in small print above, tagged when the call asks each time, with the input and Allow, Allow for now
+// and Deny in a row, enabled for the people who may run the tool and marked paused for everyone
+// else; every other call is a line with the server, the tool and what became of the call, which
+// opens on its input and output.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
@@ -273,8 +274,8 @@ const RISK_TAGS: Partial<Record<ToolRisk, string>> = {
   review: "Needs review",
 };
 
-// A tool call waiting for a decision: the tool's name under the hand, its input, and the buttons
-// to decide.
+// A tool call waiting for a decision: the tool's name under the hand, its server above where it has
+// one, its input, and the buttons to decide.
 function ToolCard({
   row,
   definition,
@@ -337,14 +338,23 @@ function ToolCard({
             aria-hidden
             className={cn("size-4 shrink-0", decide ? "text-status-waiting" : "text-status-paused")}
           />
-          <ConfirmationTitle className="block min-w-0 truncate text-sm font-semibold text-foreground">
-            {toolName(row, definition)}
-          </ConfirmationTitle>
-          {tag && (
-            <Badge variant="outline" className="shrink-0 text-muted-foreground">
-              {tag}
-            </Badge>
-          )}
+          <div className="flex min-w-0 flex-col">
+            {definition?.toolset && (
+              <span className="truncate text-xs leading-tight text-muted-foreground">
+                {definition.toolset}
+              </span>
+            )}
+            <div className="flex min-w-0 items-center gap-2">
+              <ConfirmationTitle className="block min-w-0 truncate text-sm font-semibold text-foreground">
+                {toolName(row, definition)}
+              </ConfirmationTitle>
+              {tag && (
+                <Badge variant="outline" className="shrink-0 text-muted-foreground">
+                  {tag}
+                </Badge>
+              )}
+            </div>
+          </div>
         </div>
         <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
           <ToolInput value={row.input} schema={definition?.inputSchema} />
@@ -366,8 +376,8 @@ function duration(ms: number | null) {
   return ms !== null && ms >= 1000 ? `${Math.round(ms / 1000)}s` : null;
 }
 
-// A tool call that ran, is running or did not run, as one line with the tool and what became of
-// the call, and who decided on it, which opens on its input and output.
+// A tool call that ran, is running or did not run, as one line with the tool, its server where it
+// has one, what became of the call, and who decided on it, which opens on its input and output.
 function ToolLine({
   row,
   definition,
@@ -411,7 +421,9 @@ function ToolLine({
       icon = <Spinner />;
       status = row.waits && row.state === "pending" ? "Waiting" : "Running";
   }
-  const text = [toolName(row, definition), status, who].filter(Boolean).join(" · ");
+  const text = [definition?.toolset, toolName(row, definition), status, who]
+    .filter(Boolean)
+    .join(" · ");
   const took = duration(row.ms);
   return (
     <Collapsible className={cn("text-xs text-muted-foreground", !framed && "pl-9")}>

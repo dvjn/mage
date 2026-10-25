@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as schema from "@/adapters/schema.ts";
 import { mergeHeaders, outputOf, riskOfAnnotations, secretHint } from "@/services/mcp-servers.ts";
 import { mcpHeadersInputSchema, type McpServerSummary } from "@/shared/mcp.ts";
+import type { ThreadDetail } from "@/shared/threads.ts";
 import type { ToolsetSetting } from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
@@ -488,7 +489,7 @@ describe("MCP tools in a thread", () => {
   }
 
   it("run through the server with its headers, and give back its structured content", async () => {
-    const { ada, post, calls, model, worker, start, id, toolRows } = await mcpThread();
+    const { ada, api, thread, post, calls, model, worker, start, id, toolRows } = await mcpThread();
     start();
 
     await post(ada, "Write a note");
@@ -505,6 +506,16 @@ describe("MCP tools in a thread", () => {
     expect(next.texts.at(-1)).toBe(
       `result ${id("add_note")}: {"ok":true,"value":{"id":"note-1","title":"Engines","words":2}}`,
     );
+
+    // The thread's tool definitions name the server; Mage's own tools name no toolset.
+    const detail = (await (
+      await api("GET", `/threads/${thread.id}`, ada.cookie)
+    ).json()) as ThreadDetail;
+    expect(detail.tools.find((tool) => tool.name === id("add_note"))).toMatchObject({
+      title: "Add note",
+      toolset: "Notes",
+    });
+    expect(detail.tools.find((tool) => tool.name === "thread.rename")?.toolset).toBeUndefined();
   });
 
   it("run on a server of the 2026-07-28 revision, and go straight to initialize on an older one", async () => {

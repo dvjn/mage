@@ -178,9 +178,15 @@ export function createTools(options: ToolsOptions) {
       return specsOf(inSpace(space)).map((spec) => spec.name);
     },
 
-    // Every tool's definition in the space, as people see it.
+    // Every tool's definition in the space, as people see it; an MCP server's tools named with
+    // their server.
     definitions(space: Pick<Space, "id" | "orgId">): ToolDefinition[] {
-      return specsOf(inSpace(space)).map(definitionOf);
+      return inSpace(space).flatMap((toolset) =>
+        toolset.tools.map((spec) => ({
+          ...definitionOf(spec),
+          ...(toolset.source === "mcp" && { toolset: toolset.title }),
+        })),
+      );
     },
 
     offered,

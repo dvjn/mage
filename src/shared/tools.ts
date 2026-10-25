@@ -9,7 +9,8 @@ export type JsonSchema = Record<string, unknown>;
 
 // A tool as MCP defines one: its name, which is its id, an optional title and description, and the
 // JSON Schemas of its input and, where it says, its output. Mage's own tools come the same way, so
-// nothing shows a tool from anything else.
+// nothing shows a tool from anything else. Where tools of many toolsets show together, one from an
+// MCP server carries the server's name as its toolset; Mage's own carry none.
 export const toolDefinitionSchema = z.object({
   name: z.string(),
   title: z.string().optional(),
@@ -17,6 +18,7 @@ export const toolDefinitionSchema = z.object({
   inputSchema: z.record(z.string(), z.unknown()),
   outputSchema: z.record(z.string(), z.unknown()).optional(),
   annotations: z.record(z.string(), z.unknown()).optional(),
+  toolset: z.string().optional(),
 });
 
 export type ToolDefinition = z.infer<typeof toolDefinitionSchema>;
