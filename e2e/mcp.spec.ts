@@ -1,6 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 
-import { MCP_BEARER_TOKEN } from "./mcp-server.ts";
+import { MCP_API_KEY, MCP_BEARER_TOKEN } from "./mcp-server.ts";
 import { mcpServer } from "./servers.ts";
 
 // Sign-ups are rate limited per client address; each person counts as their own client, in every
@@ -151,4 +151,49 @@ test("a space's own MCP server is used in that space's threads alone", async ({ 
   await page.goto(`/s/${own}`);
   await write(page, `/tool mcp:${serverId}/echo {"text":"hello"}`);
   await expect(transcript(page)).toContainText(`I cannot use mcp:${serverId}/echo here.`);
+});
+
+test("an MCP server's headers and address are changed in the form it was added with", async ({
+  page,
+}) => {
+  await signUp(page);
+  await page.goto("/org/tools");
+  await addServer(page, "Notes", `${mcpServer}/headers/mcp`, async (dialog) => {
+    await dialog.getByRole("button", { name: "Headers" }).click();
+    await dialog.getByRole("button", { name: "Add header" }).click();
+    await dialog.getByLabel("Header name").fill("X-Api-Key");
+    await dialog.getByLabel("Value of X-Api-Key").fill("wrong-key-value");
+  });
+  await expect(page.getByText("Can't connect").first()).toBeVisible();
+
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit MCP server" });
+  await expect(dialog.getByLabel("Name", { exact: true })).toHaveValue("Notes");
+  await expect(dialog.getByLabel("Server URL")).toHaveValue(`${mcpServer}/headers/mcp`);
+  const value = dialog.getByLabel("Value of x-api-key");
+  await expect(value).toHaveValue("");
+  await expect(value).toHaveAttribute("placeholder", "…alue");
+  await value.fill(MCP_API_KEY);
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText("Connected").first()).toBeVisible();
+  const row = page.getByRole("listitem", { name: "Add note" });
+  await row.getByRole("button", { name: "Needs approval" }).click();
+  await expect(row.getByRole("button", { name: "Needs approval" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  // Moved to the open server, given by its address alone, which answers at /mcp.
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await dialog.getByLabel("Server URL").fill(mcpServer);
+  await dialog.getByRole("button", { name: "None" }).click();
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText(`${mcpServer}/mcp`, { exact: true })).toBeVisible();
+  await expect(page.getByText("Connected").first()).toBeVisible();
+  await expect(row.getByRole("button", { name: "Needs approval" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 });

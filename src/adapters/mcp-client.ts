@@ -2,7 +2,8 @@
 // transport the server answered on before or else on Streamable HTTP falling back to HTTP+SSE, and
 // closes it. Headers go only to the server's own origin. OAuth follows the MCP authorization spec
 // through the client's own flow (discovery, registration, PKCE, resource indicators, renewal), its
-// state kept wherever the caller keeps it.
+// state kept wherever the caller keeps it. Whether an address answers as an MCP server is asked
+// with a first initialize request of its own.
 
 import {
   auth,
@@ -19,6 +20,7 @@ import {
 } from "@modelcontextprotocol/client";
 
 import {
+  type McpAnswer,
   type McpAuth,
   type McpCallResult,
   type McpClient,
@@ -153,6 +155,26 @@ function olderTransport(err: unknown) {
   return status !== null && status >= 400 && status < 500 && status !== 401 && status !== 403;
 }
 
+// A first initialize request, as any client sends one.
+function initializeRequest(version: string) {
+  return JSON.stringify({
+    jsonrpc: "2.0",
+    id: 0,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "Mage", version },
+    },
+  });
+}
+
+// Where an address's OAuth protected-resource metadata is, by RFC 9728.
+function resourceMetadataUrl(url: URL) {
+  const path = url.pathname === "/" ? "" : url.pathname;
+  return new URL(`/.well-known/oauth-protected-resource${path}`, url.origin);
+}
+
 function definitionOf(tool: {
   name: string;
   title?: string;
@@ -228,7 +250,70 @@ export function createMcpClient(options: McpClientOptions): McpClient {
     }
   }
 
+  // Whether the address's protected-resource metadata is there.
+  async function describesResource(url: URL) {
+    try {
+      const res = await fetch(resourceMetadataUrl(url), {
+        headers: { Accept: "application/json" },
+      });
+      await res.body?.cancel();
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
   return {
+    async probe(url, headers) {
+      const address = new URL(url);
+      let res: Response;
+      try {
+        res = await withHeaders(
+          fetch,
+          url,
+          headers,
+        )(address, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json, text/event-stream",
+          },
+          body: initializeRequest(version),
+        });
+      } catch {
+        return "unreachable";
+      }
+      await res.body?.cancel();
+      let answer: McpAnswer = "other";
+      if (res.ok) {
+        const type = res.headers.get("content-type") ?? "";
+        if (/application\/json|text\/event-stream/.test(type)) answer = "mcp";
+        // Ends the session the request began, if it began one.
+        const session = res.headers.get("mcp-session-id");
+        if (session) {
+          await withHeaders(
+            fetch,
+            url,
+            headers,
+          )(address, {
+            method: "DELETE",
+            headers: { "Mcp-Session-Id": session },
+          })
+            .then((done) => done.body?.cancel())
+            .catch(() => {});
+        }
+      } else if (res.status === 401) {
+        const challenge = res.headers.get("www-authenticate") ?? "";
+        answer =
+          /resource_metadata=/i.test(challenge) || (await describesResource(address))
+            ? "mcp"
+            : "auth";
+      } else if (res.status === 403) {
+        answer = "auth";
+      }
+      return answer;
+    },
+
     list(target) {
       return using(target, async (client, transport) => {
         const { tools } = await client.listTools();

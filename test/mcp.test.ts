@@ -151,12 +151,12 @@ describe("an org's MCP servers", () => {
     });
 
     const res = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {
-      headers: [{ name: "x-api-key", value: MCP_API_KEY }],
+      auth: { kind: "headers", headers: [{ name: "x-api-key", value: MCP_API_KEY }] },
     });
     expect(await res.json()).toMatchObject({ status: "ok", error: null, toolCount: 3 });
     const kept = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {
       name: "Team notes",
-      headers: [{ name: "x-api-key", value: null }],
+      auth: { kind: "headers", headers: [{ name: "x-api-key", value: null }] },
     });
     expect(await kept.json()).toMatchObject({ name: "Team notes", status: "ok" });
   });
@@ -491,5 +491,219 @@ describe("MCP tools in a thread", () => {
     second.reply("Hi.");
     await worker.idle();
     expect(second.tools.some((tool) => tool.startsWith("mcp:"))).toBe(false);
+  });
+});
+
+describe("an MCP server's address", () => {
+  it("with no path is tried again at /mcp, and the address that answered is kept", async () => {
+    const { add } = await orgWithServers();
+    for (const url of [MCP_ORIGIN, `${MCP_ORIGIN}/`]) {
+      const { status, body } = await add({ name: "Open", url, auth: { kind: "none" } });
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ url: `${MCP_ORIGIN}/mcp`, status: "ok", toolCount: 3 });
+    }
+  });
+
+  it("finds a server behind OAuth at /mcp by its resource metadata, and authorizes Mage for it", async () => {
+    const workspace = await orgWithServers();
+    workspace.mcpNetwork.handle = mcpStandIn({ origin: MCP_ORIGIN, oauthPath: "/mcp" });
+    const { body } = await workspace.add({
+      name: "Notes",
+      url: MCP_ORIGIN,
+      auth: { kind: "oauth", clientId: null, clientSecret: null },
+    });
+    expect(body).toMatchObject({ url: `${MCP_ORIGIN}/mcp`, status: "needs_auth" });
+
+    const { started } = await authorizeInBrowser(workspace, body.id);
+    expect(started.searchParams.get("resource")).toBe(`${MCP_ORIGIN}/mcp`);
+    const res = await workspace.api("GET", `/mcp-servers/${body.id}`, workspace.ada.cookie);
+    expect(await res.json()).toMatchObject({ status: "ok", toolCount: 3 });
+  });
+
+  it("says so when neither it nor /mcp answers as an MCP server, and keeps nothing", async () => {
+    const { add, ada, api, mcpNetwork } = await orgWithServers();
+    mcpNetwork.handle = async () => new Response(null, { status: 405 });
+    const refused = await add({ name: "Site", url: MCP_ORIGIN, auth: { kind: "none" } });
+    expect(refused).toMatchObject({
+      status: 400,
+      body: {
+        error: "This address didn't answer as an MCP server. MCP servers usually live at /mcp.",
+      },
+    });
+    const listed = await api("GET", "/org/mcp-servers", ada.cookie);
+    expect(await listed.json()).toMatchObject({ servers: [] });
+
+    // One that cannot be reached is kept as given, saying why.
+    mcpNetwork.up = false;
+    const { body } = await add({ name: "Down", url: MCP_ORIGIN, auth: { kind: "none" } });
+    expect(body).toMatchObject({ url: MCP_ORIGIN, status: "error" });
+  });
+});
+
+describe("changing an MCP server", () => {
+  it("keeps header values left out, replaces those typed and drops those removed", async () => {
+    const { ada, add, api, db } = await orgWithServers();
+    const { body } = await add({
+      name: "Notes",
+      url: `${MCP_ORIGIN}/headers/mcp`,
+      auth: {
+        kind: "headers",
+        headers: [...bearer, { name: "X-Team", value: "blue-team-header" }],
+      },
+    });
+    const sealed = () => db.select().from(schema.mcpCredential).all();
+    const before = sealed()[0]!.sealed;
+
+    const kept = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {
+      auth: {
+        kind: "headers",
+        headers: [
+          { name: "Authorization", value: null },
+          { name: "X-Team", value: "green-team-header" },
+        ],
+      },
+    });
+    expect(await kept.json()).toMatchObject({
+      status: "ok",
+      auth: {
+        kind: "headers",
+        headers: [
+          { name: "authorization", hint: "…oken" },
+          { name: "x-team", hint: "…ader" },
+        ],
+      },
+    });
+    expect(sealed()[0]!.sealed.equals(before)).toBe(false);
+
+    const dropped = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {
+      auth: { kind: "headers", headers: [{ name: "X-Team", value: null }] },
+    });
+    expect(await dropped.json()).toMatchObject({
+      status: "error",
+      error: "The server did not accept the headers (HTTP 401).",
+      auth: { kind: "headers", headers: [{ name: "x-team", hint: "…ader" }] },
+    });
+  });
+
+  it("drops what went with the old way of authorizing, and keeps tool modes by name", async () => {
+    const { ada, add, api, db, orgTools } = await orgWithServers();
+    const { body } = await add({
+      name: "Notes",
+      url: `${MCP_ORIGIN}/headers/mcp`,
+      auth: { kind: "headers", headers: bearer },
+    });
+    const addNote = `mcp:${body.id}/add_note`;
+    await api("PATCH", "/org/tools", ada.cookie, { toolIds: [addNote], mode: "ask" });
+
+    const open = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {
+      url: `${MCP_ORIGIN}/mcp`,
+      auth: { kind: "none" },
+    });
+    expect(await open.json()).toMatchObject({
+      url: `${MCP_ORIGIN}/mcp`,
+      status: "ok",
+      auth: { kind: "none" },
+      toolCount: 3,
+    });
+    expect(db.select().from(schema.mcpCredential).all()).toHaveLength(0);
+    const tools = (await orgTools()).find((toolset) => toolset.id === `mcp:${body.id}`)?.tools;
+    expect(tools?.find((tool) => tool.id === addNote)?.mode).toBe("ask");
+
+    // Nothing stored is kept for another way of authorizing.
+    const refused = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {
+      auth: { kind: "headers", headers: [{ name: "Authorization", value: null }] },
+    });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toEqual({ error: "Give a value for authorization" });
+
+    const oauth = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {
+      url: `${MCP_ORIGIN}/oauth/mcp`,
+      auth: { kind: "oauth", clientId: null, clientSecret: null },
+    });
+    expect(await oauth.json()).toMatchObject({
+      status: "needs_auth",
+      transport: null,
+      auth: { kind: "oauth", authorized: false },
+    });
+  });
+
+  it("drops OAuth tokens and a registered client for a new address, and asks to connect again", async () => {
+    const workspace = await orgWithServers();
+    const { ada, add, api } = workspace;
+    const { body } = await add({
+      name: "Notes",
+      url: `${MCP_ORIGIN}/oauth/mcp`,
+      auth: { kind: "oauth", clientId: null, clientSecret: null },
+    });
+    await authorizeInBrowser(workspace, body.id);
+    const renamed = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {
+      name: "Team notes",
+      auth: { kind: "oauth", clientId: null, clientSecret: null },
+    });
+    expect(await renamed.json()).toMatchObject({
+      name: "Team notes",
+      status: "ok",
+      auth: { kind: "oauth", authorized: true, registration: "dynamic" },
+    });
+
+    // The server moved to /mcp, with an authorization server that knows nothing of Mage.
+    workspace.mcpNetwork.handle = mcpStandIn({ origin: MCP_ORIGIN, oauthPath: "/mcp" });
+    const moved = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, { url: MCP_ORIGIN });
+    expect(await moved.json()).toMatchObject({
+      url: `${MCP_ORIGIN}/mcp`,
+      status: "needs_auth",
+      error: null,
+      toolCount: 3,
+      auth: { kind: "oauth", authorized: false, clientId: null, registration: null, issuer: null },
+    });
+    const { started } = await authorizeInBrowser(workspace, body.id);
+    expect(started.searchParams.get("resource")).toBe(`${MCP_ORIGIN}/mcp`);
+    const res = await api("GET", `/mcp-servers/${body.id}`, ada.cookie);
+    expect(await res.json()).toMatchObject({ status: "ok", auth: { authorized: true } });
+  });
+
+  it("keeps an entered client's secret and tokens while the client stays", async () => {
+    const workspace = await orgWithServers();
+    workspace.mcpNetwork.handle = mcpStandIn({
+      origin: MCP_ORIGIN,
+      registration: false,
+      clients: [{ id: "mage-app", secret: "app-secret-0123456789" }],
+    });
+    const { ada, add, api } = workspace;
+    const { body } = await add({
+      name: "Notes",
+      url: `${MCP_ORIGIN}/oauth/mcp`,
+      auth: { kind: "oauth", clientId: "mage-app", clientSecret: "app-secret-0123456789" },
+    });
+    await authorizeInBrowser(workspace, body.id);
+
+    const kept = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {
+      auth: { kind: "oauth", clientId: "mage-app", clientSecret: null },
+    });
+    const text = await kept.text();
+    expect(text).not.toContain("app-secret-0123456789");
+    expect(JSON.parse(text)).toMatchObject({
+      status: "ok",
+      auth: { clientId: "mage-app", clientSecretHint: "…6789", authorized: true },
+    });
+
+    const other = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {
+      auth: { kind: "oauth", clientId: "other-app", clientSecret: null },
+    });
+    expect(await other.json()).toMatchObject({
+      status: "needs_auth",
+      auth: { clientId: "other-app", clientSecretHint: null, authorized: false },
+    });
+  });
+
+  it("is only for those who manage it", async () => {
+    const { add, signUp, join, yourSpace, ada, api } = await orgWithServers();
+    const { body } = await add({ name: "Open", url: `${MCP_ORIGIN}/mcp`, auth: { kind: "none" } });
+    const space = await yourSpace(ada.cookie);
+    const grace = join(await signUp("Grace Hopper", "grace@example.com"), space.id, "messager");
+    const refused = await api("PATCH", `/mcp-servers/${body.id}`, grace.cookie, { name: "Mine" });
+    expect(refused.status).toBe(403);
+    const bad = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, { url: "ftp://x" });
+    expect(bad.status).toBe(400);
   });
 });

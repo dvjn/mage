@@ -1,6 +1,7 @@
 // MCP servers an org or one of its spaces added, the secrets each is reached with, and the client
 // that reaches them: listing their tools and calling one, each over a connection of its own, with
-// headers or OAuth, and authorizing Mage with a server's authorization server.
+// headers or OAuth, asking whether an address answers as one, and authorizing Mage with a server's
+// authorization server.
 
 import type { McpAuthKind, McpStatus, McpTransport } from "@/shared/mcp.ts";
 import type { ToolDefinition } from "@/shared/tools.ts";
@@ -43,7 +44,16 @@ export type NewMcpServer = Pick<
 export type McpServerChanges = Partial<
   Pick<
     McpServer,
-    "name" | "settings" | "transport" | "status" | "error" | "serverInfo" | "tools" | "toolsReadAt"
+    | "name"
+    | "url"
+    | "authKind"
+    | "settings"
+    | "transport"
+    | "status"
+    | "error"
+    | "serverInfo"
+    | "tools"
+    | "toolsReadAt"
   >
 >;
 
@@ -126,6 +136,10 @@ export class McpError extends Error {
   }
 }
 
+// How an address answered a first MCP request: as an MCP server (or one asking for OAuth with
+// protected-resource metadata), asking for other authorization, as something else, or not at all.
+export type McpAnswer = "mcp" | "auth" | "other" | "unreachable";
+
 // The OAuth client Mage registers as, and where the authorization server sends people back.
 export interface McpOAuthClient {
   redirectUrl: string;
@@ -133,6 +147,8 @@ export interface McpOAuthClient {
 }
 
 export interface McpClient {
+  // Whether the address answers as an MCP server, sent with the headers given.
+  probe(url: string, headers: Record<string, string>): Promise<McpAnswer>;
   // Throws McpError.
   list(target: McpTarget): Promise<McpListing>;
   call(

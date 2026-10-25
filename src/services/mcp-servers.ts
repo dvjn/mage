@@ -1,9 +1,12 @@
 // MCP servers as toolsets: an org's owners add servers every space of the org uses, and a space's
 // managers add servers that space alone uses, unless the org turned that off. Each server is
 // reached with no authorization, with headers, or with OAuth that someone who manages it completes
-// once in the browser for everyone; its secrets stay sealed and never leave the server. The tools a
-// server lists are kept and offered from there until it is read again, and each call goes to the
-// server with the secrets of whoever the call runs as: today always the ones the server shares.
+// once in the browser for everyone; its secrets stay sealed and never leave the server. An address
+// with no path that does not answer as an MCP server is tried again at /mcp. Everything about a
+// server can be changed later: a secret left out keeps the stored one, and a new address or way of
+// authorizing drops the secrets and tokens that went with the old one. The tools a server lists are
+// kept and offered from there until it is read again, and each call goes to the server with the
+// secrets of whoever the call runs as: today always the ones the server shares.
 
 import { randomBytes } from "node:crypto";
 
@@ -17,6 +20,7 @@ import {
   type McpCredentialStore,
   McpError,
   type McpHolder,
+  type McpOAuthState,
   type McpOAuthStore,
   type McpSecrets,
   type McpServer,
@@ -30,6 +34,7 @@ import type { AnyToolSpec, ToolContext, ToolOutput, Toolset } from "@/ports/tool
 import { ServiceError } from "@/services/errors.ts";
 import type { Spaces } from "@/services/spaces.ts";
 import {
+  type McpAuthInput,
   type McpAuthSummary,
   type McpHeadersInput,
   type McpServerChange,
@@ -65,6 +70,7 @@ const SHARED: McpHolder = { kind: "shared" };
 
 const ORG_ONLY = "Only the organization's owners can manage its MCP servers";
 const SPACES_OFF = "The organization does not let spaces add MCP servers";
+const NOT_MCP = "This address didn't answer as an MCP server. MCP servers usually live at /mcp.";
 
 // A begun authorization, by the state the authorization server sends back.
 interface Pending {
@@ -178,9 +184,11 @@ export function createMcpServers(options: McpServersOptions) {
         return { kind: "headers", headers: own.headers ?? [] };
       case "oauth": {
         const oauth = credentials.get(server.id, SHARED)?.oauth;
+        const secret = oauth?.manual ? oauth.client?.client_secret : undefined;
         return {
           kind: "oauth",
           clientId: own.clientId ?? null,
+          clientSecretHint: typeof secret === "string" ? secretHint(secret) : null,
           registration: own.registration ?? null,
           issuer: own.issuer ?? null,
           authorized: !!oauth?.tokens,
@@ -308,17 +316,57 @@ export function createMcpServers(options: McpServersOptions) {
     }
   }
 
-  // The secrets a new server is kept with.
-  function secretsOf(input: NewMcpServer): { secrets: McpSecrets | null; settings: McpSettings } {
-    const { auth } = input;
+  // The headers sent with a server's requests, for asking whether its address answers.
+  function headersOf(secrets: McpSecrets | null) {
+    return secrets?.headers ?? {};
+  }
+
+  // Where the server is: the address given, or, when one with no path does not answer as an MCP
+  // server, the same at /mcp where that one does. One that cannot be reached is kept as given.
+  async function located(url: string, headers: Record<string, string>) {
+    const given = new URL(url);
+    if (given.pathname !== "/" || given.search) return url;
+    const root = await client.probe(url, headers);
+    if (root === "mcp" || root === "unreachable") return url;
+    const conventional = new URL("/mcp", given).href;
+    const there = await client.probe(conventional, headers);
+    if (there === "mcp" || (there === "auth" && root === "other")) return conventional;
+    if (root === "auth") return url;
+    throw new ServiceError(400, NOT_MCP);
+  }
+
+  // The secrets and settings a server is kept with once its authorization is set as given: header
+  // values and an OAuth client secret left out keep the stored ones of the same kind, and OAuth
+  // keeps its tokens while the client stays the same.
+  function secretsOf(
+    auth: McpAuthInput,
+    before?: { server: McpServer; secrets: McpSecrets | null },
+  ): { secrets: McpSecrets | null; settings: McpSettings } {
+    const same = before?.server.authKind === auth.kind ? before : undefined;
     switch (auth.kind) {
       case "none":
         return { secrets: null, settings: {} };
       case "headers": {
-        const headers = mergeHeaders(auth.headers);
+        const headers = mergeHeaders(auth.headers, same?.secrets?.headers);
         return { secrets: { headers }, settings: { headers: headerHints(headers) } };
       }
       case "oauth": {
+        const stored = same?.secrets?.oauth;
+        const enteredBefore = stored?.manual ? (stored.client?.client_id as string) : null;
+        if (same && stored && (auth.clientId || null) === enteredBefore) {
+          const secret = auth.clientSecret ?? stored.client?.client_secret;
+          const oauth: McpOAuthState = auth.clientId
+            ? {
+                ...stored,
+                client: {
+                  ...stored.client,
+                  client_id: auth.clientId,
+                  ...(typeof secret === "string" && secret && { client_secret: secret }),
+                },
+              }
+            : stored;
+          return { secrets: { oauth }, settings: same.server.settings };
+        }
         if (!auth.clientId) return { secrets: { oauth: {} }, settings: { registration: null } };
         const client = {
           client_id: auth.clientId,
@@ -332,6 +380,23 @@ export function createMcpServers(options: McpServersOptions) {
     }
   }
 
+  // OAuth state for a server at a new address: the tokens, what discovery found and a client the
+  // authorization server registered were for the old one; a client people entered stays.
+  function moved(
+    secrets: McpSecrets | null,
+    settings: McpSettings,
+  ): { secrets: McpSecrets | null; settings: McpSettings } {
+    const oauth = secrets?.oauth;
+    if (!oauth) return { secrets, settings };
+    const kept: McpOAuthState = oauth.manual ? { client: oauth.client, manual: true } : {};
+    return {
+      secrets: { ...secrets, oauth: kept },
+      settings: oauth.manual
+        ? { clientId: settings.clientId ?? null, registration: "manual" }
+        : { registration: null },
+    };
+  }
+
   async function add(principal: Principal, spaceId: string | null, input: NewMcpServer) {
     if (spaceId) {
       spaces.require(principal, spaceId, "manage");
@@ -339,12 +404,13 @@ export function createMcpServers(options: McpServersOptions) {
     } else if (principal.role !== "owner") {
       throw new ServiceError(403, ORG_ONLY);
     }
-    const { secrets, settings: own } = secretsOf(input);
+    const { secrets, settings: own } = secretsOf(input.auth);
+    const url = await located(input.url, headersOf(secrets));
     const server = servers.create({
       orgId: principal.orgId,
       spaceId,
       name: input.name,
-      url: input.url,
+      url,
       authKind: input.auth.kind,
       settings: own,
       createdBy: principal.userId,
@@ -356,6 +422,39 @@ export function createMcpServers(options: McpServersOptions) {
       return summary(servers.find(server.id)!);
     }
     return summary(await refreshed(server));
+  }
+
+  // Changes the server as given, then reads it again; one authorized by OAuth without tokens for
+  // its address needs someone to connect it first.
+  async function change(principal: Principal, id: string, input: McpServerChange) {
+    const server = manageable(principal, id);
+    const stored = credentials.get(id, SHARED);
+    const authKind = input.auth?.kind ?? server.authKind;
+    let next = input.auth
+      ? secretsOf(input.auth, { server, secrets: stored })
+      : { secrets: stored, settings: server.settings };
+    const url =
+      input.url && input.url !== server.url
+        ? await located(input.url, headersOf(next.secrets))
+        : server.url;
+    // Anything the server answered on before was for the old address.
+    const elsewhere = url !== server.url;
+    if (elsewhere) next = moved(next.secrets, next.settings);
+    servers.update(id, {
+      ...(input.name && { name: input.name }),
+      url,
+      authKind,
+      settings: next.settings,
+      ...(elsewhere && { transport: null }),
+    });
+    if (next.secrets) credentials.put(id, SHARED, next.secrets);
+    else credentials.delete(id, SHARED);
+    if (!input.auth && !elsewhere) return summary(servers.find(id)!);
+    if (authKind === "oauth" && !next.secrets?.oauth?.tokens) {
+      servers.update(id, { status: "needs_auth", error: null });
+      return summary(servers.find(id)!);
+    }
+    return summary(await refreshed(servers.find(id)!));
   }
 
   return {
@@ -403,22 +502,8 @@ export function createMcpServers(options: McpServersOptions) {
       return add(principal, spaceId, input);
     },
 
-    // Renames the server, or sets its headers and reads it again with them.
-    async change(principal: Principal, id: string, change: McpServerChange) {
-      const server = manageable(principal, id);
-      if (change.name) servers.update(id, { name: change.name });
-      if (change.headers) {
-        if (server.authKind !== "headers") {
-          throw new ServiceError(400, "This server is not authorized by headers");
-        }
-        const stored = credentials.get(id, SHARED) ?? {};
-        const headers = mergeHeaders(change.headers, stored.headers);
-        credentials.put(id, SHARED, { ...stored, headers });
-        servers.update(id, { settings: { ...server.settings, headers: headerHints(headers) } });
-        return summary(await refreshed(servers.find(id)!));
-      }
-      return summary(servers.find(id)!);
-    },
+    // Changes its name, address or authorization, and reads it again.
+    change,
 
     // Reads the server's tools again.
     async refresh(principal: Principal, id: string) {

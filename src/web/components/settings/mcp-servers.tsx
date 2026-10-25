@@ -2,8 +2,9 @@
 // opens its page, with how it answered and its tools' modes; adding one in a dialog, by its address
 // and how it is authorized (not at all, by headers with a bearer token among them, or by OAuth,
 // which sends the browser to the server's authorization server and back); and a server's page with
-// its connection, its tools and their modes, reading them again, reconnecting, changing its name or
-// headers, and removing it. Header values are only ever typed, never shown again.
+// its connection, its tools and their modes, reading them again, reconnecting, changing
+// everything about it in the same form it was added with, and removing it. Header values and
+// secrets are only ever typed, never shown again beyond their ends.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -97,12 +98,6 @@ const AUTH_KINDS: { value: McpAuthKind; label: string }[] = [
 
 function hostOf(url: string) {
   return URL.parse(url)?.host ?? url;
-}
-
-function serversKey(scope: McpScope) {
-  return scope.kind === "org"
-    ? orgMcpServersQuery.queryKey
-    : spaceMcpServersQuery(scope.spaceId).queryKey;
 }
 
 // A server's page, by its scope.
@@ -272,7 +267,7 @@ function ServersCard({
           <SpaceServersSwitch allowed={spaceServers} canManage={canManage} />
         )}
       </div>
-      <AddMcpServerDialog scope={scope} open={adding} onOpenChange={setAdding} />
+      <McpServerDialog scope={scope} open={adding} onOpenChange={setAdding} />
     </SettingsCard>
   );
 }
@@ -359,7 +354,8 @@ interface HeaderDraft {
   key: number;
   name: string;
   value: string;
-  // Its value is stored on the server, and kept unless a new one is typed.
+  // The end of the value stored on the server, kept unless a new one is typed.
+  hint?: string;
   stored: boolean;
 }
 
@@ -401,7 +397,7 @@ function HeaderFields({
             type="password"
             value={row.value}
             onChange={(event) => change(row.key, { value: event.target.value })}
-            placeholder={row.stored ? "••••" : "Value"}
+            placeholder={row.stored ? (row.hint ?? "••••") : "Value"}
             autoComplete="off"
           />
           <WithTooltip label="Remove header">
@@ -433,39 +429,73 @@ function HeaderFields({
   );
 }
 
-export function AddMcpServerDialog({
+// The headers of a server authorized by them, apart from its Authorization header.
+function storedRows(server: McpServerSummary | undefined): HeaderDraft[] {
+  if (server?.auth.kind !== "headers") return [];
+  return server.auth.headers
+    .filter((header) => header.name !== "authorization")
+    .map((header, key) => ({ key, name: header.name, value: "", hint: header.hint, stored: true }));
+}
+
+// The end of the stored Authorization header, for a server authorized by headers.
+function storedToken(server: McpServerSummary | undefined) {
+  if (server?.auth.kind !== "headers") return null;
+  return server.auth.headers.find((header) => header.name === "authorization")?.hint ?? null;
+}
+
+// Adding a server, or changing one: the same form, filled in with what is stored apart from its
+// secrets, of which only the ends show.
+export function McpServerDialog({
   scope,
+  server,
   open,
   onOpenChange,
 }: {
   scope: McpScope;
+  // The server to change; none to add one.
+  server?: McpServerSummary;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const id = useId();
-  const [name, setName] = useState("");
-  const [url, setUrl] = useState("");
-  const [kind, setKind] = useState<McpAuthKind>("none");
+  const entered = server?.auth.kind === "oauth" && server.auth.registration === "manual";
+  const initial = {
+    name: server?.name ?? "",
+    url: server?.url ?? "",
+    kind: server?.auth.kind ?? ("none" as McpAuthKind),
+    tokenHint: storedToken(server),
+    rows: storedRows(server),
+    clientId: (entered && server.auth.kind === "oauth" && server.auth.clientId) || "",
+    secretHint: (server?.auth.kind === "oauth" && server.auth.clientSecretHint) || null,
+  };
+  const [name, setName] = useState(initial.name);
+  const [url, setUrl] = useState(initial.url);
+  const [kind, setKind] = useState<McpAuthKind>(initial.kind);
   const [token, setToken] = useState("");
-  const [rows, setRows] = useState<HeaderDraft[]>([]);
-  const [clientId, setClientId] = useState("");
+  const [tokenHint, setTokenHint] = useState(initial.tokenHint);
+  const [rows, setRows] = useState<HeaderDraft[]>(initial.rows);
+  const [clientId, setClientId] = useState(initial.clientId);
   const [clientSecret, setClientSecret] = useState("");
   const [error, setError] = useState<string>();
   const [pending, setPending] = useState<string>();
 
   function reset() {
-    setName("");
-    setUrl("");
-    setKind("none");
+    setName(initial.name);
+    setUrl(initial.url);
+    setKind(initial.kind);
     setToken("");
-    setRows([]);
-    setClientId("");
+    setTokenHint(initial.tokenHint);
+    setRows(initial.rows);
+    setClientId(initial.clientId);
     setClientSecret("");
     setError(undefined);
     setPending(undefined);
   }
+
+  // The client secret shows as stored while the client entered before stays.
+  const secretKept = !!initial.secretHint && clientId.trim() === initial.clientId;
 
   function authBody(): McpAuthInput {
     switch (kind) {
@@ -475,8 +505,12 @@ export function AddMcpServerDialog({
         return {
           kind,
           headers: [
-            ...(token.trim() ? [{ name: "Authorization", value: `Bearer ${token.trim()}` }] : []),
-            ...headersBody(rows).map((header) => ({ ...header, value: header.value ?? "" })),
+            ...(token.trim()
+              ? [{ name: "Authorization", value: `Bearer ${token.trim()}` }]
+              : tokenHint
+                ? [{ name: "Authorization", value: null }]
+                : []),
+            ...headersBody(rows),
           ],
         };
       case "oauth":
@@ -484,13 +518,24 @@ export function AddMcpServerDialog({
     }
   }
 
+  // Whether saving leaves an OAuth server to sign in with: a new one, or one whose address,
+  // client or tokens no longer hold.
+  const signIn =
+    kind === "oauth" &&
+    (!server ||
+      server.auth.kind !== "oauth" ||
+      !server.auth.authorized ||
+      url.trim() !== server.url ||
+      clientId.trim() !== initial.clientId);
+
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(undefined);
-    setPending(kind === "oauth" ? "Adding…" : "Connecting…");
+    setPending(server ? "Saving…" : kind === "oauth" ? "Adding…" : "Connecting…");
     const json = { name: name.trim(), url: url.trim(), auth: authBody() };
-    const res =
-      scope.kind === "org"
+    const res = server
+      ? await apiClient.v1["mcp-servers"][":id"].$patch({ param: { id: server.id }, json })
+      : scope.kind === "org"
         ? await apiClient.v1.org["mcp-servers"].$post({ json })
         : await apiClient.v1.spaces[":id"]["mcp-servers"].$post({
             param: { id: scope.spaceId },
@@ -501,42 +546,51 @@ export function AddMcpServerDialog({
       setError(await errorOf(res));
       return;
     }
-    const server = mcpServerSchema.parse(await res.json());
-    await queryClient.invalidateQueries({ queryKey: serversKey(scope) });
+    const saved = mcpServerSchema.parse(await res.json());
+    queryClient.setQueryData(mcpServerQuery(saved.id).queryKey, saved);
+    await queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
     await queryClient.invalidateQueries({ queryKey: ["org-tools"] });
     await queryClient.invalidateQueries({ queryKey: ["spaces"] });
-    if (kind === "oauth") {
+    if (saved.auth.kind === "oauth" && !saved.auth.authorized) {
       setPending("Opening sign-in…");
-      const result = await authorize(server.id);
+      const result = await authorize(saved.id);
       if ("redirecting" in result) return;
       if ("error" in result) {
-        // The server is added; its page says what went wrong and offers to try again.
+        // The server is kept; its page says what went wrong and offers to try again.
         await queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
       }
     }
     onOpenChange(false);
     reset();
-    await navigate(pageLink(scope, server.id));
+    if (!server) await navigate(pageLink(scope, saved.id));
   }
 
   const missing =
     !name.trim() ||
     !url.trim() ||
-    (kind === "headers" && !token.trim() && !headersBody(rows).length);
+    (kind === "headers" && !token.trim() && !tokenHint && !headersBody(rows).length);
+  const action = server
+    ? signIn
+      ? "Save and sign in"
+      : "Save"
+    : signIn
+      ? "Add and sign in"
+      : "Add server";
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
         onOpenChange(next);
-        if (!next) reset();
+        if (!next || server) reset();
       }}
     >
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add MCP server</DialogTitle>
+          <DialogTitle>{server ? "Edit MCP server" : "Add MCP server"}</DialogTitle>
           <DialogDescription>
-            A server reached over Streamable HTTP, or the older HTTP+SSE. Servers run as local
-            commands (stdio) are not supported.
+            {server
+              ? "Header values and secrets left blank keep the ones stored."
+              : "A server reached over Streamable HTTP, or the older HTTP+SSE. Servers run as local commands (stdio) are not supported."}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={(event) => void submit(event)}>
@@ -550,7 +604,7 @@ export function AddMcpServerDialog({
                 placeholder="Linear"
                 maxLength={80}
                 autoComplete="off"
-                autoFocus
+                autoFocus={!server}
               />
             </Field>
             <Field>
@@ -563,6 +617,9 @@ export function AddMcpServerDialog({
                 placeholder="https://example.com/mcp"
                 autoComplete="off"
               />
+              {server?.auth.kind === "oauth" && kind === "oauth" && url.trim() !== server.url && (
+                <FieldDescription>A new address needs signing in again.</FieldDescription>
+              )}
             </Field>
             <Field>
               <FieldLabel>Authorization</FieldLabel>
@@ -578,14 +635,29 @@ export function AddMcpServerDialog({
               <>
                 <Field>
                   <FieldLabel htmlFor={`${id}-token`}>Bearer token</FieldLabel>
-                  <Input
-                    id={`${id}-token`}
-                    type="password"
-                    value={token}
-                    onChange={(event) => setToken(event.target.value)}
-                    placeholder="Optional"
-                    autoComplete="off"
-                  />
+                  <div className="flex gap-2">
+                    <Input
+                      id={`${id}-token`}
+                      type="password"
+                      value={token}
+                      onChange={(event) => setToken(event.target.value)}
+                      placeholder={tokenHint ?? "Optional"}
+                      autoComplete="off"
+                    />
+                    {tokenHint && !token && (
+                      <WithTooltip label="Remove token">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          aria-label="Remove token"
+                          onClick={() => setTokenHint(null)}
+                        >
+                          <XIcon />
+                        </Button>
+                      </WithTooltip>
+                    )}
+                  </div>
                   <FieldDescription>Sent as Authorization: Bearer and the token.</FieldDescription>
                 </Field>
                 <Field>
@@ -600,8 +672,8 @@ export function AddMcpServerDialog({
             {kind === "oauth" && (
               <>
                 <p className="text-sm text-muted-foreground">
-                  You sign in with the server next. Everyone the server is for uses this one
-                  connection.
+                  {signIn ? "You sign in with the server next. " : ""}Everyone the server is for
+                  uses this one connection.
                 </p>
                 <Field>
                   <FieldLabel htmlFor={`${id}-client`}>Client ID</FieldLabel>
@@ -624,7 +696,7 @@ export function AddMcpServerDialog({
                       type="password"
                       value={clientSecret}
                       onChange={(event) => setClientSecret(event.target.value)}
-                      placeholder="Optional"
+                      placeholder={secretKept ? (initial.secretHint ?? "") : "Optional"}
                       autoComplete="off"
                     />
                   </Field>
@@ -636,109 +708,7 @@ export function AddMcpServerDialog({
           <DialogFooter className="mt-4">
             <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
             <Button type="submit" disabled={!!pending || missing}>
-              {pending ?? (kind === "oauth" ? "Add and sign in" : "Add server")}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function EditMcpServerDialog({
-  server,
-  open,
-  onOpenChange,
-}: {
-  server: McpServerSummary;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const queryClient = useQueryClient();
-  const id = useId();
-  const stored = (): HeaderDraft[] =>
-    server.auth.kind === "headers"
-      ? server.auth.headers.map((header, key) => ({
-          key,
-          name: header.name,
-          value: "",
-          stored: true,
-        }))
-      : [];
-  const [name, setName] = useState(server.name);
-  const [rows, setRows] = useState<HeaderDraft[]>(stored);
-  const [error, setError] = useState<string>();
-  const [pending, setPending] = useState(false);
-
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setPending(true);
-    setError(undefined);
-    const res = await apiClient.v1["mcp-servers"][":id"].$patch({
-      param: { id: server.id },
-      json: {
-        name: name.trim(),
-        ...(server.auth.kind === "headers" && { headers: headersBody(rows) }),
-      },
-    });
-    setPending(false);
-    if (!res.ok) {
-      setError(await errorOf(res));
-      return;
-    }
-    queryClient.setQueryData(
-      mcpServerQuery(server.id).queryKey,
-      mcpServerSchema.parse(await res.json()),
-    );
-    await queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
-    await queryClient.invalidateQueries({ queryKey: ["org-tools"] });
-    await queryClient.invalidateQueries({ queryKey: ["spaces"] });
-    onOpenChange(false);
-  }
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        onOpenChange(next);
-        if (next) {
-          setName(server.name);
-          setRows(stored());
-          setError(undefined);
-        }
-      }}
-    >
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>Edit {server.name}</DialogTitle>
-          <DialogDescription className={server.auth.kind === "headers" ? "" : "sr-only"}>
-            Header values left blank keep the ones stored.
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={(event) => void submit(event)}>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor={`${id}-name`}>Name</FieldLabel>
-              <Input
-                id={`${id}-name`}
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-                maxLength={80}
-                autoComplete="off"
-              />
-            </Field>
-            {server.auth.kind === "headers" && (
-              <Field>
-                <FieldLabel>Headers</FieldLabel>
-                <HeaderFields rows={rows} onChange={setRows} />
-              </Field>
-            )}
-            <FieldError>{error}</FieldError>
-          </FieldGroup>
-          <DialogFooter className="mt-4">
-            <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
-            <Button type="submit" disabled={pending || !name.trim()}>
-              {pending ? "Saving…" : "Save"}
+              {pending ?? action}
             </Button>
           </DialogFooter>
         </form>
@@ -1047,7 +1017,13 @@ function ServerDetail({
           </AlertDialog>
         </SettingsCard>
       )}
-      <EditMcpServerDialog server={server} open={editing} onOpenChange={setEditing} />
+      <McpServerDialog
+        key={`${server.id}:${server.url}:${server.auth.kind}`}
+        scope={scope}
+        server={server}
+        open={editing}
+        onOpenChange={setEditing}
+      />
     </>
   );
 }

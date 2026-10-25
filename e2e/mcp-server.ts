@@ -3,7 +3,8 @@
 // and over the older HTTP+SSE transport at /sse. Its OAuth comes from its own small authorization
 // server: protected resource and server metadata, client registration, an authorize page that
 // approves at once, and tokens with their renewal. POST /control/revoke forgets every token, as
-// when a person revokes the app.
+// when a person revokes the app. It can instead keep its OAuth server at /mcp, where the open one
+// was, as servers that live only behind OAuth do.
 
 import { createHash, randomBytes } from "node:crypto";
 
@@ -19,6 +20,8 @@ export interface McpStandInOptions {
   // Whether clients may register themselves; when not, only these clients are known.
   registration?: boolean;
   clients?: { id: string; secret?: string }[];
+  // Where the server behind OAuth is; /mcp puts it in place of the open one.
+  oauthPath?: "/oauth/mcp" | "/mcp";
 }
 
 interface JsonRpc {
@@ -99,7 +102,7 @@ function token() {
 }
 
 export function mcpStandIn(options: McpStandInOptions) {
-  const { origin } = options;
+  const { origin, oauthPath = "/oauth/mcp" } = options;
   const notes = new Map<string, { title: string; body: string }>();
   const clients = new Map<string, { secret?: string; redirectUris: string[] | null }>(
     (options.clients ?? []).map((client) => [
@@ -115,7 +118,7 @@ export function mcpStandIn(options: McpStandInOptions) {
   const refreshTokens = new Map<string, string>();
   // The legacy transport's open streams, by session.
   const streams = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
-  const oauthResource = `${origin}/oauth/mcp`;
+  const oauthResource = `${origin}${oauthPath}`;
 
   function answer(message: JsonRpc): unknown {
     switch (message.method) {
@@ -332,29 +335,31 @@ export function mcpStandIn(options: McpStandInOptions) {
 
   return async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    if (url.pathname === oauthPath) {
+      if (!bearerAllowed(req)) {
+        return json({ error: "invalid_token" }, 401, {
+          "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource${oauthPath}"`,
+        });
+      }
+      return streamable(req);
+    }
+    if (url.pathname === `/.well-known/oauth-protected-resource${oauthPath}`) {
+      return json({
+        resource: oauthResource,
+        authorization_servers: [origin],
+        scopes_supported: ["notes"],
+      });
+    }
     switch (url.pathname) {
       case "/mcp":
         return streamable(req);
       case "/headers/mcp":
         if (!headersAllowed(req)) return json({ error: "Give the key" }, 401);
         return streamable(req);
-      case "/oauth/mcp":
-        if (!bearerAllowed(req)) {
-          return json({ error: "invalid_token" }, 401, {
-            "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource/oauth/mcp"`,
-          });
-        }
-        return streamable(req);
       case "/sse":
         return req.method === "GET" ? openStream() : new Response(null, { status: 405 });
       case "/messages":
         return legacyMessage(req, url);
-      case "/.well-known/oauth-protected-resource/oauth/mcp":
-        return json({
-          resource: oauthResource,
-          authorization_servers: [origin],
-          scopes_supported: ["notes"],
-        });
       case "/.well-known/oauth-authorization-server":
         return authorizationMetadata();
       case "/register":

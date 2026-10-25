@@ -1,5 +1,6 @@
 // MCP servers as the API shows them, shared by the server and the web client: what is not secret
-// about each, how it answered when last reached, and the bodies that add, change and authorize one.
+// about each, how it answered when last reached, and the bodies that add, change and authorize one;
+// a change is the add body again, its stored secrets left out to keep them.
 // An org's owners add servers for all its spaces; a space's managers add them for that space.
 
 import * as z from "zod";
@@ -24,14 +25,15 @@ export type McpAuthKind = z.infer<typeof mcpAuthKindSchema>;
 export const mcpHeaderSummarySchema = z.object({ name: z.string(), hint: z.string() });
 
 // How a server is authorized, without its secrets: headers by name; for OAuth, the client Mage
-// is (registered by the server itself, or entered), the authorization server, and whether Mage
-// holds tokens.
+// is (registered by the server itself, or entered, with the end of its secret), the authorization
+// server, and whether Mage holds tokens.
 export const mcpAuthSummarySchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("none") }),
   z.object({ kind: z.literal("headers"), headers: z.array(mcpHeaderSummarySchema) }),
   z.object({
     kind: z.literal("oauth"),
     clientId: z.string().nullable(),
+    clientSecretHint: z.string().nullable(),
     registration: z.enum(["dynamic", "manual"]).nullable(),
     issuer: z.string().nullable(),
     authorized: z.boolean(),
@@ -126,8 +128,9 @@ export const mcpHeadersInputSchema = z
 
 export type McpHeadersInput = z.infer<typeof mcpHeadersInputSchema>;
 
-// How a new server is authorized: not at all, by headers (a bearer token is an Authorization
-// header), or by OAuth with a client the server registers itself or one entered here.
+// How a server is authorized: not at all, by headers (a bearer token is an Authorization header),
+// or by OAuth with a client the server registers itself or one entered here. On a change, a null
+// header value or client secret keeps the stored one.
 export const mcpAuthInputSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("none") }),
   z.object({ kind: z.literal("headers"), headers: mcpHeadersInputSchema }),
@@ -155,10 +158,11 @@ export const newMcpServerSchema = z.object({
 
 export type NewMcpServer = z.infer<typeof newMcpServerSchema>;
 
-// A new name, or headers for a server authorized by them.
+// A new name, address or authorization; what is left out stays.
 export const mcpServerChangeSchema = z.object({
   name: mcpServerNameSchema.optional(),
-  headers: mcpHeadersInputSchema.optional(),
+  url: mcpUrlSchema.optional(),
+  auth: mcpAuthInputSchema.optional(),
 });
 
 export type McpServerChange = z.infer<typeof mcpServerChangeSchema>;
