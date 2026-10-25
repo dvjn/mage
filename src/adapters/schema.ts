@@ -298,7 +298,7 @@ export const space = sqliteTable(
 );
 
 // An MCP server an org's owners added for all its spaces, or a space's managers for that space
-// alone, with the tools it last listed.
+// alone, with the tools it last listed. One turned off keeps everything but offers no tools.
 export const mcpServer = sqliteTable(
   "mcp_server",
   {
@@ -310,6 +310,7 @@ export const mcpServer = sqliteTable(
     spaceId: text("space_id").references(() => space.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     url: text("url").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).default(true).notNull(),
     // How it is authorized: not at all, by headers, or by OAuth.
     authKind: text("auth_kind", { enum: ["none", "headers", "oauth"] }).notNull(),
     // What is not secret about its authorization, as JSON: header names with hints, the OAuth
@@ -360,6 +361,22 @@ export const mcpCredential = sqliteTable(
       .notNull(),
   },
   (table) => [primaryKey({ columns: [table.serverId, table.holderKind, table.holderId] })],
+);
+
+// Whether a space uses one of the org's MCP servers, once it set so; one the org turned off is off
+// in every space whatever the space set.
+export const spaceMcpServerSetting = sqliteTable(
+  "space_mcp_server_setting",
+  {
+    spaceId: text("space_id")
+      .notNull()
+      .references(() => space.id, { onDelete: "cascade" }),
+    serverId: text("server_id")
+      .notNull()
+      .references(() => mcpServer.id, { onDelete: "cascade" }),
+    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.spaceId, table.serverId] })],
 );
 
 // The mode an org set for a tool, for all its spaces.

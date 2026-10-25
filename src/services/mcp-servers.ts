@@ -1,12 +1,15 @@
 // MCP servers as toolsets: an org's owners add servers every space of the org uses, and a space's
-// managers add servers that space alone uses, unless the org turned that off. Each server is
-// reached with no authorization, with headers, or with OAuth that someone who manages it completes
-// once in the browser for everyone; its secrets stay sealed and never leave the server. An address
-// with no path that does not answer as an MCP server is tried again at /mcp. Everything about a
-// server can be changed later: a secret left out keeps the stored one, and a new address or way of
-// authorizing drops the secrets and tokens that went with the old one. The tools a server lists are
-// kept and offered from there until it is read again, and each call goes to the server with the
-// secrets of whoever the call runs as: today always the ones the server shares.
+// managers add servers that space alone uses, unless the org turned that off. Whoever manages a
+// server turns it on or off: one that is off keeps everything but offers no tools anywhere. A
+// space's managers also turn one of the org's off for their space alone, though never on while the
+// org has it off. Each server is reached with no authorization, with headers, or with OAuth that
+// someone who manages it completes once in the browser for everyone; its secrets stay sealed and
+// never leave the server. An address with no path that does not answer as an MCP server is tried
+// again at /mcp. Everything about a server can be changed later: a secret left out keeps the
+// stored one, and a new address or way of authorizing drops the secrets and tokens that went with
+// the old one. The tools a server lists are kept and offered from there until it is read again, and
+// each call goes to the server with the secrets of whoever the call runs as: today always the ones
+// the server shares.
 
 import { randomBytes } from "node:crypto";
 
@@ -42,6 +45,7 @@ import {
   mcpToolId,
   mcpToolsetId,
   type NewMcpServer,
+  type SpaceOrgMcpServer,
 } from "@/shared/mcp.ts";
 import type { ToolRisk } from "@/shared/threads.ts";
 import type { ToolDefinition } from "@/shared/tools.ts";
@@ -70,6 +74,7 @@ const SHARED: McpHolder = { kind: "shared" };
 
 const ORG_ONLY = "Only the organization's owners can manage its MCP servers";
 const SPACES_OFF = "The organization does not let spaces add MCP servers";
+const ORG_OFF = "The organization turned this server off";
 const NOT_MCP = "This address didn't answer as an MCP server. MCP servers usually live at /mcp.";
 
 // A begun authorization, by the state the authorization server sends back.
@@ -204,6 +209,7 @@ export function createMcpServers(options: McpServersOptions) {
       name: server.name,
       url: server.url,
       spaceId: server.spaceId,
+      enabled: server.enabled,
       auth: authSummary(server),
       transport: server.transport,
       protocolVersion: server.protocolVersion,
@@ -218,6 +224,25 @@ export function createMcpServers(options: McpServersOptions) {
 
   function spacesMayAdd(orgId: string) {
     return settings.get(orgId).spaceMcpServers;
+  }
+
+  // The org's servers the space uses: those on, and not turned off in the space.
+  function orgServersIn(space: Pick<Space, "id" | "orgId">) {
+    const set = servers.inSpaceSettings(space.id);
+    return servers
+      .inOrg(space.orgId)
+      .filter((server) => server.enabled && set.get(server.id) !== false);
+  }
+
+  // The space's own servers the space uses: those on, while the org lets spaces have them.
+  function ownServersIn(space: Pick<Space, "id" | "orgId">) {
+    if (!spacesMayAdd(space.orgId)) return [];
+    return servers.inSpace(space.id).filter((server) => server.enabled);
+  }
+
+  // One of the org's servers as the space sees it.
+  function inSpaceSummary(server: McpServer, set: Map<string, boolean>): SpaceOrgMcpServer {
+    return { ...summary(server), inSpace: set.get(server.id) !== false };
   }
 
   // The server when the principal may manage it: an org's own by its owners, a space's by those
@@ -477,13 +502,28 @@ export function createMcpServers(options: McpServersOptions) {
       settings.setSpaceMcpServers(principal.orgId, allowed);
     },
 
-    // A space's own servers, for those who manage it.
+    // The servers a space has, for those who manage it: the org's, each with whether the space
+    // uses it, and its own.
     spaceServers(principal: Principal, spaceId: string) {
       const space = spaces.require(principal, spaceId, "manage");
+      const set = servers.inSpaceSettings(space.id);
       return {
-        servers: servers.inSpace(space.id).map(summary),
+        org: servers.inOrg(space.orgId).map((server) => inSpaceSummary(server, set)),
+        own: servers.inSpace(space.id).map(summary),
         allowed: spacesMayAdd(space.orgId),
       };
+    },
+
+    // Turns one of the org's servers on or off for the space alone; never on while the org has it
+    // off.
+    setInSpace(principal: Principal, spaceId: string, serverId: string, enabled: boolean) {
+      const space = spaces.require(principal, spaceId, "manage");
+      const server = servers.find(serverId);
+      if (!server || server.orgId !== space.orgId || server.spaceId) {
+        throw new ServiceError(404, "MCP server not found");
+      }
+      if (enabled && !server.enabled) throw new ServiceError(409, ORG_OFF);
+      servers.setInSpace(space.id, server.id, enabled);
     },
 
     // The server for anyone who may read it: an org's by its members, a space's by those who
@@ -507,6 +547,13 @@ export function createMcpServers(options: McpServersOptions) {
 
     // Changes its name, address or authorization, and reads it again.
     change,
+
+    // Turns the server on or off for everyone who has it, keeping everything else about it.
+    setEnabled(principal: Principal, id: string, enabled: boolean) {
+      manageable(principal, id);
+      servers.update(id, { enabled });
+      return summary(servers.find(id)!);
+    },
 
     // Reads the server's tools again.
     async refresh(principal: Principal, id: string) {
@@ -586,15 +633,19 @@ export function createMcpServers(options: McpServersOptions) {
       return { server: read, error: read.status === "ok" ? null : read.error };
     },
 
-    // The servers every space of the org uses, as toolsets.
-    toolsetsInOrg(orgId: string): Toolset[] {
+    // Settings keep every server's tools visible, including those currently off.
+    toolsetsForOrgSettings(orgId: string): Toolset[] {
       return servers.inOrg(orgId).map(toolsetOf);
     },
 
-    // The space's own servers, as toolsets, while the org lets spaces have them.
+    toolsetsForSpaceSettings(space: Pick<Space, "id" | "orgId">): Toolset[] {
+      return [...servers.inOrg(space.orgId), ...servers.inSpace(space.id)].map(toolsetOf);
+    },
+
+    // The servers the space uses, as toolsets: the org's it did not turn off, then its own, while
+    // the org lets spaces have them; none that is off.
     toolsetsInSpace(space: Pick<Space, "id" | "orgId">): Toolset[] {
-      if (!spacesMayAdd(space.orgId)) return [];
-      return servers.inSpace(space.id).map(toolsetOf);
+      return [...orgServersIn(space), ...ownServersIn(space)].map(toolsetOf);
     },
   };
 }

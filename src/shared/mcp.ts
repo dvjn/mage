@@ -1,7 +1,8 @@
 // MCP servers as the API shows them, shared by the server and the web client: what is not secret
-// about each, how it answered when last reached, and the bodies that add, change and authorize one;
-// a change is the add body again, its stored secrets left out to keep them.
-// An org's owners add servers for all its spaces; a space's managers add them for that space.
+// about each, whether it is on, how it answered when last reached, and the bodies that add, change,
+// authorize and turn one on or off; a change is the add body again, its stored secrets left out to
+// keep them. An org's owners add servers for all its spaces; a space's managers add them for that
+// space, and may turn one of the org's off for the space alone.
 
 import * as z from "zod";
 
@@ -48,6 +49,8 @@ export const mcpServerSchema = z.object({
   url: z.string(),
   // The space it was added for; null for the whole org.
   spaceId: z.string().nullable(),
+  // Whether it offers its tools; one turned off keeps its connection and tools.
+  enabled: z.boolean(),
   auth: mcpAuthSummarySchema,
   transport: mcpTransportSchema.nullable(),
   // The protocol revision it last answered with.
@@ -72,15 +75,26 @@ export const orgMcpServersSchema = z.object({
 
 export type OrgMcpServers = z.infer<typeof orgMcpServersSchema>;
 
-// A space's own servers, and whether the org lets it have them.
+// One of the org's servers as a space sees it: with whether the space uses it. One the org turned
+// off is off in the space whatever the space set.
+export const spaceOrgMcpServerSchema = mcpServerSchema.extend({ inSpace: z.boolean() });
+
+export type SpaceOrgMcpServer = z.infer<typeof spaceOrgMcpServerSchema>;
+
+// The servers a space has: the org's, each with whether the space uses it, and its own, with
+// whether the org lets it have its own.
 export const spaceMcpServersSchema = z.object({
-  servers: mcpServerListSchema,
+  org: z.array(spaceOrgMcpServerSchema),
+  own: mcpServerListSchema,
   allowed: z.boolean(),
 });
 
 export type SpaceMcpServers = z.infer<typeof spaceMcpServersSchema>;
 
 export const spaceServersChangeSchema = z.object({ allowed: z.boolean() });
+
+// Turning a server on or off: for everyone, or for one space.
+export const mcpEnabledChangeSchema = z.object({ enabled: z.boolean() });
 
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/;
 

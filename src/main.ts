@@ -142,8 +142,9 @@ const tools = createTools({
     }),
   ],
   scoped: {
-    inOrg: (orgId) => mcp.toolsetsInOrg(orgId),
     inSpace: (space) => mcp.toolsetsInSpace(space),
+    forOrgSettings: (orgId) => mcp.toolsetsForOrgSettings(orgId),
+    forSpaceSettings: (space) => mcp.toolsetsForSpaceSettings(space),
   },
   settings: toolSettings,
   access,

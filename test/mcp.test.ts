@@ -434,7 +434,7 @@ describe("a space's MCP servers", () => {
     expect((await spaceTools(own.id)).some((t) => t.id === `mcp:${body.id}`)).toBe(false);
     expect((await orgTools()).some((t) => t.id === `mcp:${body.id}`)).toBe(false);
     const listed = await api("GET", `/spaces/${lab.id}/mcp-servers`, grace.cookie);
-    expect(await listed.json()).toMatchObject({ allowed: true, servers: [{ id: body.id }] });
+    expect(await listed.json()).toMatchObject({ allowed: true, org: [], own: [{ id: body.id }] });
 
     // A space sets its own servers' tools as it likes.
     const set = await api("PATCH", `/spaces/${lab.id}/tools`, grace.cookie, {
@@ -450,7 +450,12 @@ describe("a space's MCP servers", () => {
 
     const off = await api("PUT", "/org/mcp-servers/space-servers", ada.cookie, { allowed: false });
     expect(await off.json()).toMatchObject({ spaceServers: false });
-    expect((await spaceTools(lab.id)).some((t) => t.id === `mcp:${body.id}`)).toBe(false);
+    expect((await spaceTools(lab.id)).some((t) => t.id === `mcp:${body.id}`)).toBe(true);
+    expect(
+      workspace.tools
+        .definitions({ id: lab.id, orgId: ada.orgId })
+        .some((t) => t.name.startsWith(`mcp:${body.id}/`)),
+    ).toBe(false);
     const again = await add(server, `/spaces/${lab.id}/mcp-servers`, grace);
     expect(again).toMatchObject({
       status: 403,
@@ -460,6 +465,160 @@ describe("a space's MCP servers", () => {
       allowed: true,
     });
     expect(policy.status).toBe(403);
+  });
+});
+
+describe("turning an MCP server off", () => {
+  it("takes its tools from every space while keeping them, and a space takes one of the org's from itself alone", async () => {
+    const workspace = await orgWithServers();
+    const { ada, add, api, createSpace, join, signUp, orgTools, spaceTools, yourSpace, tools } =
+      workspace;
+    const own = await yourSpace(ada.cookie);
+    const lab = await createSpace(ada.cookie, "Lab");
+    const grace = join(await signUp("Grace Hopper", "grace@example.com"), lab.id, "owner");
+    const alan = join(await signUp("Alan Turing", "alan@example.com"), lab.id, "messager");
+    const { body } = await add({ name: "Notes", url: `${MCP_ORIGIN}/mcp`, auth: { kind: "none" } });
+    const toolset = `mcp:${body.id}`;
+    const offered = (spaceId: string) =>
+      tools
+        .definitions({ id: spaceId, orgId: ada.orgId })
+        .some((tool) => tool.name.startsWith(`${toolset}/`));
+    expect(body.enabled).toBe(true);
+    expect(offered(own.id)).toBe(true);
+
+    // Off for everyone: its tools go, its connection and count stay.
+    const refused = await api("PUT", `/mcp-servers/${body.id}/enabled`, grace.cookie, {
+      enabled: false,
+    });
+    expect(refused.status).toBe(403);
+    const off = await api("PUT", `/mcp-servers/${body.id}/enabled`, ada.cookie, { enabled: false });
+    expect(await off.json()).toMatchObject({ enabled: false, status: "ok", toolCount: 3 });
+    expect((await orgTools()).some((t) => t.id === toolset)).toBe(true);
+    expect(offered(own.id)).toBe(false);
+    expect(offered(lab.id)).toBe(false);
+    const inLab = await api("GET", `/spaces/${lab.id}/mcp-servers`, grace.cookie);
+    expect(await inLab.json()).toMatchObject({
+      org: [{ id: body.id, enabled: false, inSpace: true }],
+      own: [],
+    });
+    const notWhileOff = await api("PUT", `/spaces/${lab.id}/mcp-servers/${body.id}`, grace.cookie, {
+      enabled: true,
+    });
+    expect(notWhileOff.status).toBe(409);
+    expect(await notWhileOff.json()).toEqual({ error: "The organization turned this server off" });
+
+    const on = await api("PUT", `/mcp-servers/${body.id}/enabled`, ada.cookie, { enabled: true });
+    expect(await on.json()).toMatchObject({ enabled: true });
+    expect(offered(own.id)).toBe(true);
+
+    // Off in the lab alone, by those who manage it.
+    const notAlan = await api("PUT", `/spaces/${lab.id}/mcp-servers/${body.id}`, alan.cookie, {
+      enabled: false,
+    });
+    expect(notAlan.status).toBe(403);
+    const inLabOff = await api("PUT", `/spaces/${lab.id}/mcp-servers/${body.id}`, grace.cookie, {
+      enabled: false,
+    });
+    expect(await inLabOff.json()).toMatchObject({
+      org: [{ id: body.id, enabled: true, inSpace: false }],
+    });
+    expect(offered(lab.id)).toBe(false);
+    expect(offered(own.id)).toBe(true);
+    expect((await spaceTools(lab.id)).some((t) => t.id === toolset)).toBe(true);
+    expect((await spaceTools(own.id)).some((t) => t.id === toolset)).toBe(true);
+    expect((await orgTools()).some((t) => t.id === toolset)).toBe(true);
+
+    // Only the org's servers are the space's to turn off this way.
+    const labNotes = await add(
+      { name: "Lab notes", url: `${MCP_ORIGIN}/mcp`, auth: { kind: "none" } },
+      `/spaces/${lab.id}/mcp-servers`,
+      grace,
+    );
+    const notOrg = await api(
+      "PUT",
+      `/spaces/${lab.id}/mcp-servers/${labNotes.body.id}`,
+      grace.cookie,
+      { enabled: false },
+    );
+    expect(notOrg.status).toBe(404);
+    const ownOff = await api("PUT", `/mcp-servers/${labNotes.body.id}/enabled`, grace.cookie, {
+      enabled: false,
+    });
+    expect(await ownOff.json()).toMatchObject({ enabled: false, spaceId: lab.id });
+    expect((await spaceTools(lab.id)).some((t) => t.id === `mcp:${labNotes.body.id}`)).toBe(true);
+    expect(
+      tools
+        .definitions({ id: lab.id, orgId: ada.orgId })
+        .some((t) => t.name.startsWith(`mcp:${labNotes.body.id}/`)),
+    ).toBe(false);
+  });
+
+  it("keeps permissions editable while off and preserves a space's switch across org changes", async () => {
+    const { ada, add, api, yourSpace, tools, spaceTools } = await orgWithServers();
+    const space = { ...(await yourSpace(ada.cookie)), orgId: ada.orgId };
+    const { body: server } = await add({
+      name: "Notes",
+      url: `${MCP_ORIGIN}/headers/mcp`,
+      auth: { kind: "headers", headers: bearer },
+    });
+    const toolset = `mcp:${server.id}`;
+    const echo = `${toolset}/echo`;
+    const setHere = (enabled: boolean) =>
+      api("PUT", `/spaces/${space.id}/mcp-servers/${server.id}`, ada.cookie, { enabled });
+    const setEverywhere = (enabled: boolean) =>
+      api("PUT", `/mcp-servers/${server.id}/enabled`, ada.cookie, { enabled });
+    expect((await setHere(false)).status).toBe(200);
+    expect((await setEverywhere(false)).status).toBe(200);
+    const orgMode = await api("PATCH", "/org/tools", ada.cookie, { toolIds: [echo], mode: "ask" });
+    expect(orgMode.status).toBe(200);
+    const spaceMode = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
+      toolIds: [echo],
+      mode: "block",
+    });
+    expect(spaceMode.status).toBe(200);
+    expect(
+      (await spaceTools(space.id)).find((t) => t.id === toolset)?.tools.find((t) => t.id === echo),
+    ).toMatchObject({ orgMode: "ask", mode: "block" });
+    expect(tools.offered(space).some((t) => t.name.startsWith(`${toolset}/`))).toBe(false);
+
+    const on = await setEverywhere(true);
+    expect(await on.json()).toMatchObject({
+      enabled: true,
+      status: "ok",
+      toolCount: 3,
+      auth: server.auth,
+    });
+    expect(tools.definitions(space).some((t) => t.name.startsWith(`${toolset}/`))).toBe(false);
+    expect((await setHere(true)).status).toBe(200);
+    expect(tools.definitions(space).some((t) => t.name === echo)).toBe(true);
+    expect(tools.offered(space).some((t) => t.name === echo)).toBe(false);
+    expect(
+      (await spaceTools(space.id)).find((t) => t.id === toolset)?.tools.find((t) => t.id === echo),
+    ).toMatchObject({ orgMode: "ask", mode: "block" });
+  });
+
+  it("does not let another organization change either switch", async () => {
+    const { ada, add, api, signUp, yourSpace } = await orgWithServers();
+    const { body: server } = await add({
+      name: "Notes",
+      url: `${MCP_ORIGIN}/mcp`,
+      auth: { kind: "none" },
+    });
+    const other = await signUp("Grace Hopper", "grace@example.com");
+    const otherSpace = await yourSpace(other.cookie);
+    const global = await api("PUT", `/mcp-servers/${server.id}/enabled`, other.cookie, {
+      enabled: false,
+    });
+    expect(global.status).toBe(404);
+    const local = await api(
+      "PUT",
+      `/spaces/${otherSpace.id}/mcp-servers/${server.id}`,
+      other.cookie,
+      { enabled: false },
+    );
+    expect(local.status).toBe(404);
+    const unchanged = await api("GET", `/mcp-servers/${server.id}`, ada.cookie);
+    expect(await unchanged.json()).toMatchObject({ enabled: true });
   });
 });
 
@@ -572,6 +731,57 @@ describe("MCP tools in a thread", () => {
     const server = await api("GET", `/mcp-servers/${workspace.server.id}`, ada.cookie);
     expect(await server.json()).toMatchObject({ status: "error" });
   });
+
+  it.each(["org", "space"] as const)(
+    "does not execute an approved pending call after the server is off in the %s",
+    async (scope) => {
+      const {
+        ada,
+        api,
+        post,
+        calls,
+        model,
+        worker,
+        start,
+        id,
+        toolRows,
+        thread,
+        server,
+        mcpNetwork,
+        events,
+      } = await mcpThread();
+      start();
+      await post(ada, "Delete note-9");
+      await calls(id("delete_note"), { id: "note-9" });
+      await worker.idle();
+      expect(toolRows()[0]?.state).toBe("pending");
+      const endpoint =
+        scope === "org"
+          ? `/mcp-servers/${server.id}/enabled`
+          : `/spaces/${thread.spaceId}/mcp-servers/${server.id}`;
+      expect((await api("PUT", endpoint, ada.cookie, { enabled: false })).status).toBe(200);
+      mcpNetwork.requests.length = 0;
+      const callId = toolRows()[0]!.id;
+      const approved = await api(
+        "POST",
+        `/threads/${thread.id}/tools/${callId}/decision`,
+        ada.cookie,
+        { allow: true, scope: "once" },
+      );
+      expect(approved.status).toBe(200);
+      const next = await model.next();
+      next.reply("The server is off.");
+      await worker.idle();
+      expect(events()).toContainEqual(
+        expect.objectContaining({
+          type: "tool.denied",
+          data: expect.objectContaining({ callId, reason: "stale" }),
+        }),
+      );
+      expect(await methodsOf(mcpNetwork.requests)).not.toContain("tools/call");
+      expect(next.tools.some((tool) => tool.startsWith(`mcp:${server.id}/`))).toBe(false);
+    },
+  );
 
   it("are not offered when blocked, and a removed server's tools go with it", async () => {
     const { ada, post, model, worker, start, id, api, server, db } = await mcpThread();

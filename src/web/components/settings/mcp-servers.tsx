@@ -1,9 +1,13 @@
-// MCP servers in settings: a card listing the org's servers, or a space's own, each a row that
-// opens its page, with how it answered and its tools' modes; adding one in a dialog, by its address
-// and how it is authorized (not at all, by headers with a bearer token among them, or by OAuth,
-// which sends the browser to the server's authorization server and back); and a server's page with
-// its connection, its tools and their modes, reading them again, reconnecting, changing
-// everything about it in the same form it was added with, and removing it. Header values and
+// MCP servers in settings: a card listing the org's servers, or for a space the org's tagged as
+// such beside its own, each a row that opens its page, with how it answered, its tools' modes and
+// a switch that turns it on or off: a server's own for those who manage it, or for the org's in a
+// space whether the space uses it, which stays off while the org has the server off; adding one
+// in a dialog, by its address and how it is authorized (not at all, by headers with a bearer token
+// among them, or by OAuth, which sends the browser to the server's authorization server and back);
+// and a server's page with its switch, its connection, its tools and their modes, reading them
+// again, reconnecting, changing everything about it in the same form it was added with, and
+// removing it. One of the org's servers opened from a space shows there with the space's switch
+// and the space's modes for its tools, the rest of it the org's to manage. Header values and
 // secrets are only ever typed, never shown again beyond their ends.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -26,6 +30,7 @@ import {
   type McpServerSummary,
   mcpServerSchema,
   mcpToolsetId,
+  type SpaceOrgMcpServer,
 } from "@/shared/mcp.ts";
 import type { ToolsetSetting } from "@/shared/tools.ts";
 import { LoadError } from "@/web/components/page-states";
@@ -81,6 +86,7 @@ import {
   orgMcpServersQuery,
   spaceMcpServersQuery,
 } from "@/web/lib/queries";
+import { cn } from "cn";
 
 // Whose servers: the org's, or one space's own.
 export type McpScope = { kind: "org" } | { kind: "space"; spaceId: string };
@@ -161,6 +167,9 @@ export function McpServersCard({
   );
 }
 
+// A row of the table: one of the org's servers, or one the scope's own.
+type Row = { kind: "org"; server: SpaceOrgMcpServer } | { kind: "own"; server: McpServerSummary };
+
 function OrgServersCard({
   toolsets,
   canManage,
@@ -173,7 +182,7 @@ function OrgServersCard({
     <ServersCard
       scope={{ kind: "org" }}
       state={servers}
-      list={servers.data?.servers ?? []}
+      rows={(servers.data?.servers ?? []).map((server) => ({ kind: "own", server }))}
       allowed
       spaceServers={servers.data?.spaceServers ?? null}
       toolsets={toolsets}
@@ -188,7 +197,10 @@ function SpaceServersCard({ spaceId, toolsets }: { spaceId: string; toolsets: To
     <ServersCard
       scope={{ kind: "space", spaceId }}
       state={servers}
-      list={servers.data?.servers ?? []}
+      rows={[
+        ...(servers.data?.org ?? []).map((server): Row => ({ kind: "org", server })),
+        ...(servers.data?.own ?? []).map((server): Row => ({ kind: "own", server })),
+      ]}
       allowed={servers.data?.allowed ?? true}
       spaceServers={null}
       toolsets={toolsets}
@@ -200,7 +212,7 @@ function SpaceServersCard({ spaceId, toolsets }: { spaceId: string; toolsets: To
 function ServersCard({
   scope,
   state,
-  list,
+  rows,
   allowed,
   spaceServers,
   toolsets,
@@ -208,7 +220,7 @@ function ServersCard({
 }: {
   scope: McpScope;
   state: { isPending: boolean; error: Error | null };
-  list: McpServerSummary[];
+  rows: Row[];
   // Whether the scope may add servers and the agent uses them: a space's only while the org lets
   // spaces have them.
   allowed: boolean;
@@ -218,13 +230,14 @@ function ServersCard({
   canManage: boolean;
 }) {
   const [adding, setAdding] = useState(false);
+  const ownRows = rows.some((row) => row.kind === "own");
   return (
     <SettingsCard
-      title={scope.kind === "org" ? "MCP servers" : "This space's MCP servers"}
+      title="MCP servers"
       description={
         scope.kind === "org"
           ? "Servers whose tools the agent can use in every space."
-          : "Servers whose tools the agent can use in this space alone."
+          : "Servers whose tools the agent can use in this space: the organization's, and this space's own."
       }
       action={
         canManage && (
@@ -237,22 +250,24 @@ function ServersCard({
       state={state}
     >
       <div className="flex flex-col gap-4">
-        {!allowed && (
+        {!allowed && ownRows && (
           <Alert>
             <CircleAlertIcon />
             <AlertDescription>
-              The organization does not let spaces add MCP servers, so the agent does not use these.
+              The organization does not let spaces add MCP servers, so the agent does not use this
+              space's own.
             </AlertDescription>
           </Alert>
         )}
-        {list.length > 0 ? (
+        {rows.length > 0 ? (
           <ul className="-my-2 flex flex-col divide-y">
-            {list.map((server) => (
+            {rows.map((row) => (
               <ServerRow
-                key={server.id}
+                key={row.server.id}
                 scope={scope}
-                server={server}
-                toolset={toolsets.find((toolset) => toolset.id === mcpToolsetId(server.id))}
+                row={row}
+                canManage={canManage}
+                toolset={toolsets.find((toolset) => toolset.id === mcpToolsetId(row.server.id))}
               />
             ))}
           </ul>
@@ -272,42 +287,120 @@ function ServersCard({
   );
 }
 
+// Turns a server on or off, or one of the org's for a space, and refreshes what offers its tools.
+function useServerSwitch(scope: McpScope) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string>();
+
+  async function settled() {
+    await queryClient.invalidateQueries({ queryKey: ["mcp-servers"] });
+    await queryClient.invalidateQueries({ queryKey: ["org-tools"] });
+    await queryClient.invalidateQueries({ queryKey: ["spaces"] });
+  }
+
+  async function setEnabled(server: McpServerSummary, enabled: boolean) {
+    setError(undefined);
+    const res = await apiClient.v1["mcp-servers"][":id"].enabled.$put({
+      param: { id: server.id },
+      json: { enabled },
+    });
+    if (!res.ok) {
+      setError(await errorOf(res));
+      return;
+    }
+    queryClient.setQueryData(mcpServerQuery(server.id).queryKey, await res.json());
+    await settled();
+  }
+
+  async function setInSpace(server: McpServerSummary, enabled: boolean) {
+    if (scope.kind !== "space") return;
+    setError(undefined);
+    const res = await apiClient.v1.spaces[":id"]["mcp-servers"][":serverId"].$put({
+      param: { id: scope.spaceId, serverId: server.id },
+      json: { enabled },
+    });
+    if (!res.ok) {
+      setError(await errorOf(res));
+      return;
+    }
+    queryClient.setQueryData(spaceMcpServersQuery(scope.spaceId).queryKey, await res.json());
+    await settled();
+  }
+
+  return { error, setEnabled, setInSpace };
+}
+
 function ServerRow({
   scope,
-  server,
+  row,
+  canManage,
   toolset,
 }: {
   scope: McpScope;
-  server: McpServerSummary;
+  row: Row;
+  canManage: boolean;
   toolset: ToolsetSetting | undefined;
 }) {
+  const { server } = row;
+  const { error, setEnabled, setInSpace } = useServerSwitch(scope);
+  const link = pageLink(scope, server.id);
+  // The org's server as a space sees it: off there while the org has it off.
+  const orgOff = row.kind === "org" && !server.enabled;
+  const on = row.kind === "org" ? row.server.enabled && row.server.inSpace : server.enabled;
   const ok = server.status === "ok";
   const count = server.toolCount;
   return (
-    <li aria-label={server.name}>
+    <li
+      aria-label={server.name}
+      className="group relative isolate flex items-center gap-3 rounded-md py-3 has-[a:focus-visible]:ring-[3px] has-[a:focus-visible]:ring-ring/50"
+    >
       <Link
-        {...pageLink(scope, server.id)}
-        className="group flex items-center gap-3 rounded-md py-3 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        {...link}
+        className="flex min-w-0 flex-1 items-center gap-3 outline-none after:absolute after:inset-0 after:rounded-md"
       >
         <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
           <PlugIcon className="size-4" />
         </span>
-        <span className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-sm font-medium">{server.name}</span>
-          <span className="truncate text-xs text-muted-foreground">{hostOf(server.url)}</span>
-        </span>
-        <span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
-          {ok ? (
-            <>
-              <span className="hidden sm:inline">{count === 1 ? "1 tool" : `${count} tools`}</span>
-              {toolset && <ModeCounts tools={toolset.tools} />}
-            </>
-          ) : (
-            <StatusBadge server={server} />
-          )}
-          <ChevronRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
+        <span className={cn("flex min-w-0 flex-1 flex-col", !on && "text-muted-foreground")}>
+          <span className="flex min-w-0 items-center gap-2">
+            <span className="truncate text-sm font-medium">{server.name}</span>
+            {row.kind === "org" && (
+              <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
+                Org
+              </Badge>
+            )}
+          </span>
+          <span className="truncate text-xs text-muted-foreground">
+            {orgOff ? "Turned off by the organization" : hostOf(server.url)}
+          </span>
         </span>
       </Link>
+      <span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
+        {ok ? (
+          <>
+            <span className="hidden sm:inline">{count === 1 ? "1 tool" : `${count} tools`}</span>
+            {toolset && <ModeCounts tools={toolset.tools} />}
+          </>
+        ) : (
+          <StatusBadge server={server} />
+        )}
+        {error && (
+          <span role="alert" className="text-destructive">
+            {error}
+          </span>
+        )}
+        <Switch
+          size="sm"
+          className="relative z-10"
+          aria-label={row.kind === "org" && scope.kind === "space" ? "On in this space" : "On"}
+          checked={on}
+          disabled={orgOff || (row.kind === "own" && !canManage)}
+          onCheckedChange={(next) =>
+            void (row.kind === "org" ? setInSpace(server, next) : setEnabled(server, next))
+          }
+        />
+        <ChevronRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
+      </span>
     </li>
   );
 }
@@ -826,14 +919,24 @@ function ServerDetail({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const me = useQuery(meQuery);
+  // One of the org's servers, seen from a space: the space says whether it uses it, and sets its
+  // tools' modes; the rest is the org's.
+  const orgsInSpace = scope.kind === "space" && server.spaceId === null;
+  const inSpace = useQuery({
+    ...spaceMcpServersQuery(scope.kind === "space" ? scope.spaceId : ""),
+    enabled: orgsInSpace,
+    select: (data) => data.org.find((found) => found.id === server.id)?.inSpace,
+  });
+  const onHere = server.enabled && (!orgsInSpace || inSpace.data === true);
   // A space's servers reach this page only for those who manage the space.
-  const canManage = scope.kind === "space" || me.data?.role === "owner";
+  const canManage = orgsInSpace ? false : scope.kind === "space" || me.data?.role === "owner";
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState<string>();
   const [error, setError] = useState<string>();
   const toolset = tools.tools.data?.find((found) => found.id === mcpToolsetId(server.id));
   const oauth = server.auth.kind === "oauth";
   const status = statusOf(server);
+  const power = useServerSwitch(scope);
 
   async function settled(next: McpServerSummary) {
     queryClient.setQueryData(mcpServerQuery(server.id).queryKey, next);
@@ -899,20 +1002,91 @@ function ServerDetail({
         title={server.name}
         description={<span className="break-all">{server.url}</span>}
         action={
-          canManage && (
-            <div className="flex shrink-0 flex-wrap justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
-                Edit
-              </Button>
-              <Button variant="outline" size="sm" disabled={!!busy} onClick={() => void refresh()}>
-                <RefreshCwIcon className={busy === "Reading tools…" ? "animate-spin" : undefined} />
-                Refresh tools
-              </Button>
-              {connect}
-            </div>
+          orgsInSpace ? (
+            <label className="flex shrink-0 items-center gap-2 text-sm">
+              {onHere ? "On" : "Off"}
+              <Switch
+                aria-label="On in this space"
+                checked={onHere}
+                disabled={!server.enabled || inSpace.data === undefined || !!inSpace.error}
+                onCheckedChange={(next) => void power.setInSpace(server, next)}
+              />
+            </label>
+          ) : (
+            canManage && (
+              <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+                <label className="mr-2 flex items-center gap-2 text-sm">
+                  {server.enabled ? "On" : "Off"}
+                  <Switch
+                    aria-label="On"
+                    checked={server.enabled}
+                    onCheckedChange={(next) => void power.setEnabled(server, next)}
+                  />
+                </label>
+                <Button variant="outline" size="sm" onClick={() => setEditing(true)}>
+                  Edit
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!!busy}
+                  onClick={() => void refresh()}
+                >
+                  <RefreshCwIcon
+                    className={busy === "Reading tools…" ? "animate-spin" : undefined}
+                  />
+                  Refresh tools
+                </Button>
+                {connect}
+              </div>
+            )
           )
         }
       />
+      {orgsInSpace && inSpace.error && <FieldError>{inSpace.error.message}</FieldError>}
+      {orgsInSpace && (
+        <p className="text-sm text-muted-foreground">
+          Managed by the organization: its connection and the loosest its tools can be are set
+          {me.data?.role === "owner" ? (
+            <>
+              {" "}
+              in{" "}
+              <Link
+                to="/org/tools/mcp/$serverId"
+                params={{ serverId: server.id }}
+                className="underline underline-offset-4 hover:text-foreground"
+              >
+                the organization's settings
+              </Link>
+              .
+            </>
+          ) : (
+            " by its owners."
+          )}
+        </p>
+      )}
+      {!server.enabled ? (
+        <Alert>
+          <CircleAlertIcon />
+          <AlertTitle>{orgsInSpace ? "Turned off by the organization" : "Off"}</AlertTitle>
+          <AlertDescription>
+            {orgsInSpace
+              ? "The agent does not use its tools in any space until the organization turns it on."
+              : "The agent does not use its tools anywhere until it is turned on. Its connection and tool settings are kept."}
+          </AlertDescription>
+        </Alert>
+      ) : (
+        orgsInSpace &&
+        inSpace.data === false && (
+          <Alert>
+            <CircleAlertIcon />
+            <AlertTitle>Off in this space</AlertTitle>
+            <AlertDescription>
+              The agent does not use its tools here until it is turned on for this space.
+            </AlertDescription>
+          </Alert>
+        )
+      )}
       {server.status !== "ok" && (
         <Alert variant={status.tone === "error" ? "destructive" : "default"}>
           <CircleAlertIcon />
@@ -929,12 +1103,14 @@ function ServerDetail({
           </AlertDescription>
         </Alert>
       )}
-      {(busy || error) && (
+      {(busy || error || power.error) && (
         <p
-          role={error ? "alert" : "status"}
-          className={error ? "text-sm text-destructive" : "text-sm text-muted-foreground"}
+          role={error || power.error ? "alert" : "status"}
+          className={
+            error || power.error ? "text-sm text-destructive" : "text-sm text-muted-foreground"
+          }
         >
-          {error ?? busy}
+          {error ?? power.error ?? busy}
         </p>
       )}
       <SettingsCard title="Connection">
@@ -968,7 +1144,9 @@ function ServerDetail({
         description={
           scope.kind === "org"
             ? "Whether each runs, asks first, or is off. Spaces can only make these stricter."
-            : "Whether each runs, asks first, or is off in this space."
+            : orgsInSpace
+              ? "Whether each runs, asks first, or is off in this space; only stricter than the organization has it."
+              : "Whether each runs, asks first, or is off in this space."
         }
         state={tools.tools}
       >
@@ -977,7 +1155,7 @@ function ServerDetail({
             <ToolsetTools
               toolset={toolset}
               scope={scope.kind}
-              canChange={canManage}
+              canChange={canManage || orgsInSpace}
               onChange={tools.change}
             />
             <FieldError>{tools.error}</FieldError>

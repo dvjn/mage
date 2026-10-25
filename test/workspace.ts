@@ -220,8 +220,9 @@ export function setup(
       }),
     ],
     scoped: {
-      inOrg: (orgId) => mcp.toolsetsInOrg(orgId),
       inSpace: (space) => mcp.toolsetsInSpace(space),
+      forOrgSettings: (orgId) => mcp.toolsetsForOrgSettings(orgId),
+      forSpaceSettings: (space) => mcp.toolsetsForSpaceSettings(space),
     },
     settings: toolSettings,
     access,
@@ -480,6 +481,7 @@ export function setup(
     settingStore,
     guestStore,
     toolSettings,
+    tools,
     mcp,
     mcpNetwork,
     mcpServerStore,

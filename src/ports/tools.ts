@@ -59,10 +59,12 @@ export interface Toolset {
 }
 
 // The toolsets that come and go with what orgs and spaces add, such as their MCP servers: those
-// every space of an org has, and those one space has of its own.
+// the org offers every space, and those one space has: the org's it did not turn off, and its own.
 export interface ScopedToolsets {
-  inOrg(orgId: string): Toolset[];
   inSpace(space: { id: string; orgId: string }): Toolset[];
+  // Settings include servers that are off so their permissions can be reviewed before enabling.
+  forOrgSettings(orgId: string): Toolset[];
+  forSpaceSettings(space: { id: string; orgId: string }): Toolset[];
 }
 
 // The modes an org or a space set, by tool, for the tools it set. A tool the org did not set is

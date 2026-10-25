@@ -1,10 +1,10 @@
 // A space's settings, in pages: General (renaming it, unless it is a person's own space named for
 // them, the model and reasoning effort its new threads start with, or the org's, and deleting it
 // when it is not the primary space), Members for a shared space, and the agent's Tools there, with
-// the space's own MCP servers and a page for each. They
-// are there only for those who manage it (its owners, and a team org's owners). A team org's owner
-// who manages a space without being in it reads its threads once they give themselves a role in
-// it.
+// one table of MCP servers, the org's that the space may turn off for itself beside its own, and a
+// page for each of its own. They are there only for those who manage it (its owners, and a team
+// org's owners). A team org's owner who manages a space without being in it reads its threads once
+// they give themselves a role in it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, Navigate, Outlet, useNavigate } from "@tanstack/react-router";
@@ -310,7 +310,7 @@ export function SpaceTools() {
       />
       <SpaceToolsList
         spaceId={space.id}
-        own={(toolsets) => (
+        mcp={(toolsets) => (
           <McpServersCard
             scope={{ kind: "space", spaceId: space.id }}
             toolsets={toolsets}

@@ -40,6 +40,7 @@ import {
 } from "@/shared/hosts.ts";
 import { acceptInviteSchema, newInviteSchema } from "@/shared/guests.ts";
 import {
+  mcpEnabledChangeSchema,
   mcpServerChangeSchema,
   type McpServerSummary,
   newMcpServerSchema,
@@ -269,6 +270,7 @@ function checkedBody<T extends z.ZodType>(schema: T) {
 const newMcpServer = checkedBody(newMcpServerSchema);
 const mcpServerChange = checkedBody(mcpServerChangeSchema);
 const spaceServersChange = jsonBody(spaceServersChangeSchema, "allowed is true or false");
+const mcpEnabledChange = jsonBody(mcpEnabledChangeSchema, "enabled is true or false");
 
 // Where the browser goes back to once an authorization finishes: the server's page.
 function mcpServerPage(server: Pick<McpServerSummary, "id" | "spaceId"> | null) {
@@ -924,12 +926,25 @@ function createApi(options: AppOptions) {
         const principal = signedIn(c.var.principal);
         return c.json(await mcp.addToSpace(principal, c.req.param("id"), c.req.valid("json")), 200);
       })
+      .put("/v1/spaces/:id/mcp-servers/:serverId", mcpEnabledChange, (c) => {
+        const principal = signedIn(c.var.principal);
+        const { id, serverId } = c.req.param();
+        mcp.setInSpace(principal, id, serverId, c.req.valid("json").enabled);
+        return c.json(mcp.spaceServers(principal, id), 200);
+      })
       .get("/v1/mcp-servers/:id", (c) => {
         return c.json(mcp.get(signedIn(c.var.principal), c.req.param("id")), 200);
       })
       .patch("/v1/mcp-servers/:id", mcpServerChange, async (c) => {
         const principal = signedIn(c.var.principal);
         return c.json(await mcp.change(principal, c.req.param("id"), c.req.valid("json")), 200);
+      })
+      .put("/v1/mcp-servers/:id/enabled", mcpEnabledChange, (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(
+          mcp.setEnabled(principal, c.req.param("id"), c.req.valid("json").enabled),
+          200,
+        );
       })
       .post("/v1/mcp-servers/:id/refresh", async (c) => {
         return c.json(await mcp.refresh(signedIn(c.var.principal), c.req.param("id")), 200);

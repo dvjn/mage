@@ -1,6 +1,6 @@
-// MCP servers kept in the mcp_server table, with ULID ids and their settings and tools as JSON, and
-// their secrets as JSON sealed by the cipher in the mcp_credential table, bound to the server and
-// whose they are.
+// MCP servers kept in the mcp_server table, with ULID ids and their settings and tools as JSON,
+// which of the org's each space turned off in the space_mcp_server_setting table, and their secrets
+// as JSON sealed by the cipher in the mcp_credential table, bound to the server and whose they are.
 
 import { and, asc, eq, isNull } from "drizzle-orm";
 import { ulid } from "ulid";
@@ -17,7 +17,7 @@ import type { ToolDefinition } from "@/shared/tools.ts";
 
 import type { Cipher } from "./cipher.ts";
 import type { Db } from "./db.ts";
-import { mcpCredential, mcpServer } from "./schema.ts";
+import { mcpCredential, mcpServer, spaceMcpServerSetting } from "./schema.ts";
 
 const columns = {
   id: mcpServer.id,
@@ -25,6 +25,7 @@ const columns = {
   spaceId: mcpServer.spaceId,
   name: mcpServer.name,
   url: mcpServer.url,
+  enabled: mcpServer.enabled,
   authKind: mcpServer.authKind,
   settings: mcpServer.settings,
   transport: mcpServer.transport,
@@ -106,6 +107,28 @@ export function createMcpServerStore(db: Db): McpServerStore {
 
     delete(id) {
       db.delete(mcpServer).where(eq(mcpServer.id, id)).run();
+    },
+
+    inSpaceSettings(spaceId) {
+      const rows = db
+        .select({
+          serverId: spaceMcpServerSetting.serverId,
+          enabled: spaceMcpServerSetting.enabled,
+        })
+        .from(spaceMcpServerSetting)
+        .where(eq(spaceMcpServerSetting.spaceId, spaceId))
+        .all();
+      return new Map(rows.map((row) => [row.serverId, row.enabled]));
+    },
+
+    setInSpace(spaceId, serverId, enabled) {
+      db.insert(spaceMcpServerSetting)
+        .values({ spaceId, serverId, enabled })
+        .onConflictDoUpdate({
+          target: [spaceMcpServerSetting.spaceId, spaceMcpServerSetting.serverId],
+          set: { enabled },
+        })
+        .run();
     },
   };
 }

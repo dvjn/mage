@@ -1,7 +1,8 @@
-// MCP servers an org or one of its spaces added, the secrets each is reached with, and the client
-// that reaches them: listing their tools and calling one, each over a connection of its own, with
-// headers or OAuth, asking whether an address answers as one, and authorizing Mage with a server's
-// authorization server.
+// MCP servers an org or one of its spaces added, whether each is on and which of the org's a space
+// turned off for itself, the secrets each is reached with, and the client that reaches them:
+// listing their tools and calling one, each over a connection of its own, with headers or OAuth,
+// asking whether an address answers as one, and authorizing Mage with a server's authorization
+// server.
 
 import type { McpAuthKind, McpStatus, McpTransport } from "@/shared/mcp.ts";
 import type { ToolDefinition } from "@/shared/tools.ts";
@@ -13,6 +14,8 @@ export interface McpServer {
   spaceId: string | null;
   name: string;
   url: string;
+  // Whether it offers its tools; one turned off keeps everything else.
+  enabled: boolean;
   authKind: McpAuthKind;
   // What is not secret about its authorization.
   settings: McpSettings;
@@ -48,6 +51,7 @@ export type McpServerChanges = Partial<
     McpServer,
     | "name"
     | "url"
+    | "enabled"
     | "authKind"
     | "settings"
     | "transport"
@@ -69,6 +73,9 @@ export interface McpServerStore {
   inSpace(spaceId: string): McpServer[];
   update(id: string, changes: McpServerChanges): void;
   delete(id: string): void;
+  // Whether the space uses each of the org's servers, for those it set.
+  inSpaceSettings(spaceId: string): Map<string, boolean>;
+  setInSpace(spaceId: string, serverId: string, enabled: boolean): void;
 }
 
 // Whose secrets a call goes with: the ones the server shares with everyone who uses it, or later

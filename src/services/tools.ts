@@ -73,16 +73,23 @@ export type Tools = ReturnType<typeof createTools>;
 
 export function createTools(options: ToolsOptions) {
   const { toolsets, settings, access } = options;
-  const scoped = options.scoped ?? { inOrg: () => [], inSpace: () => [] };
+  const scoped = options.scoped ?? {
+    inSpace: () => [],
+    forOrgSettings: () => [],
+    forSpaceSettings: () => [],
+  };
 
-  // The toolsets every space of the org has.
-  function inOrg(orgId: string) {
-    return [...toolsets, ...scoped.inOrg(orgId)];
+  function settingsInOrg(orgId: string) {
+    return [...toolsets, ...scoped.forOrgSettings(orgId)];
   }
 
-  // The toolsets the space has: the org's, and its own.
+  function settingsInSpace(space: Pick<Space, "id" | "orgId">) {
+    return [...toolsets, ...scoped.forSpaceSettings(space)];
+  }
+
+  // The toolsets the space has: Mage's own, and those of what the org and the space added.
   function inSpace(space: Pick<Space, "id" | "orgId">) {
-    return [...inOrg(space.orgId), ...scoped.inSpace(space)];
+    return [...toolsets, ...scoped.inSpace(space)];
   }
 
   function specsOf(sets: Toolset[]) {
@@ -93,7 +100,10 @@ export function createTools(options: ToolsOptions) {
   function orgModes(orgId: string) {
     const set = settings.inOrg(orgId);
     return new Map(
-      specsOf(inOrg(orgId)).map((spec) => [spec.name, set.get(spec.name) ?? ("allow" as ToolMode)]),
+      specsOf(settingsInOrg(orgId)).map((spec) => [
+        spec.name,
+        set.get(spec.name) ?? ("allow" as ToolMode),
+      ]),
     );
   }
 
@@ -103,7 +113,7 @@ export function createTools(options: ToolsOptions) {
     const org = orgModes(space.orgId);
     const set = settings.inSpace(space.id);
     return new Map(
-      specsOf(inSpace(space)).map((spec) => {
+      specsOf(settingsInSpace(space)).map((spec) => {
         const own = set.get(spec.name);
         const inOrg = org.get(spec.name) ?? "allow";
         return [spec.name, own ? strictest(inOrg, own) : inOrg];
@@ -158,19 +168,15 @@ export function createTools(options: ToolsOptions) {
     };
   }
 
-  // The toolsets with each tool's definition, and whether the org or the space has them.
-  function withDefinitions(sets: Toolset[], scope: "org" | "space") {
-    return sets.map(({ tools, ...toolset }) => ({
-      ...toolset,
-      scope,
-      tools: tools.map(definitionOf),
-    }));
+  // The toolset with each tool's definition, and whether the org or the space has it.
+  function withDefinitions({ tools, ...toolset }: Toolset, scope: "org" | "space") {
+    return { ...toolset, scope, tools: tools.map(definitionOf) };
   }
 
   return {
     // The tool in the org's toolsets, or in the space's when one is given.
     find(orgId: string, id: string, space?: Pick<Space, "id" | "orgId">) {
-      const sets = space ? inSpace(space) : inOrg(orgId);
+      const sets = space ? settingsInSpace(space) : settingsInOrg(orgId);
       return specsOf(sets).find((spec) => spec.name === id) ?? null;
     },
 
@@ -197,15 +203,15 @@ export function createTools(options: ToolsOptions) {
 
     // The toolsets of the org, with each tool's definition.
     toolsetsInOrg(orgId: string) {
-      return withDefinitions(inOrg(orgId), "org");
+      return settingsInOrg(orgId).map((toolset) => withDefinitions(toolset, "org"));
     },
 
-    // The space's, the org's first and then its own.
+    // The space's: those the org offers it as the org's, and the rest as its own.
     toolsetsInSpace(space: Pick<Space, "id" | "orgId">) {
-      return [
-        ...withDefinitions(inOrg(space.orgId), "org"),
-        ...withDefinitions(scoped.inSpace(space), "space"),
-      ];
+      const org = new Set(settingsInOrg(space.orgId).map((toolset) => toolset.id));
+      return settingsInSpace(space).map((toolset) =>
+        withDefinitions(toolset, org.has(toolset.id) ? "org" : "space"),
+      );
     },
 
     // The tools as the model is told about them.

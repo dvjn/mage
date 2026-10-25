@@ -160,7 +160,7 @@ test("a space's own MCP server is used in that space's threads alone", async ({ 
   const lab = ((await res.json()) as { id: string }).id;
 
   await page.goto(`/s/${lab}/settings/tools`);
-  const card = page.locator("[data-slot=card]").filter({ hasText: "This space's MCP servers" });
+  const card = page.locator("[data-slot=card]").filter({ hasText: "MCP servers" });
   await expect(card).toContainText("No servers yet");
   const serverId = await addServer(
     page,
@@ -228,4 +228,79 @@ test("an MCP server's headers and address are changed in the form it was added w
     "aria-pressed",
     "true",
   );
+});
+
+test("a space turns one of the org's MCP servers off for itself alone", async ({ page }) => {
+  const own = await signUp(page);
+  await page.goto("/org/tools");
+  const serverId = await addServer(
+    page,
+    "Notes",
+    `${mcpServer}/headers/mcp`,
+    withBearer(MCP_BEARER_TOKEN),
+  );
+
+  await page.goto(`/s/${own}/settings/tools`);
+  const row = page.getByRole("listitem", { name: "Notes" });
+  await expect(row).toContainText("Org");
+  await expect(row.getByRole("switch", { name: "On in this space" })).toBeChecked();
+
+  // Its page in the space: the space's modes for its tools, and its switch; the rest is the org's.
+  await row.getByRole("link").click();
+  await expect(page).toHaveURL(`/s/${own}/settings/tools/mcp/${serverId}`);
+  await expect(page.getByRole("heading", { name: "Notes" })).toBeVisible();
+  await expect(page.getByText("Managed by the organization")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+  const tool = page.getByRole("listitem", { name: "Add note" });
+  await tool.getByRole("button", { name: "Needs approval" }).click();
+  await expect(tool.getByRole("button", { name: "Needs approval" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  const inSpace = page.getByRole("switch", { name: "On in this space" });
+  await expect(inSpace).toBeChecked();
+  await inSpace.click();
+  await expect(inSpace).not.toBeChecked();
+  await expect(page.getByText("Off in this space", { exact: true })).toBeVisible();
+  // Permissions remain editable before the server is turned back on.
+  await tool.getByRole("button", { name: "Blocked", exact: true }).click();
+  await expect(tool.getByRole("button", { name: "Blocked", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await inSpace.click();
+  await expect(inSpace).toBeChecked();
+  await page.reload();
+  await expect(tool.getByRole("button", { name: "Blocked", exact: true })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await inSpace.click();
+  await expect(inSpace).not.toBeChecked();
+
+  await page.goto(`/s/${own}`);
+  await write(page, `/tool mcp:${serverId}/echo {"text":"hello"}`);
+  await expect(transcript(page)).toContainText(`I cannot use mcp:${serverId}/echo here.`);
+
+  await page.goto("/org/tools");
+  await expect(
+    page.getByRole("listitem", { name: "Notes" }).getByRole("switch", { name: "On" }),
+  ).toBeChecked();
+  await page.getByRole("listitem", { name: "Notes" }).getByRole("link").click();
+  await expect(
+    page
+      .getByRole("listitem", { name: "Add note" })
+      .getByRole("button", { name: "Always allow", exact: true }),
+  ).toHaveAttribute("aria-pressed", "true");
+
+  // A failed read must not invent an enabled space switch.
+  await page.route(`**/api/v1/spaces/${own}/mcp-servers`, (route) =>
+    route.fulfill({ status: 500, json: { error: "unavailable" } }),
+  );
+  await page.goto(`/s/${own}/settings/tools/mcp/${serverId}`);
+  await expect(
+    page.getByText("could not read the space's MCP servers", { exact: true }),
+  ).toBeVisible({ timeout: 15000 });
+  await expect(inSpace).toBeDisabled();
+  await expect(inSpace).not.toBeChecked();
 });

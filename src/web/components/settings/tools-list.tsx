@@ -155,12 +155,7 @@ function Toolsets({ toolsets, scope, canChange, onChange }: ToolsProps) {
     .map((source) => ({ source, toolsets: toolsets.filter((t) => t.source === source) }))
     .filter((group) => group.toolsets.length > 0);
   return sources.map(({ source, toolsets: inSource }) => (
-    <SettingsCard
-      key={source}
-      title={
-        scope === "space" && source === "mcp" ? "The organization's MCP servers" : SOURCES[source]
-      }
-    >
+    <SettingsCard key={source} title={SOURCES[source]}>
       <div className="-my-3 flex flex-col divide-y">
         {inSource.map((toolset) => (
           <ToolsetSection
@@ -600,13 +595,14 @@ export function OrgToolsList({
   );
 }
 
-// The space's toolsets the org has, in their cards; the space's own go to `own`.
+// The space's built-in toolsets in their cards; its MCP servers' toolsets, the org's and its own,
+// go to `mcp`.
 export function SpaceToolsList({
   spaceId,
-  own,
+  mcp,
 }: {
   spaceId: string;
-  own: (toolsets: ToolsetSetting[]) => ReactNode;
+  mcp: (toolsets: ToolsetSetting[]) => ReactNode;
 }) {
   const { tools, error, change } = useSpaceTools(spaceId);
   return (
@@ -615,13 +611,13 @@ export function SpaceToolsList({
         <>
           <Toolsets
             toolsets={tools.data.filter(
-              (toolset) => toolset.scope === "org" && toolset.tools.length > 0,
+              (toolset) => toolset.source !== "mcp" && toolset.tools.length > 0,
             )}
             scope="space"
             canChange
             onChange={change}
           />
-          {own(tools.data.filter((toolset) => toolset.scope === "space"))}
+          {mcp(tools.data.filter((toolset) => toolset.source === "mcp"))}
         </>
       )}
     </ToolsetsState>
