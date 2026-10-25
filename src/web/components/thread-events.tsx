@@ -6,12 +6,12 @@
 // answers. An agent reply that was cut short says so, a run that failed says why and what to do
 // about it, the last run that failed or was stopped can be tried again, and an event this client
 // does not know yet gets a labelled placeholder. Tool calls show by their tool's definition alone,
-// its title or else its name, as for any tool, and an MCP server's tool names its server too. One
-// waiting for a decision is a card from the agent headed by the tool's name under a hand, its server
-// in small print above, tagged when the call asks each time, with the input and Allow, Allow for now
-// and Deny in a row, enabled for the people who may run the tool and marked paused for everyone
-// else; every other call is a line with the server, the tool and what became of the call, which
-// opens on its input and output.
+// its title or else its name, as for any tool, and an MCP server's tool is a breadcrumb, its server
+// in muted text before a chevron and the tool. One waiting for a decision is a card from the agent
+// headed by the tool under a hand, tagged when the call asks each time, with the input and Allow,
+// Allow for now and Deny in a row, enabled for the people who may run the tool and marked paused for
+// everyone else; every other call is a line with the tool and what became of the call, which opens
+// on its input and output.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
@@ -268,14 +268,49 @@ function toolName(row: ToolRow, definition: ToolDefinition | undefined) {
   return definition?.title ?? row.toolId;
 }
 
+// What a tool is called, in words: its server's name before its own where it has a server.
+function toolPath(row: ToolRow, definition: ToolDefinition | undefined) {
+  return [definition?.toolset, toolName(row, definition)].filter(Boolean).join(" › ");
+}
+
+// An item of a flex row that grows from nothing into the room its siblings leave, up to its own
+// width, so that it truncates before they do.
+const GIVES_WAY = "min-w-0 max-w-max flex-1 truncate";
+
+// What a tool is called, as a breadcrumb inside a flex row: its server's name in muted text and a
+// chevron before its own where it has a server. Where the row is short, the server's name truncates
+// first, sharing the room the tool's name leaves with any other item of the row that gives way the
+// same, and the tool's own name only once the server's is gone. It takes the class given.
+function ToolCrumb({
+  row,
+  definition,
+  className,
+}: {
+  row: ToolRow;
+  definition: ToolDefinition | undefined;
+  className?: string;
+}) {
+  return (
+    <>
+      {definition?.toolset && (
+        <>
+          <span className={cn(GIVES_WAY, "text-muted-foreground")}>{definition.toolset}</span>
+          <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+        </>
+      )}
+      <span className={cn("min-w-0 truncate", className)}>{toolName(row, definition)}</span>
+    </>
+  );
+}
+
 // What a call's risk is called on its card; nothing for the usual one.
 const RISK_TAGS: Partial<Record<ToolRisk, string>> = {
   ask: "Asks each time",
   review: "Needs review",
 };
 
-// A tool call waiting for a decision: the tool's name under the hand, its server above where it has
-// one, its input, and the buttons to decide.
+// A tool call waiting for a decision: the tool's breadcrumb under the hand, its input, and the
+// buttons to decide.
 function ToolCard({
   row,
   definition,
@@ -338,23 +373,14 @@ function ToolCard({
             aria-hidden
             className={cn("size-4 shrink-0", decide ? "text-status-waiting" : "text-status-paused")}
           />
-          <div className="flex min-w-0 flex-col">
-            {definition?.toolset && (
-              <span className="truncate text-xs leading-tight text-muted-foreground">
-                {definition.toolset}
-              </span>
-            )}
-            <div className="flex min-w-0 items-center gap-2">
-              <ConfirmationTitle className="block min-w-0 truncate text-sm font-semibold text-foreground">
-                {toolName(row, definition)}
-              </ConfirmationTitle>
-              {tag && (
-                <Badge variant="outline" className="shrink-0 text-muted-foreground">
-                  {tag}
-                </Badge>
-              )}
-            </div>
-          </div>
+          <ConfirmationTitle className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
+            <ToolCrumb row={row} definition={definition} className="font-semibold" />
+          </ConfirmationTitle>
+          {tag && (
+            <Badge variant="outline" className="shrink-0 text-muted-foreground">
+              {tag}
+            </Badge>
+          )}
         </div>
         <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
           <ToolInput value={row.input} schema={definition?.inputSchema} />
@@ -376,8 +402,8 @@ function duration(ms: number | null) {
   return ms !== null && ms >= 1000 ? `${Math.round(ms / 1000)}s` : null;
 }
 
-// A tool call that ran, is running or did not run, as one line with the tool, its server where it
-// has one, what became of the call, and who decided on it, which opens on its input and output.
+// A tool call that ran, is running or did not run, as one line with the tool's breadcrumb, what
+// became of the call, and who decided on it, which opens on its input and output.
 function ToolLine({
   row,
   definition,
@@ -389,6 +415,9 @@ function ToolLine({
   framed?: boolean;
 }) {
   const by = row.decision?.by.name;
+  // Who let the call run, where someone did.
+  const allowed =
+    by && (row.decision?.scope === "for_now" ? `allowed for now by ${by}` : `allowed by ${by}`);
   let icon: ReactNode;
   let status: string;
   let who: string | undefined;
@@ -396,12 +425,12 @@ function ToolLine({
     case "ran":
       icon = <CheckIcon className="text-foreground" />;
       status = "Ran";
-      who =
-        by && (row.decision?.scope === "for_now" ? `allowed for now by ${by}` : `allowed by ${by}`);
+      who = allowed;
       break;
     case "failed":
       icon = <XIcon />;
       status = "Failed";
+      who = allowed;
       break;
     case "denied":
       icon = <XIcon />;
@@ -421,19 +450,21 @@ function ToolLine({
       icon = <Spinner />;
       status = row.waits && row.state === "pending" ? "Waiting" : "Running";
   }
-  const text = [definition?.toolset, toolName(row, definition), status, who]
-    .filter(Boolean)
-    .join(" · ");
+  // What became of the call follows the tool, item by item.
+  const outcome = [status, who].filter(Boolean).join(" · ");
   const took = duration(row.ms);
   return (
     <Collapsible className={cn("text-xs text-muted-foreground", !framed && "pl-9")}>
       <CollapsibleTrigger
-        aria-label={text}
-        className="group/tool flex w-full items-center gap-1.5 rounded-md py-0.5 text-left hover:text-foreground [&_svg]:size-3.5 [&_svg]:shrink-0"
+        aria-label={`${toolPath(row, definition)} · ${outcome}`}
+        className="group/tool flex w-full items-center gap-1.5 rounded-md py-0.5 text-left hover:text-foreground [&>svg]:size-3.5 [&>svg]:shrink-0"
       >
         <ChevronRightIcon className="transition-transform group-data-[panel-open]/tool:rotate-90" />
         {icon}
-        <span className="min-w-0 flex-1 truncate">{text}</span>
+        <span className="flex min-w-0 flex-1 items-center gap-1">
+          <ToolCrumb row={row} definition={definition} className="font-medium" />
+          <span className={GIVES_WAY}>· {outcome}</span>
+        </span>
         {took && <span className="shrink-0 tabular-nums">{took}</span>}
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-1 flex flex-col gap-3 rounded-md bg-muted px-3 py-2">

@@ -99,7 +99,7 @@ test("an org's header-authorized MCP server lists its tools, and a call that ask
   await card.getByRole("button", { name: "Allow", exact: true }).click();
 
   const line = transcript(page).getByRole("button", {
-    name: /^Notes · Add note · Ran · allowed by/,
+    name: /^Notes › Add note · Ran · allowed by/,
   });
   await expect(line).toBeVisible();
   await line.click();
@@ -107,6 +107,16 @@ test("an org's header-authorized MCP server lists its tools, and a call that ask
   await expect(output).toContainText("Title");
   await expect(output).toContainText("Engines");
   await expect(output).toContainText("Words");
+
+  // A call that was allowed and then failed still says who allowed it.
+  await write(page, `/tool mcp:${serverId}/delete_note {"id":"missing"}`);
+  await expect(card).toContainText("Delete note");
+  await card.getByRole("button", { name: "Allow", exact: true }).click();
+  await expect(
+    transcript(page).getByRole("button", {
+      name: /^Notes › Delete note · Failed · allowed by Ada Lovelace/,
+    }),
+  ).toBeVisible();
 });
 
 test("OAuth MCP servers of either revision are authorized in the browser and list their tools", async ({
@@ -167,7 +177,7 @@ test("a space's own MCP server is used in that space's threads alone", async ({ 
   await page.goto(`/s/${lab}`);
   await write(page, `/tool mcp:${serverId}/echo {"text":"hello lab"}`);
   await expect(
-    transcript(page).getByRole("button", { name: /^Lab notes · Echo · Ran/ }),
+    transcript(page).getByRole("button", { name: /^Lab notes › Echo · Ran/ }),
   ).toBeVisible();
 
   await page.goto(`/s/${own}`);
