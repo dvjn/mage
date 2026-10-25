@@ -7,17 +7,25 @@
 // about it, the last run that failed or was stopped can be tried again, and an event this client
 // does not know yet gets a labelled placeholder. Tool calls show by their tool's definition alone,
 // its title or else its name, as for any tool. One waiting for a decision is a card from the agent
-// with the tool, the input, and Allow, Allow for now and Deny, enabled for the people who may run
-// the tool and marked paused for everyone else; every other call is a line with the tool and what
-// became of the call, which opens on its input and output.
+// headed by the tool's name under a hand, tagged when the call asks each time, with the input and
+// Allow, Allow for now and Deny in a row, enabled for the people who may run the tool and marked
+// paused for everyone else; every other call is a line with the tool and what became of the call,
+// which opens on its input and output.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { CheckIcon, ChevronRightIcon, RotateCcwIcon, TriangleAlertIcon, XIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  HandIcon,
+  RotateCcwIcon,
+  TriangleAlertIcon,
+  XIcon,
+} from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-import type { ToolScope } from "@/shared/threads.ts";
+import type { ToolRisk, ToolScope } from "@/shared/threads.ts";
 import type { ToolDefinition } from "@/shared/tools.ts";
 import type {
   AgentRow,
@@ -45,6 +53,7 @@ import { CONNECTION_LABELS } from "@/web/components/model-picker";
 import { Time } from "@/web/components/time";
 import { ToolInput, ToolResult } from "@/web/components/tool-value";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
+import { Badge } from "@/web/components/ui/badge";
 import { Button } from "@/web/components/ui/button";
 import {
   Collapsible,
@@ -258,7 +267,13 @@ function toolName(row: ToolRow, definition: ToolDefinition | undefined) {
   return definition?.title ?? row.toolId;
 }
 
-// A tool call waiting for a decision: the tool the agent wants to use, the input, and the buttons
+// What a call's risk is called on its card; nothing for the usual one.
+const RISK_TAGS: Partial<Record<ToolRisk, string>> = {
+  ask: "Asks each time",
+  review: "Needs review",
+};
+
+// A tool call waiting for a decision: the tool's name under the hand, its input, and the buttons
 // to decide.
 function ToolCard({
   row,
@@ -272,7 +287,12 @@ function ToolCard({
   continued: boolean;
 }) {
   const [deciding, setDeciding] = useState(false);
-  function button(label: string, allow: boolean, scope: ToolScope, variant: "default" | "outline") {
+  function button(
+    label: string,
+    allow: boolean,
+    scope: ToolScope,
+    variant: "default" | "secondary" | "outline",
+  ) {
     const action = (
       <ConfirmationAction
         variant={variant}
@@ -297,6 +317,7 @@ function ToolCard({
       </WithTooltip>
     );
   }
+  const tag = RISK_TAGS[row.risk];
   return (
     <TranscriptRowFrame
       avatar={agentAvatar}
@@ -306,17 +327,32 @@ function ToolCard({
       note={!decide && <span>Paused</span>}
       continued={continued}
     >
-      <Confirmation approval={{ id: row.id }} state="approval-requested" className="gap-3">
-        <ConfirmationTitle className="font-medium text-foreground">
-          The agent wants to use {toolName(row, definition)}
-        </ConfirmationTitle>
+      <Confirmation
+        approval={{ id: row.id }}
+        state="approval-requested"
+        className="gap-2.5 px-3 py-2.5"
+      >
+        <div className="flex min-w-0 items-center gap-2">
+          <HandIcon
+            aria-hidden
+            className={cn("size-4 shrink-0", decide ? "text-status-waiting" : "text-status-paused")}
+          />
+          <ConfirmationTitle className="block min-w-0 truncate text-sm font-semibold text-foreground">
+            {toolName(row, definition)}
+          </ConfirmationTitle>
+          {tag && (
+            <Badge variant="outline" className="shrink-0 text-muted-foreground">
+              {tag}
+            </Badge>
+          )}
+        </div>
         <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
           <ToolInput value={row.input} schema={definition?.inputSchema} />
         </div>
         <ConfirmationRequest>
           <ConfirmationActions className="w-full flex-col items-stretch self-stretch sm:flex-row sm:items-center sm:justify-start">
             {button("Allow", true, "once", "default")}
-            {row.risk === "normal" && button("Allow for now", true, "for_now", "outline")}
+            {row.risk === "normal" && button("Allow for now", true, "for_now", "secondary")}
             {button("Deny", false, "once", "outline")}
           </ConfirmationActions>
         </ConfirmationRequest>

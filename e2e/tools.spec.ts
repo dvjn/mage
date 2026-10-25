@@ -142,7 +142,9 @@ test("a tool that needs approval asks every time, and a guest may decide it", as
   await expect(guest).toHaveURL(/\/t\/[^/]+$/);
 
   await write(page, '/tool thread.move {"folder":"Research"}');
-  await expect(card(page)).toContainText("The agent wants to use Move thread");
+  await expect(card(page)).toContainText("Move thread");
+  await expect(card(page)).not.toContainText("The agent wants to use");
+  await expect(card(page)).toContainText("Asks each time");
   await expect(card(page)).toContainText("Research");
   await expect(card(page).getByRole("button", { name: "Allow for now" })).toHaveCount(0);
   await expect(page.getByLabel("Message", { exact: true })).toHaveAttribute(
@@ -179,7 +181,8 @@ test("a viewer sees the card paused while a messager decides it", async ({
   await write(page, '/tool thread.rename {"title":"Looms"}');
 
   await alan.goto(page.url());
-  await expect(card(alan)).toContainText("The agent wants to use Rename thread");
+  await expect(card(alan)).toContainText("Rename thread");
+  await expect(card(alan)).toContainText("Asks each time");
   await expect(card(alan)).toContainText("Paused");
   await expect(card(alan).getByRole("button", { name: "Deny" })).toBeDisabled();
   await grace.goto(page.url());
