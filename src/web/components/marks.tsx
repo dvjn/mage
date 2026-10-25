@@ -1,10 +1,9 @@
 // Marks for models and the hosts they come through. A model shows its maker's mark, in the maker's
 // colour, or in the foreground colour where the maker's own is black on light and white on dark; a
 // bot in muted grey for a model no one can tell the maker of. A host shows its own mark, the generic
-// server mark when it has none, or a named server's initial. A model's tile carries its host as a
-// badge on its top-left corner: quiet, the host's mark in muted grey, where the host is the maker's
-// own API, and in the host's colour on a disc elsewhere. Screen readers leave the marks out, so what
-// they stand for is said beside them or in the tile's label.
+// server mark when it has none, or a named server's initial. A model's tile shows only its maker's
+// mark. Screen readers leave the marks out, so what they stand for is said beside them or in the
+// tile's label.
 
 import { cn } from "cn";
 import { BotIcon, ServerIcon } from "lucide-react";
@@ -89,37 +88,22 @@ export function givenName(connectionLabel: string | null | undefined) {
   return at >= 0 ? connectionLabel!.slice(at + 3) : null;
 }
 
-// Whether the host is the maker's own API, whose badge stays quiet.
-export function makerOwnHost(host: HostId, maker: MakerId | null) {
-  const { firstParty, maker: hostMaker } = hostOf(host);
-  return !!firstParty && !!maker && hostMaker === maker;
-}
-
 // How people know a model and where it comes from, as "Claude Opus · Amazon Bedrock".
 export function modelLabel(name: string, via: string | null | undefined) {
   return via ? `${name} · ${via}` : name;
 }
 
-// A model's tile: its maker's mark, with its host as a badge on the top-left corner, ringed in the
-// colour around the tile, given as `disc`. What else goes on the tile, such as a status on another
-// corner, is given as its children.
+// A model's tile: its maker's mark. What else goes on the tile, such as a status on a corner, is
+// given as its children.
 export function ModelTile({
   maker,
-  host,
-  connection,
-  disc,
   className,
   children,
 }: {
   maker: MakerId | null;
-  host: HostId | null;
-  // How people know the connection, for a named server's initial.
-  connection?: string | null;
-  disc: string;
   className?: string;
   children?: React.ReactNode;
 }) {
-  const quiet = host && makerOwnHost(host, maker);
   return (
     <span
       data-maker={maker ?? undefined}
@@ -129,27 +113,6 @@ export function ModelTile({
       )}
     >
       <MakerMark maker={maker} className="size-4" />
-      {host && (
-        <span
-          aria-hidden
-          data-host={host}
-          className={cn("absolute -top-1 -left-1 grid place-items-center rounded-full p-px", disc)}
-        >
-          <span
-            className={cn(
-              "grid size-3.5 place-items-center rounded-full",
-              quiet ? "text-muted-foreground" : "bg-background ring-1 ring-border",
-            )}
-          >
-            <HostMark
-              host={host}
-              label={givenName(connection)}
-              mono={!!quiet}
-              className="size-2.5 text-[0.45rem]"
-            />
-          </span>
-        </span>
-      )}
       {children}
     </span>
   );

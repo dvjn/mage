@@ -62,8 +62,7 @@ test("a server people run connects at its address, its models marked by maker an
   const thread = await newThread(page, "Hello from the lab");
   const tile = thread.locator("[data-maker]");
   await expect(tile).toHaveAttribute("data-maker", "meta");
-  await expect(tile.locator("[data-host]")).toHaveAttribute("data-host", "custom");
-  await expect(tile.locator("[data-host]")).toHaveText("L");
+  await expect(tile.locator("[data-host]")).toHaveCount(0);
   await expect(
     thread.getByRole("img", { name: "llama-3.3-70b-instruct · OpenAI-compatible · Lab box" }),
   ).toBeAttached();
@@ -107,7 +106,7 @@ test("Amazon Bedrock connects with access keys in a region, Claude marked as ser
   const thread = await newThread(page, "Hello from the cloud");
   const tile = thread.locator("[data-maker]");
   await expect(tile).toHaveAttribute("data-maker", "anthropic");
-  await expect(tile.locator("[data-host]")).toHaveAttribute("data-host", "bedrock");
+  await expect(tile.locator("[data-host]")).toHaveCount(0);
   await expect(
     thread.getByRole("img", {
       name: "Claude Echo · Amazon Bedrock",

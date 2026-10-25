@@ -66,17 +66,12 @@ export function ThreadRow(
 // The tile leading the row, though after the title for screen readers, so a row is named by its
 // title first: the model's tile, named with the model and its connection, a bot for a model no one
 // can tell the maker of or for none; and on its bottom-right corner the status's glyph, on a disc
-// of the colour the row has, given as `disc`, which rings the host's badge too.
+// of the colour the row has, given as `disc`.
 function RowTile({ thread, status, disc }: { thread: Listed; status: ThreadStatus; disc: string }) {
   const model = thread.shownModel;
   const label = model ? modelLabel(model.name, model.connection) : "No model";
   return (
-    <ModelTile
-      maker={model?.maker ?? null}
-      host={model?.host ?? null}
-      connection={model?.connection}
-      disc={disc}
-    >
+    <ModelTile maker={model?.maker ?? null}>
       <WithTooltip label={label}>
         <span role="img" aria-label={label} className="absolute inset-0" />
       </WithTooltip>

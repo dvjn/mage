@@ -17,7 +17,7 @@ import { type HostId, hostOf } from "@/shared/hosts.ts";
 import { MAKERS } from "@/shared/makers.ts";
 import type { ModelSummary } from "@/shared/models.ts";
 import { promptInputSelectTriggerClassName } from "@/web/components/ai-elements/prompt-input";
-import { givenName, HostMark, MakerMark, makerOwnHost } from "@/web/components/marks";
+import { givenName, HostMark, MakerMark } from "@/web/components/marks";
 import {
   Combobox,
   ComboboxCollection,
@@ -230,14 +230,6 @@ export function ModelPicker({
                 >
                   {label}
                 </span>
-                {/* Where the model comes from, unless it is its maker's own API. */}
-                {shown && !missing && !makerOwnHost(shown.host, shown.maker) && (
-                  <HostMark
-                    host={shown.host}
-                    label={givenName(shown.connectionLabel)}
-                    className="size-3 opacity-80"
-                  />
-                )}
               </>
             )}
           </span>
