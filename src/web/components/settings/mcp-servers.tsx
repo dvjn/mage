@@ -945,6 +945,7 @@ function ServerDetail({
           <Fact label="Transport">
             {server.transport ? TRANSPORTS[server.transport] : "Not reached yet"}
           </Fact>
+          {server.protocolVersion && <Fact label="Protocol">{server.protocolVersion}</Fact>}
           <Fact label="Authorization">
             <AuthFact server={server} />
           </Fact>

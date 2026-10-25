@@ -4,7 +4,9 @@
 // server: protected resource and server metadata, client registration, an authorize page that
 // approves at once, and tokens with their renewal. POST /control/revoke forgets every token, as
 // when a person revokes the app. It can instead keep its OAuth server at /mcp, where the open one
-// was, as servers that live only behind OAuth do.
+// was, as servers that live only behind OAuth do. Each Streamable HTTP server also answers under
+// /modern speaking only the 2026-07-28 revision: it describes itself to server/discover, wants the
+// revision in each request's _meta, and refuses the older initialize handshake as rmcp servers do.
 
 import { createHash, randomBytes } from "node:crypto";
 
@@ -30,6 +32,12 @@ interface JsonRpc {
   method: string;
   params?: Record<string, unknown>;
 }
+
+// The one revision the /modern servers speak, and where a request names the revision it is in.
+export const MODERN_REVISION = "2026-07-28";
+const REVISION_KEY = "io.modelcontextprotocol/protocolVersion";
+
+const SERVER_INFO = { name: "Notes", version: "1.0.0" };
 
 const TOOLS = [
   {
@@ -118,7 +126,8 @@ export function mcpStandIn(options: McpStandInOptions) {
   const refreshTokens = new Map<string, string>();
   // The legacy transport's open streams, by session.
   const streams = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
-  const oauthResource = `${origin}${oauthPath}`;
+  // Where the server behind OAuth is, in either revision.
+  const oauthResources = [`${origin}${oauthPath}`, `${origin}/modern${oauthPath}`];
 
   function answer(message: JsonRpc): unknown {
     switch (message.method) {
@@ -127,7 +136,7 @@ export function mcpStandIn(options: McpStandInOptions) {
         return {
           protocolVersion: asked.startsWith("2025") ? asked : "2025-06-18",
           capabilities: { tools: {} },
-          serverInfo: { name: "Notes", version: "1.0.0" },
+          serverInfo: SERVER_INFO,
         };
       }
       case "ping":
@@ -179,11 +188,61 @@ export function mcpStandIn(options: McpStandInOptions) {
   }
 
   // Streamable HTTP: each POST answered in its body; no stream of the server's own.
-  async function streamable(req: Request) {
+  async function streamable(req: Request, modern: boolean) {
     if (req.method !== "POST") return new Response(null, { status: 405 });
     const message = (await req.json()) as JsonRpc;
     if (message.id === undefined) return new Response(null, { status: 202 });
-    return json(reply(message));
+    return modern ? modernReply(message) : json(reply(message));
+  }
+
+  function failed(message: JsonRpc, status: number, error: Record<string, unknown>) {
+    return json({ jsonrpc: "2.0", id: message.id, error }, status);
+  }
+
+  // A request in the 2026-07-28 revision: the revision it is in named in its own _meta, each
+  // result saying it is complete, and the older handshake refused with the revisions there are.
+  function modernReply(message: JsonRpc) {
+    const meta = (message.params?._meta ?? {}) as Record<string, unknown>;
+    const asked =
+      message.method === "initialize" ? message.params?.protocolVersion : meta[REVISION_KEY];
+    if (asked === undefined) {
+      return failed(message, 400, {
+        code: -32602,
+        message: "Invalid params: request requires protocolVersion in request _meta",
+      });
+    }
+    if (asked !== MODERN_REVISION) {
+      return failed(message, 400, {
+        code: -32022,
+        message: "Unsupported protocol version",
+        data: { requested: asked, supported: [MODERN_REVISION] },
+      });
+    }
+    let result: unknown;
+    switch (message.method) {
+      case "server/discover":
+        result = {
+          supportedVersions: [MODERN_REVISION],
+          capabilities: { tools: {} },
+          ttlMs: 0,
+          cacheScope: "private",
+          _meta: { "io.modelcontextprotocol/serverInfo": SERVER_INFO },
+        };
+        break;
+      case "tools/list":
+        result = { tools: TOOLS, ttlMs: 0, cacheScope: "private" };
+        break;
+      case "tools/call":
+        result = answer(message);
+        break;
+      default:
+        return failed(message, 404, { code: -32601, message: "Method not found" });
+    }
+    return json({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: { resultType: "complete", ...(result as object) },
+    });
   }
 
   function headersAllowed(req: Request) {
@@ -318,7 +377,7 @@ export function mcpStandIn(options: McpStandInOptions) {
         code.clientId !== clientId ||
         code.redirectUri !== form.get("redirect_uri") ||
         code.challenge !== challenge ||
-        code.resource !== oauthResource
+        !oauthResources.includes(code.resource ?? "")
       ) {
         return json({ error: "invalid_grant" }, 400);
       }
@@ -335,27 +394,37 @@ export function mcpStandIn(options: McpStandInOptions) {
 
   return async function handle(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    if (url.pathname === oauthPath) {
+    const modern = url.pathname.startsWith("/modern/");
+    const path = modern ? url.pathname.slice("/modern".length) : url.pathname;
+    const prefix = modern ? "/modern" : "";
+    if (path === oauthPath) {
       if (!bearerAllowed(req)) {
         return json({ error: "invalid_token" }, 401, {
-          "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource${oauthPath}"`,
+          "WWW-Authenticate": `Bearer resource_metadata="${origin}/.well-known/oauth-protected-resource${prefix}${oauthPath}"`,
         });
       }
-      return streamable(req);
+      return streamable(req, modern);
     }
-    if (url.pathname === `/.well-known/oauth-protected-resource${oauthPath}`) {
+    const described = oauthResources.find(
+      (resource) =>
+        url.pathname === `/.well-known/oauth-protected-resource${new URL(resource).pathname}`,
+    );
+    if (described) {
       return json({
-        resource: oauthResource,
+        resource: described,
         authorization_servers: [origin],
         scopes_supported: ["notes"],
       });
     }
-    switch (url.pathname) {
+    if (modern && path !== "/mcp" && path !== "/headers/mcp") {
+      return new Response("Not found", { status: 404 });
+    }
+    switch (path) {
       case "/mcp":
-        return streamable(req);
+        return streamable(req, modern);
       case "/headers/mcp":
         if (!headersAllowed(req)) return json({ error: "Give the key" }, 401);
-        return streamable(req);
+        return streamable(req, modern);
       case "/sse":
         return req.method === "GET" ? openStream() : new Response(null, { status: 405 });
       case "/messages":

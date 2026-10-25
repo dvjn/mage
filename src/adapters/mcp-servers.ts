@@ -28,6 +28,7 @@ const columns = {
   authKind: mcpServer.authKind,
   settings: mcpServer.settings,
   transport: mcpServer.transport,
+  protocolVersion: mcpServer.protocolVersion,
   status: mcpServer.status,
   error: mcpServer.error,
   serverInfo: mcpServer.serverInfo,

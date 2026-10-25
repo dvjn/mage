@@ -166,6 +166,7 @@ export function createMcpServers(options: McpServersOptions) {
     return {
       url: server.url,
       transport: server.transport,
+      protocolVersion: server.protocolVersion,
       auth:
         server.authKind === "headers"
           ? { kind: "headers", headers: secrets?.headers ?? {} }
@@ -205,6 +206,7 @@ export function createMcpServers(options: McpServersOptions) {
       spaceId: server.spaceId,
       auth: authSummary(server),
       transport: server.transport,
+      protocolVersion: server.protocolVersion,
       status: server.status,
       error: server.error,
       serverInfo: server.serverInfo,
@@ -236,6 +238,7 @@ export function createMcpServers(options: McpServersOptions) {
       const listing = await client.list(targetOf(server, SHARED));
       servers.update(server.id, {
         transport: listing.transport,
+        protocolVersion: listing.protocolVersion,
         serverInfo: listing.serverInfo,
         tools: listing.tools,
         toolsReadAt: now(),
@@ -445,7 +448,7 @@ export function createMcpServers(options: McpServersOptions) {
       url,
       authKind,
       settings: next.settings,
-      ...(elsewhere && { transport: null }),
+      ...(elsewhere && { transport: null, protocolVersion: null }),
     });
     if (next.secrets) credentials.put(id, SHARED, next.secrets);
     else credentials.delete(id, SHARED);

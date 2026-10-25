@@ -1,6 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 
-import { MCP_API_KEY, MCP_BEARER_TOKEN } from "./mcp-server.ts";
+import { MCP_API_KEY, MCP_BEARER_TOKEN, MODERN_REVISION } from "./mcp-server.ts";
 import { mcpServer } from "./servers.ts";
 
 // Sign-ups are rate limited per client address; each person counts as their own client, in every
@@ -106,7 +106,9 @@ test("an org's header-authorized MCP server lists its tools, and a call that ask
   await expect(output).toContainText("Words");
 });
 
-test("an OAuth MCP server is authorized in the browser and lists its tools", async ({ page }) => {
+test("OAuth MCP servers of either revision are authorized in the browser and list their tools", async ({
+  page,
+}) => {
   await signUp(page);
   await page.goto("/org/tools");
   await addServer(
@@ -122,6 +124,21 @@ test("an OAuth MCP server is authorized in the browser and lists its tools", asy
   await expect(page.getByText("Client registered by the server")).toBeVisible();
   await expect(page.getByRole("listitem", { name: "Delete note" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Reconnect" })).toBeVisible();
+  await expect(page.getByText("2025-11-25", { exact: true })).toBeVisible();
+
+  // One that speaks only the 2026-07-28 revision, and refuses the older handshake.
+  await page.goto("/org/tools");
+  await addServer(
+    page,
+    "Modern tracker",
+    `${mcpServer}/modern/oauth/mcp`,
+    (dialog) => dialog.getByRole("button", { name: "OAuth" }).click(),
+    "Add and sign in",
+  );
+  await expect(page.getByRole("heading", { name: "Modern tracker" })).toBeVisible();
+  await expect(page.getByText("Connected").first()).toBeVisible();
+  await expect(page.getByText(MODERN_REVISION, { exact: true })).toBeVisible();
+  await expect(page.getByRole("listitem", { name: "Delete note" })).toBeVisible();
 });
 
 test("a space's own MCP server is used in that space's threads alone", async ({ page }) => {

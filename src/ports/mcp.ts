@@ -17,6 +17,8 @@ export interface McpServer {
   // What is not secret about its authorization.
   settings: McpSettings;
   transport: McpTransport | null;
+  // The protocol revision it last answered with; null until it has.
+  protocolVersion: string | null;
   status: McpStatus;
   error: string | null;
   serverInfo: { name: string; version: string } | null;
@@ -49,6 +51,7 @@ export type McpServerChanges = Partial<
     | "authKind"
     | "settings"
     | "transport"
+    | "protocolVersion"
     | "status"
     | "error"
     | "serverInfo"
@@ -109,11 +112,15 @@ export interface McpTarget {
   url: string;
   // The transport it answered on before, tried first; null tries Streamable HTTP, then HTTP+SSE.
   transport: McpTransport | null;
+  // The revision it answered with before: an older one is spoken again without asking; null, or
+  // the 2026-07-28 one, asks which it speaks.
+  protocolVersion: string | null;
   auth: McpAuth;
 }
 
 export interface McpListing {
   transport: McpTransport;
+  protocolVersion: string | null;
   serverInfo: { name: string; version: string } | null;
   tools: ToolDefinition[];
 }

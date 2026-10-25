@@ -7,11 +7,20 @@ import { mcpHeadersInputSchema, type McpServerSummary } from "@/shared/mcp.ts";
 import type { ToolsetSetting } from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
-import { MCP_API_KEY, MCP_BEARER_TOKEN, mcpStandIn } from "../e2e/mcp-server.ts";
+import { MCP_API_KEY, MCP_BEARER_TOKEN, MODERN_REVISION, mcpStandIn } from "../e2e/mcp-server.ts";
 import { agentThread } from "./agent-thread.ts";
 import { MCP_ORIGIN, setup } from "./workspace.ts";
 
 const bearer = [{ name: "Authorization", value: `Bearer ${MCP_BEARER_TOKEN}` }];
+
+// The JSON-RPC methods the requests sent were for.
+function methodsOf(requests: Request[]) {
+  return Promise.all(
+    requests
+      .filter((req) => req.method === "POST")
+      .map(async (req) => ((await req.clone().json()) as { method?: string }).method),
+  );
+}
 
 describe("headers", () => {
   it("are named once each in lower case, on one line, never ones the transport sets", () => {
@@ -164,7 +173,52 @@ describe("an org's MCP servers", () => {
   it("fall back to HTTP+SSE for a server that only speaks it", async () => {
     const { add } = await orgWithServers();
     const { body } = await add({ name: "Old", url: `${MCP_ORIGIN}/sse`, auth: { kind: "none" } });
-    expect(body).toMatchObject({ status: "ok", transport: "sse", toolCount: 3 });
+    expect(body).toMatchObject({
+      status: "ok",
+      transport: "sse",
+      protocolVersion: "2025-11-25",
+      toolCount: 3,
+    });
+  });
+
+  it("speak the 2026-07-28 revision with a server that speaks only it, never initializing", async () => {
+    const { add, mcpNetwork } = await orgWithServers();
+    const { body } = await add({
+      name: "Modern",
+      url: `${MCP_ORIGIN}/modern/headers/mcp`,
+      auth: { kind: "headers", headers: bearer },
+    });
+    expect(body).toMatchObject({
+      status: "ok",
+      error: null,
+      transport: "streamable-http",
+      protocolVersion: MODERN_REVISION,
+      serverInfo: { name: "Notes", version: "1.0.0" },
+      toolCount: 3,
+    });
+    expect(await methodsOf(mcpNetwork.requests)).toEqual(["server/discover", "tools/list"]);
+  });
+
+  it("ask again which revision a server speaks when read again, as one may move to a later one", async () => {
+    const { ada, add, api, mcpNetwork } = await orgWithServers();
+    const { body } = await add({ name: "Open", url: `${MCP_ORIGIN}/mcp`, auth: { kind: "none" } });
+    expect(body).toMatchObject({ protocolVersion: "2025-11-25" });
+
+    const upgraded = mcpStandIn({ origin: MCP_ORIGIN });
+    mcpNetwork.handle = (req) => upgraded(new Request(`${MCP_ORIGIN}/modern/mcp`, req));
+    const read = await api("POST", `/mcp-servers/${body.id}/refresh`, ada.cookie);
+    expect(await read.json()).toMatchObject({ status: "ok", protocolVersion: MODERN_REVISION });
+  });
+
+  it("fall back to the initialize handshake with a server of an older revision", async () => {
+    const { add } = await orgWithServers();
+    const { body } = await add({ name: "Open", url: `${MCP_ORIGIN}/mcp`, auth: { kind: "none" } });
+    expect(body).toMatchObject({
+      status: "ok",
+      transport: "streamable-http",
+      protocolVersion: "2025-11-25",
+      toolCount: 3,
+    });
   });
 
   it("keep their tools while the server is down, and say why until it answers", async () => {
@@ -297,6 +351,26 @@ describe("OAuth", () => {
     expect(await ok.json()).toMatchObject({ status: "ok", error: null });
   });
 
+  it("authorizes Mage for a server that speaks only the 2026-07-28 revision", async () => {
+    const workspace = await orgWithServers();
+    const { body } = await workspace.add({
+      name: "Modern",
+      url: `${MCP_ORIGIN}/modern/oauth/mcp`,
+      auth: { kind: "oauth", clientId: null, clientSecret: null },
+    });
+    expect(body).toMatchObject({ status: "needs_auth", protocolVersion: null });
+
+    const { started } = await authorizeInBrowser(workspace, body.id);
+    expect(started.searchParams.get("resource")).toBe(`${MCP_ORIGIN}/modern/oauth/mcp`);
+    const res = await workspace.api("GET", `/mcp-servers/${body.id}`, workspace.ada.cookie);
+    expect(await res.json()).toMatchObject({
+      status: "ok",
+      protocolVersion: MODERN_REVISION,
+      toolCount: 3,
+      auth: { kind: "oauth", authorized: true },
+    });
+  });
+
   it("uses a client people entered where the server registers none, and says so without one", async () => {
     const workspace = await orgWithServers();
     workspace.mcpNetwork.handle = mcpStandIn({
@@ -389,12 +463,12 @@ describe("a space's MCP servers", () => {
 });
 
 describe("MCP tools in a thread", () => {
-  async function mcpThread() {
+  async function mcpThread(url = `${MCP_ORIGIN}/headers/mcp`) {
     const workspace = await agentThread();
     const { ada, api, model, events } = workspace;
     const res = await api("POST", "/org/mcp-servers", ada.cookie, {
       name: "Notes",
-      url: `${MCP_ORIGIN}/headers/mcp`,
+      url,
       auth: { kind: "headers", headers: bearer },
     });
     const server = (await res.json()) as McpServerSummary;
@@ -431,6 +505,28 @@ describe("MCP tools in a thread", () => {
     expect(next.texts.at(-1)).toBe(
       `result ${id("add_note")}: {"ok":true,"value":{"id":"note-1","title":"Engines","words":2}}`,
     );
+  });
+
+  it("run on a server of the 2026-07-28 revision, and go straight to initialize on an older one", async () => {
+    for (const [path, methods] of [
+      ["/modern/headers/mcp", ["server/discover", "tools/call"]],
+      ["/headers/mcp", ["initialize", "notifications/initialized", "tools/call"]],
+    ] as const) {
+      const { ada, post, calls, model, worker, start, id, mcpNetwork } = await mcpThread(
+        `${MCP_ORIGIN}${path}`,
+      );
+      start();
+      mcpNetwork.requests.length = 0;
+
+      await post(ada, "Say it");
+      await calls(id("echo"), { text: "hello" });
+      const next = await model.next();
+      next.reply("Said.");
+      await worker.idle();
+
+      expect(next.texts.at(-1)).toBe(`result ${id("echo")}: {"ok":true,"value":{"text":"hello"}}`);
+      expect(await methodsOf(mcpNetwork.requests)).toEqual(methods);
+    }
   });
 
   it("ask before one the server marks destructive, and fail clearly when the server is down", async () => {
@@ -518,6 +614,24 @@ describe("an MCP server's address", () => {
     expect(started.searchParams.get("resource")).toBe(`${MCP_ORIGIN}/mcp`);
     const res = await workspace.api("GET", `/mcp-servers/${body.id}`, workspace.ada.cookie);
     expect(await res.json()).toMatchObject({ status: "ok", toolCount: 3 });
+  });
+
+  it("finds a server at /mcp that refuses the initialize handshake for a later revision", async () => {
+    const { add, mcpNetwork } = await orgWithServers();
+    const modern = mcpStandIn({ origin: MCP_ORIGIN });
+    mcpNetwork.handle = async (req) => {
+      const url = new URL(req.url);
+      if (url.pathname !== "/mcp") return new Response("Not found", { status: 404 });
+      return modern(new Request(`${MCP_ORIGIN}/modern/mcp`, req));
+    };
+    const { status, body } = await add({ name: "Modern", url: MCP_ORIGIN, auth: { kind: "none" } });
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      url: `${MCP_ORIGIN}/mcp`,
+      status: "ok",
+      protocolVersion: MODERN_REVISION,
+      toolCount: 3,
+    });
   });
 
   it("says so when neither it nor /mcp answers as an MCP server, and keeps nothing", async () => {

@@ -1,0 +1,1 @@
+ALTER TABLE `mcp_server` ADD `protocol_version` text;

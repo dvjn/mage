@@ -317,6 +317,8 @@ export const mcpServer = sqliteTable(
     settings: text("settings", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
     // The transport it last answered on; null until it has.
     transport: text("transport", { enum: ["streamable-http", "sse"] }),
+    // The protocol revision it last answered with; null until it has.
+    protocolVersion: text("protocol_version"),
     // Whether it answered when last reached, needs authorizing again, or failed, and why.
     status: text("status", { enum: ["ok", "needs_auth", "error"] }).notNull(),
     error: text("error"),

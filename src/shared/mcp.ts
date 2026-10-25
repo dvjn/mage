@@ -50,6 +50,8 @@ export const mcpServerSchema = z.object({
   spaceId: z.string().nullable(),
   auth: mcpAuthSummarySchema,
   transport: mcpTransportSchema.nullable(),
+  // The protocol revision it last answered with.
+  protocolVersion: z.string().nullable(),
   status: mcpStatusSchema,
   error: z.string().nullable(),
   serverInfo: z.object({ name: z.string(), version: z.string() }).nullable(),

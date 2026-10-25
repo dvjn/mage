@@ -1,14 +1,19 @@
 // MCP servers reached with the official client: each list or call opens a connection, on the
 // transport the server answered on before or else on Streamable HTTP falling back to HTTP+SSE, and
-// closes it. Headers go only to the server's own origin. OAuth follows the MCP authorization spec
-// through the client's own flow (discovery, registration, PKCE, resource indicators, renewal), its
-// state kept wherever the caller keeps it. Whether an address answers as an MCP server is asked
-// with a first initialize request of its own.
+// closes it. On Streamable HTTP the client asks the server which revision it speaks, taking up the
+// 2026-07-28 one where the server offers it and the older initialize handshake where it does not;
+// a call to a server that answered with an older revision before goes straight to the handshake.
+// Headers go only to the server's own origin. OAuth follows the MCP authorization spec through the
+// client's own flow (discovery, registration, PKCE, resource indicators, renewal), its state kept
+// wherever the caller keeps it. Whether an address answers as an MCP server is asked with a first
+// initialize request of its own, and any JSON-RPC answer to it counts, even a refusal from a
+// server that speaks only a later revision.
 
 import {
   auth,
   Client,
   type FetchLike,
+  isJSONRPCErrorResponse,
   OAuthError,
   type OAuthClientProvider,
   SdkError,
@@ -16,6 +21,7 @@ import {
   SdkHttpError,
   SSEClientTransport,
   StreamableHTTPClientTransport,
+  SUPPORTED_PROTOCOL_VERSIONS,
   UnauthorizedError,
 } from "@modelcontextprotocol/client";
 
@@ -111,6 +117,10 @@ function hostOf(url: string) {
 // What went wrong, as people read it, and whether authorizing again would help.
 export function mcpFailure(err: unknown, target: Pick<McpTarget, "url" | "auth">): McpError {
   if (err instanceof McpError) return err;
+  // Asking which revision the server speaks failed for a reason of its own.
+  if (err instanceof SdkError && err.code === SdkErrorCode.EraNegotiationFailed && err.cause) {
+    return mcpFailure(err.cause, target);
+  }
   const oauth = target.auth.kind === "oauth";
   const status = err instanceof SdkHttpError ? err.status : null;
   if (err instanceof UnauthorizedError || err instanceof OAuthError) {
@@ -169,6 +179,20 @@ function initializeRequest(version: string) {
   });
 }
 
+// Whether a refused request's body is a JSON-RPC error, as only an MCP server would answer.
+async function answeredJsonRpc(res: Response) {
+  try {
+    return isJSONRPCErrorResponse(JSON.parse(await res.text()));
+  } catch {
+    return false;
+  }
+}
+
+// Whether a revision the server answered with before is one of the initialize handshake's.
+function olderRevision(version: string | null) {
+  return version !== null && SUPPORTED_PROTOCOL_VERSIONS.includes(version);
+}
+
 // Where an address's OAuth protected-resource metadata is, by RFC 9728.
 function resourceMetadataUrl(url: URL) {
   const path = url.pathname === "/" ? "" : url.pathname;
@@ -209,9 +233,17 @@ export function createMcpClient(options: McpClientOptions): McpClient {
       : new StreamableHTTPClientTransport(new URL(url), common);
   }
 
+  // A client connected on the transport. HTTP+SSE predates the 2026-07-28 revision, so it goes
+  // straight to the initialize handshake.
   async function connectOn(kind: McpTransport, target: McpTarget) {
-    const client = new Client({ name: oauthClient.clientName, version });
-    await client.connect(transportOf(kind, target.url, target.auth));
+    const client = new Client(
+      { name: oauthClient.clientName, version },
+      kind === "sse" ? {} : { versionNegotiation: { mode: "auto" } },
+    );
+    await client.connect(
+      transportOf(kind, target.url, target.auth),
+      olderRevision(target.protocolVersion) ? { prior: { kind: "legacy" } } : undefined,
+    );
     return client;
   }
 
@@ -283,9 +315,9 @@ export function createMcpClient(options: McpClientOptions): McpClient {
       } catch {
         return "unreachable";
       }
-      await res.body?.cancel();
       let answer: McpAnswer = "other";
       if (res.ok) {
+        await res.body?.cancel();
         const type = res.headers.get("content-type") ?? "";
         if (/application\/json|text\/event-stream/.test(type)) answer = "mcp";
         // Ends the session the request began, if it began one.
@@ -303,23 +335,29 @@ export function createMcpClient(options: McpClientOptions): McpClient {
             .catch(() => {});
         }
       } else if (res.status === 401) {
+        await res.body?.cancel();
         const challenge = res.headers.get("www-authenticate") ?? "";
         answer =
           /resource_metadata=/i.test(challenge) || (await describesResource(address))
             ? "mcp"
             : "auth";
       } else if (res.status === 403) {
+        await res.body?.cancel();
         answer = "auth";
+      } else if (await answeredJsonRpc(res)) {
+        answer = "mcp";
       }
       return answer;
     },
 
+    // Asks the server again which revision it speaks, whatever it answered with before.
     list(target) {
-      return using(target, async (client, transport) => {
+      return using({ ...target, protocolVersion: null }, async (client, transport) => {
         const { tools } = await client.listTools();
         const info = client.getServerVersion();
         return {
           transport,
+          protocolVersion: client.getNegotiatedProtocolVersion() ?? null,
           serverInfo: info ? { name: info.name, version: info.version } : null,
           tools: tools.map(definitionOf),
         };
