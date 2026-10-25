@@ -301,7 +301,16 @@ function duration(ms: number | null) {
 
 // A tool call that ran, is running or did not run, as one line with the tool and what became of
 // the call, and who decided on it, which opens on its input and output.
-function ToolLine({ row, definition }: { row: ToolRow; definition: ToolDefinition | undefined }) {
+function ToolLine({
+  row,
+  definition,
+  framed,
+}: {
+  row: ToolRow;
+  definition: ToolDefinition | undefined;
+  // Under its own Agent header, rather than aligned with the text of the rows around it.
+  framed?: boolean;
+}) {
   const by = row.decision?.by.name;
   let icon: ReactNode;
   let status: string;
@@ -338,7 +347,7 @@ function ToolLine({ row, definition }: { row: ToolRow; definition: ToolDefinitio
   const text = [toolName(row, definition), status, who].filter(Boolean).join(" · ");
   const took = duration(row.ms);
   return (
-    <Collapsible className="pl-9 text-xs text-muted-foreground">
+    <Collapsible className={cn("text-xs text-muted-foreground", !framed && "pl-9")}>
       <CollapsibleTrigger
         aria-label={text}
         className="group/tool flex w-full items-center gap-1.5 rounded-md py-0.5 text-left hover:text-foreground [&_svg]:size-3.5 [&_svg]:shrink-0"
@@ -362,13 +371,27 @@ function ToolCall({
   row,
   definition,
   decide,
+  opensTurn,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
   decide?: RowActions["decide"];
+  opensTurn?: boolean;
 }) {
   if (row.state === "pending" && row.waits) {
     return <ToolCard row={row} definition={definition} decide={decide} />;
+  }
+  if (opensTurn) {
+    return (
+      <TranscriptRowFrame
+        avatar={agentAvatar}
+        author="Agent"
+        at={row.requestedAt}
+        label="Message from Agent"
+      >
+        <ToolLine row={row} definition={definition} framed />
+      </TranscriptRowFrame>
+    );
   }
   return <ToolLine row={row} definition={definition} />;
 }
@@ -447,9 +470,11 @@ export function TranscriptItem({
   row,
   actions = {},
   tools = [],
+  opensTurn,
 }: {
   row: TranscriptRow;
   actions?: RowActions;
+  opensTurn?: boolean;
   // The tools' definitions, by which their calls show.
   tools?: ToolDefinition[];
 }) {
@@ -466,6 +491,7 @@ export function TranscriptItem({
           row={row}
           definition={tools.find((tool) => tool.name === row.toolId)}
           decide={actions.decide}
+          opensTurn={opensTurn}
         />
       );
     case "failure":

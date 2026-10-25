@@ -20,7 +20,7 @@ import {
   threadSchema,
   type ToolScope,
 } from "@/shared/threads.ts";
-import { transcriptOf } from "@/shared/transcript.ts";
+import { opensAgentTurn, transcriptOf } from "@/shared/transcript.ts";
 import {
   Conversation,
   ConversationContent,
@@ -258,10 +258,11 @@ export function ThreadPage() {
           {detail.data && transcript.rows.length === 0 ? (
             <ConversationEmptyState description="Write the first message below." />
           ) : (
-            transcript.rows.map((row) => (
+            transcript.rows.map((row, index) => (
               <TranscriptItem
                 key={row.id}
                 row={row}
+                opensTurn={opensAgentTurn(transcript.rows, index)}
                 tools={detail.data?.tools}
                 actions={{
                   ...(row === retryable && { retry: () => void retry(retryable.runId) }),

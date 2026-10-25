@@ -359,3 +359,16 @@ export function transcriptOf(
   }
   return { rows, pending: [...pending.values()], run, usage };
 }
+
+// Whether the row at the index is a tool call that follows someone else's row, so that it needs the
+// Agent header the agent's own words would have given it.
+export function opensAgentTurn(rows: TranscriptRow[], index: number) {
+  if (rows[index]?.kind !== "tool") return false;
+  for (let i = index - 1; i >= 0; i--) {
+    const before = rows[i]!;
+    if (before.kind === "tool") return false;
+    if (before.kind !== "agent") return true;
+    if (before.status !== "completed" || before.text || before.reasoning) return false;
+  }
+  return true;
+}
