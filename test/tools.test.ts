@@ -433,6 +433,55 @@ describe("tool calls", () => {
 });
 
 describe("independent review", () => {
+  it.each(["allow", "ask"] as const)(
+    "lets the requester decide the pending call after changing review to %s",
+    async (mode) => {
+      const {
+        ada,
+        space,
+        thread,
+        post,
+        calls,
+        model,
+        worker,
+        start,
+        tools,
+        decideCall,
+        toolSettings,
+        api,
+      } = await toolThread();
+      toolSettings.setInSpace(space.id, ["thread.rename"], "review");
+      start();
+      await post(ada, "Rename it");
+      await calls(["thread.rename", { title: "Engines" }]);
+      await worker.idle();
+      const callId = tools()[0]!.id;
+      expect((await decideCall(ada, callId, true)).status).toBe(403);
+      const changed = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
+        toolIds: ["thread.rename"],
+        mode,
+      });
+      expect(changed.status).toBe(200);
+      const detail = await api("GET", `/threads/${thread.id}`, ada.cookie);
+      expect(await detail.json()).toMatchObject({
+        pendingTools: { [callId]: { risk: mode === "ask" ? "ask" : "normal", canDecide: true } },
+      });
+      const listed = await api("GET", `/spaces/${space.id}/threads`, ada.cookie);
+      expect(await listed.json()).toContainEqual(
+        expect.objectContaining({
+          id: thread.id,
+          activity: expect.objectContaining({ canApprove: true }),
+        }),
+      );
+      // The audit log still records the requirement at request time.
+      expect(tools()[0]?.risk).toBe("review");
+      expect((await decideCall(ada, callId, true)).status).toBe(200);
+      await answered(model.next());
+      await worker.idle();
+      expect(tools()[0]?.state).toBe("ran");
+    },
+  );
+
   it("does not downgrade a tool's declared review risk when configured to ask", async () => {
     const { ada, space, toolRegistry, toolSettings } = await toolThread();
     const spec = toolRegistry.find(ada.orgId, "thread.rename")!;
@@ -470,6 +519,11 @@ describe("independent review", () => {
     await worker.idle();
     const pending = tools()[0]!;
     expect(pending).toMatchObject({ risk: "review", state: "pending" });
+    const loosened = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
+      toolIds: ["thread.rename"],
+      mode: "allow",
+    });
+    expect(loosened.status).toBe(200);
     expect((await decideCall(ada, pending.id, true)).status).toBe(403);
     expect((await decideCall(hedy, pending.id, false)).status).toBe(403);
     expect((await decideCall(alan, pending.id, true)).status).toBe(403);

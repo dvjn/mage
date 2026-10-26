@@ -156,8 +156,15 @@ export function createTools(options: ToolsOptions) {
     return levelOf(access.of({ userId, orgId: space.orgId }, thread));
   }
 
-  function requiresReview(row: ToolRow, space: Pick<Space, "id" | "orgId">) {
-    return row.risk === "review" || spaceModes(space).get(row.toolId) === "review";
+  // A pending request keeps its history, but decisions follow the tool's current policy.
+  function riskForCall(
+    row: ToolRow,
+    space: Pick<Space, "id" | "orgId">,
+    model: string | null = null,
+  ): ToolRisk {
+    const spec = specsOf(settingsInSpace(space)).find((tool) => tool.name === row.toolId);
+    const parsed = spec?.input.safeParse(row.input);
+    return spec && parsed?.success ? riskOf(space, spec, parsed.data, model) : row.risk;
   }
 
   function canDecide(
@@ -166,10 +173,11 @@ export function createTools(options: ToolsOptions) {
     rows: readonly TranscriptRow[],
     thread: Thread,
     space: Space,
+    model: string | null = null,
   ) {
     return (
       levelFor(userId, thread, space) === "run" &&
-      (!requiresReview(row, space) || independentReviewer(rows, userId))
+      (riskForCall(row, space, model) !== "review" || independentReviewer(rows, userId))
     );
   }
 
@@ -228,7 +236,7 @@ export function createTools(options: ToolsOptions) {
     offered,
     riskOf,
     levelFor,
-    requiresReview,
+    riskForCall,
     canDecide,
     orgModes,
     spaceModes,
@@ -292,11 +300,11 @@ export function createTools(options: ToolsOptions) {
       rows: readonly TranscriptRow[],
       thread: Thread,
       space: Space,
-      risk: ToolRisk = row.risk,
+      risk: ToolRisk = riskForCall(row, space),
     ) {
       const approval = approvalOf(row, thread, space);
       if (!approval || !row.decision) return false;
-      const review = risk === "review" || requiresReview(row, space);
+      const review = risk === "review";
       return (
         (!review ||
           (row.decision.scope === "once" && independentReviewer(rows, row.decision.by.userId))) &&
@@ -312,7 +320,7 @@ export interface ToolDecisionsOptions {
     | "find"
     | "levelFor"
     | "canDecide"
-    | "requiresReview"
+    | "riskForCall"
     | "toolsetsInOrg"
     | "toolsetsInSpace"
     | "orgModes"
@@ -380,7 +388,7 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
         if (tools.levelFor(principal.userId, thread, space) !== "run") {
           throw new ServiceError(403, ONLY_RUNNERS);
         }
-        if (!tools.canDecide(principal.userId, call, rows, thread, space)) {
+        if (!tools.canDecide(principal.userId, call, rows, thread, space, run.model)) {
           throw new ServiceError(
             403,
             "Independent review requires someone who has not contributed to this conversation",
@@ -389,7 +397,7 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
         if (
           decision.allow &&
           decision.scope === "for_now" &&
-          (call.risk !== "normal" || tools.requiresReview(call, space))
+          tools.riskForCall(call, space, run.model) !== "normal"
         ) {
           throw new ServiceError(400, "This call can only be allowed once");
         }

@@ -81,7 +81,7 @@ export interface ThreadsOptions {
   // Names threads after their first message, when given.
   titles?: Pick<Titles, "name">;
   // The agent's tools, for each reader's level for them.
-  tools: Pick<Tools, "ids" | "levelFor" | "canDecide" | "definitions">;
+  tools: Pick<Tools, "ids" | "levelFor" | "canDecide" | "riskForCall" | "definitions">;
   now?: () => Date;
 }
 
@@ -188,7 +188,7 @@ export function createThreads(options: ThreadsOptions) {
       canApprove:
         call?.kind === "tool" &&
         !!space &&
-        tools.canDecide(userId, call, transcript.rows, thread, space),
+        tools.canDecide(userId, call, transcript.rows, thread, space, run.model),
     };
   }
 
@@ -501,10 +501,35 @@ export function createThreads(options: ThreadsOptions) {
       // The default that replies, with its effort.
       const following = space && (await models.replyModel(space, { model: null, effort: null }));
       const used = following?.used ? { used: following.used, effort: following.effort } : null;
+      const events = threads.eventsAfter(id, 0).map(eventSummary);
+      const rows = transcriptOf(events).rows;
+      const activeRun = runs.active(id);
       return {
         thread: threadSummary(thread),
-        events: threads.eventsAfter(id, 0).map(eventSummary),
+        events,
         access: via,
+        pendingTools: Object.fromEntries(
+          rows.flatMap((row) =>
+            row.kind === "tool" && row.state === "pending" && row.waits && space
+              ? [
+                  [
+                    row.id,
+                    {
+                      risk: tools.riskForCall(row, space, activeRun?.model ?? null),
+                      canDecide: tools.canDecide(
+                        principal.userId,
+                        row,
+                        rows,
+                        thread,
+                        space,
+                        activeRun?.model ?? null,
+                      ),
+                    },
+                  ],
+                ]
+              : [],
+          ),
+        ),
         levels: Object.fromEntries(
           space
             ? tools

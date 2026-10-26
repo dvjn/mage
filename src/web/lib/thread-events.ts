@@ -102,7 +102,7 @@ export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () =
       if (!event.success) return;
       mergeEvents(queryClient, threadId, [event.data]);
       if (event.data.type === "thread.renamed") renamed(queryClient, threadId, event.data.data);
-      if (event.data.type === "tool.ran") {
+      if (event.data.type === "tool.ran" || event.data.type === "tool.requested") {
         void queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
       }
       onEvent?.();

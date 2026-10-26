@@ -379,6 +379,10 @@ export const threadDetailSchema = z.object({
   access: threadAccessSchema,
   // The reader's level for each tool here: whether they may run it, and so decide on its calls.
   levels: z.record(z.string(), z.enum(["run", "approve"])),
+  // Current policy for pending approval cards, separate from the historical request events.
+  pendingTools: z
+    .record(z.string(), z.object({ risk: toolRiskSchema, canDecide: z.boolean() }))
+    .optional(),
   // Every tool's definition, by which its calls show.
   tools: z.array(toolDefinitionSchema),
   defaults: threadDefaultsSchema,

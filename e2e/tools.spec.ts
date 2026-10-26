@@ -338,6 +338,24 @@ test("a permission group requires an independent reviewer", async ({ page, brows
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Reviewed");
 });
 
+test("changing review to Ask updates a pending approval for the requester", async ({ page }) => {
+  await signUp(page, "Ada Lovelace");
+  const spaceId = spaceIdOf(page);
+  await setInSpace(page, spaceId, "Rename thread", "Independent review");
+  await startThread(page, '/tool thread.rename {"title":"Engines"}');
+  const threadUrl = page.url();
+  await expect(card(page)).toContainText("Needs review");
+  await expect(card(page).getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
+  await setInSpace(page, spaceId, "Rename thread", "Ask");
+  await page.goto(threadUrl);
+  await expect(card(page)).toContainText("Asks each time");
+  await expect(card(page)).not.toContainText("Needs review");
+  await expect(card(page).getByRole("button", { name: "Allow", exact: true })).toBeEnabled();
+  await card(page).getByRole("button", { name: "Allow", exact: true }).click();
+  await expect(line(page, /^Rename thread · Ran · allowed by Ada Lovelace/)).toBeVisible();
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Engines");
+});
+
 test("built-in toolset switches preserve permissions and obey the org switch", async ({ page }) => {
   await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);

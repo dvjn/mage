@@ -550,6 +550,7 @@ export function useOrgTools() {
       return;
     }
     queryClient.setQueryData(orgToolsKey, toolsetSettingListSchema.parse(await res.json()));
+    await queryClient.invalidateQueries({ queryKey: ["threads"] });
     await queryClient.invalidateQueries({ queryKey: ["spaces"] });
   }
 
@@ -602,6 +603,7 @@ export function useSpaceTools(spaceId: string) {
       spaceToolsKey(spaceId),
       toolsetSettingListSchema.parse(await res.json()),
     );
+    await queryClient.invalidateQueries({ queryKey: ["threads"] });
   }
 
   async function setEnabled(toolsetId: string, enabled: boolean) {

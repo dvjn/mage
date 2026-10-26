@@ -258,24 +258,33 @@ export function ThreadPage() {
           {detail.data && transcript.rows.length === 0 ? (
             <ConversationEmptyState description="Write the first message below." />
           ) : (
-            transcript.rows.map((row, index) => (
-              <TranscriptItem
-                key={row.id}
-                row={row}
-                turn={agentTurnOf(transcript.rows, index)}
-                tools={detail.data?.tools}
-                actions={{
-                  ...(row === retryable && { retry: () => void retry(retryable.runId) }),
-                  ...(!guest && { pickModel: () => setPicking(true) }),
-                  ...(row.kind === "tool" &&
-                    detail.data?.levels[row.toolId] === "run" &&
-                    (row.risk !== "review" ||
-                      independentReviewer(transcript.rows, me.data?.user.id ?? "")) && {
-                      decide: (allow: boolean, scope: ToolScope) => decide(row.id, allow, scope),
-                    }),
-                }}
-              />
-            ))
+            transcript.rows.map((savedRow, index) => {
+              const policy =
+                savedRow.kind === "tool" && savedRow.state === "pending"
+                  ? detail.data?.pendingTools?.[savedRow.id]
+                  : undefined;
+              const row =
+                policy && savedRow.kind === "tool" ? { ...savedRow, risk: policy.risk } : savedRow;
+              return (
+                <TranscriptItem
+                  key={row.id}
+                  row={row}
+                  turn={agentTurnOf(transcript.rows, index)}
+                  tools={detail.data?.tools}
+                  actions={{
+                    ...(row === retryable && { retry: () => void retry(retryable.runId) }),
+                    ...(!guest && { pickModel: () => setPicking(true) }),
+                    ...(row.kind === "tool" &&
+                      detail.data?.levels[row.toolId] === "run" &&
+                      policy?.canDecide !== false &&
+                      (row.risk !== "review" ||
+                        independentReviewer(transcript.rows, me.data?.user.id ?? "")) && {
+                        decide: (allow: boolean, scope: ToolScope) => decide(row.id, allow, scope),
+                      }),
+                  }}
+                />
+              );
+            })
           )}
           {run &&
             !run.waitingOn &&
