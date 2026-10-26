@@ -39,7 +39,12 @@ import {
   type ToolModeChange,
   type ToolsetSetting,
 } from "@/shared/tools.ts";
-import { type ToolRow, type TranscriptRow, transcriptOf } from "@/shared/transcript.ts";
+import {
+  independentReviewer,
+  type ToolRow,
+  type TranscriptRow,
+  transcriptOf,
+} from "@/shared/transcript.ts";
 
 export type { AnyToolSpec };
 
@@ -89,7 +94,12 @@ export function createTools(options: ToolsOptions) {
 
   // The toolsets the space has: Mage's own, and those of what the org and the space added.
   function inSpace(space: Pick<Space, "id" | "orgId">) {
-    return [...toolsets, ...scoped.inSpace(space)];
+    const org = settings.toolsetsInOrg(space.orgId);
+    const own = settings.toolsetsInSpace(space.id);
+    return [
+      ...toolsets.filter((set) => org.get(set.id) !== false && own.get(set.id) !== false),
+      ...scoped.inSpace(space),
+    ];
   }
 
   function specsOf(sets: Toolset[]) {
@@ -134,13 +144,33 @@ export function createTools(options: ToolsOptions) {
     input: unknown,
     model: string | null,
   ): ToolRisk {
-    if (spaceModes(space).get(spec.name) === "ask") return "ask";
-    return spec.risk(input, { model });
+    const declared = spec.risk(input, { model });
+    const mode = spaceModes(space).get(spec.name);
+    if (declared === "review" || mode === "review") return "review";
+    if (declared === "ask" || mode === "ask") return "ask";
+    return "normal";
   }
 
   // The person's level in the thread, as they reach it now.
   function levelFor(userId: string, thread: Thread, space: Space): ToolLevel {
     return levelOf(access.of({ userId, orgId: space.orgId }, thread));
+  }
+
+  function requiresReview(row: ToolRow, space: Pick<Space, "id" | "orgId">) {
+    return row.risk === "review" || spaceModes(space).get(row.toolId) === "review";
+  }
+
+  function canDecide(
+    userId: string,
+    row: ToolRow,
+    rows: readonly TranscriptRow[],
+    thread: Thread,
+    space: Space,
+  ) {
+    return (
+      levelFor(userId, thread, space) === "run" &&
+      (!requiresReview(row, space) || independentReviewer(rows, userId))
+    );
   }
 
   // The words the model read, each with its writer's level now.
@@ -198,20 +228,35 @@ export function createTools(options: ToolsOptions) {
     offered,
     riskOf,
     levelFor,
+    requiresReview,
+    canDecide,
     orgModes,
     spaceModes,
 
     // The toolsets of the org, with each tool's definition.
     toolsetsInOrg(orgId: string) {
-      return settingsInOrg(orgId).map((toolset) => withDefinitions(toolset, "org"));
+      const switches = settings.toolsetsInOrg(orgId);
+      return settingsInOrg(orgId).map((toolset) => ({
+        ...withDefinitions(toolset, "org"),
+        ...(toolset.source === "builtin" && {
+          orgEnabled: switches.get(toolset.id) !== false,
+          enabled: switches.get(toolset.id) !== false,
+        }),
+      }));
     },
 
     // The space's: those the org offers it as the org's, and the rest as its own.
     toolsetsInSpace(space: Pick<Space, "id" | "orgId">) {
       const org = new Set(settingsInOrg(space.orgId).map((toolset) => toolset.id));
-      return settingsInSpace(space).map((toolset) =>
-        withDefinitions(toolset, org.has(toolset.id) ? "org" : "space"),
-      );
+      const orgSwitches = settings.toolsetsInOrg(space.orgId);
+      const switches = settings.toolsetsInSpace(space.id);
+      return settingsInSpace(space).map((toolset) => ({
+        ...withDefinitions(toolset, org.has(toolset.id) ? "org" : "space"),
+        ...(toolset.source === "builtin" && {
+          orgEnabled: orgSwitches.get(toolset.id) !== false,
+          enabled: orgSwitches.get(toolset.id) !== false && switches.get(toolset.id) !== false,
+        }),
+      }));
     },
 
     // The tools as the model is told about them.
@@ -242,9 +287,21 @@ export function createTools(options: ToolsOptions) {
     },
 
     // Whether the approval given for the call still holds, just before it runs.
-    approvalHolds(row: ToolRow, rows: readonly TranscriptRow[], thread: Thread, space: Space) {
+    approvalHolds(
+      row: ToolRow,
+      rows: readonly TranscriptRow[],
+      thread: Thread,
+      space: Space,
+      risk: ToolRisk = row.risk,
+    ) {
       const approval = approvalOf(row, thread, space);
-      return !!approval && holds(approval, influenceOf(rows, thread, space));
+      if (!approval || !row.decision) return false;
+      const review = risk === "review" || requiresReview(row, space);
+      return (
+        (!review ||
+          (row.decision.scope === "once" && independentReviewer(rows, row.decision.by.userId))) &&
+        holds(approval, influenceOf(rows, thread, space))
+      );
     },
   };
 }
@@ -252,7 +309,14 @@ export function createTools(options: ToolsOptions) {
 export interface ToolDecisionsOptions {
   tools: Pick<
     Tools,
-    "find" | "levelFor" | "toolsetsInOrg" | "toolsetsInSpace" | "orgModes" | "spaceModes"
+    | "find"
+    | "levelFor"
+    | "canDecide"
+    | "requiresReview"
+    | "toolsetsInOrg"
+    | "toolsetsInSpace"
+    | "orgModes"
+    | "spaceModes"
   >;
   access: Pick<ThreadAccess, "require">;
   threads: Pick<ThreadStore, "eventsAfter">;
@@ -316,7 +380,17 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
         if (tools.levelFor(principal.userId, thread, space) !== "run") {
           throw new ServiceError(403, ONLY_RUNNERS);
         }
-        if (decision.allow && decision.scope === "for_now" && call.risk !== "normal") {
+        if (!tools.canDecide(principal.userId, call, rows, thread, space)) {
+          throw new ServiceError(
+            403,
+            "Independent review requires someone who has not contributed to this conversation",
+          );
+        }
+        if (
+          decision.allow &&
+          decision.scope === "for_now" &&
+          (call.risk !== "normal" || tools.requiresReview(call, space))
+        ) {
           throw new ServiceError(400, "This call can only be allowed once");
         }
         const actor = { kind: "user" as const, userId: principal.userId };
@@ -372,6 +446,27 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
       const space = spaces.require(principal, spaceId, "manage");
       for (const id of change.toolIds) known(space.orgId, id, space);
       settings.setInSpace(space.id, change.toolIds, change.mode);
+    },
+
+    setOrgToolset(principal: Principal, toolsetId: string, enabled: boolean) {
+      if (principal.role !== "owner")
+        throw new ServiceError(403, "Only the organization's owners can do this");
+      const toolset = tools
+        .toolsetsInOrg(principal.orgId)
+        .find((set) => set.id === toolsetId && set.source === "builtin");
+      if (!toolset) throw new ServiceError(404, "Toolset not found");
+      settings.setToolsetInOrg(principal.orgId, toolsetId, enabled);
+    },
+
+    setSpaceToolset(principal: Principal, spaceId: string, toolsetId: string, enabled: boolean) {
+      const space = spaces.require(principal, spaceId, "manage");
+      const toolset = tools
+        .toolsetsInSpace(space)
+        .find((set) => set.id === toolsetId && set.source === "builtin");
+      if (!toolset) throw new ServiceError(404, "Toolset not found");
+      if (enabled && !toolset.orgEnabled)
+        throw new ServiceError(409, "The organization turned this toolset off");
+      settings.setToolsetInSpace(spaceId, toolsetId, enabled);
     },
   };
 }

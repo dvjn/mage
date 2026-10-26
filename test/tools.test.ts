@@ -77,6 +77,11 @@ describe("deciding a call", () => {
       { risk: "ask", influence: [{ seq: 1, level: run }], standing: [{ atSeq: 5, level: run }] },
       "wait",
     ],
+    [
+      "independent review ignores standing approvals",
+      { risk: "review", influence: [{ seq: 1, level: run }], standing: [{ atSeq: 5, level: run }] },
+      "wait",
+    ],
   ];
   it.each(cases)("%s", (_name, input, expected) => {
     expect(decide(input)).toBe(expected);
@@ -133,7 +138,16 @@ async function toolThread() {
   function revokeHedy() {
     guestStore.revoke(thread.id, hedy.userId, ada.userId, new Date());
   }
-  return { ...workspace, hedy, calls, tools, decideCall, setRole, revokeHedy };
+  return {
+    ...workspace,
+    toolRegistry: workspace.tools,
+    hedy,
+    calls,
+    tools,
+    decideCall,
+    setRole,
+    revokeHedy,
+  };
 }
 
 async function answered(call: Promise<Call>, text = "Done.") {
@@ -415,6 +429,230 @@ describe("tool calls", () => {
     await worker.idle();
     expect(thread.id).toBeDefined();
     expect(elsewhere.tools).toEqual(["thread.rename", "thread.move", "thread.set_model"]);
+  });
+});
+
+describe("independent review", () => {
+  it("does not downgrade a tool's declared review risk when configured to ask", async () => {
+    const { ada, space, toolRegistry, toolSettings } = await toolThread();
+    const spec = toolRegistry.find(ada.orgId, "thread.rename")!;
+    spec.risk = () => "review";
+    toolSettings.setInSpace(space.id, [spec.name], "ask");
+    expect(
+      toolRegistry.riskOf({ ...space, orgId: ada.orgId }, spec, { title: "Looms" }, null),
+    ).toBe("review");
+  });
+  it("waits for a runner who has not contributed, and never grants standing review", async () => {
+    const {
+      ada,
+      grace,
+      alan,
+      hedy,
+      space,
+      thread,
+      post,
+      calls,
+      model,
+      start,
+      worker,
+      tools,
+      decideCall,
+      toolSettings,
+      api,
+    } = await toolThread();
+    toolSettings.setInOrg(ada.orgId, ["thread.rename"], "review");
+    // A space's ask setting cannot loosen the organization's independent-review requirement.
+    toolSettings.setInSpace(space.id, ["thread.rename"], "ask");
+    start();
+    await post(ada, "Rename it");
+    await post(hedy, "// I suggested the name");
+    await calls(["thread.rename", { title: "Engines" }]);
+    await worker.idle();
+    const pending = tools()[0]!;
+    expect(pending).toMatchObject({ risk: "review", state: "pending" });
+    expect((await decideCall(ada, pending.id, true)).status).toBe(403);
+    expect((await decideCall(hedy, pending.id, false)).status).toBe(403);
+    expect((await decideCall(alan, pending.id, true)).status).toBe(403);
+    expect((await decideCall(grace, pending.id, true, "for_now")).status).toBe(400);
+    for (const [who, canApprove] of [
+      [ada, false],
+      [grace, true],
+    ] as const) {
+      const list = await api("GET", `/spaces/${space.id}/threads`, who.cookie);
+      expect(await list.json()).toContainEqual(
+        expect.objectContaining({
+          id: thread.id,
+          activity: expect.objectContaining({ canApprove }),
+        }),
+      );
+    }
+    expect((await decideCall(grace, pending.id, true)).status).toBe(200);
+    await answered(model.next());
+    await worker.idle();
+    expect(tools()[0]).toMatchObject({ state: "ran", decision: { by: { userId: grace.userId } } });
+    await post(ada, "Rename it again");
+    await calls(["thread.rename", { title: "Looms" }]);
+    await worker.idle();
+    expect(tools()[1]).toMatchObject({ risk: "review", state: "pending" });
+  });
+
+  it("rechecks independence before executing an approved call", async () => {
+    const {
+      ada,
+      grace,
+      space,
+      post,
+      calls,
+      model,
+      start,
+      makeWorker,
+      tools,
+      decideCall,
+      toolSettings,
+      threadStore,
+      thread,
+    } = await toolThread();
+    toolSettings.setInSpace(space.id, ["thread.rename"], "review");
+    const first = makeWorker();
+    start(first);
+    await post(ada, "Rename it");
+    await calls(["thread.rename", { title: "Engines" }]);
+    await first.idle();
+    await first.stop();
+    expect((await decideCall(grace, tools()[0]!.id, true)).status).toBe(200);
+    await post(grace, "// I now want a different name");
+    const second = makeWorker();
+    start(second);
+    await answered(model.next());
+    await second.idle();
+    expect(tools()[0]?.state).toBe("stale");
+    expect(threadStore.find(thread.id)?.title).not.toBe("Engines");
+  });
+
+  it("does not let an earlier normal approval bypass a new review requirement", async () => {
+    const workspace = await toolThread();
+    const {
+      ada,
+      hedy,
+      grace,
+      space,
+      post,
+      calls,
+      model,
+      start,
+      makeWorker,
+      tools,
+      decideCall,
+      toolSettings,
+    } = workspace;
+    const first = makeWorker();
+    start(first);
+    await post(hedy, "Rename it");
+    workspace.revokeHedy();
+    await calls(["thread.rename", { title: "Engines" }]);
+    await first.idle();
+    await first.stop();
+    expect((await decideCall(ada, tools()[0]!.id, true, "for_now")).status).toBe(200);
+    toolSettings.setInSpace(space.id, ["thread.rename"], "review");
+    const second = makeWorker();
+    start(second);
+    await answered(model.next());
+    await second.idle();
+    expect(tools()[0]?.state).toBe("stale");
+    // An uninvolved runner can decide future review calls, but previous standing grants cannot.
+    await post(ada, "Again");
+    await calls(["thread.rename", { title: "Looms" }]);
+    await second.idle();
+    expect(tools()[1]?.state).toBe("pending");
+    expect((await decideCall(grace, tools()[1]!.id, false)).status).toBe(200);
+    await answered(model.next());
+    await second.idle();
+  });
+});
+
+describe("built-in toolset switches", () => {
+  it.each(["org", "space"] as const)(
+    "prevents a pending built-in call from executing after its %s toolset switch is off",
+    async (scope) => {
+      const {
+        ada,
+        space,
+        post,
+        calls,
+        model,
+        start,
+        makeWorker,
+        tools,
+        decideCall,
+        toolSettings,
+        threadStore,
+        thread,
+        api,
+      } = await toolThread();
+      toolSettings.setInSpace(space.id, ["thread.rename"], "ask");
+      const first = makeWorker();
+      start(first);
+      await post(ada, "Rename it");
+      await calls(["thread.rename", { title: "Engines" }]);
+      await first.idle();
+      await first.stop();
+      const path = scope === "org" ? "/org/toolsets/thread" : `/spaces/${space.id}/toolsets/thread`;
+      expect((await api("PUT", path, ada.cookie, { enabled: false })).status).toBe(200);
+      expect((await decideCall(ada, tools()[0]!.id, true)).status).toBe(200);
+      const second = makeWorker();
+      start(second);
+      await answered(model.next());
+      await second.idle();
+      expect(tools()[0]?.state).toBe("stale");
+      expect(threadStore.find(thread.id)?.title).not.toBe("Engines");
+    },
+  );
+  it("preserves tool permissions, isolates space switches, and prevents overriding an org switch", async () => {
+    const { ada, grace, alan, api, space, createSpace, toolSettings, toolRegistry } =
+      await toolThread();
+    const elsewhere = await createSpace(ada.cookie, "Elsewhere");
+    toolSettings.setInOrg(ada.orgId, ["thread.rename"], "ask");
+    const setOrg = (enabled: boolean, cookie = ada.cookie) =>
+      api("PUT", "/org/toolsets/thread", cookie, { enabled });
+    const setSpace = (enabled: boolean, cookie = ada.cookie) =>
+      api("PUT", `/spaces/${space.id}/toolsets/thread`, cookie, { enabled });
+    expect((await setOrg(false, grace.cookie)).status).toBe(403);
+    expect((await setSpace(false, alan.cookie)).status).toBe(403);
+    expect((await setSpace(false)).status).toBe(200);
+    const off = await api("GET", `/spaces/${space.id}/tools`, ada.cookie);
+    expect(await off.json()).toContainEqual(
+      expect.objectContaining({
+        id: "thread",
+        enabled: false,
+        orgEnabled: true,
+        tools: expect.arrayContaining([
+          expect.objectContaining({ id: "thread.rename", mode: "ask" }),
+        ]),
+      }),
+    );
+    expect(toolRegistry.offered({ id: space.id, orgId: ada.orgId })).toEqual([]);
+    expect(toolRegistry.offered({ id: elsewhere.id, orgId: ada.orgId }).length).toBeGreaterThan(0);
+    expect((await setOrg(false)).status).toBe(200);
+    expect((await setSpace(true)).status).toBe(409);
+    expect(toolRegistry.definitions({ id: elsewhere.id, orgId: ada.orgId })).toEqual([]);
+    const changeWhileOff = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
+      toolIds: ["thread.rename"],
+      mode: "review",
+    });
+    expect(changeWhileOff.status).toBe(200);
+    expect((await setOrg(true)).status).toBe(200);
+    expect(toolRegistry.offered({ id: space.id, orgId: ada.orgId })).toEqual([]);
+    expect((await setSpace(true)).status).toBe(200);
+    const restored = await api("GET", `/spaces/${space.id}/tools`, ada.cookie);
+    expect(await restored.json()).toContainEqual(
+      expect.objectContaining({
+        id: "thread",
+        enabled: true,
+        tools: expect.arrayContaining([
+          expect.objectContaining({ id: "thread.rename", orgMode: "ask", mode: "review" }),
+        ]),
+      }),
+    );
   });
 });
 

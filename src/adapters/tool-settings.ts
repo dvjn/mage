@@ -6,10 +6,49 @@ import { eq } from "drizzle-orm";
 import type { ToolSettingStore } from "@/ports/tools.ts";
 
 import type { Db } from "./db.ts";
-import { orgToolSetting, spaceToolSetting } from "./schema.ts";
+import {
+  orgToolSetting,
+  spaceToolSetting,
+  orgToolsetSetting,
+  spaceToolsetSetting,
+} from "./schema.ts";
 
 export function createToolSettingStore(db: Db): ToolSettingStore {
   return {
+    toolsetsInOrg(orgId) {
+      const rows = db
+        .select()
+        .from(orgToolsetSetting)
+        .where(eq(orgToolsetSetting.organizationId, orgId))
+        .all();
+      return new Map(rows.map((row) => [row.toolsetId, row.enabled]));
+    },
+    setToolsetInOrg(orgId, toolsetId, enabled) {
+      db.insert(orgToolsetSetting)
+        .values({ organizationId: orgId, toolsetId, enabled })
+        .onConflictDoUpdate({
+          target: [orgToolsetSetting.organizationId, orgToolsetSetting.toolsetId],
+          set: { enabled },
+        })
+        .run();
+    },
+    toolsetsInSpace(spaceId) {
+      const rows = db
+        .select()
+        .from(spaceToolsetSetting)
+        .where(eq(spaceToolsetSetting.spaceId, spaceId))
+        .all();
+      return new Map(rows.map((row) => [row.toolsetId, row.enabled]));
+    },
+    setToolsetInSpace(spaceId, toolsetId, enabled) {
+      db.insert(spaceToolsetSetting)
+        .values({ spaceId, toolsetId, enabled })
+        .onConflictDoUpdate({
+          target: [spaceToolsetSetting.spaceId, spaceToolsetSetting.toolsetId],
+          set: { enabled },
+        })
+        .run();
+    },
     inOrg(orgId) {
       const rows = db
         .select({ toolId: orgToolSetting.toolId, mode: orgToolSetting.mode })

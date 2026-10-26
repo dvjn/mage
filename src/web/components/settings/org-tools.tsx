@@ -21,8 +21,8 @@ export function OrgTools() {
         title="Tools"
         description={
           canManage
-            ? "The tools the agent can use, and whether each runs, asks first, or is off. Spaces can only make these stricter."
-            : "The tools the agent can use, and whether each runs, asks first, or is off. Only the organization's owners change this."
+            ? "The tools the agent can use, and whether each runs, asks first, needs independent review, or is off. Spaces can only make these stricter."
+            : "The tools the agent can use, and whether each runs, asks first, needs independent review, or is off. Only the organization's owners change this."
         }
       />
       <OrgToolsList

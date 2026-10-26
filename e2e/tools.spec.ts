@@ -259,7 +259,9 @@ test("a space can only make a tool stricter than its org, and remembers the tool
   const thread = page.getByRole("region", { name: "Thread" });
   await expect(thread).toContainText("4 tools");
   const toolset = thread.getByRole("button", { name: /^Thread 4 tools/ });
-  await expect(toolset).toContainText("3 allowed, 1 needs approval, 0 blocked");
+  await expect(toolset).toContainText(
+    "3 allowed, 1 needs approval, 0 need independent review, 0 blocked",
+  );
   const move = page.getByRole("listitem", { name: "Move thread" });
   await expect(move.getByRole("button", { name: "Always allow" })).toBeDisabled();
   await expect(move.getByRole("img", { name: "Set by the organization" })).toBeVisible();
@@ -276,7 +278,7 @@ test("a space can only make a tool stricter than its org, and remembers the tool
   // The groups are plain headings: only the toolset opens and closes.
   await expect(thread.getByRole("button", { name: /^(Read-only|Interactive)/i })).toHaveCount(0);
   // Its tools differ, so no icon of the group is pressed.
-  for (const name of ["Allow all", "Ask for all", "Block all"]) {
+  for (const name of ["Allow all", "Ask for all", "Review all independently", "Block all"]) {
     await expect(interactive.getByRole("button", { name })).toHaveAttribute(
       "aria-pressed",
       "false",
@@ -296,13 +298,89 @@ test("a space can only make a tool stricter than its org, and remembers the tool
     "aria-pressed",
     "true",
   );
-  await expect(toolset).toContainText("1 allowed, 0 need approval, 3 blocked");
+  await expect(toolset).toContainText(
+    "1 allowed, 0 need approval, 0 need independent review, 3 blocked",
+  );
 
   await toolset.click();
   await expect(move).toBeHidden();
   await page.reload();
   await expect(page.getByRole("region", { name: "Thread" })).toContainText("4 tools");
   await expect(page.getByRole("listitem", { name: "Move thread" })).toBeHidden();
+});
+
+test("a permission group requires an independent reviewer", async ({ page, browser }, testInfo) => {
+  const adaEmail = await signUp(page, "Ada Lovelace");
+  const spaceId = spaceIdOf(page);
+  await page.goto(`/s/${spaceId}/settings/tools`);
+  const group = page.getByRole("group", { name: "Interactive tools", exact: true });
+  await group.getByRole("button", { name: "Review all independently" }).click();
+  await expect(group.getByRole("button", { name: "Review all independently" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(
+    page
+      .getByRole("listitem", { name: "Rename thread" })
+      .getByRole("button", { name: "Require independent review" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await page.goto(`/s/${spaceId}`);
+  await startThread(page, '/tool thread.rename {"title":"Reviewed"}');
+  await expect(card(page)).toContainText("Needs review");
+  await expect(card(page).getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
+  await expect(card(page).getByRole("button", { name: "Allow for now" })).toHaveCount(0);
+  const reviewer = await someoneElse(browser, testInfo.parallelIndex);
+  joinSpaceOf(adaEmail, await signUp(reviewer, "Grace Hopper"), "messager");
+  await reviewer.goto(page.url());
+  await expect(card(reviewer).getByRole("button", { name: "Allow", exact: true })).toBeEnabled();
+  await card(reviewer).getByRole("button", { name: "Allow", exact: true }).click();
+  await expect(line(page, /^Rename thread · Ran · allowed by Grace Hopper/)).toBeVisible();
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Reviewed");
+});
+
+test("built-in toolset switches preserve permissions and obey the org switch", async ({ page }) => {
+  await signUp(page, "Ada Lovelace");
+  const spaceId = spaceIdOf(page);
+  await setInSpace(page, spaceId, "Rename thread", "Needs approval");
+  await page.goto(`/s/${spaceId}/settings/tools`);
+  const local = page.getByRole("switch", { name: "Thread: on in this space" });
+  await expect(local).toBeChecked();
+  await local.click();
+  await expect(local).not.toBeChecked();
+  await page.reload();
+  await expect(local).not.toBeChecked();
+  const rename = page.getByRole("listitem", { name: "Rename thread" });
+  await expect(rename.getByRole("button", { name: "Needs approval" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await rename.getByRole("button", { name: "Require independent review" }).click();
+  await expect(rename.getByRole("button", { name: "Require independent review" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.goto(`/s/${spaceId}`);
+  await startThread(page, '/tool thread.rename {"title":"Unavailable"}');
+  await expect(replies(page).last()).toContainText("I cannot use thread.rename here.");
+  await page.goto("/org/tools");
+  const global = page.getByRole("switch", { name: "Thread: on", exact: true });
+  await global.click();
+  await expect(global).not.toBeChecked();
+  await page.goto(`/s/${spaceId}/settings/tools`);
+  await expect(local).not.toBeChecked();
+  await expect(local).toBeDisabled();
+  await page.goto("/org/tools");
+  await global.click();
+  await expect(global).toBeChecked();
+  await page.goto(`/s/${spaceId}/settings/tools`);
+  await expect(local).not.toBeChecked();
+  await expect(local).toBeEnabled();
+  await local.click();
+  await expect(local).toBeChecked();
+  await expect(rename.getByRole("button", { name: "Require independent review" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 });
 
 test("tools have their own settings page in the org and in a space", async ({ page }) => {

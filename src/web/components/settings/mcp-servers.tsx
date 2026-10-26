@@ -1143,10 +1143,10 @@ function ServerDetail({
         title="Tools"
         description={
           scope.kind === "org"
-            ? "Whether each runs, asks first, or is off. Spaces can only make these stricter."
+            ? "Whether each runs, asks first, needs independent review, or is off. Spaces can only make these stricter."
             : orgsInSpace
-              ? "Whether each runs, asks first, or is off in this space; only stricter than the organization has it."
-              : "Whether each runs, asks first, or is off in this space."
+              ? "Whether each runs, asks first, needs independent review, or is off in this space; only stricter than the organization has it."
+              : "Whether each runs, asks first, needs independent review, or is off in this space."
         }
         state={tools.tools}
       >

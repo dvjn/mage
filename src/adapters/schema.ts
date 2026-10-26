@@ -387,7 +387,7 @@ export const orgToolSetting = sqliteTable(
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
     toolId: text("tool_id").notNull(),
-    mode: text("mode", { enum: ["block", "ask", "allow"] }).notNull(),
+    mode: text("mode", { enum: ["block", "review", "ask", "allow"] }).notNull(),
   },
   (table) => [primaryKey({ columns: [table.organizationId, table.toolId] })],
 );
@@ -400,9 +400,33 @@ export const spaceToolSetting = sqliteTable(
       .notNull()
       .references(() => space.id, { onDelete: "cascade" }),
     toolId: text("tool_id").notNull(),
-    mode: text("mode", { enum: ["block", "ask", "allow"] }).notNull(),
+    mode: text("mode", { enum: ["block", "review", "ask", "allow"] }).notNull(),
   },
   (table) => [primaryKey({ columns: [table.spaceId, table.toolId] })],
+);
+
+export const orgToolsetSetting = sqliteTable(
+  "org_toolset_setting",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    toolsetId: text("toolset_id").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.organizationId, table.toolsetId] })],
+);
+
+export const spaceToolsetSetting = sqliteTable(
+  "space_toolset_setting",
+  {
+    spaceId: text("space_id")
+      .notNull()
+      .references(() => space.id, { onDelete: "cascade" }),
+    toolsetId: text("toolset_id").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.spaceId, table.toolsetId] })],
 );
 
 // A person's or a group's role in a space.

@@ -81,7 +81,7 @@ export interface ThreadsOptions {
   // Names threads after their first message, when given.
   titles?: Pick<Titles, "name">;
   // The agent's tools, for each reader's level for them.
-  tools: Pick<Tools, "ids" | "levelFor" | "definitions">;
+  tools: Pick<Tools, "ids" | "levelFor" | "canDecide" | "definitions">;
   now?: () => Date;
 }
 
@@ -185,7 +185,10 @@ export function createThreads(options: ThreadsOptions) {
         since: call?.kind === "tool" ? call.requestedAt : since,
         ...(toolId && { toolId }),
       },
-      canApprove: !!toolId && !!space && tools.levelFor(userId, thread, space) === "run",
+      canApprove:
+        call?.kind === "tool" &&
+        !!space &&
+        tools.canDecide(userId, call, transcript.rows, thread, space),
     };
   }
 

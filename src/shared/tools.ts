@@ -28,9 +28,9 @@ export const toolLevelSchema = z.enum(["run", "approve"]);
 
 export type ToolLevel = z.infer<typeof toolLevelSchema>;
 
-// How a tool is set: allowed, so anyone who can message runs it without asking; asking each time,
-// so every call waits for someone who can message; or blocked, so it is off. Strictest first.
-export const toolModeSchema = z.enum(["block", "ask", "allow"]);
+// A tool can run, ask each time, require a runner outside the conversation, or be blocked.
+// Strictest first; a space may only tighten the organization's mode.
+export const toolModeSchema = z.enum(["block", "review", "ask", "allow"]);
 
 export type ToolMode = z.infer<typeof toolModeSchema>;
 
@@ -63,6 +63,9 @@ export const toolsetSettingSchema = z.object({
   title: z.string(),
   source: toolsetSourceSchema,
   scope: z.enum(["org", "space"]),
+  // Built-in toolset switches; MCP servers expose their switches through server settings.
+  enabled: z.boolean().optional(),
+  orgEnabled: z.boolean().optional(),
   tools: z.array(toolSettingSchema),
 });
 
@@ -77,3 +80,5 @@ export const toolModeChangeSchema = z.object({
 });
 
 export type ToolModeChange = z.infer<typeof toolModeChangeSchema>;
+
+export const toolsetEnabledChangeSchema = z.object({ enabled: z.boolean() });

@@ -345,7 +345,13 @@ function ToolCard({
     );
     if (decide) return action;
     return (
-      <WithTooltip label={ONLY_RUNNERS}>
+      <WithTooltip
+        label={
+          row.risk === "review"
+            ? "Only someone who can run this and has not contributed to the conversation can review it"
+            : ONLY_RUNNERS
+        }
+      >
         {/* A disabled control takes no pointer, so its wrapper holds the tooltip. */}
         <span className="inline-flex w-full sm:w-auto" tabIndex={0}>
           {action}
@@ -385,6 +391,11 @@ function ToolCard({
         <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
           <ToolInput value={row.input} schema={definition?.inputSchema} />
         </div>
+        {row.risk === "review" && (
+          <p className="text-xs text-muted-foreground">
+            Waiting for review by someone who has not contributed to this conversation.
+          </p>
+        )}
         <ConfirmationRequest>
           <ConfirmationActions className="w-full flex-col items-stretch self-stretch sm:flex-row sm:items-center sm:justify-start">
             {button("Allow", true, "once", "default")}

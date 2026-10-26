@@ -92,7 +92,7 @@ import {
   toolDecisionSchema,
 } from "@/shared/threads.ts";
 import { spaceThreadPageQuerySchema, threadPageQuerySchema } from "@/shared/thread-status.ts";
-import { toolModeChangeSchema } from "@/shared/tools.ts";
+import { toolModeChangeSchema, toolsetEnabledChangeSchema } from "@/shared/tools.ts";
 
 export interface AppOptions {
   // Answers every request under /api/auth.
@@ -282,8 +282,9 @@ function mcpServerPage(server: Pick<McpServerSummary, "id" | "spaceId"> | null) 
 
 const toolModeChange = jsonBody(
   toolModeChangeSchema,
-  "Give toolIds and a mode of allow, ask or block",
+  "Give toolIds and a mode of allow, ask, review or block",
 );
+const toolsetEnabledChange = jsonBody(toolsetEnabledChangeSchema, "enabled is true or false");
 const newInvite = jsonBody(newInviteSchema, "accessFor is 1h, 1d, 7d or never");
 const acceptInvite = jsonBody(acceptInviteSchema, "token is required");
 const orgName = jsonBody(orgNameSchema, "A name of 1 to 80 characters is required");
@@ -906,6 +907,21 @@ function createApi(options: AppOptions) {
       .patch("/v1/spaces/:id/tools", toolModeChange, (c) => {
         const principal = signedIn(c.var.principal);
         tools.setSpaceTools(principal, c.req.param("id"), c.req.valid("json"));
+        return c.json(tools.spaceTools(principal, c.req.param("id")), 200);
+      })
+      .put("/v1/org/toolsets/:toolsetId", toolsetEnabledChange, (c) => {
+        const principal = signedIn(c.var.principal);
+        tools.setOrgToolset(principal, c.req.param("toolsetId"), c.req.valid("json").enabled);
+        return c.json(tools.orgTools(principal), 200);
+      })
+      .put("/v1/spaces/:id/toolsets/:toolsetId", toolsetEnabledChange, (c) => {
+        const principal = signedIn(c.var.principal);
+        tools.setSpaceToolset(
+          principal,
+          c.req.param("id"),
+          c.req.param("toolsetId"),
+          c.req.valid("json").enabled,
+        );
         return c.json(tools.spaceTools(principal, c.req.param("id")), 200);
       })
       .get("/v1/org/mcp-servers", (c) => {

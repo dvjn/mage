@@ -586,10 +586,10 @@ export function createRunWorker(options: RunWorkerOptions) {
         const parsed = spec?.input.safeParse(call.input);
         let allowed = false;
         if (spec && parsed?.success) {
+          const risk = tools.riskOf(space, spec, parsed.data, execution.ref);
           if (call.state === "allowed") {
-            allowed = tools.approvalHolds(call, rows, thread, space);
+            allowed = tools.approvalHolds(call, rows, thread, space, risk);
           } else {
-            const risk = tools.riskOf(space, spec, parsed.data, execution.ref);
             allowed = tools.decide(rows, thread, space, call.toolId, risk) !== "wait";
             if (!allowed && call.waits) {
               waiting = true;

@@ -20,7 +20,7 @@ import {
   threadSchema,
   type ToolScope,
 } from "@/shared/threads.ts";
-import { agentTurnOf, transcriptOf } from "@/shared/transcript.ts";
+import { agentTurnOf, independentReviewer, transcriptOf } from "@/shared/transcript.ts";
 import {
   Conversation,
   ConversationContent,
@@ -268,7 +268,9 @@ export function ThreadPage() {
                   ...(row === retryable && { retry: () => void retry(retryable.runId) }),
                   ...(!guest && { pickModel: () => setPicking(true) }),
                   ...(row.kind === "tool" &&
-                    detail.data?.levels[row.toolId] === "run" && {
+                    detail.data?.levels[row.toolId] === "run" &&
+                    (row.risk !== "review" ||
+                      independentReviewer(transcript.rows, me.data?.user.id ?? "")) && {
                       decide: (allow: boolean, scope: ToolScope) => decide(row.id, allow, scope),
                     }),
                 }}

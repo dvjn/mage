@@ -306,7 +306,7 @@ export function SpaceTools() {
     <>
       <SettingsTitle
         title="Tools"
-        description="The tools the agent can use in this space, and whether each runs, asks first, or is off. The organization sets the loosest each can be, but for the space's own servers."
+        description="The tools the agent can use in this space, and whether each runs, asks first, needs independent review, or is off. The organization sets the loosest each can be, but for the space's own servers."
       />
       <SpaceToolsList
         spaceId={space.id}

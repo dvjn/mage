@@ -75,4 +75,8 @@ export interface ToolSettingStore {
   setInOrg(orgId: string, toolIds: readonly string[], mode: ToolMode): void;
   inSpace(spaceId: string): Map<string, ToolMode>;
   setInSpace(spaceId: string, toolIds: readonly string[], mode: ToolMode): void;
+  toolsetsInOrg(orgId: string): Map<string, boolean>;
+  setToolsetInOrg(orgId: string, toolsetId: string, enabled: boolean): void;
+  toolsetsInSpace(spaceId: string): Map<string, boolean>;
+  setToolsetInSpace(spaceId: string, toolsetId: string, enabled: boolean): void;
 }

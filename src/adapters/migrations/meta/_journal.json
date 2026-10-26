@@ -211,6 +211,13 @@
       "when": 1792933178564,
       "tag": "0029_mcp_server_switches",
       "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1793000163106,
+      "tag": "0030_builtin_toolset_switches",
+      "breakpoints": true
     }
   ]
 }

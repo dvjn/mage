@@ -1,7 +1,7 @@
 // The agent's tools in settings, a card for each source of toolsets (built in, MCP servers) and in
-// it one collapsible row per toolset with how many of its tools are allowed, ask or are blocked.
+// it one collapsible row per toolset with counts of its tools' modes and a built-in on/off switch.
 // Inside, its tools are split under plain read-only and interactive headings. Each heading's icons
-// set all its tools at once; each tool is allowed, asks every time, or is blocked. For the org,
+// set all its tools at once; each tool runs, asks, requires independent review, or is blocked. For the org,
 // only its owners change them; for a space, a tool can only be made stricter than the org has it,
 // but for the space's own toolsets. Which toolsets are open is remembered in this browser for the
 // signed-in person. The toolsets an MCP server card shows are handed to it as they are read.
@@ -15,6 +15,7 @@ import {
   HandIcon,
   LockIcon,
   SearchIcon,
+  ShieldCheckIcon,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
@@ -36,6 +37,7 @@ import { FieldError } from "@/web/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
 import { Popover, PopoverContent, PopoverTrigger } from "@/web/components/ui/popover";
 import { ToggleGroup, ToggleGroupItem } from "@/web/components/ui/toggle-group";
+import { Switch } from "@/web/components/ui/switch";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
@@ -73,6 +75,15 @@ const MODES: {
     all: "Ask for all",
     counted: (count) => `${count} ${count === 1 ? "needs" : "need"} approval`,
     icon: <HandIcon />,
+    tone: "aria-pressed:text-tool-ask",
+    color: "text-tool-ask",
+  },
+  {
+    value: "review",
+    label: "Require independent review",
+    all: "Review all independently",
+    counted: (count) => `${count} ${count === 1 ? "needs" : "need"} independent review`,
+    icon: <ShieldCheckIcon />,
     tone: "aria-pressed:text-tool-ask",
     color: "text-tool-ask",
   },
@@ -146,9 +157,10 @@ interface ToolsProps {
   scope: "org" | "space";
   canChange: boolean;
   onChange: Change;
+  onSwitch?: (toolsetId: string, enabled: boolean) => void;
 }
 
-function Toolsets({ toolsets, scope, canChange, onChange }: ToolsProps) {
+function Toolsets({ toolsets, scope, canChange, onChange, onSwitch }: ToolsProps) {
   const sections = useOpenSections(scope);
   // A card only for a source that has toolsets.
   const sources = (Object.keys(SOURCES) as ToolsetSetting["source"][])
@@ -166,6 +178,7 @@ function Toolsets({ toolsets, scope, canChange, onChange }: ToolsProps) {
             scope={scope}
             canChange={canChange}
             onChange={onChange}
+            onSwitch={onSwitch}
           />
         ))}
       </div>
@@ -207,6 +220,7 @@ function ToolsetSection({
   scope,
   canChange,
   onChange,
+  onSwitch,
 }: {
   toolset: ToolsetSetting;
   open: boolean;
@@ -219,21 +233,39 @@ function ToolsetSection({
       onOpenChange={onOpenChange}
       render={<section aria-label={toolset.title} />}
     >
-      <h2>
-        <CollapsibleTrigger className="group/trigger flex w-full items-start gap-2 py-3 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
-          <span className="flex h-6 shrink-0 items-center">
-            <ChevronRightIcon className="size-4 text-muted-foreground transition-transform group-data-[panel-open]/trigger:rotate-90" />
-          </span>
-          {/* On a phone the counts go under the title. */}
-          <span className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
-            <span className="truncate text-base leading-6 font-semibold">{toolset.title}</span>
-            <span className="flex items-center gap-3 text-xs text-muted-foreground sm:ml-auto">
-              {count === 1 ? "1 tool" : `${count} tools`}
-              <ModeCounts tools={toolset.tools} />
+      <div className="flex items-center gap-3">
+        <h2 className="min-w-0 flex-1">
+          <CollapsibleTrigger className="group/trigger flex w-full items-start gap-2 py-3 text-left outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50">
+            <span className="flex h-6 shrink-0 items-center">
+              <ChevronRightIcon className="size-4 text-muted-foreground transition-transform group-data-[panel-open]/trigger:rotate-90" />
             </span>
-          </span>
-        </CollapsibleTrigger>
-      </h2>
+            {/* On a phone the counts go under the title. */}
+            <span className="flex min-w-0 flex-1 flex-col gap-1 sm:flex-row sm:items-center sm:gap-2">
+              <span className="truncate text-base leading-6 font-semibold">{toolset.title}</span>
+              <span className="flex items-center gap-3 text-xs text-muted-foreground sm:ml-auto">
+                {count === 1 ? "1 tool" : `${count} tools`}
+                <ModeCounts tools={toolset.tools} />
+              </span>
+            </span>
+          </CollapsibleTrigger>
+        </h2>
+        {onSwitch && toolset.source === "builtin" && (
+          <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+            {toolset.orgEnabled === false
+              ? "Off by organization"
+              : (toolset.enabled ?? true)
+                ? "On"
+                : "Off"}
+            <Switch
+              size="sm"
+              aria-label={`${toolset.title}: ${scope === "space" ? "on in this space" : "on"}`}
+              checked={toolset.enabled ?? true}
+              disabled={!canChange || (scope === "space" && toolset.orgEnabled === false)}
+              onCheckedChange={(enabled) => onSwitch(toolset.id, enabled)}
+            />
+          </label>
+        )}
+      </div>
       <CollapsibleContent className="mb-3 ml-[7px] border-l-2 pl-3 sm:pl-[15px]">
         <ToolsetTools toolset={toolset} scope={scope} canChange={canChange} onChange={onChange} />
       </CollapsibleContent>
@@ -526,10 +558,25 @@ export function useOrgTools() {
     await queryClient.invalidateQueries({ queryKey: ["spaces"] });
   }
 
+  async function setEnabled(toolsetId: string, enabled: boolean) {
+    setError(undefined);
+    const res = await apiClient.v1.org.toolsets[":toolsetId"].$put({
+      param: { toolsetId },
+      json: { enabled },
+    });
+    if (!res.ok) {
+      setError(await errorOf(res));
+      return;
+    }
+    queryClient.setQueryData(orgToolsKey, toolsetSettingListSchema.parse(await res.json()));
+    await queryClient.invalidateQueries({ queryKey: ["spaces"] });
+  }
+
   return {
     tools,
     error,
     change: (toolIds: string[], mode: ToolMode) => void change(toolIds, mode),
+    setEnabled: (toolsetId: string, enabled: boolean) => void setEnabled(toolsetId, enabled),
   };
 }
 
@@ -562,10 +609,28 @@ export function useSpaceTools(spaceId: string) {
     );
   }
 
+  async function setEnabled(toolsetId: string, enabled: boolean) {
+    setError(undefined);
+    const res = await apiClient.v1.spaces[":id"].toolsets[":toolsetId"].$put({
+      param: { id: spaceId, toolsetId },
+      json: { enabled },
+    });
+    if (!res.ok) {
+      setError(await errorOf(res));
+      return;
+    }
+    queryClient.setQueryData(
+      spaceToolsKey(spaceId),
+      toolsetSettingListSchema.parse(await res.json()),
+    );
+    await queryClient.invalidateQueries({ queryKey: ["spaces"] });
+  }
+
   return {
     tools,
     error,
     change: (toolIds: string[], mode: ToolMode) => void change(toolIds, mode),
+    setEnabled: (toolsetId: string, enabled: boolean) => void setEnabled(toolsetId, enabled),
   };
 }
 
@@ -577,7 +642,7 @@ export function OrgToolsList({
   canManage: boolean;
   mcp: (toolsets: ToolsetSetting[]) => ReactNode;
 }) {
-  const { tools, error, change } = useOrgTools();
+  const { tools, error, change, setEnabled } = useOrgTools();
   return (
     <ToolsetsState state={tools} error={error}>
       {tools.data && (
@@ -587,6 +652,7 @@ export function OrgToolsList({
             scope="org"
             canChange={canManage}
             onChange={change}
+            onSwitch={setEnabled}
           />
           {mcp(tools.data.filter((toolset) => toolset.source === "mcp"))}
         </>
@@ -604,7 +670,7 @@ export function SpaceToolsList({
   spaceId: string;
   mcp: (toolsets: ToolsetSetting[]) => ReactNode;
 }) {
-  const { tools, error, change } = useSpaceTools(spaceId);
+  const { tools, error, change, setEnabled } = useSpaceTools(spaceId);
   return (
     <ToolsetsState state={tools} error={error}>
       {tools.data && (
@@ -616,6 +682,7 @@ export function SpaceToolsList({
             scope="space"
             canChange
             onChange={change}
+            onSwitch={setEnabled}
           />
           {mcp(tools.data.filter((toolset) => toolset.source === "mcp"))}
         </>
