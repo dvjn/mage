@@ -54,7 +54,6 @@ export function spaceToolsKey(spaceId: string) {
 const MODES: {
   value: ToolMode;
   label: string;
-  all: string;
   counted: (count: number) => string;
   icon: ReactNode;
   tone: string;
@@ -62,8 +61,7 @@ const MODES: {
 }[] = [
   {
     value: "allow",
-    label: "Always allow",
-    all: "Allow all",
+    label: "Allow",
     counted: (count) => `${count} allowed`,
     icon: <CircleCheckIcon />,
     tone: "aria-pressed:text-foreground",
@@ -71,8 +69,7 @@ const MODES: {
   },
   {
     value: "ask",
-    label: "Needs approval",
-    all: "Ask for all",
+    label: "Ask",
     counted: (count) => `${count} ${count === 1 ? "needs" : "need"} approval`,
     icon: <HandIcon />,
     tone: "aria-pressed:text-tool-ask",
@@ -80,8 +77,7 @@ const MODES: {
   },
   {
     value: "review",
-    label: "Require independent review",
-    all: "Review all independently",
+    label: "Independent review",
     counted: (count) => `${count} ${count === 1 ? "needs" : "need"} independent review`,
     icon: <ShieldCheckIcon />,
     tone: "aria-pressed:text-tool-ask",
@@ -89,8 +85,7 @@ const MODES: {
   },
   {
     value: "block",
-    label: "Blocked",
-    all: "Block all",
+    label: "Block",
     counted: (count) => `${count} blocked`,
     icon: <BanIcon />,
     tone: "aria-pressed:text-destructive",
@@ -370,7 +365,7 @@ function ToolGroup({
           label={`${name}: when the agent may use them`}
           value={value}
           canChange={canChange}
-          labelOf={(mode) => mode.all}
+          labelOf={(mode) => mode.label}
           setByOrg={unavailable}
           onChange={(mode) =>
             onChange(

@@ -81,11 +81,8 @@ test("an org's header-authorized MCP server lists its tools, and a call that ask
     "Echo",
   );
   const row = page.getByRole("listitem", { name: "Add note" });
-  await row.getByRole("button", { name: "Needs approval" }).click();
-  await expect(row.getByRole("button", { name: "Needs approval" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await row.getByRole("button", { name: "Ask" }).click();
+  await expect(row.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "true");
 
   await page.goto("/org/tools");
   await expect(page.getByRole("listitem", { name: "Notes" })).toContainText("3 tools");
@@ -210,11 +207,8 @@ test("an MCP server's headers and address are changed in the form it was added w
   await expect(dialog).toBeHidden();
   await expect(page.getByText("Connected").first()).toBeVisible();
   const row = page.getByRole("listitem", { name: "Add note" });
-  await row.getByRole("button", { name: "Needs approval" }).click();
-  await expect(row.getByRole("button", { name: "Needs approval" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await row.getByRole("button", { name: "Ask" }).click();
+  await expect(row.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "true");
 
   // Moved to the open server, given by its address alone, which answers at /mcp.
   await page.getByRole("button", { name: "Edit", exact: true }).click();
@@ -224,10 +218,7 @@ test("an MCP server's headers and address are changed in the form it was added w
   await expect(dialog).toBeHidden();
   await expect(page.getByText(`${mcpServer}/mcp`, { exact: true })).toBeVisible();
   await expect(page.getByText("Connected").first()).toBeVisible();
-  await expect(row.getByRole("button", { name: "Needs approval" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(row.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "true");
 });
 
 test("a space turns one of the org's MCP servers off for itself alone", async ({ page }) => {
@@ -252,26 +243,23 @@ test("a space turns one of the org's MCP servers off for itself alone", async ({
   await expect(page.getByText("Managed by the organization")).toBeVisible();
   await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
   const tool = page.getByRole("listitem", { name: "Add note" });
-  await tool.getByRole("button", { name: "Needs approval" }).click();
-  await expect(tool.getByRole("button", { name: "Needs approval" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await tool.getByRole("button", { name: "Ask" }).click();
+  await expect(tool.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "true");
   const inSpace = page.getByRole("switch", { name: "On in this space" });
   await expect(inSpace).toBeChecked();
   await inSpace.click();
   await expect(inSpace).not.toBeChecked();
   await expect(page.getByText("Off in this space", { exact: true })).toBeVisible();
   // Permissions remain editable before the server is turned back on.
-  await tool.getByRole("button", { name: "Blocked", exact: true }).click();
-  await expect(tool.getByRole("button", { name: "Blocked", exact: true })).toHaveAttribute(
+  await tool.getByRole("button", { name: "Block", exact: true }).click();
+  await expect(tool.getByRole("button", { name: "Block", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
   await inSpace.click();
   await expect(inSpace).toBeChecked();
   await page.reload();
-  await expect(tool.getByRole("button", { name: "Blocked", exact: true })).toHaveAttribute(
+  await expect(tool.getByRole("button", { name: "Block", exact: true })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
@@ -290,7 +278,7 @@ test("a space turns one of the org's MCP servers off for itself alone", async ({
   await expect(
     page
       .getByRole("listitem", { name: "Add note" })
-      .getByRole("button", { name: "Always allow", exact: true }),
+      .getByRole("button", { name: "Allow", exact: true }),
   ).toHaveAttribute("aria-pressed", "true");
 
   // A failed read must not invent an enabled space switch.
