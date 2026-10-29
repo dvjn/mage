@@ -1,15 +1,21 @@
 // Tools the agent can call, each with its definition (what people and the model read about it, the
 // input it takes and what it gives back), how much a call can do, and running it; the toolsets they
-// come in; and the mode orgs and spaces set for each. A tool's id names where it comes from:
+// come in; the access policies orgs and spaces keep; and the policy each sets for each tool. A tool's id names where it comes from:
 // `thread.rename` for Mage's own, `mcp:<server>/<tool>` for an MCP server's, later `skill:<name>`.
 
 import type * as z from "zod";
 
 import type { NewEvent } from "@/ports/threads.ts";
 import type { ToolRisk } from "@/shared/threads.ts";
-import type { JsonSchema, ToolLevel, ToolMode, ToolsetSource } from "@/shared/tools.ts";
+import type {
+  JsonSchema,
+  PolicyColor,
+  PolicyUse,
+  ToolLevel,
+  ToolsetSource,
+} from "@/shared/tools.ts";
 
-export type { ToolLevel, ToolMode };
+export type { ToolLevel };
 
 export type ToolOutput = { ok: true; value: unknown } | { ok: false; error: string };
 
@@ -67,16 +73,48 @@ export interface ScopedToolsets {
   forSpaceSettings(space: { id: string; orgId: string }): Toolset[];
 }
 
-// The modes an org or a space set, by tool, for the tools it set. A tool the org did not set is
-// allowed; one the space did not set has the org's mode. Later a row may also say whose
-// credentials a tool's calls must go with.
+// What an org or a space set each tool to, for the tools it set: a policy's id, or "off". A tool
+// the org did not set is open to everyone; one a space did not set adds no rule of its own.
 export interface ToolSettingStore {
-  inOrg(orgId: string): Map<string, ToolMode>;
-  setInOrg(orgId: string, toolIds: readonly string[], mode: ToolMode): void;
-  inSpace(spaceId: string): Map<string, ToolMode>;
-  setInSpace(spaceId: string, toolIds: readonly string[], mode: ToolMode): void;
+  inOrg(orgId: string): Map<string, string>;
+  // Sets the tools to the policy or off, or with null takes back what was set.
+  setInOrg(orgId: string, toolIds: readonly string[], assignment: string | null): void;
+  inSpace(spaceId: string): Map<string, string>;
+  setInSpace(spaceId: string, toolIds: readonly string[], assignment: string | null): void;
+  // Every tool set to a policy in the org or in any of its spaces.
+  policyUses(orgId: string): { spaceId: string | null; toolId: string; policyId: string }[];
   toolsetsInOrg(orgId: string): Map<string, boolean>;
   setToolsetInOrg(orgId: string, toolsetId: string, enabled: boolean): void;
   toolsetsInSpace(spaceId: string): Map<string, boolean>;
   setToolsetInSpace(spaceId: string, toolsetId: string, enabled: boolean): void;
+}
+
+// A reusable access rule: who can use its tools without approval, and who approves everyone else.
+// The org's are usable in every space; a space's only there. People and groups are kept by key.
+export interface ToolPolicyRecord {
+  id: string;
+  orgId: string;
+  spaceId: string | null;
+  name: string;
+  color: PolicyColor;
+  use: PolicyUse;
+  users: string[];
+  approvers: string[];
+  independent: boolean;
+  createdAt: Date;
+}
+
+export type ToolPolicyFields = Pick<
+  ToolPolicyRecord,
+  "name" | "color" | "use" | "users" | "approvers" | "independent"
+>;
+
+export interface ToolPolicyStore {
+  // The org's policies and those of its spaces, oldest first.
+  inOrg(orgId: string): ToolPolicyRecord[];
+  find(id: string): ToolPolicyRecord | null;
+  create(policy: Pick<ToolPolicyRecord, "orgId" | "spaceId"> & ToolPolicyFields): ToolPolicyRecord;
+  update(id: string, fields: ToolPolicyFields): void;
+  // Deletes the policy, and anything still set to it.
+  delete(id: string): void;
 }

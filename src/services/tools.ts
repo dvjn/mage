@@ -1,12 +1,14 @@
-// The agent's tools in each thread: which ones its space offers, each person's level for them, and
-// whether a call runs now, runs on a standing approval or waits; people's decisions on calls that
-// wait; and the mode orgs and spaces set for each tool. Mage's own tools and the toolsets an org
-// adds are in every space of the org; a space may add toolsets of its own. An org allows a tool,
-// has it ask each time, or blocks it, for all its spaces; a space can only make that stricter for
-// itself, and sets its own toolsets' tools as it likes.
+// The agent's tools in each thread: which ones its space offers, who may use each directly and who
+// may approve a call, and whether a call runs now, runs on a standing approval or waits; people's
+// decisions on calls that wait; and the policies orgs and spaces set for each tool. Mage's own
+// tools and the toolsets an org adds are in every space of the org; a space may add toolsets of
+// its own. An org sets each of its tools to a policy or off, for all its spaces; a space adds an
+// extra rule of its own on top, or turns a tool off there, and sets its own toolsets' tools as it
+// likes.
 
 import * as z from "zod";
 
+import type { Directory } from "@/ports/directory.ts";
 import type { EventBus } from "@/ports/event-bus.ts";
 import type { Principal } from "@/ports/identity.ts";
 import type { ModelTool } from "@/ports/model-gateway.ts";
@@ -17,7 +19,8 @@ import type {
   AnyToolSpec,
   ScopedToolsets,
   ToolLevel,
-  ToolMode,
+  ToolPolicyRecord,
+  ToolPolicyStore,
   ToolSettingStore,
   Toolset,
 } from "@/ports/tools.ts";
@@ -27,24 +30,28 @@ import type { ThreadAccess } from "@/services/thread-access.ts";
 import { eventSummary, type ThreadLog } from "@/services/thread-log.ts";
 import {
   type Approval,
+  canUse,
   decide,
-  holds,
+  holdsOnce,
   type Influence,
+  latestAuthor,
   levelOf,
+  mayApprove,
+  NOBODY,
+  OPEN,
+  type Person,
+  personOf,
+  type Rule,
+  riskOf as riskUnder,
 } from "@/services/tool-authority.ts";
 import type { ToolRisk, ToolScope } from "@/shared/threads.ts";
 import {
-  strictest,
+  TOOL_OFF,
   type ToolDefinition,
-  type ToolModeChange,
+  type ToolPolicyChange,
   type ToolsetSetting,
 } from "@/shared/tools.ts";
-import {
-  independentReviewer,
-  type ToolRow,
-  type TranscriptRow,
-  transcriptOf,
-} from "@/shared/transcript.ts";
+import { type ToolRow, type TranscriptRow, transcriptOf } from "@/shared/transcript.ts";
 
 export type { AnyToolSpec };
 
@@ -71,13 +78,30 @@ export interface ToolsOptions {
   // Those orgs and spaces add.
   scoped?: ScopedToolsets;
   settings: ToolSettingStore;
+  policies: Pick<ToolPolicyStore, "inOrg">;
+  directory: Pick<Directory, "groupIdsOf">;
   access: Pick<ThreadAccess, "of">;
 }
 
 export type Tools = ReturnType<typeof createTools>;
 
+// What applies to one tool in a space: whether it is off there, and the rules it is used under.
+export interface ToolRules {
+  off: boolean;
+  rules: Rule[];
+}
+
+function ruleOf(policy: ToolPolicyRecord): Rule {
+  return {
+    use: policy.use,
+    users: policy.users,
+    approvers: policy.approvers,
+    independent: policy.independent,
+  };
+}
+
 export function createTools(options: ToolsOptions) {
-  const { toolsets, settings, access } = options;
+  const { toolsets, settings, policies, directory, access } = options;
   const scoped = options.scoped ?? {
     inSpace: () => [],
     forOrgSettings: () => [],
@@ -106,54 +130,62 @@ export function createTools(options: ToolsOptions) {
     return sets.flatMap((toolset) => toolset.tools);
   }
 
-  // Each tool's mode in the org: as it set, else allowed.
-  function orgModes(orgId: string) {
-    const set = settings.inOrg(orgId);
-    return new Map(
-      specsOf(settingsInOrg(orgId)).map((spec) => [
-        spec.name,
-        set.get(spec.name) ?? ("allow" as ToolMode),
-      ]),
-    );
+  // What applies to each tool in the space. The org's tools take the org's policy, or are open
+  // when it set none, with the space's extra rule on top; the space's own take the space's
+  // policy, or are open. Off in either is off. A policy that is gone, or not the scope's to use,
+  // lets nobody use the tool and nobody approve it.
+  function rulesIn(space: Pick<Space, "id" | "orgId">): (toolId: string) => ToolRules {
+    const orgTools = new Set(specsOf(settingsInOrg(space.orgId)).map((spec) => spec.name));
+    const org = settings.inOrg(space.orgId);
+    const own = settings.inSpace(space.id);
+    const byId = new Map(policies.inOrg(space.orgId).map((policy) => [policy.id, policy]));
+    const policyRule = (id: string, spaceOk: boolean) => {
+      const policy = byId.get(id);
+      if (!policy || (policy.spaceId !== null && !(spaceOk && policy.spaceId === space.id))) {
+        return NOBODY;
+      }
+      return ruleOf(policy);
+    };
+    return (toolId) => {
+      const fromOrg = orgTools.has(toolId);
+      const inOrg = fromOrg ? org.get(toolId) : undefined;
+      const inSpace = own.get(toolId);
+      const rules: Rule[] = [];
+      if (fromOrg) rules.push(inOrg && inOrg !== TOOL_OFF ? policyRule(inOrg, false) : OPEN);
+      if (inSpace && inSpace !== TOOL_OFF) rules.push(policyRule(inSpace, true));
+      else if (!fromOrg) rules.push(OPEN);
+      return { off: inOrg === TOOL_OFF || inSpace === TOOL_OFF, rules };
+    };
   }
 
-  // Each tool's mode in the space: the org's, made stricter where the space set one. The space's
-  // own tools are the org's to allow.
-  function spaceModes(space: Pick<Space, "id" | "orgId">) {
-    const org = orgModes(space.orgId);
-    const set = settings.inSpace(space.id);
-    return new Map(
-      specsOf(settingsInSpace(space)).map((spec) => {
-        const own = set.get(spec.name);
-        const inOrg = org.get(spec.name) ?? "allow";
-        return [spec.name, own ? strictest(inOrg, own) : inOrg];
-      }),
-    );
-  }
-
-  // The tools the space offers: those not blocked there.
+  // The tools the space offers: those not off there.
   function offered(space: Pick<Space, "id" | "orgId">) {
-    const modes = spaceModes(space);
-    return specsOf(inSpace(space)).filter((spec) => modes.get(spec.name) !== "block");
+    const rules = rulesIn(space);
+    return specsOf(inSpace(space)).filter((spec) => !rules(spec.name).off);
   }
 
-  // How much a call can do: as the tool says, or always asking where the space has it ask.
+  // How much a call needs: as the tool says, raised where the tool's rules ask more.
   function riskOf(
     space: Pick<Space, "id" | "orgId">,
     spec: AnyToolSpec,
     input: unknown,
     model: string | null,
   ): ToolRisk {
-    const declared = spec.risk(input, { model });
-    const mode = spaceModes(space).get(spec.name);
-    if (declared === "review" || mode === "review") return "review";
-    if (declared === "ask" || mode === "ask") return "ask";
-    return "normal";
+    return riskUnder(spec.risk(input, { model }), rulesIn(space)(spec.name).rules);
   }
 
   // The person's level in the thread, as they reach it now.
   function levelFor(userId: string, thread: Thread, space: Space): ToolLevel {
     return levelOf(access.of({ userId, orgId: space.orgId }, thread));
+  }
+
+  // The person as rules see them: their level and the groups they are active in now.
+  function personIn(userId: string, thread: Thread, space: Space): Person {
+    return personOf(
+      userId,
+      levelFor(userId, thread, space),
+      directory.groupIdsOf(space.orgId, userId),
+    );
   }
 
   // A pending request keeps its history, but decisions follow the tool's current policy.
@@ -167,6 +199,7 @@ export function createTools(options: ToolsOptions) {
     return spec && parsed?.success ? riskOf(space, spec, parsed.data, model) : row.risk;
   }
 
+  // Whether the person may approve or deny the call now.
   function canDecide(
     userId: string,
     row: ToolRow,
@@ -175,35 +208,35 @@ export function createTools(options: ToolsOptions) {
     space: Space,
     model: string | null = null,
   ) {
-    return (
-      levelFor(userId, thread, space) === "run" &&
-      (riskForCall(row, space, model) !== "review" || independentReviewer(rows, userId))
+    return mayApprove(
+      personIn(userId, thread, space),
+      rulesIn(space)(row.toolId).rules,
+      riskForCall(row, space, model),
+      latestAuthor(rows),
     );
   }
 
-  // The words the model read, each with its writer's level now.
-  function influenceOf(rows: readonly TranscriptRow[], thread: Thread, space: Space) {
-    const levels = new Map<string, ToolLevel>();
+  // The words the model read, each with its writer's level now and whether they may use the tool
+  // directly under the rules.
+  function influenceOf(
+    rows: readonly TranscriptRow[],
+    thread: Thread,
+    space: Space,
+    rules: readonly Rule[],
+  ) {
+    const people = new Map<string, Person>();
     const influence: Influence[] = [];
     for (const row of rows) {
       if (row.kind !== "human") continue;
       const { userId } = row.author;
-      let level = levels.get(userId);
-      if (!level) {
-        level = levelFor(userId, thread, space);
-        levels.set(userId, level);
+      let person = people.get(userId);
+      if (!person) {
+        person = personIn(userId, thread, space);
+        people.set(userId, person);
       }
-      influence.push({ seq: row.seq, level });
+      influence.push({ seq: row.seq, level: person.level, canUse: canUse(person, rules) });
     }
     return influence;
-  }
-
-  function approvalOf(row: ToolRow, thread: Thread, space: Space): Approval | null {
-    if (!row.decision?.allow) return null;
-    return {
-      atSeq: row.decision.seq,
-      level: levelFor(row.decision.by.userId, thread, space),
-    };
   }
 
   // The toolset with each tool's definition, and whether the org or the space has it.
@@ -238,8 +271,19 @@ export function createTools(options: ToolsOptions) {
     levelFor,
     riskForCall,
     canDecide,
-    orgModes,
-    spaceModes,
+    rulesIn,
+
+    // Each tool's level for the person in the thread: whether they may use it without approval.
+    levelsFor(userId: string, thread: Thread, space: Space): Record<string, ToolLevel> {
+      const person = personIn(userId, thread, space);
+      const rules = rulesIn(space);
+      return Object.fromEntries(
+        specsOf(inSpace(space)).map((spec) => [
+          spec.name,
+          canUse(person, rules(spec.name).rules) ? "run" : "approve",
+        ]),
+      );
+    },
 
     // The toolsets of the org, with each tool's definition.
     toolsetsInOrg(orgId: string) {
@@ -276,25 +320,43 @@ export function createTools(options: ToolsOptions) {
       }));
     },
 
-    // Whether a call of the tool with this risk runs now, on a standing approval, or waits.
+    // Whether a call of the tool, with the risk the tool itself declares for it, runs now, on a
+    // standing approval, or waits.
     decide(
       rows: readonly TranscriptRow[],
       thread: Thread,
       space: Space,
       toolId: string,
-      risk: ToolRisk,
+      declared: ToolRisk,
     ) {
-      const standing = rows
+      const { rules } = rulesIn(space)(toolId);
+      const standing: Approval[] = rows
         .filter(
           (row): row is ToolRow =>
-            row.kind === "tool" && row.toolId === toolId && row.decision?.scope === "for_now",
+            row.kind === "tool" &&
+            row.toolId === toolId &&
+            row.decision?.scope === "for_now" &&
+            row.decision.allow,
         )
-        .map((row) => approvalOf(row, thread, space))
-        .filter((approval) => approval !== null);
-      return decide({ risk, influence: influenceOf(rows, thread, space), standing });
+        .map((row) => ({
+          atSeq: row.decision!.seq,
+          eligible: mayApprove(
+            personIn(row.decision!.by.userId, thread, space),
+            rules,
+            "normal",
+            null,
+          ),
+        }));
+      return decide({
+        declared,
+        rules,
+        influence: influenceOf(rows, thread, space, rules),
+        standing,
+      });
     },
 
-    // Whether the approval given for the call still holds, just before it runs.
+    // Whether the approval given for the call still holds, just before it runs: its giver may
+    // still approve it under the tool's rules now, independently where that applies.
     approvalHolds(
       row: ToolRow,
       rows: readonly TranscriptRow[],
@@ -302,13 +364,18 @@ export function createTools(options: ToolsOptions) {
       space: Space,
       risk: ToolRisk = riskForCall(row, space),
     ) {
-      const approval = approvalOf(row, thread, space);
-      if (!approval || !row.decision) return false;
-      const review = risk === "review";
-      return (
-        (!review ||
-          (row.decision.scope === "once" && independentReviewer(rows, row.decision.by.userId))) &&
-        holds(approval, influenceOf(rows, thread, space))
+      if (!row.decision?.allow) return false;
+      if (risk === "review" && row.decision.scope !== "once") return false;
+      const { rules } = rulesIn(space)(row.toolId);
+      const eligible = mayApprove(
+        personIn(row.decision.by.userId, thread, space),
+        rules,
+        risk,
+        latestAuthor(rows),
+      );
+      return holdsOnce(
+        { atSeq: row.decision.seq, eligible },
+        influenceOf(rows, thread, space, rules),
       );
     },
   };
@@ -317,14 +384,7 @@ export function createTools(options: ToolsOptions) {
 export interface ToolDecisionsOptions {
   tools: Pick<
     Tools,
-    | "find"
-    | "levelFor"
-    | "canDecide"
-    | "riskForCall"
-    | "toolsetsInOrg"
-    | "toolsetsInSpace"
-    | "orgModes"
-    | "spaceModes"
+    "find" | "levelFor" | "canDecide" | "riskForCall" | "toolsetsInOrg" | "toolsetsInSpace"
   >;
   access: Pick<ThreadAccess, "require">;
   threads: Pick<ThreadStore, "eventsAfter">;
@@ -332,33 +392,54 @@ export interface ToolDecisionsOptions {
   runs: Pick<RunStore, "find" | "resume">;
   spaces: Pick<Spaces, "require">;
   settings: ToolSettingStore;
+  policies: Pick<ToolPolicyStore, "find">;
   log: ThreadLog;
   bus: EventBus;
 }
 
 export type ToolDecisions = ReturnType<typeof createToolDecisions>;
 
-const ONLY_RUNNERS = "Only people who can run this here can decide";
+const OWNERS_ONLY = "Only the organization's owners can do this";
 
-// People's decisions on calls that wait, and the tool switches and levels of orgs and spaces.
+// People's decisions on calls that wait, and what orgs and spaces set their tools to.
 export function createToolDecisions(options: ToolDecisionsOptions) {
-  const { tools, access, threads, spaceStore, runs, spaces, settings, log, bus } = options;
+  const { tools, access, threads, spaceStore, runs, spaces, settings, policies, log, bus } =
+    options;
 
   function known(orgId: string, toolId: string, space?: Space) {
     if (!tools.find(orgId, toolId, space)) throw new ServiceError(404, "Tool not found");
   }
 
-  // The toolsets as settings show them, with each tool's modes.
+  // A policy the scope may set its tools to: the org's own, or for a space also its own.
+  function usable(policyId: string | null, orgId: string, spaceId: string | null) {
+    if (policyId === null || policyId === TOOL_OFF) return;
+    const policy = policies.find(policyId);
+    if (
+      !policy ||
+      policy.orgId !== orgId ||
+      (policy.spaceId !== null && policy.spaceId !== spaceId)
+    ) {
+      throw new ServiceError(404, "Policy not found");
+    }
+  }
+
+  // The toolsets as settings show them, with what each tool is set to.
   function settingsOf(
     toolsets: ReturnType<Tools["toolsetsInSpace"]>,
-    modesOf: (toolId: string) => { orgMode: ToolMode; mode: ToolMode },
-  ) {
+    assignmentsOf: (
+      toolId: string,
+      scope: "org" | "space",
+    ) => {
+      orgPolicy: string | null;
+      policy: string | null;
+    },
+  ): ToolsetSetting[] {
     return toolsets.map((toolset) => ({
       ...toolset,
       tools: toolset.tools.map((definition) => ({
         id: definition.name,
         definition,
-        ...modesOf(definition.name),
+        ...assignmentsOf(definition.name, toolset.scope),
       })),
     }));
   }
@@ -385,13 +466,15 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
         if (call.state !== "pending" || !call.waits) {
           throw new ServiceError(409, "Already decided");
         }
-        if (tools.levelFor(principal.userId, thread, space) !== "run") {
-          throw new ServiceError(403, ONLY_RUNNERS);
-        }
         if (!tools.canDecide(principal.userId, call, rows, thread, space, run.model)) {
+          const independent =
+            tools.riskForCall(call, space, run.model) === "review" &&
+            latestAuthor(rows) === principal.userId;
           throw new ServiceError(
             403,
-            "Independent review requires someone who has not contributed to this conversation",
+            independent
+              ? "Independent approval needs someone other than the author of the latest message"
+              : "Only this tool's approvers can decide",
           );
         }
         if (
@@ -422,43 +505,42 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
       return { runId, event: events[0]! };
     },
 
-    // The toolsets with each tool's mode in the org.
+    // The toolsets with what the org set each tool to.
     orgTools(principal: Principal): ToolsetSetting[] {
-      const modes = tools.orgModes(principal.orgId);
-      return settingsOf(tools.toolsetsInOrg(principal.orgId), (id) => ({
-        orgMode: modes.get(id)!,
-        mode: modes.get(id)!,
-      }));
+      const org = settings.inOrg(principal.orgId);
+      return settingsOf(tools.toolsetsInOrg(principal.orgId), (id) => {
+        const policy = org.get(id) ?? null;
+        return { orgPolicy: policy, policy };
+      });
     },
 
-    setOrgTools(principal: Principal, change: ToolModeChange) {
-      if (principal.role !== "owner") {
-        throw new ServiceError(403, "Only the organization's owners can do this");
-      }
+    setOrgTools(principal: Principal, change: ToolPolicyChange) {
+      if (principal.role !== "owner") throw new ServiceError(403, OWNERS_ONLY);
       for (const id of change.toolIds) known(principal.orgId, id);
-      settings.setInOrg(principal.orgId, change.toolIds, change.mode);
+      usable(change.policy, principal.orgId, null);
+      settings.setInOrg(principal.orgId, change.toolIds, change.policy);
     },
 
-    // The toolsets with each tool's mode in the org and in the space.
+    // The toolsets with what the org and the space set each tool to.
     spaceTools(principal: Principal, spaceId: string): ToolsetSetting[] {
       const space = spaces.require(principal, spaceId, "manage");
-      const org = tools.orgModes(space.orgId);
-      const modes = tools.spaceModes(space);
-      return settingsOf(tools.toolsetsInSpace(space), (id) => ({
-        orgMode: org.get(id) ?? "allow",
-        mode: modes.get(id)!,
+      const org = settings.inOrg(space.orgId);
+      const own = settings.inSpace(space.id);
+      return settingsOf(tools.toolsetsInSpace(space), (id, scope) => ({
+        orgPolicy: scope === "org" ? (org.get(id) ?? null) : null,
+        policy: own.get(id) ?? null,
       }));
     },
 
-    setSpaceTools(principal: Principal, spaceId: string, change: ToolModeChange) {
+    setSpaceTools(principal: Principal, spaceId: string, change: ToolPolicyChange) {
       const space = spaces.require(principal, spaceId, "manage");
       for (const id of change.toolIds) known(space.orgId, id, space);
-      settings.setInSpace(space.id, change.toolIds, change.mode);
+      usable(change.policy, space.orgId, space.id);
+      settings.setInSpace(space.id, change.toolIds, change.policy);
     },
 
     setOrgToolset(principal: Principal, toolsetId: string, enabled: boolean) {
-      if (principal.role !== "owner")
-        throw new ServiceError(403, "Only the organization's owners can do this");
+      if (principal.role !== "owner") throw new ServiceError(403, OWNERS_ONLY);
       const toolset = tools
         .toolsetsInOrg(principal.orgId)
         .find((set) => set.id === toolsetId && set.source === "builtin");

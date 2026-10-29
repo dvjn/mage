@@ -104,3 +104,73 @@ describe("splitting hosts from providers", () => {
     ).toThrow();
   });
 });
+
+describe("tool policies in place of tool modes", () => {
+  it("seeds the org policies the modes need, and sets each tool to its policy or off", () => {
+    const { db, statements } = before("0031_tool_policies");
+    for (const statement of [
+      "insert into organization (id, name, slug, created_at, kind) values ('o1', 'Ada', 'ada', 0, 'personal'), ('o2', 'Bo', 'bo', 0, 'personal'), ('o3', 'Cy', 'cy', 0, 'personal')",
+      "insert into space (id, organization_id, kind, name) values ('s1', 'o1', 'personal', 'Ada'), ('s2', 'o2', 'personal', 'Bo')",
+      "insert into org_tool_setting (organization_id, tool_id, mode) values ('o1', 'a', 'allow'), ('o1', 'b', 'ask'), ('o1', 'c', 'review'), ('o1', 'd', 'block'), ('o3', 'a', 'allow')",
+      "insert into space_tool_setting (space_id, tool_id, mode) values ('s1', 'a', 'block'), ('s1', 'e', 'allow'), ('s2', 'a', 'review')",
+    ]) {
+      db.run(sql.raw(statement));
+    }
+
+    for (const statement of statements) db.run(sql.raw(statement));
+
+    expect(
+      db.all(
+        sql.raw(
+          "select id, organization_id, space_id, name, use, users, approvers, independent from tool_policy order by id",
+        ),
+      ),
+    ).toEqual([
+      {
+        id: "o1-independent-review",
+        organization_id: "o1",
+        space_id: null,
+        name: "Independent review",
+        use: "none",
+        users: "[]",
+        approvers: '["editors"]',
+        independent: 1,
+      },
+      {
+        id: "o1-sign-off",
+        organization_id: "o1",
+        space_id: null,
+        name: "Sign-off",
+        use: "none",
+        users: "[]",
+        approvers: '["editors"]',
+        independent: 0,
+      },
+      {
+        id: "o2-independent-review",
+        organization_id: "o2",
+        space_id: null,
+        name: "Independent review",
+        use: "none",
+        users: "[]",
+        approvers: '["editors"]',
+        independent: 1,
+      },
+    ]);
+    expect(
+      db.all(
+        sql.raw("select organization_id, tool_id, policy_id from org_tool_setting order by 1, 2"),
+      ),
+    ).toEqual([
+      { organization_id: "o1", tool_id: "b", policy_id: "o1-sign-off" },
+      { organization_id: "o1", tool_id: "c", policy_id: "o1-independent-review" },
+      { organization_id: "o1", tool_id: "d", policy_id: null },
+    ]);
+    expect(
+      db.all(sql.raw("select space_id, tool_id, policy_id from space_tool_setting order by 1, 2")),
+    ).toEqual([
+      { space_id: "s1", tool_id: "a", policy_id: null },
+      { space_id: "s2", tool_id: "a", policy_id: "o2-independent-review" },
+    ]);
+  });
+});

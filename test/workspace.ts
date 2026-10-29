@@ -26,6 +26,7 @@ import * as schema from "@/adapters/schema.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
 import { createThreadReadStore } from "@/adapters/thread-reads.ts";
 import { createThreadStore } from "@/adapters/threads.ts";
+import { createToolPolicyStore } from "@/adapters/tool-policies.ts";
 import { createToolSettingStore } from "@/adapters/tool-settings.ts";
 import { createApp } from "@/http/app.ts";
 import type { OrgRole } from "@/ports/directory.ts";
@@ -46,6 +47,7 @@ import { createThreadAccess } from "@/services/thread-access.ts";
 import { createThreadLog } from "@/services/thread-log.ts";
 import { createThreads } from "@/services/threads.ts";
 import { createTitles } from "@/services/titles.ts";
+import { createToolPolicies } from "@/services/tool-policies.ts";
 import { createToolDecisions, createTools } from "@/services/tools.ts";
 import type { Effort } from "@/shared/threads.ts";
 
@@ -178,6 +180,7 @@ export function setup(
     guests: guestStore,
   });
   const toolSettings = createToolSettingStore(db);
+  const toolPolicyStore = createToolPolicyStore(db);
   // The stand-in MCP server, reached while it is up; anything else cannot be reached.
   const mcpNetwork = {
     up: true,
@@ -225,6 +228,8 @@ export function setup(
       forSpaceSettings: (space) => mcp.toolsetsForSpaceSettings(space),
     },
     settings: toolSettings,
+    policies: toolPolicyStore,
+    directory,
     access,
   });
   const bus = createEventBus();
@@ -343,8 +348,17 @@ export function setup(
       runs: runStore,
       spaces,
       settings: toolSettings,
+      policies: toolPolicyStore,
       log,
       bus: countingBus,
+    }),
+    toolPolicies: createToolPolicies({
+      policies: toolPolicyStore,
+      settings: toolSettings,
+      tools,
+      spaceStore,
+      spaces,
+      directory,
     }),
     mcp,
     logger,
@@ -481,6 +495,7 @@ export function setup(
     settingStore,
     guestStore,
     toolSettings,
+    toolPolicyStore,
     tools,
     mcp,
     mcpNetwork,

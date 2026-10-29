@@ -1,6 +1,6 @@
 // A space's settings, in pages: General (renaming it, unless it is a person's own space named for
 // them, the model and reasoning effort its new threads start with, or the org's, and deleting it
-// when it is not the primary space), Members for a shared space, and the agent's Tools there, with
+// when it is not the primary space), Members for a shared space, and the agent's Tools and MCPs there, with
 // one table of MCP servers, the org's that the space may turn off for itself beside its own, and a
 // page for each of its own. They are there only for those who manage it (its owners, and a team
 // org's owners). A team org's owner who manages a space without being in it reads its threads once
@@ -261,7 +261,7 @@ export function SpaceSettingsShell() {
           <li className="shrink-0">
             <Link to="/s/$spaceId/settings/tools" params={params} className={settingsNavLink}>
               <WrenchIcon className="size-4" />
-              Tools
+              Tools and MCPs
             </Link>
           </li>
         </>
@@ -305,8 +305,8 @@ export function SpaceTools() {
   return (
     <>
       <SettingsTitle
-        title="Tools"
-        description="The tools the agent can use in this space, and whether each runs, asks first, needs independent review, or is off. The organization sets the loosest each can be, but for the space's own servers."
+        title="Tools and MCPs"
+        description="What the agent can use in this space, and who has to approve it."
       />
       <SpaceToolsList
         spaceId={space.id}

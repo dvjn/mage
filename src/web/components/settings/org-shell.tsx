@@ -11,7 +11,7 @@ import { meQuery } from "@/web/lib/queries";
 export const ORG_PAGES = [
   { to: "/org/general", label: "General", icon: Settings2Icon, team: false, owners: false },
   { to: "/org/providers", label: "Model providers", icon: BlocksIcon, team: false, owners: false },
-  { to: "/org/tools", label: "Tools", icon: WrenchIcon, team: false, owners: false },
+  { to: "/org/tools", label: "Tools and MCPs", icon: WrenchIcon, team: false, owners: false },
   { to: "/org/people", label: "People", icon: UsersIcon, team: true, owners: false },
   { to: "/org/spaces", label: "Spaces", icon: LayoutGridIcon, team: true, owners: true },
 ] as const;

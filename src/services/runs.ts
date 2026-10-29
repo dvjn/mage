@@ -537,12 +537,17 @@ export function createRunWorker(options: RunWorkerOptions) {
         const { callId, toolId, input, messageId } = call;
         const spec = offered.find((candidate) => candidate.name === toolId);
         const parsed = spec?.input.safeParse(input);
-        const risk =
-          spec && parsed?.success
-            ? tools.riskOf(space, spec, parsed.data, execution.ref)
-            : "normal";
+        const ok = !!spec && !!parsed?.success;
+        const risk = ok ? tools.riskOf(space, spec, parsed.data, execution.ref) : "normal";
         const waits =
-          !!spec && !!parsed?.success && tools.decide(rows, thread, space, toolId, risk) === "wait";
+          ok &&
+          tools.decide(
+            rows,
+            thread,
+            space,
+            toolId,
+            spec.risk(parsed.data, { model: execution.ref }),
+          ) === "wait";
         append({
           type: "tool.requested",
           actor: AGENT,
@@ -590,7 +595,8 @@ export function createRunWorker(options: RunWorkerOptions) {
           if (call.state === "allowed") {
             allowed = tools.approvalHolds(call, rows, thread, space, risk);
           } else {
-            allowed = tools.decide(rows, thread, space, call.toolId, risk) !== "wait";
+            const declared = spec.risk(parsed.data, { model: execution.ref });
+            allowed = tools.decide(rows, thread, space, call.toolId, declared) !== "wait";
             if (!allowed && call.waits) {
               waiting = true;
               continue;

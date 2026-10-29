@@ -24,6 +24,7 @@ import type { ConnectionModel, Models } from "@/services/models.ts";
 import type { Orgs } from "@/services/orgs.ts";
 import type { Spaces, SpaceView } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
+import type { ToolPolicies } from "@/services/tool-policies.ts";
 import type { ToolDecisions } from "@/services/tools.ts";
 import {
   type AttemptSummary,
@@ -92,7 +93,11 @@ import {
   toolDecisionSchema,
 } from "@/shared/threads.ts";
 import { spaceThreadPageQuerySchema, threadPageQuerySchema } from "@/shared/thread-status.ts";
-import { toolModeChangeSchema, toolsetEnabledChangeSchema } from "@/shared/tools.ts";
+import {
+  toolPolicyChangeSchema,
+  toolPolicyInputSchema,
+  toolsetEnabledChangeSchema,
+} from "@/shared/tools.ts";
 
 export interface AppOptions {
   // Answers every request under /api/auth.
@@ -111,8 +116,10 @@ export interface AppOptions {
   threads: Threads;
   // Invite links to threads and the guests they let in.
   guests: Guests;
-  // Decisions on the agent's tool calls, and the tools orgs and spaces turn on and off.
+  // Decisions on the agent's tool calls, and what orgs and spaces set their tools to.
   tools: ToolDecisions;
+  // The access policies orgs and spaces keep for their tools.
+  toolPolicies: ToolPolicies;
   // The MCP servers orgs and spaces add, and authorizing Mage with them.
   mcp: McpServers;
   // The orgs people are in, their members and invites, and creating team orgs.
@@ -280,10 +287,11 @@ function mcpServerPage(server: Pick<McpServerSummary, "id" | "spaceId"> | null) 
     : `/org/tools/mcp/${server.id}`;
 }
 
-const toolModeChange = jsonBody(
-  toolModeChangeSchema,
-  "Give toolIds and a mode of allow, ask, review or block",
+const toolPolicyChange = jsonBody(
+  toolPolicyChangeSchema,
+  "Give toolIds and a policy: a policy's id, off, or null",
 );
+const toolPolicyInput = checkedBody(toolPolicyInputSchema);
 const toolsetEnabledChange = jsonBody(toolsetEnabledChangeSchema, "enabled is true or false");
 const newInvite = jsonBody(newInviteSchema, "accessFor is 1h, 1d, 7d or never");
 const acceptInvite = jsonBody(acceptInviteSchema, "token is required");
@@ -422,6 +430,7 @@ function createApi(options: AppOptions) {
     orgs,
     groups,
     tools,
+    toolPolicies,
     mcp,
   } = options;
 
@@ -896,7 +905,7 @@ function createApi(options: AppOptions) {
       .get("/v1/org/tools", (c) => {
         return c.json(tools.orgTools(signedIn(c.var.principal)), 200);
       })
-      .patch("/v1/org/tools", toolModeChange, (c) => {
+      .patch("/v1/org/tools", toolPolicyChange, (c) => {
         const principal = signedIn(c.var.principal);
         tools.setOrgTools(principal, c.req.valid("json"));
         return c.json(tools.orgTools(principal), 200);
@@ -904,10 +913,53 @@ function createApi(options: AppOptions) {
       .get("/v1/spaces/:id/tools", (c) => {
         return c.json(tools.spaceTools(signedIn(c.var.principal), c.req.param("id")), 200);
       })
-      .patch("/v1/spaces/:id/tools", toolModeChange, (c) => {
+      .patch("/v1/spaces/:id/tools", toolPolicyChange, (c) => {
         const principal = signedIn(c.var.principal);
         tools.setSpaceTools(principal, c.req.param("id"), c.req.valid("json"));
         return c.json(tools.spaceTools(principal, c.req.param("id")), 200);
+      })
+      .get("/v1/org/tool-policies", (c) => {
+        return c.json(toolPolicies.inOrg(signedIn(c.var.principal)), 200);
+      })
+      .post("/v1/org/tool-policies", toolPolicyInput, (c) => {
+        return c.json(
+          toolPolicies.createInOrg(signedIn(c.var.principal), c.req.valid("json")),
+          201,
+        );
+      })
+      .put("/v1/org/tool-policies/:policyId", toolPolicyInput, (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(
+          toolPolicies.updateInOrg(principal, c.req.param("policyId"), c.req.valid("json")),
+          200,
+        );
+      })
+      .delete("/v1/org/tool-policies/:policyId", (c) => {
+        toolPolicies.deleteInOrg(signedIn(c.var.principal), c.req.param("policyId"));
+        return c.json({ ok: true }, 200);
+      })
+      .get("/v1/spaces/:id/tool-policies", (c) => {
+        return c.json(toolPolicies.inSpace(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .post("/v1/spaces/:id/tool-policies", toolPolicyInput, (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(
+          toolPolicies.createInSpace(principal, c.req.param("id"), c.req.valid("json")),
+          201,
+        );
+      })
+      .put("/v1/spaces/:id/tool-policies/:policyId", toolPolicyInput, (c) => {
+        const { id, policyId } = c.req.param();
+        const principal = signedIn(c.var.principal);
+        return c.json(
+          toolPolicies.updateInSpace(principal, id, policyId, c.req.valid("json")),
+          200,
+        );
+      })
+      .delete("/v1/spaces/:id/tool-policies/:policyId", (c) => {
+        const { id, policyId } = c.req.param();
+        toolPolicies.deleteInSpace(signedIn(c.var.principal), id, policyId);
+        return c.json({ ok: true }, 200);
       })
       .put("/v1/org/toolsets/:toolsetId", toolsetEnabledChange, (c) => {
         const principal = signedIn(c.var.principal);

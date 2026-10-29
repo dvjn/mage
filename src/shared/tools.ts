@@ -1,6 +1,6 @@
 // The agent's tools as the API shows them, shared by the server and the web client: their
-// definitions, the toolsets they come in, the modes and levels orgs and spaces set for them, and the
-// bodies that change those.
+// definitions, the toolsets they come in, the access policies orgs and spaces keep and assign to
+// them, and the bodies that change those.
 
 import * as z from "zod";
 
@@ -28,30 +28,117 @@ export const toolLevelSchema = z.enum(["run", "approve"]);
 
 export type ToolLevel = z.infer<typeof toolLevelSchema>;
 
-// A tool can run, ask each time, require a runner outside the conversation, or be blocked.
-// Strictest first; a space may only tighten the organization's mode.
-export const toolModeSchema = z.enum(["block", "review", "ask", "allow"]);
+// The colours a policy can be shown in.
+export const POLICY_COLORS = [
+  "green",
+  "emerald",
+  "teal",
+  "cyan",
+  "sky",
+  "blue",
+  "indigo",
+  "violet",
+  "purple",
+  "fuchsia",
+  "pink",
+  "orange",
+  "amber",
+  "yellow",
+  "lime",
+  "gray",
+] as const;
 
-export type ToolMode = z.infer<typeof toolModeSchema>;
+export const policyColorSchema = z.enum(POLICY_COLORS);
 
-// The stricter of two modes.
-export function strictest(a: ToolMode, b: ToolMode): ToolMode {
-  const order = toolModeSchema.options;
-  return order.indexOf(a) <= order.indexOf(b) ? a : b;
+export type PolicyColor = z.infer<typeof policyColorSchema>;
+
+// Who can use a policy's tools without approval: everyone in the thread, only the people and
+// groups it lists, or no one.
+export const policyUseSchema = z.enum(["everyone", "some", "none"]);
+
+export type PolicyUse = z.infer<typeof policyUseSchema>;
+
+// A person or a linked group a policy names, by a stable key: `user:<id>` or `group:<id>`. As an
+// approver, `editors` also stands for anyone who can edit the thread.
+export const EDITORS = "editors";
+
+const memberKeySchema = z.string().regex(/^(user|group):.+$/, "Name a person or a group");
+const approverKeySchema = z.union([z.literal(EDITORS), memberKeySchema]);
+
+// The kind of identity a key names.
+export function identityKind(key: string): "user" | "group" | "editors" {
+  if (key === EDITORS) return "editors";
+  return key.startsWith("group:") ? "group" : "user";
 }
+
+// A policy as it is created or changed. Who approves is asked only when not everyone can use it,
+// and then someone must.
+export const toolPolicyInputSchema = z
+  .object({
+    name: z.string().trim().min(1, "A name is required").max(60),
+    color: policyColorSchema,
+    use: policyUseSchema,
+    users: z.array(memberKeySchema).max(200),
+    approvers: z.array(approverKeySchema).max(200),
+    independent: z.boolean(),
+  })
+  .refine((policy) => policy.use === "everyone" || policy.approvers.length > 0, {
+    message: "Pick at least one approver",
+    path: ["approvers"],
+  });
+
+export type ToolPolicyInput = z.infer<typeof toolPolicyInputSchema>;
+
+// A person, group, or anyone who can edit the thread, as a policy shows them: a stale one is a
+// person or group that is gone or no longer linked, and never matches anyone.
+export const policyIdentitySchema = z.object({
+  key: z.string(),
+  kind: z.enum(["user", "group", "editors"]),
+  name: z.string(),
+  detail: z.string().nullable(),
+  stale: z.boolean(),
+});
+
+export type PolicyIdentity = z.infer<typeof policyIdentitySchema>;
+
+// A policy as settings show it: whose it is (the org's when spaceId is null), its rule, and how
+// many tools use it, in the org and all its spaces.
+export const toolPolicySchema = z.object({
+  id: z.string(),
+  spaceId: z.string().nullable(),
+  name: z.string(),
+  color: policyColorSchema,
+  use: policyUseSchema,
+  users: z.array(policyIdentitySchema),
+  approvers: z.array(policyIdentitySchema),
+  independent: z.boolean(),
+  toolCount: z.number().int(),
+});
+
+export type ToolPolicy = z.infer<typeof toolPolicySchema>;
+
+export const toolPolicyListSchema = z.array(toolPolicySchema);
+
+// What a tool is set to in an org or a space: a policy's id, off, or null when nothing is set.
+export const TOOL_OFF = "off";
+
+export const toolAssignmentSchema = z.string().min(1).nullable();
+
+export type ToolAssignment = z.infer<typeof toolAssignmentSchema>;
 
 // Where a toolset comes from: Mage itself, or an MCP server.
 export const toolsetSourceSchema = z.enum(["builtin", "mcp"]);
 
 export type ToolsetSource = z.infer<typeof toolsetSourceSchema>;
 
-// A tool in settings: its definition, the mode the org gives it, and the mode it has where it is
-// shown (for the org, the same).
+// A tool in settings: its definition, what the org set it to, and what the scope shown set it to
+// (for the org, the same; for a space, its extra rule on the org's tools, or its own choice on
+// its own).
 export const toolSettingSchema = z.object({
   id: z.string(),
   definition: toolDefinitionSchema,
-  orgMode: toolModeSchema,
-  mode: toolModeSchema,
+  orgPolicy: toolAssignmentSchema,
+  policy: toolAssignmentSchema,
 });
 
 export type ToolSetting = z.infer<typeof toolSettingSchema>;
@@ -73,12 +160,12 @@ export type ToolsetSetting = z.infer<typeof toolsetSettingSchema>;
 
 export const toolsetSettingListSchema = z.array(toolsetSettingSchema);
 
-// Sets each named tool to the mode, as one change.
-export const toolModeChangeSchema = z.object({
+// Sets each named tool to a policy, to off, or with null back to nothing set, as one change.
+export const toolPolicyChangeSchema = z.object({
   toolIds: z.array(z.string().min(1)).min(1),
-  mode: toolModeSchema,
+  policy: toolAssignmentSchema,
 });
 
-export type ToolModeChange = z.infer<typeof toolModeChangeSchema>;
+export type ToolPolicyChange = z.infer<typeof toolPolicyChangeSchema>;
 
 export const toolsetEnabledChangeSchema = z.object({ enabled: z.boolean() });

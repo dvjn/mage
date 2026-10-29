@@ -1,24 +1,24 @@
-// MCP servers in settings: a card listing the org's servers, or for a space the org's tagged as
-// such beside its own, each a row that opens its page, with how it answered, its tools' modes and
-// a switch that turns it on or off: a server's own for those who manage it, or for the org's in a
-// space whether the space uses it, which stays off while the org has the server off; adding one
-// in a dialog, by its address and how it is authorized (not at all, by headers with a bearer token
-// among them, or by OAuth, which sends the browser to the server's authorization server and back);
-// and a server's page with its switch, its connection, its tools and their modes, reading them
-// again, reconnecting, changing everything about it in the same form it was added with, and
-// removing it. One of the org's servers opened from a space shows there with the space's switch
-// and the space's modes for its tools, the rest of it the org's to manage. Header values and
-// secrets are only ever typed, never shown again beyond their ends.
+// MCP servers in settings: a card listing the org's servers, or for a space the org's beside its
+// own tagged as such, each a collapsible row with how it answered, its tools' policies, a switch
+// that turns it on or off (a server's own for those who manage it, or for the org's in a space
+// whether the space uses it, which stays off while the org has the server off) and a link to its
+// page; inside, its tools with their policy pickers. Adding one in a dialog, by its address and
+// how it is authorized (not at all, by headers with a bearer token among them, or by OAuth, which
+// sends the browser to the server's authorization server and back); and a server's page with its
+// switch, its connection, its tools and their policies, reading them again, reconnecting,
+// changing everything about it in the same form it was added with, and removing it. One of the
+// org's servers opened from a space shows there with the space's switch and the space's extra
+// rules for its tools, the rest of it the org's to manage. Header values and secrets are only
+// ever typed, never shown again beyond their ends.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftIcon,
-  ChevronRightIcon,
   CircleAlertIcon,
-  PlugIcon,
   PlusIcon,
   RefreshCwIcon,
+  SettingsIcon,
   XIcon,
 } from "lucide-react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
@@ -35,9 +35,11 @@ import {
 import type { ToolsetSetting } from "@/shared/tools.ts";
 import { LoadError } from "@/web/components/page-states";
 import { SettingsCard, SettingsTitle } from "@/web/components/settings/layout";
+import { PolicyCounts, ToolPoliciesProvider } from "@/web/components/settings/tool-policies";
 import {
-  ModeCounts,
+  ToolsetSection,
   ToolsetTools,
+  useOpenSections,
   useOrgTools,
   useSpaceTools,
 } from "@/web/components/settings/tools-list";
@@ -56,7 +58,7 @@ import {
 } from "@/web/components/ui/alert-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/web/components/ui/alert";
 import { Badge } from "@/web/components/ui/badge";
-import { Button } from "@/web/components/ui/button";
+import { Button, buttonVariants } from "@/web/components/ui/button";
 import {
   Dialog,
   DialogClose,
@@ -86,7 +88,6 @@ import {
   orgMcpServersQuery,
   spaceMcpServersQuery,
 } from "@/web/lib/queries";
-import { cn } from "cn";
 
 // Whose servers: the org's, or one space's own.
 export type McpScope = { kind: "org" } | { kind: "space"; spaceId: string };
@@ -117,11 +118,17 @@ function pageLink(scope: McpScope, serverId: string) {
 }
 
 // How the server answered when last reached, in a word or two.
-function statusOf(server: McpServerSummary): { label: string; tone: "ok" | "ask" | "error" } {
+function statusOf(server: McpServerSummary): {
+  label: string;
+  tone: "ok" | "ask" | "error";
+} {
   if (server.status === "error") return { label: "Can't connect", tone: "error" };
   if (server.status === "needs_auth") {
     const never = server.auth.kind === "oauth" && !server.auth.authorized && !server.toolsReadAt;
-    return { label: never ? "Not connected" : "Needs reconnecting", tone: "ask" };
+    return {
+      label: never ? "Not connected" : "Needs reconnecting",
+      tone: "ask",
+    };
   }
   return { label: "Connected", tone: "ok" };
 }
@@ -141,7 +148,9 @@ function StatusBadge({ server }: { server: McpServerSummary }) {
 
 // Sends the browser to authorize Mage with the server, or reads it again when it needed no one.
 async function authorize(id: string) {
-  const res = await apiClient.v1["mcp-servers"][":id"].authorize.$post({ param: { id } });
+  const res = await apiClient.v1["mcp-servers"][":id"].authorize.$post({
+    param: { id },
+  });
   if (!res.ok) return { error: await errorOf(res) };
   const result = mcpAuthorizeSchema.parse(await res.json());
   if (result.status === "redirect") {
@@ -182,7 +191,10 @@ function OrgServersCard({
     <ServersCard
       scope={{ kind: "org" }}
       state={servers}
-      rows={(servers.data?.servers ?? []).map((server) => ({ kind: "own", server }))}
+      rows={(servers.data?.servers ?? []).map((server) => ({
+        kind: "own",
+        server,
+      }))}
       allowed
       spaceServers={servers.data?.spaceServers ?? null}
       toolsets={toolsets}
@@ -198,8 +210,14 @@ function SpaceServersCard({ spaceId, toolsets }: { spaceId: string; toolsets: To
       scope={{ kind: "space", spaceId }}
       state={servers}
       rows={[
-        ...(servers.data?.org ?? []).map((server): Row => ({ kind: "org", server })),
-        ...(servers.data?.own ?? []).map((server): Row => ({ kind: "own", server })),
+        ...(servers.data?.org ?? []).map((server): Row => ({
+          kind: "org",
+          server,
+        })),
+        ...(servers.data?.own ?? []).map((server): Row => ({
+          kind: "own",
+          server,
+        })),
       ]}
       allowed={servers.data?.allowed ?? true}
       spaceServers={null}
@@ -230,6 +248,7 @@ function ServersCard({
   canManage: boolean;
 }) {
   const [adding, setAdding] = useState(false);
+  const sections = useOpenSections(scope.kind);
   const ownRows = rows.some((row) => row.kind === "own");
   return (
     <SettingsCard
@@ -260,17 +279,19 @@ function ServersCard({
           </Alert>
         )}
         {rows.length > 0 ? (
-          <ul className="-my-2 flex flex-col divide-y">
+          <div className="-my-3 flex flex-col divide-y">
             {rows.map((row) => (
               <ServerRow
                 key={row.server.id}
                 scope={scope}
                 row={row}
                 canManage={canManage}
+                open={sections.isOpen(mcpToolsetId(row.server.id))}
+                onOpenChange={(open) => sections.set(mcpToolsetId(row.server.id), open)}
                 toolset={toolsets.find((toolset) => toolset.id === mcpToolsetId(row.server.id))}
               />
             ))}
-          </ul>
+          </div>
         ) : (
           <p className="text-sm text-muted-foreground">
             {canManage
@@ -334,11 +355,15 @@ function ServerRow({
   scope,
   row,
   canManage,
+  open,
+  onOpenChange,
   toolset,
 }: {
   scope: McpScope;
   row: Row;
   canManage: boolean;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   toolset: ToolsetSetting | undefined;
 }) {
   const { server } = row;
@@ -347,61 +372,68 @@ function ServerRow({
   // The org's server as a space sees it: off there while the org has it off.
   const orgOff = row.kind === "org" && !server.enabled;
   const on = row.kind === "org" ? row.server.enabled && row.server.inSpace : server.enabled;
+  const inSpace = row.kind === "org" && scope.kind === "space";
   const ok = server.status === "ok";
-  const count = server.toolCount;
+  const tools = toolset?.tools ?? [];
   return (
-    <li
-      aria-label={server.name}
-      className="group relative isolate flex items-center gap-3 rounded-md py-3 has-[a:focus-visible]:ring-[3px] has-[a:focus-visible]:ring-ring/50"
+    <ToolsetSection
+      title={server.name}
+      badge={
+        scope.kind === "space" &&
+        row.kind === "own" && (
+          <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
+            This space
+          </Badge>
+        )
+      }
+      count={ok ? server.toolCount : null}
+      counts={ok ? <PolicyCounts tools={tools} /> : <StatusBadge server={server} />}
+      open={open}
+      onOpenChange={onOpenChange}
+      on={on}
+      control={
+        <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+          {error && (
+            <span role="alert" className="text-destructive">
+              {error}
+            </span>
+          )}
+          <label className="flex items-center gap-2">
+            {orgOff ? "Off by organization" : !inSpace && (on ? "On" : "Off")}
+            <Switch
+              size="sm"
+              aria-label={`${server.name}: ${inSpace ? "on in this space" : "on"}`}
+              checked={on}
+              disabled={orgOff || (row.kind === "own" && !canManage)}
+              onCheckedChange={(next) =>
+                void (row.kind === "org" ? setInSpace(server, next) : setEnabled(server, next))
+              }
+            />
+          </label>
+          <WithTooltip label="Server settings">
+            <Link
+              {...link}
+              aria-label={`${server.name} settings`}
+              className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
+            >
+              <SettingsIcon />
+            </Link>
+          </WithTooltip>
+        </span>
+      }
     >
-      <Link
-        {...link}
-        className="flex min-w-0 flex-1 items-center gap-3 outline-none after:absolute after:inset-0 after:rounded-md"
-      >
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-muted-foreground">
-          <PlugIcon className="size-4" />
-        </span>
-        <span className={cn("flex min-w-0 flex-1 flex-col", !on && "text-muted-foreground")}>
-          <span className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-medium">{server.name}</span>
-            {row.kind === "org" && (
-              <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
-                Org
-              </Badge>
-            )}
-          </span>
-          <span className="truncate text-xs text-muted-foreground">
-            {orgOff ? "Turned off by the organization" : hostOf(server.url)}
-          </span>
-        </span>
-      </Link>
-      <span className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
-        {ok ? (
-          <>
-            <span className="hidden sm:inline">{count === 1 ? "1 tool" : `${count} tools`}</span>
-            {toolset && <ModeCounts tools={toolset.tools} />}
-          </>
-        ) : (
-          <StatusBadge server={server} />
-        )}
-        {error && (
-          <span role="alert" className="text-destructive">
-            {error}
-          </span>
-        )}
-        <Switch
-          size="sm"
-          className="relative z-10"
-          aria-label={row.kind === "org" && scope.kind === "space" ? "On in this space" : "On"}
-          checked={on}
-          disabled={orgOff || (row.kind === "own" && !canManage)}
-          onCheckedChange={(next) =>
-            void (row.kind === "org" ? setInSpace(server, next) : setEnabled(server, next))
-          }
-        />
-        <ChevronRightIcon className="size-4 transition-transform group-hover:translate-x-0.5" />
-      </span>
-    </li>
+      {tools.length > 0 ? (
+        <ToolsetTools toolset={toolset!} scope={scope.kind} />
+      ) : (
+        <p className="py-2 text-sm text-muted-foreground">
+          {orgOff
+            ? "Turned off by the organization."
+            : server.toolsReadAt
+              ? "The server lists no tools."
+              : "Its tools show once the server answers."}
+        </p>
+      )}
+    </ToolsetSection>
   );
 }
 
@@ -460,7 +492,10 @@ function nextKey(rows: HeaderDraft[]) {
 function headersBody(rows: HeaderDraft[]) {
   return rows
     .filter((row) => row.name.trim())
-    .map((row) => ({ name: row.name.trim(), value: row.value || (row.stored ? null : "") }));
+    .map((row) => ({
+      name: row.name.trim(),
+      value: row.value || (row.stored ? null : ""),
+    }));
 }
 
 function HeaderFields({
@@ -527,7 +562,13 @@ function storedRows(server: McpServerSummary | undefined): HeaderDraft[] {
   if (server?.auth.kind !== "headers") return [];
   return server.auth.headers
     .filter((header) => header.name !== "authorization")
-    .map((header, key) => ({ key, name: header.name, value: "", hint: header.hint, stored: true }));
+    .map((header, key) => ({
+      key,
+      name: header.name,
+      value: "",
+      hint: header.hint,
+      stored: true,
+    }));
 }
 
 // The end of the stored Authorization header, for a server authorized by headers.
@@ -607,7 +648,11 @@ export function McpServerDialog({
           ],
         };
       case "oauth":
-        return { kind, clientId: clientId.trim() || null, clientSecret: clientSecret || null };
+        return {
+          kind,
+          clientId: clientId.trim() || null,
+          clientSecret: clientSecret || null,
+        };
     }
   }
 
@@ -627,7 +672,10 @@ export function McpServerDialog({
     setPending(server ? "Saving…" : kind === "oauth" ? "Adding…" : "Connecting…");
     const json = { name: name.trim(), url: url.trim(), auth: authBody() };
     const res = server
-      ? await apiClient.v1["mcp-servers"][":id"].$patch({ param: { id: server.id }, json })
+      ? await apiClient.v1["mcp-servers"][":id"].$patch({
+          param: { id: server.id },
+          json,
+        })
       : scope.kind === "org"
         ? await apiClient.v1.org["mcp-servers"].$post({ json })
         : await apiClient.v1.spaces[":id"]["mcp-servers"].$post({
@@ -898,7 +946,10 @@ function BackToTools({ scope }: { scope: McpScope }) {
     <Link
       {...(scope.kind === "org"
         ? { to: "/org/tools" as const }
-        : { to: "/s/$spaceId/settings/tools" as const, params: { spaceId: scope.spaceId } })}
+        : {
+            to: "/s/$spaceId/settings/tools" as const,
+            params: { spaceId: scope.spaceId },
+          })}
       className="-mb-4 flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
     >
       <ArrowLeftIcon className="size-4" />
@@ -919,8 +970,8 @@ function ServerDetail({
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const me = useQuery(meQuery);
-  // One of the org's servers, seen from a space: the space says whether it uses it, and sets its
-  // tools' modes; the rest is the org's.
+  // One of the org's servers, seen from a space: the space says whether it uses it, and adds extra
+  // rules to its tools; the rest is the org's.
   const orgsInSpace = scope.kind === "space" && server.spaceId === null;
   const inSpace = useQuery({
     ...spaceMcpServersQuery(scope.kind === "space" ? scope.spaceId : ""),
@@ -967,14 +1018,18 @@ function ServerDetail({
     setBusy(undefined);
     if ("error" in result) {
       setError(result.error);
-      await queryClient.invalidateQueries({ queryKey: mcpServerQuery(server.id).queryKey });
+      await queryClient.invalidateQueries({
+        queryKey: mcpServerQuery(server.id).queryKey,
+      });
       return;
     }
     await settled(result.server);
   }
 
   async function remove() {
-    const res = await apiClient.v1["mcp-servers"][":id"].$delete({ param: { id: server.id } });
+    const res = await apiClient.v1["mcp-servers"][":id"].$delete({
+      param: { id: server.id },
+    });
     if (!res.ok) {
       setError(await errorOf(res));
       return;
@@ -985,7 +1040,10 @@ function ServerDetail({
     await navigate(
       scope.kind === "org"
         ? { to: "/org/tools" }
-        : { to: "/s/$spaceId/settings/tools", params: { spaceId: scope.spaceId } },
+        : {
+            to: "/s/$spaceId/settings/tools",
+            params: { spaceId: scope.spaceId },
+          },
     );
   }
 
@@ -1046,7 +1104,7 @@ function ServerDetail({
       {orgsInSpace && inSpace.error && <FieldError>{inSpace.error.message}</FieldError>}
       {orgsInSpace && (
         <p className="text-sm text-muted-foreground">
-          Managed by the organization: its connection and the loosest its tools can be are set
+          Managed by the organization: its connection and its tools' policies are set
           {me.data?.role === "owner" ? (
             <>
               {" "}
@@ -1143,23 +1201,20 @@ function ServerDetail({
         title="Tools"
         description={
           scope.kind === "org"
-            ? "Whether each runs, asks first, needs independent review, or is off. Spaces can only make these stricter."
-            : orgsInSpace
-              ? "Whether each runs, asks first, needs independent review, or is off in this space; only stricter than the organization has it."
-              : "Whether each runs, asks first, needs independent review, or is off in this space."
+            ? "The policy each tool is used under, or off."
+            : "The policy each tool is used under in this space, or off."
         }
         state={tools.tools}
       >
         {toolset && toolset.tools.length > 0 ? (
-          <>
-            <ToolsetTools
-              toolset={toolset}
-              scope={scope.kind}
-              canChange={canManage || orgsInSpace}
-              onChange={tools.change}
-            />
+          <ToolPoliciesProvider
+            scope={scope}
+            canChange={canManage || orgsInSpace}
+            change={tools.change}
+          >
+            <ToolsetTools toolset={toolset} scope={scope.kind} />
             <FieldError>{tools.error}</FieldError>
-          </>
+          </ToolPoliciesProvider>
         ) : (
           <p className="text-sm text-muted-foreground">
             {server.toolsReadAt

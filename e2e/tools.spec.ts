@@ -31,7 +31,9 @@ async function signUp(page: Page, name: string) {
 }
 
 async function someoneElse(browser: Browser, index: number) {
-  const context = await browser.newContext({ extraHTTPHeaders: nextClient(index) });
+  const context = await browser.newContext({
+    extraHTTPHeaders: nextClient(index),
+  });
   return context.newPage();
 }
 
@@ -50,7 +52,7 @@ function card(page: Page) {
 // The settings card of the built-in toolsets.
 function builtIn(page: Page) {
   return page.locator("[data-slot=card]").filter({
-    has: page.locator("[data-slot=card-title]", { hasText: /^Built in$/ }),
+    has: page.locator("[data-slot=card-title]", { hasText: /^System tools$/ }),
   });
 }
 
@@ -74,7 +76,9 @@ async function startThread(page: Page, text: string) {
 
 // Makes a folder in the space whose page or thread is open.
 async function makeFolder(page: Page, spaceId: string, name: string) {
-  const res = await page.request.post(`/api/v1/spaces/${spaceId}/folders`, { data: { name } });
+  const res = await page.request.post(`/api/v1/spaces/${spaceId}/folders`, {
+    data: { name },
+  });
   expect(res.ok()).toBe(true);
 }
 
@@ -113,12 +117,54 @@ test("the agent renames a thread at once when the owner alone asked", async ({ p
   await expect(transcript(page).getByRole("region", { name: "Output" })).toContainText("Engines");
 });
 
-// Sets the tool's mode in the open space's settings, from the tool's own row.
-async function setInSpace(page: Page, spaceId: string, tool: string, mode: string) {
-  await page.goto(`/s/${spaceId}/settings/tools`);
+// Makes an org policy every call of which waits for anyone who can edit the thread, or with the
+// fields given, and gives its id.
+async function makePolicy(page: Page, fields: Record<string, unknown> = {}) {
+  const res = await page.request.post("/api/v1/org/tool-policies", {
+    data: {
+      name: "Sign-off",
+      color: "orange",
+      use: "none",
+      users: [],
+      approvers: ["editors"],
+      independent: false,
+      ...fields,
+    },
+  });
+  expect(res.ok()).toBe(true);
+  return ((await res.json()) as { id: string }).id;
+}
+
+// Opens tools settings at the url with the Thread toolset expanded.
+async function openTools(page: Page, url: string) {
+  await page.goto(url);
+  const toggle = page
+    .getByRole("region", { name: "Thread" })
+    .getByRole("button", { name: /^Thread \d+ tools?/ });
+  await expect(toggle).toBeVisible();
+  if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+}
+
+// The picker of a tool's row, or of a group of tools, in tools settings.
+function picker(scope: Page | ReturnType<Page["getByRole"]>, name: string) {
+  return scope.getByRole("button", {
+    name: new RegExp(`^${name} (policy|policy in this space)$`),
+  });
+}
+
+// Picks a policy, Off, or nothing in the open picker.
+async function choose(page: Page, choice: string) {
+  await page.getByRole("menuitemradio", { name: new RegExp(`^${choice}`) }).click();
+  await expect(page.getByRole("menu")).toHaveCount(0);
+}
+
+// Sets the tool in the open space's settings, from the tool's own row.
+async function setInSpace(page: Page, spaceId: string, tool: string, choice: string) {
+  await openTools(page, `/s/${spaceId}/settings/tools`);
   const row = page.getByRole("listitem", { name: tool });
-  await row.getByRole("button", { name: mode }).click();
-  await expect(row.getByRole("button", { name: mode })).toHaveAttribute("aria-pressed", "true");
+  await picker(row, tool).click();
+  await choose(page, choice);
+  await expect(picker(row, tool)).toContainText(choice);
   await page.goto(`/s/${spaceId}`);
 }
 
@@ -130,7 +176,8 @@ test("a tool that needs approval asks every time, and a guest may decide it", as
   const spaceId = spaceIdOf(page);
   await makeFolder(page, spaceId, "Research");
   await makeFolder(page, spaceId, "Archive");
-  await setInSpace(page, spaceId, "Move thread", "Ask");
+  await makePolicy(page);
+  await setInSpace(page, spaceId, "Move thread", "Sign-off");
   await startThread(page, "How do engines compute?");
   await expect(replies(page)).toHaveText(/I have read 1 message/);
   const url = await inviteLink(page);
@@ -170,7 +217,8 @@ test("a viewer sees the card paused while a messager decides it", async ({
 }, testInfo) => {
   const adaEmail = await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
-  await setInSpace(page, spaceId, "Rename thread", "Ask");
+  await makePolicy(page);
+  await setInSpace(page, spaceId, "Rename thread", "Sign-off");
   await startThread(page, "How do looms work?");
   await expect(replies(page)).toHaveText(/I have read 1 message/);
 
@@ -213,7 +261,9 @@ test("on a phone the card's buttons stack, Allow first and Deny last", async ({
   await expect(guest).toHaveURL(/\/t\/[^/]+$/);
   await write(guest, "Call it Pistons");
   await expect(replies(page)).toHaveCount(2);
-  const me = (await (await guest.request.get("/api/v1/me")).json()) as { user: { id: string } };
+  const me = (await (await guest.request.get("/api/v1/me")).json()) as {
+    user: { id: string };
+  };
   const revoked = await page.request.delete(`/api/v1/threads/${threadId}/guests/${me.user.id}`);
   expect(revoked.ok()).toBe(true);
 
@@ -230,100 +280,186 @@ test("on a phone the card's buttons stack, Allow first and Deny last", async ({
   await expect(line(page, /^Rename thread · Ran/)).toBeVisible();
 });
 
-test("a tool the space blocked is not offered, and the agent says it cannot use it", async ({
+test("a tool the space turned off is not offered, and the agent says it cannot use it", async ({
   page,
 }) => {
   await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
-  await setInSpace(page, spaceId, "Move thread", "Block");
+  await setInSpace(page, spaceId, "Move thread", "Off");
 
   await startThread(page, '/tool thread.move {"folder":"Research"}');
   await expect(replies(page)).toHaveText(/I cannot use thread.move here\./);
   await expect(card(page)).toHaveCount(0);
 });
 
-test("a space can only make a tool stricter than its org, and remembers the toolsets it closed", async ({
+test("a policy made from a template is used for a group and a tool, and a space adds rules on top", async ({
   page,
 }) => {
   await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
-  await page.goto("/org/tools");
-  const orgMove = page.getByRole("listitem", { name: "Move thread" });
-  await orgMove.getByRole("button", { name: "Ask" }).click();
-  await expect(orgMove.getByRole("button", { name: "Ask" })).toHaveAttribute(
+  await openTools(page, "/org/tools");
+  const interactive = page.getByRole("group", {
+    name: "Interactive tools",
+    exact: true,
+  });
+
+  // A new policy from a group's picker is used for that group once made.
+  await picker(interactive, "Interactive tools").click();
+  await page.getByRole("menuitem", { name: "New policy" }).click();
+  const dialog = page.getByRole("dialog", { name: "New policy" });
+  await expect(dialog).toContainText("It will be used for Thread interactive tools.");
+  await expect(dialog.getByRole("button", { name: "Anyone can use" })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
+  await dialog.getByRole("button", { name: "Always approve" }).click();
+  await expect(dialog.getByRole("radio", { name: /^No one/ })).toBeChecked();
+  await dialog.getByLabel("Name").fill("Sign-off");
+  await expect(dialog).toContainText("Pick at least one approver");
+  await expect(dialog.getByRole("button", { name: "Create policy" })).toBeDisabled();
+  const approvers = dialog.getByRole("combobox", { name: "Approvers" });
+  await approvers.fill("anyone");
+  await expect(page.getByRole("option", { name: /Anyone who can edit the thread/ })).toBeVisible();
+  await approvers.press("Enter");
+  await expect(dialog).not.toContainText("Pick at least one approver");
+  // Backspace in the empty search takes back the last one; Enter adds the top match again.
+  await approvers.press("Backspace");
+  await expect(dialog).toContainText("Pick at least one approver");
+  await approvers.press("Enter");
+  await expect(dialog).not.toContainText("Pick at least one approver");
+  // Picking "Only these people" follows the template it matches.
+  await dialog.getByRole("radio", { name: /^Only these people/ }).click();
+  await expect(dialog.getByRole("button", { name: "Some can use" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await dialog.getByRole("radio", { name: /^No one/ }).click();
+  await dialog.getByRole("button", { name: "Create policy" }).click();
+  await expect(dialog).toBeHidden();
 
-  await page.goto(`/s/${spaceId}/settings/tools`);
+  const move = page.getByRole("listitem", { name: "Move thread" });
+  await expect(picker(move, "Move thread")).toContainText("Sign-off");
+  await expect(picker(interactive, "Interactive tools")).toContainText("Sign-off");
+  const policies = page.getByRole("listitem", { name: "Sign-off" });
+  await expect(policies).toContainText("Thread editors approve");
+  await expect(policies).toContainText("3 tools");
+
+  // A policy in use can be copied but not deleted.
+  await policies.getByRole("button").click();
+  const edit = page.getByRole("dialog", { name: "Edit policy" });
+  await expect(edit).toContainText("Used by 3 tools. Changes apply to all of them.");
+  await expect(edit.getByRole("button", { name: "Delete" })).toBeDisabled();
+  await edit.getByRole("button", { name: "Duplicate" }).click();
+  const copy = page.getByRole("dialog", { name: "New policy" });
+  await expect(copy.getByLabel("Name")).toHaveValue("Sign-off copy");
+  await copy.getByRole("button", { name: "Cancel" }).click();
+  await expect(copy).toBeHidden();
+
+  // One tool back to open; the group is mixed.
+  await picker(move, "Move thread").click();
+  await choose(page, "Open");
+  await expect(picker(interactive, "Interactive tools")).toContainText("Mixed");
+  await expect(policies).toContainText("2 tools");
+
+  // In the space, the org's tools follow the org's policy by default.
+  await openTools(page, `/s/${spaceId}/settings/tools`);
   const thread = page.getByRole("region", { name: "Thread" });
   await expect(thread).toContainText("4 tools");
-  const toolset = thread.getByRole("button", { name: /^Thread 4 tools/ });
-  await expect(toolset).toContainText(
-    "3 allowed, 1 needs approval, 0 need independent review, 0 blocked",
-  );
-  const move = page.getByRole("listitem", { name: "Move thread" });
-  await expect(move.getByRole("button", { name: "Allow" })).toBeDisabled();
-  await expect(move.getByRole("img", { name: "Set by the organization" })).toBeVisible();
-  await expect(
-    page
-      .getByRole("listitem", { name: "Rename thread" })
-      .getByRole("img", { name: "Set by the organization" }),
-  ).toHaveCount(0);
-  await expect(move.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "true");
-  const interactive = page.getByRole("group", {
-    name: "Interactive tools: when the agent may use them",
+  await expect(thread.getByRole("button", { name: /^Thread 4 tools/ })).toContainText("2 Sign-off");
+  const rename = page.getByRole("listitem", { name: "Rename thread" });
+  await expect(picker(rename, "Rename thread")).toContainText("Default · Sign-off");
+  await expect(page.getByRole("listitem", { name: "Sign-off" })).toContainText("Organization");
+  const spaceGroup = page.getByRole("group", {
+    name: "Interactive tools",
     exact: true,
   });
-  // The groups are plain headings: only the toolset opens and closes.
-  await expect(thread.getByRole("button", { name: /^(Read-only|Interactive)/i })).toHaveCount(0);
-  // Its tools differ, so no icon of the group is pressed.
-  for (const name of ["Allow", "Ask", "Independent review", "Block"]) {
-    await expect(interactive.getByRole("button", { name })).toHaveAttribute(
-      "aria-pressed",
-      "false",
-    );
-  }
-  await expect(
-    page
-      .getByRole("group", { name: "Read-only tools: when the agent may use them", exact: true })
-      .getByRole("button", { name: "Allow" }),
-  ).toHaveAttribute("aria-pressed", "true");
-  await interactive.getByRole("button", { name: "Block" }).click();
-  await expect(interactive.getByRole("button", { name: "Block" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  await expect(move.getByRole("button", { name: "Block" })).toHaveAttribute("aria-pressed", "true");
-  await expect(toolset).toContainText(
-    "1 allowed, 0 need approval, 0 need independent review, 3 blocked",
-  );
+  await picker(spaceGroup, "Interactive tools").click();
+  await choose(page, "Off");
+  await expect(picker(rename, "Rename thread")).toContainText("Off");
+  await expect(thread.getByRole("button", { name: /^Thread 4 tools/ })).toContainText("3 Off");
 
-  await toolset.click();
-  await expect(move).toBeHidden();
+  // The org still has its own; the space's rules stay in the space.
+  await openTools(page, "/org/tools");
+  await expect(
+    picker(page.getByRole("listitem", { name: "Rename thread" }), "Rename thread"),
+  ).toContainText("Sign-off");
+
+  await openTools(page, `/s/${spaceId}/settings/tools`);
+  await thread.getByRole("button", { name: /^Thread 4 tools/ }).click();
+  await expect(rename).toBeHidden();
   await page.reload();
   await expect(page.getByRole("region", { name: "Thread" })).toContainText("4 tools");
-  await expect(page.getByRole("listitem", { name: "Move thread" })).toBeHidden();
+  await expect(page.getByRole("listitem", { name: "Rename thread" })).toBeHidden();
 });
 
-test("a permission group requires an independent reviewer", async ({ page, browser }, testInfo) => {
+test("a policy's people use a tool directly, and only its approvers approve the rest", async ({
+  page,
+  browser,
+}, testInfo) => {
   const adaEmail = await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
-  await page.goto(`/s/${spaceId}/settings/tools`);
-  const group = page.getByRole("group", {
-    name: "Interactive tools: when the agent may use them",
-    exact: true,
-  });
-  await group.getByRole("button", { name: "Independent review" }).click();
-  await expect(group.getByRole("button", { name: "Independent review" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  await expect(
-    page
-      .getByRole("listitem", { name: "Rename thread" })
-      .getByRole("button", { name: "Independent review" }),
-  ).toHaveAttribute("aria-pressed", "true");
+  await openTools(page, "/org/tools");
+  await page.getByRole("button", { name: "New policy" }).click();
+  const dialog = page.getByRole("dialog", { name: "New policy" });
+  await dialog.getByRole("button", { name: "Some can use" }).click();
+  await dialog.getByLabel("Name").fill("Ada runs");
+  await dialog.getByRole("combobox", { name: "People who can use it" }).fill("Ada");
+  await page.getByRole("option", { name: /Ada Lovelace/ }).click();
+  await dialog.getByRole("combobox", { name: "Approvers" }).fill("Ada");
+  await page.getByRole("option", { name: /Ada Lovelace/ }).click();
+  await expect(dialog.getByRole("combobox", { name: "Approvers" })).toHaveValue("");
+  await dialog.getByRole("button", { name: "Create policy" }).click();
+  await expect(dialog).toBeHidden();
+  const policy = page.getByRole("listitem", { name: "Ada runs" });
+  await expect(policy).toContainText("Ada Lovelace can use");
+  await expect(policy).toContainText("Ada Lovelace approves");
+  const rename = page.getByRole("listitem", { name: "Rename thread" });
+  await picker(rename, "Rename thread").click();
+  await choose(page, "Ada runs");
+
+  await page.goto(`/s/${spaceId}`);
+  await startThread(page, '/tool thread.rename {"title":"Mine"}');
+  await expect(line(page, /^Rename thread · Ran$/)).toBeVisible();
+  await expect(replies(page).last()).toHaveText(/Tool thread.rename said: ok/);
+
+  // Grace may message here but is not named: her call waits, and only Ada may approve it.
+  const grace = await someoneElse(browser, testInfo.parallelIndex);
+  joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
+  await grace.goto(page.url());
+  await expect(line(grace, /^Rename thread · Ran$/)).toBeVisible();
+  await write(grace, '/tool thread.rename {"title":"Hers"}');
+  await expect(card(grace)).toContainText("Rename thread");
+  await expect(card(grace)).toContainText("Paused");
+  await expect(card(grace).getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
+  await expect(card(page)).not.toContainText("Paused");
+  await card(page).getByRole("button", { name: "Allow", exact: true }).click();
+  await expect(line(grace, /^Rename thread · Ran · allowed by Ada Lovelace/)).toBeVisible();
+  await expect(grace.locator("[data-slot=breadcrumb-page]")).toHaveText("Hers");
+});
+
+test("independent approval needs someone other than the author of the latest message", async ({
+  page,
+  browser,
+}, testInfo) => {
+  const adaEmail = await signUp(page, "Ada Lovelace");
+  const spaceId = spaceIdOf(page);
+  await openTools(page, `/s/${spaceId}/settings/tools`);
+  const rename = page.getByRole("listitem", { name: "Rename thread" });
+  await picker(rename, "Rename thread").click();
+  await page.getByRole("menuitem", { name: "New policy" }).click();
+  const dialog = page.getByRole("dialog", { name: "New policy" });
+  await expect(dialog).toContainText("Only in this space.");
+  await dialog.getByRole("button", { name: "Independent approval" }).click();
+  await expect(dialog.getByRole("checkbox", { name: /Independent approval/ })).toBeChecked();
+  await dialog.getByLabel("Name").fill("Reviewed");
+  await dialog.getByRole("combobox", { name: "Approvers" }).fill("anyone");
+  await page.getByRole("option", { name: /Anyone who can edit the thread/ }).click();
+  await dialog.getByRole("button", { name: "Create policy" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(picker(rename, "Rename thread")).toContainText("Reviewed");
+  await expect(picker(rename, "Rename thread")).toHaveAttribute("title", /Independent/);
+  await expect(page.getByRole("listitem", { name: "Reviewed" })).toContainText("1 tool");
+
   await page.goto(`/s/${spaceId}`);
   await startThread(page, '/tool thread.rename {"title":"Reviewed"}');
   await expect(card(page)).toContainText("Needs review");
@@ -338,15 +474,19 @@ test("a permission group requires an independent reviewer", async ({ page, brows
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Reviewed");
 });
 
-test("changing review to Ask updates a pending approval for the requester", async ({ page }) => {
+test("changing independent approval to sign-off updates a pending approval for the requester", async ({
+  page,
+}) => {
   await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
+  await makePolicy(page, { name: "Independent review", independent: true });
+  await makePolicy(page);
   await setInSpace(page, spaceId, "Rename thread", "Independent review");
   await startThread(page, '/tool thread.rename {"title":"Engines"}');
   const threadUrl = page.url();
   await expect(card(page)).toContainText("Needs review");
   await expect(card(page).getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
-  await setInSpace(page, spaceId, "Rename thread", "Ask");
+  await setInSpace(page, spaceId, "Rename thread", "Sign-off");
   await page.goto(threadUrl);
   await expect(card(page)).toContainText("Asks each time");
   await expect(card(page)).not.toContainText("Needs review");
@@ -356,11 +496,13 @@ test("changing review to Ask updates a pending approval for the requester", asyn
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Engines");
 });
 
-test("built-in toolset switches preserve permissions and obey the org switch", async ({ page }) => {
+test("built-in toolset switches preserve policies and obey the org switch", async ({ page }) => {
   await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
-  await setInSpace(page, spaceId, "Rename thread", "Ask");
-  await page.goto(`/s/${spaceId}/settings/tools`);
+  await makePolicy(page);
+  await makePolicy(page, { name: "Independent review", independent: true });
+  await setInSpace(page, spaceId, "Rename thread", "Sign-off");
+  await openTools(page, `/s/${spaceId}/settings/tools`);
   const local = page.getByRole("switch", { name: "Thread: on in this space" });
   await expect(local).toBeChecked();
   await local.click();
@@ -368,34 +510,30 @@ test("built-in toolset switches preserve permissions and obey the org switch", a
   await page.reload();
   await expect(local).not.toBeChecked();
   const rename = page.getByRole("listitem", { name: "Rename thread" });
-  await expect(rename.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "true");
-  await rename.getByRole("button", { name: "Independent review" }).click();
-  await expect(rename.getByRole("button", { name: "Independent review" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(picker(rename, "Rename thread")).toContainText("Sign-off");
+  await picker(rename, "Rename thread").click();
+  await choose(page, "Independent review");
+  await expect(picker(rename, "Rename thread")).toContainText("Independent review");
   await page.goto(`/s/${spaceId}`);
   await startThread(page, '/tool thread.rename {"title":"Unavailable"}');
   await expect(replies(page).last()).toContainText("I cannot use thread.rename here.");
-  await page.goto("/org/tools");
+  await openTools(page, "/org/tools");
   const global = page.getByRole("switch", { name: "Thread: on", exact: true });
   await global.click();
   await expect(global).not.toBeChecked();
-  await page.goto(`/s/${spaceId}/settings/tools`);
+  await openTools(page, `/s/${spaceId}/settings/tools`);
   await expect(local).not.toBeChecked();
   await expect(local).toBeDisabled();
-  await page.goto("/org/tools");
+  await expect(page.getByRole("region", { name: "Thread" })).toContainText("Off by organization");
+  await openTools(page, "/org/tools");
   await global.click();
   await expect(global).toBeChecked();
-  await page.goto(`/s/${spaceId}/settings/tools`);
+  await openTools(page, `/s/${spaceId}/settings/tools`);
   await expect(local).not.toBeChecked();
   await expect(local).toBeEnabled();
   await local.click();
   await expect(local).toBeChecked();
-  await expect(rename.getByRole("button", { name: "Independent review" })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(picker(rename, "Rename thread")).toContainText("Independent review");
 });
 
 test("tools have their own settings page in the org and in a space", async ({ page }) => {
@@ -405,23 +543,23 @@ test("tools have their own settings page in the org and in a space", async ({ pa
   await expect(page.getByRole("region", { name: "Thread" })).toHaveCount(0);
   await page
     .getByRole("navigation", { name: "Organization settings" })
-    .getByRole("link", { name: "Tools" })
+    .getByRole("link", { name: "Tools and MCPs" })
     .click();
   await expect(page).toHaveURL(/\/org\/tools$/);
-  // The page's title is the only "Tools" heading; the toolsets are in a card for their source.
-  await expect(page.getByRole("heading", { name: "Tools", exact: true })).toHaveCount(1);
+  // The page's title is the only "Tools and MCPs" heading; the toolsets are in a card for their source.
+  await expect(page.getByRole("heading", { name: "Tools and MCPs", exact: true })).toHaveCount(1);
   await expect(builtIn(page)).toHaveCount(1);
   await expect(builtIn(page).getByRole("region", { name: "Thread" })).toContainText("4 tools");
 
   // A person's own space has no members to set.
   await page.goto(`/s/${spaceId}/settings`);
   const nav = page.getByRole("navigation", { name: "Space settings" });
-  await expect(nav.getByRole("link")).toHaveText(["General", "Tools"]);
+  await expect(nav.getByRole("link")).toHaveText(["General", "Tools and MCPs"]);
   await expect(page.getByRole("region", { name: "Thread" })).toHaveCount(0);
-  await nav.getByRole("link", { name: "Tools" }).click();
+  await nav.getByRole("link", { name: "Tools and MCPs" }).click();
   await expect(page).toHaveURL(/\/settings\/tools$/);
   await expect(page.getByRole("region", { name: "Thread" })).toContainText("4 tools");
-  await expect(page.getByRole("heading", { name: "Tools", exact: true })).toHaveCount(1);
+  await expect(page.getByRole("heading", { name: "Tools and MCPs", exact: true })).toHaveCount(1);
   await expect(builtIn(page).getByRole("region", { name: "Thread" })).toHaveCount(1);
   await page.goto(`/s/${spaceId}/settings/members`);
   await expect(page).toHaveURL(/\/settings$/);

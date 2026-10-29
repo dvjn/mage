@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 
 import { AUTH_KINDS } from "../shared/hosts.ts";
+import { POLICY_COLORS } from "../shared/tools.ts";
 
 export const user = sqliteTable("user", {
   id: text("id").primaryKey(),
@@ -379,7 +380,32 @@ export const spaceMcpServerSetting = sqliteTable(
   (table) => [primaryKey({ columns: [table.spaceId, table.serverId] })],
 );
 
-// The mode an org set for a tool, for all its spaces.
+// An access policy: the org's when spaceId is null, usable in every space, or one space's. Who
+// can use its tools without approval and who approves are kept as JSON lists of keys.
+export const toolPolicy = sqliteTable(
+  "tool_policy",
+  {
+    id: text("id").primaryKey(),
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    spaceId: text("space_id").references(() => space.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    color: text("color", {
+      enum: POLICY_COLORS,
+    }).notNull(),
+    use: text("use", { enum: ["everyone", "some", "none"] }).notNull(),
+    users: text("users", { mode: "json" }).$type<string[]>().notNull(),
+    approvers: text("approvers", { mode: "json" }).$type<string[]>().notNull(),
+    independent: integer("independent", { mode: "boolean" }).default(false).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [index("tool_policy_organization_idx").on(table.organizationId)],
+);
+
+// The policy an org set a tool to, for all its spaces; a null policy turns the tool off.
 export const orgToolSetting = sqliteTable(
   "org_tool_setting",
   {
@@ -387,12 +413,13 @@ export const orgToolSetting = sqliteTable(
       .notNull()
       .references(() => organization.id, { onDelete: "cascade" }),
     toolId: text("tool_id").notNull(),
-    mode: text("mode", { enum: ["block", "review", "ask", "allow"] }).notNull(),
+    policyId: text("policy_id").references(() => toolPolicy.id),
   },
   (table) => [primaryKey({ columns: [table.organizationId, table.toolId] })],
 );
 
-// The mode a space set for a tool; it only makes the org's stricter.
+// The policy a space set a tool to: on the org's tools a rule added to the org's, on its own the
+// one that applies. A null policy turns the tool off there.
 export const spaceToolSetting = sqliteTable(
   "space_tool_setting",
   {
@@ -400,7 +427,7 @@ export const spaceToolSetting = sqliteTable(
       .notNull()
       .references(() => space.id, { onDelete: "cascade" }),
     toolId: text("tool_id").notNull(),
-    mode: text("mode", { enum: ["block", "review", "ask", "allow"] }).notNull(),
+    policyId: text("policy_id").references(() => toolPolicy.id),
   },
   (table) => [primaryKey({ columns: [table.spaceId, table.toolId] })],
 );

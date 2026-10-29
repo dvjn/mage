@@ -2,7 +2,21 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as schema from "@/adapters/schema.ts";
-import { decide, levelOf } from "@/services/tool-authority.ts";
+import type { ToolPolicyFields } from "@/ports/tools.ts";
+import {
+  canUse,
+  decide,
+  type Influence,
+  latestAuthor,
+  levelOf,
+  mayApprove,
+  NOBODY,
+  OPEN,
+  personOf,
+  type Rule,
+  riskOf,
+} from "@/services/tool-authority.ts";
+import { EDITORS, TOOL_OFF } from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
 import { agentThread } from "./agent-thread.ts";
@@ -21,66 +35,160 @@ describe("levels", () => {
   });
 });
 
+function rule(fields: Partial<Rule>): Rule {
+  return { ...NOBODY, ...fields };
+}
+
+describe("policy evaluation", () => {
+  const ada = personOf("ada", run, ["eng"]);
+  const grace = personOf("grace", run, ["sec"]);
+  const alan = personOf("alan", approve, ["eng", "sec"]);
+  const engineering = rule({ use: "some", users: ["group:eng"], approvers: ["group:sec"] });
+
+  it("lets people use a tool directly only when every rule names them, never viewers", () => {
+    expect(canUse(ada, [OPEN])).toBe(true);
+    expect(canUse(alan, [OPEN])).toBe(false);
+    expect(canUse(ada, [engineering])).toBe(true);
+    expect(canUse(grace, [engineering])).toBe(false);
+    expect(canUse(alan, [engineering])).toBe(false);
+    expect(canUse(ada, [rule({ use: "some", users: ["user:ada"] })])).toBe(true);
+    expect(canUse(ada, [OPEN, rule({ use: "none", approvers: [EDITORS] })])).toBe(false);
+    // A space's extra rule narrows the org's: both must let them.
+    expect(canUse(ada, [engineering, rule({ use: "some", users: ["user:grace"] })])).toBe(false);
+  });
+
+  it("lets only named approvers who can edit the thread approve, and anyone who can when none asks", () => {
+    expect(mayApprove(grace, [engineering], "normal", null)).toBe(true);
+    expect(mayApprove(ada, [engineering], "normal", null)).toBe(false);
+    expect(mayApprove(alan, [engineering], "normal", null)).toBe(false);
+    expect(mayApprove(ada, [OPEN], "ask", null)).toBe(true);
+    expect(mayApprove(alan, [OPEN], "ask", null)).toBe(false);
+    expect(mayApprove(ada, [rule({ approvers: [EDITORS] })], "ask", null)).toBe(true);
+    // Every rule that asks must name them.
+    const both = [engineering, rule({ approvers: ["user:ada"] })];
+    expect(mayApprove(grace, both, "ask", null)).toBe(false);
+    expect(mayApprove(personOf("maya", run, ["sec"]), both, "ask", null)).toBe(false);
+    expect(mayApprove(personOf("ada", run, ["sec"]), both, "ask", null)).toBe(true);
+  });
+
+  it("never matches a stale id, and leaves calls with nobody to approve them", () => {
+    const gone = rule({ use: "some", users: ["group:gone"], approvers: ["user:gone"] });
+    expect(canUse(ada, [gone])).toBe(false);
+    expect(mayApprove(ada, [gone], "normal", null)).toBe(false);
+    expect(mayApprove(ada, [NOBODY], "ask", null)).toBe(false);
+    expect(mayApprove(ada, [rule({ approvers: [] })], "ask", null)).toBe(false);
+  });
+
+  it("keeps the author of the latest human message from approving independently", () => {
+    const rows = [
+      { kind: "human", author: { userId: "ada" } },
+      { kind: "human", author: { userId: "grace" } },
+      { kind: "agent" },
+    ];
+    expect(latestAuthor(rows)).toBe("grace");
+    const review = [rule({ approvers: [EDITORS], independent: true })];
+    expect(mayApprove(grace, review, "review", "grace")).toBe(false);
+    expect(mayApprove(ada, review, "review", "grace")).toBe(true);
+    // Independence applies to approvals, whoever wrote last, only where review applies.
+    expect(mayApprove(grace, [OPEN], "ask", "grace")).toBe(true);
+  });
+
+  it("raises the tool's risk where a policy lets no one use it or asks for independence", () => {
+    expect(riskOf("normal", [OPEN])).toBe("normal");
+    expect(riskOf("ask", [OPEN])).toBe("ask");
+    expect(riskOf("review", [rule({ approvers: [EDITORS] })])).toBe("review");
+    expect(riskOf("normal", [OPEN, rule({ approvers: [EDITORS] })])).toBe("ask");
+    expect(riskOf("normal", [engineering])).toBe("normal");
+    expect(riskOf("normal", [{ ...engineering, independent: true }])).toBe("review");
+    expect(riskOf("normal", [{ ...OPEN, independent: true }])).toBe("normal");
+  });
+});
+
 describe("deciding a call", () => {
+  const can = (seq: number): Influence => ({ seq, level: run, canUse: true });
+  const cannot = (seq: number): Influence => ({ seq, level: run, canUse: false });
   const cases: [string, Parameters<typeof decide>[0], ReturnType<typeof decide>][] = [
     [
       "owner alone, normal risk",
-      { risk: "normal", influence: [{ seq: 1, level: run }], standing: [] },
+      { declared: "normal", rules: [OPEN], influence: [can(1)], standing: [] },
       "run",
     ],
     [
-      "someone at approve wrote earlier",
-      {
-        risk: "normal",
-        influence: [
-          { seq: 1, level: run },
-          { seq: 2, level: approve },
-        ],
-        standing: [],
-      },
+      "someone who can't use it wrote earlier",
+      { declared: "normal", rules: [OPEN], influence: [can(1), cannot(2)], standing: [] },
       "wait",
     ],
     [
       "a standing approval after they wrote",
       {
-        risk: "normal",
-        influence: [{ seq: 2, level: approve }],
-        standing: [{ atSeq: 5, level: run }],
+        declared: "normal",
+        rules: [OPEN],
+        influence: [cannot(2)],
+        standing: [{ atSeq: 5, eligible: true }],
       },
       "standing",
     ],
     [
       "they wrote after the standing approval",
       {
-        risk: "normal",
-        influence: [{ seq: 6, level: approve }],
-        standing: [{ atSeq: 5, level: run }],
+        declared: "normal",
+        rules: [OPEN],
+        influence: [cannot(6)],
+        standing: [{ atSeq: 5, eligible: true }],
       },
       "wait",
     ],
     [
-      "the approval's giver lost their level",
+      "the approval's giver may no longer approve",
       {
-        risk: "normal",
-        influence: [{ seq: 2, level: approve }],
-        standing: [{ atSeq: 5, level: approve }],
+        declared: "normal",
+        rules: [OPEN],
+        influence: [cannot(2)],
+        standing: [{ atSeq: 5, eligible: false }],
       },
       "wait",
     ],
     [
-      "ask risk with the owner alone",
-      { risk: "ask", influence: [{ seq: 1, level: run }], standing: [] },
+      "the tool declares it asks",
+      {
+        declared: "ask",
+        rules: [OPEN],
+        influence: [can(1)],
+        standing: [{ atSeq: 5, eligible: true }],
+      },
       "wait",
     ],
     [
-      "ask risk with a standing approval",
-      { risk: "ask", influence: [{ seq: 1, level: run }], standing: [{ atSeq: 5, level: run }] },
+      "a policy that lets no one use it",
+      {
+        declared: "normal",
+        rules: [OPEN, rule({ approvers: [EDITORS] })],
+        influence: [can(1)],
+        standing: [{ atSeq: 5, eligible: true }],
+      },
       "wait",
     ],
     [
-      "independent review ignores standing approvals",
-      { risk: "review", influence: [{ seq: 1, level: run }], standing: [{ atSeq: 5, level: run }] },
+      "independent approval ignores standing approvals",
+      {
+        declared: "normal",
+        rules: [rule({ use: "some", approvers: [EDITORS], independent: true })],
+        influence: [cannot(1)],
+        standing: [{ atSeq: 5, eligible: true }],
+      },
       "wait",
+    ],
+    [
+      "independent approval still lets its users run it",
+      {
+        declared: "normal",
+        rules: [
+          rule({ use: "some", users: ["user:ada"], approvers: [EDITORS], independent: true }),
+        ],
+        influence: [can(1)],
+        standing: [],
+      },
+      "run",
     ],
   ];
   it.each(cases)("%s", (_name, input, expected) => {
@@ -138,6 +246,21 @@ async function toolThread() {
   function revokeHedy() {
     guestStore.revoke(thread.id, hedy.userId, ada.userId, new Date());
   }
+  // A policy of the org, or of the space when given; by default every call needs approval from
+  // anyone who can edit the thread.
+  function policy(fields: Partial<ToolPolicyFields> = {}, spaceId: string | null = null) {
+    return workspace.toolPolicyStore.create({
+      orgId: ada.orgId,
+      spaceId,
+      name: "Sign-off",
+      color: "orange",
+      use: "none",
+      users: [],
+      approvers: [EDITORS],
+      independent: false,
+      ...fields,
+    });
+  }
   return {
     ...workspace,
     toolRegistry: workspace.tools,
@@ -147,6 +270,7 @@ async function toolThread() {
     decideCall,
     setRole,
     revokeHedy,
+    policy,
   };
 }
 
@@ -366,10 +490,10 @@ describe("tool calls", () => {
     expect((await decideCall(ada, tools()[0]!.id, true, "for_now")).status).toBe(400);
   });
 
-  it("ask every time where the tool is set to ask, never for now", async () => {
-    const { ada, post, calls, model, worker, start, tools, decideCall, toolSettings, space } =
+  it("ask every time where no one may use the tool directly, never for now", async () => {
+    const { ada, post, calls, model, worker, start, tools, decideCall, toolSettings, policy } =
       await toolThread();
-    toolSettings.setInSpace(space.id, ["thread.rename"], "ask");
+    toolSettings.setInOrg(ada.orgId, ["thread.rename"], policy().id);
     start();
     await post(ada, "Rename it");
     await calls(["thread.rename", { title: "Looms" }]);
@@ -412,11 +536,11 @@ describe("tool calls", () => {
     expect(second.request.effort).toBe("low");
   });
 
-  it("are not offered where the org or the space blocked them", async () => {
+  it("are not offered where the org or the space turned them off", async () => {
     const workspace = await toolThread();
     const { ada, post, model, worker, start, toolSettings, space } = workspace;
-    toolSettings.setInOrg(ada.orgId, ["thread.info"], "block");
-    toolSettings.setInSpace(space.id, ["thread.move"], "block");
+    toolSettings.setInOrg(ada.orgId, ["thread.info"], TOOL_OFF);
+    toolSettings.setInSpace(space.id, ["thread.move"], TOOL_OFF);
     start();
     await post(ada, "Hello");
     const call = await answered(model.next());
@@ -432,10 +556,126 @@ describe("tool calls", () => {
   });
 });
 
+describe("tool policies", () => {
+  it("let the people a policy names use a tool directly, and only its approvers approve the rest", async () => {
+    const {
+      ada,
+      grace,
+      alan,
+      post,
+      calls,
+      model,
+      worker,
+      start,
+      tools,
+      decideCall,
+      toolSettings,
+      policy,
+    } = await toolThread();
+    const team = policy({
+      use: "some",
+      users: [`user:${grace.userId}`],
+      approvers: [`user:${ada.userId}`, `user:${alan.userId}`],
+    });
+    toolSettings.setInOrg(ada.orgId, ["thread.rename"], team.id);
+    start();
+
+    await post(grace, "Rename it to Looms");
+    await calls(["thread.rename", { title: "Looms" }]);
+    await answered(model.next());
+    await worker.idle();
+    expect(tools()[0]).toMatchObject({ state: "ran", waits: false });
+
+    await post(ada, "Rename it to Engines");
+    await calls(["thread.rename", { title: "Engines" }]);
+    await worker.idle();
+    const pending = tools()[1]!;
+    expect(pending).toMatchObject({ state: "pending", waits: true, risk: "normal" });
+    // Grace may use it but does not approve it; Alan is named but only views the thread.
+    expect((await decideCall(grace, pending.id, true)).status).toBe(403);
+    expect((await decideCall(alan, pending.id, true)).status).toBe(403);
+    expect((await decideCall(ada, pending.id, true)).status).toBe(200);
+    await answered(model.next());
+    await worker.idle();
+    expect(tools()[1]).toMatchObject({ state: "ran", decision: { by: { userId: ada.userId } } });
+  });
+
+  it("layer a space's extra rule on the org's: both must let someone use it or approve it", async () => {
+    const {
+      ada,
+      grace,
+      space,
+      post,
+      calls,
+      worker,
+      start,
+      tools,
+      decideCall,
+      toolSettings,
+      policy,
+    } = await toolThread();
+    const org = policy({
+      use: "some",
+      users: [`user:${ada.userId}`, `user:${grace.userId}`],
+      approvers: [`user:${grace.userId}`],
+    });
+    const extra = policy(
+      {
+        use: "some",
+        users: [`user:${grace.userId}`],
+        approvers: [`user:${ada.userId}`, `user:${grace.userId}`],
+      },
+      space.id,
+    );
+    toolSettings.setInOrg(ada.orgId, ["thread.rename"], org.id);
+    toolSettings.setInSpace(space.id, ["thread.rename"], extra.id);
+    start();
+
+    // The org lets Ada use it directly, but the space does not.
+    await post(ada, "Rename it");
+    await calls(["thread.rename", { title: "Looms" }]);
+    await worker.idle();
+    const pending = tools()[0]!;
+    expect(pending).toMatchObject({ state: "pending", waits: true });
+    // The space names Ada as an approver, but the org does not.
+    expect((await decideCall(ada, pending.id, true)).status).toBe(403);
+    expect((await decideCall(grace, pending.id, true)).status).toBe(200);
+  });
+
+  it("leave a call waiting with nobody to approve it when its policy is not the space's", async () => {
+    const workspace = await toolThread();
+    const {
+      ada,
+      grace,
+      space,
+      post,
+      calls,
+      worker,
+      start,
+      tools,
+      decideCall,
+      toolSettings,
+      policy,
+    } = workspace;
+    const other = await workspace.createSpace(ada.cookie, "Other");
+    toolSettings.setInSpace(space.id, ["thread.rename"], policy({ use: "everyone" }, other.id).id);
+    start();
+    await post(ada, "Rename it");
+    await calls(["thread.rename", { title: "Looms" }]);
+    await worker.idle();
+    expect(tools()[0]).toMatchObject({ state: "pending", waits: true });
+    expect((await decideCall(ada, tools()[0]!.id, true)).status).toBe(403);
+    expect((await decideCall(grace, tools()[0]!.id, true)).status).toBe(403);
+  });
+});
+
 describe("independent review", () => {
-  it.each(["allow", "ask"] as const)(
+  it.each([
+    ["open", null],
+    ["sign-off", "sign-off"],
+  ] as const)(
     "lets the requester decide the pending call after changing review to %s",
-    async (mode) => {
+    async (_name, next) => {
       const {
         ada,
         space,
@@ -449,8 +689,11 @@ describe("independent review", () => {
         decideCall,
         toolSettings,
         api,
+        policy,
       } = await toolThread();
-      toolSettings.setInSpace(space.id, ["thread.rename"], "review");
+      const review = policy({ name: "Independent review", independent: true });
+      const signOff = policy();
+      toolSettings.setInSpace(space.id, ["thread.rename"], review.id);
       start();
       await post(ada, "Rename it");
       await calls(["thread.rename", { title: "Engines" }]);
@@ -459,12 +702,12 @@ describe("independent review", () => {
       expect((await decideCall(ada, callId, true)).status).toBe(403);
       const changed = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
         toolIds: ["thread.rename"],
-        mode,
+        policy: next && signOff.id,
       });
       expect(changed.status).toBe(200);
       const detail = await api("GET", `/threads/${thread.id}`, ada.cookie);
       expect(await detail.json()).toMatchObject({
-        pendingTools: { [callId]: { risk: mode === "ask" ? "ask" : "normal", canDecide: true } },
+        pendingTools: { [callId]: { risk: next ? "ask" : "normal", canDecide: true } },
       });
       const listed = await api("GET", `/spaces/${space.id}/threads`, ada.cookie);
       expect(await listed.json()).toContainEqual(
@@ -482,16 +725,17 @@ describe("independent review", () => {
     },
   );
 
-  it("does not downgrade a tool's declared review risk when configured to ask", async () => {
-    const { ada, space, toolRegistry, toolSettings } = await toolThread();
+  it("does not downgrade a tool's declared review risk under a sign-off policy", async () => {
+    const { ada, space, toolRegistry, toolSettings, policy } = await toolThread();
     const spec = toolRegistry.find(ada.orgId, "thread.rename")!;
     spec.risk = () => "review";
-    toolSettings.setInSpace(space.id, [spec.name], "ask");
+    toolSettings.setInSpace(space.id, [spec.name], policy().id);
     expect(
       toolRegistry.riskOf({ ...space, orgId: ada.orgId }, spec, { title: "Looms" }, null),
     ).toBe("review");
   });
-  it("waits for a runner who has not contributed, and never grants standing review", async () => {
+
+  it("waits for an approver who did not write last, and never grants standing review", async () => {
     const {
       ada,
       grace,
@@ -508,10 +752,11 @@ describe("independent review", () => {
       decideCall,
       toolSettings,
       api,
+      policy,
     } = await toolThread();
-    toolSettings.setInOrg(ada.orgId, ["thread.rename"], "review");
-    // A space's ask setting cannot loosen the organization's independent-review requirement.
-    toolSettings.setInSpace(space.id, ["thread.rename"], "ask");
+    toolSettings.setInOrg(ada.orgId, ["thread.rename"], policy({ independent: true }).id);
+    // A space's extra rule cannot loosen the organization's independent review.
+    toolSettings.setInSpace(space.id, ["thread.rename"], policy({}, space.id).id);
     start();
     await post(ada, "Rename it");
     await post(hedy, "// I suggested the name");
@@ -521,18 +766,21 @@ describe("independent review", () => {
     expect(pending).toMatchObject({ risk: "review", state: "pending" });
     const loosened = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
       toolIds: ["thread.rename"],
-      mode: "allow",
+      policy: null,
     });
     expect(loosened.status).toBe(200);
-    expect((await decideCall(ada, pending.id, true)).status).toBe(403);
-    expect((await decideCall(hedy, pending.id, false)).status).toBe(403);
+    expect((await decideCall(hedy, pending.id, true)).status).toBe(403);
     expect((await decideCall(alan, pending.id, true)).status).toBe(403);
     expect((await decideCall(grace, pending.id, true, "for_now")).status).toBe(400);
     for (const [who, canApprove] of [
-      [ada, false],
+      [hedy, false],
       [grace, true],
     ] as const) {
-      const list = await api("GET", `/spaces/${space.id}/threads`, who.cookie);
+      const list = await api(
+        "GET",
+        who === hedy ? "/shared-threads" : `/spaces/${space.id}/threads`,
+        who.cookie,
+      );
       expect(await list.json()).toContainEqual(
         expect.objectContaining({
           id: thread.id,
@@ -548,6 +796,7 @@ describe("independent review", () => {
     await calls(["thread.rename", { title: "Looms" }]);
     await worker.idle();
     expect(tools()[1]).toMatchObject({ risk: "review", state: "pending" });
+    expect((await decideCall(ada, tools()[1]!.id, true)).status).toBe(403);
   });
 
   it("rechecks independence before executing an approved call", async () => {
@@ -565,8 +814,9 @@ describe("independent review", () => {
       toolSettings,
       threadStore,
       thread,
+      policy,
     } = await toolThread();
-    toolSettings.setInSpace(space.id, ["thread.rename"], "review");
+    toolSettings.setInSpace(space.id, ["thread.rename"], policy({ independent: true }).id);
     const first = makeWorker();
     start(first);
     await post(ada, "Rename it");
@@ -598,6 +848,7 @@ describe("independent review", () => {
       tools,
       decideCall,
       toolSettings,
+      policy,
     } = workspace;
     const first = makeWorker();
     start(first);
@@ -607,13 +858,13 @@ describe("independent review", () => {
     await first.idle();
     await first.stop();
     expect((await decideCall(ada, tools()[0]!.id, true, "for_now")).status).toBe(200);
-    toolSettings.setInSpace(space.id, ["thread.rename"], "review");
+    toolSettings.setInSpace(space.id, ["thread.rename"], policy({ independent: true }).id);
     const second = makeWorker();
     start(second);
     await answered(model.next());
     await second.idle();
     expect(tools()[0]?.state).toBe("stale");
-    // An uninvolved runner can decide future review calls, but previous standing grants cannot.
+    // Someone who did not write last can decide future review calls, but standing grants cannot.
     await post(ada, "Again");
     await calls(["thread.rename", { title: "Looms" }]);
     await second.idle();
@@ -642,8 +893,9 @@ describe("built-in toolset switches", () => {
         threadStore,
         thread,
         api,
+        policy,
       } = await toolThread();
-      toolSettings.setInSpace(space.id, ["thread.rename"], "ask");
+      toolSettings.setInSpace(space.id, ["thread.rename"], policy().id);
       const first = makeWorker();
       start(first);
       await post(ada, "Rename it");
@@ -661,11 +913,13 @@ describe("built-in toolset switches", () => {
       expect(threadStore.find(thread.id)?.title).not.toBe("Engines");
     },
   );
-  it("preserves tool permissions, isolates space switches, and prevents overriding an org switch", async () => {
-    const { ada, grace, alan, api, space, createSpace, toolSettings, toolRegistry } =
+  it("preserves tool policies, isolates space switches, and prevents overriding an org switch", async () => {
+    const { ada, grace, alan, api, space, createSpace, toolSettings, toolRegistry, policy } =
       await toolThread();
     const elsewhere = await createSpace(ada.cookie, "Elsewhere");
-    toolSettings.setInOrg(ada.orgId, ["thread.rename"], "ask");
+    const signOff = policy();
+    const review = policy({ independent: true });
+    toolSettings.setInOrg(ada.orgId, ["thread.rename"], signOff.id);
     const setOrg = (enabled: boolean, cookie = ada.cookie) =>
       api("PUT", "/org/toolsets/thread", cookie, { enabled });
     const setSpace = (enabled: boolean, cookie = ada.cookie) =>
@@ -680,7 +934,7 @@ describe("built-in toolset switches", () => {
         enabled: false,
         orgEnabled: true,
         tools: expect.arrayContaining([
-          expect.objectContaining({ id: "thread.rename", mode: "ask" }),
+          expect.objectContaining({ id: "thread.rename", orgPolicy: signOff.id, policy: null }),
         ]),
       }),
     );
@@ -691,7 +945,7 @@ describe("built-in toolset switches", () => {
     expect(toolRegistry.definitions({ id: elsewhere.id, orgId: ada.orgId })).toEqual([]);
     const changeWhileOff = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
       toolIds: ["thread.rename"],
-      mode: "review",
+      policy: review.id,
     });
     expect(changeWhileOff.status).toBe(200);
     expect((await setOrg(true)).status).toBe(200);
@@ -703,25 +957,44 @@ describe("built-in toolset switches", () => {
         id: "thread",
         enabled: true,
         tools: expect.arrayContaining([
-          expect.objectContaining({ id: "thread.rename", orgMode: "ask", mode: "review" }),
+          expect.objectContaining({
+            id: "thread.rename",
+            orgPolicy: signOff.id,
+            policy: review.id,
+          }),
         ]),
       }),
     );
   });
 });
 
+const signOffInput = {
+  name: "Sign-off",
+  color: "orange",
+  use: "none",
+  users: [],
+  approvers: [EDITORS],
+  independent: false,
+};
+
 describe("tool settings", () => {
-  it("let org owners set each tool, and spaces only make it stricter", async () => {
-    const { ada, grace, api, space } = await toolThread();
-    const change = (toolIds: string[], mode: string) => ({ toolIds, mode });
+  it("let org owners set each tool to an org policy or off, and spaces add rules or turn tools off", async () => {
+    const { ada, grace, api, space, createSpace } = await toolThread();
+    const change = (toolIds: string[], policy: string | null) => ({ toolIds, policy });
+    const made = await api("POST", "/org/tool-policies", ada.cookie, signOffInput);
+    expect(made.status).toBe(201);
+    const signOff = (await made.json()) as { id: string };
 
     expect(
-      (await api("PATCH", "/org/tools", grace.cookie, change(["thread.move"], "ask"))).status,
+      (await api("PATCH", "/org/tools", grace.cookie, change(["thread.move"], signOff.id))).status,
     ).toBe(403);
     expect(
-      (await api("PATCH", "/org/tools", ada.cookie, change(["thread.nope"], "ask"))).status,
+      (await api("PATCH", "/org/tools", ada.cookie, change(["thread.nope"], signOff.id))).status,
     ).toBe(404);
-    const org = await api("PATCH", "/org/tools", ada.cookie, change(["thread.move"], "ask"));
+    expect(
+      (await api("PATCH", "/org/tools", ada.cookie, change(["thread.move"], "nope"))).status,
+    ).toBe(404);
+    const org = await api("PATCH", "/org/tools", ada.cookie, change(["thread.move"], signOff.id));
     const [thread] = (await org.json()) as {
       id: string;
       title: string;
@@ -730,39 +1003,157 @@ describe("tool settings", () => {
     }[];
     expect(thread).toMatchObject({ id: "thread", title: "Thread", source: "builtin" });
     expect(thread!.tools).toContainEqual(
-      expect.objectContaining({ id: "thread.move", orgMode: "ask", mode: "ask" }),
+      expect.objectContaining({ id: "thread.move", orgPolicy: signOff.id, policy: signOff.id }),
     );
     expect(thread!.tools).toContainEqual(
       expect.objectContaining({
         id: "thread.info",
-        mode: "allow",
+        orgPolicy: null,
         definition: expect.objectContaining({ annotations: { readOnlyHint: true } }),
       }),
     );
 
-    await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, change(["thread.move"], "allow"));
+    // A space's own policy is for its tools alone, never the org's or another space's.
+    const own = await api("POST", `/spaces/${space.id}/tool-policies`, ada.cookie, {
+      ...signOffInput,
+      name: "Space sign-off",
+    });
+    expect(own.status).toBe(201);
+    const spacePolicy = (await own.json()) as { id: string; spaceId: string };
+    expect(spacePolicy.spaceId).toBe(space.id);
+    expect(
+      (await api("PATCH", "/org/tools", ada.cookie, change(["thread.move"], spacePolicy.id)))
+        .status,
+    ).toBe(404);
+    const other = await createSpace(ada.cookie, "Other");
+    expect(
+      (
+        await api(
+          "PATCH",
+          `/spaces/${other.id}/tools`,
+          ada.cookie,
+          change(["thread.move"], spacePolicy.id),
+        )
+      ).status,
+    ).toBe(404);
+
     const changed = await api(
       "PATCH",
       `/spaces/${space.id}/tools`,
       ada.cookie,
-      change(["thread.rename", "thread.info"], "block"),
+      change(["thread.rename", "thread.info"], TOOL_OFF),
     );
-    const [inSpace] = (await changed.json()) as { tools: unknown[] }[];
+    await api(
+      "PATCH",
+      `/spaces/${space.id}/tools`,
+      ada.cookie,
+      change(["thread.set_model"], spacePolicy.id),
+    );
+    expect(changed.status).toBe(200);
+    const listed = await api("GET", `/spaces/${space.id}/tools`, ada.cookie);
+    const [inSpace] = (await listed.json()) as { tools: unknown[] }[];
     expect(inSpace!.tools).toEqual([
-      expect.objectContaining({ id: "thread.info", orgMode: "allow", mode: "block" }),
-      expect.objectContaining({ id: "thread.rename", orgMode: "allow", mode: "block" }),
-      expect.objectContaining({ id: "thread.move", orgMode: "ask", mode: "ask" }),
-      expect.objectContaining({ id: "thread.set_model", orgMode: "allow", mode: "allow" }),
+      expect.objectContaining({ id: "thread.info", orgPolicy: null, policy: TOOL_OFF }),
+      expect.objectContaining({ id: "thread.rename", orgPolicy: null, policy: TOOL_OFF }),
+      expect.objectContaining({ id: "thread.move", orgPolicy: signOff.id, policy: null }),
+      expect.objectContaining({ id: "thread.set_model", orgPolicy: null, policy: spacePolicy.id }),
     ]);
     expect((await api("GET", `/spaces/${space.id}/tools`, grace.cookie)).status).toBe(403);
+  });
+
+  it("make, change and delete policies: the org's by its owners, a space's by its managers", async () => {
+    const { ada, grace, alan, api, space } = await toolThread();
+    expect((await api("POST", "/org/tool-policies", grace.cookie, signOffInput)).status).toBe(403);
+    expect(
+      (await api("POST", `/spaces/${space.id}/tool-policies`, grace.cookie, signOffInput)).status,
+    ).toBe(403);
+    // Someone must approve when not everyone can use it.
+    const noApprover = await api("POST", "/org/tool-policies", ada.cookie, {
+      ...signOffInput,
+      approvers: [],
+    });
+    expect(noApprover.status).toBe(400);
+    expect(await noApprover.json()).toEqual({ error: "Pick at least one approver" });
+    expect(
+      (
+        await api("POST", "/org/tool-policies", ada.cookie, {
+          ...signOffInput,
+          approvers: ["user:nobody"],
+        })
+      ).status,
+    ).toBe(400);
+
+    const made = await api("POST", "/org/tool-policies", ada.cookie, {
+      ...signOffInput,
+      use: "some",
+      users: [`user:${grace.userId}`],
+      approvers: [EDITORS, `user:${alan.userId}`],
+    });
+    const policy = (await made.json()) as { id: string };
+    expect(policy).toMatchObject({
+      spaceId: null,
+      use: "some",
+      users: [{ key: `user:${grace.userId}`, kind: "user", name: "Grace Hopper", stale: false }],
+      approvers: [
+        { key: EDITORS, kind: "editors", name: "Anyone who can edit the thread" },
+        { key: `user:${alan.userId}`, name: "Alan Turing" },
+      ],
+      toolCount: 0,
+    });
+    const everyone = await api("PUT", `/org/tool-policies/${policy.id}`, ada.cookie, {
+      ...signOffInput,
+      name: "Open to all",
+      use: "everyone",
+      users: [`user:${grace.userId}`],
+      independent: true,
+    });
+    // Everyone uses it, so nobody approves and nothing is independent.
+    expect(await everyone.json()).toMatchObject({
+      name: "Open to all",
+      use: "everyone",
+      users: [],
+      approvers: [],
+      independent: false,
+    });
+
+    await api("PATCH", "/org/tools", ada.cookie, { toolIds: ["thread.move"], policy: policy.id });
+    const listed = (await (await api("GET", "/org/tool-policies", grace.cookie)).json()) as {
+      id: string;
+      toolCount: number;
+    }[];
+    expect(listed).toEqual([expect.objectContaining({ id: policy.id, toolCount: 1 })]);
+    expect((await api("DELETE", `/org/tool-policies/${policy.id}`, ada.cookie)).status).toBe(409);
+    // A space can use the org's policies, but not change them.
+    const inSpace = (await (
+      await api("GET", `/spaces/${space.id}/tool-policies`, ada.cookie)
+    ).json()) as { id: string }[];
+    expect(inSpace.map((found) => found.id)).toEqual([policy.id]);
+    expect(
+      (await api("DELETE", `/spaces/${space.id}/tool-policies/${policy.id}`, ada.cookie)).status,
+    ).toBe(404);
+    await api("PATCH", "/org/tools", ada.cookie, { toolIds: ["thread.move"], policy: null });
+    expect((await api("DELETE", `/org/tool-policies/${policy.id}`, ada.cookie)).status).toBe(200);
+    expect(await (await api("GET", "/org/tool-policies", ada.cookie)).json()).toEqual([]);
   });
 });
 
 describe("thread lists", () => {
   it("say when the agent waits for a decision, on which tool, and who may make it", async () => {
-    const { ada, alan, hedy, post, calls, worker, start, api, space, thread, toolSettings } =
-      await toolThread();
-    toolSettings.setInSpace(space.id, ["thread.rename"], "ask");
+    const {
+      ada,
+      alan,
+      hedy,
+      post,
+      calls,
+      worker,
+      start,
+      api,
+      space,
+      thread,
+      toolSettings,
+      policy,
+    } = await toolThread();
+    toolSettings.setInSpace(space.id, ["thread.rename"], policy().id);
     start();
     await post(ada, "Rename it");
     await calls(["thread.rename", { title: "Looms" }]);
@@ -787,9 +1178,21 @@ describe("thread lists", () => {
   });
 
   it("list a thread waiting for a decision as needing only those who may make it", async () => {
-    const { ada, alan, hedy, post, calls, worker, start, api, space, thread, toolSettings } =
-      await toolThread();
-    toolSettings.setInSpace(space.id, ["thread.rename"], "ask");
+    const {
+      ada,
+      alan,
+      hedy,
+      post,
+      calls,
+      worker,
+      start,
+      api,
+      space,
+      thread,
+      toolSettings,
+      policy,
+    } = await toolThread();
+    toolSettings.setInSpace(space.id, ["thread.rename"], policy().id);
     start();
     await post(ada, "Rename it");
     await calls(["thread.rename", { title: "Looms" }]);

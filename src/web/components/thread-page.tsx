@@ -2,11 +2,11 @@
 // the messages waiting for it, a composer to post, steer, queue, interrupt and stop, trying the
 // last reply again when it failed or was stopped, and the thread's model with, for a model that can
 // think, its reasoning effort, or the defaults it follows, named as such, with a way back to them.
-// Its space's owners and messagers can share it from its header. Those who may run a tool decide on
-// the agent's calls of it that wait, and while the agent waits the composer says so. A
-// guest of the thread sees its space's name alone, and cannot change its model; once their access
-// ends, they are told so. When the server cannot be reached, the thread as last read stays in view
-// while it reconnects. Reading it marks it seen.
+// Its space's owners and messagers can share it from its header. Those a tool's policy lets
+// approve decide on the agent's calls of it that wait, and while the agent waits the composer says
+// so. A guest of the thread sees its space's name alone, and cannot change its model; once their
+// access ends, they are told so. When the server cannot be reached, the thread as last read stays
+// in view while it reconnects. Reading it marks it seen.
 
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -20,7 +20,7 @@ import {
   threadSchema,
   type ToolScope,
 } from "@/shared/threads.ts";
-import { agentTurnOf, independentReviewer, transcriptOf } from "@/shared/transcript.ts";
+import { agentTurnOf, transcriptOf } from "@/shared/transcript.ts";
 import {
   Conversation,
   ConversationContent,
@@ -275,10 +275,7 @@ export function ThreadPage() {
                     ...(row === retryable && { retry: () => void retry(retryable.runId) }),
                     ...(!guest && { pickModel: () => setPicking(true) }),
                     ...(row.kind === "tool" &&
-                      detail.data?.levels[row.toolId] === "run" &&
-                      policy?.canDecide !== false &&
-                      (row.risk !== "review" ||
-                        independentReviewer(transcript.rows, me.data?.user.id ?? "")) && {
+                      policy?.canDecide === true && {
                         decide: (allow: boolean, scope: ToolScope) => decide(row.id, allow, scope),
                       }),
                   }}

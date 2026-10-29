@@ -5,12 +5,28 @@ import * as schema from "@/adapters/schema.ts";
 import { mergeHeaders, outputOf, riskOfAnnotations, secretHint } from "@/services/mcp-servers.ts";
 import { mcpHeadersInputSchema, type McpServerSummary } from "@/shared/mcp.ts";
 import type { ThreadDetail } from "@/shared/threads.ts";
-import type { ToolsetSetting } from "@/shared/tools.ts";
+import { EDITORS, TOOL_OFF, type ToolsetSetting } from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
 import { MCP_API_KEY, MCP_BEARER_TOKEN, MODERN_REVISION, mcpStandIn } from "../e2e/mcp-server.ts";
 import { agentThread } from "./agent-thread.ts";
 import { MCP_ORIGIN, setup } from "./workspace.ts";
+
+// Makes an org policy every call of which waits for anyone who can edit the thread, and gives its id.
+async function signOff(
+  api: (method: string, path: string, cookie: string, body?: object) => Promise<Response>,
+  cookie: string,
+) {
+  const res = await api("POST", "/org/tool-policies", cookie, {
+    name: "Sign-off",
+    color: "orange",
+    use: "none",
+    users: [],
+    approvers: [EDITORS],
+    independent: false,
+  });
+  return ((await res.json()) as { id: string }).id;
+}
 
 const bearer = [{ name: "Authorization", value: `Bearer ${MCP_BEARER_TOKEN}` }];
 
@@ -139,10 +155,10 @@ describe("an org's MCP servers", () => {
 
     const notes = (await orgTools()).find((toolset) => toolset.id === `mcp:${body.id}`);
     expect(notes).toMatchObject({ title: "Notes", source: "mcp", scope: "org" });
-    expect(notes?.tools.map((tool) => [tool.id, tool.mode, tool.definition.title])).toEqual([
-      [`mcp:${body.id}/echo`, "allow", "Echo"],
-      [`mcp:${body.id}/add_note`, "allow", "Add note"],
-      [`mcp:${body.id}/delete_note`, "allow", "Delete note"],
+    expect(notes?.tools.map((tool) => [tool.id, tool.policy, tool.definition.title])).toEqual([
+      [`mcp:${body.id}/echo`, null, "Echo"],
+      [`mcp:${body.id}/add_note`, null, "Add note"],
+      [`mcp:${body.id}/delete_note`, null, "Delete note"],
     ]);
     expect(notes?.tools[0]?.definition.annotations).toEqual({ readOnlyHint: true });
   });
@@ -426,10 +442,10 @@ describe("a space's MCP servers", () => {
 
     const inLab = (await spaceTools(lab.id)).find((t) => t.id === `mcp:${body.id}`);
     expect(inLab).toMatchObject({ scope: "space", title: "Lab notes" });
-    expect(inLab?.tools.map((tool) => [tool.orgMode, tool.mode])).toEqual([
-      ["allow", "allow"],
-      ["allow", "allow"],
-      ["allow", "allow"],
+    expect(inLab?.tools.map((tool) => [tool.orgPolicy, tool.policy])).toEqual([
+      [null, null],
+      [null, null],
+      [null, null],
     ]);
     expect((await spaceTools(own.id)).some((t) => t.id === `mcp:${body.id}`)).toBe(false);
     expect((await orgTools()).some((t) => t.id === `mcp:${body.id}`)).toBe(false);
@@ -439,12 +455,12 @@ describe("a space's MCP servers", () => {
     // A space sets its own servers' tools as it likes.
     const set = await api("PATCH", `/spaces/${lab.id}/tools`, grace.cookie, {
       toolIds: [`mcp:${body.id}/add_note`],
-      mode: "ask",
+      policy: TOOL_OFF,
     });
     expect(set.status).toBe(200);
     const unknown = await api("PATCH", `/spaces/${own.id}/tools`, ada.cookie, {
       toolIds: [`mcp:${body.id}/add_note`],
-      mode: "ask",
+      policy: TOOL_OFF,
     });
     expect(unknown.status).toBe(404);
 
@@ -569,16 +585,17 @@ describe("turning an MCP server off", () => {
       api("PUT", `/mcp-servers/${server.id}/enabled`, ada.cookie, { enabled });
     expect((await setHere(false)).status).toBe(200);
     expect((await setEverywhere(false)).status).toBe(200);
-    const orgMode = await api("PATCH", "/org/tools", ada.cookie, { toolIds: [echo], mode: "ask" });
+    const asks = await signOff(api, ada.cookie);
+    const orgMode = await api("PATCH", "/org/tools", ada.cookie, { toolIds: [echo], policy: asks });
     expect(orgMode.status).toBe(200);
     const spaceMode = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
       toolIds: [echo],
-      mode: "block",
+      policy: TOOL_OFF,
     });
     expect(spaceMode.status).toBe(200);
     expect(
       (await spaceTools(space.id)).find((t) => t.id === toolset)?.tools.find((t) => t.id === echo),
-    ).toMatchObject({ orgMode: "ask", mode: "block" });
+    ).toMatchObject({ orgPolicy: asks, policy: TOOL_OFF });
     expect(tools.offered(space).some((t) => t.name.startsWith(`${toolset}/`))).toBe(false);
 
     const on = await setEverywhere(true);
@@ -594,7 +611,7 @@ describe("turning an MCP server off", () => {
     expect(tools.offered(space).some((t) => t.name === echo)).toBe(false);
     expect(
       (await spaceTools(space.id)).find((t) => t.id === toolset)?.tools.find((t) => t.id === echo),
-    ).toMatchObject({ orgMode: "ask", mode: "block" });
+    ).toMatchObject({ orgPolicy: asks, policy: TOOL_OFF });
   });
 
   it("does not let another organization change either switch", async () => {
@@ -783,9 +800,9 @@ describe("MCP tools in a thread", () => {
     },
   );
 
-  it("are not offered when blocked, and a removed server's tools go with it", async () => {
+  it("are not offered when off, and a removed server's tools go with it", async () => {
     const { ada, post, model, worker, start, id, api, server, db } = await mcpThread();
-    await api("PATCH", "/org/tools", ada.cookie, { toolIds: [id("echo")], mode: "block" });
+    await api("PATCH", "/org/tools", ada.cookie, { toolIds: [id("echo")], policy: TOOL_OFF });
     start();
 
     await post(ada, "Hello");
@@ -920,7 +937,7 @@ describe("changing an MCP server", () => {
     });
   });
 
-  it("drops what went with the old way of authorizing, and keeps tool modes by name", async () => {
+  it("drops what went with the old way of authorizing, and keeps tool policies by name", async () => {
     const { ada, add, api, db, orgTools } = await orgWithServers();
     const { body } = await add({
       name: "Notes",
@@ -928,7 +945,8 @@ describe("changing an MCP server", () => {
       auth: { kind: "headers", headers: bearer },
     });
     const addNote = `mcp:${body.id}/add_note`;
-    await api("PATCH", "/org/tools", ada.cookie, { toolIds: [addNote], mode: "ask" });
+    const asks = await signOff(api, ada.cookie);
+    await api("PATCH", "/org/tools", ada.cookie, { toolIds: [addNote], policy: asks });
 
     const open = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {
       url: `${MCP_ORIGIN}/mcp`,
@@ -942,7 +960,7 @@ describe("changing an MCP server", () => {
     });
     expect(db.select().from(schema.mcpCredential).all()).toHaveLength(0);
     const tools = (await orgTools()).find((toolset) => toolset.id === `mcp:${body.id}`)?.tools;
-    expect(tools?.find((tool) => tool.id === addNote)?.mode).toBe("ask");
+    expect(tools?.find((tool) => tool.id === addNote)?.policy).toBe(asks);
 
     // Nothing stored is kept for another way of authorizing.
     const refused = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, {

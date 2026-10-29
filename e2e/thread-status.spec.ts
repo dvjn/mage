@@ -150,8 +150,19 @@ test("a viewer sees the agent paused while a messager's call waits for approval"
 }, testInfo) => {
   const adaEmail = await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
+  const made = await page.request.post("/api/v1/org/tool-policies", {
+    data: {
+      name: "Sign-off",
+      color: "orange",
+      use: "none",
+      users: [],
+      approvers: ["editors"],
+      independent: false,
+    },
+  });
+  const policy = ((await made.json()) as { id: string }).id;
   const res = await page.request.patch(`/api/v1/spaces/${spaceId}/tools`, {
-    data: { toolIds: ["thread.rename"], mode: "ask" },
+    data: { toolIds: ["thread.rename"], policy },
   });
   expect(res.ok()).toBe(true);
   const threadUrl = await startThread(page, "// Looms");

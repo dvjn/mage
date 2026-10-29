@@ -36,6 +36,32 @@ async function write(page: Page, text: string) {
   await expect(box).toHaveValue("");
 }
 
+// Makes an org policy every call of which waits for anyone who can edit the thread.
+async function makeSignOff(page: Page) {
+  const res = await page.request.post("/api/v1/org/tool-policies", {
+    data: {
+      name: "Sign-off",
+      color: "orange",
+      use: "none",
+      users: [],
+      approvers: ["editors"],
+      independent: false,
+    },
+  });
+  expect(res.ok()).toBe(true);
+}
+
+// Sets the tool, in its row, to a policy, Off, or nothing, and waits for the picker to say so.
+async function setTool(page: Page, tool: string, choice: string, shown = choice) {
+  const button = page.getByRole("listitem", { name: tool }).getByRole("button", {
+    name: new RegExp(`^${tool} (policy|policy in this space)$`),
+  });
+  await button.click();
+  await page.getByRole("menuitemradio", { name: new RegExp(`^${choice}`) }).click();
+  await expect(button).toContainText(shown);
+  return button;
+}
+
 // Adds a server from the open Tools page's dialog, and returns its id from its page.
 async function addServer(
   page: Page,
@@ -80,17 +106,24 @@ test("an org's header-authorized MCP server lists its tools, and a call that ask
   await expect(page.getByRole("group", { name: "Read-only tools", exact: true })).toContainText(
     "Echo",
   );
-  const row = page.getByRole("listitem", { name: "Add note" });
-  await row.getByRole("button", { name: "Ask" }).click();
-  await expect(row.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "true");
+  await makeSignOff(page);
+  await page.reload();
+  await setTool(page, "Add note", "Sign-off");
 
   await page.goto("/org/tools");
-  await expect(page.getByRole("listitem", { name: "Notes" })).toContainText("3 tools");
+  const notes = page.getByRole("region", { name: "Notes" });
+  await expect(notes).toContainText("3 tools");
+  await expect(notes).toContainText("1 Sign-off");
+  // Its tools open in the list too.
+  await notes.getByRole("button", { name: /^Notes 3 tools/ }).click();
+  await expect(notes.getByRole("listitem", { name: "Echo" })).toBeVisible();
 
   await page.goto(`/s/${spaceId}`);
   await write(page, `/tool mcp:${serverId}/add_note {"title":"Engines","body":"They compute"}`);
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
-  const card = transcript(page).getByRole("article", { name: "Approval request" });
+  const card = transcript(page).getByRole("article", {
+    name: "Approval request",
+  });
   await expect(card).toContainText("Notes");
   await expect(card).toContainText("Add note");
   await card.getByRole("button", { name: "Allow", exact: true }).click();
@@ -153,7 +186,9 @@ test("OAuth MCP servers of either revision are authorized in the browser and lis
 
 test("a space's own MCP server is used in that space's threads alone", async ({ page }) => {
   const own = await signUp(page);
-  const res = await page.request.post("/api/v1/spaces", { data: { name: "Lab" } });
+  const res = await page.request.post("/api/v1/spaces", {
+    data: { name: "Lab" },
+  });
   const lab = ((await res.json()) as { id: string }).id;
 
   await page.goto(`/s/${lab}/settings/tools`);
@@ -165,11 +200,12 @@ test("a space's own MCP server is used in that space's threads alone", async ({ 
     `${mcpServer}/headers/mcp`,
     withBearer(MCP_BEARER_TOKEN),
   );
+  await expect(page.getByRole("heading", { name: "Lab notes", exact: true })).toBeVisible();
   await expect(page.getByText("This space", { exact: true })).toBeVisible();
 
   await page.goto("/org/tools");
-  await expect(page.getByRole("heading", { name: "Tools" })).toBeVisible();
-  await expect(page.getByRole("listitem", { name: "Lab notes" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Tools and MCPs" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Lab notes" })).toHaveCount(0);
 
   await page.goto(`/s/${lab}`);
   await write(page, `/tool mcp:${serverId}/echo {"text":"hello lab"}`);
@@ -206,9 +242,9 @@ test("an MCP server's headers and address are changed in the form it was added w
   await dialog.getByRole("button", { name: "Save" }).click();
   await expect(dialog).toBeHidden();
   await expect(page.getByText("Connected").first()).toBeVisible();
-  const row = page.getByRole("listitem", { name: "Add note" });
-  await row.getByRole("button", { name: "Ask" }).click();
-  await expect(row.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "true");
+  await makeSignOff(page);
+  await page.reload();
+  const picker = await setTool(page, "Add note", "Sign-off");
 
   // Moved to the open server, given by its address alone, which answers at /mcp.
   await page.getByRole("button", { name: "Edit", exact: true }).click();
@@ -218,7 +254,7 @@ test("an MCP server's headers and address are changed in the form it was added w
   await expect(dialog).toBeHidden();
   await expect(page.getByText(`${mcpServer}/mcp`, { exact: true })).toBeVisible();
   await expect(page.getByText("Connected").first()).toBeVisible();
-  await expect(row.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "true");
+  await expect(picker).toContainText("Sign-off");
 });
 
 test("a space turns one of the org's MCP servers off for itself alone", async ({ page }) => {
@@ -230,39 +266,32 @@ test("a space turns one of the org's MCP servers off for itself alone", async ({
     `${mcpServer}/headers/mcp`,
     withBearer(MCP_BEARER_TOKEN),
   );
+  await makeSignOff(page);
 
   await page.goto(`/s/${own}/settings/tools`);
-  const row = page.getByRole("listitem", { name: "Notes" });
-  await expect(row).toContainText("Org");
-  await expect(row.getByRole("switch", { name: "On in this space" })).toBeChecked();
+  const row = page.getByRole("region", { name: "Notes" });
+  await expect(row).not.toContainText("This space");
+  await expect(row.getByRole("switch", { name: "Notes: on in this space" })).toBeChecked();
 
-  // Its page in the space: the space's modes for its tools, and its switch; the rest is the org's.
-  await row.getByRole("link").click();
+  // Its page in the space: the space's extra rules for its tools, and its switch; the rest is the
+  // org's.
+  await row.getByRole("link", { name: "Notes settings" }).click();
   await expect(page).toHaveURL(`/s/${own}/settings/tools/mcp/${serverId}`);
   await expect(page.getByRole("heading", { name: "Notes" })).toBeVisible();
   await expect(page.getByText("Managed by the organization")).toBeVisible();
   await expect(page.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
-  const tool = page.getByRole("listitem", { name: "Add note" });
-  await tool.getByRole("button", { name: "Ask" }).click();
-  await expect(tool.getByRole("button", { name: "Ask" })).toHaveAttribute("aria-pressed", "true");
+  await setTool(page, "Add note", "Sign-off");
   const inSpace = page.getByRole("switch", { name: "On in this space" });
   await expect(inSpace).toBeChecked();
   await inSpace.click();
   await expect(inSpace).not.toBeChecked();
   await expect(page.getByText("Off in this space", { exact: true })).toBeVisible();
-  // Permissions remain editable before the server is turned back on.
-  await tool.getByRole("button", { name: "Block", exact: true }).click();
-  await expect(tool.getByRole("button", { name: "Block", exact: true })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  // Policies remain editable before the server is turned back on.
+  const picker = await setTool(page, "Add note", "Off");
   await inSpace.click();
   await expect(inSpace).toBeChecked();
   await page.reload();
-  await expect(tool.getByRole("button", { name: "Block", exact: true })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(picker).toContainText("Off");
   await inSpace.click();
   await expect(inSpace).not.toBeChecked();
 
@@ -271,15 +300,14 @@ test("a space turns one of the org's MCP servers off for itself alone", async ({
   await expect(transcript(page)).toContainText(`I cannot use mcp:${serverId}/echo here.`);
 
   await page.goto("/org/tools");
-  await expect(
-    page.getByRole("listitem", { name: "Notes" }).getByRole("switch", { name: "On" }),
-  ).toBeChecked();
-  await page.getByRole("listitem", { name: "Notes" }).getByRole("link").click();
+  const inOrg = page.getByRole("region", { name: "Notes" });
+  await expect(inOrg.getByRole("switch", { name: "Notes: on" })).toBeChecked();
+  await inOrg.getByRole("link", { name: "Notes settings" }).click();
   await expect(
     page
       .getByRole("listitem", { name: "Add note" })
-      .getByRole("button", { name: "Allow", exact: true }),
-  ).toHaveAttribute("aria-pressed", "true");
+      .getByRole("button", { name: "Add note policy" }),
+  ).toContainText("Open");
 
   // A failed read must not invent an enabled space switch.
   await page.route(`**/api/v1/spaces/${own}/mcp-servers`, (route) =>

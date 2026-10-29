@@ -157,11 +157,6 @@ export interface StreamingReply {
   reasoning: string;
 }
 
-// Independent review comes from someone whose words have not entered the model's conversation.
-export function independentReviewer(rows: readonly TranscriptRow[], userId: string) {
-  return !rows.some((row) => row.kind === "human" && row.author.userId === userId);
-}
-
 // `streaming` holds the replies still being written, by message id.
 export function transcriptOf(
   events: readonly AnyThreadEvent[],

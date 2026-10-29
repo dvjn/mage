@@ -27,6 +27,7 @@ import { createRunStore } from "@/adapters/runs.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
 import { createThreadReadStore } from "@/adapters/thread-reads.ts";
 import { createThreadStore } from "@/adapters/threads.ts";
+import { createToolPolicyStore } from "@/adapters/tool-policies.ts";
 import { createToolSettingStore } from "@/adapters/tool-settings.ts";
 import { loadConfig } from "@/config.ts";
 import { createApp } from "@/http/app.ts";
@@ -44,6 +45,7 @@ import { createThreadAccess } from "@/services/thread-access.ts";
 import { createThreadLog } from "@/services/thread-log.ts";
 import { createThreads } from "@/services/threads.ts";
 import { createTitles } from "@/services/titles.ts";
+import { createToolPolicies } from "@/services/tool-policies.ts";
 import { createToolDecisions, createTools } from "@/services/tools.ts";
 
 const config = loadConfig();
@@ -119,6 +121,7 @@ const folders = createFolders({ spaces, folders: folderStore });
 const guestStore = createGuestStore(db);
 const access = createThreadAccess({ spaces, threads: threadStore, guests: guestStore });
 const toolSettings = createToolSettingStore(db);
+const toolPolicyStore = createToolPolicyStore(db);
 const mcp = createMcpServers({
   servers: createMcpServerStore(db),
   credentials: createMcpCredentialStore(db, cipher),
@@ -147,6 +150,8 @@ const tools = createTools({
     forSpaceSettings: (space) => mcp.toolsetsForSpaceSettings(space),
   },
   settings: toolSettings,
+  policies: toolPolicyStore,
+  directory,
   access,
 });
 
@@ -240,8 +245,17 @@ const app = createApp({
     runs: runStore,
     spaces,
     settings: toolSettings,
+    policies: toolPolicyStore,
     log,
     bus,
+  }),
+  toolPolicies: createToolPolicies({
+    policies: toolPolicyStore,
+    settings: toolSettings,
+    tools,
+    spaceStore,
+    spaces,
+    directory,
   }),
   mcp,
   guests: createGuests({

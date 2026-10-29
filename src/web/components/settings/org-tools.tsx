@@ -1,6 +1,6 @@
-// The organization's tools page: every toolset the agent can use, built in or from an MCP server,
-// each with its tools' permissions, and an MCP server's own page. Only the org's owners change
-// them.
+// The organization's tools page: its access policies, every toolset the agent can use, built in or
+// from an MCP server, each with its tools' policies, and an MCP server's own page. Only the org's
+// owners change them.
 
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
@@ -18,11 +18,11 @@ export function OrgTools() {
   return (
     <>
       <SettingsTitle
-        title="Tools"
+        title="Tools and MCPs"
         description={
           canManage
-            ? "The tools the agent can use, and whether each runs, asks first, needs independent review, or is off. Spaces can only make these stricter."
-            : "The tools the agent can use, and whether each runs, asks first, needs independent review, or is off. Only the organization's owners change this."
+            ? "What the agent can use in every space, and who has to approve it."
+            : "What the agent can use in every space, and who has to approve it. Only the organization's owners change this."
         }
       />
       <OrgToolsList
