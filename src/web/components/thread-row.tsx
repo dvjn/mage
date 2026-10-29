@@ -157,10 +157,12 @@ function PageRow({ thread, place, badge, time }: PageRowProps) {
 const sidebarDisc =
   "bg-sidebar group-hover/menu-button:bg-sidebar-accent group-data-active/menu-button:bg-sidebar-accent";
 
-// The row keeps room for its menu only while the pointer is over it, or the menu is in use, so the
-// title has the full width otherwise; on a phone the menu always shows, and the room stays.
-const menuRoom =
-  "md:group-has-data-[sidebar=menu-action]/menu-item:pr-2 md:group-has-data-[sidebar=menu-action]/menu-item:group-hover/menu-item:pr-8 md:group-has-[[data-sidebar=menu-action]:is(:focus-visible,[aria-expanded=true])]/menu-item:pr-8";
+// The title, beside the menu, makes room for it only while the pointer is over the row or the menu
+// is in use, so the title has the full width otherwise and the line under it never moves; on a
+// phone the menu always shows, and the row keeps room for it.
+const menuRoom = "md:group-has-data-[sidebar=menu-action]/menu-item:pr-2";
+const titleRoom =
+  "md:group-has-data-[sidebar=menu-action]/menu-item:group-hover/menu-item:pr-6 md:group-has-[[data-sidebar=menu-action]:is(:focus-visible,[aria-expanded=true])]/menu-item:pr-6";
 
 function SidebarRow({ thread, place, title, isActive, children }: SidebarRowProps) {
   const status = useThreadStatus(thread.activity);
@@ -174,7 +176,7 @@ function SidebarRow({ thread, place, title, isActive, children }: SidebarRowProp
       <span className="grid min-w-0 flex-1 grid-cols-1">
         <ThreadTitle
           thread={thread}
-          className={cn("h-5 truncate", status === "unread" && "font-medium")}
+          className={cn("h-5 truncate", titleRoom, status === "unread" && "font-medium")}
         />
         <span className="flex h-4 min-w-0 items-center gap-1 text-xs text-muted-foreground">
           <Writers thread={thread} place={place} />
