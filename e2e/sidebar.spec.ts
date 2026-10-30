@@ -54,7 +54,7 @@ test("Ctrl+O opens a draft that becomes a thread only when its first message is 
   const folderDialog = page.getByRole("dialog", { name: "New folder" });
   await folderDialog.getByRole("textbox", { name: "Name" }).fill("Engines");
   await folderDialog.getByRole("button", { name: "Create" }).click();
-  await expect(sidebar(page).getByRole("button", { name: "Engines", exact: true })).toBeVisible();
+  await expect(sidebar(page).getByRole("button", { name: /^Engines \d/ })).toBeVisible();
   const today = sidebar(page).getByRole("list", { name: "Today" });
   await expect(today.getByRole("link", { name: "How do engines compute?" })).toBeVisible();
 });
@@ -78,17 +78,16 @@ test("a draft's folder is picked in its breadcrumb, and a thread moves from it",
   await page.getByLabel("Message", { exact: true }).fill("Pistons");
   await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
-  const folder = sidebar(page)
-    .locator("[data-sidebar=menu-item]")
-    .filter({ has: page.getByRole("button", { name: "Engines", exact: true }) });
-  await expect(folder.getByRole("link", { name: "Pistons" })).toBeVisible();
+  // Listed with all the space's threads, the row names its folder.
+  const row = sidebar(page).getByRole("link", { name: /^Pistons/ });
+  await expect(row).toContainText("Engines");
 
   // The thread keeps the same breadcrumb, and moves out of the folder from it.
   await page.getByRole("button", { name: "Folder: Engines" }).click();
   await page.getByRole("option", { name: "No folder" }).click();
   await expect(page.getByRole("button", { name: "Add to folder" })).toBeVisible();
-  await expect(folder.getByRole("link", { name: "Pistons" })).toHaveCount(0);
-  await expect(sidebar(page).getByRole("link", { name: "Pistons" })).toBeVisible();
+  await expect(row).toBeVisible();
+  await expect(row).not.toContainText("Engines");
 });
 
 test("a viewer sees no write actions, and a failed delete says why in its dialog", async ({

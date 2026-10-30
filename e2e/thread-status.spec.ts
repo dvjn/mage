@@ -65,11 +65,10 @@ async function openThread(page: Page, url: string, title: string) {
   await expect(page.locator("[data-slot=breadcrumb-page]")).toContainText(title);
 }
 
-// The thread's row in the sidebar's threads list.
+// The thread's row in the sidebar's threads list, in whichever group its status puts it.
 function sidebarRow(page: Page, title: string) {
   return page
-    .getByRole("list", { name: "Today" })
-    .locator("[data-sidebar=menu-item]")
+    .locator("[data-sidebar=sidebar] [data-sidebar=menu-item][data-status]")
     .filter({ hasText: title });
 }
 
@@ -98,9 +97,9 @@ test("opening a thread clears what is new for that person only", async ({
   // Ada hears of it while she is elsewhere.
   await expect(sidebarRow(page, "Engines")).toHaveAttribute("data-status", "unread");
   await expect(page.getByRole("img", { name: "New messages" }).first()).toBeVisible();
-  // The row shows who has written, whoever wrote last first, and not what they said.
+  // The row moves to the unread threads, and does not show what they said.
+  await expect(page.getByRole("list", { name: "Unread" })).toContainText("Engines");
   await expect(sidebarRow(page, "Engines")).not.toContainText("Looks good");
-  await expect(sidebarRow(page, "Engines").getByText("Grace, You", { exact: true })).toBeVisible();
 
   await sidebarRow(page, "Engines").getByRole("link").click();
   await expect(sidebarRow(page, "Engines")).toHaveAttribute("data-status", "read");
@@ -139,6 +138,8 @@ test("a failed run needs the person until they open it, and a run elsewhere spin
     .getByRole("link", { name: /Card reader/ })
     .click();
   await expect(page).toHaveURL(threadUrl);
+  // Rows hold still while the pointer is over the list.
+  await page.mouse.move(800, 400);
   await expect(needsYou(page)).toHaveCount(0);
   await expect(sidebarRow(page, "Card reader")).toHaveAttribute("data-status", "read");
   await expect(page).toHaveTitle("Mage");

@@ -42,14 +42,13 @@ test("a thread found with the sidebar search opens", async ({ page }) => {
 
   const searchButton = page
     .locator("[data-sidebar=sidebar]")
-    .getByRole("button", { name: "Search" });
+    .getByRole("button", { name: /^Search/ });
   await searchButton.click();
   const dialog = page.getByRole("dialog", { name: "Search threads" });
   await dialog.getByRole("combobox").fill("ENGINES");
   const result = dialog.getByRole("option", { name: "How do engines compute?" });
   await expect(result).toBeVisible();
   await expect(dialog.getByRole("option")).toHaveCount(1);
-  await expect(dialog.getByRole("group", { name: "Ada Lovelace's Space" })).toBeVisible();
   await result.click();
 
   await expect(dialog).toBeHidden();
@@ -75,7 +74,7 @@ test("the space page narrows its threads by title", async ({ page }) => {
   await expect(page.getByText("No matches")).toBeVisible();
 });
 
-test("Ctrl+K searches everywhere or in this space, and finds untitled threads", async ({
+test("Ctrl+K lists every thread, searches everywhere or in this space, and finds untitled threads", async ({
   page,
 }) => {
   await signUp(page);
@@ -93,21 +92,28 @@ test("Ctrl+K searches everywhere or in this space, and finds untitled threads", 
   await page.keyboard.press("Control+k");
   const dialog = page.getByRole("dialog", { name: "Search threads" });
   await expect(dialog).toBeVisible();
+  // Before anything is typed, it lists every thread.
+  await expect(dialog.getByRole("option")).toHaveCount(2);
   await dialog.getByRole("combobox").fill("untitled");
   await expect(dialog.getByRole("option")).toHaveCount(2);
-  await expect(dialog.getByRole("option", { name: "Untitled", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("option").filter({ has: page.locator(".italic") })).toHaveCount(1);
 
-  // Tab narrows the search to this space, and back.
+  // The scope narrows the search to this space, and back.
   const scope = dialog.getByRole("group", { name: "Where to search" });
   await expect(scope.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
+  await scope.getByRole("button", { name: "Ada Lovelace's Space" }).click();
+  await expect(dialog.getByRole("option")).toHaveCount(2);
+  // Tab switches to the space's folders, and back.
   await dialog.getByRole("combobox").press("Tab");
-  await expect(scope.getByRole("button", { name: "Ada Lovelace's Space" })).toHaveAttribute(
+  await expect(dialog.getByRole("button", { name: /^Folders \d/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await expect(dialog.getByText("No folder matches.")).toBeVisible();
+  await dialog.getByRole("combobox").press("Tab");
+  await expect(dialog.getByRole("button", { name: /^Threads \d/ })).toHaveAttribute(
     "aria-pressed",
     "true",
   );
   await expect(dialog.getByRole("option")).toHaveCount(2);
-  await expect(dialog.getByRole("group", { name: "Ada Lovelace's Space" })).toHaveCount(0);
-  await dialog.getByRole("combobox").press("Shift+Tab");
-  await expect(scope.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
-  await expect(dialog.getByRole("group", { name: "Ada Lovelace's Space" })).toBeVisible();
 });

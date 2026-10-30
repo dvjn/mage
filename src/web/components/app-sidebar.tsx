@@ -36,7 +36,7 @@ function NavSearch() {
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton onClick={openSearch}>
+        <SidebarMenuButton onClick={() => openSearch()}>
           <SearchIcon />
           <span>Search</span>
           <ShortcutHint id="search" />

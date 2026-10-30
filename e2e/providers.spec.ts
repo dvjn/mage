@@ -22,13 +22,14 @@ async function signUpToProviders(page: Page) {
   await page.goto("/org/providers");
 }
 
-// Writes a message in a new thread, and the sidebar row it makes, the person's only one.
+// Writes a message in a new thread, and the row it makes in the space's list, the person's only one.
 async function newThread(page: Page, text: string) {
   await page.goto("/");
   await page.getByLabel("Message", { exact: true }).fill(text);
   await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
-  return page.getByRole("list", { name: "Today" }).locator("[data-sidebar=menu-item]").first();
+  await page.goto("/");
+  return page.getByRole("table", { name: "Threads" }).getByRole("link").first();
 }
 
 test("a server people run connects at its address, its models marked by maker and server", async ({

@@ -107,15 +107,18 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
   await expect(
     transcript(page).getByRole("article", { name: "Message from Hedy Lamarr" }),
   ).toContainText("Guest");
-  // The host's row names who wrote, whoever wrote last first, and on hover her as its guest.
+  // The host's row in the space's list names who wrote, whoever wrote last first, and on hover
+  // her as its guest.
+  await page.goto(hostSpace);
   const writers = page
-    .locator("[data-sidebar=sidebar]")
+    .getByRole("table", { name: "Threads" })
     .getByRole("link", { name: /How do engines compute\?/ })
     .getByText("Hedy, You", { exact: true });
   await writers.hover();
   await expect(page.locator("[data-slot=tooltip-content]")).toHaveText(
     "Hedy Lamarr (guest) and Ada Lovelace",
   );
+  await page.goBack();
 
   // The space itself stays out of reach.
   await guest.goto(hostSpace);

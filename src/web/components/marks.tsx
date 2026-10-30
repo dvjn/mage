@@ -37,14 +37,23 @@ export function Mark({
   );
 }
 
-// The mark of who makes a model, in colour; a bot when no one can tell.
-export function MakerMark({ maker, className }: { maker: MakerId | null; className?: string }) {
+// The mark of who makes a model, in colour unless asked for its monochrome one; a bot when no one
+// can tell.
+export function MakerMark({
+  maker,
+  mono,
+  className,
+}: {
+  maker: MakerId | null;
+  mono?: boolean;
+  className?: string;
+}) {
   if (!maker) {
     return (
       <BotIcon aria-hidden className={cn("size-4 shrink-0 text-muted-foreground", className)} />
     );
   }
-  return <Mark name={MAKERS[maker].mark} className={className} />;
+  return <Mark name={MAKERS[maker].mark} color={!mono} className={className} />;
 }
 
 // What a host mark stands for: the host, and the name of the connection when it is a server people

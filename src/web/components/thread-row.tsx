@@ -1,14 +1,15 @@
-// One thread in a list of threads, in the sidebar or in a page's table, always two lines high
-// whatever its status, so rows never move as threads start and stop working. A tile of its model
-// leads the row, as its maker's mark with its host's badge on one corner, named with the model and
-// its connection on hover, with the status's glyph on another corner. The first line is its title, bold while something new waits there. The second
-// line is who has written in it, as the first names of the one or two who wrote last and how many
-// more, all named in full on hover with a guest marked, then where the thread is when the list
-// mixes places. A sidebar row ends its second line with how long ago the thread was last active and
-// keeps the menu it is given, which the title makes room for while the pointer is over the row. A
-// page's row keeps a badge (its folder) and something about time (when it was last active, or when
-// access ends) at the end of its first line. Every list of threads uses it, so they look and behave
-// alike.
+// One thread in a list of threads, in the sidebar or in a page's table, its height the same
+// whatever its status, so rows never move as threads start and stop working. A page's row is two
+// lines: a tile of its model leads, as its maker's mark with its host's badge on one corner, named
+// with the model and its connection on hover, with the status's glyph on another corner; the first
+// line is its title, bold while something new waits there, with a badge (its folder) and something
+// about time (when it was last active, or when access ends) at its end; the second is who has
+// written in it, as the first names of the one or two who wrote last and how many more, all named
+// in full on hover with a guest marked, then where the thread is when the list mixes places. A
+// sidebar row is one line: the status's glyph, or while there is none a small muted mark of its
+// model's maker named with the model, the title, where the thread is when the list mixes places,
+// and how long ago it was last active, under the menu it is given while the pointer is over the
+// row. Every list of threads uses it, so they look and behave alike.
 
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -17,7 +18,7 @@ import type * as React from "react";
 
 import type { ThreadStatus } from "@/shared/thread-status.ts";
 import type { ShownModel, ThreadActivity, ThreadParticipants } from "@/shared/threads.ts";
-import { ModelTile, modelLabel } from "@/web/components/marks";
+import { MakerMark, ModelTile, modelLabel } from "@/web/components/marks";
 import { StatusGlyph, useThreadStatus } from "@/web/components/thread-status";
 import { ThreadTitle } from "@/web/components/thread-title";
 import { ShortTime } from "@/web/components/time";
@@ -152,38 +153,68 @@ function PageRow({ thread, place, badge, time }: PageRowProps) {
   );
 }
 
-// The disc under the status takes the sidebar's colour, or the row's while it is under the pointer
-// or open.
-const sidebarDisc =
-  "bg-sidebar group-hover/menu-button:bg-sidebar-accent group-data-active/menu-button:bg-sidebar-accent";
+// While the pointer is over a sidebar row or header with a menu, or the menu is in use, the menu
+// stands where this is; on a phone the menu always shows, beside it.
+export const slotUnderMenu =
+  "md:group-has-data-[sidebar=menu-action]/menu-item:group-hover/menu-item:opacity-0 md:group-has-[[data-sidebar=menu-action]:is(:focus-visible,[aria-expanded=true])]/menu-item:opacity-0";
 
-// The title, beside the menu, makes room for it only while the pointer is over the row or the menu
-// is in use, so the title has the full width otherwise and the line under it never moves; on a
-// phone the menu always shows, and the row keeps room for it.
-const menuRoom = "md:group-has-data-[sidebar=menu-action]/menu-item:pr-2";
-const titleRoom =
-  "md:group-has-data-[sidebar=menu-action]/menu-item:group-hover/menu-item:pr-6 md:group-has-[[data-sidebar=menu-action]:is(:focus-visible,[aria-expanded=true])]/menu-item:pr-6";
+// A row with a menu takes the full width, the menu standing over its end; on a phone the menu
+// always shows, and the row keeps room for it.
+export const menuRoom = "md:group-has-data-[sidebar=menu-action]/menu-item:pr-2";
+
+// The start of a one-line row: the status's glyph, or while there is none a small muted mark of the
+// model's maker, named with the model. First in the row, though after the title for screen
+// readers, so a row is named by its title first.
+export function RowLead({
+  thread,
+  status,
+}: {
+  thread: Pick<Listed, "shownModel" | "activity">;
+  status: ThreadStatus;
+}) {
+  const model = thread.shownModel;
+  const label = model ? modelLabel(model.name, model.connection) : "No model";
+  return (
+    <span className="order-first flex size-4 shrink-0 items-center justify-center">
+      {status === "read" ? (
+        <WithTooltip label={label}>
+          <span role="img" aria-label={label} className="flex">
+            <MakerMark
+              maker={model?.maker ?? null}
+              mono
+              className="size-3.5 text-muted-foreground"
+            />
+          </span>
+        </WithTooltip>
+      ) : (
+        <StatusGlyph status={status} activity={thread.activity} size="size-3.5" />
+      )}
+    </span>
+  );
+}
+
+// The title of a one-line row, sized for the sidebar.
+export const rowTitle = "min-w-0 flex-1 truncate text-[13px]";
 
 function SidebarRow({ thread, place, title, isActive, children }: SidebarRowProps) {
   const status = useThreadStatus(thread.activity);
   const button = (
     <SidebarMenuButton
-      size="lg"
       isActive={isActive}
-      className={cn("gap-2.5 py-1.5", menuRoom)}
+      className={menuRoom}
       render={<Link to="/t/$threadId" params={{ threadId: thread.id }} />}
     >
-      <span className="grid min-w-0 flex-1 grid-cols-1">
-        <ThreadTitle
-          thread={thread}
-          className={cn("h-5 truncate", titleRoom, status === "unread" && "font-medium")}
-        />
-        <span className="flex h-4 min-w-0 items-center gap-1 text-xs text-muted-foreground">
-          <Writers thread={thread} place={place} />
-          <ShortTime iso={thread.updatedAt} className="ml-auto shrink-0 pl-1 tabular-nums" />
+      <ThreadTitle thread={thread} className={cn(rowTitle, status === "unread" && "font-medium")} />
+      {place && (
+        <span title={place} className="max-w-16 shrink-0 truncate text-xs text-muted-foreground">
+          {place}
         </span>
-      </span>
-      <RowTile thread={thread} status={status} disc={sidebarDisc} />
+      )}
+      <ShortTime
+        iso={thread.updatedAt}
+        className={cn("shrink-0 text-xs text-muted-foreground tabular-nums", slotUnderMenu)}
+      />
+      <RowLead thread={thread} status={status} />
     </SidebarMenuButton>
   );
   return (
