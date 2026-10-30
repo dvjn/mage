@@ -121,10 +121,16 @@ export interface ThreadStore {
   facts(threadIds: string[]): Map<string, ThreadFacts>;
   // Who has written in each of the threads named that anyone has.
   writers(threadIds: string[]): Map<string, ThreadWriters>;
-  // Threads in the spaces whose titles contain the text, ignoring case, most recently active
-  // first, at most `limit` of them.
+  // Threads in the spaces, and in the folder when one is given, whose titles contain the text,
+  // ignoring case, most recently active first, at most `limit` of them.
   // Untitled threads match as `untitled`.
-  search(spaceIds: string[], text: string, limit: number, untitled: string): Thread[];
+  search(
+    spaceIds: string[],
+    text: string,
+    limit: number,
+    untitled: string,
+    folderId?: string,
+  ): Thread[];
   update(
     id: string,
     changes: {

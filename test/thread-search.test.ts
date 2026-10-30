@@ -101,7 +101,7 @@ describe("thread search", () => {
     });
   });
 
-  it("returns at most 50, the most recently active first", async () => {
+  it("returns at most 200, the most recently active first", async () => {
     const { signUp, yourSpace, search, storedThread } = workspace();
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(ada.cookie);
@@ -111,18 +111,47 @@ describe("thread search", () => {
 
     const results = await search(ada.cookie, "note");
 
-    expect(SEARCH_LIMIT).toBe(50);
-    expect(results).toHaveLength(50);
+    expect(SEARCH_LIMIT).toBe(200);
+    expect(results).toHaveLength(200);
     expect(results[0]?.id).toBe(touched.id);
   });
 
-  it("refuses an empty query", async () => {
+  it("lists every thread without text, each with what it holds for the reader", async () => {
+    const { signUp, yourSpace, createThread, search } = workspace();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const space = await yourSpace(cookie);
+    await createThread(cookie, space.id, "Engines");
+    await createThread(cookie, space.id, "Looms");
+
+    for (const q of ["", "  "]) {
+      const found = await search(cookie, q);
+      expect(found.map((result) => result.title)).toEqual(["Looms", "Engines"]);
+      expect(found[0]).toHaveProperty("activity.lastSeenSeq");
+    }
+  });
+
+  it("looks only in the folder given, which hides the shared threads", async () => {
+    const { api, signUp, yourSpace, createThread, createFolder } = workspace();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const space = await yourSpace(cookie);
+    const engines = await createFolder(cookie, space.id, "Engines");
+    const pistons = await createThread(cookie, space.id, "Pistons");
+    await createThread(cookie, space.id, "Pistons at the top");
+    await api("PATCH", `/threads/${pistons.id}`, cookie, { folderId: engines.id });
+
+    const res = await api("GET", `/threads/search?q=pistons&folder=${engines.id}`, cookie);
+    expect(((await res.json()) as ResultBody[]).map((result) => result.title)).toEqual(["Pistons"]);
+    // Another person's folder holds nothing they can see.
+    const grace = await signUp("Grace Hopper", "grace@example.com");
+    const theirs = await api("GET", `/threads/search?folder=${engines.id}`, grace.cookie);
+    expect(await theirs.json()).toEqual([]);
+  });
+
+  it("refuses text over 200 characters", async () => {
     const { api, signUp } = workspace();
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
 
-    for (const path of ["/threads/search", "/threads/search?q=", "/threads/search?q=%20%20"]) {
-      expect((await api("GET", path, cookie)).status).toBe(400);
-    }
+    expect((await api("GET", `/threads/search?q=${"a".repeat(201)}`, cookie)).status).toBe(400);
   });
 
   it("is unauthorized when signed out", async () => {

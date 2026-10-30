@@ -88,7 +88,7 @@ export interface ThreadsOptions {
 export type Threads = ReturnType<typeof createThreads>;
 
 const TITLE_LENGTH = 60;
-export const SEARCH_LIMIT = 50;
+export const SEARCH_LIMIT = 200;
 // How long an inbox gathers changes before telling them.
 const INBOX_DELAY_MS = 50;
 
@@ -417,10 +417,11 @@ export function createThreads(options: ThreadsOptions) {
       return { threads: items, loose, folders, needsYou: failed + waitingOnYou };
     },
 
-    // Threads whose titles contain the text, ignoring case, untitled ones as "Untitled", in every
-    // space the principal can see and among those they are a guest in: the most recently active
-    // first, at most 50.
-    search(principal: Principal, text: string): ThreadSearchResult[] {
+    // Threads whose titles contain the text, ignoring case, untitled ones as "Untitled", every one
+    // without text, in every space the principal can see and among those they are a guest in, or
+    // only in the folder given: the most recently active first, at most 200, each with the model it
+    // shows and what it holds for them.
+    search(principal: Principal, text: string, folderId?: string): ThreadSearchResult[] {
       const names = new Map(
         spaces
           .list(principal)
@@ -428,14 +429,16 @@ export function createThreads(options: ThreadsOptions) {
           .map((space) => [space.id, space.name]),
       );
       const needle = text.toLowerCase();
-      const shared = guests
-        .threadsOf(principal.userId, now())
-        .filter(({ thread }) => !names.has(thread.spaceId))
-        .filter(({ thread }) => (thread.title ?? UNTITLED).toLowerCase().includes(needle))
-        .map(({ thread, spaceName }) => ({ thread, spaceName, shared: true }));
-      return [
+      const shared = folderId
+        ? []
+        : guests
+            .threadsOf(principal.userId, now())
+            .filter(({ thread }) => !names.has(thread.spaceId))
+            .filter(({ thread }) => (thread.title ?? UNTITLED).toLowerCase().includes(needle))
+            .map(({ thread, spaceName }) => ({ thread, spaceName, shared: true }));
+      const found = [
         ...threads
-          .search([...names.keys()], text, SEARCH_LIMIT, UNTITLED)
+          .search([...names.keys()], text, SEARCH_LIMIT, UNTITLED, folderId)
           .map((thread) => ({ thread, spaceName: names.get(thread.spaceId) ?? "", shared: false })),
         ...shared,
       ]
@@ -444,8 +447,16 @@ export function createThreads(options: ThreadsOptions) {
             b.thread.updatedAt.getTime() - a.thread.updatedAt.getTime() ||
             b.thread.id.localeCompare(a.thread.id),
         )
-        .slice(0, SEARCH_LIMIT)
-        .map(({ thread, spaceName, shared }) => ({ ...threadSummary(thread), spaceName, shared }));
+        .slice(0, SEARCH_LIMIT);
+      const list = found.map(({ thread }) => thread);
+      const items = itemsOf(principal.userId, list, runs.activeIn(list.map(({ id }) => id)));
+      return found.map(({ thread, spaceName, shared }, index) => ({
+        ...threadSummary(thread),
+        spaceName,
+        shared,
+        shownModel: items[index]!.shownModel,
+        activity: items[index]!.activity,
+      }));
     },
 
     // The threads the principal is a guest in, most recently active first.

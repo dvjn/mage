@@ -259,7 +259,7 @@ export function createThreadStore(db: Db): ThreadStore {
       return !!db.select({ id: thread.id }).from(thread).where(eq(thread.spaceId, spaceId)).get();
     },
 
-    search(spaceIds, text, limit, untitled) {
+    search(spaceIds, text, limit, untitled, folderId) {
       if (spaceIds.length === 0) return [];
       // The text's own % and _ match only themselves.
       const pattern = `%${text.replace(/[\\%_]/g, "\\$&")}%`;
@@ -269,6 +269,7 @@ export function createThreadStore(db: Db): ThreadStore {
         .where(
           and(
             inArray(thread.spaceId, spaceIds),
+            folderId ? eq(thread.folderId, folderId) : undefined,
             sql`lower(coalesce(${thread.title}, ${untitled})) like lower(${pattern}) escape '\\'`,
           ),
         )

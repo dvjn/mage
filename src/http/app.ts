@@ -379,10 +379,10 @@ const spaceMemberQuery = queryOf(spaceMemberFilterSchema);
 const threadPageQuery = queryOf(threadPageQuerySchema);
 const spaceThreadPageQuery = queryOf(spaceThreadPageQuerySchema);
 
-// `?q=` with the text to find in thread titles.
-const threadSearch = validator("query", (value: { q?: string }, c) => {
+// `?q=` with the text to find in thread titles, and `?folder=` with the folder to look in.
+const threadSearch = validator("query", (value: { q?: string; folder?: string }, c) => {
   const parsed = threadSearchSchema.safeParse(value);
-  if (!parsed.success) return c.json({ error: "q must be 1 to 200 characters" }, 400);
+  if (!parsed.success) return c.json({ error: "q must be at most 200 characters" }, 400);
   return parsed.data;
 });
 
@@ -778,8 +778,8 @@ function createApi(options: AppOptions) {
         return c.json(guests.accept(signedIn(c.var.principal), token), 200);
       })
       .get("/v1/threads/search", threadSearch, (c) => {
-        const { q } = c.req.valid("query");
-        return c.json(threads.search(signedIn(c.var.principal), q), 200);
+        const { q, folder } = c.req.valid("query");
+        return c.json(threads.search(signedIn(c.var.principal), q, folder), 200);
       })
       .get("/v1/threads/:id", async (c) => {
         return c.json(await threads.get(signedIn(c.var.principal), c.req.param("id")), 200);
