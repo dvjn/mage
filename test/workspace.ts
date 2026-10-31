@@ -16,6 +16,7 @@ import { createDirectory } from "@/adapters/directory.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
 import { createFolderStore } from "@/adapters/folders.ts";
 import { createGuestStore } from "@/adapters/guests.ts";
+import { createInstructionStore } from "@/adapters/instructions.ts";
 import { createLogger } from "@/adapters/logger.ts";
 import { createMcpClient } from "@/adapters/mcp-client.ts";
 import { createMcpCredentialStore, createMcpServerStore } from "@/adapters/mcp-servers.ts";
@@ -38,6 +39,7 @@ import { ServiceError } from "@/services/errors.ts";
 import { createFolders } from "@/services/folders.ts";
 import { createGroups } from "@/services/groups.ts";
 import { createGuests } from "@/services/guests.ts";
+import { createInstructions } from "@/services/instructions.ts";
 import { createMcpServers } from "@/services/mcp-servers.ts";
 import { createOrgs } from "@/services/orgs.ts";
 import { createRunWorker, dropRefusedWaiting, type RunWorkerOptions } from "@/services/runs.ts";
@@ -212,6 +214,7 @@ export function setup(
     settings: settingStore,
     logger,
   });
+  const instructions = createInstructions({ store: createInstructionStore(db), spaces });
   const tools = createTools({
     toolsets: [
       createSystemTools({
@@ -301,6 +304,7 @@ export function setup(
       flushMs: 1,
       models: { open: () => model.open(), replyModel },
       tools,
+      guidance: (space) => instructions.textsFor(space),
       logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
       ...workerOptions,
       ...options,
@@ -361,6 +365,7 @@ export function setup(
       directory,
     }),
     mcp,
+    instructions,
     logger,
     signInOptions: { oidc: null },
     pingDatabase: () => Promise.resolve(true),
@@ -500,6 +505,7 @@ export function setup(
     mcp,
     mcpNetwork,
     mcpServerStore,
+    instructions,
     signUp,
     join,
     api,

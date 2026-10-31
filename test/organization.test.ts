@@ -10,6 +10,7 @@ import type { Connections } from "@/services/connections.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Guests } from "@/services/guests.ts";
 import type { Groups } from "@/services/groups.ts";
+import type { Instructions } from "@/services/instructions.ts";
 import type { McpServers } from "@/services/mcp-servers.ts";
 import type { ToolPolicies } from "@/services/tool-policies.ts";
 import type { ToolDecisions } from "@/services/tools.ts";
@@ -47,6 +48,7 @@ function setup() {
     tools: {} as ToolDecisions,
     toolPolicies: {} as ToolPolicies,
     mcp: {} as McpServers,
+    instructions: {} as Instructions,
     logger,
     signInOptions: { oidc: null },
     pingDatabase: () => Promise.resolve(true),

@@ -5,7 +5,8 @@
 // reasons for a few words first when it asks it to think. Each `/tool <id> <json>` line in the
 // newest message makes it call that tool after its words, when it is offered, or say it cannot;
 // shown what the calls gave back, it says so. A `/fail <text>` line makes it fail with that text
-// after its words. Its lists stand in for hosts' lists: they take any key starting with `sk-`.
+// after its words. A `/prompt` line makes it say its system prompt in place of its words. Its lists
+// stand in for hosts' lists: they take any key starting with `sk-`.
 
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -24,6 +25,7 @@ const REASONING = "Considering the gears and the levers".split(" ");
 // A line of a person's message, after the name it starts with.
 const TOOL_LINE = /^(?:\[[^\]\n]*\][ \t]*)?\/tool[ \t]+(\S+)[ \t]*(.*)$/gm;
 const FAIL_LINE = /^(?:\[[^\]\n]*\][ \t]*)?\/fail[ \t]+(.+)$/m;
+const PROMPT_LINE = /^(?:\[[^\]\n]*\][ \t]*)?\/prompt[ \t]*$/m;
 
 function wordsFor(messages: ModelMessage[]) {
   const read = messages.filter((message) => message.role === "user");
@@ -81,12 +83,14 @@ export function createFakeGateway(): ModelGateway {
         const words =
           last?.role === "tool"
             ? last.results.map(saidBy).join(" ").split(" ")
-            : [
-                ...wordsFor(messages),
-                ...wanted
-                  .filter(({ toolId }) => !offered.has(toolId))
-                  .flatMap(({ toolId }) => `I cannot use ${toolId} here.`.split(" ")),
-              ];
+            : PROMPT_LINE.test(said)
+              ? request.instructions.split(" ")
+              : [
+                  ...wordsFor(messages),
+                  ...wanted
+                    .filter(({ toolId }) => !offered.has(toolId))
+                    .flatMap(({ toolId }) => `I cannot use ${toolId} here.`.split(" ")),
+                ];
         for (const [index, word] of words.entries()) {
           await delay(WORD_MS, undefined, { signal });
           yield { type: "delta", text: index === 0 ? word : ` ${word}` };

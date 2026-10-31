@@ -15,6 +15,7 @@ import { createEventBus } from "@/adapters/event-bus.ts";
 import { createFakeCatalogs, createFakeGateway, FAKE_MODEL_REF } from "@/adapters/fake-gateway.ts";
 import { createFolderStore } from "@/adapters/folders.ts";
 import { createGuestStore } from "@/adapters/guests.ts";
+import { createInstructionStore } from "@/adapters/instructions.ts";
 import { createLogger, createPrettyDestination } from "@/adapters/logger.ts";
 import { createMcpClient } from "@/adapters/mcp-client.ts";
 import { createMcpCredentialStore, createMcpServerStore } from "@/adapters/mcp-servers.ts";
@@ -35,6 +36,7 @@ import { createConnections } from "@/services/connections.ts";
 import { createFolders } from "@/services/folders.ts";
 import { createGroups } from "@/services/groups.ts";
 import { createGuests } from "@/services/guests.ts";
+import { createInstructions } from "@/services/instructions.ts";
 import { createMcpServers } from "@/services/mcp-servers.ts";
 import { createModels, type Models } from "@/services/models.ts";
 import { createOrgs } from "@/services/orgs.ts";
@@ -134,6 +136,7 @@ const mcp = createMcpServers({
   settings: settingStore,
   logger,
 });
+const instructions = createInstructions({ store: createInstructionStore(db), spaces });
 const tools = createTools({
   toolsets: [
     createSystemTools({
@@ -189,6 +192,7 @@ const worker = createRunWorker({
   transact,
   models: runModels,
   tools,
+  guidance: (space) => instructions.textsFor(space),
   logger,
 });
 
@@ -258,6 +262,7 @@ const app = createApp({
     directory,
   }),
   mcp,
+  instructions,
   guests: createGuests({
     access,
     guests: guestStore,

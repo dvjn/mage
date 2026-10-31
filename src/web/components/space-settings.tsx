@@ -1,6 +1,6 @@
 // A space's settings, in pages: General (renaming it, unless it is a person's own space named for
 // them, the model and reasoning effort its new threads start with, or the org's, and deleting it
-// when it is not the primary space), Members for a shared space, and the agent's Tools and MCPs there, with
+// when it is not the primary space, and the agent's instructions there), Members for a shared space, and the agent's Tools and MCPs there, with
 // one table of MCP servers, the org's that the space may turn off for itself beside its own, and a
 // page for each of its own. They are there only for those who manage it (its owners, and a team
 // org's owners). A team org's owner who manages a space without being in it reads its threads once
@@ -21,6 +21,7 @@ import {
   modelName,
   ModelField,
 } from "@/web/components/settings/default-fields";
+import { SpaceInstructions } from "@/web/components/settings/instructions";
 import { SettingsCard, SettingsTitle } from "@/web/components/settings/layout";
 import { SettingsShell, settingsNavLink } from "@/web/components/settings/settings-nav";
 import { McpServerPage, McpServersCard } from "@/web/components/settings/mcp-servers";
@@ -285,6 +286,7 @@ export function SpaceGeneral() {
       />
       {!namedForPerson(space) && <SpaceName key={space.id} space={space} />}
       <SpaceModel space={space} />
+      <SpaceInstructions spaceId={space.id} spaceName={space.name} />
       {!space.primary && <DeleteSpace space={space} />}
     </>
   );

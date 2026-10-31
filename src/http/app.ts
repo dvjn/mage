@@ -19,6 +19,7 @@ import { ServiceError } from "@/services/errors.ts";
 import type { Folders } from "@/services/folders.ts";
 import type { Groups } from "@/services/groups.ts";
 import type { Guests } from "@/services/guests.ts";
+import type { Instructions } from "@/services/instructions.ts";
 import type { McpServers } from "@/services/mcp-servers.ts";
 import type { ConnectionModel, Models } from "@/services/models.ts";
 import type { Orgs } from "@/services/orgs.ts";
@@ -48,6 +49,7 @@ import {
   spaceServersChangeSchema,
 } from "@/shared/mcp.ts";
 import type { Me } from "@/shared/me.ts";
+import { instructionsInputSchema } from "@/shared/instructions.ts";
 import type { SignInOptions } from "@/shared/sign-in.ts";
 import {
   type ConnectionModels,
@@ -122,6 +124,8 @@ export interface AppOptions {
   toolPolicies: ToolPolicies;
   // The MCP servers orgs and spaces add, and authorizing Mage with them.
   mcp: McpServers;
+  // The instructions orgs and spaces give the agent.
+  instructions: Instructions;
   // The orgs people are in, their members and invites, and creating team orgs.
   orgs: Orgs;
   // A team org's groups, as a directory brings them.
@@ -287,6 +291,8 @@ function mcpServerPage(server: Pick<McpServerSummary, "id" | "spaceId"> | null) 
     : `/org/tools/mcp/${server.id}`;
 }
 
+const instructionsInput = checkedBody(instructionsInputSchema);
+
 const toolPolicyChange = jsonBody(
   toolPolicyChangeSchema,
   "Give toolIds and a policy: a policy's id, off, or null",
@@ -432,6 +438,7 @@ function createApi(options: AppOptions) {
     tools,
     toolPolicies,
     mcp,
+    instructions,
   } = options;
 
   // A connection as the API shows it, with its proxy and the ends of its secrets.
@@ -1023,6 +1030,23 @@ function createApi(options: AppOptions) {
       .delete("/v1/mcp-servers/:id", (c) => {
         mcp.remove(signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
+      })
+      .get("/v1/org/instructions", (c) => {
+        return c.json(instructions.inOrg(signedIn(c.var.principal)), 200);
+      })
+      .put("/v1/org/instructions", instructionsInput, (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(instructions.setInOrg(principal, c.req.valid("json").text), 200);
+      })
+      .get("/v1/spaces/:id/instructions", (c) => {
+        return c.json(instructions.inSpace(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .put("/v1/spaces/:id/instructions", instructionsInput, (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(
+          instructions.setInSpace(principal, c.req.param("id"), c.req.valid("json").text),
+          200,
+        );
       })
       .post("/v1/threads/:id/retry", retry, (c) => {
         const { runId } = c.req.valid("json");

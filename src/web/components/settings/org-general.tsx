@@ -1,12 +1,13 @@
 // The organization's general settings: its name, which a team org's owners change, a team org's
 // first steps until it has a model provider, the models its threads start with and that name them,
-// and deleting a team org.
+// the agent's instructions in every space, and deleting a team org.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { BlocksIcon, UsersIcon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 
+import { OrgInstructions } from "@/web/components/settings/instructions";
 import { SettingsCard, SettingsTitle } from "@/web/components/settings/layout";
 import { ModelsCard } from "@/web/components/settings/models-card";
 import {
@@ -203,6 +204,7 @@ export function OrgGeneral() {
         {me.data && <OrgName key={me.data.org.name} name={me.data.org.name} canManage={!!owner} />}
       </SettingsCard>
       <ModelsCard canManage={role === "owner"} />
+      <OrgInstructions />
       {owner && me.data && <DeleteOrg name={me.data.org.name} />}
     </>
   );

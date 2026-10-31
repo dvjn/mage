@@ -1,5 +1,6 @@
 // What the agent is given to reply from: a short system prompt naming Mage and the people in the
-// thread, and the thread's messages in the order the agent saw them, each person's prefixed with
+// thread, followed by the org's instructions and the space's when there are any, and the thread's
+// messages in the order the agent saw them, each person's prefixed with
 // their name, each reply with the tool calls it asked for and what they gave back. Quiet asides are
 // included; replies still being written, and replies cut short that were tried again, are not. A
 // call that did not run gives back only that it was not approved.
@@ -17,14 +18,31 @@ export function humanMessage(row: Pick<HumanRow, "author" | "text">): ModelMessa
   return { role: "user", text: `[${row.author.name}] ${row.text}` };
 }
 
-export function instructionsFor(people: string[]) {
-  return [
-    "You are the agent in Mage, a workspace where people talk with you and with each other in shared threads.",
-    `The people in this thread: ${people.join(", ")}.`,
-    "Each of their messages starts with the writer's name in brackets, like [Ada Lovelace]. Your replies do not start with a name.",
-    `A message starting with ${QUIET_PREFIX} is an aside between people: take it in as context, but do not answer it.`,
-    "Reply in Markdown.",
-  ].join("\n");
+// What the org and the space tell the agent.
+export interface Guidance {
+  org: string;
+  space: string;
+}
+
+export const NO_GUIDANCE: Guidance = { org: "", space: "" };
+
+export function instructionsFor(people: string[], guidance: Guidance = NO_GUIDANCE) {
+  const sections = [
+    [
+      "You are the agent in Mage, a workspace where people talk with you and with each other in shared threads.",
+      `The people in this thread: ${people.join(", ")}.`,
+      "Each of their messages starts with the writer's name in brackets, like [Ada Lovelace]. Your replies do not start with a name.",
+      `A message starting with ${QUIET_PREFIX} is an aside between people: take it in as context, but do not answer it.`,
+      "Reply in Markdown.",
+    ].join("\n"),
+  ];
+  if (guidance.org.trim()) {
+    sections.push(`Instructions from the organization:\n${guidance.org.trim()}`);
+  }
+  if (guidance.space.trim()) {
+    sections.push(`Instructions from this space:\n${guidance.space.trim()}`);
+  }
+  return sections.join("\n\n");
 }
 
 export const NOT_APPROVED = "This action was not approved.";
@@ -44,7 +62,10 @@ function resultOf(row: ToolRow): ModelToolResult | null {
   }
 }
 
-export function contextOf(rows: readonly TranscriptRow[]): Context {
+export function contextOf(
+  rows: readonly TranscriptRow[],
+  guidance: Guidance = NO_GUIDANCE,
+): Context {
   const people = new Set<string>();
   const messages: ModelMessage[] = [];
   const calls = new Map<string, ToolRow[]>();
@@ -77,5 +98,5 @@ export function contextOf(rows: readonly TranscriptRow[]): Context {
       }
     }
   }
-  return { instructions: instructionsFor([...people]), messages };
+  return { instructions: instructionsFor([...people], guidance), messages };
 }

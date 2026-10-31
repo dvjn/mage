@@ -1,7 +1,7 @@
 // Server state the web client reads: the ways to sign in, the current session, who is signed in, the orgs they are in,
 // the tab org's members, groups and settings, their connections, the models the org can use, its
-// default model and effort and title model, its MCP servers and its spaces', their spaces with who
-// is in them, their folders and threads, the threads shared with them, and who is in a thread.
+// default model and effort and title model, its MCP servers and its spaces', the instructions it
+// and its spaces give the agent, their spaces with who is in them, their folders and threads, the threads shared with them, and who is in a thread.
 
 import { queryOptions } from "@tanstack/react-query";
 
@@ -9,6 +9,7 @@ import { connectionListSchema } from "@/shared/connections.ts";
 import { folderListSchema } from "@/shared/folders.ts";
 import { sharedThreadListSchema, threadPeopleSchema } from "@/shared/guests.ts";
 import { mcpServerSchema, orgMcpServersSchema, spaceMcpServersSchema } from "@/shared/mcp.ts";
+import { instructionsSchema, spaceInstructionsSchema } from "@/shared/instructions.ts";
 import { meSchema } from "@/shared/me.ts";
 import { orgListSchema, teamSettingsSchema } from "@/shared/orgs.ts";
 import {
@@ -86,6 +87,26 @@ export function spaceMcpServersQuery(spaceId: string) {
       const res = await apiClient.v1.spaces[":id"]["mcp-servers"].$get({ param: { id: spaceId } });
       if (!res.ok) throw new Error("could not read the space's MCP servers");
       return spaceMcpServersSchema.parse(await res.json());
+    },
+  });
+}
+
+export const orgInstructionsQuery = queryOptions({
+  queryKey: ["instructions", "org"],
+  queryFn: async () => {
+    const res = await apiClient.v1.org.instructions.$get();
+    if (!res.ok) throw new Error("could not read the instructions");
+    return instructionsSchema.parse(await res.json());
+  },
+});
+
+export function spaceInstructionsQuery(spaceId: string) {
+  return queryOptions({
+    queryKey: ["instructions", "space", spaceId],
+    queryFn: async () => {
+      const res = await apiClient.v1.spaces[":id"].instructions.$get({ param: { id: spaceId } });
+      if (!res.ok) throw new Error("could not read the space's instructions");
+      return spaceInstructionsSchema.parse(await res.json());
     },
   });
 }

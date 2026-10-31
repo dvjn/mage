@@ -41,7 +41,7 @@ import type { Thread, ThreadStore } from "@/ports/threads.ts";
 import type { ToolOutput } from "@/ports/tools.ts";
 import type { Transact } from "@/ports/transaction.ts";
 import { ConnectionError } from "@/services/connections.ts";
-import { contextOf, humanMessage } from "@/services/context.ts";
+import { contextOf, type Guidance, humanMessage, NO_GUIDANCE } from "@/services/context.ts";
 import type { Models, OpenModel } from "@/services/models.ts";
 import type { ThreadAccess } from "@/services/thread-access.ts";
 import { type Append, eventSummary, type ThreadLog } from "@/services/thread-log.ts";
@@ -60,6 +60,8 @@ export interface RunWorkerOptions {
   transact: Transact;
   models: Pick<Models, "open" | "replyModel">;
   tools: Pick<Tools, "offered" | "riskOf" | "forModel" | "decide" | "approvalHolds">;
+  // What the org and the space tell the agent beyond Mage's own prompt, given the tools offered.
+  guidance?: (space: Space, offered: readonly AnyToolSpec[]) => Guidance;
   logger: Logger;
   now?: () => Date;
   // How long reply pieces gather before they are stored and announced together.
@@ -248,6 +250,7 @@ export function createRunWorker(options: RunWorkerOptions) {
   const { runs, threads, spaceStore, access, deltas, log, bus, transact, models, tools, logger } =
     options;
   const now = options.now ?? (() => new Date());
+  const guidance = options.guidance ?? (() => NO_GUIDANCE);
   const leaseMs = options.leaseMs ?? 30_000;
   const pollMs = options.pollMs ?? 5_000;
   const flushMs = options.flushMs ?? 75;
@@ -686,7 +689,11 @@ export function createRunWorker(options: RunWorkerOptions) {
       if (current.model !== model.own.model || current.effort !== model.own.effort) {
         model = await replying(execution, space, current);
       }
-      const { instructions, messages } = contextOf(transcript(thread.id).rows);
+      const offered = tools.offered(space);
+      const { instructions, messages } = contextOf(
+        transcript(thread.id).rows,
+        guidance(space, offered),
+      );
       const calls: (ModelToolCall & { messageId: string })[] = [];
       let messageId = "";
       const stream = model.model.stream(
@@ -697,7 +704,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           sessionId: thread.id,
           ...(model.effort && { effort: model.effort }),
           beforeStep: () => boundary(execution, false),
-          tools: tools.forModel(tools.offered(space)),
+          tools: tools.forModel(offered),
         },
         controller.signal,
       );
