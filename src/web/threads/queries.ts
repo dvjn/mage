@@ -1,6 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 
-import { type ThreadDetail, threadDetailSchema, threadSidebarSchema } from "@/shared/threads.ts";
+import { type ThreadDetail, threadDetailSchema } from "@/shared/threads/detail.ts";
+import { threadSidebarSchema } from "@/shared/threads/list.ts";
 import { apiClient } from "@/web/api/api-client";
 import { withLiveEvents } from "@/web/threads/thread-detail";
 

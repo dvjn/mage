@@ -2,12 +2,12 @@
 // every thread's prompt, warned about once long and refused past a cap. In a space, the org's show
 // read-only above the space's own. Only those who manage a scope change it; others read it.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { ChevronRightIcon } from "lucide-react";
 import { useState } from "react";
 
 import { INSTRUCTIONS_LONG, INSTRUCTIONS_MAX } from "@/shared/instructions.ts";
-import { SettingsCard } from "@/web/settings/layout";
+import { SettingsCard } from "@/web/shell/settings-page";
 import { Button } from "@/web/components/ui/button";
 import {
   Collapsible,
@@ -16,12 +16,10 @@ import {
 } from "@/web/components/ui/collapsible";
 import { FieldError } from "@/web/components/ui/field";
 import { Textarea } from "@/web/components/ui/textarea";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
 import { meQuery } from "@/web/auth/queries";
 import { orgInstructionsQuery, spaceInstructionsQuery } from "@/web/instructions/queries";
-
-type Scope = { kind: "org" } | { kind: "space"; spaceId: string };
+import type { Scope } from "@/web/shell/scope";
+import { useSaveInstructions } from "@/web/instructions/mutations";
 
 export function OrgInstructions() {
   const me = useQuery(meQuery);
@@ -84,31 +82,14 @@ function InstructionsForm({
   orgText?: string;
   placeholder: string;
 }) {
-  const queryClient = useQueryClient();
   const [text, setText] = useState(saved);
   const [justSaved, setJustSaved] = useState(false);
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
+  const saveText = useSaveInstructions(scope);
   const dirty = text !== saved;
   const tooLong = text.length > INSTRUCTIONS_MAX;
 
-  async function save() {
-    setPending(true);
-    setError(undefined);
-    const res =
-      scope.kind === "org"
-        ? await apiClient.v1.org.instructions.$put({ json: { text } })
-        : await apiClient.v1.spaces[":id"].instructions.$put({
-            param: { id: scope.spaceId },
-            json: { text },
-          });
-    setPending(false);
-    if (!res.ok) {
-      setError(await errorOf(res));
-      return;
-    }
-    await queryClient.invalidateQueries({ queryKey: ["instructions"] });
-    setJustSaved(true);
+  function save() {
+    saveText.mutate(text, { onSuccess: () => setJustSaved(true) });
   }
 
   return (
@@ -151,7 +132,7 @@ function InstructionsForm({
         )
       )}
       <div className="flex items-center gap-3">
-        <FieldError>{error}</FieldError>
+        <FieldError>{saveText.error?.message}</FieldError>
         <span className="flex-1" />
         {justSaved && !dirty && <span className="text-xs text-muted-foreground">Saved</span>}
         {canManage && dirty && (
@@ -160,7 +141,7 @@ function InstructionsForm({
           </Button>
         )}
         {canManage && dirty && (
-          <Button size="sm" disabled={pending || tooLong} onClick={() => void save()}>
+          <Button size="sm" disabled={saveText.isPending || tooLong} onClick={save}>
             Save
           </Button>
         )}

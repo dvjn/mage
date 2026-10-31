@@ -7,12 +7,9 @@ import type { ColumnDef } from "@tanstack/react-table";
 import type * as React from "react";
 
 import type { ThreadShow } from "@/shared/thread-status.ts";
-import type { ShownModel, ThreadActivity, ThreadParticipants } from "@/shared/threads.ts";
+import type { ShownModel, ThreadActivity, ThreadParticipants } from "@/shared/threads/list.ts";
 import { DataTable, type Empty } from "@/web/components/data-table/data-table";
 import { DataTableToolbar } from "@/web/components/data-table/data-table-toolbar";
-import { filterColumn } from "@/web/components/people-table";
-import { ThreadRow } from "@/web/threads/thread-row";
-import { ThreadShowControl } from "@/web/threads/thread-show";
 import { useDataTable } from "@/web/hooks/use-data-table";
 import {
   type DataTableFeatures,
@@ -20,6 +17,9 @@ import {
   type TableSearch,
   withoutUnset,
 } from "@/web/lib/data-table";
+import { filterColumn } from "@/web/shell/people-table";
+import { ThreadRow } from "@/web/threads/thread-row";
+import { ThreadShowControl } from "@/web/threads/thread-show";
 
 type Thread = {
   id: string;

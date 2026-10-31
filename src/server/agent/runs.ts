@@ -18,9 +18,10 @@
 import { ulid } from "ulid";
 import * as z from "zod";
 
-import type { DeltaStore, Thread, ThreadStore } from "@/server/threads/service.ts";
+import type { Transact } from "@/server/db/db.ts";
 import type { EventBus } from "@/server/kernel/event-bus.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
+import { ConnectionError } from "@/server/models/connections.ts";
 import {
   ModelError,
   type ModelErrorKind,
@@ -28,23 +29,22 @@ import {
   type ModelToolCall,
   type ModelUsage,
 } from "@/server/models/gateway.ts";
-import type { Space, SpaceStore } from "@/server/spaces/service.ts";
-import type { Transact } from "@/server/db/db.ts";
-import { ConnectionError } from "@/server/models/connections.ts";
 import type { Models, OpenModel } from "@/server/models/service.ts";
+import type { Space, SpaceStore } from "@/server/spaces/service.ts";
 import type { ThreadAccess } from "@/server/spaces/thread-access.ts";
 import { type Append, eventSummary, type ThreadLog } from "@/server/threads/log.ts";
+import type { DeltaStore, Thread, ThreadStore } from "@/server/threads/service.ts";
 import type {
   EventDataMap,
   ReplyPart,
   ReplyStatus,
   FailureKind,
   RunReason,
-} from "@/shared/threads.ts";
+} from "@/shared/threads/events.ts";
 import { type PendingMessage, type ToolRow, transcriptOf } from "@/shared/transcript.ts";
 
-import type { ToolOutput, AnyToolSpec, Tools } from "./tools.ts";
 import { contextOf, type Guidance, humanMessage, NO_GUIDANCE } from "./context.ts";
+import type { ToolOutput, AnyToolSpec, Tools } from "./tools.ts";
 
 export type RunStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled";
 

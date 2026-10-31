@@ -14,14 +14,14 @@ import {
   joinRefusalSchema,
 } from "@/shared/orgs.ts";
 import { AuthCard, AuthFrame, SignInActions, useCanSignUp } from "@/web/auth/auth-frame";
-import { GoHome } from "@/web/components/page-states";
 import { Button } from "@/web/components/ui/button";
 import { Spinner } from "@/web/components/ui/spinner";
 import { apiClient } from "@/web/api/api-client";
 import { authClient } from "@/web/api/auth-client";
 import { switchOrg } from "@/web/lib/org-tab";
-import { forgetCache } from "@/web/lib/query-cache";
+import { forgetCache } from "@/web/api/query-cache";
 import { sessionQuery } from "@/web/auth/queries";
+import { GoHome } from "@/web/shell/not-found";
 
 const joinRoute = getRouteApi("/join/$token");
 

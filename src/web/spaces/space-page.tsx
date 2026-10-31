@@ -11,9 +11,8 @@ import { useEffect } from "react";
 import * as z from "zod";
 
 import { threadShowSchema } from "@/shared/thread-status.ts";
-import { PageHeader, pageWidth } from "@/web/app/app-shell";
 import { NewThreadComposer } from "@/web/threads/draft-thread";
-import { EmptyState, NotFound } from "@/web/components/page-states";
+import { EmptyState } from "@/web/components/page-states";
 import { ThreadTable } from "@/web/threads/thread-table";
 import { Time } from "@/web/components/time";
 import { Button } from "@/web/components/ui/button";
@@ -22,6 +21,8 @@ import { rememberSpace } from "@/web/spaces/last-space";
 import { spaceThreadsPage } from "@/web/api/list-queries";
 import { spaceFoldersQuery } from "@/web/folders/queries";
 import { spacesQuery } from "@/web/spaces/queries";
+import { PageHeader, pageWidth } from "@/web/shell/page-header";
+import { NotFound } from "@/web/shell/not-found";
 
 const spaceRoute = getRouteApi("/_app/s/$spaceId");
 

@@ -8,11 +8,10 @@
 
 import { createHash, randomBytes } from "node:crypto";
 
-import type { SpaceStore, Spaces } from "@/server/spaces/service.ts";
 import type { RunStore } from "@/server/agent/runs.ts";
-import type { ThreadStore } from "@/server/threads/service.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
-import type { Page, PageParams } from "@/shared/paging.ts";
+import type { SpaceStore, Spaces } from "@/server/spaces/service.ts";
+import type { ThreadStore } from "@/server/threads/service.ts";
 import type {
   CreatedOrgInvite,
   JoinPreview,
@@ -21,7 +20,8 @@ import type {
   OrgPerson,
   TeamSettings,
 } from "@/shared/orgs.ts";
-import type { Effort } from "@/shared/threads.ts";
+import type { Page, PageParams } from "@/shared/paging.ts";
+import type { Effort } from "@/shared/threads/thread.ts";
 
 import type { Directory, MemberRow, OrgRole } from "./directory.ts";
 import type { Principal } from "./identity.ts";

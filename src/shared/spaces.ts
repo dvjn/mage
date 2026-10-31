@@ -5,7 +5,7 @@ import * as z from "zod";
 
 import { lockSchema } from "@/shared/orgs.ts";
 import { pageSchema, tableQuerySchema } from "@/shared/paging.ts";
-import { effortSchema } from "@/shared/threads.ts";
+import { effortSchema } from "@/shared/threads/thread.ts";
 
 export const spaceRoleSchema = z.enum(["owner", "messager", "viewer"]);
 

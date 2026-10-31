@@ -1,12 +1,12 @@
-// Adds people of the org, or groups, to something: one picker that searches the org on the server,
-// leaving out those already in it, and, where they get a role, the role to give. Inviting someone
+// Adds people of the org, or groups, to something: the subject picker searching the org on the
+// server, leaving out those already in it, and, where they get a role, the role to give. Inviting someone
 // new to the org is the invite dialog's.
 
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { type FormEvent, useId, useState } from "react";
 
-import { type SubjectOption, SubjectPicker } from "@/web/spaces/subject-picker";
+import { groupsPages, membersPages } from "@/web/api/list-queries";
 import { Button } from "@/web/components/ui/button";
 import {
   Dialog,
@@ -26,7 +26,7 @@ import {
   SelectValue,
 } from "@/web/components/ui/select";
 import { useDebounced } from "@/web/hooks/use-debounced";
-import { groupsPages, membersPages } from "@/web/api/list-queries";
+import { type SubjectOption, SubjectPicker } from "@/web/spaces/subject-picker";
 
 export function AddPeopleDialog<T extends string>({
   open,
@@ -125,14 +125,16 @@ export function AddPeopleDialog<T extends string>({
               </FieldLabel>
               <SubjectPicker
                 id={pickerId}
+                text={text}
+                onTextChange={setText}
+                placeholder="Search"
                 options={options}
-                value={picked}
-                onChange={setPicked}
-                query={text}
-                onQueryChange={setText}
-                placeholder={withGroups ? "Pick a person or group" : "Pick a person"}
+                picked={picked}
+                onPick={setPicked}
                 empty={
-                  canInvite ? (
+                  options.length === 0 &&
+                  people.isSuccess &&
+                  (canInvite ? (
                     <>
                       Nobody else to add.{" "}
                       <Link to="/org/people" className="underline underline-offset-4">
@@ -141,7 +143,7 @@ export function AddPeopleDialog<T extends string>({
                     </>
                   ) : (
                     "Nobody else to add."
-                  )
+                  ))
                 }
               />
             </Field>

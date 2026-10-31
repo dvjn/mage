@@ -1,12 +1,11 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
-import { sharedThreadListSchema } from "@/shared/guests.ts";
-import { statusOf } from "@/shared/thread-status.ts";
-import { type ThreadActivity, threadListSchema } from "@/shared/threads.ts";
-
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { openInbox } from "@/server/testing/sse.ts";
+import { sharedThreadListSchema } from "@/shared/guests.ts";
+import { statusOf } from "@/shared/thread-status.ts";
+import { type ThreadActivity, threadListSchema } from "@/shared/threads/list.ts";
 
 const ME = "u-me";
 

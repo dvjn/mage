@@ -11,7 +11,7 @@
 // an answer counts as its writer's words like a message.
 
 import type { Access } from "@/server/spaces/thread-access.ts";
-import type { ToolRisk } from "@/shared/threads.ts";
+import type { ToolRisk } from "@/shared/threads/events.ts";
 import { EDITORS, type PolicyUse } from "@/shared/tools.ts";
 
 import type { ToolLevel } from "./tools.ts";

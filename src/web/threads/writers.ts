@@ -2,7 +2,7 @@
 // the one or two who wrote last, "You" for whoever is signed in, then how many more there are
 // ("Grace, You +3"); and in full, every name a list has with a guest marked, for its tooltip.
 
-import type { ThreadParticipants } from "@/shared/threads.ts";
+import type { ThreadParticipants } from "@/shared/threads/list.ts";
 
 const names = new Intl.ListFormat(undefined, { type: "conjunction" });
 

@@ -17,12 +17,12 @@ import { randomBytes } from "node:crypto";
 
 import * as z from "zod";
 
-import type { Principal } from "@/server/orgs/identity.ts";
-import type { Logger } from "@/server/kernel/logger.ts";
-import type { OrgSettingStore } from "@/server/orgs/service.ts";
-import type { Space, Spaces } from "@/server/spaces/service.ts";
 import type { AnyToolSpec, ToolContext, ToolOutput, Toolset } from "@/server/agent/tools.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
+import type { Logger } from "@/server/kernel/logger.ts";
+import type { Principal } from "@/server/orgs/identity.ts";
+import type { OrgSettingStore } from "@/server/orgs/service.ts";
+import type { Space, Spaces } from "@/server/spaces/service.ts";
 import {
   type McpAuthInput,
   type McpAuthSummary,
@@ -38,7 +38,7 @@ import {
   type McpStatus,
   type McpTransport,
 } from "@/shared/mcp.ts";
-import type { ToolRisk } from "@/shared/threads.ts";
+import type { ToolRisk } from "@/shared/threads/events.ts";
 import type { ToolDefinition } from "@/shared/tools.ts";
 
 import {

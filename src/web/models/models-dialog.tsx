@@ -4,13 +4,12 @@
 // they are made; the organization's default model stays on, marked as such, and spaces that start
 // threads on a model turned off are named. A list that could not be read says why, to try again.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { RotateCcwIcon } from "lucide-react";
 import { useId, useState } from "react";
 
 import { type ConnectionSummary, connectionLabel } from "@/shared/connections.ts";
-import { type ConnectionModels, connectionModelsSchema } from "@/shared/models.ts";
 import { Badge } from "@/web/components/ui/badge";
 import { Button } from "@/web/components/ui/button";
 import {
@@ -26,26 +25,8 @@ import { Input } from "@/web/components/ui/input";
 import { Skeleton } from "@/web/components/ui/skeleton";
 import { Switch } from "@/web/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/web/components/ui/tooltip";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
-import { modelsQuery } from "@/web/models/queries";
-
-// A connection's models; a list the server could not read says why at once rather than being
-// asked for again.
-export function connectionModelsQuery(connectionId: string) {
-  return {
-    queryKey: ["connection-models", connectionId],
-    retry: false,
-    queryFn: async () => {
-      const res = await apiClient.v1.connections[":id"].models.$get({
-        param: { id: connectionId },
-        query: { refresh: "0" },
-      });
-      if (!res.ok) throw new Error(await errorOf(res));
-      return connectionModelsSchema.parse(await res.json());
-    },
-  };
-}
+import { useConnectionModels } from "@/web/models/mutations";
+import { connectionModelsQuery } from "@/web/models/queries";
 
 // "128K", "1M": how many tokens a model reads.
 function contextSize(tokens: number) {
@@ -63,35 +44,26 @@ export function ModelsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const queryClient = useQueryClient();
   const id = useId();
   const query = connectionModelsQuery(connection?.id ?? "");
   const list = useQuery({ ...query, enabled: open && !!connection });
   const [filter, setFilter] = useState("");
-  const [error, setError] = useState<string>();
   const [warning, setWarning] = useState<string>();
+  const switching = useConnectionModels(connection?.id ?? "");
 
-  async function change(json: { autoEnable?: boolean; set?: { ids: string[]; enabled: boolean } }) {
+  function change(json: { autoEnable?: boolean; set?: { ids: string[]; enabled: boolean } }) {
     if (!connection) return;
-    setError(undefined);
     setWarning(undefined);
-    const res = await apiClient.v1.connections[":id"].models.$patch({
-      param: { id: connection.id },
-      json,
+    switching.mutate(json, {
+      onSuccess: (updated) => {
+        const spaces = updated.spacesUsingOff ?? [];
+        if (spaces.length > 0) {
+          setWarning(
+            `${spaces.map((s) => s.name).join(", ")} ${spaces.length === 1 ? "starts" : "start"} new threads on a model now turned off. Choose another in ${spaces.length === 1 ? "its" : "their"} space settings.`,
+          );
+        }
+      },
     });
-    if (!res.ok) {
-      setError(await errorOf(res));
-      return;
-    }
-    const updated: ConnectionModels = connectionModelsSchema.parse(await res.json());
-    queryClient.setQueryData(query.queryKey, updated);
-    const spaces = updated.spacesUsingOff ?? [];
-    if (spaces.length > 0) {
-      setWarning(
-        `${spaces.map((s) => s.name).join(", ")} ${spaces.length === 1 ? "starts" : "start"} new threads on a model now turned off. Choose another in ${spaces.length === 1 ? "its" : "their"} space settings.`,
-      );
-    }
-    await queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
   }
 
   const needle = filter.trim().toLowerCase();
@@ -111,7 +83,7 @@ export function ModelsDialog({
       onOpenChange={(next) => {
         if (!next) {
           setFilter("");
-          setError(undefined);
+          switching.reset();
           setWarning(undefined);
         }
         onOpenChange(next);
@@ -155,7 +127,7 @@ export function ModelsDialog({
               <Switch
                 id={`${id}-auto`}
                 checked={list.data.autoEnable}
-                onCheckedChange={(checked) => void change({ autoEnable: checked })}
+                onCheckedChange={(checked) => change({ autoEnable: checked })}
               />
             </div>
             <Input
@@ -165,7 +137,7 @@ export function ModelsDialog({
               value={filter}
               onChange={(event) => setFilter(event.target.value)}
             />
-            <FieldError>{error}</FieldError>
+            <FieldError>{switching.error?.message}</FieldError>
             {warning && (
               <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
                 {warning}
@@ -183,7 +155,7 @@ export function ModelsDialog({
                   checked={allOn}
                   disabled={switchable.length === 0}
                   onCheckedChange={(checked) =>
-                    void change({ set: { ids: models.map((m) => m.id), enabled: checked } })
+                    change({ set: { ids: models.map((m) => m.id), enabled: checked } })
                   }
                 />
               </div>
@@ -227,7 +199,7 @@ export function ModelsDialog({
                           aria-label={`${model.name} available`}
                           checked={model.enabled}
                           onCheckedChange={(checked) =>
-                            void change({ set: { ids: [model.id], enabled: checked } })
+                            change({ set: { ids: [model.id], enabled: checked } })
                           }
                         />
                       )}

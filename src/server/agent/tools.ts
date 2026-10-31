@@ -10,17 +10,17 @@ import { createHash } from "node:crypto";
 
 import * as z from "zod";
 
-import type { Directory } from "@/server/orgs/directory.ts";
-import type { EventBus } from "@/server/kernel/event-bus.ts";
-import type { Principal } from "@/server/orgs/identity.ts";
-import type { ModelTool } from "@/server/models/gateway.ts";
-import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
-import type { Thread, ThreadStore, NewEvent } from "@/server/threads/service.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
+import type { EventBus } from "@/server/kernel/event-bus.ts";
+import type { ModelTool } from "@/server/models/gateway.ts";
+import type { Directory } from "@/server/orgs/directory.ts";
+import type { Principal } from "@/server/orgs/identity.ts";
+import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
 import type { ThreadAccess } from "@/server/spaces/thread-access.ts";
 import { eventSummary, type ThreadLog } from "@/server/threads/log.ts";
+import type { Thread, ThreadStore, NewEvent } from "@/server/threads/service.ts";
 import { type AskAnswers, askInputSchema, answersProblem } from "@/shared/ask.ts";
-import type { ToolRisk, ToolScope } from "@/shared/threads.ts";
+import type { ToolRisk, ToolScope } from "@/shared/threads/events.ts";
 import {
   TOOL_OFF,
   WIRE_NAME_MAX,

@@ -24,23 +24,14 @@ import { methodOf } from "@/shared/hosts.ts";
 import { MAKERS, type MakerId } from "@/shared/makers.ts";
 import { HostMark, MakerMark } from "@/web/models/marks";
 import { EmptyState } from "@/web/components/page-states";
-import { HeaderAction } from "@/web/components/people-table";
+import { HeaderAction } from "@/web/shell/people-table";
 import { Time } from "@/web/components/time";
 import { WithTooltip } from "@/web/components/with-tooltip";
-import { AddProviderDialog, EditProviderDialog } from "@/web/models/add-provider";
-import { SettingsCard, SettingsTitle } from "@/web/settings/layout";
-import { connectionModelsQuery, ModelsDialog } from "@/web/models/models-dialog";
+import { AddProviderDialog } from "@/web/models/add-provider";
+import { EditProviderDialog } from "@/web/models/edit-provider-dialog";
+import { SettingsCard, SettingsTitle } from "@/web/shell/settings-page";
+import { ModelsDialog } from "@/web/models/models-dialog";
 import { ProxyForm } from "@/web/models/proxy-settings";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/web/components/ui/alert-dialog";
 import { Button } from "@/web/components/ui/button";
 import {
   Table,
@@ -64,11 +55,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/web/components/ui/dropdown-menu";
-import { FieldError } from "@/web/components/ui/field";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
 import { meQuery } from "@/web/auth/queries";
 import { connectionsQuery, modelsQuery } from "@/web/models/queries";
+import { ConfirmDialog } from "@/web/components/confirm-dialog";
+import { useRemoveConnection } from "@/web/models/mutations";
+import { connectionModelsQuery } from "@/web/models/queries";
 
 // How it connects, as its host's way of connecting is called.
 function methodTitle(connection: ConnectionSummary) {
@@ -294,34 +285,21 @@ function ProvidersTable({
 }
 
 function RowDialogs({ action, onClose }: { action: RowAction | null; onClose: () => void }) {
-  const queryClient = useQueryClient();
-  const [error, setError] = useState<string>();
   const connections = useQuery(connectionsQuery);
+  const removal = useRemoveConnection();
   // As it is now, after the dialog's own changes.
   const connection =
     connections.data?.find((c) => c.id === action?.connection.id) ?? action?.connection;
   const name = connection ? connectionLabel(connection) : "";
 
-  async function refresh() {
-    await queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
-    await queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
-  }
-
-  async function remove() {
+  function remove() {
     if (!connection) return;
-    const res = await apiClient.v1.connections[":id"].$delete({ param: { id: connection.id } });
-    if (!res.ok) {
-      const failed = await errorOf(res);
-      setError(failed);
-      return;
-    }
-    await refresh();
-    close(false);
+    removal.mutate(connection.id, { onSuccess: () => close(false) });
   }
 
   function close(open: boolean) {
     if (open) return;
-    setError(undefined);
+    removal.reset();
     onClose();
   }
 
@@ -347,23 +325,16 @@ function RowDialogs({ action, onClose }: { action: RowAction | null; onClose: ()
           )}
         </DialogContent>
       </Dialog>
-      <AlertDialog open={action?.kind === "remove"} onOpenChange={close}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove {name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Threads on its models fall back to the default model.
-            </AlertDialogDescription>
-            <FieldError>{error}</FieldError>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void remove()}>
-              Remove
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={action?.kind === "remove"}
+        onOpenChange={close}
+        title={`Remove ${name}?`}
+        description="Threads on its models fall back to the default model."
+        error={removal.error?.message}
+        disabled={removal.isPending}
+        action="Remove"
+        onConfirm={remove}
+      />
     </>
   );
 }

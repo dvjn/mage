@@ -59,7 +59,7 @@ import { createThreads } from "@/server/threads/service.ts";
 import { createThreadStore } from "@/server/threads/store.ts";
 import { createTitles } from "@/server/threads/titles.ts";
 import { type ModelPair, replyCandidates } from "@/shared/models.ts";
-import type { Effort } from "@/shared/threads.ts";
+import type { Effort } from "@/shared/threads/thread.ts";
 
 import { createFixtures, gitStandIn } from "../../../e2e/git-server.ts";
 import { mcpStandIn } from "../../../e2e/mcp-server.ts";

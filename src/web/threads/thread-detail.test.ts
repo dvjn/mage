@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { AnyThreadEvent, ThreadDetail } from "@/shared/threads.ts";
+import type { ThreadDetail } from "@/shared/threads/detail.ts";
+import type { AnyThreadEvent } from "@/shared/threads/events.ts";
 import { withEvents, withLiveEvents } from "@/web/threads/thread-detail.ts";
 
 function event(seq: number): AnyThreadEvent {

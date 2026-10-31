@@ -10,54 +10,56 @@
 // ends, they are told so. When the server cannot be reached, the thread as last read stays in view
 // while it reconnects. Reading it marks it seen.
 
-import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
+import { cn } from "cn";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ASK_TOOL, type AskAnswers } from "@/shared/ask.ts";
-import {
-  anyThreadEventSchema,
-  type Delivery,
-  type Effort,
-  threadSchema,
-  type ToolScope,
-} from "@/shared/threads.ts";
+import type { Delivery, ToolScope } from "@/shared/threads/events.ts";
+import type { Effort } from "@/shared/threads/thread.ts";
 import { agentTurnOf, transcriptOf } from "@/shared/transcript.ts";
+import { AuthCard, AuthFrame } from "@/web/auth/auth-frame";
+import { meQuery } from "@/web/auth/queries";
 import {
   Conversation,
   ConversationContent,
   ConversationEmptyState,
   ConversationScrollButton,
 } from "@/web/components/ai-elements/conversation";
-import { PageHeader, pageWidth } from "@/web/app/app-shell";
-import { folderCrumb } from "@/web/folders/folder-choice";
-import { AuthCard, AuthFrame } from "@/web/auth/auth-frame";
-import { GoHome, NotFound } from "@/web/components/page-states";
-import { ShareDialog } from "@/web/guests/share-dialog";
-import { Composer, PendingTray, RunStatus } from "@/web/threads/thread-composer";
-import { ThreadPickers } from "@/web/models/thread-pickers";
-import { AgentStarting, TranscriptItem } from "@/web/threads/thread-events";
-import { useToast } from "@/web/app/toaster";
 import { FieldError } from "@/web/components/ui/field";
 import { Spinner } from "@/web/components/ui/spinner";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
-import { ReplyActions } from "@/web/replies/reply-actions";
-import { rememberSpace } from "@/web/spaces/last-space";
-import { meQuery } from "@/web/auth/queries";
+import { folderCrumb } from "@/web/folders/folder-choice";
 import { spaceFoldersQuery } from "@/web/folders/queries";
+import { ShareDialog } from "@/web/guests/share-dialog";
+import { useOnline } from "@/web/lib/online";
 import { modelsQuery } from "@/web/models/queries";
+import { ThreadPickers } from "@/web/models/thread-pickers";
+import { ReplyActions } from "@/web/replies/reply-actions";
+import { GoHome, NotFound } from "@/web/shell/not-found";
+import { PageHeader, pageWidth } from "@/web/shell/page-header";
+import { rememberSpace } from "@/web/spaces/last-space";
 import { spacesQuery } from "@/web/spaces/queries";
+import { useThreadEvents } from "@/web/threads/event-stream";
+import { useMarkRead } from "@/web/threads/inbox";
+import {
+  useMoveThread,
+  usePostMessage,
+  useRetryRun,
+  useStopRun,
+  useThreadModel,
+  useToolAnswer,
+  useToolDecision,
+} from "@/web/threads/mutations";
 import {
   spaceThreadsQuery,
   ThreadAccessEnded,
   ThreadNotFound,
   threadQuery,
 } from "@/web/threads/queries";
-import { useMarkRead } from "@/web/threads/inbox";
-import { useOnline } from "@/web/lib/online";
-import { mergeEvents, useThreadEvents } from "@/web/threads/event-stream";
+import { Composer, PendingTray, RunStatus } from "@/web/threads/thread-composer";
+import { AgentStarting } from "@/web/threads/transcript/agent-starting";
+import { TranscriptItem } from "@/web/threads/transcript/transcript-item";
 
 const threadRoute = getRouteApi("/_app/t/$threadId");
 
@@ -69,10 +71,6 @@ export function ThreadPage() {
   const models = useQuery(modelsQuery);
   const me = useQuery(meQuery);
   const online = useOnline();
-  // A message that could not be posted, said above the composer; other failures are toasts.
-  const [error, setError] = useState<string>();
-  const toast = useToast();
-  const [sending, setSending] = useState(false);
   // The run someone here asked to stop.
   const [stopped, setStopped] = useState<string>();
   const [picking, setPicking] = useState(false);
@@ -161,64 +159,40 @@ export function ThreadPage() {
   useMarkRead(threadId, notFound || ended || !opened ? undefined : thread?.lastEventSeq);
 
   const run = transcript.run;
+  const posting = usePostMessage(threadId);
+  const stopping = useStopRun(threadId);
+  const retrying = useRetryRun(threadId);
+  const decision = useToolDecision(threadId);
+  const answering = useToolAnswer(threadId);
+  const modelChange = useThreadModel(threadId);
+  const moving = useMoveThread();
 
   // Throws when the message is not posted, so the composer keeps the text.
   async function send(text: string, mode: Delivery) {
     if (!text.trim()) return;
-    setSending(true);
-    const res = await apiClient.v1.threads[":id"].messages.$post({
-      param: { id: threadId },
-      json: { text, mode },
-    });
-    setSending(false);
-    if (!res.ok) {
-      const failed = await errorOf(res);
-      setError(failed);
-      throw new Error(failed);
-    }
-    setError(undefined);
+    await posting.mutateAsync({ text, mode });
     setVisit((shown) => shown && { ...shown, newFrom: undefined });
-    mergeEvents(queryClient, threadId, [anyThreadEventSchema.parse(await res.json())]);
-    await queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
     refreshList();
   }
 
-  async function stop() {
+  function stop() {
     if (!run) return;
     setStopped(run.id);
-    const res = await apiClient.v1.threads[":id"].stop.$post({ param: { id: threadId } });
-    // A run that ended meanwhile has nothing to stop.
-    if (!res.ok && (res.status as number) !== 409) toast(await errorOf(res));
+    stopping.mutate();
   }
 
-  async function retry(runId: string) {
-    const res = await apiClient.v1.threads[":id"].retry.$post({
-      param: { id: threadId },
-      json: { runId },
-    });
-    if (!res.ok) {
-      toast(await errorOf(res));
-      return;
-    }
-    mergeEvents(queryClient, threadId, [anyThreadEventSchema.parse(await res.json())]);
+  function retry(runId: string) {
+    retrying.mutate(runId);
   }
 
   // Approves or denies a tool call; the decision arrives with the thread's events.
-  async function decide(callId: string, allow: boolean, scope: ToolScope) {
-    const res = await apiClient.v1.threads[":id"].tools[":callId"].decision.$post({
-      param: { id: threadId, callId },
-      json: { allow, scope },
-    });
-    if (!res.ok) toast(await errorOf(res));
+  function decide(callId: string, allow: boolean, scope: ToolScope) {
+    return decision.mutateAsync({ callId, allow, scope }).catch(() => {});
   }
 
   // Answers the questions a call asks, or skips them; the answer arrives with the thread's events.
-  async function answer(callId: string, answers: AskAnswers | null) {
-    const res = await apiClient.v1.threads[":id"].tools[":callId"].answer.$post({
-      param: { id: threadId, callId },
-      json: { answers },
-    });
-    if (!res.ok) toast(await errorOf(res));
+  function answer(callId: string, answers: AskAnswers | null) {
+    return answering.mutateAsync({ callId, answers }).catch(() => {});
   }
 
   // What the run waits for: an answer to the agent's questions, or a decision on a call.
@@ -244,35 +218,14 @@ export function ThreadPage() {
     canRetry && (last?.kind === "failure" || last?.kind === "stop") ? last : undefined;
 
   // Changes the thread's model or reasoning effort.
-  async function change(json: { model: string | null } | { effort: Effort | null }) {
-    const res = await apiClient.v1.threads[":id"].$patch({ param: { id: threadId }, json });
-    if (!res.ok) {
-      toast(await errorOf(res));
-      return;
-    }
-    const updated = threadSchema.parse(await res.json());
-    queryClient.setQueryData(threadQuery(threadId).queryKey, (current) =>
-      current ? { ...current, thread: updated } : current,
-    );
-    // Whether the model it now names can reply is the server's to say.
-    await queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
+  function change(json: { model: string | null } | { effort: Effort | null }) {
+    modelChange.mutate(json);
   }
 
   // Moves the thread to a folder, or out of one, as the sidebar's "Move to" does.
-  async function move(folderId: string | null) {
+  function move(folderId: string | null) {
     if (!thread || thread.folderId === folderId) return;
-    const res = await apiClient.v1.threads[":id"].$patch({
-      param: { id: thread.id },
-      json: { folderId },
-    });
-    if (!res.ok) {
-      toast(await errorOf(res));
-      return;
-    }
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: threadQuery(thread.id).queryKey }),
-      queryClient.invalidateQueries({ queryKey: ["spaces", thread.spaceId] }),
-    ]);
+    moving.mutate({ thread, folderId });
   }
 
   if (notFound) return <NotFound what="thread" id={threadId} />;
@@ -313,7 +266,7 @@ export function ThreadPage() {
                   folders: folders.data ?? [],
                   value: thread.folderId,
                   canMove: role === "owner" || role === "messager",
-                  onChange: (folderId) => void move(folderId),
+                  onChange: (folderId) => move(folderId),
                 }),
               ].filter((crumb) => crumb !== null)
             : []),
@@ -357,7 +310,7 @@ export function ThreadPage() {
                         turn={agentTurnOf(transcript.rows, index)}
                         tools={detail.data?.tools}
                         actions={{
-                          ...(row === retryable && { retry: () => void retry(retryable.runId) }),
+                          ...(row === retryable && { retry: () => retry(retryable.runId) }),
                           ...(!guest && { pickModel: () => setPicking(true) }),
                           ...(row.kind === "tool" &&
                             policy?.canDecide === true &&
@@ -404,15 +357,15 @@ export function ThreadPage() {
           )}
           <RunStatus stopping={!!run && run.id === stopped} />
           <PendingTray threadId={threadId} pending={transcript.pending} me={me.data?.user.id} />
-          <FieldError>{error}</FieldError>
+          <FieldError>{posting.error?.message}</FieldError>
           <Composer
             running={!!run}
             waiting={waiting}
             readOnly={role === "viewer"}
-            sending={sending}
+            sending={posting.isPending}
             stopping={!!run && run.id === stopped}
             onSend={send}
-            onStop={() => void stop()}
+            onStop={stop}
             tools={
               // A guest uses the model the thread's space chose.
               !guest && (
@@ -428,8 +381,8 @@ export function ThreadPage() {
                       effort: detail.data.model.effort,
                     }
                   }
-                  onModel={(ref) => void change({ model: ref })}
-                  onEffort={(effort) => void change({ effort })}
+                  onModel={(ref) => change({ model: ref })}
+                  onEffort={(effort) => change({ effort })}
                   open={picking}
                   onOpenChange={setPicking}
                 />

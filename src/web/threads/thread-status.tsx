@@ -12,10 +12,10 @@ import { HandIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
 
 import { ASK_TOOL } from "@/shared/ask.ts";
 import { statusOf, type ThreadStatus } from "@/shared/thread-status.ts";
-import type { ThreadActivity } from "@/shared/threads.ts";
+import type { ThreadActivity } from "@/shared/threads/list.ts";
+import { meQuery } from "@/web/auth/queries";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/web/components/ui/tooltip";
 import { useMinute } from "@/web/hooks/use-minute";
-import { meQuery } from "@/web/auth/queries";
 
 const clock = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
 

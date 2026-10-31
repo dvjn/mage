@@ -2,7 +2,7 @@ import { Hono } from "hono";
 
 import { type ApiEnv, signedIn, jsonBody, checkedBody } from "@/server/http.ts";
 import { toolAnswerSchema } from "@/shared/ask.ts";
-import { toolDecisionSchema } from "@/shared/threads.ts";
+import { toolDecisionSchema } from "@/shared/threads/requests.ts";
 import {
   toolPolicyChangeSchema,
   toolPolicyInputSchema,

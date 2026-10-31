@@ -1,13 +1,10 @@
-import { alias } from "drizzle-orm/sqlite-core";
 import { and, asc, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { ulid } from "ulid";
 
-import { FIRST_SPACE_NAME, spaceNameFor } from "@/shared/spaces.ts";
-import { UNTITLED } from "@/shared/threads.ts";
 import type { Db } from "@/server/db/db.ts";
 import { organization, user } from "@/server/orgs/schema.ts";
 import { space } from "@/server/spaces/schema.ts";
-import { thread } from "@/server/threads/schema.ts";
 import {
   kept,
   listedThread,
@@ -16,9 +13,12 @@ import {
   type StatusedRow,
   windowOf,
 } from "@/server/threads/lists.ts";
+import { thread } from "@/server/threads/schema.ts";
+import { FIRST_SPACE_NAME, spaceNameFor } from "@/shared/spaces.ts";
+import { UNTITLED } from "@/shared/threads/thread.ts";
 
-import type { GuestStore, ThreadGuest, ThreadInvite } from "./service.ts";
 import { threadGuest, threadInvite } from "./schema.ts";
+import type { GuestStore, ThreadGuest, ThreadInvite } from "./service.ts";
 
 const guestColumns = {
   threadId: threadGuest.threadId,

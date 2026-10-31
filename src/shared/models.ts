@@ -6,7 +6,7 @@ import * as z from "zod";
 
 import { AUTH_KINDS, hostIdSchema } from "@/shared/hosts.ts";
 import { MAKER_IDS } from "@/shared/makers.ts";
-import { type Effort, effortSchema } from "@/shared/threads.ts";
+import { type Effort, effortSchema } from "@/shared/threads/thread.ts";
 
 export const modelSchema = z.object({
   ref: z.string(),

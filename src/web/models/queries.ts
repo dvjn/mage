@@ -8,6 +8,8 @@ import {
   titleModelSchema,
 } from "@/shared/models.ts";
 import { apiClient } from "@/web/api/api-client";
+import { connectionModelsSchema } from "@/shared/models.ts";
+import { errorOf } from "@/web/api/api-errors";
 
 export const connectionsQuery = queryOptions({
   queryKey: ["connections"],
@@ -56,3 +58,20 @@ export const titleModelQuery = queryOptions({
     return titleModelSchema.parse(await res.json());
   },
 });
+
+// A connection's models; a list the server could not read says why at once rather than being
+// asked for again.
+export function connectionModelsQuery(connectionId: string) {
+  return {
+    queryKey: ["connection-models", connectionId],
+    retry: false,
+    queryFn: async () => {
+      const res = await apiClient.v1.connections[":id"].models.$get({
+        param: { id: connectionId },
+        query: { refresh: "0" },
+      });
+      if (!res.ok) throw new Error(await errorOf(res));
+      return connectionModelsSchema.parse(await res.json());
+    },
+  };
+}

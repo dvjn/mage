@@ -2,34 +2,23 @@
 // first steps until it has a model provider, the models its threads start with and that name them,
 // the agent's instructions in every space, and deleting a team org.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { BlocksIcon, UsersIcon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 
 import { OrgInstructions } from "@/web/instructions/instructions";
-import { SettingsCard, SettingsTitle } from "@/web/settings/layout";
+import { SettingsCard, SettingsTitle } from "@/web/shell/settings-page";
 import { ModelsCard } from "@/web/models/models-card";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogTrigger,
-} from "@/web/components/ui/alert-dialog";
 import { Button } from "@/web/components/ui/button";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
 import { switchOrg } from "@/web/lib/org-tab";
 import { meQuery } from "@/web/auth/queries";
 import { connectionsQuery } from "@/web/models/queries";
 import { orgsQuery } from "@/web/orgs/queries";
+import { DeleteCard } from "@/web/shell/delete-card";
+import { useDeleteOrg, useRenameOrg } from "@/web/orgs/mutations";
 
 // Until a team org can reply, where to start: a model provider, then its people.
 function FirstSteps() {
@@ -56,30 +45,17 @@ function FirstSteps() {
 
 // The org's name; a team org's owners rename it.
 function OrgName({ name, canManage }: { name: string; canManage: boolean }) {
-  const queryClient = useQueryClient();
   const id = useId();
   const [draft, setDraft] = useState(name);
-  const [error, setError] = useState<string>();
-  const [pending, setPending] = useState(false);
+  const rename = useRenameOrg();
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
+  function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setPending(true);
-    setError(undefined);
-    const res = await apiClient.v1.org.$patch({ json: { name: draft } });
-    setPending(false);
-    if (!res.ok) {
-      setError(await errorOf(res));
-      return;
-    }
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: meQuery.queryKey }),
-      queryClient.invalidateQueries({ queryKey: orgsQuery.queryKey }),
-    ]);
+    rename.mutate(draft);
   }
 
   return (
-    <form onSubmit={(event) => void submit(event)}>
+    <form onSubmit={submit}>
       <FieldGroup>
         <Field>
           <FieldLabel htmlFor={id}>Organization name</FieldLabel>
@@ -93,10 +69,10 @@ function OrgName({ name, canManage }: { name: string; canManage: boolean }) {
             autoComplete="off"
           />
         </Field>
-        <FieldError>{error}</FieldError>
+        <FieldError>{rename.error?.message}</FieldError>
         {canManage && draft.trim() !== name && (
           <div>
-            <Button type="submit" disabled={pending || !draft.trim()}>
+            <Button type="submit" disabled={rename.isPending || !draft.trim()}>
               Save
             </Button>
           </div>
@@ -111,71 +87,44 @@ function DeleteOrg({ name }: { name: string }) {
   const id = useId();
   const orgs = useQuery(orgsQuery);
   const [typed, setTyped] = useState("");
-  const [error, setError] = useState<string>();
-  const [pending, setPending] = useState(false);
+  const deleteOrg = useDeleteOrg();
 
-  async function remove() {
-    setPending(true);
-    setError(undefined);
-    const res = await apiClient.v1.org.$delete();
-    setPending(false);
-    if (!res.ok) {
-      setError(await errorOf(res));
-      return;
-    }
-    const personal = orgs.data?.orgs.find((org) => org.kind === "personal");
-    if (personal) switchOrg(personal.id, "/");
-    else window.location.assign("/");
+  function remove() {
+    deleteOrg.mutate(undefined, {
+      onSuccess: () => {
+        const personal = orgs.data?.orgs.find((org) => org.kind === "personal");
+        if (personal) switchOrg(personal.id, "/");
+        else window.location.assign("/");
+      },
+    });
   }
 
   return (
-    <SettingsCard
+    <DeleteCard
       title="Delete organization"
       description="Deletes the organization and everything in it, for everyone. This cannot be undone."
-      footer={
-        <AlertDialog
-          onOpenChange={(open) => {
-            if (open) return;
-            setTyped("");
-            setError(undefined);
-          }}
-        >
-          <AlertDialogTrigger render={<Button variant="destructive" />}>
-            Delete organization
-          </AlertDialogTrigger>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete {name}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                This deletes, for everyone and for good: all its spaces and threads, its model
-                providers and their keys, its groups and invites, and guests&apos; access to its
-                threads. Its members keep their accounts.
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <Field>
-              <FieldLabel htmlFor={id}>Type {name} to confirm</FieldLabel>
-              <Input
-                id={id}
-                value={typed}
-                onChange={(event) => setTyped(event.target.value)}
-                autoComplete="off"
-              />
-            </Field>
-            <FieldError>{error}</FieldError>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                disabled={typed !== name || pending}
-                onClick={() => void remove()}
-              >
-                Delete organization
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      }
-    />
+      confirmTitle={`Delete ${name}?`}
+      confirmDescription="This deletes, for everyone and for good: all its spaces and threads, its model providers and their keys, its groups and invites, and guests' access to its threads. Its members keep their accounts."
+      action="Delete organization"
+      error={deleteOrg.error?.message}
+      disabled={typed !== name || deleteOrg.isPending}
+      onOpenChange={(open) => {
+        if (open) return;
+        setTyped("");
+        deleteOrg.reset();
+      }}
+      onConfirm={remove}
+    >
+      <Field>
+        <FieldLabel htmlFor={id}>Type {name} to confirm</FieldLabel>
+        <Input
+          id={id}
+          value={typed}
+          onChange={(event) => setTyped(event.target.value)}
+          autoComplete="off"
+        />
+      </Field>
+    </DeleteCard>
   );
 }
 

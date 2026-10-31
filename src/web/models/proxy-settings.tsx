@@ -2,7 +2,6 @@
 // headers added to them. The fields serve a key being added as well as a connection's own form in
 // a dialog, which saves or clears them; stored header values are never shown.
 
-import { useQueryClient } from "@tanstack/react-query";
 import { PlusIcon, XIcon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 
@@ -19,9 +18,7 @@ import {
   FieldLabel,
 } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
-import { connectionsQuery, modelsQuery } from "@/web/models/queries";
+import { useSaveProxy } from "@/web/models/mutations";
 
 // Where a connection sends its requests without a proxy: its host's address, or the server's or
 // resource's it was given.
@@ -156,44 +153,38 @@ export function ProxyFields({
 
 // The connection's proxy as a form that saves it, or clears it.
 export function ProxyForm({ connection }: { connection: ConnectionSummary }) {
-  const queryClient = useQueryClient();
   const { proxy } = connection;
   const [draft, setDraft] = useState<ProxyDraft>(() => ({
     baseUrl: proxy?.baseUrl ?? "",
     rows: (proxy?.headerNames ?? []).map((name, key) => ({ key, name, value: "", stored: true })),
   }));
-  const [error, setError] = useState<string>();
   const [saved, setSaved] = useState<"saved" | "cleared">();
-  const [pending, setPending] = useState(false);
+  const saveProxy = useSaveProxy(connection.id);
 
-  async function save(json: { baseUrl: string | null; headers: Record<string, string | null> }) {
-    setPending(true);
-    setError(undefined);
+  function save(json: { baseUrl: string | null; headers: Record<string, string | null> }) {
     setSaved(undefined);
-    const res = await apiClient.v1.connections[":id"].proxy.$patch({
-      param: { id: connection.id },
-      json,
+    saveProxy.mutate(json, {
+      onSuccess: () => {
+        // Every value is stored now.
+        setDraft((current) => ({
+          ...current,
+          rows: current.rows
+            .filter((row) => row.name.trim())
+            .map((row) => ({
+              ...row,
+              name: row.name.trim().toLowerCase(),
+              value: "",
+              stored: true,
+            })),
+        }));
+        setSaved(json.baseUrl || Object.keys(json.headers).length > 0 ? "saved" : "cleared");
+      },
     });
-    setPending(false);
-    if (!res.ok) {
-      setError(await errorOf(res));
-      return;
-    }
-    // Every value is stored now.
-    setDraft((current) => ({
-      ...current,
-      rows: current.rows
-        .filter((row) => row.name.trim())
-        .map((row) => ({ ...row, name: row.name.trim().toLowerCase(), value: "", stored: true })),
-    }));
-    setSaved(json.baseUrl || Object.keys(json.headers).length > 0 ? "saved" : "cleared");
-    await queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
-    await queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
   }
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    void save(proxyBody(draft));
+    save(proxyBody(draft));
   }
 
   return (
@@ -204,7 +195,7 @@ export function ProxyForm({ connection }: { connection: ConnectionSummary }) {
           onChange={setDraft}
           placeholder={defaultBaseUrl(connection.host, connection.settings)}
         />
-        <FieldError>{error}</FieldError>
+        <FieldError>{saveProxy.error?.message}</FieldError>
         {saved && (
           <p role="status" className="text-sm text-muted-foreground">
             {saved === "saved" ? "Proxy saved." : "Proxy cleared."}
@@ -215,15 +206,15 @@ export function ProxyForm({ connection }: { connection: ConnectionSummary }) {
         <Button
           type="button"
           variant="outline"
-          disabled={pending || !proxy}
+          disabled={saveProxy.isPending || !proxy}
           onClick={() => {
             setDraft({ baseUrl: "", rows: [] });
-            void save({ baseUrl: null, headers: {} });
+            save({ baseUrl: null, headers: {} });
           }}
         >
           Clear
         </Button>
-        <Button type="submit" disabled={pending}>
+        <Button type="submit" disabled={saveProxy.isPending}>
           Save
         </Button>
       </DialogFooter>

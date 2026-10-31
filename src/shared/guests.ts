@@ -8,8 +8,8 @@ import {
   shownModelSchema,
   threadActivitySchema,
   threadParticipantsSchema,
-  threadSchema,
-} from "@/shared/threads.ts";
+} from "@/shared/threads/list.ts";
+import { threadSchema } from "@/shared/threads/thread.ts";
 
 // How long a guest's access lasts from accepting the link: an hour, a day, a week or for good.
 export const accessForSchema = z.enum(["1h", "1d", "7d", "never"]);

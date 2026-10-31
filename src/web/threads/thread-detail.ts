@@ -2,7 +2,8 @@
 // following. Live events join the detail already shown, and a fresh read of the thread keeps the
 // live events that arrived after the server answered it.
 
-import type { AnyThreadEvent, ThreadDetail } from "@/shared/threads.ts";
+import type { ThreadDetail } from "@/shared/threads/detail.ts";
+import type { AnyThreadEvent } from "@/shared/threads/events.ts";
 
 // The detail with the events it did not have yet.
 export function withEvents(detail: ThreadDetail, events: AnyThreadEvent[]): ThreadDetail {

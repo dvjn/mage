@@ -3,7 +3,7 @@
 // members and defaults, and are deleted while they have no threads; members' private spaces are
 // listed with their person, and stay theirs. Reading a space's threads still takes a role in it.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import { LayoutGridIcon, LockIcon, Settings2Icon, Trash2Icon } from "lucide-react";
 import { useId, useState } from "react";
@@ -21,19 +21,9 @@ import {
   filterColumn,
   nameColumn,
   Subject,
-} from "@/web/components/people-table";
-import { SettingsCard, SettingsTitle } from "@/web/settings/layout";
+} from "@/web/shell/people-table";
+import { SettingsCard, SettingsTitle } from "@/web/shell/settings-page";
 import { Time } from "@/web/components/time";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/web/components/ui/alert-dialog";
 import { DropdownMenuItem } from "@/web/components/ui/dropdown-menu";
 import {
   Field,
@@ -53,13 +43,12 @@ import {
 import { Switch } from "@/web/components/ui/switch";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { useDataTable } from "@/web/hooks/use-data-table";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
 import { lenient, tableSearchSchema, withoutUnset } from "@/web/lib/data-table";
 import { orgSpacesPage } from "@/web/api/list-queries";
 import { meQuery } from "@/web/auth/queries";
 import { teamSettingsQuery } from "@/web/orgs/queries";
-import { spacesQuery } from "@/web/spaces/queries";
+import { ConfirmDialog } from "@/web/components/confirm-dialog";
+import { useDeleteSpace, useTeamSettings } from "@/web/spaces/mutations";
 
 const orgSpacesRoute = getRouteApi("/_app/org/spaces");
 
@@ -82,22 +71,10 @@ const CREATION_LABELS: Record<TeamSettings["spaceCreation"], string> = {
 const EVERYONE_LABELS = { messager: "Messager", viewer: "Viewer" } as const;
 
 function SpaceSettingsCard() {
-  const queryClient = useQueryClient();
   const creationId = useId();
   const switchId = useId();
   const settings = useQuery(teamSettingsQuery);
-  const [error, setError] = useState<string>();
-
-  async function change(json: Partial<TeamSettings>) {
-    setError(undefined);
-    const res = await apiClient.v1.org.settings.$patch({ json });
-    if (!res.ok) {
-      setError(await errorOf(res));
-      return;
-    }
-    queryClient.setQueryData(teamSettingsQuery.queryKey, (await res.json()) as TeamSettings);
-    await queryClient.invalidateQueries({ queryKey: spacesQuery.queryKey });
-  }
+  const settingsChange = useTeamSettings();
 
   return (
     <SettingsCard title="Settings" state={settings}>
@@ -111,7 +88,8 @@ function SpaceSettingsCard() {
             <Select
               value={settings.data.spaceCreation}
               onValueChange={(next) =>
-                next && void change({ spaceCreation: next as TeamSettings["spaceCreation"] })
+                next &&
+                settingsChange.mutate({ spaceCreation: next as TeamSettings["spaceCreation"] })
               }
             >
               <SelectTrigger id={creationId} className="w-36 shrink-0">
@@ -139,10 +117,10 @@ function SpaceSettingsCard() {
             <Switch
               id={switchId}
               checked={settings.data.memberSpaces}
-              onCheckedChange={(memberSpaces) => void change({ memberSpaces })}
+              onCheckedChange={(memberSpaces) => settingsChange.mutate({ memberSpaces })}
             />
           </Field>
-          <FieldError>{error}</FieldError>
+          <FieldError>{settingsChange.error?.message}</FieldError>
         </FieldGroup>
       )}
     </SettingsCard>
@@ -245,14 +223,13 @@ export const orgSpacesSearchSchema = tableSearchSchema.extend({
 });
 
 export function OrgSpaces() {
-  const queryClient = useQueryClient();
   const me = useQuery(meQuery);
   const owner = me.data?.org.kind === "team" && me.data.role === "owner";
   const search = orgSpacesRoute.useSearch();
   const navigate = orgSpacesRoute.useNavigate();
   const spaces = useQuery({ ...orgSpacesPage(search), enabled: owner });
   const [deleting, setDeleting] = useState<OrgSpace | null>(null);
-  const [error, setError] = useState<string>();
+  const deletion = useDeleteSpace();
   const settings = (space: OrgSpace) =>
     void navigate({ to: "/s/$spaceId/settings", params: { spaceId: space.id } });
   const table = useDataTable({
@@ -270,19 +247,9 @@ export function OrgSpaces() {
     hidden: ["kind"],
   });
 
-  async function remove() {
+  function remove() {
     if (!deleting) return;
-    setError(undefined);
-    const res = await apiClient.v1.spaces[":id"].$delete({ param: { id: deleting.id } });
-    if (!res.ok) {
-      setError(await errorOf(res));
-      return;
-    }
-    setDeleting(null);
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["org-spaces"] }),
-      queryClient.invalidateQueries({ queryKey: spacesQuery.queryKey }),
-    ]);
+    deletion.mutate(deleting.id, { onSuccess: () => setDeleting(null) });
   }
 
   return (
@@ -317,28 +284,20 @@ export function OrgSpaces() {
           </SettingsCard>
         </>
       )}
-      <AlertDialog
+      <ConfirmDialog
         open={!!deleting}
         onOpenChange={(open) => {
           if (open) return;
           setDeleting(null);
-          setError(undefined);
+          deletion.reset();
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete {deleting?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>This cannot be undone.</AlertDialogDescription>
-            <FieldError>{error}</FieldError>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction variant="destructive" onClick={() => void remove()}>
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={`Delete ${deleting?.name ?? ""}?`}
+        description="This cannot be undone."
+        error={deletion.error?.message}
+        disabled={deletion.isPending}
+        action="Delete"
+        onConfirm={remove}
+      />
     </>
   );
 }

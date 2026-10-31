@@ -17,7 +17,7 @@ import { connectionLabel } from "@/shared/connections.ts";
 import { type HostId, hostOf } from "@/shared/hosts.ts";
 import { MAKERS } from "@/shared/makers.ts";
 import type { ModelSummary } from "@/shared/models.ts";
-import { promptInputSelectTriggerClassName } from "@/web/components/ai-elements/prompt-input";
+import { promptInputSelectTriggerClassName } from "@/web/components/prompt-input/parts";
 import { givenName, HostMark, MakerMark } from "@/web/models/marks";
 import {
   Combobox,

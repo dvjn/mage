@@ -2,12 +2,12 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as schema from "@/server/schema.ts";
+import { type SpaceBody, setup } from "@/server/testing/workspace.ts";
 import type { OrgMember, OrgPerson } from "@/shared/orgs.ts";
 import type { Page } from "@/shared/paging.ts";
 import { FIRST_SPACE_NAME, type SpaceMembers, spaceNameFor } from "@/shared/spaces.ts";
-import type { ThreadDetail } from "@/shared/threads.ts";
+import type { ThreadDetail } from "@/shared/threads/detail.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
-import { type SpaceBody, setup } from "@/server/testing/workspace.ts";
 
 type Workspace = ReturnType<typeof setup>;
 type Person = { userId: string; orgId: string; cookie: string };

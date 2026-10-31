@@ -13,9 +13,9 @@ import {
   pendingChangeSchema,
   retrySchema,
   threadReadSchema,
-  threadSearchSchema,
   threadUpdateSchema,
-} from "@/shared/threads.ts";
+} from "@/shared/threads/requests.ts";
+import { threadSearchSchema } from "@/shared/threads/search.ts";
 
 import type { Threads } from "./service.ts";
 

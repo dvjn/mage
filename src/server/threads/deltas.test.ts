@@ -1,10 +1,10 @@
 import { describe, expect, it, onTestFinished } from "vite-plus/test";
 
-import type { DeltaBatch } from "@/shared/threads.ts";
-import { transcriptOf } from "@/shared/transcript.ts";
-import { withPieces } from "@/web/threads/event-stream.ts";
 import { openStream } from "@/server/testing/sse.ts";
 import { setup } from "@/server/testing/workspace.ts";
+import type { DeltaBatch } from "@/shared/threads/events.ts";
+import { transcriptOf } from "@/shared/transcript.ts";
+import { withPieces } from "@/web/threads/event-stream.ts";
 
 import { eventSummary } from "./log.ts";
 

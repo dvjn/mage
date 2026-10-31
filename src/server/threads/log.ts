@@ -2,9 +2,9 @@
 // followers about each, so nothing is announced that was not stored, and people's inboxes that the
 // thread may read differently now.
 
-import type { EventBus } from "@/server/kernel/event-bus.ts";
 import type { Transact } from "@/server/db/db.ts";
-import type { ThreadEventSummary } from "@/shared/threads.ts";
+import type { EventBus } from "@/server/kernel/event-bus.ts";
+import type { ThreadEventSummary } from "@/shared/threads/events.ts";
 
 import type { NewEvent, StoredEvent, ThreadStore } from "./service.ts";
 

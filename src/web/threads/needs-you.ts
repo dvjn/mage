@@ -7,10 +7,10 @@ import { useMemo } from "react";
 
 import type { SharedThread } from "@/shared/guests.ts";
 import { needsYou, statusOf } from "@/shared/thread-status.ts";
-import type { ThreadListItem } from "@/shared/threads.ts";
-import { usePlace } from "@/web/spaces/active-space";
+import type { ThreadListItem } from "@/shared/threads/list.ts";
 import { meQuery } from "@/web/auth/queries";
 import { sharedThreadsQuery } from "@/web/guests/queries";
+import { usePlace } from "@/web/spaces/active-space";
 import { spaceThreadsQuery } from "@/web/threads/queries";
 
 export type NeedsYouItem =

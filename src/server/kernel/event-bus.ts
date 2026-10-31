@@ -3,7 +3,7 @@
 
 import { EventEmitter } from "node:events";
 
-import type { ThreadFeedItem } from "@/shared/threads.ts";
+import type { ThreadFeedItem } from "@/shared/threads/events.ts";
 
 // A thread whose list entry may read differently now; with `read`, only that someone saw it up to
 // a seq; with `gone`, it was deleted, and who could read it: its space's members and its guests.

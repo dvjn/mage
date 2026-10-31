@@ -5,8 +5,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 
-import { SettingsTitle } from "@/web/settings/layout";
-import { McpServerPage, McpServersCard } from "@/web/mcp/mcp-servers";
+import { SettingsTitle } from "@/web/shell/settings-page";
+import { McpServerPage } from "@/web/mcp/servers/page";
+import { McpServersCard } from "@/web/mcp/servers/card";
 import { OrgToolsList } from "@/web/agent/tools-list";
 import { meQuery } from "@/web/auth/queries";
 

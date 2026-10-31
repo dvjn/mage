@@ -4,11 +4,11 @@ import { RouterProvider } from "@tanstack/react-router";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
-import { ThemeProvider } from "@/web/app/theme-provider";
-import { Toaster } from "@/web/app/toaster";
+import { ThemeProvider } from "@/web/shell/theme-provider";
+import { Toaster } from "@/web/shell/toaster";
 import { startTab } from "@/web/lib/org-tab";
 import "@/web/lib/online";
-import { cacheMaxAge, cacheOptions, cacheRestored } from "@/web/lib/query-cache";
+import { cacheMaxAge, cacheOptions, cacheRestored } from "@/web/api/query-cache";
 import { createAppRouter } from "@/web/app/router";
 
 import "./index.css";

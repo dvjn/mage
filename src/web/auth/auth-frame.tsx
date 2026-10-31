@@ -9,6 +9,9 @@ import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { type ReactNode, useState } from "react";
 
+import { authClient } from "@/web/api/auth-client";
+import { signInOptionsQuery } from "@/web/auth/queries";
+import { Button } from "@/web/components/ui/button";
 import {
   Card,
   CardContent,
@@ -17,10 +20,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/web/components/ui/card";
-import { Button } from "@/web/components/ui/button";
-import { Wordmark } from "@/web/app/wordmark";
-import { authClient } from "@/web/api/auth-client";
-import { signInOptionsQuery } from "@/web/auth/queries";
+import { Wordmark } from "@/web/shell/wordmark";
 
 export function AuthFrame({ children, inApp = false }: { children: ReactNode; inApp?: boolean }) {
   const Root = inApp ? "div" : "main";
@@ -42,7 +42,6 @@ export function AuthCard({
 }: {
   title: ReactNode;
   description?: ReactNode;
-  // A form.
   children?: ReactNode;
   // Buttons, side by side.
   actions?: ReactNode;

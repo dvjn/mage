@@ -12,43 +12,43 @@
 // for every thread they can read. Who may do each is the thread access rule's; a thread's guests
 // find it, and post in it, beside the threads of their own spaces.
 
-import type { EventBus } from "@/server/kernel/event-bus.ts";
-import type { GuestStore, GuestThread } from "@/server/guests/service.ts";
-import type { Principal } from "@/server/orgs/identity.ts";
 import { type Run, type RunStore, startRun } from "@/server/agent/runs.ts";
-import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
-import { ServiceError } from "@/server/kernel/errors.ts";
-import type { Folders } from "@/server/folders/service.ts";
 import type { Tools } from "@/server/agent/tools.ts";
+import type { Folders } from "@/server/folders/service.ts";
+import type { GuestStore, GuestThread } from "@/server/guests/service.ts";
+import { ServiceError } from "@/server/kernel/errors.ts";
+import type { EventBus } from "@/server/kernel/event-bus.ts";
 import type { Models } from "@/server/models/service.ts";
+import type { Principal } from "@/server/orgs/identity.ts";
+import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
 import type { ThreadAccess, ThreadAction } from "@/server/spaces/thread-access.ts";
 import type { SharedThread } from "@/shared/guests.ts";
 import type { Page, PageParams } from "@/shared/paging.ts";
 import { plainText } from "@/shared/plain-text.ts";
 import { statusOf, type ThreadShow } from "@/shared/thread-status.ts";
+import type { ThreadDetail } from "@/shared/threads/detail.ts";
 import {
   type Delivery,
-  type Effort,
   QUIET_PREFIX,
-  UNTITLED,
-  type InboxItem,
-  type ThreadActivity,
-  type ThreadDetail,
   type ThreadFeedItem,
+  type DeltaBatch,
+  type EventDataMap,
+} from "@/shared/threads/events.ts";
+import type { InboxItem } from "@/shared/threads/inbox.ts";
+import {
+  type ThreadActivity,
   type ThreadListItem,
   type ThreadParticipants,
   type ThreadSidebar,
   SIDEBAR_LIMIT,
-  type ThreadSearchResult,
-  type ThreadSummary,
   type ShownModel,
-  type DeltaBatch,
-  type EventDataMap,
-} from "@/shared/threads.ts";
+} from "@/shared/threads/list.ts";
+import type { ThreadSearchResult } from "@/shared/threads/search.ts";
+import { type Effort, UNTITLED, type ThreadSummary } from "@/shared/threads/thread.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
-import type { Titles } from "./titles.ts";
 import { type Append, eventSummary, type ThreadLog } from "./log.ts";
+import type { Titles } from "./titles.ts";
 
 export type TitleSource = "message" | "agent" | "person";
 

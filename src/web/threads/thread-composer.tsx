@@ -6,20 +6,19 @@
 // on a tool call, the composer says so. Viewers only read, and a line where the composer would be
 // says so. Offline, nothing sends or stops until the app is back online.
 
-import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDownIcon, EyeIcon, SquareIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useRef, useState } from "react";
 
-import { anyThreadEventSchema, type Delivery, QUIET_PREFIX } from "@/shared/threads.ts";
+import { type Delivery, QUIET_PREFIX } from "@/shared/threads/events.ts";
 import type { PendingMessage } from "@/shared/transcript.ts";
 import {
-  PromptInput,
   PromptInputBody,
   PromptInputFooter,
   PromptInputSubmit,
   PromptInputTextarea,
   PromptInputTools,
-} from "@/web/components/ai-elements/prompt-input";
+} from "@/web/components/prompt-input/parts";
+import { PromptInput } from "@/web/components/prompt-input/prompt-input";
 import { Button } from "@/web/components/ui/button";
 import { ButtonGroup } from "@/web/components/ui/button-group";
 import {
@@ -32,10 +31,8 @@ import { FieldError } from "@/web/components/ui/field";
 import { InputGroupButton } from "@/web/components/ui/input-group";
 import { Spinner } from "@/web/components/ui/spinner";
 import { Textarea } from "@/web/components/ui/textarea";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
 import { useOnline } from "@/web/lib/online";
-import { mergeEvents } from "@/web/threads/event-stream";
+import { useWaitingMessage } from "@/web/threads/mutations";
 
 export function Composer({
   running,
@@ -199,31 +196,19 @@ function WaitingItem({
   message: PendingMessage;
   mine: boolean;
 }) {
-  const queryClient = useQueryClient();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text);
-  const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
+  const waiting = useWaitingMessage(threadId, message.id);
+  const busy = waiting.isPending;
 
-  async function act(request: () => Promise<Response>) {
-    setBusy(true);
-    const res = await request();
-    setBusy(false);
-    if (!res.ok) {
-      setError(await errorOf(res));
-      return false;
-    }
-    setError(undefined);
-    const event = anyThreadEventSchema.safeParse(await res.json());
-    if (event.success) mergeEvents(queryClient, threadId, [event.data]);
-    return true;
-  }
-
-  const param = { id: threadId, messageId: message.id };
-  const change = (json: { text?: string; mode?: "steer" | "queue" }) =>
-    act(() => apiClient.v1.threads[":id"].messages[":messageId"].$patch({ param, json }));
-  const remove = () =>
-    act(() => apiClient.v1.threads[":id"].messages[":messageId"].$delete({ param }));
+  // Whether the change was made.
+  const act = (change: { text?: string; mode?: "steer" | "queue" } | null) =>
+    waiting.mutateAsync(change).then(
+      () => true,
+      () => false,
+    );
+  const change = (json: { text?: string; mode?: "steer" | "queue" }) => act(json);
+  const remove = () => act(null);
 
   return (
     <li
@@ -289,7 +274,7 @@ function WaitingItem({
       ) : (
         <p className="line-clamp-3 whitespace-pre-wrap">{message.text}</p>
       )}
-      <FieldError>{error}</FieldError>
+      <FieldError>{waiting.error?.message}</FieldError>
     </li>
   );
 }

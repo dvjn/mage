@@ -8,16 +8,16 @@ import * as z from "zod";
 
 import type { FolderStore } from "@/server/folders/service.ts";
 import type { GuestStore } from "@/server/guests/service.ts";
-import type { SpaceStore } from "@/server/spaces/service.ts";
-import type { ThreadStore } from "@/server/threads/service.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Models } from "@/server/models/service.ts";
+import type { SpaceStore } from "@/server/spaces/service.ts";
 import { eventSummary } from "@/server/threads/log.ts";
-import { effortSchema } from "@/shared/threads.ts";
+import type { ThreadStore } from "@/server/threads/service.ts";
+import { effortSchema } from "@/shared/threads/thread.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
-import type { Toolset, ToolSpec } from "./tools.ts";
 import { askTool } from "./ask.ts";
+import type { Toolset, ToolSpec } from "./tools.ts";
 
 export interface SystemToolsOptions {
   threads: Pick<ThreadStore, "find" | "update" | "eventsAfter">;

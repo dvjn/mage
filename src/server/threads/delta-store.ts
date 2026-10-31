@@ -1,10 +1,10 @@
 import { asc, eq } from "drizzle-orm";
 
-import type { DeltaBatch } from "@/shared/threads.ts";
 import type { Db } from "@/server/db/db.ts";
+import type { DeltaBatch } from "@/shared/threads/events.ts";
 
-import type { DeltaStore } from "./service.ts";
 import { messageDelta } from "./schema.ts";
+import type { DeltaStore } from "./service.ts";
 
 export function createDeltaStore(db: Db): DeltaStore {
   return {

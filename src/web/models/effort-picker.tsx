@@ -4,8 +4,8 @@
 
 import { cn } from "cn";
 
-import { type Effort, effortSchema } from "@/shared/threads.ts";
-import { promptInputSelectTriggerClassName } from "@/web/components/ai-elements/prompt-input";
+import { type Effort, effortSchema } from "@/shared/threads/thread.ts";
+import { promptInputSelectTriggerClassName } from "@/web/components/prompt-input/parts";
 import {
   Select,
   SelectContent,

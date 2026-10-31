@@ -15,13 +15,12 @@ import { FolderIcon, XIcon } from "lucide-react";
 import { createContext, type ReactNode, use, useCallback, useEffect, useState } from "react";
 
 import { statusOf } from "@/shared/thread-status.ts";
-import { type ThreadSearchResult, threadSearchListSchema } from "@/shared/threads.ts";
+import { type ThreadSearchResult, threadSearchListSchema } from "@/shared/threads/search.ts";
+import { apiClient } from "@/web/api/api-client";
+import { meQuery } from "@/web/auth/queries";
 import { SegmentedControl } from "@/web/components/segmented-control";
-import { Badge } from "@/web/components/ui/badge";
-import { RowLead, rowTitle } from "@/web/threads/thread-row";
-import { NeedsYouDot, useThreadStatus } from "@/web/threads/thread-status";
-import { ThreadTitle } from "@/web/threads/thread-title";
 import { ShortTime } from "@/web/components/time";
+import { Badge } from "@/web/components/ui/badge";
 import {
   Command,
   CommandDialog,
@@ -31,13 +30,14 @@ import {
   CommandItem,
   CommandList,
 } from "@/web/components/ui/command";
-import { useActiveSpace } from "@/web/spaces/active-space";
-import { apiClient } from "@/web/api/api-client";
 import { useFolderActivity } from "@/web/folders/folder-activity";
-import { meQuery } from "@/web/auth/queries";
 import { sharedThreadsQuery } from "@/web/guests/queries";
 import { useShortcut } from "@/web/lib/shortcuts";
+import { useActiveSpace } from "@/web/spaces/active-space";
 import { groupOf, grouped } from "@/web/threads/thread-groups";
+import { RowLead, rowTitle } from "@/web/threads/thread-row";
+import { NeedsYouDot, useThreadStatus } from "@/web/threads/thread-status";
+import { ThreadTitle } from "@/web/threads/thread-title";
 
 const DEBOUNCE_MS = 200;
 

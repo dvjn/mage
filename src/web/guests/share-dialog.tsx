@@ -5,7 +5,7 @@
 // ends) and its links not yet used, each with Remove where the signed-in person may remove it;
 // removing a person asks first. A long list scrolls, with a filter above it.
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { LinkIcon, SearchIcon, UserPlusIcon } from "lucide-react";
 import { type ReactNode, useId, useState } from "react";
 
@@ -13,23 +13,12 @@ import {
   type AccessFor,
   accessForSchema,
   type CreatedInvite,
-  createdInviteSchema,
   type PendingInvite,
   type ThreadPerson,
 } from "@/shared/guests.ts";
 import { CopyButton } from "@/web/components/copy-button";
-import { Subject, type SubjectAvatar } from "@/web/components/people-table";
+import { Subject, type SubjectAvatar } from "@/web/shell/people-table";
 import { Until } from "@/web/components/time";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/web/components/ui/alert-dialog";
 import { Button } from "@/web/components/ui/button";
 import {
   Dialog,
@@ -57,11 +46,11 @@ import {
   SheetTrigger,
 } from "@/web/components/ui/sheet";
 import { useIsMobile } from "@/web/hooks/use-mobile";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
 import { threadPeopleQuery } from "@/web/guests/queries";
 import { ROLE_LABELS } from "@/web/spaces/roles";
 import { fullTime, timeUntil } from "@/web/lib/time";
+import { ConfirmDialog } from "@/web/components/confirm-dialog";
+import { useCreateInvite, useRevoke } from "@/web/guests/mutations";
 
 const ACCESS_LABELS: Record<AccessFor, string> = {
   "1h": "1 hour",
@@ -186,62 +175,33 @@ function People({
 }
 
 // Revokes a guest or an unused link; what went wrong, if anything.
-async function revokeIn(threadId: string, path: { guest: string } | { invite: string }) {
-  const res =
-    "guest" in path
-      ? await apiClient.v1.threads[":id"].guests[":userId"].$delete({
-          param: { id: threadId, userId: path.guest },
-        })
-      : await apiClient.v1.threads[":id"].invites[":inviteId"].$delete({
-          param: { id: threadId, inviteId: path.invite },
-        });
-  return res.ok ? undefined : errorOf(res);
-}
-
 function ShareBody({ threadId }: { threadId: string }) {
-  const queryClient = useQueryClient();
   const id = useId();
   const people = useQuery(threadPeopleQuery(threadId));
   const [accessFor, setAccessFor] = useState<AccessFor>("1d");
   const [created, setCreated] = useState<CreatedInvite>();
-  const [error, setError] = useState<string>();
-  const [pending, setPending] = useState(false);
   const [confirming, setConfirming] = useState<ThreadPerson | null>(null);
+  const invite = useCreateInvite(threadId);
+  const revocation = useRevoke(threadId);
+  const error = (invite.error ?? revocation.error)?.message;
 
-  const refresh = () =>
-    queryClient.invalidateQueries({ queryKey: threadPeopleQuery(threadId).queryKey });
-
-  async function create() {
-    setPending(true);
-    setError(undefined);
-    const res = await apiClient.v1.threads[":id"].invites.$post({
-      param: { id: threadId },
-      json: { accessFor },
-    });
-    setPending(false);
-    if (!res.ok) {
-      setError(await errorOf(res));
-      return;
-    }
-    setCreated(createdInviteSchema.parse(await res.json()));
-    await refresh();
+  function create() {
+    revocation.reset();
+    invite.mutate(accessFor, { onSuccess: setCreated });
   }
 
-  // Revoking a person asks first; an unused link goes at once.
   function ask(path: { guest: string } | { invite: string }) {
     if ("invite" in path) {
-      void revoke(path);
+      revoke(path);
       return;
     }
     setConfirming(people.data?.people.find((person) => person.userId === path.guest) ?? null);
   }
 
-  async function revoke(path: { guest: string } | { invite: string }) {
-    setError(undefined);
-    const failed = await revokeIn(threadId, path);
-    if (failed) setError(failed);
+  function revoke(path: { guest: string } | { invite: string }) {
+    invite.reset();
+    revocation.mutate(path);
     if ("invite" in path && path.invite === created?.id) setCreated(undefined);
-    await refresh();
   }
 
   return (
@@ -267,7 +227,7 @@ function ShareBody({ threadId }: { threadId: string }) {
               ))}
             </SelectContent>
           </Select>
-          <Button disabled={pending} onClick={() => void create()}>
+          <Button disabled={invite.isPending} onClick={create}>
             Create link
           </Button>
         </div>
@@ -298,31 +258,19 @@ function ShareBody({ threadId }: { threadId: string }) {
       {people.data && (
         <People people={people.data.people} invites={people.data.invites} onRevoke={ask} />
       )}
-      <AlertDialog
+      <ConfirmDialog
         open={!!confirming}
         onOpenChange={(open) => {
           if (!open) setConfirming(null);
         }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Remove {confirming?.name}?</AlertDialogTitle>
-            <AlertDialogDescription>They lose access to this thread.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              onClick={() => {
-                if (confirming) void revoke({ guest: confirming.userId });
-                setConfirming(null);
-              }}
-            >
-              Remove
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={`Remove ${confirming?.name ?? ""}?`}
+        description="They lose access to this thread."
+        action="Remove"
+        onConfirm={() => {
+          if (confirming) revoke({ guest: confirming.userId });
+          setConfirming(null);
+        }}
+      />
     </div>
   );
 }

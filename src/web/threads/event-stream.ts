@@ -16,11 +16,11 @@ import {
   anyThreadEventSchema,
   type DeltaBatch,
   deltaBatchSchema,
-} from "@/shared/threads.ts";
-import { checkServer, useOnline } from "@/web/lib/online";
+} from "@/shared/threads/events.ts";
 import { sharedThreadsQuery } from "@/web/guests/queries";
-import { threadQuery } from "@/web/threads/queries";
+import { checkServer, useOnline } from "@/web/lib/online";
 import { tabOrg } from "@/web/lib/org-tab";
+import { threadQuery } from "@/web/threads/queries";
 import { withEvents } from "@/web/threads/thread-detail";
 
 // Adds the events the cache does not have yet.

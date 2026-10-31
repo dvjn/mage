@@ -17,15 +17,15 @@ import { cn } from "cn";
 import type * as React from "react";
 
 import type { ThreadStatus } from "@/shared/thread-status.ts";
-import type { ShownModel, ThreadActivity, ThreadParticipants } from "@/shared/threads.ts";
-import { MakerMark, ModelTile, modelLabel } from "@/web/models/marks";
-import { StatusGlyph, useThreadStatus } from "@/web/threads/thread-status";
-import { ThreadTitle } from "@/web/threads/thread-title";
+import type { ShownModel, ThreadActivity, ThreadParticipants } from "@/shared/threads/list.ts";
+import { meQuery } from "@/web/auth/queries";
 import { ShortTime } from "@/web/components/time";
 import { Badge } from "@/web/components/ui/badge";
 import { SidebarMenuButton, SidebarMenuItem } from "@/web/components/ui/sidebar";
 import { WithTooltip } from "@/web/components/with-tooltip";
-import { meQuery } from "@/web/auth/queries";
+import { MakerMark, ModelTile, modelLabel } from "@/web/models/marks";
+import { StatusGlyph, useThreadStatus } from "@/web/threads/thread-status";
+import { ThreadTitle } from "@/web/threads/thread-title";
 import { writerLine, writersInFull } from "@/web/threads/writers";
 
 // The hover and focus of every row of a page's list.

@@ -14,18 +14,18 @@ import {
   redirect,
 } from "@tanstack/react-router";
 
-import { AppShell, PageHeader } from "@/web/app/app-shell";
+import { AppShell } from "@/web/app/app-shell";
 import { AuthFrame } from "@/web/auth/auth-frame";
 import { InvitePage } from "@/web/guests/invite-page";
 import { JoinPage } from "@/web/orgs/join-page";
 import { LoginForm } from "@/web/auth/login-form";
-import { OrgSkills } from "@/web/skills/skills";
+import { OrgSkills } from "@/web/skills/pages";
 import { OrgGeneral } from "@/web/orgs/org-general";
 import { OrgMcpServer, OrgTools } from "@/web/agent/org-tools";
-import { OrgPeople, peopleSearchSchema } from "@/web/orgs/org-people";
+import { OrgPeople, peopleSearchSchema } from "@/web/orgs/people-page";
 import { OrgSpaces, orgSpacesSearchSchema } from "@/web/spaces/org-spaces";
 import { OrgProviders } from "@/web/models/org-providers";
-import { OrgShell } from "@/web/settings/org-shell";
+import { OrgShell } from "@/web/orgs/org-shell";
 import { SharedPage, sharedSearchSchema } from "@/web/guests/shared-page";
 import { SignupForm } from "@/web/auth/signup-form";
 import { SpacePage, spaceSearchSchema } from "@/web/spaces/space-page";
@@ -42,9 +42,10 @@ import { DraftThread } from "@/web/threads/draft-thread";
 import { ThreadPage } from "@/web/threads/thread-page";
 import { lastSpace } from "@/web/spaces/last-space";
 import { tabOrg } from "@/web/lib/org-tab";
-import { lastSignedIn, restored } from "@/web/lib/query-cache";
+import { lastSignedIn, restored } from "@/web/api/query-cache";
 import { meQuery, sessionQuery, signInOptionsQuery } from "@/web/auth/queries";
 import { spacesQuery } from "@/web/spaces/queries";
+import { PageHeader } from "@/web/shell/page-header";
 
 type Context = { context: { queryClient: QueryClient } };
 

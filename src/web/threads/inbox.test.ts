@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { SharedThread } from "@/shared/guests.ts";
-import type { ThreadListItem } from "@/shared/threads.ts";
+import type { ThreadListItem } from "@/shared/threads/list.ts";
 import { withSeen, withSharedThread, without, withThread } from "@/web/threads/inbox.ts";
 
 function item(

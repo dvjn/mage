@@ -4,60 +4,31 @@
 // space, and opens it. Nothing is made until then. The folder can be changed from the breadcrumb.
 // Someone who can only view the space is sent to it instead, as they cannot start threads.
 
-import { cn } from "cn";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { getRouteApi, Navigate, useNavigate } from "@tanstack/react-router";
+import { cn } from "cn";
 import { FolderIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { type ModelPair, replyCandidates } from "@/shared/models.ts";
-import { type Effort, threadSchema } from "@/shared/threads.ts";
+import type { Effort } from "@/shared/threads/thread.ts";
 import {
   Conversation,
   ConversationContent,
   ConversationEmptyState,
 } from "@/web/components/ai-elements/conversation";
-import { PageHeader, pageWidth } from "@/web/app/app-shell";
-import { folderCrumb } from "@/web/folders/folder-choice";
-import { Composer } from "@/web/threads/thread-composer";
-import { ThreadPickers } from "@/web/models/thread-pickers";
 import { FieldError } from "@/web/components/ui/field";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
-import { rememberSpace } from "@/web/spaces/last-space";
+import { folderCrumb } from "@/web/folders/folder-choice";
 import { spaceFoldersQuery } from "@/web/folders/queries";
 import { defaultEffortQuery, defaultModelQuery, modelsQuery } from "@/web/models/queries";
+import { ThreadPickers } from "@/web/models/thread-pickers";
+import { PageHeader, pageWidth } from "@/web/shell/page-header";
+import { rememberSpace } from "@/web/spaces/last-space";
 import { spacesQuery } from "@/web/spaces/queries";
-import { spaceThreadsQuery } from "@/web/threads/queries";
+import { useCreateThread } from "@/web/threads/mutations";
+import { Composer } from "@/web/threads/thread-composer";
 
 const draftRoute = getRouteApi("/_app/s/$spaceId/new");
-
-// Makes a thread in the space with its first message, in a folder or at its top, and opens it;
-// throws with what went wrong otherwise.
-export function useCreateThread() {
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  return async (
-    spaceId: string,
-    text: string,
-    options: { folderId?: string; model?: string | null; effort?: Effort | null } = {},
-  ) => {
-    const { folderId, model, effort } = options;
-    const res = await apiClient.v1.spaces[":id"].threads.$post({
-      param: { id: spaceId },
-      json: {
-        text,
-        ...(folderId && { folderId }),
-        ...(model && { model }),
-        ...(effort && { effort }),
-      },
-    });
-    if (!res.ok) throw new Error(await errorOf(res));
-    const thread = threadSchema.parse(await res.json());
-    await queryClient.invalidateQueries({ queryKey: spaceThreadsQuery(spaceId).queryKey });
-    await navigate({ to: "/t/$threadId", params: { threadId: thread.id }, replace: true });
-  };
-}
 
 // Writing a new thread's first message, on the model and effort picked beside it or the space's
 // defaults; sending makes the thread and opens it.
@@ -69,9 +40,7 @@ export function NewThreadComposer({ spaceId, folderId }: { spaceId: string; fold
   // Null follows the defaults.
   const [model, setModel] = useState<string | null>(null);
   const [effort, setEffort] = useState<Effort | null>(null);
-  const create = useCreateThread();
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string>();
+  const create = useCreateThread(spaceId);
   const space = spaces.data?.find((s) => s.id === spaceId);
   const list = models.data?.models ?? [];
   // The first model, with its effort, that can reply for a thread with `own`, as the server
@@ -98,24 +67,15 @@ export function NewThreadComposer({ spaceId, folderId }: { spaceId: string; fold
 
   async function send(text: string) {
     if (!text.trim()) return;
-    setSending(true);
-    setError(undefined);
-    try {
-      await create(spaceId, text, { folderId, model, effort });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not start the thread");
-      throw err;
-    } finally {
-      setSending(false);
-    }
+    await create.mutateAsync({ text, folderId, model, effort });
   }
 
   return (
     <div className="flex flex-col gap-2">
-      <FieldError>{error}</FieldError>
+      <FieldError>{create.error?.message}</FieldError>
       <Composer
         running={false}
-        sending={sending}
+        sending={create.isPending}
         stopping={false}
         onSend={send}
         onStop={() => {}}

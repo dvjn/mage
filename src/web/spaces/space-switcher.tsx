@@ -8,7 +8,7 @@
 // header, which steps aside while searching, and "New space" and what sits below it.
 
 import { cn } from "cn";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftRightIcon,
@@ -21,8 +21,8 @@ import {
 import { useState } from "react";
 
 import { orgSubtitle } from "@/shared/me.ts";
-import { createdOrgSchema, type OrgSummary } from "@/shared/orgs.ts";
-import { type SpaceSummary, spaceSchema } from "@/shared/spaces.ts";
+import { type OrgSummary } from "@/shared/orgs.ts";
+import { type SpaceSummary } from "@/shared/spaces.ts";
 import { NameDialog } from "@/web/components/name-dialog";
 import { Badge } from "@/web/components/ui/badge";
 import {
@@ -48,8 +48,6 @@ import {
   useSidebar,
 } from "@/web/components/ui/sidebar";
 import { usePlace } from "@/web/spaces/active-space";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
 import { initialsOf } from "@/web/lib/initials";
 import { lastSpace } from "@/web/spaces/last-space";
 import { switchOrg, tabOrg } from "@/web/lib/org-tab";
@@ -58,6 +56,7 @@ import { sharedThreadsQuery } from "@/web/guests/queries";
 import { orgsQuery, teamSettingsQuery } from "@/web/orgs/queries";
 import { spacesQuery } from "@/web/spaces/queries";
 import { ROLE_LABELS } from "@/web/spaces/roles";
+import { useCreateOrg, useCreateSpace } from "@/web/spaces/mutations";
 
 function SpaceRow({
   space,
@@ -190,7 +189,6 @@ function NoMatch({ children }: { children: string }) {
 
 export function SpaceSwitcher() {
   const { isMobile } = useSidebar();
-  const queryClient = useQueryClient();
   const navigate = useNavigate();
   const me = useQuery(meQuery);
   const spaces = useQuery(spacesQuery);
@@ -200,6 +198,8 @@ export function SpaceSwitcher() {
   const place = usePlace();
   const [adding, setAdding] = useState(false);
   const [creatingOrg, setCreatingOrg] = useState(false);
+  const createSpace = useCreateSpace();
+  const newOrg = useCreateOrg();
   const tab = tabOrg();
   const active = place?.kind === "space" ? place.space : undefined;
   const team = me.data?.org.kind === "team";
@@ -220,21 +220,22 @@ export function SpaceSwitcher() {
   const nothing =
     query.trim() !== "" && shownYours.length + shownJoined.length + shownOrgs.length === 0;
 
-  async function create(name: string) {
-    const res = await apiClient.v1.spaces.$post({ json: { name } });
-    if (!res.ok) return errorOf(res);
-    const space = spaceSchema.parse(await res.json());
-    await queryClient.invalidateQueries({ queryKey: spacesQuery.queryKey });
-    await navigate({ to: "/s/$spaceId", params: { spaceId: space.id } });
-    return undefined;
+  function create(name: string) {
+    return createSpace.mutateAsync(name).then(
+      (space) =>
+        navigate({ to: "/s/$spaceId", params: { spaceId: space.id } }).then(() => undefined),
+      (failed: Error) => failed.message,
+    );
   }
 
-  async function createOrg(name: string) {
-    const res = await apiClient.v1.orgs.$post({ json: { name } });
-    if (!res.ok) return errorOf(res);
-    const { orgId } = createdOrgSchema.parse(await res.json());
-    switchOrg(orgId, "/org/general");
-    return undefined;
+  function createOrg(name: string) {
+    return newOrg.mutateAsync(name).then(
+      (orgId) => {
+        switchOrg(orgId, "/org/general");
+        return undefined;
+      },
+      (failed: Error) => failed.message,
+    );
   }
 
   function open(space: SpaceSummary) {

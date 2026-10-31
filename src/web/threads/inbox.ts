@@ -17,11 +17,11 @@ import {
   type ThreadListItem,
   threadListItemSchema,
   type ThreadSidebar,
-} from "@/shared/threads.ts";
+} from "@/shared/threads/list.ts";
 import { apiClient } from "@/web/api/api-client";
+import { sharedThreadsQuery } from "@/web/guests/queries";
 import { checkServer, useOnline } from "@/web/lib/online";
 import { tabOrg } from "@/web/lib/org-tab";
-import { sharedThreadsQuery } from "@/web/guests/queries";
 import { spaceThreadsQuery, threadQuery } from "@/web/threads/queries";
 
 type Listed = { id: string; updatedAt: string; activity: ThreadActivity };

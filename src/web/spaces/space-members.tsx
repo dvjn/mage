@@ -5,7 +5,7 @@
 // confirmation, which says when a group still covers the person. Nobody changes their own role, nor
 // the last owner's.
 
-import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import { Building2Icon, UserMinusIcon, UserPlusIcon, UsersIcon } from "lucide-react";
 import { useState } from "react";
@@ -18,7 +18,7 @@ import {
   type SpaceSummary,
 } from "@/shared/spaces.ts";
 import { AddPeopleDialog } from "@/web/spaces/add-people-dialog";
-import { Peek, PeekList } from "@/web/components/peek";
+import { Peek, PeekList } from "@/web/shell/peek";
 import { DataTable } from "@/web/components/data-table/data-table";
 import { DataTableToolbar } from "@/web/components/data-table/data-table-toolbar";
 import {
@@ -30,25 +30,13 @@ import {
   roleColumn,
   RoleControl,
   Subject,
-} from "@/web/components/people-table";
-import { SettingsCard, SettingsTitle } from "@/web/settings/layout";
+} from "@/web/shell/people-table";
+import { SettingsCard, SettingsTitle } from "@/web/shell/settings-page";
 import { Time } from "@/web/components/time";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/web/components/ui/alert-dialog";
 import { DropdownMenuItem } from "@/web/components/ui/dropdown-menu";
 import { FieldError } from "@/web/components/ui/field";
 import { Skeleton } from "@/web/components/ui/skeleton";
 import { useDataTable } from "@/web/hooks/use-data-table";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
 import { lenient, tableSearchSchema, withoutUnset } from "@/web/lib/data-table";
 import {
   groupMembersPages,
@@ -58,8 +46,9 @@ import {
   spaceMembersPage,
 } from "@/web/api/list-queries";
 import { meQuery } from "@/web/auth/queries";
-import { spacesQuery } from "@/web/spaces/queries";
 import { LOCK_REASONS, ROLE_LABELS } from "@/web/spaces/roles";
+import { ConfirmDialog } from "@/web/components/confirm-dialog";
+import { useSpaceEveryone, useSpaceGrant } from "@/web/spaces/mutations";
 
 const ROLES = (["owner", "messager", "viewer"] as const).map((value) => ({
   value,
@@ -173,7 +162,6 @@ export const spaceMembersSearchSchema = tableSearchSchema.extend({
 });
 
 export function SpaceMembers({ space }: { space: SpaceSummary }) {
-  const queryClient = useQueryClient();
   const search = settingsRoute.useSearch();
   const navigate = settingsRoute.useNavigate();
   const me = useQuery(meQuery);
@@ -182,47 +170,36 @@ export function SpaceMembers({ space }: { space: SpaceSummary }) {
   const groups = useInfiniteQuery(groupsPages({}, 1));
   const withGroups = (groups.data?.pages[0]?.total ?? 0) > 0;
   const [adding, setAdding] = useState(false);
-  const [error, setError] = useState<string>();
   const [removing, setRemoving] = useState<SpaceGrant | null>(null);
-  const [removeError, setRemoveError] = useState<string>();
+  const roleChange = useSpaceGrant(space.id);
+  const removal = useSpaceGrant(space.id);
+  const adder = useSpaceGrant(space.id);
+  const everyone = useSpaceEveryone(space.id);
+  const error = (roleChange.error ?? everyone.error)?.message;
 
-  async function refresh() {
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["space-members", space.id] }),
-      queryClient.invalidateQueries({ queryKey: spacesQuery.queryKey }),
-      queryClient.invalidateQueries({ queryKey: ["org-spaces"] }),
-    ]);
+  function change(row: SpaceGrant, role: SpaceRole) {
+    everyone.reset();
+    roleChange.mutate({ kind: row.kind, id: row.id, role });
   }
 
-  async function grant(subject: { kind: "user" | "group"; id: string }, role: SpaceRole | null) {
-    const res = await apiClient.v1.spaces[":id"].members.$put({
-      param: { id: space.id },
-      json: { kind: subject.kind, id: subject.id, role },
-    });
-    if (!res.ok) return errorOf(res);
-    await refresh();
-    return undefined;
+  function grant(subject: { kind: "user" | "group"; id: string }, role: SpaceRole | null) {
+    return adder.mutateAsync({ kind: subject.kind, id: subject.id, role }).then(
+      () => undefined,
+      (failed: Error) => failed.message,
+    );
   }
 
-  async function change(row: SpaceGrant, role: SpaceRole) {
-    setError(await grant(row, role));
-  }
-
-  async function remove() {
+  function remove() {
     if (!removing) return;
-    const failed = await grant(removing, null);
-    setRemoveError(failed);
-    if (!failed) setRemoving(null);
+    removal.mutate(
+      { kind: removing.kind, id: removing.id, role: null },
+      { onSuccess: () => setRemoving(null) },
+    );
   }
 
-  async function setEveryone(next: Everyone) {
-    setError(undefined);
-    const res = await apiClient.v1.spaces[":id"].everyone.$put({
-      param: { id: space.id },
-      json: { role: next === "none" ? null : next },
-    });
-    if (!res.ok) setError(await errorOf(res));
-    await refresh();
+  function setEveryone(next: Everyone) {
+    roleChange.reset();
+    everyone.mutate(next === "none" ? null : next);
   }
 
   const first = list.data;
@@ -249,13 +226,13 @@ export function SpaceMembers({ space }: { space: SpaceSummary }) {
       return {
         value: row.role,
         options: EVERYONE,
-        ...(manage && { onChange: (next: string) => void setEveryone(next as Everyone) }),
+        ...(manage && { onChange: (next: string) => setEveryone(next as Everyone) }),
       };
     }
     return {
       value: row.role,
       options: ROLES,
-      ...(manage && { onChange: (next: string) => void change(row, next as SpaceRole) }),
+      ...(manage && { onChange: (next: string) => change(row, next as SpaceRole) }),
       ...(manage && row.locked && { locked: LOCK_REASONS.space[row.locked] }),
     };
   }
@@ -373,34 +350,26 @@ export function SpaceMembers({ space }: { space: SpaceSummary }) {
           canInvite={me.data?.role === "owner"}
           onAdd={(option, role) => grant(option, role)}
         />
-        <AlertDialog
+        <ConfirmDialog
           open={!!removing}
           onOpenChange={(open) => {
             if (open) return;
             setRemoving(null);
-            setRemoveError(undefined);
+            removal.reset();
           }}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Remove {removing?.name}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                {removing?.kind === "group"
-                  ? "Its people lose access unless they're added another way."
-                  : removing && removing.coveredBy.length > 0
-                    ? `They stay in through ${keeping(removing.coveredBy).name} as ${ROLE_LABELS[keeping(removing.coveredBy).role]}.`
-                    : "They lose access to this space."}
-              </AlertDialogDescription>
-              <FieldError>{removeError}</FieldError>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction variant="destructive" onClick={() => void remove()}>
-                Remove
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+          title={`Remove ${removing?.name ?? ""}?`}
+          description={
+            removing?.kind === "group"
+              ? "Its people lose access unless they're added another way."
+              : removing && removing.coveredBy.length > 0
+                ? `They stay in through ${keeping(removing.coveredBy).name} as ${ROLE_LABELS[keeping(removing.coveredBy).role]}.`
+                : "They lose access to this space."
+          }
+          error={removal.error?.message}
+          disabled={removal.isPending}
+          action="Remove"
+          onConfirm={remove}
+        />
       </SettingsCard>
     </>
   );

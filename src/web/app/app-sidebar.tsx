@@ -10,12 +10,8 @@ import { SearchIcon } from "lucide-react";
 import type * as React from "react";
 import { useEffect } from "react";
 
-import { NavThreads, useNewThread } from "@/web/threads/nav-threads";
-import { NavUser } from "@/web/app/nav-user";
-import { SidebarOfflineStatus } from "@/web/app/offline-status";
+import { meQuery } from "@/web/auth/queries";
 import { ShortcutHint } from "@/web/components/shortcut-keys";
-import { SpaceSwitcher } from "@/web/spaces/space-switcher";
-import { useOpenThreadSearch } from "@/web/threads/thread-search";
 import {
   Sidebar,
   SidebarContent,
@@ -27,9 +23,14 @@ import {
   useSidebar,
 } from "@/web/components/ui/sidebar";
 import { useModHeld } from "@/web/hooks/use-mod-held";
-import { useActiveSpace } from "@/web/spaces/active-space";
-import { meQuery } from "@/web/auth/queries";
 import { useShortcut } from "@/web/lib/shortcuts";
+import { NavUser } from "@/web/shell/nav-user";
+import { SidebarOfflineStatus } from "@/web/shell/offline-status";
+import { useActiveSpace } from "@/web/spaces/active-space";
+import { SpaceSwitcher } from "@/web/spaces/space-switcher";
+import { NavThreads } from "@/web/threads/nav/nav-threads";
+import { useNewThread } from "@/web/threads/nav/use-new-thread";
+import { useOpenThreadSearch } from "@/web/threads/thread-search";
 
 function NavSearch() {
   const openSearch = useOpenThreadSearch();

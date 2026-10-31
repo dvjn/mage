@@ -1,6 +1,6 @@
 // Reads a thread's live event stream, or a person's inbox stream, in the tests, one frame at a time.
 
-import type { ThreadEventSummary } from "@/shared/threads.ts";
+import type { ThreadEventSummary } from "@/shared/threads/events.ts";
 
 import type { setup } from "./workspace.ts";
 

@@ -2,15 +2,15 @@ import { and, asc, desc, eq, gt, inArray, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { ulid } from "ulid";
 
-import { spokenText } from "@/shared/plain-text.ts";
-import { UNTITLED } from "@/shared/threads.ts";
-import { orgFormerMember, user } from "@/server/orgs/schema.ts";
 import { type Db, writeLock } from "@/server/db/db.ts";
+import { orgFormerMember, user } from "@/server/orgs/schema.ts";
 import { space } from "@/server/spaces/schema.ts";
+import { spokenText } from "@/shared/plain-text.ts";
+import { UNTITLED } from "@/shared/threads/thread.ts";
 
-import type { StoredEvent, Thread, ThreadFacts, ThreadStore, ThreadWriters } from "./service.ts";
-import { thread, threadEvent } from "./schema.ts";
 import { kept, listedThread, newestFirst, statused, type StatusedRow, windowOf } from "./lists.ts";
+import { thread, threadEvent } from "./schema.ts";
+import type { StoredEvent, Thread, ThreadFacts, ThreadStore, ThreadWriters } from "./service.ts";
 
 // The events a reader is told about: a person's message, a finished reply and a failed run.
 const NOTABLE = ["message", "message.completed", "run.failed"];

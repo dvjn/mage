@@ -19,7 +19,7 @@ import {
   type ToolRisk,
   type ToolScope,
   type Usage,
-} from "@/shared/threads.ts";
+} from "@/shared/threads/events.ts";
 
 type Person = Extract<ActorSummary, { kind: "user" }>;
 

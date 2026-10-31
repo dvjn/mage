@@ -7,7 +7,7 @@
 import * as z from "zod";
 
 import { tableQuerySchema } from "@/shared/paging.ts";
-import type { ThreadActivity } from "@/shared/threads.ts";
+import type { ThreadActivity } from "@/shared/threads/list.ts";
 
 export type ThreadStatus = "waiting" | "failed" | "working" | "paused" | "unread" | "read";
 

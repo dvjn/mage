@@ -2,13 +2,11 @@
 // the top, the space's folders, the current one checked, and "New folder" at the bottom, which
 // makes a folder and chooses it. It opens from a breadcrumb or a button, or as a dialog from a menu.
 
-import { useQueryClient } from "@tanstack/react-query";
 import { ChevronDownIcon, FolderIcon, FolderPlusIcon } from "lucide-react";
 import type * as React from "react";
 import { useState } from "react";
 
-import { folderSchema, type FolderSummary } from "@/shared/folders.ts";
-import type { Crumb } from "@/web/app/app-shell";
+import { type FolderSummary } from "@/shared/folders.ts";
 import { NameDialog } from "@/web/components/name-dialog";
 import {
   Command,
@@ -28,9 +26,8 @@ import {
 } from "@/web/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/web/components/ui/popover";
 import { WithTooltip } from "@/web/components/with-tooltip";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
-import { spaceFoldersQuery } from "@/web/folders/queries";
+import { useCreateFolder } from "@/web/folders/mutations";
+import { type Crumb } from "@/web/shell/page-header";
 
 export const NO_FOLDER = "No folder";
 
@@ -96,18 +93,16 @@ function FolderList({
 
 // Making a folder in the space from the list, then choosing it.
 function useNewFolder(spaceId: string, onChange: (folderId: string | null) => void) {
-  const queryClient = useQueryClient();
   const [naming, setNaming] = useState<string | null>(null);
-  async function create(name: string) {
-    const res = await apiClient.v1.spaces[":id"].folders.$post({
-      param: { id: spaceId },
-      json: { name },
-    });
-    if (!res.ok) return errorOf(res);
-    const folder = folderSchema.parse(await res.json());
-    await queryClient.invalidateQueries({ queryKey: spaceFoldersQuery(spaceId).queryKey });
-    onChange(folder.id);
-    return undefined;
+  const newFolder = useCreateFolder(spaceId);
+  function create(name: string) {
+    return newFolder.mutateAsync(name).then(
+      (folder) => {
+        onChange(folder.id);
+        return undefined;
+      },
+      (failed: Error) => failed.message,
+    );
   }
   const dialog = (
     <NameDialog

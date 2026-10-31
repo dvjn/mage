@@ -8,15 +8,16 @@
 // those it lists for the first time are turned on or not as the connection says; a model turned off
 // is in no picker and does not reply.
 
+import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { OrgSettings, OrgSettingStore } from "@/server/orgs/service.ts";
 import type { Space, SpaceStore } from "@/server/spaces/service.ts";
-import { ServiceError } from "@/server/kernel/errors.ts";
 import { connectionLabel } from "@/shared/connections.ts";
 import { type HostId, HOSTS, hostOf, isHost } from "@/shared/hosts.ts";
 import { type MakerId, makerOf } from "@/shared/makers.ts";
 import { type ModelPair, replyCandidates } from "@/shared/models.ts";
-import type { Effort, ShownModel } from "@/shared/threads.ts";
+import type { ShownModel } from "@/shared/threads/list.ts";
+import type { Effort } from "@/shared/threads/thread.ts";
 
 import type { Catalog, CatalogModel } from "./catalog.ts";
 import {

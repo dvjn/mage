@@ -7,7 +7,7 @@
 // approved, or that its questions were skipped.
 
 import type { ModelMessage, ModelToolResult } from "@/server/models/gateway.ts";
-import { QUIET_PREFIX } from "@/shared/threads.ts";
+import { QUIET_PREFIX } from "@/shared/threads/events.ts";
 import type { HumanRow, ToolRow, TranscriptRow } from "@/shared/transcript.ts";
 
 export interface Context {

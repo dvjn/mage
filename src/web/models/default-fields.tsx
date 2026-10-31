@@ -5,10 +5,10 @@
 import { useId } from "react";
 
 import type { ModelSummary } from "@/shared/models.ts";
-import type { Effort } from "@/shared/threads.ts";
+import type { Effort } from "@/shared/threads/thread.ts";
+import { Field, FieldDescription, FieldLabel } from "@/web/components/ui/field";
 import { EffortPicker } from "@/web/models/effort-picker";
 import { fallbackReason, ModelPicker, useMissingModel } from "@/web/models/model-picker";
-import { Field, FieldDescription, FieldLabel } from "@/web/components/ui/field";
 
 export { EFFORT_LABELS } from "@/web/models/effort-picker";
 

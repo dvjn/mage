@@ -8,11 +8,11 @@ import { useEffect, useRef, useState } from "react";
 
 import { acceptedInviteSchema, type InviteRefusal, inviteRefusalSchema } from "@/shared/guests.ts";
 import { AuthCard, AuthFrame, SignInActions, useCanSignUp } from "@/web/auth/auth-frame";
-import { GoHome } from "@/web/components/page-states";
 import { Spinner } from "@/web/components/ui/spinner";
 import { apiClient } from "@/web/api/api-client";
 import { sessionQuery } from "@/web/auth/queries";
 import { sharedThreadsQuery } from "@/web/guests/queries";
+import { GoHome } from "@/web/shell/not-found";
 
 const inviteRoute = getRouteApi("/invite/$token");
 

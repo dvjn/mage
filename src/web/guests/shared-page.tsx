@@ -9,11 +9,11 @@ import { getRouteApi } from "@tanstack/react-router";
 import { UsersIcon } from "lucide-react";
 
 import { threadShowSchema } from "@/shared/thread-status.ts";
-import { PageHeader, pageWidth } from "@/web/app/app-shell";
 import { ThreadTable } from "@/web/threads/thread-table";
 import { Until } from "@/web/components/time";
 import { lenient, tableSearchSchema } from "@/web/lib/data-table";
 import { sharedThreadsPage } from "@/web/api/list-queries";
+import { PageHeader, pageWidth } from "@/web/shell/page-header";
 
 // The search, which threads show, and the page in the address.
 export const sharedSearchSchema = tableSearchSchema.extend({ show: lenient(threadShowSchema) });

@@ -160,9 +160,8 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await page.goto(`${loomRoom}/settings/members`);
   await page.getByRole("button", { name: "Add people" }).click();
   const add = page.getByRole("dialog");
-  await add.getByLabel("Person").click();
-  await page.getByLabel("Search people and groups").fill("grace");
-  await page.getByRole("option", { name: /Grace Hopper/ }).click();
+  await add.getByLabel("Person").fill("grace");
+  await add.getByRole("button", { name: /Grace Hopper/ }).click();
   await add.getByLabel("Role").click();
   await page.getByRole("option", { name: "Viewer" }).click();
   await add.getByRole("button", { name: "Add", exact: true }).click();

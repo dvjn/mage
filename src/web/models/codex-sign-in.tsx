@@ -4,7 +4,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { attemptSchema, type ConnectionSummary, deviceStartSchema } from "@/shared/connections.ts";
+import { attemptSchema, type ConnectionSummary } from "@/shared/connections.ts";
+import { apiClient } from "@/web/api/api-client";
+import { errorOf } from "@/web/api/api-errors";
 import { CopyButton } from "@/web/components/copy-button";
 import { Button } from "@/web/components/ui/button";
 import {
@@ -14,8 +16,7 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/web/components/ui/field";
-import { apiClient } from "@/web/api/api-client";
-import { errorOf } from "@/web/api/api-errors";
+import { useCancelCodexSignIn, useStartCodexSignIn } from "@/web/models/mutations";
 import { connectionsQuery, modelsQuery } from "@/web/models/queries";
 
 export function CodexSignIn({
@@ -25,7 +26,8 @@ export function CodexSignIn({
 }) {
   const queryClient = useQueryClient();
   const [device, setDevice] = useState<{ attemptId: string; userCode: string; url: string }>();
-  const [error, setError] = useState<string>();
+  const start = useStartCodexSignIn();
+  const cancel = useCancelCodexSignIn();
 
   const attempt = useQuery({
     queryKey: ["codex-attempt", device?.attemptId],
@@ -46,35 +48,29 @@ export function CodexSignIn({
     refetchInterval: (query) => (query.state.data?.status === "pending" ? 2000 : false),
   });
   const waiting = device && attempt.data?.status !== "failed";
-  const shownError = error ?? (attempt.data?.status === "failed" ? attempt.data.error : undefined);
+  const shownError =
+    start.error?.message ?? (attempt.data?.status === "failed" ? attempt.data.error : undefined);
 
   function reset() {
     setDevice(undefined);
-    setError(undefined);
+    start.reset();
   }
 
-  async function startDevice() {
+  function startDevice() {
     reset();
-    const res = await apiClient.v1.connections.codex.device.$post();
-    if (!res.ok) {
-      setError(await errorOf(res));
-      return;
-    }
-    const started = deviceStartSchema.parse(await res.json());
-    setDevice({
-      attemptId: started.attemptId,
-      userCode: started.userCode,
-      url: started.verificationUrl,
+    start.mutate(undefined, {
+      onSuccess: (started) =>
+        setDevice({
+          attemptId: started.attemptId,
+          userCode: started.userCode,
+          url: started.verificationUrl,
+        }),
     });
   }
 
-  async function cancelDevice() {
-    if (device) {
-      await apiClient.v1.connections.codex.attempts[":id"].cancel.$post({
-        param: { id: device.attemptId },
-      });
-    }
-    reset();
+  function cancelDevice() {
+    if (!device) return reset();
+    cancel.mutate(device.attemptId, { onSettled: reset });
   }
 
   return (
@@ -98,7 +94,7 @@ export function CodexSignIn({
             </FieldDescription>
           </Field>
           <Field>
-            <Button variant="outline" onClick={() => void cancelDevice()}>
+            <Button variant="outline" onClick={cancelDevice}>
               Cancel
             </Button>
           </Field>
@@ -106,7 +102,7 @@ export function CodexSignIn({
       ) : (
         <FieldGroup>
           <Field>
-            <Button onClick={() => void startDevice()}>Get a code</Button>
+            <Button onClick={startDevice}>Get a code</Button>
             <FieldDescription>
               Enter a code at OpenAI from any device. Works wherever Mage runs.
             </FieldDescription>

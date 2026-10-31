@@ -5,21 +5,21 @@
 // given to everyone in the org. A team org's owners manage its shared spaces without a role there,
 // but read their threads only once they give themselves one.
 
+import { ServiceError } from "@/server/kernel/errors.ts";
+import type { Hooks } from "@/server/kernel/hooks.ts";
+import type { Models } from "@/server/models/service.ts";
 import type { Directory, OrgRole } from "@/server/orgs/directory.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { OrgSettingStore } from "@/server/orgs/service.ts";
 import type { ThreadStore } from "@/server/threads/service.ts";
 import type { PageParams, Page } from "@/shared/paging.ts";
-import { ServiceError } from "@/server/kernel/errors.ts";
-import type { Hooks } from "@/server/kernel/hooks.ts";
-import type { Models } from "@/server/models/service.ts";
 import {
   FIRST_SPACE_NAME,
   namedForPerson,
   type SpaceMembers,
   spaceNameFor,
 } from "@/shared/spaces.ts";
-import type { Effort } from "@/shared/threads.ts";
+import type { Effort } from "@/shared/threads/thread.ts";
 
 // Owners manage the space; messagers and owners post; viewers only read.
 export type SpaceRole = "owner" | "messager" | "viewer";

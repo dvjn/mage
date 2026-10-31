@@ -1,10 +1,12 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
-import * as schema from "@/server/schema.ts";
 import { modelToolNames } from "@/server/agent/tools.ts";
+import * as schema from "@/server/schema.ts";
+import { agentThread } from "@/server/testing/agent-thread.ts";
+import { MCP_ORIGIN, setup } from "@/server/testing/workspace.ts";
 import { mcpHeadersInputSchema, type McpServerSummary, mcpSlugOf } from "@/shared/mcp.ts";
-import type { ThreadDetail } from "@/shared/threads.ts";
+import type { ThreadDetail } from "@/shared/threads/detail.ts";
 import {
   EDITORS,
   TOOL_OFF,
@@ -13,16 +15,14 @@ import {
   wireToolName,
 } from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
-import { agentThread } from "@/server/testing/agent-thread.ts";
-import { MCP_ORIGIN, setup } from "@/server/testing/workspace.ts";
 
-import { mergeHeaders, outputOf, riskOfAnnotations, secretHint, uniqueSlug } from "./service.ts";
 import {
   MCP_API_KEY,
   MCP_BEARER_TOKEN,
   MODERN_REVISION,
   mcpStandIn,
 } from "../../../e2e/mcp-server.ts";
+import { mergeHeaders, outputOf, riskOfAnnotations, secretHint, uniqueSlug } from "./service.ts";
 
 // Makes an org policy every call of which waits for anyone who can edit the thread, and gives its id.
 async function signOff(

@@ -6,11 +6,12 @@
 // open, and show a placeholder until the models are known.
 
 import type { ModelSummary } from "@/shared/models.ts";
-import type { Effort, ThreadDefaults } from "@/shared/threads.ts";
+import type { ThreadDefaults } from "@/shared/threads/detail.ts";
+import type { Effort } from "@/shared/threads/thread.ts";
+import { WithTooltip } from "@/web/components/with-tooltip";
+import { modelName } from "@/web/models/default-fields";
 import { EFFORT_LABELS, EffortPicker } from "@/web/models/effort-picker";
 import { fallbackReason, ModelPicker, useMissingModel } from "@/web/models/model-picker";
-import { modelName } from "@/web/models/default-fields";
-import { WithTooltip } from "@/web/components/with-tooltip";
 
 // The two triggers' text, alike whatever they show.
 const TRIGGER =

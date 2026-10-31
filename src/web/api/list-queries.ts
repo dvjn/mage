@@ -11,6 +11,7 @@ import {
   useInfiniteQuery,
 } from "@tanstack/react-query";
 
+import { sharedThreadSchema } from "@/shared/guests.ts";
 import {
   directoryGroupPageSchema,
   directoryPersonPageSchema,
@@ -24,8 +25,7 @@ import {
 } from "@/shared/orgs.ts";
 import { type Page, pageSchema } from "@/shared/paging.ts";
 import { orgSpacePageSchema, spaceMembersSchema } from "@/shared/spaces.ts";
-import { sharedThreadSchema } from "@/shared/guests.ts";
-import { threadListItemSchema } from "@/shared/threads.ts";
+import { threadListItemSchema } from "@/shared/threads/list.ts";
 import { apiClient } from "@/web/api/api-client";
 import { pageQueryOf } from "@/web/lib/data-table";
 
