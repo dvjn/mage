@@ -3,6 +3,10 @@ saveExact: true
 overrides:
   vite: npm:@voidzero-dev/vite-plus-core@1.3.0
   vitest: 5.0.5
+  "@openuidev/lang-core": 1.0.1
+  "@openuidev/devtools": 0.3.0
+  "@openuidev/observability": 0.0.4
 
 allowBuilds:
   esbuild: false
+  "@openuidev/lang-core": false

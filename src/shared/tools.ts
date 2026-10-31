@@ -150,6 +150,8 @@ export const toolsetSettingSchema = z.object({
   title: z.string(),
   source: toolsetSourceSchema,
   scope: z.enum(["org", "space"]),
+  // What a toolset of no tools is for.
+  description: z.string().optional(),
   // Built-in toolset switches; MCP servers expose their switches through server settings.
   enabled: z.boolean().optional(),
   orgEnabled: z.boolean().optional(),

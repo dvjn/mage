@@ -42,6 +42,7 @@ import { FieldError } from "@/web/components/ui/field";
 import { Spinner } from "@/web/components/ui/spinner";
 import { apiClient } from "@/web/lib/api-client";
 import { errorOf } from "@/web/lib/api-errors";
+import { ReplyActions } from "@/web/lib/reply-actions";
 import { rememberSpace } from "@/web/lib/last-space";
 import {
   meQuery,
@@ -189,6 +190,12 @@ export function ThreadPage() {
       : "decision"
     : null;
 
+  // A click in a reply's layout posts as the person who clicked, for those who may post.
+  const replyActions =
+    access && role !== "viewer"
+      ? { send: (text: string) => void send(text, "queue").catch(() => {}) }
+      : {};
+
   // The last row, when it ends a run that failed or was stopped and nothing has run since.
   const last = transcript.rows.at(-1);
   const canRetry = role !== "viewer" && !run && transcript.pending.length === 0;
@@ -274,51 +281,57 @@ export function ThreadPage() {
       >
         {(role === "owner" || role === "messager") && <ShareDialog threadId={threadId} />}
       </PageHeader>
-      <Conversation aria-label="Events" className="min-h-0">
-        <ConversationContent className={cn(pageWidth, "gap-4")}>
-          {detail.data && transcript.rows.length === 0 ? (
-            <ConversationEmptyState description="Write the first message below." />
-          ) : (
-            transcript.rows.map((savedRow, index) => {
-              const policy =
-                savedRow.kind === "tool" && savedRow.state === "pending"
-                  ? detail.data?.pendingTools?.[savedRow.id]
-                  : undefined;
-              const row =
-                policy && savedRow.kind === "tool" ? { ...savedRow, risk: policy.risk } : savedRow;
-              return (
-                <TranscriptItem
-                  key={row.id}
-                  row={row}
-                  turn={agentTurnOf(transcript.rows, index)}
-                  tools={detail.data?.tools}
-                  actions={{
-                    ...(row === retryable && { retry: () => void retry(retryable.runId) }),
-                    ...(!guest && { pickModel: () => setPicking(true) }),
-                    ...(row.kind === "tool" &&
-                      policy?.canDecide === true &&
-                      (row.toolId === ASK_TOOL
-                        ? { answer: (answers: AskAnswers | null) => answer(row.id, answers) }
-                        : {
-                            decide: (allow: boolean, scope: ToolScope) =>
-                              decide(row.id, allow, scope),
-                          })),
-                  }}
-                />
-              );
-            })
-          )}
-          {run &&
-            !run.waitingOn &&
-            !transcript.rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
-              <AgentStarting
-                at={run.createdAt}
-                continued={agentTurnOf(transcript.rows, transcript.rows.length - 1) !== null}
-              />
+      <ReplyActions.Provider value={replyActions}>
+        <Conversation aria-label="Events" className="min-h-0">
+          <ConversationContent className={cn(pageWidth, "gap-4")}>
+            {detail.data && transcript.rows.length === 0 ? (
+              <ConversationEmptyState description="Write the first message below." />
+            ) : (
+              transcript.rows.map((savedRow, index) => {
+                const policy =
+                  savedRow.kind === "tool" && savedRow.state === "pending"
+                    ? detail.data?.pendingTools?.[savedRow.id]
+                    : undefined;
+                const row =
+                  policy && savedRow.kind === "tool"
+                    ? { ...savedRow, risk: policy.risk }
+                    : savedRow;
+                return (
+                  <TranscriptItem
+                    key={row.id}
+                    row={row}
+                    turn={agentTurnOf(transcript.rows, index)}
+                    tools={detail.data?.tools}
+                    actions={{
+                      ...(row === retryable && { retry: () => void retry(retryable.runId) }),
+                      ...(!guest && { pickModel: () => setPicking(true) }),
+                      ...(row.kind === "tool" &&
+                        policy?.canDecide === true &&
+                        (row.toolId === ASK_TOOL
+                          ? { answer: (answers: AskAnswers | null) => answer(row.id, answers) }
+                          : {
+                              decide: (allow: boolean, scope: ToolScope) =>
+                                decide(row.id, allow, scope),
+                            })),
+                    }}
+                  />
+                );
+              })
             )}
-        </ConversationContent>
-        <ConversationScrollButton />
-      </Conversation>
+            {run &&
+              !run.waitingOn &&
+              !transcript.rows.some(
+                (row) => row.kind === "agent" && row.status === "streaming",
+              ) && (
+                <AgentStarting
+                  at={run.createdAt}
+                  continued={agentTurnOf(transcript.rows, transcript.rows.length - 1) !== null}
+                />
+              )}
+          </ConversationContent>
+          <ConversationScrollButton />
+        </Conversation>
+      </ReplyActions.Provider>
       <div className={cn(pageWidth, "p-4 pt-0")}>
         <div className="flex flex-col gap-2">
           {offline && (

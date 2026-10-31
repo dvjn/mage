@@ -65,12 +65,17 @@ export interface ToolSpec<I = unknown> {
 // Any tool, whatever its input.
 export type AnyToolSpec = ToolSpec<any>;
 
-// Tools from one provider, set out together: Mage's own, or one MCP server's.
+// Tools from one provider, set out together: Mage's own, or one MCP server's. One of Mage's own may
+// have no tools, only guidance for the agent.
 export interface Toolset {
   id: string;
   title: string;
   source: ToolsetSource;
   tools: AnyToolSpec[];
+  // What it is for, where settings show it without tools.
+  description?: string;
+  // What the agent is told while it is on in the thread's space.
+  guidance?: string;
   // Whether a space has any use for it now, such as skills to load; always, when not given.
   usefulIn?(space: { id: string; orgId: string }): boolean;
 }

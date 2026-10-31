@@ -5,7 +5,8 @@
 // reasons for a few words first when it asks it to think. Each `/tool <id> <json>` line in the
 // newest message makes it call that tool after its words, when it is offered, or say it cannot;
 // shown what the calls gave back, it says so. A `/fail <text>` line makes it fail with that text
-// after its words. A `/prompt` line makes it say its system prompt in place of its words. Its lists
+// after its words. A `/prompt` line makes it say its system prompt in place of its words, and a
+// `/say` line makes it reply with the rest of the message, a few characters at a time. Its lists
 // stand in for hosts' lists: they take any key starting with `sk-`.
 
 import { setTimeout as delay } from "node:timers/promises";
@@ -26,6 +27,9 @@ const REASONING = "Considering the gears and the levers".split(" ");
 const TOOL_LINE = /^(?:\[[^\]\n]*\][ \t]*)?\/tool[ \t]+(\S+)[ \t]*(.*)$/gm;
 const FAIL_LINE = /^(?:\[[^\]\n]*\][ \t]*)?\/fail[ \t]+(.+)$/m;
 const PROMPT_LINE = /^(?:\[[^\]\n]*\][ \t]*)?\/prompt[ \t]*$/m;
+// Everything after a `/say` line is the reply.
+const SAY_LINE = /^(?:\[[^\]\n]*\][ \t]*)?\/say[ \t]*\n([\s\S]*)$/m;
+const SAY_CHARS = 6;
 
 function wordsFor(messages: ModelMessage[]) {
   const read = messages.filter((message) => message.role === "user");
@@ -78,6 +82,17 @@ export function createFakeGateway(): ModelGateway {
             await delay(WORD_MS, undefined, { signal });
             yield { type: "reasoning", text: index === 0 ? word : ` ${word}` };
           }
+        }
+        const scripted = last?.role === "user" ? SAY_LINE.exec(said) : null;
+        if (scripted) {
+          const text = scripted[1]!;
+          for (let at = 0; at < text.length; at += SAY_CHARS) {
+            await delay(WORD_MS, undefined, { signal });
+            yield { type: "delta", text: text.slice(at, at + SAY_CHARS) };
+          }
+          messages.push({ role: "assistant", text });
+          yield { type: "step-end", usage: { inputTokens: 10, outputTokens: text.length } };
+          continue;
         }
         const wanted = toolLines(said);
         const words =

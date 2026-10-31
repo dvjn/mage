@@ -1,6 +1,6 @@
 // The agent's tools in settings: the Policies card, then a card for each source of toolsets (built
 // in, MCP servers) and in it one collapsible row per toolset with counts of its tools' policies and
-// a built-in on/off switch. Inside, its tools are split under plain read-only and interactive
+// a built-in on/off switch; a built-in toolset of no tools is a plain row with its switch. Inside, its tools are split under plain read-only and interactive
 // headings. Each heading's picker sets all its tools at once; each tool takes a policy or is off.
 // For the org, only its owners change them; in a space, the org's tools follow the org's policy by
 // default or take a stricter one on top, while the space's own toolsets take its policy directly. Which toolsets are open is remembered in this browser for the signed-in person. The
@@ -104,6 +104,34 @@ function Toolsets({ toolsets, scope, canChange, onSwitch }: ToolsProps) {
       <div className="-my-3 flex flex-col divide-y">
         {inSource.map((toolset) => {
           const on = toolset.enabled ?? true;
+          const control =
+            onSwitch &&
+            toolset.source === "builtin" &&
+            switchOf(toolset, scope, on, canChange, onSwitch);
+          if (toolset.tools.length === 0) {
+            return (
+              <section
+                key={toolset.id}
+                aria-label={toolset.title}
+                className="flex items-center gap-3 py-3"
+              >
+                <div className="flex min-w-0 flex-1 flex-col pl-6">
+                  <h2
+                    className={cn(
+                      "truncate text-base leading-6 font-semibold",
+                      !on && "text-muted-foreground",
+                    )}
+                  >
+                    {toolset.title}
+                  </h2>
+                  {toolset.description && (
+                    <p className="text-xs text-muted-foreground">{toolset.description}</p>
+                  )}
+                </div>
+                {control}
+              </section>
+            );
+          }
           return (
             <ToolsetSection
               key={toolset.id}
@@ -113,23 +141,7 @@ function Toolsets({ toolsets, scope, canChange, onSwitch }: ToolsProps) {
               open={sections.isOpen(toolset.id)}
               onOpenChange={(open) => sections.set(toolset.id, open)}
               on={on}
-              control={
-                onSwitch &&
-                toolset.source === "builtin" && (
-                  <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-                    {toolset.orgEnabled === false
-                      ? "Off by organization"
-                      : scope === "org" && (on ? "On" : "Off")}
-                    <Switch
-                      size="sm"
-                      aria-label={`${toolset.title}: ${scope === "space" ? "on in this space" : "on"}`}
-                      checked={on}
-                      disabled={!canChange || (scope === "space" && toolset.orgEnabled === false)}
-                      onCheckedChange={(enabled) => onSwitch(toolset.id, enabled)}
-                    />
-                  </label>
-                )
-              }
+              control={control}
             >
               <ToolsetTools toolset={toolset} scope={scope} />
             </ToolsetSection>
@@ -138,6 +150,30 @@ function Toolsets({ toolsets, scope, canChange, onSwitch }: ToolsProps) {
       </div>
     </SettingsCard>
   ));
+}
+
+// A built-in toolset's on/off switch, with whether it is on or the org turned it off.
+function switchOf(
+  toolset: ToolsetSetting,
+  scope: "org" | "space",
+  on: boolean,
+  canChange: boolean,
+  onSwitch: (toolsetId: string, enabled: boolean) => void,
+) {
+  return (
+    <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+      {toolset.orgEnabled === false
+        ? "Off by organization"
+        : scope === "org" && (on ? "On" : "Off")}
+      <Switch
+        size="sm"
+        aria-label={`${toolset.title}: ${scope === "space" ? "on in this space" : "on"}`}
+        checked={on}
+        disabled={!canChange || (scope === "space" && toolset.orgEnabled === false)}
+        onCheckedChange={(enabled) => onSwitch(toolset.id, enabled)}
+      />
+    </label>
+  );
 }
 
 // One toolset as a collapsible row: its title and badge, how many tools it has and their
@@ -538,7 +574,8 @@ export function SpaceToolsList({
           <>
             <Toolsets
               toolsets={tools.data.filter(
-                (toolset) => toolset.source !== "mcp" && toolset.tools.length > 0,
+                (toolset) =>
+                  toolset.source !== "mcp" && (toolset.tools.length > 0 || !!toolset.description),
               )}
               scope="space"
               canChange

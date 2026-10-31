@@ -3,7 +3,7 @@
 // with a copy button on hover; the signed-in person's own rows carry their avatar in the accent
 // colour. An agent's turn, its tool calls and its reply, sits under one Agent header that names the
 // model that wrote the reply; the reply shows what the model thought first, folded away once it
-// answers. An agent reply that was cut short says so, a run that failed says why and what to do
+// answers, then its Markdown with any layouts it wrote drawn in place. An agent reply that was cut short says so, a run that failed says why and what to do
 // about it, the last run that failed or was stopped can be tried again, and an event this client
 // does not know yet gets a labelled placeholder. Tool calls show by their tool's definition alone,
 // as a breadcrumb: its toolset or MCP server in muted text that lights up with the line on hover, a
@@ -57,6 +57,7 @@ import {
 } from "@/web/components/ai-elements/reasoning";
 import { CONNECTION_LABELS } from "@/web/components/model-picker";
 import { GivenAnswers, QuestionForm } from "@/web/components/question-form";
+import { RichReply } from "@/web/components/rich-reply";
 import { Time } from "@/web/components/time";
 import { ToolInput, ToolResult } from "@/web/components/tool-value";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
@@ -232,9 +233,15 @@ function AgentReply({ row, continued }: { row: AgentRow; continued: boolean }) {
         {streaming && !row.text ? (
           !row.reasoning && caret
         ) : (
-          <MessageResponse isAnimating={streaming} caret="block">
-            {row.text}
-          </MessageResponse>
+          <RichReply
+            text={row.text}
+            streaming={streaming}
+            markdown={(text, last) => (
+              <MessageResponse isAnimating={streaming && last} caret="block">
+                {text}
+              </MessageResponse>
+            )}
+          />
         )}
       </div>
     </TranscriptRowFrame>

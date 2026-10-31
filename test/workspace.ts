@@ -51,6 +51,7 @@ import { createOrgs } from "@/services/orgs.ts";
 import { createRunWorker, dropRefusedWaiting, type RunWorkerOptions } from "@/services/runs.ts";
 import { createSkills } from "@/services/skills.ts";
 import { createSpaces } from "@/services/spaces.ts";
+import { createRichReplies } from "@/services/rich-replies.ts";
 import { createSystemTools } from "@/services/system-tools.ts";
 import { createThreadAccess } from "@/services/thread-access.ts";
 import { createThreadLog } from "@/services/thread-log.ts";
@@ -263,6 +264,7 @@ export function setup(
         models: { replyModel, requireModel: models.requireModel },
       }),
       skills.toolset(),
+      createRichReplies(),
     ],
     scoped: {
       inSpace: (space) => mcp.toolsetsInSpace(space),
@@ -346,6 +348,7 @@ export function setup(
       guidance: (space, offered) => ({
         ...instructions.textsFor(space),
         skills: skills.listFor(space, offered),
+        toolsets: tools.guidanceIn(space),
       }),
       logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
       ...workerOptions,

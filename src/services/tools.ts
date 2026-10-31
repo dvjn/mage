@@ -286,7 +286,10 @@ export function createTools(options: ToolsOptions) {
   }
 
   // The toolset with each tool's definition, and whether the org or the space has it.
-  function withDefinitions({ tools, ...toolset }: Toolset, scope: "org" | "space") {
+  function withDefinitions(
+    { tools, guidance: _guidance, ...toolset }: Toolset,
+    scope: "org" | "space",
+  ) {
     return { ...toolset, scope, tools: tools.map(definitionOf) };
   }
 
@@ -314,6 +317,11 @@ export function createTools(options: ToolsOptions) {
 
     offered,
     riskOf,
+
+    // What the toolsets on in the space tell the agent.
+    guidanceIn(space: Pick<Space, "id" | "orgId">) {
+      return inSpace(space).flatMap((toolset) => (toolset.guidance ? [toolset.guidance] : []));
+    },
 
     // The names the model knows the space's tools by, those it does not offer now among them, for
     // calls made before.

@@ -46,6 +46,7 @@ import { createOrgs } from "@/services/orgs.ts";
 import { createRunWorker, dropRefusedWaiting, type RunWorker } from "@/services/runs.ts";
 import { createSkills } from "@/services/skills.ts";
 import { createSpaces } from "@/services/spaces.ts";
+import { createRichReplies } from "@/services/rich-replies.ts";
 import { createSystemTools } from "@/services/system-tools.ts";
 import { createThreadAccess } from "@/services/thread-access.ts";
 import { createThreadLog } from "@/services/thread-log.ts";
@@ -159,6 +160,7 @@ const tools = createTools({
       models,
     }),
     skills.toolset(),
+    createRichReplies(),
   ],
   scoped: {
     inSpace: (space) => mcp.toolsetsInSpace(space),
@@ -208,6 +210,7 @@ const worker = createRunWorker({
   guidance: (space, offered) => ({
     ...instructions.textsFor(space),
     skills: skills.listFor(space, offered),
+    toolsets: tools.guidanceIn(space),
   }),
   logger,
 });
