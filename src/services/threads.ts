@@ -503,8 +503,8 @@ export function createThreads(options: ThreadsOptions) {
       return threadSummary(threads.find(thread.id) ?? thread);
     },
 
-    // The thread with its events, the defaults it follows, and the model it names and the one that
-    // replies, which differ while the one it names is turned off.
+    // The thread with its events, how far the reader had seen it, the defaults it follows, and the
+    // model it names and the one that replies, which differ while the one it names is turned off.
     async get(principal: Principal, id: string): Promise<ThreadDetail> {
       const { thread, access: via } = access.require(principal, id);
       const space = spaceStore.find(thread.spaceId);
@@ -519,6 +519,7 @@ export function createThreads(options: ThreadsOptions) {
         thread: threadSummary(thread),
         events,
         access: via,
+        seenSeq: reads.seen(principal.userId, [id]).get(id) ?? 0,
         pendingTools: Object.fromEntries(
           rows.flatMap((row) =>
             row.kind === "tool" && row.state === "pending" && row.waits && space

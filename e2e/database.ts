@@ -28,8 +28,13 @@ function eventually<T>(read: () => T | undefined): T {
 }
 
 // Makes the user with `email` a member of the primary space of the user with `ownerEmail`, with
-// the role, acting from then on in that space's org.
-export function joinSpaceOf(ownerEmail: string, email: string, role: "messager" | "viewer") {
+// the role, and points their sessions at that space's org, answering its id. A tab of theirs still
+// open names its own org with each request, which points the session back.
+export function joinSpaceOf(
+  ownerEmail: string,
+  email: string,
+  role: "messager" | "viewer",
+): string {
   const db = open();
   try {
     const userId = (email: string) =>
@@ -56,6 +61,7 @@ export function joinSpaceOf(ownerEmail: string, email: string, role: "messager" 
         "insert into space_member (space_id, subject_kind, subject_id, role, source) values (?, 'user', ?, ?, 'direct')",
       ).run(space.id, member, role);
     }).immediate();
+    return space.orgId;
   } finally {
     db.close();
   }
@@ -138,6 +144,66 @@ export function shareThreads(ownerEmail: string, guestEmail: string) {
     db.prepare(
       "insert into thread_guest (thread_id, user_id, invited_by) select id, ?, ? from thread where space_id = ?",
     ).run(guest, space.userId, space.id);
+  } finally {
+    db.close();
+  }
+}
+
+// Adds a thread titled `title` to the primary space of the user with `email`, holding `count`
+// asides from them, `Note 1` and on, each a few lines long, which they have seen; then `count` more
+// from the user with `email` in `unread`, which they have not. Answers its id.
+export function addNotesThread(
+  email: string,
+  title: string,
+  count: number,
+  unread?: { email: string; count: number },
+) {
+  const db = open();
+  try {
+    const space = primarySpaceOf(db, email);
+    const other =
+      unread &&
+      (db.prepare("select id from user where email = ?").get(unread.email) as { id: string }).id;
+    const authors = [
+      ...Array.from({ length: count }, () => space.userId),
+      ...Array.from({ length: unread?.count ?? 0 }, () => other!),
+    ];
+    const threadId = randomUUID();
+    db.transaction(() => {
+      lastAdded = Math.max(Date.now(), lastAdded + 1);
+      const start = lastAdded - authors.length;
+      db.prepare(
+        "insert into thread (id, space_id, title, title_source, created_by, last_event_seq, last_message_text, created_at, updated_at) values (?, ?, ?, 'person', ?, ?, ?, ?, ?)",
+      ).run(
+        threadId,
+        space.id,
+        title,
+        space.userId,
+        authors.length,
+        `Note ${authors.length}`,
+        start,
+        lastAdded,
+      );
+      const insert = db.prepare(
+        "insert into thread_event (id, thread_id, seq, type, actor_kind, actor_user_id, data, created_at) values (?, ?, ?, 'message', 'user', ?, ?, ?)",
+      );
+      authors.forEach((author, index) => {
+        const seq = index + 1;
+        const text = `Note ${seq}\n\nA line to give it height.\n\nAnd one more.`;
+        insert.run(
+          randomUUID(),
+          threadId,
+          seq,
+          author,
+          JSON.stringify({ parts: [{ type: "text", text }], quiet: true, mode: "steer" }),
+          start + seq,
+        );
+      });
+      db.prepare(
+        "insert into thread_read (user_id, thread_id, last_seen_seq, seen_at) values (?, ?, ?, ?)",
+      ).run(space.userId, threadId, count, lastAdded);
+    }).immediate();
+    return threadId;
   } finally {
     db.close();
   }

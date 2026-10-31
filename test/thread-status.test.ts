@@ -90,7 +90,7 @@ describe("what a thread holds for each reader", () => {
     expect(statusOf(await listed(workspace, ada.cookie), ada.userId)).toBe("read");
   });
 
-  it("keeps how far a reader saw from moving back, and hides threads they cannot read", async () => {
+  it("keeps how far a reader saw from moving back, gives it with the thread, and hides threads they cannot read", async () => {
     const workspace = await agentThread();
     const { ada, post, api, thread, signUp } = workspace;
     await post(ada, "// One");
@@ -102,6 +102,9 @@ describe("what a thread holds for each reader", () => {
     expect(
       await (await api("PUT", `/threads/${thread.id}/read`, ada.cookie, { seq: 1 })).json(),
     ).toEqual({ seq: 2 });
+    expect(await (await api("GET", `/threads/${thread.id}`, ada.cookie)).json()).toMatchObject({
+      seenSeq: 2,
+    });
     const stranger = await signUp("Hedy Lamarr", "hedy@example.com");
     expect(
       (await api("PUT", `/threads/${thread.id}/read`, stranger.cookie, { seq: 1 })).status,

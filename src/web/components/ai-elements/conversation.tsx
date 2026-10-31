@@ -4,21 +4,68 @@ import { Button } from "@/web/components/ui/button";
 import { cn } from "cn";
 import type { UIMessage } from "ai";
 import { ArrowDownIcon, DownloadIcon } from "lucide-react";
-import type { ComponentProps } from "react";
-import { useCallback } from "react";
+import type { ComponentProps, ReactNode, RefObject } from "react";
+import { useCallback, useLayoutEffect } from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 
-export type ConversationProps = ComponentProps<typeof StickToBottom>;
+export type ConversationProps = Omit<ComponentProps<typeof StickToBottom>, "children"> & {
+  children?: ReactNode;
+  // Opens with this element near the top of the view, unless all from it on fits the view.
+  openAt?: RefObject<HTMLElement | null>;
+  // Content after `openAt` is still growing: it is not followed, even when it fits at first,
+  // until the reader reaches the end.
+  holdOpenAt?: boolean;
+};
 
-export const Conversation = ({ className, ...props }: ConversationProps) => (
+// Opens at the end, or at `openAt`, and stays at the end as content grows unless the reader
+// scrolls up; scrolling back down to it sticks again.
+export const Conversation = ({
+  className,
+  children,
+  openAt,
+  holdOpenAt,
+  ...props
+}: ConversationProps) => (
   <StickToBottom
     className={cn("relative flex-1 overflow-y-hidden", className)}
-    initial="smooth"
+    initial="instant"
     resize="smooth"
     role="log"
     {...props}
-  />
+  >
+    {children}
+    <OpenScrolled at={openAt} hold={holdOpenAt} />
+  </StickToBottom>
 );
+
+// The room left above the element a conversation opens at.
+const OPEN_AT_OFFSET_PX = 24;
+
+// Scrolls the content mounted with the conversation into place before it is first painted: to the
+// end, or to `at` without sticking to the end, held there when `hold`. Coming after the content,
+// it runs once the content is in place.
+const OpenScrolled = ({ at, hold }: { at?: RefObject<HTMLElement | null>; hold?: boolean }) => {
+  const { state, scrollRef, stopScroll } = useStickToBottomContext();
+  useLayoutEffect(() => {
+    const end = state.calculatedTargetScrollTop;
+    const scroll = scrollRef.current;
+    const mark = at?.current;
+    if (scroll && mark) {
+      const top =
+        scroll.scrollTop +
+        mark.getBoundingClientRect().top -
+        scroll.getBoundingClientRect().top -
+        OPEN_AT_OFFSET_PX;
+      if (top < end || hold) {
+        state.scrollTop = Math.max(0, Math.min(top, end));
+        stopScroll();
+        return;
+      }
+    }
+    state.scrollTop = end;
+  }, [at, hold, scrollRef, state, stopScroll]);
+  return null;
+};
 
 export type ConversationContentProps = ComponentProps<typeof StickToBottom.Content>;
 
@@ -79,6 +126,7 @@ export const ConversationScrollButton = ({
           className,
         )}
         onClick={handleScrollToBottom}
+        aria-label="Scroll to end"
         size="icon"
         type="button"
         variant="outline"

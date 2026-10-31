@@ -5,7 +5,7 @@
 // is read again when it lacks the thread; the pages of tables of threads it is in are read again. How far they saw a thread, here or on another device,
 // clears what was new, and a thread gone for them leaves every list. After the stream was lost the
 // lists are read again, as they are once the app is back online; offline it does not follow.
-// Reading a thread records how far it was seen, at once in the lists here.
+// Reading a thread records how far it was seen, at once in the lists and the thread here.
 // The open thread is marked seen as it opens and as new events arrive while it is in view.
 
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
@@ -21,7 +21,7 @@ import {
 import { apiClient } from "@/web/lib/api-client";
 import { checkServer, useOnline } from "@/web/lib/online";
 import { tabOrg } from "@/web/lib/org-tab";
-import { sharedThreadsQuery, spaceThreadsQuery } from "@/web/lib/queries";
+import { sharedThreadsQuery, spaceThreadsQuery, threadQuery } from "@/web/lib/queries";
 
 type Listed = { id: string; updatedAt: string; activity: ThreadActivity };
 
@@ -81,9 +81,12 @@ function eachList(queryClient: QueryClient, change: <T extends Listed>(list: T[]
   );
 }
 
-// Records here that the thread was seen up to `seq`.
+// Records here that the thread was seen up to `seq`, in the lists and the thread as last read.
 export function seenHere(queryClient: QueryClient, threadId: string, seq: number) {
   eachList(queryClient, (list) => withSeen(list, threadId, seq));
+  queryClient.setQueryData(threadQuery(threadId).queryKey, (detail) =>
+    detail && detail.seenSeq < seq ? { ...detail, seenSeq: seq } : detail,
+  );
 }
 
 // Tells the server the thread was seen up to `seq`, showing it here at once.

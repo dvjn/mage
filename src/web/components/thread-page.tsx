@@ -1,18 +1,19 @@
-// A thread: its transcript as it happens, kept scrolled to the newest, what the agent is doing and
-// the messages waiting for it, a composer to post, steer, queue, interrupt and stop, trying the
-// last reply again when it failed or was stopped, and the thread's model with, for a model that can
-// think, its reasoning effort, or the defaults it follows, named as such, with a way back to them.
-// Its space's owners and messagers can share it from its header. Those a tool's policy lets
-// approve decide on the agent's calls of it that wait, those it lets use or approve it answer the
-// agent's questions, and while the agent waits the composer says on what. A guest of the thread
-// sees its space's name alone, and cannot change its model; once their access ends, they are told
-// so. When the server cannot be reached, the thread as last read stays in view while it
-// reconnects. Reading it marks it seen.
+// A thread: its transcript as it happens, opened where the reader stopped with a line above what
+// is new to them, or else at the newest, and kept scrolled to the newest once they reach it, what
+// the agent is doing and the messages waiting for it, a composer to post, steer, queue, interrupt
+// and stop, trying the last reply again when it failed or was stopped, and the thread's model with,
+// for a model that can think, its reasoning effort, or the defaults it follows, named as such, with
+// a way back to them. Its space's owners and messagers can share it from its header. Those a
+// tool's policy lets approve decide on the agent's calls of it that wait, those it lets use or
+// approve it answer the agent's questions, and while the agent waits the composer says on what. A
+// guest of the thread sees its space's name alone, and cannot change its model; once their access
+// ends, they are told so. When the server cannot be reached, the thread as last read stays in view
+// while it reconnects. Reading it marks it seen.
 
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ASK_TOOL, type AskAnswers } from "@/shared/ask.ts";
 import {
@@ -102,7 +103,6 @@ export function ThreadPage() {
     threadId,
     !!detail.data && !notFound && !ended,
   );
-  useMarkRead(threadId, notFound || ended ? undefined : thread?.lastEventSeq);
   // The thread cannot be read or followed right now; what is shown is what was last read. Offline,
   // the sidebar says so instead.
   const offline = online && !notFound && !ended && (detail.failureCount > 0 || reconnecting);
@@ -119,6 +119,46 @@ export function ThreadPage() {
       ),
     [events, streaming],
   );
+
+  // The thread as first read from the server on this visit, or as cached when it cannot answer:
+  // its events, and the first row the reader had not seen by then that is not their own nor a
+  // reply still being written. It opens there, or at the end when there is none, and a line marks
+  // that row until they post; while the agent is at work it is held there, not following the
+  // reply, until the reader reaches the end. Until more events arrive, what renders late, such as
+  // an image, lands at the end at once; what arrives after scrolls in. The thread is marked seen
+  // once it is read.
+  const [visit, setVisit] = useState<{
+    threadId: string;
+    events: unknown;
+    openedAt?: string;
+    newFrom?: string;
+    hold: boolean;
+  }>();
+  if (
+    detail.data &&
+    (!detail.isFetching || detail.failureCount > 0) &&
+    visit?.threadId !== threadId
+  ) {
+    const seen = detail.data.seenSeq;
+    const reader = me.data?.user.id;
+    const newFrom = transcript.rows.find(
+      (row) =>
+        row.seq > seen &&
+        !(row.kind === "human" && row.author.userId === reader) &&
+        !(row.kind === "agent" && row.status === "streaming"),
+    )?.id;
+    setVisit({
+      threadId,
+      events: detail.data.events,
+      openedAt: newFrom,
+      newFrom,
+      hold: !!transcript.run,
+    });
+  }
+  const opened = visit?.threadId === threadId ? visit : undefined;
+  const arriving = !!opened && opened.events !== events;
+  const stoppedAt = useRef<HTMLDivElement>(null);
+  useMarkRead(threadId, notFound || ended || !opened ? undefined : thread?.lastEventSeq);
 
   const run = transcript.run;
 
@@ -137,6 +177,7 @@ export function ThreadPage() {
       throw new Error(failed);
     }
     setError(undefined);
+    setVisit((shown) => shown && { ...shown, newFrom: undefined });
     mergeEvents(queryClient, threadId, [anyThreadEventSchema.parse(await res.json())]);
     await queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
     refreshList();
@@ -282,55 +323,72 @@ export function ThreadPage() {
         {(role === "owner" || role === "messager") && <ShareDialog threadId={threadId} />}
       </PageHeader>
       <ReplyActions.Provider value={replyActions}>
-        <Conversation aria-label="Events" className="min-h-0">
-          <ConversationContent className={cn(pageWidth, "gap-4")}>
-            {detail.data && transcript.rows.length === 0 ? (
-              <ConversationEmptyState description="Write the first message below." />
-            ) : (
-              transcript.rows.map((savedRow, index) => {
-                const policy =
-                  savedRow.kind === "tool" && savedRow.state === "pending"
-                    ? detail.data?.pendingTools?.[savedRow.id]
-                    : undefined;
-                const row =
-                  policy && savedRow.kind === "tool"
-                    ? { ...savedRow, risk: policy.risk }
-                    : savedRow;
-                return (
-                  <TranscriptItem
-                    key={row.id}
-                    row={row}
-                    turn={agentTurnOf(transcript.rows, index)}
-                    tools={detail.data?.tools}
-                    actions={{
-                      ...(row === retryable && { retry: () => void retry(retryable.runId) }),
-                      ...(!guest && { pickModel: () => setPicking(true) }),
-                      ...(row.kind === "tool" &&
-                        policy?.canDecide === true &&
-                        (row.toolId === ASK_TOOL
-                          ? { answer: (answers: AskAnswers | null) => answer(row.id, answers) }
-                          : {
-                              decide: (allow: boolean, scope: ToolScope) =>
-                                decide(row.id, allow, scope),
-                            })),
-                    }}
-                  />
-                );
-              })
-            )}
-            {run &&
-              !run.waitingOn &&
-              !transcript.rows.some(
-                (row) => row.kind === "agent" && row.status === "streaming",
-              ) && (
-                <AgentStarting
-                  at={run.createdAt}
-                  continued={agentTurnOf(transcript.rows, transcript.rows.length - 1) !== null}
-                />
+        {detail.data ? (
+          // The cached thread shows at once; it opens again where the reader stopped once read.
+          <Conversation
+            key={`${threadId}:${opened?.openedAt ?? ""}`}
+            openAt={stoppedAt}
+            holdOpenAt={opened?.hold}
+            aria-label="Events"
+            className="min-h-0"
+            resize={arriving ? "smooth" : "instant"}
+          >
+            <ConversationContent className={cn(pageWidth, "gap-4")}>
+              {transcript.rows.length === 0 ? (
+                <ConversationEmptyState description="Write the first message below." />
+              ) : (
+                transcript.rows.map((savedRow, index) => {
+                  const policy =
+                    savedRow.kind === "tool" && savedRow.state === "pending"
+                      ? detail.data?.pendingTools?.[savedRow.id]
+                      : undefined;
+                  const row =
+                    policy && savedRow.kind === "tool"
+                      ? { ...savedRow, risk: policy.risk }
+                      : savedRow;
+                  return (
+                    <Fragment key={row.id}>
+                      {row.id === opened?.newFrom && (
+                        // Where the reader stopped; takes no room in the rows' gap.
+                        <div ref={stoppedAt} aria-hidden className="-my-2 h-0 shrink-0" />
+                      )}
+                      <TranscriptItem
+                        row={row}
+                        turn={agentTurnOf(transcript.rows, index)}
+                        tools={detail.data?.tools}
+                        actions={{
+                          ...(row === retryable && { retry: () => void retry(retryable.runId) }),
+                          ...(!guest && { pickModel: () => setPicking(true) }),
+                          ...(row.kind === "tool" &&
+                            policy?.canDecide === true &&
+                            (row.toolId === ASK_TOOL
+                              ? { answer: (answers: AskAnswers | null) => answer(row.id, answers) }
+                              : {
+                                  decide: (allow: boolean, scope: ToolScope) =>
+                                    decide(row.id, allow, scope),
+                                })),
+                        }}
+                      />
+                    </Fragment>
+                  );
+                })
               )}
-          </ConversationContent>
-          <ConversationScrollButton />
-        </Conversation>
+              {run &&
+                !run.waitingOn &&
+                !transcript.rows.some(
+                  (row) => row.kind === "agent" && row.status === "streaming",
+                ) && (
+                  <AgentStarting
+                    at={run.createdAt}
+                    continued={agentTurnOf(transcript.rows, transcript.rows.length - 1) !== null}
+                  />
+                )}
+            </ConversationContent>
+            <ConversationScrollButton />
+          </Conversation>
+        ) : (
+          <div className="min-h-0 flex-1" />
+        )}
       </ReplyActions.Provider>
       <div className={cn(pageWidth, "p-4 pt-0")}>
         <div className="flex flex-col gap-2">
