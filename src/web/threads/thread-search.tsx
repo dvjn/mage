@@ -261,6 +261,7 @@ function ThreadSearchDialog({ start, onClose }: { start: SearchStart; onClose: (
                       key={thread.id}
                       value={thread.id}
                       onSelect={() => choose(thread.id)}
+                      className="[--lead-bg:var(--popover)] data-selected:[--lead-bg:var(--muted)]"
                     >
                       <ResultRow thread={thread} place={placeOf(thread)} />
                     </CommandItem>

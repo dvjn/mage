@@ -1,18 +1,18 @@
-// A space's threads in the sidebar: chips pick a folder, or all of the space, and remember it;
-// the threads picked are listed grouped below.
+// A space's threads in the sidebar: a switcher picks a folder, or all of the space, and remembers
+// it; the threads picked are listed grouped below.
 
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
 
 import type { SpaceSummary } from "@/shared/spaces.ts";
-import { SidebarGroup, SidebarGroupLabel } from "@/web/components/ui/sidebar";
+import { SidebarGroup } from "@/web/components/ui/sidebar";
 import { useFolderActivity } from "@/web/folders/folder-activity";
 import { FolderDialogs } from "@/web/folders/folder-dialogs";
+import { FolderSwitcher } from "@/web/folders/folder-switcher";
 import { usePickedFolder } from "@/web/folders/picked-folder";
 import { useShortcut } from "@/web/lib/shortcuts";
 import { useMoveThread } from "@/web/threads/mutations";
-import { FolderChips } from "@/web/threads/nav/folder-chips";
 import { GroupedThreads } from "@/web/threads/nav/grouped-threads";
 import { Empty, MenuSkeleton } from "@/web/threads/nav/list-states";
 import { type Nav, type NavAction, NavContext } from "@/web/threads/nav/nav-context";
@@ -64,14 +64,15 @@ export function SpaceThreads({ space }: { space: SpaceSummary }) {
     <>
       <SpaceSection space={space} onNewFolder={() => setAction({ kind: "new-folder" })} />
       <SidebarGroup>
-        <SidebarGroupLabel>Threads</SidebarGroupLabel>
         <NavContext value={nav}>
-          <FolderChips
+          <FolderSwitcher
+            spaceId={space.id}
             folders={folders}
-            total={spaceTotal}
             picked={picked}
             onPick={pick}
             onStart={(folderId) => newThread(space.id, folderId)}
+            act={setAction}
+            role={space.role}
           />
           <GroupedThreads
             threads={listed}

@@ -31,18 +31,27 @@ import { type Crumb } from "@/web/shell/page-header";
 
 export const NO_FOLDER = "No folder";
 
+// What each use of the list may add: what the null item is called, and something at the right of
+// a folder's row.
+interface ListExtras {
+  none?: string;
+  detail?: (folder: FolderSummary) => React.ReactNode;
+}
+
 // The list itself; `onNew` asks for a new folder, with the text typed so far as its name.
 function FolderList({
   folders,
   value,
   onChange,
   onNew,
+  none = NO_FOLDER,
+  detail,
 }: {
   folders: FolderSummary[];
   value: string | null;
   onChange: (folderId: string | null) => void;
   onNew: (name: string) => void;
-}) {
+} & ListExtras) {
   const [text, setText] = useState("");
   // The item's own check shows on the current one.
   const checked = (id: string | null) => id === value || undefined;
@@ -66,7 +75,7 @@ function FolderList({
             data-checked={checked(null)}
             onSelect={() => onChange(null)}
           >
-            {NO_FOLDER}
+            {none}
           </CommandItem>
           {folders.map((folder) => (
             <CommandItem
@@ -76,6 +85,7 @@ function FolderList({
               onSelect={() => onChange(folder.id)}
             >
               <span className="truncate">{folder.name}</span>
+              {detail?.(folder)}
             </CommandItem>
           ))}
         </CommandGroup>
@@ -127,6 +137,7 @@ export function FolderPicker({
   trigger,
   tooltip,
   children,
+  ...extras
 }: {
   spaceId: string;
   folders: FolderSummary[];
@@ -135,7 +146,7 @@ export function FolderPicker({
   trigger: React.ReactElement;
   tooltip?: string;
   children: React.ReactNode;
-}) {
+} & ListExtras) {
   const [open, setOpen] = useState(false);
   const fresh = useNewFolder(spaceId, onChange);
   return (
@@ -150,6 +161,7 @@ export function FolderPicker({
         )}
         <PopoverContent align="start" className="w-56 p-0">
           <FolderList
+            {...extras}
             folders={folders}
             value={value}
             onChange={(id) => {

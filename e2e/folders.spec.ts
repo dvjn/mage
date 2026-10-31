@@ -28,11 +28,16 @@ function sidebar(page: Page) {
   return page.locator("[data-sidebar=sidebar]");
 }
 
-// The folder's chip, named with how many threads it holds.
-function chip(page: Page, name: string) {
-  return sidebar(page)
-    .getByRole("group", { name: "Folders" })
-    .getByRole("button", { name: new RegExp(`^${name} \\d`) });
+// The row naming the folder the sidebar lists, or "All threads", which opens the folder picker.
+function switcher(page: Page) {
+  return sidebar(page).getByRole("list", { name: "Folder" }).getByRole("button").first();
+}
+
+// Picks a folder, or "All threads", in the sidebar's switcher.
+async function pickFolder(page: Page, name: string) {
+  await switcher(page).click();
+  await page.getByRole("option", { name: new RegExp(`^${name}`) }).click();
+  await expect(switcher(page)).toHaveAccessibleName(name);
 }
 
 async function itemMenu(page: Page, name: string, item: string) {
@@ -42,10 +47,9 @@ async function itemMenu(page: Page, name: string, item: string) {
   await page.getByRole("menuitem", { name: item }).click();
 }
 
-// Picks the folder's chip, then an action from its menu.
+// Picks the folder, then an action from its menu.
 async function folderMenu(page: Page, name: string, item: string) {
-  await chip(page, name).click();
-  await expect(chip(page, name)).toHaveAttribute("aria-pressed", "true");
+  await pickFolder(page, name);
   await itemMenu(page, name, item);
 }
 
@@ -70,16 +74,16 @@ test("a thread started in a folder stays there after a reload and moves to the t
   page,
 }) => {
   await signUp(page);
+  await expect(switcher(page)).toHaveAccessibleName("All threads");
 
   await sidebar(page).getByRole("button", { name: "New folder" }).click();
   await nameIt(page, "Engines", "Create");
   await newThreadIn(page, "Engines", "Pistons");
   await expect(sidebar(page).getByRole("link", { name: /^Pistons/ })).toBeVisible();
-  await expect(chip(page, "Engines")).toHaveAccessibleName("Engines 1 thread");
 
   // The picked folder is remembered.
   await page.reload();
-  await expect(chip(page, "Engines")).toHaveAttribute("aria-pressed", "true");
+  await expect(switcher(page)).toHaveAccessibleName("Engines");
   await expect(sidebar(page).getByRole("link", { name: /^Pistons/ })).toBeVisible();
 
   await itemMenu(page, "Pistons", "Move to");
@@ -89,33 +93,45 @@ test("a thread started in a folder stays there after a reload and moves to the t
     .click();
   await expect(sidebar(page).getByRole("link", { name: /^Pistons/ })).toHaveCount(0);
   await expect(sidebar(page).getByText("No threads", { exact: true })).toBeVisible();
-  await expect(chip(page, "Engines")).toHaveAccessibleName("Engines 0 threads");
-  await chip(page, "All").click();
+  await pickFolder(page, "All threads");
   await expect(sidebar(page).getByRole("link", { name: /^Pistons/ })).toBeVisible();
+  await expect(sidebar(page).getByRole("button", { name: /^Actions for Engines/ })).toHaveCount(0);
 });
 
-test("a folder is renamed and deleted from its chip's menu, its threads moving to the top", async ({
+test("a folder is made from the switcher, renamed and deleted from its menu, its threads moving to the top", async ({
   page,
 }) => {
   await signUp(page);
-  await sidebar(page).getByRole("button", { name: "New folder" }).click();
+
+  // The text typed in the picker names the new folder, which is then picked.
+  await switcher(page).click();
+  await page.getByPlaceholder("Find a folder").fill("Looms");
+  await page.getByRole("option", { name: "New folder" }).click();
   await nameIt(page, "Looms", "Create");
-  await newThreadIn(page, "Looms", "Punched cards");
+  await expect(switcher(page)).toHaveAccessibleName("Looms");
+  await itemMenu(page, "Looms", "New thread");
+  await expect(page.getByText("New thread in Looms")).toBeVisible();
+  await page.getByLabel("Message", { exact: true }).fill("Punched cards");
+  await page.getByLabel("Message", { exact: true }).press("Enter");
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
 
   await folderMenu(page, "Looms", "Rename");
   await nameIt(page, "Jacquard", "Save");
-  await expect(chip(page, "Jacquard")).toHaveAttribute("aria-pressed", "true");
+  await expect(switcher(page)).toHaveAccessibleName("Jacquard");
 
   await itemMenu(page, "Jacquard", "Delete");
   const confirm = page.getByRole("alertdialog");
   await expect(confirm).toContainText("Its threads move to the top of the space.");
   await confirm.getByRole("button", { name: "Delete" }).click();
 
-  await expect(chip(page, "Jacquard")).toHaveCount(0);
+  await expect(switcher(page)).toHaveAccessibleName("All threads");
+  await switcher(page).click();
+  await expect(page.getByRole("option", { name: /^Jacquard/ })).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await expect(sidebar(page).getByRole("link", { name: /^Punched cards/ })).toBeVisible();
 });
 
-test("chips pick a folder, the list groups and cuts its threads, and the search opens on the scope", async ({
+test("the switcher picks a folder, the list groups and cuts its threads, and the search opens on the scope", async ({
   page,
 }) => {
   const email = await signUp(page);
@@ -126,14 +142,17 @@ test("chips pick a folder, the list groups and cuts its threads, and the search 
   addThreads(email, 5, { prefix: "Loom", folder: "Looms" });
   await page.reload();
 
-  // All, then the most recently active folders that fit on two rows, then the rest in the search.
-  const group = sidebar(page).getByRole("group", { name: "Folders" });
-  await expect(group.getByRole("button").nth(0)).toHaveText("All 16 threads");
-  await expect(group.getByRole("button").nth(1)).toHaveText("Looms 5 threads");
-  const more = group.getByRole("button", { name: /^\d+ more$/ });
-  await expect(more).toBeVisible();
-  expect((await group.boundingBox())!.height).toBeLessThan(3 * 24);
-  await expect(chip(page, "All")).toHaveAttribute("aria-pressed", "true");
+  // The picker lists all of the space first, then every folder, the current one checked.
+  await switcher(page).click();
+  const options = page.getByRole("option");
+  await expect(options.first()).toHaveText("All threads");
+  await expect(options.first()).toHaveAttribute("data-checked", "true");
+  await expect(
+    options.filter({ hasText: /^(Gears|Cards|Pistons|Valves|Levers|Looms)$/ }),
+  ).toHaveCount(6);
+  await expect(options.last()).toHaveText("New folder");
+  await page.keyboard.press("Escape");
+
   const today = sidebar(page).getByRole("list", { name: "Today" });
   await expect(today.getByRole("link")).toHaveCount(4);
   await expect(today.getByRole("link", { name: /^Loom 5/ })).toContainText("Looms");
@@ -142,14 +161,9 @@ test("chips pick a folder, the list groups and cuts its threads, and the search 
   await sidebar(page).getByRole("button", { name: "12 more threads" }).click();
   const dialog = page.getByRole("dialog", { name: "Search threads" });
   await expect(dialog.getByRole("option")).toHaveCount(16);
-  await page.keyboard.press("Escape");
 
-  // "<n> more" opens the folders; choosing one scopes the threads to it until Backspace clears it.
-  await more.click();
-  await expect(dialog.getByRole("button", { name: /^Folders \d/ })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  // Choosing a folder scopes the threads to it until Backspace clears it.
+  await dialog.getByRole("combobox").press("Tab");
   await expect(dialog.getByRole("option")).toHaveCount(6);
   await dialog.getByRole("combobox").fill("gea");
   await expect(dialog.getByRole("option")).toHaveCount(1);
@@ -163,8 +177,7 @@ test("chips pick a folder, the list groups and cuts its threads, and the search 
   await page.keyboard.press("Escape");
 
   // A picked folder lists its newest few and leads to the search on it for all.
-  await chip(page, "Looms").click();
-  await expect(sidebar(page).getByRole("button", { name: /^Search Looms/ })).toHaveCount(0);
+  await pickFolder(page, "Looms");
   await expect(today.getByRole("link")).toHaveCount(4);
   await expect(today.getByRole("link", { name: /^Loom 5/ })).not.toContainText("Looms");
   await sidebar(page).getByRole("button", { name: "All 5 in Looms" }).click();
@@ -174,7 +187,7 @@ test("chips pick a folder, the list groups and cuts its threads, and the search 
   await expect(dialog.getByRole("option")).toHaveCount(16);
 });
 
-test("a long folder name is cut short in its chip, on rows and in the search's scope", async ({
+test("a long folder name is cut short in the switcher, on rows and in the search's scope", async ({
   page,
 }) => {
   const long = "Customer escalations for enterprise accounts";
@@ -183,17 +196,29 @@ test("a long folder name is cut short in its chip, on rows and in the search's s
   addThreads(email, 2, { prefix: "Escalation", folder: long });
   await page.reload();
 
-  const group = sidebar(page).getByRole("group", { name: "Folders" });
-  const longChip = chip(page, long);
-  await expect(longChip).toHaveAccessibleName(`${long} 2 threads`);
-  expect((await group.boundingBox())!.height).toBeLessThan(3 * 24);
-  expect((await longChip.boundingBox())!.width).toBeLessThan(160);
   // The row's title keeps most of the row.
   const row = sidebar(page).getByRole("link", { name: /^Escalation 2/ });
   const place = row.getByText(long);
   expect((await place.boundingBox())!.width).toBeLessThanOrEqual(80);
 
-  await longChip.click();
+  // The switcher's name is cut short before the folder's menu, inside the sidebar.
+  await pickFolder(page, long);
+  const name = switcher(page).getByText(long);
+  const menu = sidebar(page).getByRole("button", { name: `Actions for ${long}` });
+  await switcher(page).hover();
+  await expect(menu).toBeVisible();
+  const menuAt = (await menu.boundingBox())!.x;
+  // The row's padding eases in once a folder is picked.
+  await expect
+    .poll(async () => {
+      const box = (await name.boundingBox())!;
+      return box.x + box.width;
+    })
+    .toBeLessThanOrEqual(menuAt);
+  const box = (await switcher(page).boundingBox())!;
+  const side = (await sidebar(page).boundingBox())!;
+  expect(box.x + box.width).toBeLessThanOrEqual(side.x + side.width);
+
   await sidebar(page)
     .getByRole("button", { name: /^Search/ })
     .first()

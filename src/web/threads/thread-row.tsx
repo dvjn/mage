@@ -6,8 +6,8 @@
 // about time (when it was last active, or when access ends) at its end; the second is who has
 // written in it, as the first names of the one or two who wrote last and how many more, all named
 // in full on hover with a guest marked, then where the thread is when the list mixes places. A
-// sidebar row is one line: the status's glyph, or while there is none a small muted mark of its
-// model's maker named with the model, the title, where the thread is when the list mixes places,
+// sidebar row is one line: a small muted mark of its model's maker named with the model, the status
+// as a dot on its corner, the title, where the thread is when the list mixes places,
 // and how long ago it was last active, under the menu it is given while the pointer is over the
 // row. Every list of threads uses it, so they look and behave alike.
 
@@ -24,7 +24,12 @@ import { Badge } from "@/web/components/ui/badge";
 import { SidebarMenuButton, SidebarMenuItem } from "@/web/components/ui/sidebar";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { MakerMark, ModelTile, modelLabel } from "@/web/models/marks";
-import { StatusGlyph, useThreadStatus } from "@/web/threads/thread-status";
+import {
+  StatusDot,
+  StatusGlyph,
+  useStatusLabel,
+  useThreadStatus,
+} from "@/web/threads/thread-status";
 import { ThreadTitle } from "@/web/threads/thread-title";
 import { writerLine, writersInFull } from "@/web/threads/writers";
 
@@ -162,9 +167,10 @@ export const slotUnderMenu =
 // always shows, and the row keeps room for it.
 export const menuRoom = "md:group-has-data-[sidebar=menu-action]/menu-item:pr-2";
 
-// The start of a one-line row: the status's glyph, or while there is none a small muted mark of the
-// model's maker, named with the model. First in the row, though after the title for screen
-// readers, so a row is named by its title first.
+// The start of a one-line row: a small muted mark of the model's maker, named with the model, with
+// the status as a dot on its corner; on hover, the status then the model. The row gives its colour
+// as `--lead-bg` for the dot's disc. First in the row, though after the title for screen readers,
+// so a row is named by its title first.
 export function RowLead({
   thread,
   status,
@@ -174,24 +180,24 @@ export function RowLead({
 }) {
   const model = thread.shownModel;
   const label = model ? modelLabel(model.name, model.connection) : "No model";
+  const statusLabel = useStatusLabel(status, thread.activity);
   return (
-    <span className="order-first flex size-4 shrink-0 items-center justify-center">
-      {status === "read" ? (
-        <WithTooltip label={label}>
-          <span role="img" aria-label={label} className="flex">
-            <MakerMark
-              maker={model?.maker ?? null}
-              mono
-              className="size-3.5 text-muted-foreground"
-            />
-          </span>
-        </WithTooltip>
-      ) : (
-        <StatusGlyph status={status} activity={thread.activity} size="size-3.5" />
-      )}
-    </span>
+    <WithTooltip label={statusLabel ? `${statusLabel} · ${label}` : label}>
+      {/* Last in the row for the menu button, which cuts its last span short; the dot sits past
+          the mark's edge, so this one must not clip. */}
+      <span className="relative order-first flex size-4 shrink-0 items-center justify-center overflow-visible!">
+        <span role="img" aria-label={label} className="flex">
+          <MakerMark maker={model?.maker ?? null} mono className="size-3.5 text-muted-foreground" />
+        </span>
+        <StatusDot status={status} label={statusLabel} className="absolute -right-1 -bottom-1" />
+      </span>
+    </WithTooltip>
   );
 }
+
+// The sidebar row's colour, for the disc under its status dot.
+const leadOnSidebar =
+  "[--lead-bg:var(--sidebar)] hover:[--lead-bg:var(--sidebar-accent)] data-[active=true]:[--lead-bg:var(--sidebar-accent)]";
 
 // The title of a one-line row, sized for the sidebar.
 export const rowTitle = "min-w-0 flex-1 truncate text-[13px]";
@@ -201,7 +207,7 @@ function SidebarRow({ thread, place, title, isActive, children }: SidebarRowProp
   const button = (
     <SidebarMenuButton
       isActive={isActive}
-      className={menuRoom}
+      className={cn(menuRoom, leadOnSidebar)}
       render={<Link to="/t/$threadId" params={{ threadId: thread.id }} />}
     >
       <ThreadTitle thread={thread} className={cn(rowTitle, status === "unread" && "font-medium")} />

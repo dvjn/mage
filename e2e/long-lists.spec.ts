@@ -69,9 +69,8 @@ test("a folder lists its newest few threads, the search lists them all, and the 
   addThreads(email, 2, { prefix: "Loose" });
   await page.reload();
   const space = page.url();
-  await sidebar(page)
-    .getByRole("button", { name: /^Looms \d/ })
-    .click();
+  await sidebar(page).getByRole("button", { name: "All threads" }).click();
+  await page.getByRole("option", { name: "Looms" }).click();
   await expect(sidebar(page).getByRole("link", { name: /^Loom \d+ / })).toHaveCount(4);
   await sidebar(page).getByRole("button", { name: "All 31 in Looms" }).click();
   const dialog = page.getByRole("dialog", { name: "Search threads" });

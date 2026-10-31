@@ -51,7 +51,7 @@ function grouping<T extends Grouped>(threads: T[], layout: Layout, fresh: Layout
   const groups = (["Needs you", "Working", "Unread", "Today", "Previous 7 days"] as const).map(
     (group) => {
       const all = placed.filter((p) => p.at.group === group).map((p) => p.thread);
-      return { group, count: all.length, list: all.slice(0, LIMITS[group] ?? all.length) };
+      return { group, list: all.slice(0, LIMITS[group] ?? all.length) };
     },
   );
   return groups.filter((g) => g.list.length > 0);
@@ -89,14 +89,10 @@ export function GroupedThreads<T extends Grouped>({
       onPointerEnter={() => setHeld(layoutOf(threads, userId, now))}
       onPointerLeave={() => setHeld(null)}
     >
-      {groups.map(({ group, count, list }) => (
+      {groups.map(({ group, list }) => (
         <li key={group} className="contents">
-          <span
-            aria-hidden
-            className="flex px-2 pt-3 pb-1 pl-8 text-xs text-muted-foreground tabular-nums"
-          >
-            <span className="flex-1">{group}</span>
-            {count}
+          <span aria-hidden className="px-2 pt-3 pb-1 text-xs text-muted-foreground">
+            {group}
           </span>
           <ul className="flex flex-col gap-0.5" aria-label={group}>
             {list.map(row)}

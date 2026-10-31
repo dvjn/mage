@@ -54,7 +54,9 @@ test("Ctrl+O opens a draft that becomes a thread only when its first message is 
   const folderDialog = page.getByRole("dialog", { name: "New folder" });
   await folderDialog.getByRole("textbox", { name: "Name" }).fill("Engines");
   await folderDialog.getByRole("button", { name: "Create" }).click();
-  await expect(sidebar(page).getByRole("button", { name: /^Engines \d/ })).toBeVisible();
+  await sidebar(page).getByRole("button", { name: "All threads" }).click();
+  await expect(page.getByRole("option", { name: "Engines" })).toBeVisible();
+  await page.keyboard.press("Escape");
   const today = sidebar(page).getByRole("list", { name: "Today" });
   await expect(today.getByRole("link", { name: "How do engines compute?" })).toBeVisible();
 });

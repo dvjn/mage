@@ -3,8 +3,9 @@
 // new, a red triangle when it failed, a blue hand while it waits for them, a softer blue hand while
 // it waits for someone else), at the size a list asks for, with what it means in words on hover and
 // for screen readers, so the status never rests on colour alone; nothing while there is nothing
-// new. The spinner holds still for those who ask for less motion. A small dot in the waiting colour
-// says a folder holds a thread that needs them.
+// new. The spinner holds still for those who ask for less motion. A one-line row shows the status
+// as a dot on its model's mark instead. A small dot in the waiting colour says a folder holds a
+// thread that needs them.
 
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
@@ -75,6 +76,48 @@ function Glyph({ status, size }: { status: ThreadStatus; size: string }) {
     case "read":
       return null;
   }
+}
+
+// What the status means in words, kept current; null for read.
+export function useStatusLabel(status: ThreadStatus, activity: ThreadActivity) {
+  useMinute();
+  return tooltipOf(status, activity);
+}
+
+// The status as a dot for the corner of a model's mark, on a disc of the row's colour, given as
+// `--lead-bg`, so it reads on any row; named for screen readers. Working is a turning ring, still
+// when less motion is asked for.
+export function StatusDot({
+  status,
+  label,
+  className,
+}: {
+  status: ThreadStatus;
+  label: string | null;
+  className?: string;
+}) {
+  if (status === "read" || !label) return null;
+  const mark =
+    status === "working"
+      ? "size-2 border-[1.5px] border-status-working border-t-transparent motion-safe:animate-spin"
+      : {
+          waiting: "size-2 bg-status-waiting",
+          paused: "size-2 bg-status-paused",
+          failed: "size-2 bg-destructive",
+          unread: "size-2 bg-status-unread",
+        }[status];
+  return (
+    <span
+      role="img"
+      aria-label={label}
+      className={cn(
+        "flex size-3 items-center justify-center rounded-full bg-(--lead-bg,var(--sidebar))",
+        className,
+      )}
+    >
+      <span className={cn("block shrink-0 rounded-full", mark)} />
+    </span>
+  );
 }
 
 // The status's glyph, named for screen readers, with what it means on hover; nothing for a thread
