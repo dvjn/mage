@@ -13,7 +13,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/web/components/ui/pop
 import { Skeleton } from "@/web/components/ui/skeleton";
 import { useDebounced } from "@/web/hooks/use-debounced";
 import { useCanHover } from "@/web/hooks/use-hover";
-import { type PagesOptions, usePages } from "@/web/lib/list-queries";
+import { type PagesOptions, usePages } from "@/web/api/list-queries";
 
 const triggerClass =
   "cursor-default rounded-sm text-left underline decoration-dotted decoration-muted-foreground/50 underline-offset-4 outline-none focus-visible:ring-3 focus-visible:ring-ring/50";

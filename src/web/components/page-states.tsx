@@ -6,7 +6,7 @@ import type * as React from "react";
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 
-import { PageHeader } from "@/web/components/app-shell";
+import { PageHeader } from "@/web/app/app-shell";
 import { Button } from "@/web/components/ui/button";
 import { Skeleton } from "@/web/components/ui/skeleton";
 import { followPlace } from "@/web/lib/org-tab";

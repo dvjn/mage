@@ -11,8 +11,8 @@ import { HOST_IDS, type HostId, hostOf } from "../src/shared/hosts.ts";
 
 const SOURCE_REPO = "BerriAI/litellm";
 const SOURCE_FILE = "model_prices_and_context_window.json";
-const DATA = path.join(import.meta.dirname, "../src/data/models.json");
-const LICENSE = path.join(import.meta.dirname, "../src/data/LICENSE");
+const DATA = path.join(import.meta.dirname, "../src/server/models/data/models.json");
+const LICENSE = path.join(import.meta.dirname, "../src/server/models/data/LICENSE");
 
 // What Mage uses of a model.
 export interface ModelData {

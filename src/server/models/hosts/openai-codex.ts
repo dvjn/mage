@@ -1,0 +1,284 @@
+// Signs in to a ChatGPT account with the Codex CLI's OAuth client by device code, and renews its
+// tokens. Lists the models the account can use from the Codex backend, and streams replies from it
+// with the AI SDK's OpenAI Responses provider, shaped the way the Codex CLI asks. A connection's
+// proxy takes the place of the backend for both, with its headers added.
+
+import { createOpenAI } from "@ai-sdk/openai";
+import { decodeJwt } from "jose";
+import * as z from "zod";
+
+import type { Catalog } from "@/server/models/catalog.ts";
+import type { ModelGateway } from "@/server/models/gateway.ts";
+import type { DeviceOAuth, OAuthTokens } from "@/server/models/oauth.ts";
+
+import { type ProviderErrors, streamReply } from "./ai-sdk-stream.ts";
+
+const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const ISSUER = "https://auth.openai.com";
+const TOKEN_URL = `${ISSUER}/oauth/token`;
+const DEVICE_USER_CODE_URL = `${ISSUER}/api/accounts/deviceauth/usercode`;
+const DEVICE_TOKEN_URL = `${ISSUER}/api/accounts/deviceauth/token`;
+const DEVICE_VERIFICATION_URL = `${ISSUER}/codex/device`;
+const DEVICE_REDIRECT_URI = `${ISSUER}/deviceauth/callback`;
+const ORIGINATOR = "mage";
+const CODEX_URL = "https://chatgpt.com/backend-api/codex";
+// The Codex CLI release whose model list we ask for; the backend leaves out models it is too old for.
+const CLIENT_VERSION = "0.163.0";
+const AUTH_CLAIM = "https://api.openai.com/auth";
+const PROFILE_CLAIM = "https://api.openai.com/profile";
+
+const tokenResponseSchema = z.object({
+  access_token: z.string().min(1),
+  refresh_token: z.string().min(1),
+  expires_in: z.number(),
+  id_token: z.string().optional(),
+});
+
+const userCodeSchema = z.object({
+  device_auth_id: z.string().min(1),
+  user_code: z.string().min(1),
+  interval: z.coerce.number().nonnegative(),
+});
+
+const deviceApprovalSchema = z.object({
+  authorization_code: z.string().min(1),
+  code_verifier: z.string().min(1),
+});
+
+const deviceErrorSchema = z.object({
+  error: z.union([z.string(), z.object({ code: z.string().optional() })]).optional(),
+});
+
+const authClaimSchema = z.object({
+  chatgpt_account_id: z.string().min(1).optional(),
+  chatgpt_plan_type: z.string().min(1).optional(),
+});
+
+const claimsSchema = z.object({
+  email: z.string().optional(),
+  [AUTH_CLAIM]: authClaimSchema.optional(),
+  [PROFILE_CLAIM]: z.object({ email: z.string().optional() }).optional(),
+});
+
+const modelsSchema = z.object({
+  models: z.array(
+    z.object({
+      slug: z.string().min(1),
+      display_name: z.string().min(1),
+      // "list" models are offered in the Codex model picker; the rest are hidden there.
+      visibility: z.string().optional(),
+      priority: z.number().optional(),
+      context_window: z.number().int().positive().nullish(),
+      supported_reasoning_levels: z.array(z.unknown()).optional(),
+    }),
+  ),
+});
+
+// Reads claims without checking the signature: OpenAI has just issued the token to us over TLS.
+function claimsOf(token: string | undefined) {
+  if (!token) return {};
+  try {
+    const parsed = claimsSchema.safeParse(decodeJwt(token));
+    return parsed.success ? parsed.data : {};
+  } catch {
+    return {};
+  }
+}
+
+function tokensFrom(body: z.infer<typeof tokenResponseSchema>): OAuthTokens {
+  const access = claimsOf(body.access_token);
+  const id = claimsOf(body.id_token);
+  const accountId = access[AUTH_CLAIM]?.chatgpt_account_id;
+  if (!accountId) throw new Error("access token has no ChatGPT account id");
+  return {
+    access: body.access_token,
+    refresh: body.refresh_token,
+    expiresIn: body.expires_in,
+    accountId,
+    email: id.email ?? access[PROFILE_CLAIM]?.email ?? null,
+    plan: id[AUTH_CLAIM]?.chatgpt_plan_type ?? access[AUTH_CLAIM]?.chatgpt_plan_type ?? null,
+  };
+}
+
+export function createCodexOAuth(fetchFn: typeof fetch = fetch): DeviceOAuth {
+  async function postForm(params: Record<string, string>, signal?: AbortSignal) {
+    const res = await fetchFn(TOKEN_URL, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ client_id: CLIENT_ID, ...params }),
+      signal,
+    });
+    if (!res.ok) throw new Error(`token ${params.grant_type} failed with status ${res.status}`);
+    const body = tokenResponseSchema.safeParse(await res.json().catch(() => null));
+    if (!body.success) throw new Error(`token ${params.grant_type} response is incomplete`);
+    return tokensFrom(body.data);
+  }
+
+  function postJson(url: string, body: object, signal?: AbortSignal) {
+    return fetchFn(url, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+  }
+
+  return {
+    refresh(refreshToken) {
+      return postForm({ grant_type: "refresh_token", refresh_token: refreshToken });
+    },
+
+    async startDevice(signal) {
+      const res = await postJson(DEVICE_USER_CODE_URL, { client_id: CLIENT_ID }, signal);
+      if (!res.ok) throw new Error(`device code request failed with status ${res.status}`);
+      const body = userCodeSchema.safeParse(await res.json().catch(() => null));
+      if (!body.success) throw new Error("device code response is incomplete");
+      return {
+        deviceAuthId: body.data.device_auth_id,
+        userCode: body.data.user_code,
+        verificationUrl: DEVICE_VERIFICATION_URL,
+        intervalSeconds: body.data.interval,
+      };
+    },
+
+    async pollDevice(device, signal) {
+      const res = await postJson(
+        DEVICE_TOKEN_URL,
+        { device_auth_id: device.deviceAuthId, user_code: device.userCode },
+        signal,
+      );
+      if (res.ok) {
+        const body = deviceApprovalSchema.safeParse(await res.json().catch(() => null));
+        if (!body.success) throw new Error("device approval response is incomplete");
+        return {
+          status: "approved",
+          code: body.data.authorization_code,
+          codeVerifier: body.data.code_verifier,
+        };
+      }
+      // Not approved yet.
+      if (res.status === 403 || res.status === 404) return { status: "pending" };
+      const body = deviceErrorSchema.safeParse(await res.json().catch(() => null));
+      const error = body.success ? body.data.error : undefined;
+      const code = typeof error === "object" ? error.code : error;
+      if (code === "deviceauth_authorization_pending") return { status: "pending" };
+      if (code === "slow_down") return { status: "slow_down" };
+      throw new Error(`device sign-in failed with status ${res.status}${code ? `: ${code}` : ""}`);
+    },
+
+    exchangeDevice({ code, codeVerifier }, signal) {
+      return postForm(
+        {
+          grant_type: "authorization_code",
+          code,
+          code_verifier: codeVerifier,
+          redirect_uri: DEVICE_REDIRECT_URI,
+        },
+        signal,
+      );
+    },
+  };
+}
+
+export function createCodexCatalog(fetchFn: typeof fetch = fetch): Catalog {
+  return {
+    async list(token, signal) {
+      if (!token.accountId) throw new Error("the connection has no ChatGPT account id");
+      const base = token.proxy?.baseUrl ?? CODEX_URL;
+      const query = new URLSearchParams({ client_version: CLIENT_VERSION }).toString();
+      const res = await fetchFn(`${base}/models?${query}`, {
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token.access}`,
+          "ChatGPT-Account-ID": token.accountId,
+          originator: ORIGINATOR,
+          ...token.proxy?.headers,
+        },
+        signal,
+      });
+      if (!res.ok) throw new Error(`model list failed with status ${res.status}`);
+      const body = modelsSchema.safeParse(await res.json().catch(() => null));
+      if (!body.success) throw new Error("model list response is not a list");
+      return body.data.models
+        .filter((model) => (model.visibility ?? "list") === "list")
+        .toSorted((a, b) => (a.priority ?? 0) - (b.priority ?? 0))
+        .map((model) => ({
+          id: model.slug,
+          name: model.display_name,
+          ...(model.context_window && { contextWindow: model.context_window }),
+          ...(model.supported_reasoning_levels && {
+            reasoning: model.supported_reasoning_levels.length > 0,
+          }),
+        }));
+    },
+  };
+}
+
+const usageLimitSchema = z.object({
+  error: z.object({
+    resets_at: z.number().optional(),
+    resets_in_seconds: z.number().optional(),
+  }),
+});
+
+// The Codex backend names its usage windows in `x-codex-*` headers (used percent, window and reset
+// time of the primary and secondary window, which limit is active), and a usage limit's 429 body
+// says when it resets.
+export const codexErrors: ProviderErrors = {
+  explains: (name) =>
+    name.startsWith("x-codex-") || name === "x-request-id" || name === "x-oai-request-id",
+  resetsAt(headers, body, now) {
+    const parsed = usageLimitSchema.safeParse(body);
+    if (parsed.success) {
+      const { resets_at, resets_in_seconds } = parsed.data.error;
+      if (resets_at) return new Date(resets_at * 1000);
+      if (resets_in_seconds) return new Date(now.getTime() + resets_in_seconds * 1000);
+    }
+    // The window that is used up, sooner first.
+    const resets = ["primary", "secondary"]
+      .filter((window) => Number(headers[`x-codex-${window}-used-percent`]) >= 100)
+      .map((window) => Number(headers[`x-codex-${window}-reset-at`]))
+      .filter((seconds) => Number.isFinite(seconds) && seconds > 0)
+      .toSorted((a, b) => a - b);
+    return resets[0] ? new Date(resets[0] * 1000) : null;
+  },
+};
+
+// Replies through the Codex backend's Responses endpoint. It keeps nothing between requests
+// (`store: false`), so every request carries the whole conversation, the instructions as their own
+// field rather than a system message, and the encrypted reasoning back; it takes no output token
+// limit or sampling settings. A model that can think is given the effort and streams a summary of
+// its reasoning. The thread id keys its prompt cache and names the session.
+export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway {
+  return {
+    async *stream(token, request, signal) {
+      if (!token.accountId) throw new Error("the connection has no ChatGPT account id");
+      const provider = createOpenAI({
+        baseURL: token.proxy?.baseUrl ?? CODEX_URL,
+        apiKey: token.access,
+        headers: {
+          "ChatGPT-Account-ID": token.accountId,
+          originator: ORIGINATOR,
+          "OpenAI-Beta": "responses=experimental",
+          "session-id": request.sessionId,
+          "x-client-request-id": request.sessionId,
+          ...token.proxy?.headers,
+        },
+        fetch: fetchFn,
+      });
+      yield* streamReply(provider.responses(request.model), request, signal, {
+        providerOptions: {
+          openai: {
+            store: false,
+            instructions: request.instructions,
+            include: ["reasoning.encrypted_content"],
+            promptCacheKey: request.sessionId,
+            // As the Codex CLI asks: the effort, and a summary of the reasoning to show.
+            ...(request.effort && { reasoningEffort: request.effort, reasoningSummary: "auto" }),
+          },
+        },
+        errors: codexErrors,
+      });
+    },
+  };
+}

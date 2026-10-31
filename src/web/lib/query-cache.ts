@@ -20,7 +20,7 @@ import type {
 import { del, get, keys, set } from "idb-keyval";
 
 import { adoptOrg, tabOrg } from "@/web/lib/org-tab";
-import { meQuery, sessionQuery } from "@/web/lib/queries";
+import { meQuery, sessionQuery } from "@/web/auth/queries";
 
 export const cacheMaxAge = 7 * 24 * 60 * 60 * 1000;
 
