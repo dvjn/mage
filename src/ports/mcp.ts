@@ -13,6 +13,8 @@ export interface McpServer {
   // The space it was added for; null for the whole org.
   spaceId: string | null;
   name: string;
+  // What the agent calls it: its tools are named mcp.<slug>.<tool> for the model.
+  slug: string;
   url: string;
   // Whether it offers its tools; one turned off keeps everything else.
   enabled: boolean;
@@ -43,13 +45,14 @@ export interface McpSettings {
 
 export type NewMcpServer = Pick<
   McpServer,
-  "orgId" | "spaceId" | "name" | "url" | "authKind" | "settings"
+  "orgId" | "spaceId" | "name" | "slug" | "url" | "authKind" | "settings"
 > & { createdBy: string };
 
 export type McpServerChanges = Partial<
   Pick<
     McpServer,
     | "name"
+    | "slug"
     | "url"
     | "enabled"
     | "authKind"
@@ -71,6 +74,10 @@ export interface McpServerStore {
   inOrg(orgId: string): McpServer[];
   // The servers added for a space.
   inSpace(spaceId: string): McpServer[];
+  // Every server of the org, its own and its spaces'.
+  everyInOrg(orgId: string): McpServer[];
+  // The ids, orgs and spaces and names of servers given no slug yet, oldest first.
+  withoutSlug(): Pick<McpServer, "id" | "orgId" | "spaceId" | "name">[];
   update(id: string, changes: McpServerChanges): void;
   delete(id: string): void;
   // Whether the space uses each of the org's servers, for those it set.

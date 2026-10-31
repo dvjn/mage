@@ -101,7 +101,7 @@ test("the agent renames a thread at once when the owner alone asked", async ({ p
   await signUp(page, "Ada Lovelace");
   await startThread(page, '/tool thread.rename {"title":"Engines"}');
 
-  await expect(line(page, /^Rename thread · Ran$/)).toBeVisible();
+  await expect(line(page, /^Thread › Rename · Ran$/)).toBeVisible();
   await expect(replies(page).last()).toHaveText(/Tool thread.rename said: ok/);
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Engines");
   await expect(card(page)).toHaveCount(0);
@@ -111,7 +111,7 @@ test("the agent renames a thread at once when the owner alone asked", async ({ p
   await expect(replies(page).first().getByText("Agent", { exact: true })).toBeVisible();
   await expect(replies(page).last().getByText("Agent", { exact: true })).toHaveCount(0);
 
-  await line(page, /^Rename thread · Ran$/).click();
+  await line(page, /^Thread › Rename · Ran$/).click();
   const input = transcript(page).getByRole("region", { name: "Input" });
   await expect(input).toHaveText("InputTitleEngines");
   await expect(transcript(page).getByRole("region", { name: "Output" })).toContainText("Engines");
@@ -177,7 +177,7 @@ test("a tool that needs approval asks every time, and a guest may decide it", as
   await makeFolder(page, spaceId, "Research");
   await makeFolder(page, spaceId, "Archive");
   await makePolicy(page);
-  await setInSpace(page, spaceId, "Move thread", "Sign-off");
+  await setInSpace(page, spaceId, "Move", "Sign-off");
   await startThread(page, "How do engines compute?");
   await expect(replies(page)).toHaveText(/I have read 1 message/);
   const url = await inviteLink(page);
@@ -189,7 +189,7 @@ test("a tool that needs approval asks every time, and a guest may decide it", as
   await expect(guest).toHaveURL(/\/t\/[^/]+$/);
 
   await write(page, '/tool thread.move {"folder":"Research"}');
-  await expect(card(page)).toContainText("Move thread");
+  await expect(card(page)).toContainText("Move");
   await expect(card(page)).not.toContainText("The agent wants to use");
   await expect(card(page)).toContainText("Asks each time");
   await expect(card(page)).toContainText("Research");
@@ -200,14 +200,14 @@ test("a tool that needs approval asks every time, and a guest may decide it", as
   );
   await expect(card(guest)).not.toContainText("Paused");
   await card(guest).getByRole("button", { name: "Allow", exact: true }).click();
-  await expect(line(page, /^Move thread · Ran · allowed by Hedy Lamarr/)).toBeVisible();
+  await expect(line(page, /^Thread › Move · Ran · allowed by Hedy Lamarr/)).toBeVisible();
   await expect(page.locator("[data-slot=breadcrumb]")).toContainText("Research");
   await expect(replies(page).last()).toHaveText(/Tool thread.move said: ok/);
 
   await write(page, '/tool thread.move {"folder":"Archive"}');
   await expect(card(page)).toContainText("Archive");
   await card(page).getByRole("button", { name: "Deny" }).click();
-  await expect(line(page, /^Move thread · Denied · by Ada Lovelace/)).toBeVisible();
+  await expect(line(page, /^Thread › Move · Denied · by Ada Lovelace/)).toBeVisible();
   await expect(replies(page).last()).toHaveText(/Tool thread.move said: error This action/);
 });
 
@@ -218,7 +218,7 @@ test("a viewer sees the card paused while a messager decides it", async ({
   const adaEmail = await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
   await makePolicy(page);
-  await setInSpace(page, spaceId, "Rename thread", "Sign-off");
+  await setInSpace(page, spaceId, "Rename", "Sign-off");
   await startThread(page, "How do looms work?");
   await expect(replies(page)).toHaveText(/I have read 1 message/);
 
@@ -229,7 +229,7 @@ test("a viewer sees the card paused while a messager decides it", async ({
   await write(page, '/tool thread.rename {"title":"Looms"}');
 
   await alan.goto(page.url());
-  await expect(card(alan)).toContainText("Rename thread");
+  await expect(card(alan)).toContainText("Rename");
   await expect(card(alan)).toContainText("Asks each time");
   await expect(card(alan)).toContainText("Paused");
   await expect(card(alan).getByRole("button", { name: "Deny" })).toBeDisabled();
@@ -237,7 +237,7 @@ test("a viewer sees the card paused while a messager decides it", async ({
   await expect(card(grace)).not.toContainText("Paused");
   await card(grace).getByRole("button", { name: "Allow", exact: true }).click();
 
-  await expect(line(alan, /^Rename thread · Ran · allowed by Grace Hopper/)).toBeVisible();
+  await expect(line(alan, /^Thread › Rename · Ran · allowed by Grace Hopper/)).toBeVisible();
   await expect(card(alan)).toHaveCount(0);
   await expect(alan.locator("[data-slot=breadcrumb-page]")).toHaveText("Looms");
 });
@@ -277,7 +277,7 @@ test("on a phone the card's buttons stack, Allow first and Deny last", async ({
   expect(a!.y).toBeLessThan(b!.y);
   expect(b!.y).toBeLessThan(c!.y);
   await allow.click();
-  await expect(line(page, /^Rename thread · Ran/)).toBeVisible();
+  await expect(line(page, /^Thread › Rename · Ran/)).toBeVisible();
 });
 
 test("a tool the space turned off is not offered, and the agent says it cannot use it", async ({
@@ -285,7 +285,7 @@ test("a tool the space turned off is not offered, and the agent says it cannot u
 }) => {
   await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
-  await setInSpace(page, spaceId, "Move thread", "Off");
+  await setInSpace(page, spaceId, "Move", "Off");
 
   await startThread(page, '/tool thread.move {"folder":"Research"}');
   await expect(replies(page)).toHaveText(/I cannot use thread.move here\./);
@@ -337,8 +337,8 @@ test("a policy made from a template is used for a group and a tool, and a space 
   await dialog.getByRole("button", { name: "Create policy" }).click();
   await expect(dialog).toBeHidden();
 
-  const move = page.getByRole("listitem", { name: "Move thread" });
-  await expect(picker(move, "Move thread")).toContainText("Sign-off");
+  const move = page.getByRole("listitem", { name: "Move" });
+  await expect(picker(move, "Move")).toContainText("Sign-off");
   await expect(picker(interactive, "Interactive tools")).toContainText("Sign-off");
   const policies = page.getByRole("listitem", { name: "Sign-off" });
   await expect(policies).toContainText("Thread editors approve");
@@ -356,7 +356,7 @@ test("a policy made from a template is used for a group and a tool, and a space 
   await expect(copy).toBeHidden();
 
   // One tool back to open; the group is mixed.
-  await picker(move, "Move thread").click();
+  await picker(move, "Move").click();
   await choose(page, "Open");
   await expect(picker(interactive, "Interactive tools")).toContainText("Mixed");
   await expect(policies).toContainText("2 tools");
@@ -366,8 +366,8 @@ test("a policy made from a template is used for a group and a tool, and a space 
   const thread = page.getByRole("region", { name: "Thread" });
   await expect(thread).toContainText("4 tools");
   await expect(thread.getByRole("button", { name: /^Thread 4 tools/ })).toContainText("2 Sign-off");
-  const rename = page.getByRole("listitem", { name: "Rename thread" });
-  await expect(picker(rename, "Rename thread")).toContainText("Default · Sign-off");
+  const rename = page.getByRole("listitem", { name: "Rename" });
+  await expect(picker(rename, "Rename")).toContainText("Default · Sign-off");
   await expect(page.getByRole("listitem", { name: "Sign-off" })).toContainText("Organization");
   const spaceGroup = page.getByRole("group", {
     name: "Interactive tools",
@@ -375,21 +375,21 @@ test("a policy made from a template is used for a group and a tool, and a space 
   });
   await picker(spaceGroup, "Interactive tools").click();
   await choose(page, "Off");
-  await expect(picker(rename, "Rename thread")).toContainText("Off");
+  await expect(picker(rename, "Rename")).toContainText("Off");
   await expect(thread.getByRole("button", { name: /^Thread 4 tools/ })).toContainText("3 Off");
 
   // The org still has its own; the space's rules stay in the space.
   await openTools(page, "/org/tools");
-  await expect(
-    picker(page.getByRole("listitem", { name: "Rename thread" }), "Rename thread"),
-  ).toContainText("Sign-off");
+  await expect(picker(page.getByRole("listitem", { name: "Rename" }), "Rename")).toContainText(
+    "Sign-off",
+  );
 
   await openTools(page, `/s/${spaceId}/settings/tools`);
   await thread.getByRole("button", { name: /^Thread 4 tools/ }).click();
   await expect(rename).toBeHidden();
   await page.reload();
   await expect(page.getByRole("region", { name: "Thread" })).toContainText("4 tools");
-  await expect(page.getByRole("listitem", { name: "Rename thread" })).toBeHidden();
+  await expect(page.getByRole("listitem", { name: "Rename" })).toBeHidden();
 });
 
 test("a policy's people use a tool directly, and only its approvers approve the rest", async ({
@@ -413,27 +413,27 @@ test("a policy's people use a tool directly, and only its approvers approve the 
   const policy = page.getByRole("listitem", { name: "Ada runs" });
   await expect(policy).toContainText("Ada Lovelace can use");
   await expect(policy).toContainText("Ada Lovelace approves");
-  const rename = page.getByRole("listitem", { name: "Rename thread" });
-  await picker(rename, "Rename thread").click();
+  const rename = page.getByRole("listitem", { name: "Rename" });
+  await picker(rename, "Rename").click();
   await choose(page, "Ada runs");
 
   await page.goto(`/s/${spaceId}`);
   await startThread(page, '/tool thread.rename {"title":"Mine"}');
-  await expect(line(page, /^Rename thread · Ran$/)).toBeVisible();
+  await expect(line(page, /^Thread › Rename · Ran$/)).toBeVisible();
   await expect(replies(page).last()).toHaveText(/Tool thread.rename said: ok/);
 
   // Grace may message here but is not named: her call waits, and only Ada may approve it.
   const grace = await someoneElse(browser, testInfo.parallelIndex);
   joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
   await grace.goto(page.url());
-  await expect(line(grace, /^Rename thread · Ran$/)).toBeVisible();
+  await expect(line(grace, /^Thread › Rename · Ran$/)).toBeVisible();
   await write(grace, '/tool thread.rename {"title":"Hers"}');
-  await expect(card(grace)).toContainText("Rename thread");
+  await expect(card(grace)).toContainText("Rename");
   await expect(card(grace)).toContainText("Paused");
   await expect(card(grace).getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
   await expect(card(page)).not.toContainText("Paused");
   await card(page).getByRole("button", { name: "Allow", exact: true }).click();
-  await expect(line(grace, /^Rename thread · Ran · allowed by Ada Lovelace/)).toBeVisible();
+  await expect(line(grace, /^Thread › Rename · Ran · allowed by Ada Lovelace/)).toBeVisible();
   await expect(grace.locator("[data-slot=breadcrumb-page]")).toHaveText("Hers");
 });
 
@@ -444,8 +444,8 @@ test("independent approval needs someone other than the author of the latest mes
   const adaEmail = await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
   await openTools(page, `/s/${spaceId}/settings/tools`);
-  const rename = page.getByRole("listitem", { name: "Rename thread" });
-  await picker(rename, "Rename thread").click();
+  const rename = page.getByRole("listitem", { name: "Rename" });
+  await picker(rename, "Rename").click();
   await page.getByRole("menuitem", { name: "New policy" }).click();
   const dialog = page.getByRole("dialog", { name: "New policy" });
   await expect(dialog).toContainText("Only in this space.");
@@ -456,8 +456,8 @@ test("independent approval needs someone other than the author of the latest mes
   await page.getByRole("option", { name: /Anyone who can edit the thread/ }).click();
   await dialog.getByRole("button", { name: "Create policy" }).click();
   await expect(dialog).toBeHidden();
-  await expect(picker(rename, "Rename thread")).toContainText("Reviewed");
-  await expect(picker(rename, "Rename thread")).toHaveAttribute("title", /Independent/);
+  await expect(picker(rename, "Rename")).toContainText("Reviewed");
+  await expect(picker(rename, "Rename")).toHaveAttribute("title", /Independent/);
   await expect(page.getByRole("listitem", { name: "Reviewed" })).toContainText("1 tool");
 
   await page.goto(`/s/${spaceId}`);
@@ -470,7 +470,7 @@ test("independent approval needs someone other than the author of the latest mes
   await reviewer.goto(page.url());
   await expect(card(reviewer).getByRole("button", { name: "Allow", exact: true })).toBeEnabled();
   await card(reviewer).getByRole("button", { name: "Allow", exact: true }).click();
-  await expect(line(page, /^Rename thread · Ran · allowed by Grace Hopper/)).toBeVisible();
+  await expect(line(page, /^Thread › Rename · Ran · allowed by Grace Hopper/)).toBeVisible();
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Reviewed");
 });
 
@@ -481,18 +481,18 @@ test("changing independent approval to sign-off updates a pending approval for t
   const spaceId = spaceIdOf(page);
   await makePolicy(page, { name: "Independent review", independent: true });
   await makePolicy(page);
-  await setInSpace(page, spaceId, "Rename thread", "Independent review");
+  await setInSpace(page, spaceId, "Rename", "Independent review");
   await startThread(page, '/tool thread.rename {"title":"Engines"}');
   const threadUrl = page.url();
   await expect(card(page)).toContainText("Needs review");
   await expect(card(page).getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
-  await setInSpace(page, spaceId, "Rename thread", "Sign-off");
+  await setInSpace(page, spaceId, "Rename", "Sign-off");
   await page.goto(threadUrl);
   await expect(card(page)).toContainText("Asks each time");
   await expect(card(page)).not.toContainText("Needs review");
   await expect(card(page).getByRole("button", { name: "Allow", exact: true })).toBeEnabled();
   await card(page).getByRole("button", { name: "Allow", exact: true }).click();
-  await expect(line(page, /^Rename thread · Ran · allowed by Ada Lovelace/)).toBeVisible();
+  await expect(line(page, /^Thread › Rename · Ran · allowed by Ada Lovelace/)).toBeVisible();
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Engines");
 });
 
@@ -501,7 +501,7 @@ test("built-in toolset switches preserve policies and obey the org switch", asyn
   const spaceId = spaceIdOf(page);
   await makePolicy(page);
   await makePolicy(page, { name: "Independent review", independent: true });
-  await setInSpace(page, spaceId, "Rename thread", "Sign-off");
+  await setInSpace(page, spaceId, "Rename", "Sign-off");
   await openTools(page, `/s/${spaceId}/settings/tools`);
   const local = page.getByRole("switch", { name: "Thread: on in this space" });
   await expect(local).toBeChecked();
@@ -509,11 +509,11 @@ test("built-in toolset switches preserve policies and obey the org switch", asyn
   await expect(local).not.toBeChecked();
   await page.reload();
   await expect(local).not.toBeChecked();
-  const rename = page.getByRole("listitem", { name: "Rename thread" });
-  await expect(picker(rename, "Rename thread")).toContainText("Sign-off");
-  await picker(rename, "Rename thread").click();
+  const rename = page.getByRole("listitem", { name: "Rename" });
+  await expect(picker(rename, "Rename")).toContainText("Sign-off");
+  await picker(rename, "Rename").click();
   await choose(page, "Independent review");
-  await expect(picker(rename, "Rename thread")).toContainText("Independent review");
+  await expect(picker(rename, "Rename")).toContainText("Independent review");
   await page.goto(`/s/${spaceId}`);
   await startThread(page, '/tool thread.rename {"title":"Unavailable"}');
   await expect(replies(page).last()).toContainText("I cannot use thread.rename here.");
@@ -533,7 +533,7 @@ test("built-in toolset switches preserve policies and obey the org switch", asyn
   await expect(local).toBeEnabled();
   await local.click();
   await expect(local).toBeChecked();
-  await expect(picker(rename, "Rename thread")).toContainText("Independent review");
+  await expect(picker(rename, "Rename")).toContainText("Independent review");
 });
 
 test("tools have their own settings page in the org and in a space", async ({ page }) => {

@@ -71,7 +71,7 @@ test("a repository added from a pasted command, a skill switched on, and loaded 
   await page.goto(`/s/${spaceId}/new`);
   await write(page, '/tool skills.load {"name":"haiku"}');
   await expect(
-    transcript(page).getByRole("button", { name: /^Loaded skill haiku · Ran/ }),
+    transcript(page).getByRole("button", { name: /^Skills › Loaded haiku · Ran/ }),
   ).toBeVisible();
   await expect(transcript(page)).toContainText("Write three lines");
 

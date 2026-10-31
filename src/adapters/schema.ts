@@ -312,6 +312,8 @@ export const mcpServer = sqliteTable(
     // The space it was added for; null for the whole org.
     spaceId: text("space_id").references(() => space.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    // What the agent calls it, unique among the servers a space has; null until given one.
+    slug: text("slug"),
     url: text("url").notNull(),
     enabled: integer("enabled", { mode: "boolean" }).default(true).notNull(),
     // How it is authorized: not at all, by headers, or by OAuth.

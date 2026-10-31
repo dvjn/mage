@@ -46,6 +46,8 @@ export type McpAuthSummary = z.infer<typeof mcpAuthSummarySchema>;
 export const mcpServerSchema = z.object({
   id: z.string(),
   name: z.string(),
+  // What the agent calls it: its tools are mcp.<slug>.<tool> to the model.
+  slug: z.string(),
   url: z.string(),
   // The space it was added for; null for the whole org.
   spaceId: z.string().nullable(),
@@ -161,6 +163,26 @@ export type McpAuthInput = z.infer<typeof mcpAuthInputSchema>;
 
 export const mcpServerNameSchema = z.string().trim().min(1).max(80);
 
+// A server's short name for the agent: lower case letters, digits, `_` and `-`.
+export const mcpSlugSchema = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9][a-z0-9_-]{0,31}$/, "Use up to 32 lower-case letters, digits, - and _");
+
+// A name as a server's short name; "server" when nothing of it is left.
+export function mcpSlugOf(name: string) {
+  return (
+    name
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^[-_]+|[-_]+$/g, "")
+      .slice(0, 32)
+      .replace(/[-_]+$/, "") || "server"
+  );
+}
+
 // An http(s) address; local and private addresses are fine, as people run servers beside Mage.
 export const mcpUrlSchema = z
   .url({ protocol: /^https?$/, error: "Give an http or https address" })
@@ -168,6 +190,8 @@ export const mcpUrlSchema = z
 
 export const newMcpServerSchema = z.object({
   name: mcpServerNameSchema,
+  // Made from the name when not given.
+  slug: mcpSlugSchema.optional(),
   url: mcpUrlSchema,
   auth: mcpAuthInputSchema,
 });
@@ -177,6 +201,7 @@ export type NewMcpServer = z.infer<typeof newMcpServerSchema>;
 // A new name, address or authorization; what is left out stays.
 export const mcpServerChangeSchema = z.object({
   name: mcpServerNameSchema.optional(),
+  slug: mcpSlugSchema.optional(),
   url: mcpUrlSchema.optional(),
   auth: mcpAuthInputSchema.optional(),
 });

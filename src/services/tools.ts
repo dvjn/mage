@@ -6,6 +6,8 @@
 // extra rule of its own on top, or turns a tool off there, and sets its own toolsets' tools as it
 // likes.
 
+import { createHash } from "node:crypto";
+
 import * as z from "zod";
 
 import type { Directory } from "@/ports/directory.ts";
@@ -47,6 +49,8 @@ import {
 import type { ToolRisk, ToolScope } from "@/shared/threads.ts";
 import {
   TOOL_OFF,
+  WIRE_NAME_MAX,
+  wireToolName,
   type ToolDefinition,
   type ToolPolicyChange,
   type ToolsetSetting,
@@ -70,6 +74,36 @@ export function definitionOf(spec: AnyToolSpec): ToolDefinition {
       }),
     ...(spec.annotations && { annotations: spec.annotations }),
   };
+}
+
+// The name the model knows each tool by: its own model name or its id, unique among the tools once
+// providers' characters are applied, and short enough for them; one too long, or that would clash,
+// ends in a short hash of its id.
+export function modelToolNames(tools: readonly { id: string; name: string }[]) {
+  const used = new Set<string>();
+  const names = new Map<string, string>();
+  const fits = (name: string) => wireToolName(name).length <= WIRE_NAME_MAX;
+  for (const { id, name } of tools) {
+    let chosen = name;
+    for (let round = 0; !fits(chosen) || used.has(wireToolName(chosen)); round += 1) {
+      const hash = createHash("sha256")
+        .update(round ? `${id}#${round}` : id)
+        .digest("hex")
+        .slice(0, 6);
+      let prefix = name;
+      while (!fits(`${prefix}_${hash}`)) prefix = prefix.slice(0, -1);
+      chosen = `${prefix}_${hash}`;
+    }
+    used.add(wireToolName(chosen));
+    names.set(id, chosen);
+  }
+  return names;
+}
+
+// Model names both ways, for one run.
+export interface ModelNames {
+  toModel: (id: string) => string;
+  fromModel: (name: string) => string | undefined;
 }
 
 export interface ToolsOptions {
@@ -259,19 +293,35 @@ export function createTools(options: ToolsOptions) {
       return specsOf(inSpace(space)).map((spec) => spec.name);
     },
 
-    // Every tool's definition in the space, as people see it; an MCP server's tools named with
-    // their server.
+    // Every tool's definition in the space, as people see it, each named with its toolset: Mage's
+    // own with theirs, an MCP server's with the server.
     definitions(space: Pick<Space, "id" | "orgId">): ToolDefinition[] {
       return inSpace(space).flatMap((toolset) =>
         toolset.tools.map((spec) => ({
           ...definitionOf(spec),
-          ...(toolset.source === "mcp" && { toolset: toolset.title }),
+          toolset: toolset.title,
         })),
       );
     },
 
     offered,
     riskOf,
+
+    // The names the model knows the space's tools by, those it does not offer now among them, for
+    // calls made before.
+    modelNames(space: Pick<Space, "id" | "orgId">): ModelNames {
+      const names = modelToolNames(
+        specsOf(settingsInSpace(space)).map((spec) => ({
+          id: spec.name,
+          name: spec.modelName ?? spec.name,
+        })),
+      );
+      const ids = new Map([...names].map(([id, name]) => [name, id]));
+      return {
+        toModel: (id) => names.get(id) ?? id,
+        fromModel: (name) => ids.get(name),
+      };
+    },
     levelFor,
     riskForCall,
     canDecide,

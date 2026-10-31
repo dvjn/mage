@@ -59,7 +59,7 @@ export interface RunWorkerOptions {
   bus: EventBus;
   transact: Transact;
   models: Pick<Models, "open" | "replyModel">;
-  tools: Pick<Tools, "offered" | "riskOf" | "forModel" | "decide" | "approvalHolds">;
+  tools: Pick<Tools, "offered" | "riskOf" | "forModel" | "decide" | "approvalHolds" | "modelNames">;
   // What the org and the space tell the agent beyond Mage's own prompt, given the tools offered.
   guidance?: (space: Space, offered: readonly AnyToolSpec[]) => Guidance;
   logger: Logger;
@@ -133,6 +133,26 @@ type Abort = { kind: "lease" } | { kind: "shutdown" } | { kind: "cancel" };
 
 // Thrown once the run waits for a decision on a tool call, its lease let go.
 class Waiting extends Error {}
+
+// The message with its tool calls and results named as the model knows the tools.
+function namedFor(message: ModelMessage, toModel: (id: string) => string): ModelMessage {
+  switch (message.role) {
+    case "assistant":
+      return message.toolCalls
+        ? {
+            ...message,
+            toolCalls: message.toolCalls.map((call) => ({ ...call, toolId: toModel(call.toolId) })),
+          }
+        : message;
+    case "tool":
+      return {
+        ...message,
+        results: message.results.map((result) => ({ ...result, toolId: toModel(result.toolId) })),
+      };
+    default:
+      return message;
+  }
+}
 
 // The model a run replies with, and the thread's own model and effort it was chosen from.
 interface Replying {
@@ -694,17 +714,19 @@ export function createRunWorker(options: RunWorkerOptions) {
         transcript(thread.id).rows,
         guidance(space, offered),
       );
+      // The model knows tools by their model names; calls and results go to it by those.
+      const names = tools.modelNames(space);
       const calls: (ModelToolCall & { messageId: string })[] = [];
       let messageId = "";
       const stream = model.model.stream(
         {
           instructions,
-          messages,
+          messages: messages.map((message) => namedFor(message, names.toModel)),
           maxSteps: maxSteps - steps,
           sessionId: thread.id,
           ...(model.effort && { effort: model.effort }),
           beforeStep: () => boundary(execution, false),
-          tools: tools.forModel(offered),
+          tools: tools.forModel(offered).map((tool) => ({ ...tool, id: names.toModel(tool.id) })),
         },
         controller.signal,
       );
@@ -722,7 +744,11 @@ export function createRunWorker(options: RunWorkerOptions) {
             break;
           case "tool-call": {
             const { type: _type, ...asked } = event;
-            calls.push({ ...asked, messageId });
+            calls.push({
+              ...asked,
+              toolId: names.fromModel(asked.toolId) ?? asked.toolId,
+              messageId,
+            });
             break;
           }
           case "step-end":

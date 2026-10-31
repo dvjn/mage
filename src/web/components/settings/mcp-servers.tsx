@@ -2,8 +2,8 @@
 // own tagged as such, each a collapsible row with how it answered, its tools' policies, a switch
 // that turns it on or off (a server's own for those who manage it, or for the org's in a space
 // whether the space uses it, which stays off while the org has the server off) and a link to its
-// page; inside, its tools with their policy pickers. Adding one in a dialog, by its address and
-// how it is authorized (not at all, by headers with a bearer token among them, or by OAuth, which
+// page; inside, its tools with their policy pickers. Adding one in a dialog, by its address, the
+// short name the agent knows it by, and how it is authorized (not at all, by headers with a bearer token among them, or by OAuth, which
 // sends the browser to the server's authorization server and back); and a server's page with its
 // switch, its connection, its tools and their policies, reading them again, reconnecting,
 // changing everything about it in the same form it was added with, and removing it. One of the
@@ -29,6 +29,7 @@ import {
   mcpAuthorizeSchema,
   type McpServerSummary,
   mcpServerSchema,
+  mcpSlugOf,
   mcpToolsetId,
   type SpaceOrgMcpServer,
 } from "@/shared/mcp.ts";
@@ -605,6 +606,7 @@ export function McpServerDialog({
     secretHint: (server?.auth.kind === "oauth" && server.auth.clientSecretHint) || null,
   };
   const [name, setName] = useState(initial.name);
+  const [slug, setSlug] = useState(server?.slug ?? "");
   const [url, setUrl] = useState(initial.url);
   const [kind, setKind] = useState<McpAuthKind>(initial.kind);
   const [token, setToken] = useState("");
@@ -617,6 +619,7 @@ export function McpServerDialog({
 
   function reset() {
     setName(initial.name);
+    setSlug(server?.slug ?? "");
     setUrl(initial.url);
     setKind(initial.kind);
     setToken("");
@@ -670,7 +673,12 @@ export function McpServerDialog({
     event.preventDefault();
     setError(undefined);
     setPending(server ? "Saving…" : kind === "oauth" ? "Adding…" : "Connecting…");
-    const json = { name: name.trim(), url: url.trim(), auth: authBody() };
+    const json = {
+      name: name.trim(),
+      ...(slug.trim() && slug.trim() !== server?.slug && { slug: slug.trim() }),
+      url: url.trim(),
+      auth: authBody(),
+    };
     const res = server
       ? await apiClient.v1["mcp-servers"][":id"].$patch({
           param: { id: server.id },
@@ -746,6 +754,19 @@ export function McpServerDialog({
                 maxLength={80}
                 autoComplete="off"
                 autoFocus={!server}
+              />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor={`${id}-slug`}>Short name</FieldLabel>
+              <Input
+                id={`${id}-slug`}
+                value={slug}
+                onChange={(event) => setSlug(event.target.value)}
+                placeholder={mcpSlugOf(name || "linear")}
+                maxLength={32}
+                spellCheck={false}
+                autoComplete="off"
+                className="font-mono"
               />
             </Field>
             <Field>

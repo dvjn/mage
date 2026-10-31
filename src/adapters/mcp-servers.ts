@@ -24,6 +24,7 @@ const columns = {
   orgId: mcpServer.organizationId,
   spaceId: mcpServer.spaceId,
   name: mcpServer.name,
+  slug: mcpServer.slug,
   url: mcpServer.url,
   enabled: mcpServer.enabled,
   authKind: mcpServer.authKind,
@@ -39,13 +40,19 @@ const columns = {
   createdAt: mcpServer.createdAt,
 };
 
-type Row = Omit<McpServer, "settings" | "tools"> & {
+type Row = Omit<McpServer, "settings" | "tools" | "slug"> & {
+  slug: string | null;
   settings: Record<string, unknown>;
   tools: unknown[];
 };
 
 function serverOf(row: Row): McpServer {
-  return { ...row, settings: row.settings as McpSettings, tools: row.tools as ToolDefinition[] };
+  return {
+    ...row,
+    slug: row.slug ?? "",
+    settings: row.settings as McpSettings,
+    tools: row.tools as ToolDefinition[],
+  };
 }
 
 export function createMcpServerStore(db: Db): McpServerStore {
@@ -91,6 +98,30 @@ export function createMcpServerStore(db: Db): McpServerStore {
         .orderBy(asc(mcpServer.id))
         .all()
         .map(serverOf);
+    },
+
+    everyInOrg(orgId) {
+      return db
+        .select(columns)
+        .from(mcpServer)
+        .where(eq(mcpServer.organizationId, orgId))
+        .orderBy(asc(mcpServer.id))
+        .all()
+        .map(serverOf);
+    },
+
+    withoutSlug() {
+      return db
+        .select({
+          id: mcpServer.id,
+          orgId: mcpServer.organizationId,
+          spaceId: mcpServer.spaceId,
+          name: mcpServer.name,
+        })
+        .from(mcpServer)
+        .where(isNull(mcpServer.slug))
+        .orderBy(asc(mcpServer.id))
+        .all();
     },
 
     update(id, changes) {

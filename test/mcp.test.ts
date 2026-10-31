@@ -2,10 +2,23 @@ import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as schema from "@/adapters/schema.ts";
-import { mergeHeaders, outputOf, riskOfAnnotations, secretHint } from "@/services/mcp-servers.ts";
-import { mcpHeadersInputSchema, type McpServerSummary } from "@/shared/mcp.ts";
+import {
+  mergeHeaders,
+  outputOf,
+  riskOfAnnotations,
+  secretHint,
+  uniqueSlug,
+} from "@/services/mcp-servers.ts";
+import { modelToolNames } from "@/services/tools.ts";
+import { mcpHeadersInputSchema, type McpServerSummary, mcpSlugOf } from "@/shared/mcp.ts";
 import type { ThreadDetail } from "@/shared/threads.ts";
-import { EDITORS, TOOL_OFF, type ToolsetSetting } from "@/shared/tools.ts";
+import {
+  EDITORS,
+  TOOL_OFF,
+  type ToolsetSetting,
+  WIRE_NAME_MAX,
+  wireToolName,
+} from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
 import { MCP_API_KEY, MCP_BEARER_TOKEN, MODERN_REVISION, mcpStandIn } from "../e2e/mcp-server.ts";
@@ -639,51 +652,55 @@ describe("turning an MCP server off", () => {
   });
 });
 
-describe("MCP tools in a thread", () => {
-  async function mcpThread(url = `${MCP_ORIGIN}/headers/mcp`) {
-    const workspace = await agentThread();
-    const { ada, api, model, events } = workspace;
-    const res = await api("POST", "/org/mcp-servers", ada.cookie, {
-      name: "Notes",
-      url,
-      auth: { kind: "headers", headers: bearer },
-    });
-    const server = (await res.json()) as McpServerSummary;
-    const id = (tool: string) => `mcp:${server.id}/${tool}`;
-    async function calls(toolId: string, input: unknown) {
-      const call = await model.next();
-      call.startStep();
-      call.toolCall(`call-${model.calls.length}`, toolId, input);
-      call.endStep();
-      call.end();
-      return call;
-    }
-    function toolRows() {
-      return transcriptOf(events()).rows.filter((row) => row.kind === "tool");
-    }
-    return { ...workspace, server, id, calls, toolRows };
+// A thread whose org has the stand-in MCP server, and the ids and model names of its tools.
+async function mcpThread(url = `${MCP_ORIGIN}/headers/mcp`) {
+  const workspace = await agentThread();
+  const { ada, api, model, events } = workspace;
+  const res = await api("POST", "/org/mcp-servers", ada.cookie, {
+    name: "Notes",
+    url,
+    auth: { kind: "headers", headers: bearer },
+  });
+  const server = (await res.json()) as McpServerSummary;
+  const id = (tool: string) => `mcp:${server.id}/${tool}`;
+  // What the model knows the tool by.
+  const named = (tool: string) => `mcp.notes.${tool}`;
+  async function calls(toolId: string, input: unknown) {
+    const call = await model.next();
+    call.startStep();
+    call.toolCall(`call-${model.calls.length}`, toolId, input);
+    call.endStep();
+    call.end();
+    return call;
   }
+  function toolRows() {
+    return transcriptOf(events()).rows.filter((row) => row.kind === "tool");
+  }
+  return { ...workspace, server, id, named, calls, toolRows };
+}
 
+describe("MCP tools in a thread", () => {
   it("run through the server with its headers, and give back its structured content", async () => {
-    const { ada, api, thread, post, calls, model, worker, start, id, toolRows } = await mcpThread();
+    const { ada, api, thread, post, calls, model, worker, start, id, named, toolRows } =
+      await mcpThread();
     start();
 
     await post(ada, "Write a note");
-    const first = await calls(id("add_note"), { title: "Engines", body: "They compute" });
+    const first = await calls(named("add_note"), { title: "Engines", body: "They compute" });
     const next = await model.next();
     next.reply("Written.");
     await worker.idle();
 
-    expect(first.tools).toEqual(expect.arrayContaining([id("echo"), id("add_note")]));
-    expect(first.request.tools?.find((tool) => tool.id === id("add_note"))?.inputSchema).toEqual(
+    expect(first.tools).toEqual(expect.arrayContaining([named("echo"), named("add_note")]));
+    expect(first.request.tools?.find((tool) => tool.id === named("add_note"))?.inputSchema).toEqual(
       expect.objectContaining({ required: ["title"] }),
     );
     expect(toolRows().map((row) => [row.state, row.risk])).toEqual([["ran", "normal"]]);
     expect(next.texts.at(-1)).toBe(
-      `result ${id("add_note")}: {"ok":true,"value":{"id":"note-1","title":"Engines","words":2}}`,
+      `result ${named("add_note")}: {"ok":true,"value":{"id":"note-1","title":"Engines","words":2}}`,
     );
 
-    // The thread's tool definitions name the server; Mage's own tools name no toolset.
+    // The thread's tool definitions name the server; Mage's own name their toolset.
     const detail = (await (
       await api("GET", `/threads/${thread.id}`, ada.cookie)
     ).json()) as ThreadDetail;
@@ -691,7 +708,10 @@ describe("MCP tools in a thread", () => {
       title: "Add note",
       toolset: "Notes",
     });
-    expect(detail.tools.find((tool) => tool.name === "thread.rename")?.toolset).toBeUndefined();
+    expect(detail.tools.find((tool) => tool.name === "thread.rename")).toMatchObject({
+      title: "Rename",
+      toolset: "Thread",
+    });
   });
 
   it("run on a server of the 2026-07-28 revision, and go straight to initialize on an older one", async () => {
@@ -699,19 +719,21 @@ describe("MCP tools in a thread", () => {
       ["/modern/headers/mcp", ["server/discover", "tools/call"]],
       ["/headers/mcp", ["initialize", "notifications/initialized", "tools/call"]],
     ] as const) {
-      const { ada, post, calls, model, worker, start, id, mcpNetwork } = await mcpThread(
+      const { ada, post, calls, model, worker, start, named, mcpNetwork } = await mcpThread(
         `${MCP_ORIGIN}${path}`,
       );
       start();
       mcpNetwork.requests.length = 0;
 
       await post(ada, "Say it");
-      await calls(id("echo"), { text: "hello" });
+      await calls(named("echo"), { text: "hello" });
       const next = await model.next();
       next.reply("Said.");
       await worker.idle();
 
-      expect(next.texts.at(-1)).toBe(`result ${id("echo")}: {"ok":true,"value":{"text":"hello"}}`);
+      expect(next.texts.at(-1)).toBe(
+        `result ${named("echo")}: {"ok":true,"value":{"text":"hello"}}`,
+      );
       expect(await methodsOf(mcpNetwork.requests)).toEqual(methods);
     }
   });
@@ -801,7 +823,7 @@ describe("MCP tools in a thread", () => {
   );
 
   it("are not offered when off, and a removed server's tools go with it", async () => {
-    const { ada, post, model, worker, start, id, api, server, db } = await mcpThread();
+    const { ada, post, model, worker, start, id, named, api, server, db } = await mcpThread();
     await api("PATCH", "/org/tools", ada.cookie, { toolIds: [id("echo")], policy: TOOL_OFF });
     start();
 
@@ -809,8 +831,8 @@ describe("MCP tools in a thread", () => {
     const first = await model.next();
     first.reply("Hi.");
     await worker.idle();
-    expect(first.tools).not.toContain(id("echo"));
-    expect(first.tools).toContain(id("add_note"));
+    expect(first.tools).not.toContain(named("echo"));
+    expect(first.tools).toContain(named("add_note"));
 
     await api("DELETE", `/mcp-servers/${server.id}`, ada.cookie);
     expect(
@@ -824,7 +846,7 @@ describe("MCP tools in a thread", () => {
     const second = await model.next();
     second.reply("Hi.");
     await worker.idle();
-    expect(second.tools.some((tool) => tool.startsWith("mcp:"))).toBe(false);
+    expect(second.tools.some((tool) => tool.startsWith("mcp"))).toBe(false);
   });
 });
 
@@ -1058,5 +1080,90 @@ describe("changing an MCP server", () => {
     expect(refused.status).toBe(403);
     const bad = await api("PATCH", `/mcp-servers/${body.id}`, ada.cookie, { url: "ftp://x" });
     expect(bad.status).toBe(400);
+  });
+});
+
+describe("what the model calls a server's tools", () => {
+  it("is a slug made from the server's name", () => {
+    expect(mcpSlugOf("GitHub Issues")).toBe("github-issues");
+    expect(mcpSlugOf("  Ünïcode & Co!  ")).toBe("unicode-co");
+    expect(mcpSlugOf("***")).toBe("server");
+    expect(mcpSlugOf("x".repeat(50))).toHaveLength(32);
+    expect(uniqueSlug("notes", new Set(["notes", "notes-2"]))).toBe("notes-3");
+    expect(uniqueSlug("x".repeat(32), new Set(["x".repeat(32)]))).toBe(`${"x".repeat(30)}-2`);
+  });
+
+  it("is unique among the servers a space has: the org's and its own", async () => {
+    const { ada, add, api, createSpace } = await orgWithServers();
+    const lab = await createSpace(ada.cookie, "Lab");
+    const other = await createSpace(ada.cookie, "Other");
+    const server = (name: string) => ({ name, url: `${MCP_ORIGIN}/mcp`, auth: { kind: "none" } });
+    const slugOf = async (body: object, path?: string) => (await add(body, path)).body.slug;
+
+    expect(await slugOf(server("Notes"))).toBe("notes");
+    expect(await slugOf(server("Notes"))).toBe("notes-2");
+    expect(await slugOf(server("Notes"), `/spaces/${lab.id}/mcp-servers`)).toBe("notes-3");
+    // Another space may reuse a space's slug, but an org server may not take one any space has.
+    expect(await slugOf(server("Notes"), `/spaces/${other.id}/mcp-servers`)).toBe("notes-3");
+    expect(await slugOf(server("Notes"))).toBe("notes-4");
+    const taken = await add({ ...server("Mine"), slug: "notes" });
+    expect(taken.status).toBe(409);
+    expect(taken.body.error).toBe("Another server here is called notes");
+    expect(await slugOf({ ...server("Mine"), slug: "mine_1" })).toBe("mine_1");
+    const bad = await api("POST", "/org/mcp-servers", ada.cookie, { ...server("x"), slug: "Bad!" });
+    expect(bad.status).toBe(400);
+  });
+
+  it("changes with the slug, while the tools keep their ids and policies", async () => {
+    const workspace = await mcpThread();
+    const { ada, api, server, id, post, calls, model, worker, start } = workspace;
+    const policy = await signOff(api, ada.cookie);
+    await api("PATCH", "/org/tools", ada.cookie, { toolIds: [id("echo")], policy });
+    const res = await api("PATCH", `/mcp-servers/${server.id}`, ada.cookie, {
+      name: "Scratchpad",
+      slug: "pad",
+    });
+    expect(((await res.json()) as McpServerSummary).slug).toBe("pad");
+    const tools = (await (await api("GET", "/org/tools", ada.cookie)).json()) as ToolsetSetting[];
+    const echo = tools.flatMap((set) => set.tools).find((tool) => tool.id === id("echo"));
+    expect(echo?.policy).toBe(policy);
+
+    start();
+    await post(ada, "Say it");
+    const first = await calls("mcp.pad.add_note", { title: "T", body: "B" });
+    const next = await model.next();
+    next.reply("Done.");
+    await worker.idle();
+    expect(first.tools).toEqual(expect.arrayContaining(["mcp.pad.echo", "mcp.pad.add_note"]));
+    expect(workspace.toolRows().map((row) => [row.toolId, row.state])).toEqual([
+      [id("add_note"), "ran"],
+    ]);
+    expect(next.texts.filter((text) => text.startsWith("tool"))).toEqual([
+      'tool mcp.pad.add_note: {"title":"T","body":"B"}',
+    ]);
+  });
+});
+
+describe("tool names for the model", () => {
+  it("fit providers' limit and stay unique on the wire, mapping back to their ids", () => {
+    const long = `mcp.server.${"very_long_tool_name_".repeat(5)}`;
+    const tools = [
+      { id: "a", name: "thread.info" },
+      { id: "b", name: "thread__info" },
+      { id: "c", name: long },
+      { id: "d", name: `${long}x` },
+      { id: "e", name: "mcp.notes.echo" },
+    ];
+    const names = modelToolNames(tools);
+    const wire = [...names.values()].map(wireToolName);
+    expect(new Set(wire).size).toBe(tools.length);
+    expect(wire.every((name) => name.length <= WIRE_NAME_MAX)).toBe(true);
+    expect(names.get("a")).toBe("thread.info");
+    expect(names.get("e")).toBe("mcp.notes.echo");
+    expect(names.get("b")).toMatch(/^thread__info_[0-9a-f]{6}$/);
+    expect(wireToolName("mcp.github.search_issues")).toBe("mcp__github__search_issues");
+    expect(names.get("c")).toMatch(/_[0-9a-f]{6}$/);
+    // The same tools are named the same each run.
+    expect(modelToolNames(tools)).toEqual(names);
   });
 });

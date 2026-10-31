@@ -9,7 +9,10 @@
 // stored one, and a new address or way of authorizing drops the secrets and tokens that went with
 // the old one. The tools a server lists are kept and offered from there until it is read again, and
 // each call goes to the server with the secrets of whoever the call runs as: today always the ones
-// the server shares.
+// the server shares. Each server has a short name for the agent, made from its name unless given,
+// unique among the servers any one space has; its tools reach the model as mcp.<slug>.<tool>, while
+// their ids stay with the server's id, so renaming it keeps their policies and history. Servers
+// kept from before short names get one when the service starts.
 
 import { randomBytes } from "node:crypto";
 
@@ -43,6 +46,7 @@ import {
   type McpServerChange,
   type McpServerSummary,
   mcpToolId,
+  mcpSlugOf,
   mcpToolsetId,
   type NewMcpServer,
   type SpaceOrgMcpServer,
@@ -144,10 +148,54 @@ function headerHints(headers: Record<string, string>) {
   return Object.entries(headers).map(([name, value]) => ({ name, hint: secretHint(value) }));
 }
 
+// The slug, or it with the first number from 2 that no server in `taken` has.
+export function uniqueSlug(base: string, taken: ReadonlySet<string>) {
+  if (!taken.has(base)) return base;
+  for (let n = 2; ; n += 1) {
+    const suffix = `-${n}`;
+    const slug = `${base.slice(0, 32 - suffix.length)}${suffix}`;
+    if (!taken.has(slug)) return slug;
+  }
+}
+
 export function createMcpServers(options: McpServersOptions) {
   const { servers, credentials, client, spaces, settings, logger } = options;
   const now = options.now ?? (() => new Date());
   const pending = new Map<string, Pending>();
+
+  // The slugs a server of the org, or of one of its spaces, may not take: those of every server
+  // some space has beside it. The org's are in every space, so they clash with any space's.
+  function takenSlugs(orgId: string, spaceId: string | null, except?: string) {
+    const all = servers.everyInOrg(orgId);
+    return new Set(
+      all
+        .filter((server) => server.id !== except && server.slug)
+        .filter((server) => !spaceId || server.spaceId === null || server.spaceId === spaceId)
+        .map((server) => server.slug),
+    );
+  }
+
+  function slugFor(
+    orgId: string,
+    spaceId: string | null,
+    wanted: string | undefined,
+    name: string,
+    except?: string,
+  ) {
+    const taken = takenSlugs(orgId, spaceId, except);
+    if (wanted) {
+      if (taken.has(wanted)) throw new ServiceError(409, `Another server here is called ${wanted}`);
+      return wanted;
+    }
+    return uniqueSlug(mcpSlugOf(name), taken);
+  }
+
+  // Servers kept from before slugs get one made from their names, oldest first.
+  for (const server of servers.withoutSlug()) {
+    servers.update(server.id, {
+      slug: slugFor(server.orgId, server.spaceId, undefined, server.name),
+    });
+  }
 
   // Where a server's OAuth state is kept: with whoever's secrets they are.
   function oauthStore(serverId: string, holder: McpHolder): McpOAuthStore {
@@ -207,6 +255,7 @@ export function createMcpServers(options: McpServersOptions) {
     return {
       id: server.id,
       name: server.name,
+      slug: server.slug,
       url: server.url,
       spaceId: server.spaceId,
       enabled: server.enabled,
@@ -306,6 +355,7 @@ export function createMcpServers(options: McpServersOptions) {
   function specOf(server: McpServer, definition: ToolDefinition): AnyToolSpec {
     return {
       name: mcpToolId(server.id, definition.name),
+      modelName: `mcp.${server.slug}.${definition.name}`,
       title: definition.title ?? definition.name,
       description: definition.description ?? definition.title ?? definition.name,
       input: anyInput,
@@ -438,6 +488,7 @@ export function createMcpServers(options: McpServersOptions) {
       orgId: principal.orgId,
       spaceId,
       name: input.name,
+      slug: slugFor(principal.orgId, spaceId, input.slug, input.name),
       url,
       authKind: input.auth.kind,
       settings: own,
@@ -468,8 +519,13 @@ export function createMcpServers(options: McpServersOptions) {
     // Anything the server answered on before was for the old address.
     const elsewhere = url !== server.url;
     if (elsewhere) next = moved(next.secrets, next.settings);
+    const slug =
+      input.slug && input.slug !== server.slug
+        ? slugFor(server.orgId, server.spaceId, input.slug, server.name, server.id)
+        : undefined;
     servers.update(id, {
       ...(input.name && { name: input.name }),
+      ...(slug && { slug }),
       url,
       authKind,
       settings: next.settings,

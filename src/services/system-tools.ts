@@ -43,7 +43,7 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
 
   const info: ToolSpec<Record<string, never>> = {
     name: "thread.info",
-    title: "Thread details",
+    title: "Details",
     annotations: { readOnlyHint: true },
     description:
       "Read this thread's title, folder, the model and effort it is set to and the one replying, and the people in it. Check it before changing any of them.",
@@ -83,7 +83,7 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
 
   const rename: ToolSpec<{ title: string }> = {
     name: "thread.rename",
-    title: "Rename thread",
+    title: "Rename",
     annotations: { readOnlyHint: false },
     description: "Rename this thread.",
     input: z.object({
@@ -101,7 +101,7 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
 
   const move: ToolSpec<{ folder: string | null }> = {
     name: "thread.move",
-    title: "Move thread",
+    title: "Move",
     annotations: { readOnlyHint: false },
     description:
       "Move this thread to one of its space's folders, by name, or to the top of the space with null. It does not make folders.",

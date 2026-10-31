@@ -134,7 +134,7 @@ function toolUse(name: string, json: string) {
 describe("Anthropic API key gateway", () => {
   it("offers tools by names the API takes, and ends the request with the calls asked for", async () => {
     const { fetchFn, requests } = recordingFetch([
-      sse(toolUse("thread_rename", '{"title":"Engines"}')),
+      sse(toolUse("thread__rename", '{"title":"Engines"}')),
     ]);
     const tools = [
       {
@@ -171,12 +171,12 @@ describe("Anthropic API key gateway", () => {
 
     expect(requests).toHaveLength(1);
     expect(requests[0]?.body.tools).toEqual([
-      expect.objectContaining({ name: "thread_rename", description: "Rename this thread." }),
+      expect.objectContaining({ name: "thread__rename", description: "Rename this thread." }),
     ]);
     expect((requests[0]!.body.messages as unknown[]).slice(-2)).toEqual([
       {
         role: "assistant",
-        content: [{ type: "tool_use", id: "toolu_0", name: "thread_info", input: {} }],
+        content: [{ type: "tool_use", id: "toolu_0", name: "thread__info", input: {} }],
       },
       {
         role: "user",

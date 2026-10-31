@@ -6,9 +6,8 @@
 // answers. An agent reply that was cut short says so, a run that failed says why and what to do
 // about it, the last run that failed or was stopped can be tried again, and an event this client
 // does not know yet gets a labelled placeholder. Tool calls show by their tool's definition alone,
-// its title or else its name, as for any tool (loading a skill as Loaded skill and the skill's
-// name), and an MCP server's tool is a breadcrumb, its server
-// in muted text before a chevron and the tool. One waiting for a decision is a card from the agent
+// as a breadcrumb: its toolset or MCP server in muted text that lights up with the line on hover, a
+// chevron, and its title or else its name (loading a skill as Loaded and the skill's name). One waiting for a decision is a card from the agent
 // headed by the tool under a hand, tagged when the call asks each time, with the input and Allow,
 // Allow for now and Deny in a row, enabled for the people who may run the tool and marked paused for
 // everyone else; every other call is a line with the tool and what became of the call, which opens
@@ -269,7 +268,7 @@ const ONLY_RUNNERS = "Only people who can run this here can decide";
 function toolName(row: ToolRow, definition: ToolDefinition | undefined) {
   const skill = (row.input as { name?: unknown } | null)?.name;
   if (row.toolId === LOAD_SKILL && typeof skill === "string") {
-    return row.state === "ran" ? `Loaded skill ${skill}` : `Load skill ${skill}`;
+    return row.state === "ran" ? `Loaded ${skill}` : `Load ${skill}`;
   }
   return definition?.title ?? row.toolId;
 }
@@ -300,8 +299,13 @@ function ToolCrumb({
     <>
       {definition?.toolset && (
         <>
-          <span className={cn(GIVES_WAY, "text-muted-foreground")}>{definition.toolset}</span>
-          <ChevronRightIcon aria-hidden className="size-3 shrink-0 text-muted-foreground" />
+          <span className={cn(GIVES_WAY, "text-muted-foreground group-hover/tool:text-foreground")}>
+            {definition.toolset}
+          </span>
+          <ChevronRightIcon
+            aria-hidden
+            className="size-3 shrink-0 text-muted-foreground group-hover/tool:text-foreground"
+          />
         </>
       )}
       <span className={cn("min-w-0 truncate", className)}>{toolName(row, definition)}</span>

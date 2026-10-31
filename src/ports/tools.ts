@@ -39,6 +39,8 @@ export interface ToolContext {
 // Schemas of what it takes and gives back. People and the model see it the same.
 export interface ToolSpec<I = unknown> {
   name: string;
+  // What the model calls it, when not its id.
+  modelName?: string;
   title?: string;
   // What the model reads; the same for everyone.
   description: string;

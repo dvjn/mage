@@ -16,6 +16,7 @@ import {
   type ToolSet,
 } from "ai";
 
+import { wireToolName } from "@/shared/tools.ts";
 import {
   type ModelErrorKind,
   type ModelEvent,
@@ -34,9 +35,9 @@ export interface ProviderErrors {
   resetsAt?(headers: Record<string, string>, body: unknown, now: Date): Date | null;
 }
 
-// A tool id as a function name providers accept: letters, digits, `_` and `-`.
+// A tool's name for the model as a function name providers accept.
 export function toolName(id: string) {
-  return id.replace(/[^a-zA-Z0-9_-]/g, "_");
+  return wireToolName(id);
 }
 
 function sdkMessages(messages: ModelMessage[]): SdkMessage[] {

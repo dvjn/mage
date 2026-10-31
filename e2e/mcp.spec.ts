@@ -92,12 +92,7 @@ test("an org's header-authorized MCP server lists its tools, and a call that ask
 }) => {
   const spaceId = await signUp(page);
   await page.goto("/org/tools");
-  const serverId = await addServer(
-    page,
-    "Notes",
-    `${mcpServer}/headers/mcp`,
-    withBearer(MCP_BEARER_TOKEN),
-  );
+  await addServer(page, "Notes", `${mcpServer}/headers/mcp`, withBearer(MCP_BEARER_TOKEN));
 
   await expect(page.getByRole("heading", { name: "Notes" })).toBeVisible();
   await expect(page.getByText("Connected").first()).toBeVisible();
@@ -119,7 +114,7 @@ test("an org's header-authorized MCP server lists its tools, and a call that ask
   await expect(notes.getByRole("listitem", { name: "Echo" })).toBeVisible();
 
   await page.goto(`/s/${spaceId}`);
-  await write(page, `/tool mcp:${serverId}/add_note {"title":"Engines","body":"They compute"}`);
+  await write(page, `/tool mcp.notes.add_note {"title":"Engines","body":"They compute"}`);
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const card = transcript(page).getByRole("article", {
     name: "Approval request",
@@ -139,7 +134,7 @@ test("an org's header-authorized MCP server lists its tools, and a call that ask
   await expect(output).toContainText("Words");
 
   // A call that was allowed and then failed still says who allowed it.
-  await write(page, `/tool mcp:${serverId}/delete_note {"id":"missing"}`);
+  await write(page, `/tool mcp.notes.delete_note {"id":"missing"}`);
   await expect(card).toContainText("Delete note");
   await card.getByRole("button", { name: "Allow", exact: true }).click();
   await expect(
@@ -194,12 +189,7 @@ test("a space's own MCP server is used in that space's threads alone", async ({ 
   await page.goto(`/s/${lab}/settings/tools`);
   const card = page.locator("[data-slot=card]").filter({ hasText: "MCP servers" });
   await expect(card).toContainText("No servers yet");
-  const serverId = await addServer(
-    page,
-    "Lab notes",
-    `${mcpServer}/headers/mcp`,
-    withBearer(MCP_BEARER_TOKEN),
-  );
+  await addServer(page, "Lab notes", `${mcpServer}/headers/mcp`, withBearer(MCP_BEARER_TOKEN));
   await expect(page.getByRole("heading", { name: "Lab notes", exact: true })).toBeVisible();
   await expect(page.getByText("This space", { exact: true })).toBeVisible();
 
@@ -208,14 +198,14 @@ test("a space's own MCP server is used in that space's threads alone", async ({ 
   await expect(page.getByRole("region", { name: "Lab notes" })).toHaveCount(0);
 
   await page.goto(`/s/${lab}`);
-  await write(page, `/tool mcp:${serverId}/echo {"text":"hello lab"}`);
+  await write(page, `/tool mcp.lab-notes.echo {"text":"hello lab"}`);
   await expect(
     transcript(page).getByRole("button", { name: /^Lab notes › Echo · Ran/ }),
   ).toBeVisible();
 
   await page.goto(`/s/${own}`);
-  await write(page, `/tool mcp:${serverId}/echo {"text":"hello"}`);
-  await expect(transcript(page)).toContainText(`I cannot use mcp:${serverId}/echo here.`);
+  await write(page, `/tool mcp.lab-notes.echo {"text":"hello"}`);
+  await expect(transcript(page)).toContainText(`I cannot use mcp.lab-notes.echo here.`);
 });
 
 test("an MCP server's headers and address are changed in the form it was added with", async ({
@@ -296,8 +286,8 @@ test("a space turns one of the org's MCP servers off for itself alone", async ({
   await expect(inSpace).not.toBeChecked();
 
   await page.goto(`/s/${own}`);
-  await write(page, `/tool mcp:${serverId}/echo {"text":"hello"}`);
-  await expect(transcript(page)).toContainText(`I cannot use mcp:${serverId}/echo here.`);
+  await write(page, `/tool mcp.notes.echo {"text":"hello"}`);
+  await expect(transcript(page)).toContainText(`I cannot use mcp.notes.echo here.`);
 
   await page.goto("/org/tools");
   const inOrg = page.getByRole("region", { name: "Notes" });

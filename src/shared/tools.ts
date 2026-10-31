@@ -9,8 +9,8 @@ export type JsonSchema = Record<string, unknown>;
 
 // A tool as MCP defines one: its name, which is its id, an optional title and description, and the
 // JSON Schemas of its input and, where it says, its output. Mage's own tools come the same way, so
-// nothing shows a tool from anything else. Where tools of many toolsets show together, one from an
-// MCP server carries the server's name as its toolset; Mage's own carry none.
+// nothing shows a tool from anything else. Where tools of many toolsets show together, each carries
+// its toolset's name: an MCP server's, or that of Mage's own toolset it is in.
 export const toolDefinitionSchema = z.object({
   name: z.string(),
   title: z.string().optional(),
@@ -169,3 +169,12 @@ export const toolPolicyChangeSchema = z.object({
 export type ToolPolicyChange = z.infer<typeof toolPolicyChangeSchema>;
 
 export const toolsetEnabledChangeSchema = z.object({ enabled: z.boolean() });
+
+// The most characters providers take in a tool's name.
+export const WIRE_NAME_MAX = 64;
+
+// A tool's name for the model as providers take it: letters, digits, `_` and `-`, each dot as two
+// underscores and anything else as one.
+export function wireToolName(name: string) {
+  return name.replaceAll(".", "__").replace(/[^a-zA-Z0-9_-]/g, "_");
+}

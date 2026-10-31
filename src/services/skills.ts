@@ -651,7 +651,7 @@ export function createSkills(options: SkillsOptions) {
 
       const load: ToolSpec<{ name: string }> = {
         name: LOAD_SKILL,
-        title: "Load skill",
+        title: "Load",
         annotations: { readOnlyHint: true },
         description:
           "Load a skill by name: its instructions, and the files that come with it. Load one when the task matches its description, before you start.",
@@ -675,7 +675,7 @@ export function createSkills(options: SkillsOptions) {
 
       const readFile: ToolSpec<{ name: string; path: string }> = {
         name: READ_SKILL_FILE,
-        title: "Read skill file",
+        title: "Read file",
         annotations: { readOnlyHint: true },
         description:
           "Read one of the files that come with a skill, by the skill's name and the file's path.",
