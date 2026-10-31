@@ -6,7 +6,9 @@
 // anyone who can edit the thread when none asks. Where independence applies, the approver can't
 // be the author of the thread's latest human message. A call runs at once when the tool declares
 // normal risk, no rule makes every call ask, and everyone whose words the model read may use it
-// directly; or on a standing approval that still holds. Otherwise it waits.
+// directly; or on a standing approval that still holds. Otherwise it waits. A call that asks the
+// thread questions always waits for an answer, which anyone who may use or approve the tool gives;
+// an answer counts as its writer's words like a message.
 
 import type { ToolLevel } from "@/ports/tools.ts";
 import type { Access } from "@/services/thread-access.ts";
@@ -73,13 +75,31 @@ export function riskOf(declared: ToolRisk, rules: readonly Rule[]): ToolRisk {
   return "normal";
 }
 
-// The author of the thread's latest human message.
-export function latestAuthor(rows: readonly { kind: string; author?: { userId: string } }[]) {
-  for (let index = rows.length - 1; index >= 0; index -= 1) {
-    const row = rows[index]!;
-    if (row.kind === "human" && row.author) return row.author.userId;
+// A row of the thread as rules read it: a person's message, or a call someone answered.
+export interface WordsRow {
+  kind: string;
+  seq: number;
+  author?: { userId: string };
+  answers?: unknown;
+  decision?: { by: { userId: string }; seq: number } | null;
+}
+
+// The people's words the model read, where each sits in the thread and who wrote it: their
+// messages, and their answers to the agent's questions.
+export function wordsIn(rows: readonly WordsRow[]) {
+  const words: { seq: number; userId: string }[] = [];
+  for (const row of rows) {
+    if (row.kind === "human" && row.author) words.push({ seq: row.seq, userId: row.author.userId });
+    else if (row.kind === "tool" && row.answers && row.decision) {
+      words.push({ seq: row.decision.seq, userId: row.decision.by.userId });
+    }
   }
-  return null;
+  return words.sort((a, b) => a.seq - b.seq);
+}
+
+// Who wrote the thread's latest words: a message, or an answer.
+export function latestAuthor(rows: readonly WordsRow[]) {
+  return wordsIn(rows).at(-1)?.userId ?? null;
 }
 
 // Whether the person may approve a call with this risk under the rules: they can edit the thread,
@@ -94,6 +114,17 @@ export function mayApprove(
   const asking = rules.filter((rule) => rule.use !== "everyone");
   if (!asking.every((rule) => names(person, rule.approvers))) return false;
   return risk !== "review" || latest !== person.userId;
+}
+
+// Whether the person may answer a call's questions: they may use the tool directly, or approve the
+// call; an answer stands for both.
+export function mayAnswer(
+  person: Person,
+  rules: readonly Rule[],
+  risk: ToolRisk,
+  latest: string | null,
+) {
+  return canUse(person, rules) || mayApprove(person, rules, risk, latest);
 }
 
 // A person's words the model read: where they sit in the thread, their writer's level now, and

@@ -10,6 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { HandIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
 
+import { ASK_TOOL } from "@/shared/ask.ts";
 import { statusOf, type ThreadStatus } from "@/shared/thread-status.ts";
 import type { ThreadActivity } from "@/shared/threads.ts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/web/components/ui/tooltip";
@@ -37,7 +38,9 @@ function tooltipOf(status: ThreadStatus, activity: ThreadActivity) {
     case "waiting":
       return `Waiting for you · since ${clock.format(new Date(run?.since ?? Date.now()))}`;
     case "paused":
-      return "Paused · waiting for someone to approve";
+      return run?.toolId === ASK_TOOL
+        ? "Paused · waiting for someone to answer"
+        : "Paused · waiting for someone to approve";
     case "failed":
       return `Failed · ${activity.failed?.error || "The agent could not reply"}`;
     case "working":

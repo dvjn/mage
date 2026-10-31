@@ -364,8 +364,8 @@ test("a policy made from a template is used for a group and a tool, and a space 
   // In the space, the org's tools follow the org's policy by default.
   await openTools(page, `/s/${spaceId}/settings/tools`);
   const thread = page.getByRole("region", { name: "Thread" });
-  await expect(thread).toContainText("4 tools");
-  await expect(thread.getByRole("button", { name: /^Thread 4 tools/ })).toContainText("2 Sign-off");
+  await expect(thread).toContainText("5 tools");
+  await expect(thread.getByRole("button", { name: /^Thread 5 tools/ })).toContainText("2 Sign-off");
   const rename = page.getByRole("listitem", { name: "Rename" });
   await expect(picker(rename, "Rename")).toContainText("Default · Sign-off");
   await expect(page.getByRole("listitem", { name: "Sign-off" })).toContainText("Organization");
@@ -376,7 +376,7 @@ test("a policy made from a template is used for a group and a tool, and a space 
   await picker(spaceGroup, "Interactive tools").click();
   await choose(page, "Off");
   await expect(picker(rename, "Rename")).toContainText("Off");
-  await expect(thread.getByRole("button", { name: /^Thread 4 tools/ })).toContainText("3 Off");
+  await expect(thread.getByRole("button", { name: /^Thread 5 tools/ })).toContainText("3 Off");
 
   // The org still has its own; the space's rules stay in the space.
   await openTools(page, "/org/tools");
@@ -385,10 +385,10 @@ test("a policy made from a template is used for a group and a tool, and a space 
   );
 
   await openTools(page, `/s/${spaceId}/settings/tools`);
-  await thread.getByRole("button", { name: /^Thread 4 tools/ }).click();
+  await thread.getByRole("button", { name: /^Thread 5 tools/ }).click();
   await expect(rename).toBeHidden();
   await page.reload();
-  await expect(page.getByRole("region", { name: "Thread" })).toContainText("4 tools");
+  await expect(page.getByRole("region", { name: "Thread" })).toContainText("5 tools");
   await expect(page.getByRole("listitem", { name: "Rename" })).toBeHidden();
 });
 
@@ -549,7 +549,7 @@ test("tools have their own settings page in the org and in a space", async ({ pa
   // The page's title is the only "Tools and MCPs" heading; the toolsets are in a card for their source.
   await expect(page.getByRole("heading", { name: "Tools and MCPs", exact: true })).toHaveCount(1);
   await expect(builtIn(page)).toHaveCount(1);
-  await expect(builtIn(page).getByRole("region", { name: "Thread" })).toContainText("4 tools");
+  await expect(builtIn(page).getByRole("region", { name: "Thread" })).toContainText("5 tools");
 
   // A person's own space has no members to set.
   await page.goto(`/s/${spaceId}/settings`);
@@ -558,7 +558,7 @@ test("tools have their own settings page in the org and in a space", async ({ pa
   await expect(page.getByRole("region", { name: "Thread" })).toHaveCount(0);
   await nav.getByRole("link", { name: "Tools and MCPs" }).click();
   await expect(page).toHaveURL(/\/settings\/tools$/);
-  await expect(page.getByRole("region", { name: "Thread" })).toContainText("4 tools");
+  await expect(page.getByRole("region", { name: "Thread" })).toContainText("5 tools");
   await expect(page.getByRole("heading", { name: "Tools and MCPs", exact: true })).toHaveCount(1);
   await expect(builtIn(page).getByRole("region", { name: "Thread" })).toHaveCount(1);
   await page.goto(`/s/${spaceId}/settings/members`);

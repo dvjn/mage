@@ -4,6 +4,7 @@
 
 import * as z from "zod";
 
+import { askAnswersSchema } from "@/shared/ask.ts";
 import { hostIdSchema } from "@/shared/hosts.ts";
 import { MAKER_IDS } from "@/shared/makers.ts";
 import { toolDefinitionSchema } from "@/shared/tools.ts";
@@ -176,8 +177,8 @@ export const toolRiskSchema = z.enum(["normal", "ask", "review"]);
 export type ToolRisk = z.infer<typeof toolRiskSchema>;
 
 // Why a tool call did not run: someone denied it, the approval no longer held when it was to run,
-// or the run ended first.
-export const toolDenialSchema = z.enum(["denied", "stale", "stopped"]);
+// the run ended first, or someone skipped the questions it asked.
+export const toolDenialSchema = z.enum(["denied", "stale", "stopped", "skipped"]);
 
 // An approval for this call alone, or for later calls of the tool in the thread until input that
 // needs approval arrives.
@@ -251,6 +252,8 @@ export const eventDataSchemas = {
   }),
   // The actor approved the call.
   "tool.approved": z.object({ runId: z.string(), callId: z.string(), scope: toolScopeSchema }),
+  // The actor answered the questions the call asks; the first answer wins.
+  "tool.answered": z.object({ runId: z.string(), callId: z.string(), answers: askAnswersSchema }),
   // The call will not run, and why.
   "tool.denied": z.object({ runId: z.string(), callId: z.string(), reason: toolDenialSchema }),
   // The call ran, with what it gave back or why it failed, in milliseconds.
@@ -311,6 +314,7 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("thread.renamed"),
   eventSchema("tool.requested"),
   eventSchema("tool.approved"),
+  eventSchema("tool.answered"),
   eventSchema("tool.denied"),
   eventSchema("tool.ran"),
 ]);

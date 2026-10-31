@@ -93,6 +93,7 @@ import {
   type SpaceSummary,
   spaceNameSchema,
 } from "@/shared/spaces.ts";
+import { toolAnswerSchema } from "@/shared/ask.ts";
 import {
   messageInputSchema,
   newThreadSchema,
@@ -278,6 +279,7 @@ const pendingChange = jsonBody(pendingChangeSchema, "Give a text, or a mode of s
 const retry = jsonBody(retrySchema, "runId is required");
 const threadRead = jsonBody(threadReadSchema, "seq is required");
 const toolDecision = jsonBody(toolDecisionSchema, "allow is required; scope is once or for_now");
+const toolAnswer = jsonBody(toolAnswerSchema, "answers are required, or null to skip");
 // A body that must match the schema; otherwise 400 with what is wrong first.
 function checkedBody<T extends z.ZodType>(schema: T) {
   return validator("json", (value, c) => {
@@ -925,6 +927,11 @@ function createApi(options: AppOptions) {
         const { id, callId } = c.req.param();
         const decision = c.req.valid("json");
         tools.decide(signedIn(c.var.principal), id, callId, decision);
+        return c.json({ ok: true }, 200);
+      })
+      .post("/v1/threads/:id/tools/:callId/answer", toolAnswer, (c) => {
+        const { id, callId } = c.req.param();
+        tools.answer(signedIn(c.var.principal), id, callId, c.req.valid("json").answers);
         return c.json({ ok: true }, 200);
       })
       .get("/v1/org/tools", (c) => {

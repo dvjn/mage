@@ -3,16 +3,18 @@
 // last reply again when it failed or was stopped, and the thread's model with, for a model that can
 // think, its reasoning effort, or the defaults it follows, named as such, with a way back to them.
 // Its space's owners and messagers can share it from its header. Those a tool's policy lets
-// approve decide on the agent's calls of it that wait, and while the agent waits the composer says
-// so. A guest of the thread sees its space's name alone, and cannot change its model; once their
-// access ends, they are told so. When the server cannot be reached, the thread as last read stays
-// in view while it reconnects. Reading it marks it seen.
+// approve decide on the agent's calls of it that wait, those it lets use or approve it answer the
+// agent's questions, and while the agent waits the composer says on what. A guest of the thread
+// sees its space's name alone, and cannot change its model; once their access ends, they are told
+// so. When the server cannot be reached, the thread as last read stays in view while it
+// reconnects. Reading it marks it seen.
 
 import { cn } from "cn";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { ASK_TOOL, type AskAnswers } from "@/shared/ask.ts";
 import {
   anyThreadEventSchema,
   type Delivery,
@@ -168,6 +170,25 @@ export function ThreadPage() {
     if (!res.ok) toast(await errorOf(res));
   }
 
+  // Answers the questions a call asks, or skips them; the answer arrives with the thread's events.
+  async function answer(callId: string, answers: AskAnswers | null) {
+    const res = await apiClient.v1.threads[":id"].tools[":callId"].answer.$post({
+      param: { id: threadId, callId },
+      json: { answers },
+    });
+    if (!res.ok) toast(await errorOf(res));
+  }
+
+  // What the run waits for: an answer to the agent's questions, or a decision on a call.
+  const waitingOn = run?.waitingOn
+    ? transcript.rows.find((row) => row.kind === "tool" && row.id === run.waitingOn)
+    : undefined;
+  const waiting = waitingOn
+    ? waitingOn.kind === "tool" && waitingOn.toolId === ASK_TOOL
+      ? "answer"
+      : "decision"
+    : null;
+
   // The last row, when it ends a run that failed or was stopped and nothing has run since.
   const last = transcript.rows.at(-1);
   const canRetry = role !== "viewer" && !run && transcript.pending.length === 0;
@@ -275,9 +296,13 @@ export function ThreadPage() {
                     ...(row === retryable && { retry: () => void retry(retryable.runId) }),
                     ...(!guest && { pickModel: () => setPicking(true) }),
                     ...(row.kind === "tool" &&
-                      policy?.canDecide === true && {
-                        decide: (allow: boolean, scope: ToolScope) => decide(row.id, allow, scope),
-                      }),
+                      policy?.canDecide === true &&
+                      (row.toolId === ASK_TOOL
+                        ? { answer: (answers: AskAnswers | null) => answer(row.id, answers) }
+                        : {
+                            decide: (allow: boolean, scope: ToolScope) =>
+                              decide(row.id, allow, scope),
+                          })),
                   }}
                 />
               );
@@ -311,7 +336,7 @@ export function ThreadPage() {
           <FieldError>{error}</FieldError>
           <Composer
             running={!!run}
-            waiting={!!run?.waitingOn}
+            waiting={waiting}
             readOnly={role === "viewer"}
             sending={sending}
             stopping={!!run && run.id === stopped}

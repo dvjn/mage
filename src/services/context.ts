@@ -3,7 +3,8 @@
 // any, and the thread's messages in the order the agent saw them, each person's prefixed with
 // their name, each reply with the tool calls it asked for and what they gave back. Quiet asides are
 // included; replies still being written, and replies cut short that were tried again, are not. A
-// call that did not run gives back only that it was not approved.
+// call that did not run gives back only that it was not approved, or that its questions were
+// skipped.
 
 import type { ModelMessage, ModelToolResult } from "@/ports/model-gateway.ts";
 import { QUIET_PREFIX } from "@/shared/threads.ts";
@@ -66,6 +67,8 @@ function resultOf(row: ToolRow): ModelToolResult | null {
     case "ran":
     case "failed":
       return row.output && { callId, toolId, output: row.output };
+    case "skipped":
+      return { callId, toolId, output: { ok: true, value: { skipped: true } } };
     default:
       return { callId, toolId, output: { ok: false, error: NOT_APPROVED } };
   }

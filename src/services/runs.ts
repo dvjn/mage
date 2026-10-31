@@ -9,10 +9,11 @@
 // stored pieces, and tried again until the same input has failed too many times. A run that fails
 // says why in a way people can act on: the provider's failure kind, what it said and, for a limit,
 // when it resets. A step that calls tools ends the model call; each call is recorded and decided
-// before any result goes back: it runs at once, or the run waits for a person's decision, letting
-// its lease go and keeping nothing in memory. A decision queues the run again, and the worker that
-// claims it reads the thread's log to see where its calls stand, checks each approval still holds,
-// runs what it may and goes on; a restart takes the same path.
+// before any result goes back: it runs at once, or the run waits for a person's decision, or for an
+// answer to a call that asks questions, letting its lease go and keeping nothing in memory. A
+// decision or an answer queues the run again, and the worker that claims it reads the thread's log
+// to see where its calls stand, checks each approval and answer still holds, runs what it may and
+// goes on; a restart takes the same path.
 
 import { ulid } from "ulid";
 
@@ -59,7 +60,10 @@ export interface RunWorkerOptions {
   bus: EventBus;
   transact: Transact;
   models: Pick<Models, "open" | "replyModel">;
-  tools: Pick<Tools, "offered" | "riskOf" | "forModel" | "decide" | "approvalHolds" | "modelNames">;
+  tools: Pick<
+    Tools,
+    "offered" | "riskOf" | "forModel" | "decide" | "approvalHolds" | "answerHolds" | "modelNames"
+  >;
   // What the org and the space tell the agent beyond Mage's own prompt, given the tools offered.
   guidance?: (space: Space, offered: readonly AnyToolSpec[]) => Guidance;
   logger: Logger;
@@ -131,7 +135,7 @@ function failureOf(err: unknown, ref: string | null): RunFailure {
 // Why a run was aborted from outside its stream.
 type Abort = { kind: "lease" } | { kind: "shutdown" } | { kind: "cancel" };
 
-// Thrown once the run waits for a decision on a tool call, its lease let go.
+// Thrown once the run waits for a decision on a tool call, or an answer, its lease let go.
 class Waiting extends Error {}
 
 // The message with its tool calls and results named as the model knows the tools.
@@ -562,15 +566,17 @@ export function createRunWorker(options: RunWorkerOptions) {
         const parsed = spec?.input.safeParse(input);
         const ok = !!spec && !!parsed?.success;
         const risk = ok ? tools.riskOf(space, spec, parsed.data, execution.ref) : "normal";
+        // A call that asks always waits for its answer.
         const waits =
           ok &&
-          tools.decide(
-            rows,
-            thread,
-            space,
-            toolId,
-            spec.risk(parsed.data, { model: execution.ref }),
-          ) === "wait";
+          (spec.waitsFor === "answer" ||
+            tools.decide(
+              rows,
+              thread,
+              space,
+              toolId,
+              spec.risk(parsed.data, { model: execution.ref }),
+            ) === "wait");
         append({
           type: "tool.requested",
           actor: AGENT,
@@ -613,7 +619,14 @@ export function createRunWorker(options: RunWorkerOptions) {
         const spec = offered.find((candidate) => candidate.name === call.toolId);
         const parsed = spec?.input.safeParse(call.input);
         let allowed = false;
-        if (spec && parsed?.success) {
+        if (spec && parsed?.success && spec.waitsFor === "answer") {
+          // A call that asks runs once answered, while the answer holds.
+          if (call.state === "pending") {
+            waiting = true;
+            continue;
+          }
+          allowed = tools.answerHolds(call, rows, thread, space);
+        } else if (spec && parsed?.success) {
           const risk = tools.riskOf(space, spec, parsed.data, execution.ref);
           if (call.state === "allowed") {
             allowed = tools.approvalHolds(call, rows, thread, space, risk);
@@ -659,6 +672,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           actor: AGENT,
           model: execution.ref,
           approvedBy: call.decision?.allow ? call.decision.by.userId : null,
+          ...(call.answers && { answers: call.answers }),
           write: (work) => write(lease, run.threadId, (append) => work(append)),
         });
       } catch (err) {

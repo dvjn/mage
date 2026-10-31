@@ -1,8 +1,8 @@
 // Mage's built-in Thread toolset, whose tools act on the thread the agent replies in: reading its
-// details, renaming it, moving it to one of its space's folders, and changing the model and effort
-// it replies with. Each is cheap, undone as easily, and shows in the thread. Changing the model asks
-// first when the new one comes through another connection than the one replying now, since the
-// whole thread then goes to another provider.
+// details, renaming it, moving it to one of its space's folders, changing the model and effort it
+// replies with, and asking its people questions. Each is cheap, undone as easily, and shows in the
+// thread. Changing the model asks first when the new one comes through another connection than the
+// one replying now, since the whole thread then goes to another provider.
 
 import * as z from "zod";
 
@@ -13,6 +13,7 @@ import type { ThreadStore } from "@/ports/threads.ts";
 import type { Toolset, ToolSpec } from "@/ports/tools.ts";
 import { ServiceError } from "@/services/errors.ts";
 import type { Models } from "@/services/models.ts";
+import { askTool } from "@/services/thread-ask.ts";
 import { eventSummary } from "@/services/thread-log.ts";
 import { effortSchema } from "@/shared/threads.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
@@ -163,6 +164,6 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
     id: "thread",
     title: "Thread",
     source: "builtin",
-    tools: [info, rename, move, setModel],
+    tools: [info, rename, move, setModel, askTool],
   };
 }

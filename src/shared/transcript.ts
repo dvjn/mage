@@ -3,8 +3,10 @@
 // when the agent takes it in, or where it was posted when it is a quiet aside; an agent reply takes
 // the place its run reserved when the reply began. A reply cut short and then tried again stays in
 // view but is left out of what the agent reads. A tool call the agent asked for sits where it asked,
-// and carries how it was decided and what it gave back.
+// and carries how it was decided, what was answered to the questions it asked, and what it gave
+// back.
 
+import type { AskAnswers } from "@/shared/ask.ts";
 import {
   type ActorSummary,
   type AnyThreadEvent,
@@ -77,9 +79,18 @@ export interface StopRow {
   by: string | null;
 }
 
-// Where a tool call stands: waiting for a decision, approved and about to run, denied, ran or
-// failed, denied because its approval no longer held, or left when its run ended.
-export type ToolState = "pending" | "allowed" | "denied" | "ran" | "failed" | "stale" | "stopped";
+// Where a tool call stands: waiting for a decision or an answer, approved or answered and about to
+// run, denied, ran or failed, denied because its approval no longer held, left when its run ended,
+// or its questions skipped.
+export type ToolState =
+  | "pending"
+  | "allowed"
+  | "denied"
+  | "ran"
+  | "failed"
+  | "stale"
+  | "stopped"
+  | "skipped";
 
 // A tool call the agent asked for.
 export interface ToolRow {
@@ -99,6 +110,8 @@ export interface ToolRow {
   state: ToolState;
   // Who approved or denied it, how, and where in the thread.
   decision: { allow: boolean; scope: ToolScope; by: Person; seq: number } | null;
+  // What the person in `decision` answered, for a call that asks questions.
+  answers?: AskAnswers;
   // What it gave back, or why it failed, once it ran, and how long that took.
   output: { ok: true; value: unknown } | { ok: false; error: string } | null;
   ms: number | null;
@@ -316,6 +329,14 @@ export function transcriptOf(
             seq: event.seq,
           };
         }
+        break;
+      }
+      case "tool.answered": {
+        const call = calls.get(event.data.callId);
+        if (!call || call.state !== "pending" || event.actor.kind !== "user") break;
+        call.state = "allowed";
+        call.answers = event.data.answers;
+        call.decision = { allow: true, scope: "once", by: event.actor, seq: event.seq };
         break;
       }
       case "tool.ran": {

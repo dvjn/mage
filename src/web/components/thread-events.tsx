@@ -10,8 +10,9 @@
 // chevron, and its title or else its name (loading a skill as Loaded and the skill's name). One waiting for a decision is a card from the agent
 // headed by the tool under a hand, tagged when the call asks each time, with the input and Allow,
 // Allow for now and Deny in a row, enabled for the people who may run the tool and marked paused for
-// everyone else; every other call is a line with the tool and what became of the call, which opens
-// on its input and output.
+// everyone else. One asking the thread questions is a card with the questions to answer or skip,
+// and once answered, a line with the answers under it. Every other call is a line with the tool
+// and what became of the call, which opens on its input and output.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
@@ -20,12 +21,15 @@ import {
   CheckIcon,
   ChevronRightIcon,
   HandIcon,
+  MessageCircleQuestionIcon,
   RotateCcwIcon,
+  SkipForwardIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
+import { ASK_TOOL, type AskAnswers, type AskInput, askInputSchema } from "@/shared/ask.ts";
 import { LOAD_SKILL } from "@/shared/skills.ts";
 import type { ToolRisk, ToolScope } from "@/shared/threads.ts";
 import type { ToolDefinition } from "@/shared/tools.ts";
@@ -52,6 +56,7 @@ import {
   ReasoningTrigger,
 } from "@/web/components/ai-elements/reasoning";
 import { CONNECTION_LABELS } from "@/web/components/model-picker";
+import { GivenAnswers, QuestionForm } from "@/web/components/question-form";
 import { Time } from "@/web/components/time";
 import { ToolInput, ToolResult } from "@/web/components/tool-value";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
@@ -260,6 +265,8 @@ export interface RowActions {
   retry?: () => void;
   pickModel?: () => void;
   decide?: (allow: boolean, scope: ToolScope) => Promise<void>;
+  // Answers the questions a call asks, or with null skips them.
+  answer?: (answers: AskAnswers | null) => Promise<void>;
 }
 
 const ONLY_RUNNERS = "Only people who can run this here can decide";
@@ -445,8 +452,8 @@ function ToolLine({
   switch (row.state) {
     case "ran":
       icon = <CheckIcon className="text-foreground" />;
-      status = "Ran";
-      who = allowed;
+      status = row.answers ? "Answered" : "Ran";
+      who = row.answers ? by && `by ${by}` : allowed;
       break;
     case "failed":
       icon = <XIcon />;
@@ -466,6 +473,11 @@ function ToolLine({
     case "stopped":
       icon = <XIcon />;
       status = "Stopped";
+      break;
+    case "skipped":
+      icon = <SkipForwardIcon />;
+      status = "Skipped";
+      who = by && `by ${by}`;
       break;
     default:
       icon = <Spinner />;
@@ -523,17 +535,84 @@ function ToolOpening({
   );
 }
 
+// Questions a call puts to the thread, waiting for an answer: the tool's breadcrumb under a
+// question mark, and the form to answer them.
+function QuestionCard({
+  row,
+  input,
+  definition,
+  answer,
+  continued,
+}: {
+  row: ToolRow;
+  input: AskInput;
+  definition: ToolDefinition | undefined;
+  answer?: RowActions["answer"];
+  continued: boolean;
+}) {
+  return (
+    <TranscriptRowFrame
+      avatar={agentAvatar}
+      author="Agent"
+      at={row.requestedAt}
+      label="Questions from Agent"
+      note={!answer && <span>Paused</span>}
+      continued={continued}
+    >
+      <div className="flex flex-col gap-3 rounded-lg border px-3 py-2.5">
+        <div className="flex min-w-0 items-center gap-2 text-sm">
+          <MessageCircleQuestionIcon
+            aria-hidden
+            className={cn("size-4 shrink-0", answer ? "text-status-waiting" : "text-status-paused")}
+          />
+          <ToolCrumb row={row} definition={definition} className="font-semibold" />
+        </div>
+        <QuestionForm input={input} answer={answer} />
+      </div>
+    </TranscriptRowFrame>
+  );
+}
+
 function ToolCall({
   row,
   definition,
   decide,
+  answer,
   turn,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
   decide?: RowActions["decide"];
+  answer?: RowActions["answer"];
   turn: AgentTurn;
 }) {
+  const asked = row.toolId === ASK_TOOL ? askInputSchema.safeParse(row.input) : null;
+  if (asked?.success && row.state === "pending" && row.waits) {
+    return (
+      <QuestionCard
+        row={row}
+        input={asked.data}
+        definition={definition}
+        answer={answer}
+        continued={turn.continued}
+      />
+    );
+  }
+  if (asked?.success && row.answers) {
+    const line = turn.continued ? (
+      <ToolLine row={row} definition={definition} />
+    ) : (
+      <ToolOpening row={row} definition={definition} turn={turn} />
+    );
+    return (
+      <div className="flex flex-col gap-1">
+        {line}
+        <div className="pl-9">
+          <GivenAnswers input={asked.data} answers={row.answers} />
+        </div>
+      </div>
+    );
+  }
   if (row.state === "pending" && row.waits) {
     return (
       <ToolCard row={row} definition={definition} decide={decide} continued={turn.continued} />
@@ -639,6 +718,7 @@ export function TranscriptItem({
           row={row}
           definition={tools.find((tool) => tool.name === row.toolId)}
           decide={actions.decide}
+          answer={actions.answer}
           turn={turn ?? { continued: false, model: null }}
         />
       );

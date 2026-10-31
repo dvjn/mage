@@ -48,8 +48,8 @@ export function Composer({
   tools,
 }: {
   running: boolean;
-  // The agent waits for a decision on a tool call.
-  waiting?: boolean;
+  // What the agent waits for from people, if anything.
+  waiting?: "answer" | "decision" | null;
   readOnly?: boolean;
   sending: boolean;
   stopping: boolean;
@@ -99,11 +99,13 @@ export function Composer({
             placeholder={
               !online
                 ? "You are offline"
-                : waiting
-                  ? "The agent is waiting for a decision above; you can still steer or queue."
-                  : running
-                    ? "Steer the reply, or queue for the next one"
-                    : "Write a message"
+                : waiting === "answer"
+                  ? "The agent is waiting for an answer above; you can still steer or queue."
+                  : waiting === "decision"
+                    ? "The agent is waiting for a decision above; you can still steer or queue."
+                    : running
+                      ? "Steer the reply, or queue for the next one"
+                      : "Write a message"
             }
             onKeyDown={onKeyDown}
           />

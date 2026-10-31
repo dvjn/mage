@@ -7,6 +7,7 @@
 import type * as z from "zod";
 
 import type { NewEvent } from "@/ports/threads.ts";
+import type { AskAnswers } from "@/shared/ask.ts";
 import type { ToolRisk } from "@/shared/threads.ts";
 import type {
   JsonSchema,
@@ -32,6 +33,8 @@ export interface ToolContext {
   model: string | null;
   // Who allowed this call, when it waited for someone; whose credentials it may go with.
   approvedBy: string | null;
+  // What was answered, for a tool that waits for answers.
+  answers?: AskAnswers;
   write<T>(work: (append: (event: NewEvent, title?: string) => void) => T): T;
 }
 
@@ -52,6 +55,9 @@ export interface ToolSpec<I = unknown> {
   // What a call gives back when it succeeds, where the tool says.
   output?: z.ZodType;
   annotations?: Record<string, unknown>;
+  // A tool whose every call waits for someone in the thread to answer it before it runs; who may
+  // answer follows its rules as approving does, and an answer counts as its writer's words.
+  waitsFor?: "answer";
   risk(input: I, ctx: Pick<ToolContext, "model">): ToolRisk;
   run(input: I, ctx: ToolContext): Promise<ToolOutput>;
 }

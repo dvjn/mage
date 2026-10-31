@@ -81,11 +81,21 @@ describe("policy evaluation", () => {
 
   it("keeps the author of the latest human message from approving independently", () => {
     const rows = [
-      { kind: "human", author: { userId: "ada" } },
-      { kind: "human", author: { userId: "grace" } },
-      { kind: "agent" },
+      { kind: "human", seq: 1, author: { userId: "ada" } },
+      { kind: "human", seq: 2, author: { userId: "grace" } },
+      { kind: "agent", seq: 3 },
     ];
     expect(latestAuthor(rows)).toBe("grace");
+    // An answer to the agent's questions counts as its writer's words, where it was given.
+    const answered = {
+      kind: "tool",
+      seq: 4,
+      answers: { "Which?": "A" },
+      decision: { by: { userId: "ada" }, seq: 6 },
+    };
+    expect(latestAuthor([...rows, answered])).toBe("ada");
+    expect(latestAuthor([...rows, answered, { ...rows[1]!, seq: 7 }])).toBe("grace");
+    expect(latestAuthor([...rows, { ...answered, answers: undefined }])).toBe("grace");
     const review = [rule({ approvers: [EDITORS], independent: true })];
     expect(mayApprove(grace, review, "review", "grace")).toBe(false);
     expect(mayApprove(ada, review, "review", "grace")).toBe(true);
@@ -296,6 +306,7 @@ describe("tool calls", () => {
       "thread.rename",
       "thread.move",
       "thread.set_model",
+      "thread.ask",
     ]);
     expect(threadStore.find(thread.id)?.title).toBe("Engines");
     expect(transcript()).toEqual([
@@ -545,14 +556,19 @@ describe("tool calls", () => {
     await post(ada, "Hello");
     const call = await answered(model.next());
     await worker.idle();
-    expect(call.tools).toEqual(["thread.rename", "thread.set_model"]);
+    expect(call.tools).toEqual(["thread.rename", "thread.set_model", "thread.ask"]);
 
     const other = await workspace.createSpace(ada.cookie, "Other");
     const thread = await workspace.createThread(ada.cookie, other.id, "Hello there");
     const elsewhere = await answered(model.next());
     await worker.idle();
     expect(thread.id).toBeDefined();
-    expect(elsewhere.tools).toEqual(["thread.rename", "thread.move", "thread.set_model"]);
+    expect(elsewhere.tools).toEqual([
+      "thread.rename",
+      "thread.move",
+      "thread.set_model",
+      "thread.ask",
+    ]);
   });
 });
 
@@ -1057,6 +1073,7 @@ describe("tool settings", () => {
       expect.objectContaining({ id: "thread.rename", orgPolicy: null, policy: TOOL_OFF }),
       expect.objectContaining({ id: "thread.move", orgPolicy: signOff.id, policy: null }),
       expect.objectContaining({ id: "thread.set_model", orgPolicy: null, policy: spacePolicy.id }),
+      expect.objectContaining({ id: "thread.ask", orgPolicy: null, policy: null }),
     ]);
     expect((await api("GET", `/spaces/${space.id}/tools`, grace.cookie)).status).toBe(403);
   });

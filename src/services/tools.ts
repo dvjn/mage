@@ -1,10 +1,10 @@
 // The agent's tools in each thread: which ones its space offers, who may use each directly and who
 // may approve a call, and whether a call runs now, runs on a standing approval or waits; people's
-// decisions on calls that wait; and the policies orgs and spaces set for each tool. Mage's own
-// tools and the toolsets an org adds are in every space of the org; a space may add toolsets of
-// its own. An org sets each of its tools to a policy or off, for all its spaces; a space adds an
-// extra rule of its own on top, or turns a tool off there, and sets its own toolsets' tools as it
-// likes.
+// decisions on calls that wait, and their answers to calls that ask; and the policies orgs and
+// spaces set for each tool. Mage's own tools and the toolsets an org adds are in every space of the
+// org; a space may add toolsets of its own. An org sets each of its tools to a policy or off, for
+// all its spaces; a space adds an extra rule of its own on top, or turns a tool off there, and sets
+// its own toolsets' tools as it likes.
 
 import { createHash } from "node:crypto";
 
@@ -38,6 +38,7 @@ import {
   type Influence,
   latestAuthor,
   levelOf,
+  mayAnswer,
   mayApprove,
   NOBODY,
   OPEN,
@@ -45,7 +46,9 @@ import {
   personOf,
   type Rule,
   riskOf as riskUnder,
+  wordsIn,
 } from "@/services/tool-authority.ts";
+import { type AskAnswers, askInputSchema, answersProblem } from "@/shared/ask.ts";
 import type { ToolRisk, ToolScope } from "@/shared/threads.ts";
 import {
   TOOL_OFF,
@@ -237,7 +240,14 @@ export function createTools(options: ToolsOptions) {
     return spec && parsed?.success ? riskOf(space, spec, parsed.data, model) : row.risk;
   }
 
-  // Whether the person may approve or deny the call now.
+  // Whether the call waits for an answer rather than a decision.
+  function asks(row: Pick<ToolRow, "toolId">, space: Pick<Space, "id" | "orgId">) {
+    const spec = specsOf(settingsInSpace(space)).find((tool) => tool.name === row.toolId);
+    return spec?.waitsFor === "answer";
+  }
+
+  // Whether the person may act on the call now: approve or deny it, or for a call that asks
+  // questions, answer or skip them.
   function canDecide(
     userId: string,
     row: ToolRow,
@@ -246,7 +256,7 @@ export function createTools(options: ToolsOptions) {
     space: Space,
     model: string | null = null,
   ) {
-    return mayApprove(
+    return (asks(row, space) ? mayAnswer : mayApprove)(
       personIn(userId, thread, space),
       rulesIn(space)(row.toolId).rules,
       riskForCall(row, space, model),
@@ -254,7 +264,7 @@ export function createTools(options: ToolsOptions) {
     );
   }
 
-  // The words the model read, each with its writer's level now and whether they may use the tool
+  // The words the model read, messages and answers, each with its writer's level now and whether they may use the tool
   // directly under the rules.
   function influenceOf(
     rows: readonly TranscriptRow[],
@@ -264,15 +274,13 @@ export function createTools(options: ToolsOptions) {
   ) {
     const people = new Map<string, Person>();
     const influence: Influence[] = [];
-    for (const row of rows) {
-      if (row.kind !== "human") continue;
-      const { userId } = row.author;
+    for (const { seq, userId } of wordsIn(rows)) {
       let person = people.get(userId);
       if (!person) {
         person = personIn(userId, thread, space);
         people.set(userId, person);
       }
-      influence.push({ seq: row.seq, level: person.level, canUse: canUse(person, rules) });
+      influence.push({ seq, level: person.level, canUse: canUse(person, rules) });
     }
     return influence;
   }
@@ -409,6 +417,25 @@ export function createTools(options: ToolsOptions) {
       });
     },
 
+    asks,
+
+    // Whether the answer given to the call still holds, just before it runs: its writer may still
+    // use or approve the tool, as things stood when they answered, and everyone who wrote after
+    // it can still message in the thread.
+    answerHolds(row: ToolRow, rows: readonly TranscriptRow[], thread: Thread, space: Space) {
+      if (!row.answers || !row.decision?.allow) return false;
+      const { rules } = rulesIn(space)(row.toolId);
+      const atSeq = row.decision.seq;
+      const before = rows.filter((other) => other.seq < atSeq && other.id !== row.id);
+      const eligible = mayAnswer(
+        personIn(row.decision.by.userId, thread, space),
+        rules,
+        riskForCall(row, space),
+        latestAuthor(before),
+      );
+      return holdsOnce({ atSeq, eligible }, influenceOf(rows, thread, space, rules));
+    },
+
     // Whether the approval given for the call still holds, just before it runs: its giver may
     // still approve it under the tool's rules now, independently where that applies.
     approvalHolds(
@@ -438,7 +465,7 @@ export function createTools(options: ToolsOptions) {
 export interface ToolDecisionsOptions {
   tools: Pick<
     Tools,
-    "find" | "levelFor" | "canDecide" | "riskForCall" | "toolsetsInOrg" | "toolsetsInSpace"
+    "find" | "levelFor" | "canDecide" | "asks" | "riskForCall" | "toolsetsInOrg" | "toolsetsInSpace"
   >;
   access: Pick<ThreadAccess, "require">;
   threads: Pick<ThreadStore, "eventsAfter">;
@@ -517,6 +544,7 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
         const run = runs.find(call.runId);
         const active = run && (run.status === "running" || run.status === "waiting");
         if (!active || call.state === "stopped") throw new ServiceError(409, "No longer needed");
+        if (tools.asks(call, space)) throw new ServiceError(409, "This call waits for an answer");
         if (call.state !== "pending" || !call.waits) {
           throw new ServiceError(409, "Already decided");
         }
@@ -550,6 +578,44 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
             type: "tool.denied",
             actor,
             data: { runId: call.runId, callId, reason: "denied" },
+          });
+        }
+        runs.resume(call.runId);
+        return call.runId;
+      });
+      bus.wake(thread.id);
+      return { runId, event: events[0]! };
+    },
+
+    // Answers the questions a call waits on, or with null skips them, and wakes its run. Anyone
+    // who may use or approve the tool may; the first answer wins.
+    answer(principal: Principal, threadId: string, callId: string, answers: AskAnswers | null) {
+      const { thread } = access.require(principal, threadId, "post");
+      const space = spaceStore.find(thread.spaceId);
+      if (!space) throw new ServiceError(404, "Thread not found");
+      const { events, result: runId } = log.write(thread.id, (append) => {
+        const rows = transcriptOf(threads.eventsAfter(thread.id, 0).map(eventSummary)).rows;
+        const call = rows.find((row): row is ToolRow => row.kind === "tool" && row.id === callId);
+        if (!call) throw new ServiceError(404, "Tool call not found");
+        if (!tools.asks(call, space)) throw new ServiceError(409, "This call asks nothing");
+        const run = runs.find(call.runId);
+        const active = run && (run.status === "running" || run.status === "waiting");
+        if (!active || call.state === "stopped") throw new ServiceError(409, "No longer needed");
+        if (call.state !== "pending") throw new ServiceError(409, "Already answered");
+        if (!tools.canDecide(principal.userId, call, rows, thread, space, run.model)) {
+          throw new ServiceError(403, "Only people who can use this tool here can answer");
+        }
+        const asked = askInputSchema.safeParse(call.input);
+        const problem = answers && asked.success && answersProblem(asked.data.questions, answers);
+        if (problem) throw new ServiceError(400, problem);
+        const actor = { kind: "user" as const, userId: principal.userId };
+        if (answers) {
+          append({ type: "tool.answered", actor, data: { runId: call.runId, callId, answers } });
+        } else {
+          append({
+            type: "tool.denied",
+            actor,
+            data: { runId: call.runId, callId, reason: "skipped" },
           });
         }
         runs.resume(call.runId);
