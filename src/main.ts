@@ -14,6 +14,7 @@ import { createDeltaStore } from "@/adapters/deltas.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
 import { createFakeCatalogs, createFakeGateway, FAKE_MODEL_REF } from "@/adapters/fake-gateway.ts";
 import { createFolderStore } from "@/adapters/folders.ts";
+import { createGitReader } from "@/adapters/git.ts";
 import { createGuestStore } from "@/adapters/guests.ts";
 import { createInstructionStore } from "@/adapters/instructions.ts";
 import { createLogger, createPrettyDestination } from "@/adapters/logger.ts";
@@ -25,11 +26,13 @@ import { createCodexOAuth } from "@/adapters/openai-codex.ts";
 import { createOrgInviteStore } from "@/adapters/org-invites.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createRunStore } from "@/adapters/runs.ts";
+import { createSkillStore } from "@/adapters/skills.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
 import { createThreadReadStore } from "@/adapters/thread-reads.ts";
 import { createThreadStore } from "@/adapters/threads.ts";
 import { createToolPolicyStore } from "@/adapters/tool-policies.ts";
 import { createToolSettingStore } from "@/adapters/tool-settings.ts";
+import { createZipReader } from "@/adapters/zip.ts";
 import { loadConfig } from "@/config.ts";
 import { createApp } from "@/http/app.ts";
 import { createConnections } from "@/services/connections.ts";
@@ -41,6 +44,7 @@ import { createMcpServers } from "@/services/mcp-servers.ts";
 import { createModels, type Models } from "@/services/models.ts";
 import { createOrgs } from "@/services/orgs.ts";
 import { createRunWorker, dropRefusedWaiting, type RunWorker } from "@/services/runs.ts";
+import { createSkills } from "@/services/skills.ts";
 import { createSpaces } from "@/services/spaces.ts";
 import { createSystemTools } from "@/services/system-tools.ts";
 import { createThreadAccess } from "@/services/thread-access.ts";
@@ -137,6 +141,14 @@ const mcp = createMcpServers({
   logger,
 });
 const instructions = createInstructions({ store: createInstructionStore(db), spaces });
+const skills = createSkills({
+  skills: createSkillStore(db, cipher),
+  git: createGitReader(),
+  archives: createZipReader(),
+  spaces,
+  settings: settingStore,
+  logger,
+});
 const tools = createTools({
   toolsets: [
     createSystemTools({
@@ -146,6 +158,7 @@ const tools = createTools({
       guests: guestStore,
       models,
     }),
+    skills.toolset(),
   ],
   scoped: {
     inSpace: (space) => mcp.toolsetsInSpace(space),
@@ -192,7 +205,10 @@ const worker = createRunWorker({
   transact,
   models: runModels,
   tools,
-  guidance: (space) => instructions.textsFor(space),
+  guidance: (space, offered) => ({
+    ...instructions.textsFor(space),
+    skills: skills.listFor(space, offered),
+  }),
   logger,
 });
 
@@ -263,6 +279,7 @@ const app = createApp({
   }),
   mcp,
   instructions,
+  skills,
   guests: createGuests({
     access,
     guests: guestStore,

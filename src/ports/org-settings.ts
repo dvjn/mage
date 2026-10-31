@@ -15,6 +15,8 @@ export interface OrgSettings {
   memberSpaces: boolean;
   // Whether a space's managers may add MCP servers for it, and its threads use them.
   spaceMcpServers: boolean;
+  // Whether a space's managers may add skills for it, and its threads use them.
+  spaceSkills: boolean;
 }
 
 export interface OrgSettingStore {
@@ -27,4 +29,5 @@ export interface OrgSettingStore {
     changes: Partial<Pick<OrgSettings, "spaceCreation" | "memberSpaces">>,
   ): void;
   setSpaceMcpServers(orgId: string, allowed: boolean): void;
+  setSpaceSkills(orgId: string, allowed: boolean): void;
 }

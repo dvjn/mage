@@ -6,7 +6,8 @@
 // answers. An agent reply that was cut short says so, a run that failed says why and what to do
 // about it, the last run that failed or was stopped can be tried again, and an event this client
 // does not know yet gets a labelled placeholder. Tool calls show by their tool's definition alone,
-// its title or else its name, as for any tool, and an MCP server's tool is a breadcrumb, its server
+// its title or else its name, as for any tool (loading a skill as Loaded skill and the skill's
+// name), and an MCP server's tool is a breadcrumb, its server
 // in muted text before a chevron and the tool. One waiting for a decision is a card from the agent
 // headed by the tool under a hand, tagged when the call asks each time, with the input and Allow,
 // Allow for now and Deny in a row, enabled for the people who may run the tool and marked paused for
@@ -26,6 +27,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
+import { LOAD_SKILL } from "@/shared/skills.ts";
 import type { ToolRisk, ToolScope } from "@/shared/threads.ts";
 import type { ToolDefinition } from "@/shared/tools.ts";
 import type {
@@ -263,8 +265,12 @@ export interface RowActions {
 
 const ONLY_RUNNERS = "Only people who can run this here can decide";
 
-// What a tool is called: its title, or its name where it has none.
+// What a tool is called: its title, or its name where it has none; loading a skill names the skill.
 function toolName(row: ToolRow, definition: ToolDefinition | undefined) {
+  const skill = (row.input as { name?: unknown } | null)?.name;
+  if (row.toolId === LOAD_SKILL && typeof skill === "string") {
+    return row.state === "ran" ? `Loaded skill ${skill}` : `Load skill ${skill}`;
+  }
   return definition?.title ?? row.toolId;
 }
 

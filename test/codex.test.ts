@@ -17,6 +17,7 @@ import type { Guests } from "@/services/guests.ts";
 import type { Groups } from "@/services/groups.ts";
 import type { Instructions } from "@/services/instructions.ts";
 import type { McpServers } from "@/services/mcp-servers.ts";
+import type { Skills } from "@/services/skills.ts";
 import type { ToolPolicies } from "@/services/tool-policies.ts";
 import type { ToolDecisions } from "@/services/tools.ts";
 import type { Orgs } from "@/services/orgs.ts";
@@ -148,6 +149,7 @@ function setup() {
     toolPolicies: {} as ToolPolicies,
     mcp: {} as McpServers,
     instructions: {} as Instructions,
+    skills: {} as Skills,
     logger,
     signInOptions: { oidc: null },
     pingDatabase: () => Promise.resolve(true),

@@ -1,6 +1,6 @@
 // What the agent is given to reply from: a short system prompt naming Mage and the people in the
-// thread, followed by the org's instructions and the space's when there are any, and the thread's
-// messages in the order the agent saw them, each person's prefixed with
+// thread, followed by the org's instructions, the space's and the skills on there when there are
+// any, and the thread's messages in the order the agent saw them, each person's prefixed with
 // their name, each reply with the tool calls it asked for and what they gave back. Quiet asides are
 // included; replies still being written, and replies cut short that were tried again, are not. A
 // call that did not run gives back only that it was not approved.
@@ -18,10 +18,11 @@ export function humanMessage(row: Pick<HumanRow, "author" | "text">): ModelMessa
   return { role: "user", text: `[${row.author.name}] ${row.text}` };
 }
 
-// What the org and the space tell the agent.
+// What the org and the space tell the agent, and the skills it may load there.
 export interface Guidance {
   org: string;
   space: string;
+  skills?: { name: string; description: string }[];
 }
 
 export const NO_GUIDANCE: Guidance = { org: "", space: "" };
@@ -41,6 +42,14 @@ export function instructionsFor(people: string[], guidance: Guidance = NO_GUIDAN
   }
   if (guidance.space.trim()) {
     sections.push(`Instructions from this space:\n${guidance.space.trim()}`);
+  }
+  if (guidance.skills?.length) {
+    sections.push(
+      [
+        "Skills you can load: instructions for particular kinds of tasks. When a task matches a skill's description, load it with the load skill tool before you start, and read its files only as you need them.",
+        ...guidance.skills.map((skill) => `- ${skill.name}: ${skill.description}`),
+      ].join("\n"),
+    );
   }
   return sections.join("\n\n");
 }

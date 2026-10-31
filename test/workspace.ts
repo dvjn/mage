@@ -2,7 +2,10 @@
 // for the tests of spaces, folders, threads, their guests, their events and the agent's runs. The
 // agent replies through a model the test drives, once the test starts the worker; threads are
 // named, when asked for, through another. A stand-in directory provisions people and groups over
-// SCIM, and a stand-in MCP server answers at its address, unless the test takes it down.
+// SCIM, a stand-in MCP server answers at its address, unless the test takes it down, and a
+// stand-in git host serves repositories of skills, made the first time one is read.
+
+import { rmSync } from "node:fs";
 
 import { eq } from "drizzle-orm";
 import { ulid } from "ulid";
@@ -15,6 +18,7 @@ import { createDeltaStore } from "@/adapters/deltas.ts";
 import { createDirectory } from "@/adapters/directory.ts";
 import { createEventBus } from "@/adapters/event-bus.ts";
 import { createFolderStore } from "@/adapters/folders.ts";
+import { createGitReader } from "@/adapters/git.ts";
 import { createGuestStore } from "@/adapters/guests.ts";
 import { createInstructionStore } from "@/adapters/instructions.ts";
 import { createLogger } from "@/adapters/logger.ts";
@@ -24,11 +28,13 @@ import { createOrgInviteStore } from "@/adapters/org-invites.ts";
 import { createOrgSettingStore } from "@/adapters/org-settings.ts";
 import { createRunStore } from "@/adapters/runs.ts";
 import * as schema from "@/adapters/schema.ts";
+import { createSkillStore } from "@/adapters/skills.ts";
 import { createSpaceStore } from "@/adapters/spaces.ts";
 import { createThreadReadStore } from "@/adapters/thread-reads.ts";
 import { createThreadStore } from "@/adapters/threads.ts";
 import { createToolPolicyStore } from "@/adapters/tool-policies.ts";
 import { createToolSettingStore } from "@/adapters/tool-settings.ts";
+import { createZipReader } from "@/adapters/zip.ts";
 import { createApp } from "@/http/app.ts";
 import type { OrgRole } from "@/ports/directory.ts";
 import type { Space, SpaceRole } from "@/ports/spaces.ts";
@@ -43,6 +49,7 @@ import { createInstructions } from "@/services/instructions.ts";
 import { createMcpServers } from "@/services/mcp-servers.ts";
 import { createOrgs } from "@/services/orgs.ts";
 import { createRunWorker, dropRefusedWaiting, type RunWorkerOptions } from "@/services/runs.ts";
+import { createSkills } from "@/services/skills.ts";
 import { createSpaces } from "@/services/spaces.ts";
 import { createSystemTools } from "@/services/system-tools.ts";
 import { createThreadAccess } from "@/services/thread-access.ts";
@@ -53,6 +60,7 @@ import { createToolPolicies } from "@/services/tool-policies.ts";
 import { createToolDecisions, createTools } from "@/services/tools.ts";
 import type { Effort } from "@/shared/threads.ts";
 
+import { createFixtures, gitStandIn } from "../e2e/git-server.ts";
 import { mcpStandIn } from "../e2e/mcp-server.ts";
 import { scimClient } from "../e2e/scim-client.ts";
 import { scriptedModel } from "./scripted-model.ts";
@@ -67,6 +75,26 @@ export const SCIM_TOKEN = "test-scim-token-that-is-long-enough-0123456789";
 
 // Where the stand-in MCP server answers.
 export const MCP_ORIGIN = "http://localhost:4791";
+
+// Where the stand-in git host answers, and the folder of its repositories, made once for every
+// test in the file that reads one.
+export const GIT_ORIGIN = "http://git.test";
+let gitRoot: string | null = null;
+export function gitFixtures() {
+  if (!gitRoot) {
+    const root = createFixtures();
+    process.once("exit", () => rmSync(root, { recursive: true, force: true }));
+    gitRoot = root;
+  }
+  return gitRoot;
+}
+const gitFetch = ((input: string | URL | Request, init?: RequestInit) => {
+  const request = new Request(input, init);
+  if (new URL(request.url).origin !== GIT_ORIGIN) {
+    return Promise.reject(new TypeError("fetch failed"));
+  }
+  return gitStandIn(gitFixtures())(request);
+}) as typeof fetch;
 
 export type SpaceBody = {
   id: string;
@@ -214,7 +242,17 @@ export function setup(
     settings: settingStore,
     logger,
   });
+  const cipher = createCipher({ version: 1, key: Buffer.alloc(32, 7) });
+  const skillStore = createSkillStore(db, cipher);
   const instructions = createInstructions({ store: createInstructionStore(db), spaces });
+  const skills = createSkills({
+    skills: skillStore,
+    git: createGitReader({ fetch: gitFetch }),
+    archives: createZipReader(),
+    spaces,
+    settings: settingStore,
+    logger,
+  });
   const tools = createTools({
     toolsets: [
       createSystemTools({
@@ -224,6 +262,7 @@ export function setup(
         guests: guestStore,
         models: { replyModel, requireModel: models.requireModel },
       }),
+      skills.toolset(),
     ],
     scoped: {
       inSpace: (space) => mcp.toolsetsInSpace(space),
@@ -304,7 +343,10 @@ export function setup(
       flushMs: 1,
       models: { open: () => model.open(), replyModel },
       tools,
-      guidance: (space) => instructions.textsFor(space),
+      guidance: (space, offered) => ({
+        ...instructions.textsFor(space),
+        skills: skills.listFor(space, offered),
+      }),
       logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
       ...workerOptions,
       ...options,
@@ -366,6 +408,7 @@ export function setup(
     }),
     mcp,
     instructions,
+    skills,
     logger,
     signInOptions: { oidc: null },
     pingDatabase: () => Promise.resolve(true),
@@ -506,6 +549,8 @@ export function setup(
     mcpNetwork,
     mcpServerStore,
     instructions,
+    skills,
+    skillStore,
     signUp,
     join,
     api,

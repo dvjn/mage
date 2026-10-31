@@ -1,7 +1,8 @@
 // Server state the web client reads: the ways to sign in, the current session, who is signed in, the orgs they are in,
 // the tab org's members, groups and settings, their connections, the models the org can use, its
-// default model and effort and title model, its MCP servers and its spaces', the instructions it
-// and its spaces give the agent, their spaces with who is in them, their folders and threads, the threads shared with them, and who is in a thread.
+// default model and effort and title model, its MCP servers and its spaces', the instructions and
+// skills it and its spaces give the agent, their spaces with who
+// is in them, their folders and threads, the threads shared with them, and who is in a thread.
 
 import { queryOptions } from "@tanstack/react-query";
 
@@ -19,6 +20,7 @@ import {
   titleModelSchema,
 } from "@/shared/models.ts";
 import { signInOptionsSchema } from "@/shared/sign-in.ts";
+import { orgSkillListSchema, skillDetailSchema, spaceSkillListSchema } from "@/shared/skills.ts";
 import { spaceListSchema } from "@/shared/spaces.ts";
 import { type ThreadDetail, threadDetailSchema, threadSidebarSchema } from "@/shared/threads.ts";
 import { apiClient } from "@/web/lib/api-client";
@@ -107,6 +109,37 @@ export function spaceInstructionsQuery(spaceId: string) {
       const res = await apiClient.v1.spaces[":id"].instructions.$get({ param: { id: spaceId } });
       if (!res.ok) throw new Error("could not read the space's instructions");
       return spaceInstructionsSchema.parse(await res.json());
+    },
+  });
+}
+
+export const orgSkillsQuery = queryOptions({
+  queryKey: ["skills", "org"],
+  queryFn: async () => {
+    const res = await apiClient.v1.org.skills.$get();
+    if (!res.ok) throw new Error("could not read the skills");
+    return orgSkillListSchema.parse(await res.json());
+  },
+});
+
+export function spaceSkillsQuery(spaceId: string) {
+  return queryOptions({
+    queryKey: ["skills", "space", spaceId],
+    queryFn: async () => {
+      const res = await apiClient.v1.spaces[":id"].skills.$get({ param: { id: spaceId } });
+      if (!res.ok) throw new Error("could not read the space's skills");
+      return spaceSkillListSchema.parse(await res.json());
+    },
+  });
+}
+
+export function skillQuery(id: string) {
+  return queryOptions({
+    queryKey: ["skills", "one", id],
+    queryFn: async () => {
+      const res = await apiClient.v1.skills[":id"].$get({ param: { id } });
+      if (!res.ok) throw new Error("could not read the skill");
+      return skillDetailSchema.parse(await res.json());
     },
   });
 }

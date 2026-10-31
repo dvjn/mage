@@ -116,12 +116,16 @@ export function createTools(options: ToolsOptions) {
     return [...toolsets, ...scoped.forSpaceSettings(space)];
   }
 
-  // The toolsets the space has: Mage's own, and those of what the org and the space added.
+  // The toolsets the space has: Mage's own that are on and of use there, and those of what the org
+  // and the space added.
   function inSpace(space: Pick<Space, "id" | "orgId">) {
     const org = settings.toolsetsInOrg(space.orgId);
     const own = settings.toolsetsInSpace(space.id);
     return [
-      ...toolsets.filter((set) => org.get(set.id) !== false && own.get(set.id) !== false),
+      ...toolsets.filter(
+        (set) =>
+          org.get(set.id) !== false && own.get(set.id) !== false && (set.usefulIn?.(space) ?? true),
+      ),
       ...scoped.inSpace(space),
     ];
   }

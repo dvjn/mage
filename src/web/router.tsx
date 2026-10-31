@@ -1,6 +1,7 @@
 // Pages: login, and signup while password sign-up is open, when signed out; when signed in, the app shell with a space and its
-// settings, a new thread's draft, a thread, the threads shared with you, and the organization's
-// settings with its people and spaces, opening on the last space used.
+// settings, its skills among them, a new thread's draft, a thread, the threads shared with you,
+// and the organization's settings with its people, spaces and skills, opening on the last space
+// used.
 // Each side redirects to the other; signing in or up goes back to the page that asked for it, such
 // as an invite link, which is open either way.
 
@@ -19,6 +20,7 @@ import { AuthFrame } from "@/web/components/auth-frame";
 import { InvitePage } from "@/web/components/invite-page";
 import { JoinPage } from "@/web/components/join-page";
 import { LoginForm } from "@/web/components/login-form";
+import { OrgSkills } from "@/web/components/settings/skills";
 import { OrgGeneral } from "@/web/components/settings/org-general";
 import { OrgMcpServer, OrgTools } from "@/web/components/settings/org-tools";
 import { OrgPeople, peopleSearchSchema } from "@/web/components/settings/org-people";
@@ -34,6 +36,7 @@ import {
   SpaceMembersPage,
   SpaceMcpServer,
   SpaceSettingsShell,
+  SpaceSkillsPage,
   SpaceTools,
 } from "@/web/components/space-settings";
 import { DraftThread } from "@/web/components/draft-thread";
@@ -189,6 +192,12 @@ const spaceMembersRoute = createRoute({
   component: SpaceMembersPage,
 });
 
+const spaceSkillsRoute = createRoute({
+  getParentRoute: () => spaceSettingsRoute,
+  path: "/skills",
+  component: SpaceSkillsPage,
+});
+
 const spaceToolsRoute = createRoute({
   getParentRoute: () => spaceSettingsRoute,
   path: "/tools",
@@ -244,6 +253,12 @@ const orgGeneralRoute = createRoute({
   getParentRoute: () => orgRoute,
   path: "/general",
   component: OrgGeneral,
+});
+
+const orgSkillsRoute = createRoute({
+  getParentRoute: () => orgRoute,
+  path: "/skills",
+  component: OrgSkills,
 });
 
 const orgToolsRoute = createRoute({
@@ -318,6 +333,7 @@ export function createAppRouter(queryClient: QueryClient) {
           spaceGeneralRoute,
           spaceMembersRoute,
           spaceToolsRoute,
+          spaceSkillsRoute,
           spaceMcpServerRoute,
         ]),
         draftRoute,
@@ -328,6 +344,7 @@ export function createAppRouter(queryClient: QueryClient) {
           orgGeneralRoute,
           orgProvidersRoute,
           orgToolsRoute,
+          orgSkillsRoute,
           orgMcpServerRoute,
           orgPeopleRoute,
           orgSpacesRoute,

@@ -554,7 +554,7 @@ test("tools have their own settings page in the org and in a space", async ({ pa
   // A person's own space has no members to set.
   await page.goto(`/s/${spaceId}/settings`);
   const nav = page.getByRole("navigation", { name: "Space settings" });
-  await expect(nav.getByRole("link")).toHaveText(["General", "Tools and MCPs"]);
+  await expect(nav.getByRole("link")).toHaveText(["General", "Tools and MCPs", "Skills"]);
   await expect(page.getByRole("region", { name: "Thread" })).toHaveCount(0);
   await nav.getByRole("link", { name: "Tools and MCPs" }).click();
   await expect(page).toHaveURL(/\/settings\/tools$/);

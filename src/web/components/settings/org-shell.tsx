@@ -3,7 +3,14 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Link, Outlet } from "@tanstack/react-router";
-import { BlocksIcon, LayoutGridIcon, Settings2Icon, UsersIcon, WrenchIcon } from "lucide-react";
+import {
+  BlocksIcon,
+  LayoutGridIcon,
+  Settings2Icon,
+  FileTextIcon,
+  UsersIcon,
+  WrenchIcon,
+} from "lucide-react";
 
 import { SettingsShell, settingsNavLink } from "@/web/components/settings/settings-nav";
 import { meQuery } from "@/web/lib/queries";
@@ -12,6 +19,7 @@ export const ORG_PAGES = [
   { to: "/org/general", label: "General", icon: Settings2Icon, team: false, owners: false },
   { to: "/org/providers", label: "Model providers", icon: BlocksIcon, team: false, owners: false },
   { to: "/org/tools", label: "Tools and MCPs", icon: WrenchIcon, team: false, owners: false },
+  { to: "/org/skills", label: "Skills", icon: FileTextIcon, team: false, owners: false },
   { to: "/org/people", label: "People", icon: UsersIcon, team: true, owners: false },
   { to: "/org/spaces", label: "Spaces", icon: LayoutGridIcon, team: true, owners: true },
 ] as const;

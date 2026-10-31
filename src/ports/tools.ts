@@ -1,7 +1,8 @@
 // Tools the agent can call, each with its definition (what people and the model read about it, the
 // input it takes and what it gives back), how much a call can do, and running it; the toolsets they
-// come in; the access policies orgs and spaces keep; and the policy each sets for each tool. A tool's id names where it comes from:
-// `thread.rename` for Mage's own, `mcp:<server>/<tool>` for an MCP server's, later `skill:<name>`.
+// come in; the access policies orgs and spaces keep; and the policy each sets for each tool. A
+// tool's id names where it comes from: `thread.rename` for Mage's own, `skills.load` for the Skills
+// toolset's, `mcp:<server>/<tool>` for an MCP server's.
 
 import type * as z from "zod";
 
@@ -62,6 +63,8 @@ export interface Toolset {
   title: string;
   source: ToolsetSource;
   tools: AnyToolSpec[];
+  // Whether a space has any use for it now, such as skills to load; always, when not given.
+  usefulIn?(space: { id: string; orgId: string }): boolean;
 }
 
 // The toolsets that come and go with what orgs and spaces add, such as their MCP servers: those

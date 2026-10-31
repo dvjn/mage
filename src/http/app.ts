@@ -23,6 +23,7 @@ import type { Instructions } from "@/services/instructions.ts";
 import type { McpServers } from "@/services/mcp-servers.ts";
 import type { ConnectionModel, Models } from "@/services/models.ts";
 import type { Orgs } from "@/services/orgs.ts";
+import type { Skills } from "@/services/skills.ts";
 import type { Spaces, SpaceView } from "@/services/spaces.ts";
 import type { Threads } from "@/services/threads.ts";
 import type { ToolPolicies } from "@/services/tool-policies.ts";
@@ -51,6 +52,14 @@ import {
 import type { Me } from "@/shared/me.ts";
 import { instructionsInputSchema } from "@/shared/instructions.ts";
 import type { SignInOptions } from "@/shared/sign-in.ts";
+import {
+  newSkillSourceSchema,
+  skillEnabledChangeSchema,
+  skillInputSchema,
+  skillTokenChangeSchema,
+  skillUploadSchema,
+  spaceSkillsChangeSchema,
+} from "@/shared/skills.ts";
 import {
   type ConnectionModels,
   connectionModelsChangeSchema,
@@ -126,6 +135,8 @@ export interface AppOptions {
   mcp: McpServers;
   // The instructions orgs and spaces give the agent.
   instructions: Instructions;
+  // The skills orgs and spaces give the agent.
+  skills: Skills;
   // The orgs people are in, their members and invites, and creating team orgs.
   orgs: Orgs;
   // A team org's groups, as a directory brings them.
@@ -292,6 +303,12 @@ function mcpServerPage(server: Pick<McpServerSummary, "id" | "spaceId"> | null) 
 }
 
 const instructionsInput = checkedBody(instructionsInputSchema);
+const newSkillSource = checkedBody(newSkillSourceSchema);
+const skillInput = checkedBody(skillInputSchema);
+const skillTokenChange = checkedBody(skillTokenChangeSchema);
+const skillUpload = checkedBody(skillUploadSchema);
+const skillEnabledChange = jsonBody(skillEnabledChangeSchema, "enabled is true or false");
+const spaceSkillsChange = jsonBody(spaceSkillsChangeSchema, "allowed is true or false");
 
 const toolPolicyChange = jsonBody(
   toolPolicyChangeSchema,
@@ -439,6 +456,7 @@ function createApi(options: AppOptions) {
     toolPolicies,
     mcp,
     instructions,
+    skills,
   } = options;
 
   // A connection as the API shows it, with its proxy and the ends of its secrets.
@@ -1047,6 +1065,92 @@ function createApi(options: AppOptions) {
           instructions.setInSpace(principal, c.req.param("id"), c.req.valid("json").text),
           200,
         );
+      })
+      .get("/v1/org/skills", (c) => {
+        return c.json(skills.orgSkills(signedIn(c.var.principal)), 200);
+      })
+      .put("/v1/org/skills/space-skills", spaceSkillsChange, (c) => {
+        const principal = signedIn(c.var.principal);
+        skills.setSpaceSkills(principal, c.req.valid("json").allowed);
+        return c.json(skills.orgSkills(principal), 200);
+      })
+      .post("/v1/org/skill-sources", newSkillSource, async (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(await skills.addSource(principal, null, c.req.valid("json")), 200);
+      })
+      .post("/v1/org/skills", skillInput, (c) => {
+        return c.json(skills.write(signedIn(c.var.principal), null, c.req.valid("json")), 200);
+      })
+      .post("/v1/org/skills/upload", skillUpload, async (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(await skills.upload(principal, null, c.req.valid("json")), 200);
+      })
+      .get("/v1/spaces/:id/skills", (c) => {
+        return c.json(skills.spaceSkills(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .post("/v1/spaces/:id/skill-sources", newSkillSource, async (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(
+          await skills.addSource(principal, c.req.param("id"), c.req.valid("json")),
+          200,
+        );
+      })
+      .post("/v1/spaces/:id/skills", skillInput, (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(skills.write(principal, c.req.param("id"), c.req.valid("json")), 200);
+      })
+      .post("/v1/spaces/:id/skills/upload", skillUpload, async (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(await skills.upload(principal, c.req.param("id"), c.req.valid("json")), 200);
+      })
+      // The space's switch on one of the org's sources.
+      .put("/v1/spaces/:id/skill-sources/:sourceId", skillEnabledChange, (c) => {
+        const principal = signedIn(c.var.principal);
+        const { id, sourceId } = c.req.param();
+        skills.setSpaceSource(principal, id, sourceId, c.req.valid("json").enabled);
+        return c.json(skills.spaceSkills(principal, id), 200);
+      })
+      // The space's switch on one of the org's skills.
+      .put("/v1/spaces/:id/skills/:skillId", skillEnabledChange, (c) => {
+        const principal = signedIn(c.var.principal);
+        const { id, skillId } = c.req.param();
+        skills.setSpaceSkill(principal, id, skillId, c.req.valid("json").enabled);
+        return c.json(skills.spaceSkills(principal, id), 200);
+      })
+      .put("/v1/skill-sources/:id/enabled", skillEnabledChange, (c) => {
+        const principal = signedIn(c.var.principal);
+        skills.setSourceEnabled(principal, c.req.param("id"), c.req.valid("json").enabled);
+        return c.json({ ok: true }, 200);
+      })
+      .post("/v1/skill-sources/:id/refresh", async (c) => {
+        return c.json(await skills.refresh(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .put("/v1/skill-sources/:id/token", skillTokenChange, async (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(
+          await skills.setToken(principal, c.req.param("id"), c.req.valid("json").token),
+          200,
+        );
+      })
+      .delete("/v1/skill-sources/:id", (c) => {
+        skills.removeSource(signedIn(c.var.principal), c.req.param("id"));
+        return c.json({ ok: true }, 200);
+      })
+      .get("/v1/skills/:id", (c) => {
+        return c.json(skills.get(signedIn(c.var.principal), c.req.param("id")), 200);
+      })
+      .patch("/v1/skills/:id", skillInput, (c) => {
+        const principal = signedIn(c.var.principal);
+        return c.json(skills.edit(principal, c.req.param("id"), c.req.valid("json")), 200);
+      })
+      .put("/v1/skills/:id/enabled", skillEnabledChange, (c) => {
+        const principal = signedIn(c.var.principal);
+        skills.setSkillEnabled(principal, c.req.param("id"), c.req.valid("json").enabled);
+        return c.json({ ok: true }, 200);
+      })
+      .delete("/v1/skills/:id", (c) => {
+        skills.remove(signedIn(c.var.principal), c.req.param("id"));
+        return c.json({ ok: true }, 200);
       })
       .post("/v1/threads/:id/retry", retry, (c) => {
         const { runId } = c.req.valid("json");

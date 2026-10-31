@@ -1,14 +1,14 @@
 // A space's settings, in pages: General (renaming it, unless it is a person's own space named for
 // them, the model and reasoning effort its new threads start with, or the org's, and deleting it
-// when it is not the primary space, and the agent's instructions there), Members for a shared space, and the agent's Tools and MCPs there, with
-// one table of MCP servers, the org's that the space may turn off for itself beside its own, and a
-// page for each of its own. They are there only for those who manage it (its owners, and a team
-// org's owners). A team org's owner who manages a space without being in it reads its threads once
+// when it is not the primary space, and the agent's instructions there), Members for a shared space,
+// the agent's Tools and MCPs there, with one table of MCP servers, the org's that the space may
+// turn off for itself beside its own, and a page for each of its own, and its Skills. They are
+// there only for those who manage it (its owners, and a team org's owners). A team org's owner who manages a space without being in it reads its threads once
 // they give themselves a role in it.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link, Navigate, Outlet, useNavigate } from "@tanstack/react-router";
-import { Settings2Icon, UsersIcon, WrenchIcon } from "lucide-react";
+import { Settings2Icon, FileTextIcon, UsersIcon, WrenchIcon } from "lucide-react";
 import { type FormEvent, useEffect, useId, useState } from "react";
 
 import { namedForPerson, type SpaceSummary } from "@/shared/spaces.ts";
@@ -22,6 +22,7 @@ import {
   ModelField,
 } from "@/web/components/settings/default-fields";
 import { SpaceInstructions } from "@/web/components/settings/instructions";
+import { SpaceSkills } from "@/web/components/settings/skills";
 import { SettingsCard, SettingsTitle } from "@/web/components/settings/layout";
 import { SettingsShell, settingsNavLink } from "@/web/components/settings/settings-nav";
 import { McpServerPage, McpServersCard } from "@/web/components/settings/mcp-servers";
@@ -265,6 +266,12 @@ export function SpaceSettingsShell() {
               Tools and MCPs
             </Link>
           </li>
+          <li className="shrink-0">
+            <Link to="/s/$spaceId/settings/skills" params={params} className={settingsNavLink}>
+              <FileTextIcon className="size-4" />
+              Skills
+            </Link>
+          </li>
         </>
       }
     >
@@ -298,6 +305,13 @@ export function SpaceMembersPage() {
   if (!space) return null;
   if (space.kind !== "shared") return <Navigate to="/s/$spaceId/settings" params={{ spaceId }} />;
   return <SpaceMembers space={space} />;
+}
+
+// The skills the agent has in the space's threads.
+export function SpaceSkillsPage() {
+  const { space } = useSettingsSpace();
+  if (!space) return null;
+  return <SpaceSkills spaceId={space.id} />;
 }
 
 // The agent's tools in the space's threads.

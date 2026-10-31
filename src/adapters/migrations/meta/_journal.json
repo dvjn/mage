@@ -232,6 +232,13 @@
       "when": 1793425095594,
       "tag": "0032_instructions",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1793425173886,
+      "tag": "0033_skills",
+      "breakpoints": true
     }
   ]
 }
