@@ -24,6 +24,7 @@ const columns = {
   url: mcpServer.url,
   enabled: mcpServer.enabled,
   authKind: mcpServer.authKind,
+  credentials: mcpServer.credentials,
   settings: mcpServer.settings,
   transport: mcpServer.transport,
   protocolVersion: mcpServer.protocolVersion,
@@ -200,13 +201,46 @@ export function createMcpCredentialStore(db: Db, cipher: Cipher): McpCredentialS
         .values({ serverId, ...holderKey(holder), keyVersion, sealed: data })
         .onConflictDoUpdate({
           target: [mcpCredential.serverId, mcpCredential.holderKind, mcpCredential.holderId],
-          set: { keyVersion, sealed: data, updatedAt: new Date() },
+          set: { keyVersion, sealed: data, status: "ok", updatedAt: new Date() },
         })
         .run();
     },
 
     delete(serverId, holder) {
       db.delete(mcpCredential).where(where(serverId, holder)).run();
+    },
+
+    deletePeople(serverId) {
+      db.delete(mcpCredential)
+        .where(and(eq(mcpCredential.serverId, serverId), eq(mcpCredential.holderKind, "user")))
+        .run();
+    },
+
+    status(serverId, holder) {
+      return (
+        db
+          .select({ status: mcpCredential.status })
+          .from(mcpCredential)
+          .where(where(serverId, holder))
+          .get()?.status ?? null
+      );
+    },
+
+    setStatus(serverId, holder, status) {
+      db.update(mcpCredential).set({ status }).where(where(serverId, holder)).run();
+    },
+
+    ofUser(userId) {
+      return db
+        .select({
+          serverId: mcpCredential.serverId,
+          status: mcpCredential.status,
+          updatedAt: mcpCredential.updatedAt,
+        })
+        .from(mcpCredential)
+        .where(and(eq(mcpCredential.holderKind, "user"), eq(mcpCredential.holderId, userId)))
+        .orderBy(asc(mcpCredential.serverId))
+        .all();
     },
   };
 }

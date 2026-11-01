@@ -1,7 +1,7 @@
 // Pages: login, and signup while password sign-up is open, when signed out; when signed in, the app shell with a space and its
 // settings, its skills among them, a new thread's draft, a thread, the threads shared with you,
-// and the organization's settings with its people, spaces and skills, opening on the last space
-// used.
+// your account, and the organization's settings with its people, spaces and skills, opening on the
+// last space used.
 // Each side redirects to the other; signing in or up goes back to the page that asked for it, such
 // as an invite link, which is open either way.
 
@@ -14,6 +14,7 @@ import {
   redirect,
 } from "@tanstack/react-router";
 
+import type { ToolScope } from "@/shared/threads/events.ts";
 import { AppShell } from "@/web/app/app-shell";
 import { AuthFrame } from "@/web/auth/auth-frame";
 import { InvitePage } from "@/web/guests/invite-page";
@@ -22,6 +23,7 @@ import { LoginForm } from "@/web/auth/login-form";
 import { OrgSkills } from "@/web/skills/pages";
 import { OrgGeneral } from "@/web/orgs/org-general";
 import { OrgMcpServer, OrgTools } from "@/web/agent/org-tools";
+import { AccountPage } from "@/web/mcp/connections-page";
 import { OrgPeople, peopleSearchSchema } from "@/web/orgs/people-page";
 import { OrgSpaces, orgSpacesSearchSchema } from "@/web/spaces/org-spaces";
 import { OrgProviders } from "@/web/models/org-providers";
@@ -221,9 +223,14 @@ const draftRoute = createRoute({
   component: DraftThread,
 });
 
+// A thread, and in `?allow=` and `?scope=` a call to allow on coming back from signing in.
 const threadRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/t/$threadId",
+  validateSearch: (search: Record<string, unknown>): { allow?: string; scope?: ToolScope } => ({
+    ...(typeof search.allow === "string" && { allow: search.allow }),
+    ...((search.scope === "once" || search.scope === "for_now") && { scope: search.scope }),
+  }),
   component: ThreadPage,
 });
 
@@ -233,6 +240,13 @@ const sharedRoute = createRoute({
   path: "/shared",
   validateSearch: sharedSearchSchema,
   component: SharedPage,
+});
+
+// The signed-in person's own account: their MCP connections.
+const accountRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/account",
+  component: AccountPage,
 });
 
 // The organization's settings, opening on its general page; /settings leads there too.
@@ -340,6 +354,7 @@ export function createAppRouter(queryClient: QueryClient) {
         draftRoute,
         threadRoute,
         sharedRoute,
+        accountRoute,
         orgRoute.addChildren([
           orgIndexRoute,
           orgGeneralRoute,

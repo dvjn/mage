@@ -6,9 +6,13 @@
 // anyone who can edit the thread when none asks. Where independence applies, the approver can't
 // be the author of the thread's latest human message. A call runs at once when the tool declares
 // normal risk, no rule makes every call ask, and everyone whose words the model read may use it
-// directly; or on a standing approval that still holds. Otherwise it waits. A call that asks the
-// thread questions always waits for an answer, which anyone who may use or approve the tool gives;
-// an answer counts as its writer's words like a message.
+// directly; or on a standing approval that still holds. Otherwise it waits. A tool whose calls run
+// with one person's own login asks more, since that person's data reaches everyone in the thread:
+// it runs at once only when every word the model read is one connected person's, who may use it
+// directly, and runs as them; a standing approval runs as its giver, and holds only while they may
+// approve, their connection works and nobody else has written since. A call that asks the thread
+// questions always waits for an answer, which anyone who may use or approve the tool gives; an
+// answer counts as its writer's words like a message.
 
 import type { Access } from "@/server/spaces/thread-access.ts";
 import type { ToolRisk } from "@/shared/threads/events.ts";
@@ -132,14 +136,18 @@ export function mayAnswer(
 // whether they may use the tool directly.
 export interface Influence {
   seq: number;
+  userId: string;
   level: ToolLevel;
   canUse: boolean;
 }
 
-// An approval: where it was given, and whether its giver may still approve.
+// An approval: where it was given, and whether its giver may still approve; for a standing one,
+// the call it was given on and who gave it.
 export interface Approval {
   atSeq: number;
   eligible: boolean;
+  callId?: string;
+  by?: string;
 }
 
 // Whether a standing approval still holds: its giver may still approve, and everyone who wrote
@@ -159,21 +167,61 @@ export function holdsOnce(approval: Approval, influence: readonly Influence[]) {
   );
 }
 
-// Whether a call runs as its people may, runs on a standing approval, or waits for a decision.
+// Whether a standing approval for calls that run with its giver's own login still holds: its giver
+// may still approve, their connection works, and nobody else wrote after it.
+export function holdsAsGiver(
+  approval: Approval,
+  influence: readonly Influence[],
+  connected: (userId: string) => boolean,
+) {
+  const by = approval.by;
+  return (
+    approval.eligible &&
+    !!by &&
+    connected(by) &&
+    influence.every((words) => words.seq <= approval.atSeq || words.userId === by)
+  );
+}
+
+// What becomes of a call: it runs as its people may, runs on a standing approval (given on the
+// call named), or waits for a decision. One that runs with a person's own login says whose.
+export type Decision =
+  | { kind: "run"; runAs?: string }
+  | { kind: "standing"; callId?: string; runAs?: string }
+  | { kind: "wait" };
+
+// Whether a call runs as its people may, runs on a standing approval, or waits for a decision. For
+// a tool whose calls run with one person's own login, `connected` says whose connection works.
 export function decide(input: {
   declared: ToolRisk;
   rules: readonly Rule[];
   influence: readonly Influence[];
   standing: readonly Approval[];
-}): "run" | "standing" | "wait" {
-  const { declared, rules, influence, standing } = input;
-  if (declared !== "normal" || rules.some((rule) => rule.use === "none")) return "wait";
-  if (influence.every((words) => words.canUse)) return "run";
-  if (
-    riskOf(declared, rules) === "normal" &&
-    standing.some((approval) => holds(approval, influence))
-  ) {
-    return "standing";
+  connected?: (userId: string) => boolean;
+}): Decision {
+  const { declared, rules, influence, standing, connected } = input;
+  if (declared !== "normal" || rules.some((rule) => rule.use === "none")) return { kind: "wait" };
+  const direct = influence.every((words) => words.canUse);
+  if (!connected) {
+    if (direct) return { kind: "run" };
+  } else {
+    // Only one person's words, who may use the tool and has a working connection: it is theirs.
+    const [only, ...others] = new Set(influence.map((words) => words.userId));
+    if (direct && only && others.length === 0 && connected(only)) {
+      return { kind: "run", runAs: only };
+    }
   }
-  return "wait";
+  if (riskOf(declared, rules) !== "normal") return { kind: "wait" };
+  // The latest that holds, so a call runs as whoever gave it.
+  const held = standing
+    .filter((approval) =>
+      connected ? holdsAsGiver(approval, influence, connected) : holds(approval, influence),
+    )
+    .sort((a, b) => b.atSeq - a.atSeq)[0];
+  if (!held) return { kind: "wait" };
+  return {
+    kind: "standing",
+    ...(held.callId && { callId: held.callId }),
+    ...(connected && held.by && { runAs: held.by }),
+  };
 }

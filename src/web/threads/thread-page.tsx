@@ -5,10 +5,11 @@
 // for a model that can think, its reasoning effort, or the defaults it follows, named as such, with
 // a way back to them. Its space's owners and messagers can share it from its header. Those a
 // tool's policy lets approve decide on the agent's calls of it that wait, those it lets use or
-// approve it answer the agent's questions, and while the agent waits the composer says on what. A
-// guest of the thread sees its space's name alone, and cannot change its model; once their access
-// ends, they are told so. When the server cannot be reached, the thread as last read stays in view
-// while it reconnects. Reading it marks it seen.
+// approve it answer the agent's questions, and while the agent waits the composer says on what; a
+// call allowed while signing in with its server is applied on coming back here. A guest of the
+// thread sees its space's name alone, and cannot change its model; once their access ends, they are
+// told so. When the server cannot be reached, the thread as last read stays in view while it
+// reconnects. Reading it marks it seen.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
@@ -199,6 +200,18 @@ export function ThreadPage() {
     return answering.mutateAsync({ callId, answers }).catch(() => {});
   }
 
+  // A call the reader allowed as they signed in with its server, which the page applies once the
+  // browser is back here.
+  const { allow, scope } = threadRoute.useSearch();
+  const navigate = threadRoute.useNavigate();
+  const allowing = useRef<string>(undefined);
+  useEffect(() => {
+    if (!allow || !detail.data || allowing.current === allow) return;
+    allowing.current = allow;
+    void navigate({ search: {}, replace: true });
+    void decide(allow, true, scope ?? "once");
+  });
+
   // What the run waits for: an answer to the agent's questions, or a decision on a call.
   const waitingOn = run?.waitingOn
     ? transcript.rows.find((row) => row.kind === "tool" && row.id === run.waitingOn)
@@ -314,6 +327,7 @@ export function ThreadPage() {
                         row={row}
                         turn={agentTurnOf(transcript.rows, index)}
                         tools={detail.data?.tools}
+                        connection={policy?.connection}
                         actions={{
                           ...(row === retryable && { retry: () => retry(retryable.runId) }),
                           ...(!guest && !archived && { pickModel: () => setPicking(true) }),

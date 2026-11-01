@@ -7,6 +7,8 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   mcpAuthorizeSchema,
   type McpAuthInput,
+  mcpConnectResultSchema,
+  type McpCredentialMode,
   mcpServerSchema,
   type McpServerSummary,
 } from "@/shared/mcp.ts";
@@ -106,7 +108,13 @@ async function serversChanged(queryClient: ReturnType<typeof useQueryClient>) {
 export function useSaveServer(scope: Scope, serverId?: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (json: { name: string; slug?: string; url: string; auth: McpAuthInput }) => {
+    mutationFn: async (json: {
+      name: string;
+      slug?: string;
+      url: string;
+      auth: McpAuthInput;
+      credentials: McpCredentialMode;
+    }) => {
       const res = serverId
         ? await apiClient.v1["mcp-servers"][":id"].$patch({ param: { id: serverId }, json })
         : scope.kind === "org"
@@ -158,6 +166,62 @@ export function useRefreshServer() {
       );
     },
     onSuccess: () => serversChanged(queryClient),
+  });
+}
+
+// The person connecting their own credentials for a server: their header values, checked by the
+// server first; or signing in with it, the browser leaving and coming back where it was, or to the
+// page given. Threads are read again for their connection.
+export function useConnect() {
+  const queryClient = useQueryClient();
+  async function connected() {
+    await queryClient.invalidateQueries({ queryKey: ["mcp-connections"] });
+    await queryClient.invalidateQueries({ queryKey: ["threads"] });
+  }
+  const headers = useMutation({
+    mutationFn: async ({
+      serverId,
+      values,
+    }: {
+      serverId: string;
+      values: { name: string; value: string }[];
+    }) => {
+      const res = await apiClient.v1["mcp-servers"][":id"].connection.$put({
+        param: { id: serverId },
+        json: { headers: values },
+      });
+      if (!res.ok) throw new Error(await errorOf(res));
+    },
+    onSuccess: connected,
+  });
+  const oauth = useMutation({
+    mutationFn: async ({ serverId, returnTo }: { serverId: string; returnTo?: string }) => {
+      const res = await apiClient.v1["mcp-servers"][":id"].connection.authorize.$post({
+        param: { id: serverId },
+        json: { returnTo: returnTo ?? `${window.location.pathname}${window.location.search}` },
+      });
+      if (!res.ok) throw new Error(await errorOf(res));
+      const result = mcpConnectResultSchema.parse(await res.json());
+      if (result.status === "redirect") {
+        window.location.assign(result.url);
+        return new Promise<never>(() => {});
+      }
+    },
+    onSuccess: connected,
+  });
+  return { headers, oauth };
+}
+
+export function useDisconnect() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (serverId: string) => {
+      const res = await apiClient.v1["mcp-servers"][":id"].connection.$delete({
+        param: { id: serverId },
+      });
+      if (!res.ok) throw new Error(await errorOf(res));
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["mcp-connections"] }),
   });
 }
 

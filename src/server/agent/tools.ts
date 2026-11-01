@@ -25,6 +25,7 @@ import {
   TOOL_OFF,
   WIRE_NAME_MAX,
   wireToolName,
+  type ToolConnection,
   type ToolDefinition,
   type ToolPolicyChange,
   type ToolsetSetting,
@@ -41,6 +42,7 @@ import {
   type Approval,
   canUse,
   decide,
+  type Decision,
   holdsOnce,
   type Influence,
   latestAuthor,
@@ -58,7 +60,11 @@ import {
 
 export type { ToolLevel };
 
-export type ToolOutput = { ok: true; value: unknown } | { ok: false; error: string };
+// What a call gave back or why it failed, and for a tool that runs with each person's own
+// credentials whose it ran with, which the thread records and the model never reads.
+export type ToolOutput = ({ ok: true; value: unknown } | { ok: false; error: string }) & {
+  ranAs?: string;
+};
 
 // Where a call runs: the thread, its space and org, the run and call, and the model ref that
 // replies now. `write` appends to the thread while the run still holds it.
@@ -70,8 +76,9 @@ export interface ToolContext {
   callId: string;
   actor: { kind: "agent" };
   model: string | null;
-  // Who allowed this call, when it waited for someone; whose credentials it may go with.
-  approvedBy: string | null;
+  // Whose own login the call goes with, for a tool that uses one: whoever approved it, whoever gave
+  // the standing approval it ran on, or the one person whose words the model read.
+  runAs: string | null;
   // What was answered, for a tool that waits for answers.
   answers?: AskAnswers;
   write<T>(work: (append: (event: NewEvent, title?: string) => void) => T): T;
@@ -97,6 +104,10 @@ export interface ToolSpec<I = unknown> {
   // A tool whose every call waits for someone in the thread to answer it before it runs; who may
   // answer follows its rules as approving does, and an answer counts as its writer's words.
   waitsFor?: "answer";
+  // For a tool whose calls run with the own login of the person they run as: that person's
+  // connection for it. Its calls run directly only for one connected writer; otherwise they wait
+  // for an approver, who connects first and whose login the call then runs with.
+  connection?(userId: string): ToolConnection;
   risk(input: I, ctx: Pick<ToolContext, "model">): ToolRisk;
   run(input: I, ctx: ToolContext): Promise<ToolOutput>;
 }
@@ -392,7 +403,7 @@ export function createTools(options: ToolsOptions) {
         person = personIn(userId, thread, space);
         people.set(userId, person);
       }
-      influence.push({ seq, level: person.level, canUse: canUse(person, rules) });
+      influence.push({ seq, userId, level: person.level, canUse: canUse(person, rules) });
     }
     return influence;
   }
@@ -455,6 +466,17 @@ export function createTools(options: ToolsOptions) {
     canDecide,
     rulesIn,
 
+    // The person's own connection that a call of the tool would run with, for a tool that uses
+    // each person's own credentials.
+    connectionFor(
+      space: Pick<Space, "id" | "orgId">,
+      toolId: string,
+      userId: string,
+    ): ToolConnection | null {
+      const spec = specsOf(settingsInSpace(space)).find((tool) => tool.name === toolId);
+      return spec?.connection?.(userId) ?? null;
+    },
+
     // Each tool's level for the person in the thread: whether they may use it without approval.
     levelsFor(userId: string, thread: Thread, space: Space): Record<string, ToolLevel> {
       const person = personIn(userId, thread, space);
@@ -503,20 +525,23 @@ export function createTools(options: ToolsOptions) {
     },
 
     // Whether a call of the tool, with the risk the tool itself declares for it, runs now, on a
-    // standing approval, or waits.
+    // standing approval, or waits; for a tool whose calls run with a person's own login, as whom.
     decide(
       rows: readonly TranscriptRow[],
       thread: Thread,
       space: Space,
       toolId: string,
       declared: ToolRisk,
-    ) {
+    ): Decision {
       const { rules } = rulesIn(space)(toolId);
+      const spec = specsOf(settingsInSpace(space)).find((tool) => tool.name === toolId);
+      // The approvals given for now themselves, not the calls that later ran on them.
       const standing: Approval[] = rows
         .filter(
           (row): row is ToolRow =>
             row.kind === "tool" &&
             row.toolId === toolId &&
+            !row.standingOn &&
             row.decision?.scope === "for_now" &&
             row.decision.allow,
         )
@@ -528,12 +553,17 @@ export function createTools(options: ToolsOptions) {
             "normal",
             null,
           ),
+          callId: row.id,
+          by: row.decision!.by.userId,
         }));
       return decide({
         declared,
         rules,
         influence: influenceOf(rows, thread, space, rules),
         standing,
+        ...(spec?.connection && {
+          connected: (userId: string) => !!spec.connection?.(userId).connected,
+        }),
       });
     },
 
@@ -585,7 +615,14 @@ export function createTools(options: ToolsOptions) {
 export interface ToolDecisionsOptions {
   tools: Pick<
     Tools,
-    "find" | "levelFor" | "canDecide" | "asks" | "riskForCall" | "toolsetsInOrg" | "toolsetsInSpace"
+    | "find"
+    | "levelFor"
+    | "canDecide"
+    | "asks"
+    | "riskForCall"
+    | "connectionFor"
+    | "toolsetsInOrg"
+    | "toolsetsInSpace"
   >;
   access: Pick<ThreadAccess, "require">;
   threads: Pick<ThreadStore, "eventsAfter">;
@@ -685,6 +722,11 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
           tools.riskForCall(call, space, run.model) !== "normal"
         ) {
           throw new ServiceError(400, "This call can only be allowed once");
+        }
+        // A call allowed runs with its approver's own login, where its tool uses one.
+        const connection = tools.connectionFor(space, call.toolId, principal.userId);
+        if (decision.allow && connection && !connection.connected) {
+          throw new ServiceError(409, `Connect to ${connection.title} first`);
         }
         const actor = { kind: "user" as const, userId: principal.userId };
         if (decision.allow) {

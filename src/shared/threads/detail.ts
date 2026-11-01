@@ -4,7 +4,7 @@ import * as z from "zod";
 
 import { anyThreadEventSchema, toolRiskSchema } from "@/shared/threads/events.ts";
 import { effortSchema, threadSchema } from "@/shared/threads/thread.ts";
-import { toolDefinitionSchema } from "@/shared/tools.ts";
+import { toolConnectionSchema, toolDefinitionSchema } from "@/shared/tools.ts";
 
 // How the reader came to the thread: as a member of its space with their role, or as a guest, who
 // sees only the space's name.
@@ -47,9 +47,17 @@ export const threadDetailSchema = z.object({
   seenSeq: z.number().int().nonnegative(),
   // The reader's level for each tool here: whether they may run it, and so decide on its calls.
   levels: z.record(z.string(), z.enum(["run", "approve"])),
-  // Current policy for pending approval cards, separate from the historical request events.
+  // Current policy for pending approval cards, separate from the historical request events; with
+  // the reader's own connection, for a call that would run with it once they allow it.
   pendingTools: z
-    .record(z.string(), z.object({ risk: toolRiskSchema, canDecide: z.boolean() }))
+    .record(
+      z.string(),
+      z.object({
+        risk: toolRiskSchema,
+        canDecide: z.boolean(),
+        connection: toolConnectionSchema.optional(),
+      }),
+    )
     .optional(),
   // Every tool's definition, by which its calls show.
   tools: z.array(toolDefinitionSchema),

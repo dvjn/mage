@@ -67,13 +67,16 @@ export interface McpCallResult {
   isError?: boolean;
 }
 
-// Why a server could not be reached: it needs authorizing (again), or it failed.
+// Why a server could not be reached: it needs authorizing (again), or it failed; and whether it
+// refused the credentials it was sent.
 export class McpError extends Error {
   readonly kind: "needs_auth" | "error";
+  readonly refused: boolean;
 
-  constructor(kind: McpError["kind"], message: string) {
+  constructor(kind: McpError["kind"], message: string, refused = kind === "needs_auth") {
     super(message);
     this.kind = kind;
+    this.refused = refused;
   }
 }
 
@@ -201,7 +204,11 @@ export function mcpFailure(err: unknown, target: Pick<McpTarget, "url" | "auth">
   const oauth = target.auth.kind === "oauth";
   const status = err instanceof SdkHttpError ? err.status : null;
   if (err instanceof UnauthorizedError || err instanceof OAuthError) {
-    return new McpError(oauth ? "needs_auth" : "error", "The server needs Mage authorized again.");
+    return new McpError(
+      oauth ? "needs_auth" : "error",
+      "The server needs Mage authorized again.",
+      true,
+    );
   }
   if (status === 401 || status === 403) {
     return oauth
@@ -211,6 +218,7 @@ export function mcpFailure(err: unknown, target: Pick<McpTarget, "url" | "auth">
           target.auth.kind === "headers"
             ? `The server did not accept the headers (HTTP ${status}).`
             : `The server needs authorization (HTTP ${status}).`,
+          true,
         );
   }
   if (status) return new McpError("error", `The server answered HTTP ${status}.`);

@@ -242,6 +242,7 @@ export function setup(
     spaces,
     settings: settingStore,
     logger,
+    hooks,
   });
   const cipher = createCipher({ version: 1, key: Buffer.alloc(32, 7) });
   const skillStore = createSkillStore(db, cipher);
@@ -524,6 +525,7 @@ export function setup(
   return {
     db,
     app,
+    hooks,
     shutdown,
     scim,
     org,

@@ -1,9 +1,9 @@
-// The signed-in user at the foot of the sidebar, with a menu for the theme, the keyboard shortcuts
-// and signing out.
+// The signed-in user at the foot of the sidebar, with a menu for the theme, their account, the
+// keyboard shortcuts and signing out.
 
 import { onlineManager, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { ChevronsUpDownIcon, KeyboardIcon, LogOutIcon, SunMoonIcon } from "lucide-react";
+import { ChevronsUpDownIcon, KeyboardIcon, LogOutIcon, SunMoonIcon, UserIcon } from "lucide-react";
 
 import { useToast } from "@/web/shell/toaster";
 import { Kbd } from "@/web/components/ui/kbd";
@@ -114,6 +114,10 @@ export function NavUser({ user }: { user: { name: string; email: string } }) {
                   </DropdownMenuRadioGroup>
                 </DropdownMenuSubContent>
               </DropdownMenuSub>
+              <DropdownMenuItem onClick={() => void navigate({ to: "/account" })}>
+                <UserIcon />
+                Account
+              </DropdownMenuItem>
               <DropdownMenuItem onClick={openHelp}>
                 <KeyboardIcon />
                 Keyboard shortcuts

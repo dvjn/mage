@@ -713,7 +713,7 @@ export function createRunWorker(options: RunWorkerOptions) {
               space,
               toolId,
               spec.risk(parsed.data, { model: execution.ref }),
-            ) === "wait");
+            ).kind === "wait");
         append({
           type: "tool.requested",
           actor: AGENT,
@@ -756,6 +756,10 @@ export function createRunWorker(options: RunWorkerOptions) {
         const spec = offered.find((candidate) => candidate.name === call.toolId);
         const parsed = spec?.input.safeParse(call.input);
         let allowed = false;
+        // Whose own login it goes with, for a tool that uses one, and the standing approval it
+        // runs on, if any.
+        let runAs: string | null = null;
+        let standingOn: string | undefined;
         if (spec && parsed?.success && spec.waitsFor === "answer") {
           // A call that asks runs once answered, while the answer holds.
           if (call.state === "pending") {
@@ -767,16 +771,23 @@ export function createRunWorker(options: RunWorkerOptions) {
           const risk = tools.riskOf(space, spec, parsed.data, execution.ref);
           if (call.state === "allowed") {
             allowed = tools.approvalHolds(call, rows, thread, space, risk);
+            // An approved call runs with its approver's own login.
+            if (spec.connection) runAs = call.decision?.by.userId ?? null;
           } else {
             const declared = spec.risk(parsed.data, { model: execution.ref });
-            allowed = tools.decide(rows, thread, space, call.toolId, declared) !== "wait";
+            const decision = tools.decide(rows, thread, space, call.toolId, declared);
+            allowed = decision.kind !== "wait";
             if (!allowed && call.waits) {
               waiting = true;
               continue;
             }
+            if (decision.kind !== "wait") runAs = decision.runAs ?? null;
+            if (decision.kind === "standing") standingOn = decision.callId;
           }
         }
-        if (allowed) return { call, spec: spec!, input: parsed!.data as unknown };
+        if (allowed) {
+          return { call, spec: spec!, input: parsed!.data as unknown, runAs, standingOn };
+        }
         append({
           type: "tool.denied",
           actor: AGENT,
@@ -796,7 +807,7 @@ export function createRunWorker(options: RunWorkerOptions) {
   async function settle(execution: Execution, space: Space) {
     const { run, lease } = execution;
     for (let next = nextCall(execution, space); next; next = nextCall(execution, space)) {
-      const { call, spec, input } = next;
+      const { call, spec, input, runAs, standingOn } = next;
       const started = now().getTime();
       let output: ToolOutput;
       try {
@@ -808,7 +819,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           callId: call.id,
           actor: AGENT,
           model: execution.ref,
-          approvedBy: call.decision?.allow ? call.decision.by.userId : null,
+          runAs,
           ...(call.answers && { answers: call.answers }),
           write: (work) => write(lease, run.threadId, (append) => work(append)),
         });
@@ -827,6 +838,8 @@ export function createRunWorker(options: RunWorkerOptions) {
             callId: call.id,
             ms,
             ...(output.ok ? { ok: true, value: output.value } : { ok: false, error: output.error }),
+            ...(output.ranAs && { ranAs: output.ranAs }),
+            ...(standingOn && { standingOn }),
           },
         }),
       );

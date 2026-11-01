@@ -240,7 +240,7 @@ export interface ThreadsOptions {
   // Names threads after their first message, when given.
   titles?: Pick<Titles, "name">;
   // The agent's tools, for each reader's level for them.
-  tools: Pick<Tools, "levelsFor" | "canDecide" | "riskForCall" | "definitions">;
+  tools: Pick<Tools, "levelsFor" | "canDecide" | "riskForCall" | "definitions" | "connectionFor">;
   now?: () => Date;
 }
 
@@ -688,26 +688,29 @@ export function createThreads(options: ThreadsOptions) {
         seenSeq: reads.seen(principal.userId, [id]).get(id) ?? 0,
         archived: spaces.isArchived(thread.spaceId),
         pendingTools: Object.fromEntries(
-          rows.flatMap((row) =>
-            row.kind === "tool" && row.state === "pending" && row.waits && space
-              ? [
-                  [
-                    row.id,
-                    {
-                      risk: tools.riskForCall(row, space, activeRun?.model ?? null),
-                      canDecide: tools.canDecide(
-                        principal.userId,
-                        row,
-                        rows,
-                        thread,
-                        space,
-                        activeRun?.model ?? null,
-                      ),
-                    },
-                  ],
-                ]
-              : [],
-          ),
+          rows.flatMap((row) => {
+            if (row.kind !== "tool" || !space || row.state !== "pending" || !row.waits) return [];
+            // The reader's own connection, for a call that would run with it once they allow it;
+            // nobody learns anyone else's.
+            const connection = tools.connectionFor(space, row.toolId, principal.userId);
+            return [
+              [
+                row.id,
+                {
+                  risk: tools.riskForCall(row, space, activeRun?.model ?? null),
+                  canDecide: tools.canDecide(
+                    principal.userId,
+                    row,
+                    rows,
+                    thread,
+                    space,
+                    activeRun?.model ?? null,
+                  ),
+                  ...(connection && { connection }),
+                },
+              ],
+            ];
+          }),
         ),
         levels: space ? tools.levelsFor(principal.userId, thread, space) : {},
         tools: space ? tools.definitions(space) : [],

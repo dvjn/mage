@@ -3,6 +3,8 @@ import { Hono } from "hono";
 import { type ApiEnv, signedIn, jsonBody, checkedBody } from "@/server/http.ts";
 import type { Identity } from "@/server/orgs/identity.ts";
 import {
+  mcpConnectAuthorizeSchema,
+  mcpConnectHeadersSchema,
   mcpEnabledChangeSchema,
   mcpServerChangeSchema,
   type McpServerSummary,
@@ -20,6 +22,10 @@ const spaceServersChange = jsonBody(spaceServersChangeSchema, "allowed is true o
 
 const mcpEnabledChange = jsonBody(mcpEnabledChangeSchema, "enabled is true or false");
 
+const connectHeaders = checkedBody(mcpConnectHeadersSchema);
+
+const connectAuthorize = checkedBody(mcpConnectAuthorizeSchema);
+
 // Where the browser goes back to once an authorization finishes: the server's page.
 function mcpServerPage(server: Pick<McpServerSummary, "id" | "spaceId"> | null) {
   if (!server) return "/org/tools";
@@ -36,13 +42,30 @@ export function mcpRoutes(options: { identity: Identity; mcp: McpServers }) {
       .get("/mcp/oauth/callback", async (c) => {
         const account = await identity.resolve(c.req.raw.headers, null);
         const { state, code, iss, error } = c.req.query();
-        const { server } = await mcp.finishAuthorization(account?.userId ?? null, {
+        const { server, returnTo } = await mcp.finishAuthorization(account?.userId ?? null, {
           state,
           code,
           iss,
           error,
         });
-        return c.redirect(mcpServerPage(server), 302);
+        return c.redirect(returnTo ?? mcpServerPage(server), 302);
+      })
+      .get("/v1/mcp-connections", (c) => {
+        return c.json(mcp.connections(signedIn(c.var.principal)), 200);
+      })
+      .put("/v1/mcp-servers/:id/connection", connectHeaders, async (c) => {
+        const principal = signedIn(c.var.principal);
+        await mcp.connectHeaders(principal, c.req.param("id"), c.req.valid("json"));
+        return c.json({ ok: true }, 200);
+      })
+      .post("/v1/mcp-servers/:id/connection/authorize", connectAuthorize, async (c) => {
+        const principal = signedIn(c.var.principal);
+        const { returnTo } = c.req.valid("json");
+        return c.json(await mcp.connectOAuth(principal, c.req.param("id"), returnTo), 200);
+      })
+      .delete("/v1/mcp-servers/:id/connection", (c) => {
+        mcp.disconnect(signedIn(c.var.principal), c.req.param("id"));
+        return c.json({ ok: true }, 200);
       })
       .get("/v1/org/mcp-servers", (c) => {
         return c.json(mcp.orgServers(signedIn(c.var.principal)), 200);

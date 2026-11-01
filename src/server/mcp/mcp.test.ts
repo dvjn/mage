@@ -7,6 +7,7 @@ import { agentThread } from "@/server/testing/agent-thread.ts";
 import { MCP_ORIGIN, setup } from "@/server/testing/workspace.ts";
 import { mcpHeadersInputSchema, type McpServerSummary, mcpSlugOf } from "@/shared/mcp.ts";
 import type { ThreadDetail } from "@/shared/threads/detail.ts";
+import type { ActorSummary } from "@/shared/threads/events.ts";
 import {
   EDITORS,
   TOOL_OFF,
@@ -1139,6 +1140,386 @@ describe("what the model calls a server's tools", () => {
     ]);
     expect(next.texts.filter((text) => text.startsWith("tool"))).toEqual([
       'tool mcp.pad.add_note: {"title":"T","body":"B"}',
+    ]);
+  });
+});
+
+// A thread whose org has the stand-in's server for people's own tokens, its credentials personal,
+// connected for reading its tools with Ada's.
+async function personalThread() {
+  const workspace = await mcpThread(`${MCP_ORIGIN}/people/mcp`);
+  const { ada, api, server } = workspace;
+  const res = await api("PATCH", `/mcp-servers/${server.id}`, ada.cookie, {
+    auth: { kind: "headers", headers: [{ name: "Authorization", value: "Bearer person-ada" }] },
+    credentials: "personal",
+  });
+  expect(await res.json()).toMatchObject({ credentials: "personal", status: "ok", toolCount: 3 });
+  function connect(who: { cookie: string }, token: string) {
+    return api("PUT", `/mcp-servers/${server.id}/connection`, who.cookie, {
+      headers: [{ name: "authorization", value: `Bearer ${token}` }],
+    });
+  }
+  async function detail(who: { cookie: string }) {
+    const res = await api("GET", `/threads/${workspace.thread.id}`, who.cookie);
+    return (await res.json()) as ThreadDetail;
+  }
+  async function connections(who: { cookie: string }) {
+    return (await (await api("GET", "/mcp-connections", who.cookie)).json()) as object[];
+  }
+  function decide(who: { cookie: string }, callId: string, scope: "once" | "for_now") {
+    return api("POST", `/threads/${workspace.thread.id}/tools/${callId}/decision`, who.cookie, {
+      allow: true,
+      scope,
+    });
+  }
+  return { ...workspace, connect, detail, connections, decide };
+}
+
+describe("personal credentials", () => {
+  it("are only for servers authorized by headers or OAuth", async () => {
+    const { add } = await orgWithServers();
+    const { status, body } = await add({
+      name: "Open",
+      url: `${MCP_ORIGIN}/mcp`,
+      auth: { kind: "none" },
+      credentials: "personal",
+    });
+    expect(status).toBe(400);
+    expect(body.error).toBe("Personal credentials need headers or OAuth");
+  });
+
+  it("run at once for one connected writer, as them alone", async () => {
+    const workspace = await personalThread();
+    const { grace, post, calls, model, worker, start, toolRows, connect } = workspace;
+    expect((await connect(grace, "person-grace")).status).toBe(200);
+    start();
+
+    await post(grace, "Say hi");
+    await calls("mcp.notes.echo", { text: "hi" });
+    const next = await model.next();
+    next.reply("Said.");
+    await worker.idle();
+
+    expect(next.texts.at(-1)).toBe(
+      'result mcp.notes.echo: {"ok":true,"value":{"text":"grace: hi"}}',
+    );
+    expect(toolRows()[0]).toMatchObject({
+      state: "ran",
+      waits: false,
+      ranAs: { name: "Grace Hopper" },
+    });
+  });
+
+  it("ask a writer with no connection to approve, connecting first, and run as them", async () => {
+    const workspace = await personalThread();
+    const { grace, server, post, calls, model, worker, start, toolRows, connect, detail, decide } =
+      workspace;
+    start();
+
+    await post(grace, "Say hi");
+    await calls("mcp.notes.echo", { text: "hi" });
+    await worker.idle();
+    const [waiting] = toolRows();
+    expect(waiting).toMatchObject({ state: "pending", waits: true });
+    expect((await detail(grace)).pendingTools?.[waiting!.id]).toMatchObject({
+      canDecide: true,
+      connection: { serverId: server.id, kind: "headers", headers: ["authorization"] },
+    });
+    expect(await methodsOf(workspace.mcpNetwork.requests)).not.toContain("tools/call");
+
+    const early = await decide(grace, waiting!.id, "once");
+    expect(early.status).toBe(409);
+    expect(((await early.json()) as { error: string }).error).toBe("Connect to Notes first");
+    expect((await connect(grace, "nope")).status).toBe(400);
+    expect((await connect(grace, "person-grace")).status).toBe(200);
+    expect((await decide(grace, waiting!.id, "once")).status).toBe(200);
+    const next = await model.next();
+    next.reply("Said.");
+    await worker.idle();
+
+    expect(next.texts.at(-1)).toBe(
+      'result mcp.notes.echo: {"ok":true,"value":{"text":"grace: hi"}}',
+    );
+    expect(toolRows()[0]).toMatchObject({ state: "ran", ranAs: { name: "Grace Hopper" } });
+    expect(await workspace.connections(grace)).toMatchObject([
+      { serverId: server.id, serverName: "Notes", spaceId: null, status: "ok" },
+    ]);
+  });
+
+  it("wait in a group chat though anyone may use the tool, and run with the approver's login", async () => {
+    const workspace = await personalThread();
+    const { ada, grace, post, calls, model, worker, start, toolRows, connect, decide } = workspace;
+    expect((await connect(grace, "person-grace")).status).toBe(200);
+    expect((await connect(ada, "person-ada")).status).toBe(200);
+    start();
+
+    await post(grace, "Hello");
+    (await model.next()).reply("Hi.");
+    await worker.idle();
+    await post(ada, "Say hi");
+    await calls("mcp.notes.echo", { text: "hi" });
+    await worker.idle();
+    expect(toolRows()[0]).toMatchObject({ state: "pending", waits: true });
+
+    expect((await decide(ada, toolRows()[0]!.id, "once")).status).toBe(200);
+    const next = await model.next();
+    next.reply("Said.");
+    await worker.idle();
+    expect(next.texts.at(-1)).toBe('result mcp.notes.echo: {"ok":true,"value":{"text":"ada: hi"}}');
+    expect(toolRows()[0]).toMatchObject({
+      state: "ran",
+      decision: { by: { name: "Ada Lovelace" } },
+      ranAs: { name: "Ada Lovelace" },
+    });
+  });
+
+  it("show each reader only their own connection, and nobody's in the thread", async () => {
+    const workspace = await personalThread();
+    const { ada, grace, post, calls, worker, start, toolRows, connect, detail, events } = workspace;
+    expect((await connect(ada, "person-ada")).status).toBe(200);
+    start();
+
+    await post(grace, "Say hi");
+    await calls("mcp.notes.echo", { text: "hi" });
+    await worker.idle();
+    const callId = toolRows()[0]!.id;
+    // Grace has no connection; Ada sees an ordinary approval with her own connection.
+    expect((await detail(ada)).pendingTools?.[callId]).toEqual({
+      risk: "normal",
+      canDecide: true,
+      connection: expect.objectContaining({ connected: true }),
+    });
+    expect((await detail(grace)).pendingTools?.[callId]).toMatchObject({
+      canDecide: true,
+      connection: { connected: false },
+    });
+    expect(events().map((event) => event.type)).not.toContain("tool.blocked");
+  });
+
+  it("run for now as its giver, on later calls, until someone else writes", async () => {
+    const workspace = await personalThread();
+    const { ada, grace, post, calls, model, worker, start, toolRows, connect, decide } = workspace;
+    expect((await connect(grace, "person-grace")).status).toBe(200);
+    expect((await connect(ada, "person-ada")).status).toBe(200);
+    start();
+
+    await post(ada, "Hello");
+    (await model.next()).reply("Hi.");
+    await worker.idle();
+    await post(grace, "Say one");
+    await calls("mcp.notes.echo", { text: "one" });
+    await worker.idle();
+    const first = toolRows()[0]!;
+    expect((await decide(grace, first.id, "for_now")).status).toBe(200);
+    (await model.next()).reply("Said.");
+    await worker.idle();
+
+    // Grace writing again keeps it; the call runs with her login, and says on whose approval.
+    await post(grace, "Say two");
+    await calls("mcp.notes.echo", { text: "two" });
+    const two = await model.next();
+    two.reply("Said.");
+    await worker.idle();
+    expect(two.texts.at(-1)).toBe(
+      'result mcp.notes.echo: {"ok":true,"value":{"text":"grace: two"}}',
+    );
+    expect(toolRows()[1]).toMatchObject({
+      state: "ran",
+      waits: false,
+      standingOn: first.id,
+      decision: { scope: "for_now", by: { name: "Grace Hopper" } },
+      ranAs: { name: "Grace Hopper" },
+    });
+
+    // Ada's words end it, though she may use the tool herself.
+    await post(ada, "Say three");
+    await calls("mcp.notes.echo", { text: "three" });
+    await worker.idle();
+    expect(toolRows()[2]).toMatchObject({ state: "pending", waits: true });
+  });
+
+  it("stop running for now once its giver's connection breaks", async () => {
+    const workspace = await personalThread();
+    const { ada, grace, api, server, post, calls, model, worker, start, toolRows } = workspace;
+    expect((await workspace.connect(grace, "person-grace")).status).toBe(200);
+    start();
+
+    await post(ada, "Hello");
+    (await model.next()).reply("Hi.");
+    await worker.idle();
+    await post(grace, "Say one");
+    await calls("mcp.notes.echo", { text: "one" });
+    await worker.idle();
+    expect((await workspace.decide(grace, toolRows()[0]!.id, "for_now")).status).toBe(200);
+    (await model.next()).reply("Said.");
+    await worker.idle();
+    expect(toolRows()[0]).toMatchObject({ state: "ran", ranAs: { name: "Grace Hopper" } });
+
+    await api("DELETE", `/mcp-servers/${server.id}/connection`, grace.cookie);
+    await post(grace, "Say two");
+    await calls("mcp.notes.echo", { text: "two" });
+    await worker.idle();
+    expect(toolRows()[1]).toMatchObject({ state: "pending", waits: true });
+  });
+
+  it("never allow for now where every call asks", async () => {
+    const workspace = await personalThread();
+    const { ada, grace, api, id, post, calls, worker, start, toolRows } = workspace;
+    const policy = await signOff(api, ada.cookie);
+    await api("PATCH", "/org/tools", ada.cookie, { toolIds: [id("echo")], policy });
+    expect((await workspace.connect(grace, "person-grace")).status).toBe(200);
+    start();
+
+    await post(grace, "Say hi");
+    await calls("mcp.notes.echo", { text: "hi" });
+    await worker.idle();
+    const callId = toolRows()[0]!.id;
+    expect((await workspace.detail(grace)).pendingTools?.[callId]).toMatchObject({ risk: "ask" });
+    expect((await workspace.decide(grace, callId, "for_now")).status).toBe(400);
+  });
+
+  it("that the server refuses need connecting again, and a call never falls back", async () => {
+    const workspace = await personalThread();
+    const { ada, grace, post, calls, model, worker, start, toolRows, mcpNetwork } = workspace;
+    expect((await workspace.connect(grace, "person-grace")).status).toBe(200);
+    expect((await workspace.connect(ada, "person-ada")).status).toBe(200);
+    await mcpNetwork.handle(
+      new Request(`${MCP_ORIGIN}/control/revoke-person?name=grace`, { method: "POST" }),
+    );
+    start();
+
+    await post(grace, "Say hi");
+    await calls("mcp.notes.echo", { text: "hi" });
+    const next = await model.next();
+    next.reply("It failed.");
+    await worker.idle();
+    expect(toolRows()[0]).toMatchObject({ state: "failed", ranAs: { name: "Grace Hopper" } });
+    expect(next.texts.at(-1)).toContain("It needs connecting again.");
+    expect(await workspace.connections(grace)).toMatchObject([{ status: "needs_auth" }]);
+
+    await post(grace, "Again");
+    await calls("mcp.notes.echo", { text: "again" });
+    await worker.idle();
+    expect(toolRows()[1]).toMatchObject({ state: "pending", waits: true });
+  });
+
+  it("are forgotten for whoever leaves the org, on its servers and its spaces'", async () => {
+    const workspace = await personalThread();
+    const { ada, grace, api, hooks, db, space } = workspace;
+    const res = await api("POST", `/spaces/${space.id}/mcp-servers`, ada.cookie, {
+      name: "Lab",
+      url: `${MCP_ORIGIN}/people/mcp`,
+      auth: { kind: "headers", headers: [{ name: "Authorization", value: "Bearer person-ada" }] },
+      credentials: "personal",
+    });
+    const lab = (await res.json()) as McpServerSummary;
+    expect((await workspace.connect(grace, "person-grace")).status).toBe(200);
+    expect((await workspace.connect(ada, "person-ada")).status).toBe(200);
+    const inLab = await api("PUT", `/mcp-servers/${lab.id}/connection`, grace.cookie, {
+      headers: [{ name: "authorization", value: "Bearer person-grace" }],
+    });
+    expect(inLab.status).toBe(200);
+
+    await hooks.run("org.membersSettled", { orgId: ada.orgId, joined: [], left: [grace.userId] });
+    const people = db
+      .select()
+      .from(schema.mcpCredential)
+      .where(eq(schema.mcpCredential.holderKind, "user"))
+      .all();
+    expect(people.map((row) => row.holderId)).toEqual([ada.userId]);
+  });
+
+  it("read an older call paused for someone to connect as waiting for approval", () => {
+    const grace = { kind: "user" as const, userId: "grace", name: "Grace Hopper" };
+    const agent = { kind: "agent" as const };
+    const at = "2026-10-31T00:00:00.000Z";
+    const event = (seq: number, type: string, actor: ActorSummary, data: object) => ({
+      id: `e${seq}`,
+      threadId: "t",
+      seq,
+      type,
+      actor,
+      data,
+      createdAt: at,
+    });
+    const requested = (seq: number, callId: string) =>
+      event(seq, "tool.requested", agent, {
+        runId: "r",
+        callId,
+        messageId: "m",
+        toolId: "mcp:s/echo",
+        input: {},
+        risk: "normal",
+        waits: false,
+      });
+    const { rows, run } = transcriptOf([
+      event(1, "run.created", grace, { runId: "r", reason: null, continuesRunId: null }),
+      requested(2, "a"),
+      event(3, "tool.blocked", agent, { runId: "r", callId: "a", userId: "grace" }),
+      requested(4, "b"),
+      event(5, "tool.approved", grace, { runId: "r", callId: "b", scope: "once" }),
+      event(6, "tool.blocked", agent, { runId: "r", callId: "b", userId: "grace" }),
+      event(7, "tool.ran", agent, { runId: "r", callId: "b", ok: true, ms: 1, ranAs: "grace" }),
+    ]);
+    expect(rows.filter((row) => row.kind === "tool")).toMatchObject([
+      { id: "a", state: "pending", waits: true, decision: null },
+      { id: "b", state: "ran", decision: { by: { name: "Grace Hopper" } } },
+    ]);
+    expect(run?.waitingOn).toBe("a");
+  });
+
+  it("go when the person disconnects, or once the server's credentials are shared", async () => {
+    const workspace = await personalThread();
+    const { ada, grace, api, server, connect } = workspace;
+    expect((await connect(grace, "person-grace")).status).toBe(200);
+    expect((await connect(ada, "person-ada")).status).toBe(200);
+    const gone = await api("DELETE", `/mcp-servers/${server.id}/connection`, grace.cookie);
+    expect(gone.status).toBe(200);
+    expect(await workspace.connections(grace)).toMatchObject([
+      { serverId: server.id, status: null, connectedAt: null },
+    ]);
+    expect(await workspace.connections(ada)).toMatchObject([{ status: "ok" }]);
+
+    await api("PATCH", `/mcp-servers/${server.id}`, ada.cookie, { credentials: "shared" });
+    expect(await workspace.connections(ada)).toEqual([]);
+    const kept = workspace.db.select().from(schema.mcpCredential).all();
+    expect(kept.map((row) => row.holderKind)).toEqual(["shared"]);
+    const notPersonal = await connect(grace, "person-grace");
+    expect(notPersonal.status).toBe(409);
+  });
+
+  it("sign each person in with the server as themselves, and back to where they were", async () => {
+    const workspace = await orgWithServers();
+    const { add, ada, api } = workspace;
+    const grace = workspace.join(
+      await workspace.signUp("Grace Hopper", "grace@example.com"),
+      (await workspace.yourSpace(ada.cookie)).id,
+      "messager",
+    );
+    const { body } = await add({
+      name: "Notes",
+      url: `${MCP_ORIGIN}/oauth/mcp`,
+      auth: { kind: "oauth", clientId: null, clientSecret: null },
+      credentials: "personal",
+    });
+    await authorizeInBrowser(workspace, body.id);
+
+    const res = await api("POST", `/mcp-servers/${body.id}/connection/authorize`, grace.cookie, {
+      returnTo: "/t/somewhere",
+    });
+    const started = (await res.json()) as { status: string; url: string };
+    expect(started.status).toBe("redirect");
+    const page = await workspace.mcpNetwork.handle(new Request(started.url));
+    const back = new URL(page.headers.get("location")!);
+    const callback = await workspace.app.request(`${back.pathname}${back.search}`, {
+      headers: { Cookie: grace.cookie },
+    });
+    expect(callback.headers.get("location")).toBe("/t/somewhere");
+    const mine = await (await api("GET", "/mcp-connections", grace.cookie)).json();
+    expect(mine).toMatchObject([{ serverId: body.id, status: "ok" }]);
+    // Ada's sign-in for reading tools is not one of her own connections.
+    expect(await (await api("GET", "/mcp-connections", ada.cookie)).json()).toMatchObject([
+      { serverId: body.id, kind: "oauth", status: null },
     ]);
   });
 });

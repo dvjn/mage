@@ -315,6 +315,24 @@ function ServerDetail({ scope, server }: { scope: Scope; server: McpServerSummar
           <Fact label="Authorization">
             <AuthFact server={server} />
           </Fact>
+          <Fact label="Credentials">
+            {server.credentials === "personal" ? (
+              <span className="flex flex-col gap-0.5">
+                <span>Personal</span>
+                <span className="text-xs text-muted-foreground">
+                  Calls run with each person's own.{" "}
+                  <Link
+                    to="/account"
+                    className="underline underline-offset-4 hover:text-foreground"
+                  >
+                    Your connections
+                  </Link>
+                </span>
+              </span>
+            ) : (
+              "Shared"
+            )}
+          </Fact>
           {server.serverInfo && (
             <Fact label="Server">
               {server.serverInfo.name}{" "}

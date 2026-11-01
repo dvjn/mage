@@ -29,7 +29,8 @@ function duration(ms: number | null) {
 }
 
 // A tool call that ran, is running or did not run, as one line with the tool's breadcrumb, what
-// became of the call, and who decided on it, which opens on its input and output.
+// became of the call, who decided on it and whose credentials it ran with, which opens on its input
+// and output.
 export function ToolLine({
   row,
   definition,
@@ -81,8 +82,8 @@ export function ToolLine({
       icon = <Spinner />;
       status = row.waits && row.state === "pending" ? "Waiting" : "Running";
   }
-  // What became of the call follows the tool, item by item.
-  const outcome = [status, who].filter(Boolean).join(" · ");
+  // What became of the call follows the tool, item by item, with whose own credentials it ran.
+  const outcome = [status, who, row.ranAs && `as ${row.ranAs.name}`].filter(Boolean).join(" · ");
   const took = duration(row.ms);
   return (
     <Collapsible className={cn("text-xs text-muted-foreground", !framed && "pl-9")}>

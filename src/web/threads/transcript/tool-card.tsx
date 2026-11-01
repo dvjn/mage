@@ -1,13 +1,16 @@
 // A tool call waiting for a decision: a card from the agent headed by the tool under a hand, tagged
 // when the call asks each time, with the input and Allow, Allow for now and Deny in a row, enabled
-// for the people who may run the tool and marked paused for everyone else.
+// for the people who may run the tool and marked paused for everyone else. Allow for now shows
+// unless every call asks or needs review. A call that runs with its approver's own login asks an
+// approver with no working connection to connect first, then applies their choice; a sign-in
+// that leaves the page applies it on the way back.
 
 import { cn } from "cn";
 import { HandIcon } from "lucide-react";
 import { useState } from "react";
 
 import type { ToolRisk, ToolScope } from "@/shared/threads/events.ts";
-import type { ToolDefinition } from "@/shared/tools.ts";
+import type { ToolConnection, ToolDefinition } from "@/shared/tools.ts";
 import type { ToolRow } from "@/shared/transcript.ts";
 import { ToolInput } from "@/web/agent/tool-value";
 import {
@@ -19,6 +22,7 @@ import {
 } from "@/web/components/ai-elements/confirmation";
 import { Badge } from "@/web/components/ui/badge";
 import { WithTooltip } from "@/web/components/with-tooltip";
+import { useConnectFlow } from "@/web/mcp/connect";
 import { agentAvatar } from "@/web/threads/transcript/agent";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
@@ -32,20 +36,31 @@ const RISK_TAGS: Partial<Record<ToolRisk, string>> = {
   review: "Needs review",
 };
 
+// The thread's page, saying which call to allow and how once the browser is back from signing in.
+function allowingPath(callId: string, scope: ToolScope) {
+  return `${window.location.pathname}?${new URLSearchParams({ allow: callId, scope })}`;
+}
+
 // A tool call waiting for a decision: the tool's breadcrumb under the hand, its input, and the
 // buttons to decide.
 export function ToolCard({
   row,
   definition,
   decide,
+  connection,
   continued,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
   decide?: RowActions["decide"];
+  // The reader's own connection, for a call that would run with it.
+  connection?: ToolConnection;
   continued: boolean;
 }) {
   const [deciding, setDeciding] = useState(false);
+  // An approver with no working connection connects as they allow, and the call runs as them.
+  const mustConnect = !!decide && !!connection && !connection.connected;
+  const connect = useConnectFlow(mustConnect ? connection : undefined);
   function button(
     label: string,
     allow: boolean,
@@ -56,9 +71,13 @@ export function ToolCard({
       <ConfirmationAction
         variant={variant}
         className="w-full sm:w-auto"
-        disabled={!decide || deciding}
+        disabled={!decide || deciding || connect.busy}
         onClick={() => {
           if (!decide) return;
+          if (allow && mustConnect) {
+            void connect.start(() => decide(allow, scope), allowingPath(row.id, scope));
+            return;
+          }
           setDeciding(true);
           void decide(allow, scope).finally(() => setDeciding(false));
         }}
@@ -127,6 +146,7 @@ export function ToolCard({
           </ConfirmationActions>
         </ConfirmationRequest>
       </Confirmation>
+      {connect.dialog}
     </TranscriptRowFrame>
   );
 }

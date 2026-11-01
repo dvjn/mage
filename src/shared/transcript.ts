@@ -115,6 +115,11 @@ export interface ToolRow {
   // What it gave back, or why it failed, once it ran, and how long that took.
   output: { ok: true; value: unknown } | { ok: false; error: string } | null;
   ms: number | null;
+  // Whose own login it ran with, for a tool that uses one.
+  ranAs?: Person;
+  // For a call that ran on a standing approval, the call that approval was given on; `decision`
+  // is then that approval's.
+  standingOn?: string;
 }
 
 // An event this client does not know how to show.
@@ -145,7 +150,7 @@ export interface ActiveRun {
   startedBy: string | null;
   reason: RunReason | null;
   createdAt: string;
-  // The tool call it waits on a decision for, if any.
+  // The tool call it waits on a decision or an answer for, if any.
   waitingOn: string | null;
 }
 
@@ -181,6 +186,12 @@ export function transcriptOf(
   const calls = new Map<string, ToolRow>();
   let run: ActiveRun | null = null;
   const usage: Usage = { inputTokens: 0, outputTokens: 0 };
+  // Everyone who wrote or acted in the thread, by id, as events last named them.
+  const people = new Map<string, Person>();
+  // Approvals of calls older threads paused, kept for when they ran.
+  const parked = new Map<string, NonNullable<ToolRow["decision"]>>();
+  const personOf = (userId: string): Person =>
+    people.get(userId) ?? { kind: "user", userId, name: "(former member)" };
 
   for (const raw of events) {
     const parsed = threadEventSchema.safeParse(raw);
@@ -189,6 +200,7 @@ export function transcriptOf(
       continue;
     }
     const event = parsed.data;
+    if (event.actor.kind === "user") people.set(event.actor.userId, event.actor);
     switch (event.type) {
       case "message": {
         if (event.actor.kind !== "user") break;
@@ -339,9 +351,27 @@ export function transcriptOf(
         call.decision = { allow: true, scope: "once", by: event.actor, seq: event.seq };
         break;
       }
+      // Older threads paused a call for its person to connect; it shows as waiting for approval,
+      // as such a call does now, and any approval it had is set aside until it runs.
+      case "tool.blocked": {
+        const call = calls.get(event.data.callId);
+        if (!call || (call.state !== "pending" && call.state !== "allowed")) break;
+        if (call.decision) parked.set(call.id, call.decision);
+        call.state = "pending";
+        call.waits = true;
+        call.decision = null;
+        break;
+      }
       case "tool.ran": {
         const call = calls.get(event.data.callId);
         if (!call) break;
+        if (event.data.ranAs) call.ranAs = personOf(event.data.ranAs);
+        const standing = event.data.standingOn ? calls.get(event.data.standingOn) : undefined;
+        if (standing?.decision) {
+          call.standingOn = standing.id;
+          call.decision = { ...standing.decision };
+        }
+        call.decision ??= parked.get(call.id) ?? null;
         call.state = event.data.ok ? "ran" : "failed";
         call.output = event.data.ok
           ? { ok: true, value: event.data.value ?? null }

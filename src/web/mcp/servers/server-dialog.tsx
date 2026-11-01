@@ -1,7 +1,8 @@
 // Adding or changing an MCP server in a dialog: its address, the short name the agent knows it by,
 // and how it is authorized (not at all, by headers with a bearer token among them, or by OAuth,
-// which sends the browser to the server's authorization server and back). Header values and
-// secrets are only ever typed, never shown again beyond their ends.
+// which sends the browser to the server's authorization server and back), and whether calls share
+// those credentials or each person connects their own. Header values and secrets are only ever
+// typed, never shown again beyond their ends.
 
 import { useNavigate } from "@tanstack/react-router";
 import { PlusIcon, XIcon } from "lucide-react";
@@ -10,6 +11,7 @@ import { type FormEvent, useId, useState } from "react";
 import {
   type McpAuthInput,
   type McpAuthKind,
+  type McpCredentialMode,
   type McpServerSummary,
   mcpSlugOf,
 } from "@/shared/mcp.ts";
@@ -41,6 +43,11 @@ const AUTH_KINDS: { value: McpAuthKind; label: string }[] = [
   { value: "none", label: "None" },
   { value: "headers", label: "Headers" },
   { value: "oauth", label: "OAuth" },
+];
+
+const CREDENTIAL_MODES: { value: McpCredentialMode; label: string }[] = [
+  { value: "shared", label: "Shared" },
+  { value: "personal", label: "Personal" },
 ];
 
 interface HeaderDraft {
@@ -175,6 +182,9 @@ export function McpServerDialog({
   const [slug, setSlug] = useState(server?.slug ?? "");
   const [url, setUrl] = useState(initial.url);
   const [kind, setKind] = useState<McpAuthKind>(initial.kind);
+  const [credentials, setCredentials] = useState<McpCredentialMode>(
+    server?.credentials ?? "shared",
+  );
   const [token, setToken] = useState("");
   const [tokenHint, setTokenHint] = useState(initial.tokenHint);
   const [rows, setRows] = useState<HeaderDraft[]>(initial.rows);
@@ -198,6 +208,7 @@ export function McpServerDialog({
     setSlug(server?.slug ?? "");
     setUrl(initial.url);
     setKind(initial.kind);
+    setCredentials(server?.credentials ?? "shared");
     setToken("");
     setTokenHint(initial.tokenHint);
     setRows(initial.rows);
@@ -251,6 +262,7 @@ export function McpServerDialog({
       ...(slug.trim() && slug.trim() !== server?.slug && { slug: slug.trim() }),
       url: url.trim(),
       auth: authBody(),
+      credentials: kind === "none" ? ("shared" as const) : credentials,
     };
     const saved = await save.mutateAsync(json).catch(() => null);
     if (!saved) return;
@@ -282,7 +294,7 @@ export function McpServerDialog({
         if (!next || server) reset();
       }}
     >
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{server ? "Edit MCP server" : "Add MCP server"}</DialogTitle>
           <DialogDescription>
@@ -383,8 +395,10 @@ export function McpServerDialog({
             {kind === "oauth" && (
               <>
                 <p className="text-sm text-muted-foreground">
-                  {signIn ? "You sign in with the server next. " : ""}Everyone the server is for
-                  uses this one connection.
+                  {signIn ? "You sign in with the server next. " : ""}
+                  {credentials === "personal"
+                    ? "Your sign-in only reads its tools."
+                    : "Everyone the server is for uses this one connection."}
                 </p>
                 <Field>
                   <FieldLabel htmlFor={`${id}-client`}>Client ID</FieldLabel>
@@ -413,6 +427,23 @@ export function McpServerDialog({
                   </Field>
                 )}
               </>
+            )}
+            {kind !== "none" && (
+              <Field>
+                <FieldLabel>Credentials</FieldLabel>
+                <SegmentedControl
+                  label="Credentials"
+                  options={CREDENTIAL_MODES}
+                  value={credentials}
+                  onChange={setCredentials}
+                  className="w-fit"
+                />
+                <FieldDescription>
+                  {credentials === "personal"
+                    ? "Each person connects their own; calls run as whoever approves them."
+                    : "Everyone's calls use these."}
+                </FieldDescription>
+              </Field>
             )}
             <FieldError>{error}</FieldError>
           </FieldGroup>

@@ -23,6 +23,18 @@ export const toolDefinitionSchema = z.object({
 
 export type ToolDefinition = z.infer<typeof toolDefinitionSchema>;
 
+// The connection of one's own a tool's calls run with, as one person sees it: the server it is to,
+// how it is made (signing in, or header values by name), and whether they have one that works.
+export const toolConnectionSchema = z.object({
+  serverId: z.string(),
+  title: z.string(),
+  kind: z.enum(["oauth", "headers"]),
+  headers: z.array(z.string()),
+  connected: z.boolean(),
+});
+
+export type ToolConnection = z.infer<typeof toolConnectionSchema>;
+
 // Whether a person may run a tool, or needs approval for each call.
 export const toolLevelSchema = z.enum(["run", "approve"]);
 

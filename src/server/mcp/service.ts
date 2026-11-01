@@ -7,11 +7,17 @@
 // never leave the server. An address with no path that does not answer as an MCP server is tried
 // again at /mcp. Everything about a server can be changed later: a secret left out keeps the
 // stored one, and a new address or way of authorizing drops the secrets and tokens that went with
-// the old one. The tools a server lists are kept and offered from there until it is read again, and
-// each call goes to the server with the secrets it shares with everyone who uses it. Each server has a short name for the agent, made from its name unless given,
-// unique among the servers any one space has; its tools reach the model as mcp.<slug>.<tool>, while
-// their ids stay with the server's id, so renaming it keeps their policies and history. Servers
-// kept from before short names get one when the service starts.
+// the old one. The tools a server lists are kept and offered from there until it is read again.
+// Each call goes to the server with the secrets it shares with everyone who uses it, unless those
+// who manage it made its credentials personal: then the shared secrets only check it and read its
+// tools, and each call goes with the secrets of the person it runs as, who connects their own once
+// (signing in, or giving their own header values). A call never falls back to anyone else's: one
+// whose person has none, or whose secrets the server refuses, fails, and refused secrets are marked
+// to be connected again. Leaving an org forgets one's own secrets for its servers. Each server has
+// a short name for the agent, made from its name unless given, unique among the servers any one
+// space has; its tools reach the model as mcp.<slug>.<tool>, while their ids stay with the server's
+// id, so renaming it keeps their policies and history. Servers kept from before short names get one
+// when the service starts.
 
 import { randomBytes } from "node:crypto";
 
@@ -19,6 +25,7 @@ import * as z from "zod";
 
 import type { AnyToolSpec, ToolContext, ToolOutput, Toolset } from "@/server/agent/tools.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
+import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { OrgSettingStore } from "@/server/orgs/service.ts";
@@ -26,6 +33,9 @@ import type { Space, Spaces } from "@/server/spaces/service.ts";
 import {
   type McpAuthInput,
   type McpAuthSummary,
+  type McpConnectHeaders,
+  type McpConnection,
+  type McpCredentialMode,
   type McpHeadersInput,
   type McpServerChange,
   type McpServerSummary,
@@ -39,7 +49,7 @@ import {
   type McpTransport,
 } from "@/shared/mcp.ts";
 import type { ToolRisk } from "@/shared/threads/events.ts";
-import type { ToolDefinition } from "@/shared/tools.ts";
+import type { ToolConnection, ToolDefinition } from "@/shared/tools.ts";
 
 import {
   type McpOAuthStore,
@@ -61,6 +71,8 @@ export interface McpServer {
   // Whether it offers its tools; one turned off keeps everything else.
   enabled: boolean;
   authKind: McpAuthKind;
+  // Whose secrets its tools are called with: the shared ones, or each person's own.
+  credentials: McpCredentialMode;
   // What is not secret about its authorization.
   settings: McpSettings;
   transport: McpTransport | null;
@@ -87,7 +99,7 @@ export interface McpSettings {
 
 export type NewMcpServer = Pick<
   McpServer,
-  "orgId" | "spaceId" | "name" | "slug" | "url" | "authKind" | "settings"
+  "orgId" | "spaceId" | "name" | "slug" | "url" | "authKind" | "credentials" | "settings"
 > & { createdBy: string };
 
 export type McpServerChanges = Partial<
@@ -98,6 +110,7 @@ export type McpServerChanges = Partial<
     | "url"
     | "enabled"
     | "authKind"
+    | "credentials"
     | "settings"
     | "transport"
     | "protocolVersion"
@@ -127,9 +140,12 @@ export interface McpServerStore {
   setInSpace(spaceId: string, serverId: string, enabled: boolean): void;
 }
 
-// Whose secrets a call goes with: the ones the server shares with everyone who uses it, or later
-// one person's own.
+// Whose secrets a call goes with: the ones the server shares with everyone who uses it, or one
+// person's own.
 export type McpHolder = { kind: "shared" } | { kind: "user"; userId: string };
+
+// Whether secrets worked when last used, or the server refused them.
+export type McpCredentialStatus = "ok" | "needs_auth";
 
 // A server's secrets: the headers it is sent, or the OAuth client Mage is with its authorization
 // server, the tokens it gave, and what discovery found.
@@ -148,8 +164,16 @@ export interface McpOAuthState {
 
 export interface McpCredentialStore {
   get(serverId: string, holder: McpHolder): McpSecrets | null;
+  // Saving secrets counts them as working again.
   put(serverId: string, holder: McpHolder, secrets: McpSecrets): void;
   delete(serverId: string, holder: McpHolder): void;
+  // Forgets every person's own secrets for the server.
+  deletePeople(serverId: string): void;
+  // Whether the secrets worked when last used; null when there are none.
+  status(serverId: string, holder: McpHolder): McpCredentialStatus | null;
+  setStatus(serverId: string, holder: McpHolder, status: McpCredentialStatus): void;
+  // The servers the person keeps their own secrets for, and since when.
+  ofUser(userId: string): { serverId: string; status: McpCredentialStatus; updatedAt: Date }[];
 }
 
 export interface McpServersOptions {
@@ -159,15 +183,12 @@ export interface McpServersOptions {
   spaces: Pick<Spaces, "require">;
   settings: Pick<OrgSettingStore, "get" | "setSpaceMcpServers">;
   logger: Logger;
+  // Where the service hears that people left an org, to forget their own secrets there.
+  hooks?: Hooks;
   now?: () => Date;
 }
 
 export type McpServers = ReturnType<typeof createMcpServers>;
-
-// Whose secrets a call goes with, and the call they go with: who approved it, when someone did.
-export interface McpCaller {
-  approvedBy: string | null;
-}
 
 // How long an authorization begun in the browser may take.
 const AUTHORIZE_TTL_MS = 10 * 60 * 1000;
@@ -178,14 +199,18 @@ const ORG_ONLY = "Only the organization's owners can manage its MCP servers";
 const SPACES_OFF = "The organization does not let spaces add MCP servers";
 const ORG_OFF = "The organization turned this server off";
 const NOT_MCP = "This address didn't answer as an MCP server. MCP servers usually live at /mcp.";
+const NOTHING_PERSONAL = "Personal credentials need headers or OAuth";
+const NOT_PERSONAL = "This server's credentials are not personal";
 
-// A begun authorization, by the state the authorization server sends back.
+// A begun authorization, by the state the authorization server sends back, and for one person's
+// own secrets the page of Mage to go back to.
 interface Pending {
   serverId: string;
   holder: McpHolder;
   userId: string;
   verifier: { value?: string };
   expiresAt: number;
+  returnTo?: string;
 }
 
 // Any input object; the server checks it against its own schema.
@@ -242,6 +267,14 @@ export function mergeHeaders(input: McpHeadersInput, stored: Record<string, stri
   return headers;
 }
 
+// The names of the headers a server is sent, in one string to compare.
+function headerNames(settings: McpSettings) {
+  return (settings.headers ?? [])
+    .map((header) => header.name)
+    .sort()
+    .join("\n");
+}
+
 function headerHints(headers: Record<string, string>) {
   return Object.entries(headers).map(([name, value]) => ({ name, hint: secretHint(value) }));
 }
@@ -257,8 +290,17 @@ export function uniqueSlug(base: string, taken: ReadonlySet<string>) {
 }
 
 export function createMcpServers(options: McpServersOptions) {
-  const { servers, credentials, client, spaces, settings, logger } = options;
+  const { servers, credentials, client, spaces, settings, logger, hooks } = options;
   const now = options.now ?? (() => new Date());
+
+  // Someone who leaves an org loses their own secrets for its servers and its spaces' servers;
+  // coming back means connecting again.
+  hooks?.on("org.membersSettled", ({ orgId, left }) => {
+    if (!left.length) return;
+    for (const server of servers.everyInOrg(orgId)) {
+      for (const userId of left) credentials.delete(server.id, own(userId));
+    }
+  });
   const pending = new Map<string, Pending>();
 
   // The slugs a server of the org, or of one of its spaces, may not take: those of every server
@@ -306,10 +348,29 @@ export function createMcpServers(options: McpServersOptions) {
     };
   }
 
-  // Whose secrets a call of the server's tools goes with. Every server shares one set; a
-  // server whose people each connect their own would pick the approver's here.
-  function holderFor(_server: McpServer, _caller: McpCaller): McpHolder {
-    return SHARED;
+  function own(userId: string): McpHolder {
+    return { kind: "user", userId };
+  }
+
+  // Whether the person has their own secrets for the server that worked when last used: tokens
+  // from signing in, or header values.
+  function connectedAs(server: McpServer, userId: string) {
+    if (credentials.status(server.id, own(userId)) !== "ok") return false;
+    const secrets = credentials.get(server.id, own(userId));
+    return server.authKind === "oauth"
+      ? !!secrets?.oauth?.tokens
+      : Object.keys(secrets?.headers ?? {}).length > 0;
+  }
+
+  // The person's own connection to a server whose credentials are personal, as they see it.
+  function connectionOf(server: McpServer, userId: string): ToolConnection {
+    return {
+      serverId: server.id,
+      title: server.name,
+      kind: server.authKind === "oauth" ? "oauth" : "headers",
+      headers: (server.settings.headers ?? []).map((header) => header.name),
+      connected: connectedAs(server, userId),
+    };
   }
 
   function targetOf(server: McpServer, holder: McpHolder): McpTarget {
@@ -358,6 +419,7 @@ export function createMcpServers(options: McpServersOptions) {
       spaceId: server.spaceId,
       enabled: server.enabled,
       auth: authSummary(server),
+      credentials: server.credentials,
       transport: server.transport,
       protocolVersion: server.protocolVersion,
       status: server.status,
@@ -461,34 +523,70 @@ export function createMcpServers(options: McpServersOptions) {
       ...(definition.outputSchema && { outputSchema: definition.outputSchema }),
       ...(definition.annotations && { annotations: definition.annotations }),
       risk: () => riskOfAnnotations(definition.annotations),
+      ...(server.credentials === "personal" && {
+        connection: (userId: string) => connectionOf(server, userId),
+      }),
       run: (input, ctx) => call(server.id, definition.name, input as Record<string, unknown>, ctx),
     };
   }
 
-  // Calls the tool on the server, as whoever the call runs as. A server that cannot be reached
-  // says why, and is marked so for those who manage it.
+  // Calls the tool on the server with its shared secrets, or for personal credentials with those
+  // of the person the call runs as, saying whose they were. A server that cannot be reached says
+  // why, and is marked so for those who manage it; a person's own secrets it refuses are marked to
+  // be connected again.
   async function call(
     serverId: string,
     name: string,
     args: Record<string, unknown>,
-    ctx: Pick<ToolContext, "approvedBy">,
+    ctx: Pick<ToolContext, "runAs">,
   ): Promise<ToolOutput> {
     const server = servers.find(serverId);
     if (!server) return { ok: false, error: "This MCP server was removed." };
-    const holder = holderFor(server, { approvedBy: ctx.approvedBy });
+    if (server.credentials === "personal") {
+      const userId = ctx.runAs;
+      if (!userId || !connectedAs(server, userId)) {
+        return {
+          ok: false,
+          error: `${server.name}: the person this call runs as has no working connection to it.`,
+          ...(userId && { ranAs: userId }),
+        };
+      }
+      return callAs(server, name, args, userId);
+    }
     try {
-      const result = await client.call(targetOf(server, holder), name, args);
+      const result = await client.call(targetOf(server, SHARED), name, args);
       if (server.status !== "ok") servers.update(server.id, { status: "ok", error: null });
       return outputOf(result);
     } catch (err) {
       if (!(err instanceof McpError)) throw err;
-      if (holder.kind === "shared")
-        servers.update(server.id, { status: err.kind, error: err.message });
+      servers.update(server.id, { status: err.kind, error: err.message });
       const after =
         err.kind === "needs_auth"
           ? " Someone who manages it needs to reconnect it in settings."
           : "";
       return { ok: false, error: `${server.name}: ${err.message}${after}` };
+    }
+  }
+
+  async function callAs(
+    server: McpServer,
+    name: string,
+    args: Record<string, unknown>,
+    userId: string,
+  ): Promise<ToolOutput> {
+    try {
+      const result = await client.call(targetOf(server, own(userId)), name, args);
+      return { ...outputOf(result), ranAs: userId };
+    } catch (err) {
+      if (!(err instanceof McpError)) throw err;
+      if (!err.refused)
+        return { ok: false, error: `${server.name}: ${err.message}`, ranAs: userId };
+      credentials.setStatus(server.id, own(userId), "needs_auth");
+      return {
+        ok: false,
+        error: `${server.name}: the server refused the connection this call ran with. It needs connecting again.`,
+        ranAs: userId,
+      };
     }
   }
 
@@ -580,7 +678,11 @@ export function createMcpServers(options: McpServersOptions) {
     } else if (principal.role !== "owner") {
       throw new ServiceError(403, ORG_ONLY);
     }
-    const { secrets, settings: own } = secretsOf(input.auth);
+    const mode = input.credentials ?? "shared";
+    if (mode === "personal" && input.auth.kind === "none") {
+      throw new ServiceError(400, NOTHING_PERSONAL);
+    }
+    const { secrets, settings: kept } = secretsOf(input.auth);
     const url = await located(input.url, headersOf(secrets));
     const server = servers.create({
       orgId: principal.orgId,
@@ -589,7 +691,8 @@ export function createMcpServers(options: McpServersOptions) {
       slug: slugFor(principal.orgId, spaceId, input.slug, input.name),
       url,
       authKind: input.auth.kind,
-      settings: own,
+      credentials: mode,
+      settings: kept,
       createdBy: principal.userId,
     });
     if (secrets) credentials.put(server.id, SHARED, secrets);
@@ -602,11 +705,14 @@ export function createMcpServers(options: McpServersOptions) {
   }
 
   // Changes the server as given, then reads it again; one authorized by OAuth without tokens for
-  // its address needs someone to connect it first.
+  // its address needs someone to connect it first. People's own secrets go once they no longer
+  // fit: for another way of authorizing or another address, or once credentials are shared.
   async function change(principal: Principal, id: string, input: McpServerChange) {
     const server = manageable(principal, id);
     const stored = credentials.get(id, SHARED);
     const authKind = input.auth?.kind ?? server.authKind;
+    const mode = input.credentials ?? server.credentials;
+    if (mode === "personal" && authKind === "none") throw new ServiceError(400, NOTHING_PERSONAL);
     let next = input.auth
       ? secretsOf(input.auth, { server, secrets: stored })
       : { secrets: stored, settings: server.settings };
@@ -626,11 +732,20 @@ export function createMcpServers(options: McpServersOptions) {
       ...(slug && { slug }),
       url,
       authKind,
+      credentials: mode,
       settings: next.settings,
       ...(elsewhere && { transport: null, protocolVersion: null }),
     });
     if (next.secrets) credentials.put(id, SHARED, next.secrets);
     else credentials.delete(id, SHARED);
+    if (
+      mode === "shared" ||
+      elsewhere ||
+      authKind !== server.authKind ||
+      headerNames(next.settings) !== headerNames(server.settings)
+    ) {
+      credentials.deletePeople(id);
+    }
     if (!input.auth && !elsewhere) return summary(servers.find(id)!);
     if (authKind === "oauth" && !next.secrets?.oauth?.tokens) {
       servers.update(id, { status: "needs_auth", error: null });
@@ -639,9 +754,149 @@ export function createMcpServers(options: McpServersOptions) {
     return summary(await refreshed(servers.find(id)!));
   }
 
+  // A server whose credentials are personal, for someone who may use it to connect their own: one
+  // of the org's for its members, a space's for those who can see the space.
+  function connectable(principal: Principal, id: string) {
+    const server = servers.find(id);
+    if (!server || server.orgId !== principal.orgId) {
+      throw new ServiceError(404, "MCP server not found");
+    }
+    if (server.spaceId) spaces.require(principal, server.spaceId);
+    if (server.credentials !== "personal") throw new ServiceError(409, NOT_PERSONAL);
+    return server;
+  }
+
+  // Whether the person can see the server: one of the org's, or one of a space they can see.
+  function seen(principal: Principal, server: McpServer) {
+    if (!server.spaceId) return true;
+    try {
+      spaces.require(principal, server.spaceId);
+      return true;
+    } catch (err) {
+      if (err instanceof ServiceError) return false;
+      throw err;
+    }
+  }
+
+  // Starts the person signing in with the server's authorization server as themselves, with the
+  // client and what discovery found for its shared secrets when they have none yet of their own.
+  async function authorizeOwn(principal: Principal, server: McpServer, returnTo?: string) {
+    const holder = own(principal.userId);
+    if (!credentials.get(server.id, holder)) {
+      const shared = credentials.get(server.id, SHARED)?.oauth;
+      credentials.put(server.id, holder, {
+        oauth: {
+          ...(shared?.client && { client: shared.client }),
+          ...(shared?.manual && { manual: true }),
+          ...(shared?.discovery && { discovery: shared.discovery }),
+        },
+      });
+    }
+    const state = randomBytes(24).toString("base64url");
+    const attempt: Pending = {
+      serverId: server.id,
+      holder,
+      userId: principal.userId,
+      verifier: {},
+      expiresAt: now().getTime() + AUTHORIZE_TTL_MS,
+      ...(returnTo && { returnTo }),
+    };
+    let url: string | null;
+    try {
+      url = await client.authorize(
+        server.url,
+        oauthStore(server.id, holder),
+        state,
+        attempt.verifier,
+      );
+    } catch (err) {
+      if (!(err instanceof McpError)) throw err;
+      throw new ServiceError(502, err.message);
+    }
+    if (url) {
+      pending.set(state, attempt);
+      return { status: "redirect" as const, url };
+    }
+    credentials.setStatus(server.id, holder, "ok");
+    return { status: "connected" as const };
+  }
+
+  function forgetExpired() {
+    for (const [key, attempt] of pending) {
+      if (attempt.expiresAt <= now().getTime()) pending.delete(key);
+    }
+  }
+
   return {
-    holderFor,
     summary,
+
+    // The servers with personal credentials the person may connect to, the org's and those of the
+    // spaces they can see, each with their own connection to it, if any.
+    connections(principal: Principal): McpConnection[] {
+      const mine = new Map(credentials.ofUser(principal.userId).map((row) => [row.serverId, row]));
+      return servers
+        .everyInOrg(principal.orgId)
+        .filter((server) => server.credentials === "personal" && seen(principal, server))
+        .map((server) => {
+          const row = mine.get(server.id);
+          const { kind, headers, connected } = connectionOf(server, principal.userId);
+          return {
+            serverId: server.id,
+            serverName: server.name,
+            spaceId: server.spaceId,
+            kind,
+            headers,
+            // A sign-in begun but never finished needs connecting too.
+            status: row ? (connected ? ("ok" as const) : ("needs_auth" as const)) : null,
+            connectedAt: row?.updatedAt.toISOString() ?? null,
+          };
+        });
+    },
+
+    // Keeps the person's own header values for the server, once it takes them: one for each
+    // header its shared secrets are sent with.
+    async connectHeaders(principal: Principal, id: string, input: McpConnectHeaders) {
+      const server = connectable(principal, id);
+      if (server.authKind !== "headers") {
+        throw new ServiceError(400, "This server is not authorized by headers");
+      }
+      const headers = Object.fromEntries(
+        input.headers.map((header) => [header.name.toLowerCase(), header.value]),
+      );
+      if (
+        headerNames({ headers: Object.keys(headers).map((name) => ({ name, hint: "" })) }) !==
+        headerNames(server.settings)
+      ) {
+        throw new ServiceError(400, "Give a value for each of the server's headers");
+      }
+      try {
+        await client.list({ ...targetOf(server, SHARED), auth: { kind: "headers", headers } });
+      } catch (err) {
+        if (!(err instanceof McpError)) throw err;
+        throw new ServiceError(400, err.message);
+      }
+      credentials.put(server.id, own(principal.userId), { headers });
+    },
+
+    // Starts the person signing in with the server as themselves: where to send the browser, or
+    // that the tokens they hold still work. The browser comes back to `returnTo`.
+    async connectOAuth(principal: Principal, id: string, returnTo?: string) {
+      const server = connectable(principal, id);
+      if (server.authKind !== "oauth") {
+        throw new ServiceError(400, "This server is not authorized by OAuth");
+      }
+      forgetExpired();
+      return authorizeOwn(principal, server, returnTo);
+    },
+
+    // Forgets the person's own secrets for the server.
+    disconnect(principal: Principal, id: string) {
+      const server = servers.find(id);
+      if (!server || server.orgId !== principal.orgId) {
+        throw new ServiceError(404, "MCP server not found");
+      }
+      credentials.delete(server.id, own(principal.userId));
+    },
 
     // The org's own servers, which its members may read, and whether its spaces may add theirs.
     orgServers(principal: Principal) {
@@ -726,9 +981,7 @@ export function createMcpServers(options: McpServersOptions) {
       if (server.authKind !== "oauth") {
         throw new ServiceError(400, "This server is not authorized by OAuth");
       }
-      for (const [key, attempt] of pending) {
-        if (attempt.expiresAt <= now().getTime()) pending.delete(key);
-      }
+      forgetExpired();
       const state = randomBytes(24).toString("base64url");
       const attempt: Pending = {
         serverId: id,
@@ -753,12 +1006,12 @@ export function createMcpServers(options: McpServersOptions) {
     },
 
     // Finishes an authorization the authorization server sent the browser back from, for the
-    // person who began it: the server's tools read again, and the page to go back to with what
-    // went wrong, if anything.
+    // person who began it: for the shared secrets the server's tools read again, for their own
+    // the connection kept; and the page to go back to with what went wrong, if anything.
     async finishAuthorization(
       userId: string | null,
       query: { state?: string; code?: string; iss?: string; error?: string },
-    ): Promise<{ server: McpServer | null; error: string | null }> {
+    ): Promise<{ server: McpServer | null; error: string | null; returnTo?: string }> {
       const attempt = query.state ? pending.get(query.state) : undefined;
       if (!attempt || attempt.expiresAt <= now().getTime() || attempt.userId !== userId) {
         return { server: null, error: "This authorization expired. Try again." };
@@ -766,6 +1019,25 @@ export function createMcpServers(options: McpServersOptions) {
       pending.delete(query.state!);
       const server = servers.find(attempt.serverId);
       if (!server) return { server: null, error: "MCP server not found" };
+      if (attempt.holder.kind === "user") {
+        const back = { server, returnTo: attempt.returnTo ?? "/account" };
+        if (query.error || !query.code || !attempt.verifier.value) {
+          return { ...back, error: `The authorization server said: ${query.error ?? "no code"}.` };
+        }
+        try {
+          await client.finish(
+            server.url,
+            oauthStore(server.id, attempt.holder),
+            attempt.verifier.value,
+            { code: query.code, ...(query.iss && { iss: query.iss }) },
+          );
+        } catch (err) {
+          if (!(err instanceof McpError)) throw err;
+          return { ...back, error: err.message };
+        }
+        credentials.setStatus(server.id, attempt.holder, "ok");
+        return { ...back, error: null };
+      }
       if (query.error || !query.code || !attempt.verifier.value) {
         const error = `The authorization server said: ${query.error ?? "no code"}.`;
         servers.update(server.id, { status: "needs_auth", error });

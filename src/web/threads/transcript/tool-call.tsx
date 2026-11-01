@@ -2,7 +2,7 @@
 // answers under its line once given, and otherwise its line.
 
 import { ASK_TOOL, askInputSchema } from "@/shared/ask.ts";
-import type { ToolDefinition } from "@/shared/tools.ts";
+import type { ToolConnection, ToolDefinition } from "@/shared/tools.ts";
 import type { AgentTurn, ToolRow } from "@/shared/transcript.ts";
 import { GivenAnswers } from "@/web/agent/question-form";
 import { QuestionCard } from "@/web/threads/transcript/question-card";
@@ -17,12 +17,15 @@ export function ToolCall({
   decide,
   answer,
   turn,
+  connection,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
   decide?: RowActions["decide"];
   answer?: RowActions["answer"];
   turn: AgentTurn;
+  // The reader's own connection, for a call that would run with it.
+  connection?: ToolConnection;
 }) {
   const asked = row.toolId === ASK_TOOL ? askInputSchema.safeParse(row.input) : null;
   if (asked?.success && row.state === "pending" && row.waits) {
@@ -53,7 +56,13 @@ export function ToolCall({
   }
   if (row.state === "pending" && row.waits) {
     return (
-      <ToolCard row={row} definition={definition} decide={decide} continued={turn.continued} />
+      <ToolCard
+        row={row}
+        definition={definition}
+        decide={decide}
+        connection={connection}
+        continued={turn.continued}
+      />
     );
   }
   if (!turn.continued) return <ToolOpening row={row} definition={definition} turn={turn} />;

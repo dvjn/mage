@@ -10,6 +10,7 @@ import type { Call } from "@/server/testing/scripted-model.ts";
 import type { ToolPolicyFields } from "./tools.ts";
 import {
   canUse,
+  type Decision,
   decide,
   type Influence,
   latestAuthor,
@@ -115,9 +116,19 @@ describe("policy evaluation", () => {
 });
 
 describe("deciding a call", () => {
-  const can = (seq: number): Influence => ({ seq, level: run, canUse: true });
-  const cannot = (seq: number): Influence => ({ seq, level: run, canUse: false });
-  const cases: [string, Parameters<typeof decide>[0], ReturnType<typeof decide>][] = [
+  const can = (seq: number, userId = "ada"): Influence => ({
+    seq,
+    userId,
+    level: run,
+    canUse: true,
+  });
+  const cannot = (seq: number, userId = "alan"): Influence => ({
+    seq,
+    userId,
+    level: run,
+    canUse: false,
+  });
+  const cases: [string, Parameters<typeof decide>[0], Decision["kind"]][] = [
     [
       "owner alone, normal risk",
       { declared: "normal", rules: [OPEN], influence: [can(1)], standing: [] },
@@ -202,7 +213,91 @@ describe("deciding a call", () => {
     ],
   ];
   it.each(cases)("%s", (_name, input, expected) => {
-    expect(decide(input)).toBe(expected);
+    expect(decide(input).kind).toBe(expected);
+  });
+});
+
+describe("deciding a call that runs with a person's own login", () => {
+  const can = (seq: number, userId: string): Influence => ({
+    seq,
+    userId,
+    level: run,
+    canUse: true,
+  });
+  const connected = (...ids: string[]) => {
+    const set = new Set(ids);
+    return (userId: string) => set.has(userId);
+  };
+  const base = { declared: "normal" as const, rules: [OPEN], standing: [] };
+
+  it("runs at once as a solo writer who may use it and is connected", () => {
+    expect(
+      decide({ ...base, influence: [can(1, "ada"), can(3, "ada")], connected: connected("ada") }),
+    ).toEqual({ kind: "run", runAs: "ada" });
+  });
+
+  it("waits in a group chat, or for a solo writer with no working connection", () => {
+    const group = [can(1, "ada"), can(2, "grace")];
+    expect(decide({ ...base, influence: group, connected: connected("ada", "grace") })).toEqual({
+      kind: "wait",
+    });
+    expect(decide({ ...base, influence: [can(1, "ada")], connected: connected() })).toEqual({
+      kind: "wait",
+    });
+    // Nobody's words: nobody to run as.
+    expect(decide({ ...base, influence: [], connected: connected("ada") })).toEqual({
+      kind: "wait",
+    });
+  });
+
+  it("runs on an approval for now as its giver, until someone else writes or their connection breaks", () => {
+    const standing = [{ atSeq: 5, eligible: true, callId: "call-1", by: "grace" }];
+    const before = [can(1, "ada"), can(2, "grace")];
+    expect(decide({ ...base, influence: before, standing, connected: connected("grace") })).toEqual(
+      { kind: "standing", callId: "call-1", runAs: "grace" },
+    );
+    // The giver writing again keeps it.
+    expect(
+      decide({
+        ...base,
+        influence: [...before, can(7, "grace")],
+        standing,
+        connected: connected("grace"),
+      }),
+    ).toMatchObject({ kind: "standing", runAs: "grace" });
+    // Anyone else's new words end it, even someone who may use the tool directly.
+    expect(
+      decide({
+        ...base,
+        influence: [...before, can(7, "ada")],
+        standing,
+        connected: connected("grace", "ada"),
+      }),
+    ).toEqual({ kind: "wait" });
+    // So does the giver's connection breaking, or their losing the right to approve.
+    expect(decide({ ...base, influence: before, standing, connected: connected() })).toEqual({
+      kind: "wait",
+    });
+    expect(
+      decide({
+        ...base,
+        influence: before,
+        standing: [{ ...standing[0]!, eligible: false }],
+        connected: connected("grace"),
+      }),
+    ).toEqual({ kind: "wait" });
+  });
+
+  it("never runs for now where every call asks", () => {
+    const standing = [{ atSeq: 5, eligible: true, callId: "call-1", by: "grace" }];
+    for (const input of [
+      { ...base, declared: "ask" as const },
+      { ...base, rules: [OPEN, rule({ approvers: [EDITORS] })] },
+    ]) {
+      expect(
+        decide({ ...input, influence: [can(1, "grace")], standing, connected: connected("grace") }),
+      ).toEqual({ kind: "wait" });
+    }
   });
 });
 

@@ -2,7 +2,8 @@
 // about each, whether it is on, how it answered when last reached, and the bodies that add, change,
 // authorize and turn one on or off; a change is the add body again, its stored secrets left out to
 // keep them. An org's owners add servers for all its spaces; a space's managers add them for that
-// space, and may turn one of the org's off for the space alone.
+// space, and may turn one of the org's off for the space alone. A server whose people each connect
+// their own credentials lists each person's connections, and takes what they connect with.
 
 import * as z from "zod";
 
@@ -21,6 +22,12 @@ export type McpStatus = z.infer<typeof mcpStatusSchema>;
 export const mcpAuthKindSchema = z.enum(["none", "headers", "oauth"]);
 
 export type McpAuthKind = z.infer<typeof mcpAuthKindSchema>;
+
+// Whose credentials its tools are called with: one set everyone shares, or each person's own, the
+// shared set then only reading its tools.
+export const mcpCredentialModeSchema = z.enum(["shared", "personal"]);
+
+export type McpCredentialMode = z.infer<typeof mcpCredentialModeSchema>;
 
 // A stored header as people may see it again: its name, and the end of its value.
 export const mcpHeaderSummarySchema = z.object({ name: z.string(), hint: z.string() });
@@ -54,6 +61,7 @@ export const mcpServerSchema = z.object({
   // Whether it offers its tools; one turned off keeps its connection and tools.
   enabled: z.boolean(),
   auth: mcpAuthSummarySchema,
+  credentials: mcpCredentialModeSchema,
   transport: mcpTransportSchema.nullable(),
   // The protocol revision it last answered with.
   protocolVersion: z.string().nullable(),
@@ -194,6 +202,8 @@ export const newMcpServerSchema = z.object({
   slug: mcpSlugSchema.optional(),
   url: mcpUrlSchema,
   auth: mcpAuthInputSchema,
+  // Shared when not given.
+  credentials: mcpCredentialModeSchema.optional(),
 });
 
 export type NewMcpServer = z.infer<typeof newMcpServerSchema>;
@@ -204,6 +214,7 @@ export const mcpServerChangeSchema = z.object({
   slug: mcpSlugSchema.optional(),
   url: mcpUrlSchema.optional(),
   auth: mcpAuthInputSchema.optional(),
+  credentials: mcpCredentialModeSchema.optional(),
 });
 
 export type McpServerChange = z.infer<typeof mcpServerChangeSchema>;
@@ -215,6 +226,60 @@ export const mcpAuthorizeSchema = z.discriminatedUnion("status", [
 ]);
 
 export type McpAuthorize = z.infer<typeof mcpAuthorizeSchema>;
+
+// A server whose people each connect their own credentials, as one person sees it: where it is
+// used, how one connects to it, and whether they have, whether it worked when last used or needs
+// connecting again, and since when.
+export const mcpConnectionSchema = z.object({
+  serverId: z.string(),
+  serverName: z.string(),
+  // The space the server was added for; null for the whole org.
+  spaceId: z.string().nullable(),
+  kind: z.enum(["oauth", "headers"]),
+  headers: z.array(z.string()),
+  status: z.enum(["ok", "needs_auth"]).nullable(),
+  connectedAt: z.iso.datetime().nullable(),
+});
+
+export type McpConnection = z.infer<typeof mcpConnectionSchema>;
+
+export const mcpConnectionListSchema = z.array(mcpConnectionSchema);
+
+// A person's own header values, by the names the server is sent.
+export const mcpConnectHeadersSchema = z.object({
+  headers: z
+    .array(
+      z.object({
+        name: z.string().trim().min(1).max(200),
+        value: z
+          .string()
+          .min(1, "Give each header a value")
+          .max(8000)
+          .regex(/^[^\r\n]*$/, "Header values are one line"),
+      }),
+    )
+    .min(1)
+    .max(20),
+});
+
+export type McpConnectHeaders = z.infer<typeof mcpConnectHeadersSchema>;
+
+// Signing in with the server as oneself, and the page of Mage to come back to.
+export const mcpConnectAuthorizeSchema = z.object({
+  returnTo: z
+    .string()
+    .max(500)
+    .regex(/^\/(?![/\\])/, "Give a path in Mage")
+    .optional(),
+});
+
+// Where to send the browser to sign in, or that the tokens held still worked.
+export const mcpConnectResultSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("redirect"), url: z.url() }),
+  z.object({ status: z.literal("connected") }),
+]);
+
+export type McpConnectResult = z.infer<typeof mcpConnectResultSchema>;
 
 // The id of the toolset a server's tools come in, and of each of its tools.
 export function mcpToolsetId(serverId: string) {

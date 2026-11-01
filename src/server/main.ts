@@ -144,6 +144,7 @@ const mcp = createMcpServers({
   spaces,
   settings: settingStore,
   logger,
+  hooks,
 });
 const instructions = createInstructions({ store: createInstructionStore(db), spaces });
 const skills = createSkills({

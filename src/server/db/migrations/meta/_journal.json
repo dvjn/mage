@@ -260,6 +260,13 @@
       "when": 1793480369361,
       "tag": "0036_space_retention",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1793510721533,
+      "tag": "0037_mcp_personal_credentials",
+      "breakpoints": true
     }
   ]
 }

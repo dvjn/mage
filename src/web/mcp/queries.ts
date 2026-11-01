@@ -1,7 +1,22 @@
 import { queryOptions } from "@tanstack/react-query";
 
-import { mcpServerSchema, orgMcpServersSchema, spaceMcpServersSchema } from "@/shared/mcp.ts";
+import {
+  mcpConnectionListSchema,
+  mcpServerSchema,
+  orgMcpServersSchema,
+  spaceMcpServersSchema,
+} from "@/shared/mcp.ts";
 import { apiClient } from "@/web/api/api-client";
+
+// The servers with personal credentials the signed-in person may connect to, with theirs.
+export const mcpConnectionsQuery = queryOptions({
+  queryKey: ["mcp-connections"],
+  queryFn: async () => {
+    const res = await apiClient.v1["mcp-connections"].$get();
+    if (!res.ok) throw new Error("could not read your connections");
+    return mcpConnectionListSchema.parse(await res.json());
+  },
+});
 
 export const orgMcpServersQuery = queryOptions({
   queryKey: ["mcp-servers", "org"],

@@ -1,9 +1,10 @@
 // A stand-in MCP server for the browser journeys and the tests, as people run their own: a notes
 // server whose tools are open at /mcp, behind headers at /headers/mcp, behind OAuth at /oauth/mcp,
-// and over the older HTTP+SSE transport at /sse. Its OAuth comes from its own small authorization
-// server: protected resource and server metadata, client registration, an authorize page that
-// approves at once, and tokens with their renewal. POST /control/revoke forgets every token, as
-// when a person revokes the app. It can instead keep its OAuth server at /mcp, where the open one
+// and over the older HTTP+SSE transport at /sse. At /people/mcp each person brings their own
+// bearer token, person-<name>, and echo says the text back as that name. Its OAuth comes from its
+// own small authorization server: protected resource and server metadata, client registration, an
+// authorize page that approves at once, and tokens with their renewal. POST /control/revoke forgets
+// every token, as when a person revokes the app, and /control/revoke-person?name= one person's. It can instead keep its OAuth server at /mcp, where the open one
 // was, as servers that live only behind OAuth do. Each Streamable HTTP server also answers under
 // /modern speaking only the 2026-07-28 revision: it describes itself to server/discover, wants the
 // revision in each request's _meta, and refuses the older initialize handshake as rmcp servers do.
@@ -126,10 +127,13 @@ export function mcpStandIn(options: McpStandInOptions) {
   const refreshTokens = new Map<string, string>();
   // The legacy transport's open streams, by session.
   const streams = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
+  // The people whose tokens /people/mcp no longer takes.
+  const revokedPeople = new Set<string>();
   // Where the server behind OAuth is, in either revision.
   const oauthResources = [`${origin}${oauthPath}`, `${origin}/modern${oauthPath}`];
 
-  function answer(message: JsonRpc): unknown {
+  // `caller` is whose token a request at /people/mcp came with.
+  function answer(message: JsonRpc, caller?: string): unknown {
     switch (message.method) {
       case "initialize": {
         const asked = text(message.params?.protocolVersion);
@@ -147,16 +151,18 @@ export function mcpStandIn(options: McpStandInOptions) {
         return call(
           String(message.params?.name),
           (message.params?.arguments ?? {}) as Record<string, unknown>,
+          caller,
         );
       default:
         return null;
     }
   }
 
-  function call(name: string, args: Record<string, unknown>) {
+  function call(name: string, args: Record<string, unknown>, caller?: string) {
     switch (name) {
       case "echo": {
-        const said = text(args.text);
+        // Said back as whoever the token is for, where it names someone.
+        const said = caller ? `${caller}: ${text(args.text)}` : text(args.text);
         return { content: [{ type: "text", text: said }], structuredContent: { text: said } };
       }
       case "add_note": {
@@ -180,19 +186,25 @@ export function mcpStandIn(options: McpStandInOptions) {
     }
   }
 
-  function reply(message: JsonRpc) {
-    const result = answer(message);
+  function reply(message: JsonRpc, caller?: string) {
+    const result = answer(message, caller);
     return result === null
       ? { jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Method not found" } }
       : { jsonrpc: "2.0", id: message.id, result };
   }
 
   // Streamable HTTP: each POST answered in its body; no stream of the server's own.
-  async function streamable(req: Request, modern: boolean) {
+  async function streamable(req: Request, modern: boolean, caller?: string) {
     if (req.method !== "POST") return new Response(null, { status: 405 });
     const message = (await req.json()) as JsonRpc;
     if (message.id === undefined) return new Response(null, { status: 202 });
-    return modern ? modernReply(message) : json(reply(message));
+    return modern ? modernReply(message) : json(reply(message, caller));
+  }
+
+  // Whose token the request came with at /people/mcp: the name after `person-`, unless revoked.
+  function personOf(req: Request) {
+    const match = /^Bearer person-([a-z]+)$/.exec(req.headers.get("authorization") ?? "");
+    return match && !revokedPeople.has(match[1]!) ? match[1]! : null;
   }
 
   function failed(message: JsonRpc, status: number, error: Record<string, unknown>) {
@@ -425,6 +437,11 @@ export function mcpStandIn(options: McpStandInOptions) {
       case "/headers/mcp":
         if (!headersAllowed(req)) return json({ error: "Give the key" }, 401);
         return streamable(req, modern);
+      case "/people/mcp": {
+        const caller = personOf(req);
+        if (!caller) return json({ error: "Give your token" }, 401);
+        return streamable(req, false, caller);
+      }
       case "/sse":
         return req.method === "GET" ? openStream() : new Response(null, { status: 405 });
       case "/messages":
@@ -440,6 +457,9 @@ export function mcpStandIn(options: McpStandInOptions) {
       case "/control/revoke":
         accessTokens.clear();
         refreshTokens.clear();
+        return json({ ok: true });
+      case "/control/revoke-person":
+        revokedPeople.add(url.searchParams.get("name") ?? "");
         return json({ ok: true });
       default:
         return new Response("Not found", { status: 404 });

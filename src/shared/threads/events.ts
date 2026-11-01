@@ -153,7 +153,12 @@ export const eventDataSchemas = {
   "tool.answered": z.object({ runId: z.string(), callId: z.string(), answers: askAnswersSchema }),
   // The call will not run, and why.
   "tool.denied": z.object({ runId: z.string(), callId: z.string(), reason: toolDenialSchema }),
-  // The call ran, with what it gave back or why it failed, in milliseconds.
+  // No longer written: older threads paused a call here for the person it would run as to connect
+  // their own login. Read as the call waiting for approval.
+  "tool.blocked": z.object({ runId: z.string(), callId: z.string(), userId: z.string() }),
+  // The call ran, with what it gave back or why it failed, in milliseconds; for a tool that runs
+  // with each person's own login, whose it ran with; and for a call that ran on a standing
+  // approval, the call that approval was given on.
   "tool.ran": z.object({
     runId: z.string(),
     callId: z.string(),
@@ -161,6 +166,8 @@ export const eventDataSchemas = {
     value: z.unknown().optional(),
     error: z.string().optional(),
     ms: z.number().int().nonnegative(),
+    ranAs: z.string().optional(),
+    standingOn: z.string().optional(),
   }),
 };
 
@@ -213,6 +220,7 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("tool.approved"),
   eventSchema("tool.answered"),
   eventSchema("tool.denied"),
+  eventSchema("tool.blocked"),
   eventSchema("tool.ran"),
 ]);
 

@@ -22,6 +22,11 @@ export const mcpServer = sqliteTable(
     enabled: integer("enabled", { mode: "boolean" }).default(true).notNull(),
     // How it is authorized: not at all, by headers, or by OAuth.
     authKind: text("auth_kind", { enum: ["none", "headers", "oauth"] }).notNull(),
+    // Whose credentials its tools are called with: the one set everyone shares, or each person's
+    // own, the shared set then only reading its tools.
+    credentials: text("credentials", { enum: ["shared", "personal"] })
+      .default("shared")
+      .notNull(),
     // What is not secret about its authorization, as JSON: header names with hints, the OAuth
     // client and authorization server.
     settings: text("settings", { mode: "json" }).$type<Record<string, unknown>>().notNull(),
@@ -52,7 +57,7 @@ export const mcpServer = sqliteTable(
 );
 
 // An MCP server's secrets sealed by the cipher: its headers or OAuth client and tokens, shared by
-// everyone who uses the server, or later one person's own.
+// everyone who uses the server, or one person's own.
 export const mcpCredential = sqliteTable(
   "mcp_credential",
   {
@@ -64,6 +69,10 @@ export const mcpCredential = sqliteTable(
     holderId: text("holder_id").notNull(),
     keyVersion: integer("key_version").notNull(),
     sealed: blob("sealed", { mode: "buffer" }).notNull(),
+    // Whether the server last took them, or refused them and they need connecting again.
+    status: text("status", { enum: ["ok", "needs_auth"] })
+      .default("ok")
+      .notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .$onUpdate(() => /* @__PURE__ */ new Date())
