@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
 import * as schema from "@/server/schema.ts";
+import type { ToolRisk } from "@/shared/threads/events.ts";
 import { EDITORS, TOOL_OFF } from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
@@ -9,30 +10,43 @@ import type { Call } from "@/server/testing/scripted-model.ts";
 
 import type { ToolPolicyFields } from "./tools.ts";
 import {
-  canUse,
+  canPostIn,
+  canUse as canUseUnder,
   type Decision,
-  decide,
+  decide as decideUnder,
   type Influence,
   latestAuthor,
-  levelOf,
-  mayApprove,
+  mayApprove as mayApproveUnder,
   NOBODY,
   OPEN,
+  type Person,
   personOf,
   type Rule,
-  riskOf,
+  ruleFor,
+  riskOf as riskUnder,
 } from "./tool-authority.ts";
 
-const run = "run" as const;
-const approve = "approve" as const;
+// The checks over a tool's policies, each collapsed into the one rule the tool is used under.
+const canUse = (person: Person, rules: Rule[]) => canUseUnder(person, ruleFor(rules));
+const mayApprove = (person: Person, rules: Rule[], risk: ToolRisk, latest: string | null) =>
+  mayApproveUnder(person, ruleFor(rules), risk, latest);
+const riskOf = (declared: ToolRisk, rules: Rule[]) => riskUnder(declared, ruleFor(rules));
+const decide = ({
+  rules,
+  ...input
+}: Omit<Parameters<typeof decideUnder>[0], "rule"> & { rules: Rule[] }) =>
+  decideUnder({ ...input, rule: ruleFor(rules) });
+
+const run = true;
+const approve = false;
 
 describe("levels", () => {
   it("let anyone who can message in the thread run tools, and nobody else", () => {
-    expect(levelOf({ via: "space", role: "owner" })).toBe(run);
-    expect(levelOf({ via: "space", role: "messager" })).toBe(run);
-    expect(levelOf({ via: "guest", spaceName: "Ada" })).toBe(run);
-    expect(levelOf({ via: "space", role: "viewer" })).toBe(approve);
-    expect(levelOf(null)).toBe(approve);
+    expect(canPostIn({ via: "space", role: "owner" })).toBe(run);
+    expect(canPostIn({ via: "space", role: "messager" })).toBe(run);
+    expect(canPostIn({ via: "guest", spaceName: "Ada" })).toBe(run);
+    expect(canPostIn({ via: "space", role: "viewer" })).toBe(approve);
+    expect(canPostIn(null)).toBe(approve);
   });
 });
 
@@ -119,13 +133,13 @@ describe("deciding a call", () => {
   const can = (seq: number, userId = "ada"): Influence => ({
     seq,
     userId,
-    level: run,
+    canPost: true,
     canUse: true,
   });
   const cannot = (seq: number, userId = "alan"): Influence => ({
     seq,
     userId,
-    level: run,
+    canPost: true,
     canUse: false,
   });
   const cases: [string, Parameters<typeof decide>[0], Decision["kind"]][] = [
@@ -145,7 +159,7 @@ describe("deciding a call", () => {
         declared: "normal",
         rules: [OPEN],
         influence: [cannot(2)],
-        standing: [{ atSeq: 5, eligible: true }],
+        standing: [{ atSeq: 5, by: "grace", eligible: true }],
       },
       "standing",
     ],
@@ -155,7 +169,7 @@ describe("deciding a call", () => {
         declared: "normal",
         rules: [OPEN],
         influence: [cannot(6)],
-        standing: [{ atSeq: 5, eligible: true }],
+        standing: [{ atSeq: 5, by: "grace", eligible: true }],
       },
       "wait",
     ],
@@ -165,7 +179,7 @@ describe("deciding a call", () => {
         declared: "normal",
         rules: [OPEN],
         influence: [cannot(2)],
-        standing: [{ atSeq: 5, eligible: false }],
+        standing: [{ atSeq: 5, by: "grace", eligible: false }],
       },
       "wait",
     ],
@@ -175,7 +189,7 @@ describe("deciding a call", () => {
         declared: "ask",
         rules: [OPEN],
         influence: [can(1)],
-        standing: [{ atSeq: 5, eligible: true }],
+        standing: [{ atSeq: 5, by: "grace", eligible: true }],
       },
       "wait",
     ],
@@ -185,7 +199,7 @@ describe("deciding a call", () => {
         declared: "normal",
         rules: [OPEN, rule({ approvers: [EDITORS] })],
         influence: [can(1)],
-        standing: [{ atSeq: 5, eligible: true }],
+        standing: [{ atSeq: 5, by: "grace", eligible: true }],
       },
       "wait",
     ],
@@ -195,12 +209,12 @@ describe("deciding a call", () => {
         declared: "normal",
         rules: [rule({ use: "some", approvers: [EDITORS], independent: true })],
         influence: [cannot(1)],
-        standing: [{ atSeq: 5, eligible: true }],
+        standing: [{ atSeq: 5, by: "grace", eligible: true }],
       },
       "wait",
     ],
     [
-      "independent approval still lets its users run it",
+      "independent approval holds back even its users",
       {
         declared: "normal",
         rules: [
@@ -209,7 +223,7 @@ describe("deciding a call", () => {
         influence: [can(1)],
         standing: [],
       },
-      "run",
+      "wait",
     ],
   ];
   it.each(cases)("%s", (_name, input, expected) => {
@@ -221,7 +235,7 @@ describe("deciding a call that runs with a person's own login", () => {
   const can = (seq: number, userId: string): Influence => ({
     seq,
     userId,
-    level: run,
+    canPost: true,
     canUse: true,
   });
   const connected = (...ids: string[]) => {

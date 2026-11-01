@@ -111,7 +111,7 @@ export function createToolPolicies(options: ToolPoliciesOptions) {
       use: input.use,
       users: input.use === "some" ? unique(input.users) : [],
       approvers: input.use === "everyone" ? [] : unique(input.approvers),
-      independent: input.use !== "everyone" && input.independent,
+      independent: input.use === "none" && input.independent,
     };
     for (const key of [...fields.users, ...fields.approvers]) {
       if (key === EDITORS) continue;

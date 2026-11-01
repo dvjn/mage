@@ -205,19 +205,21 @@ export function PolicyDialog({
                 onChange={(approvers) => update({ approvers })}
                 editors
               />
-              <Label className="items-start gap-2 font-normal">
-                <Checkbox
-                  className="mt-0.5"
-                  checked={draft.independent}
-                  onCheckedChange={(independent) => update({ independent })}
-                />
-                <span className="flex flex-col">
-                  Independent approval
-                  <span className="text-xs text-muted-foreground">
-                    The approver can't be the person whose message asked for the call.
+              {draft.use === "none" && (
+                <Label className="items-start gap-2 font-normal">
+                  <Checkbox
+                    className="mt-0.5"
+                    checked={draft.independent}
+                    onCheckedChange={(independent) => update({ independent })}
+                  />
+                  <span className="flex flex-col">
+                    Independent approval
+                    <span className="text-xs text-muted-foreground">
+                      The approver can't be the person whose message asked for the call.
+                    </span>
                   </span>
-                </span>
-              </Label>
+                </Label>
+              )}
               {noApprover && (
                 <p className="text-sm text-amber-700 dark:text-amber-300">
                   Pick at least one approver, or every call that needs approval is refused.

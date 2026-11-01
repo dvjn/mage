@@ -40,13 +40,13 @@ import { type ToolRow, type TranscriptRow, transcriptOf } from "@/shared/transcr
 import type { RunStore } from "./runs.ts";
 import {
   type Approval,
+  canPostIn,
   canUse,
   decide,
   type Decision,
-  holdsOnce,
+  holds,
   type Influence,
   latestAuthor,
-  levelOf,
   mayAnswer,
   mayApprove,
   NOBODY,
@@ -54,7 +54,10 @@ import {
   type Person,
   personOf,
   type Rule,
+  ruleFor,
   riskOf as riskUnder,
+  stillPosts,
+  type ToolRule,
   wordsIn,
 } from "./tool-authority.ts";
 
@@ -245,10 +248,10 @@ export interface ToolsOptions {
 
 export type Tools = ReturnType<typeof createTools>;
 
-// What applies to one tool in a space: whether it is off there, and the rules it is used under.
+// What applies to one tool in a space: whether it is off there, and the one rule it is used under.
 export interface ToolRules {
   off: boolean;
-  rules: Rule[];
+  rule: ToolRule;
 }
 
 function ruleOf(policy: ToolPolicyRecord): Rule {
@@ -318,7 +321,7 @@ export function createTools(options: ToolsOptions) {
       if (fromOrg) rules.push(inOrg && inOrg !== TOOL_OFF ? policyRule(inOrg, false) : OPEN);
       if (inSpace && inSpace !== TOOL_OFF) rules.push(policyRule(inSpace, true));
       else if (!fromOrg) rules.push(OPEN);
-      return { off: inOrg === TOOL_OFF || inSpace === TOOL_OFF, rules };
+      return { off: inOrg === TOOL_OFF || inSpace === TOOL_OFF, rule: ruleFor(rules) };
     };
   }
 
@@ -335,19 +338,15 @@ export function createTools(options: ToolsOptions) {
     input: unknown,
     model: string | null,
   ): ToolRisk {
-    return riskUnder(spec.risk(input, { model }), rulesIn(space)(spec.name).rules);
+    return riskUnder(spec.risk(input, { model }), rulesIn(space)(spec.name).rule);
   }
 
-  // The person's level in the thread, as they reach it now.
-  function levelFor(userId: string, thread: Thread, space: Space): ToolLevel {
-    return levelOf(access.of({ userId, orgId: space.orgId }, thread));
-  }
-
-  // The person as rules see them: their level and the groups they are active in now.
+  // The person as the rule sees them: whether they can post in the thread as they reach it now,
+  // and the groups they are active in now.
   function personIn(userId: string, thread: Thread, space: Space): Person {
     return personOf(
       userId,
-      levelFor(userId, thread, space),
+      canPostIn(access.of({ userId, orgId: space.orgId }, thread)),
       directory.groupIdsOf(space.orgId, userId),
     );
   }
@@ -381,19 +380,19 @@ export function createTools(options: ToolsOptions) {
   ) {
     return (asks(row, space) ? mayAnswer : mayApprove)(
       personIn(userId, thread, space),
-      rulesIn(space)(row.toolId).rules,
+      rulesIn(space)(row.toolId).rule,
       riskForCall(row, space, model),
       latestAuthor(rows),
     );
   }
 
-  // The words the model read, messages and answers, each with its writer's level now and whether they may use the tool
-  // directly under the rules.
+  // The words the model read, messages and answers, each with whether its writer can post now and
+  // whether they may use the tool directly under the rule.
   function influenceOf(
     rows: readonly TranscriptRow[],
     thread: Thread,
     space: Space,
-    rules: readonly Rule[],
+    rule: ToolRule,
   ) {
     const people = new Map<string, Person>();
     const influence: Influence[] = [];
@@ -403,7 +402,7 @@ export function createTools(options: ToolsOptions) {
         person = personIn(userId, thread, space);
         people.set(userId, person);
       }
-      influence.push({ seq, userId, level: person.level, canUse: canUse(person, rules) });
+      influence.push({ seq, userId, canPost: person.canPost, canUse: canUse(person, rule) });
     }
     return influence;
   }
@@ -461,7 +460,6 @@ export function createTools(options: ToolsOptions) {
         fromModel: (name) => ids.get(name),
       };
     },
-    levelFor,
     riskForCall,
     canDecide,
     rulesIn,
@@ -484,7 +482,7 @@ export function createTools(options: ToolsOptions) {
       return Object.fromEntries(
         specsOf(inSpace(space)).map((spec) => [
           spec.name,
-          canUse(person, rules(spec.name).rules) ? "run" : "approve",
+          canUse(person, rules(spec.name).rule) ? "run" : "approve",
         ]),
       );
     },
@@ -533,9 +531,9 @@ export function createTools(options: ToolsOptions) {
       toolId: string,
       declared: ToolRisk,
     ): Decision {
-      const { rules } = rulesIn(space)(toolId);
+      const { rule } = rulesIn(space)(toolId);
       const spec = specsOf(settingsInSpace(space)).find((tool) => tool.name === toolId);
-      // The approvals given for now themselves, not the calls that later ran on them.
+      // The vouches given for now themselves, not the calls that later ran on them.
       const standing: Approval[] = rows
         .filter(
           (row): row is ToolRow =>
@@ -547,19 +545,19 @@ export function createTools(options: ToolsOptions) {
         )
         .map((row) => ({
           atSeq: row.decision!.seq,
+          by: row.decision!.by.userId,
           eligible: mayApprove(
             personIn(row.decision!.by.userId, thread, space),
-            rules,
+            rule,
             "normal",
             null,
           ),
           callId: row.id,
-          by: row.decision!.by.userId,
         }));
       return decide({
         declared,
-        rules,
-        influence: influenceOf(rows, thread, space, rules),
+        rule,
+        influence: influenceOf(rows, thread, space, rule),
         standing,
         ...(spec?.connection && {
           connected: (userId: string) => !!spec.connection?.(userId).connected,
@@ -571,23 +569,28 @@ export function createTools(options: ToolsOptions) {
 
     // Whether the answer given to the call still holds, just before it runs: its writer may still
     // use or approve the tool, as things stood when they answered, and everyone who wrote after
-    // it can still message in the thread.
+    // it can still post in the thread.
     answerHolds(row: ToolRow, rows: readonly TranscriptRow[], thread: Thread, space: Space) {
       if (!row.answers || !row.decision?.allow) return false;
-      const { rules } = rulesIn(space)(row.toolId);
-      const atSeq = row.decision.seq;
+      const { rule } = rulesIn(space)(row.toolId);
+      const { by, seq: atSeq } = row.decision;
       const before = rows.filter((other) => other.seq < atSeq && other.id !== row.id);
       const eligible = mayAnswer(
-        personIn(row.decision.by.userId, thread, space),
-        rules,
+        personIn(by.userId, thread, space),
+        rule,
         riskForCall(row, space),
         latestAuthor(before),
       );
-      return holdsOnce({ atSeq, eligible }, influenceOf(rows, thread, space, rules));
+      return holds(
+        { atSeq, by: by.userId, eligible },
+        influenceOf(rows, thread, space, rule),
+        stillPosts,
+      );
     },
 
-    // Whether the approval given for the call still holds, just before it runs: its giver may
-    // still approve it under the tool's rules now, independently where that applies.
+    // Whether the vouch given for the call still holds, just before it runs: its giver may still
+    // approve it under the tool's rule now, independently where that applies, and everyone who
+    // wrote after it can still post in the thread.
     approvalHolds(
       row: ToolRow,
       rows: readonly TranscriptRow[],
@@ -597,16 +600,18 @@ export function createTools(options: ToolsOptions) {
     ) {
       if (!row.decision?.allow) return false;
       if (risk === "review" && row.decision.scope !== "once") return false;
-      const { rules } = rulesIn(space)(row.toolId);
+      const { rule } = rulesIn(space)(row.toolId);
+      const { by, seq: atSeq } = row.decision;
       const eligible = mayApprove(
-        personIn(row.decision.by.userId, thread, space),
-        rules,
+        personIn(by.userId, thread, space),
+        rule,
         risk,
         latestAuthor(rows),
       );
-      return holdsOnce(
-        { atSeq: row.decision.seq, eligible },
-        influenceOf(rows, thread, space, rules),
+      return holds(
+        { atSeq, by: by.userId, eligible },
+        influenceOf(rows, thread, space, rule),
+        stillPosts,
       );
     },
   };
@@ -616,7 +621,6 @@ export interface ToolDecisionsOptions {
   tools: Pick<
     Tools,
     | "find"
-    | "levelFor"
     | "canDecide"
     | "asks"
     | "riskForCall"
