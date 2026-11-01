@@ -271,6 +271,9 @@ test("on a phone the card's buttons stack, Allow first and Deny last", async ({
   const allow = card(page).getByRole("button", { name: "Allow", exact: true });
   const forNow = card(page).getByRole("button", { name: "Allow for now" });
   const deny = card(page).getByRole("button", { name: "Deny" });
+  // The card shows with the call's event, paused, and its buttons are made anew once the reader's
+  // policy for it loads; they are measured after that.
+  await expect(deny).toBeEnabled();
   const [a, b, c] = await Promise.all([allow, forNow, deny].map((button) => button.boundingBox()));
   expect(a!.x).toBe(c!.x);
   expect(a!.width).toBe(c!.width);

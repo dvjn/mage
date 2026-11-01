@@ -241,5 +241,6 @@ test("coming back while the reader's own reply streams opens at the end and foll
   await expect(reply).not.toContainText("Streamed line 50.");
   await expect(reply).toContainText("Streamed line 50.", { timeout: 20_000 });
   await expect(reply.getByText("Streamed line 50.")).toBeInViewport();
-  expect(await distanceFromEnd(page)).toBeLessThan(2);
+  // Following the growing reply scrolls smoothly, so the end is reached a moment after it grows.
+  await expect.poll(() => distanceFromEnd(page)).toBeLessThan(2);
 });

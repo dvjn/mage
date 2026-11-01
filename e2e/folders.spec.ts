@@ -224,12 +224,20 @@ test("a long folder name is cut short in the switcher, on rows and in the search
     .first()
     .click();
   const dialog = page.getByRole("dialog", { name: "Search threads" });
+  const input = dialog.getByRole("combobox");
+  await expect(input).toBeFocused();
   await expect(dialog.getByRole("button", { name: /^Search all threads, not only/ })).toHaveCount(
     0,
   );
-  await page.keyboard.press("Tab");
-  await dialog.getByRole("combobox").fill("customer");
-  await page.keyboard.press("Enter");
+  // The dialog moves focus into its box a moment after it opens; keys go to the box itself.
+  await input.press("Tab");
+  await expect(dialog.getByRole("button", { name: /^Folders \d/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await input.fill("customer");
+  await expect(dialog.getByRole("option")).toHaveCount(1);
+  await input.press("Enter");
   const token = dialog.getByRole("button", { name: `Search all threads, not only ${long}` });
   await expect(token).toBeVisible();
   expect((await token.boundingBox())!.width).toBeLessThan(200);
