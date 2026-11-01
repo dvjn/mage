@@ -98,7 +98,7 @@ describe("org access from the directory", () => {
     expect((await link(workspace, looms, "member")).status).toBe(200);
     expect((await link(workspace, looms, "member")).status).toBe(409);
     expect(directory.roleIn(orgId, graceId)).toBe("member");
-    // Joining through a group gives them their own space, as an invite does.
+    // Joining through a group makes no space of their own, as an invite makes none.
     expect(
       workspace.db
         .select()
@@ -106,7 +106,7 @@ describe("org access from the directory", () => {
         .where(eq(schema.space.createdBy, graceId))
         .all()
         .some((space) => space.organizationId === orgId),
-    ).toBe(true);
+    ).toBe(false);
 
     await scim.addMembers(looms, [hedy]);
     expect(directory.roleIn(orgId, hedyId)).toBe("member");

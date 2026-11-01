@@ -20,6 +20,7 @@ import * as z from "zod";
 
 import type { Transact } from "@/server/db/db.ts";
 import type { EventBus } from "@/server/kernel/event-bus.ts";
+import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import { ConnectionError } from "@/server/models/connections.ts";
 import {
@@ -115,8 +116,9 @@ export interface RunStore {
   // The queued, running and waiting runs of the space's threads, or of the threads named.
   activeInSpace(spaceId: string): Run[];
   activeIn(threadIds: string[]): Run[];
-  // Asks the thread's active run to stop, unless someone already has; null when there is none.
-  requestCancel(threadId: string, userId: string, at: Date): Run | null;
+  // Asks the thread's active run to stop, unless someone already has; null when there is none. A
+  // null user is the server itself, as when the agent may no longer run in the thread's space.
+  requestCancel(threadId: string, userId: string | null, at: Date): Run | null;
   // Takes the oldest queued run for the owner until `expiresAt`.
   claim(owner: string, expiresAt: Date): Run | null;
   // Takes a running run whose lease expired before `before`, or any running run without `before`.
@@ -163,6 +165,11 @@ export interface RunWorkerOptions {
   // What the org and the space tell the agent beyond Mage's own prompt, given the tools offered.
   guidance?: (space: Space, offered: readonly AnyToolSpec[]) => Guidance;
   logger: Logger;
+  // Whether the agent may run in the space; a run claimed where it may not is stopped unstarted.
+  runsIn?: (space: Space) => boolean;
+  // Where the worker hears that people may have lost a role in an org's spaces, or that spaces
+  // were archived or put in trash.
+  hooks?: Hooks;
   now?: () => Date;
   // How long reply pieces gather before they are stored and announced together.
   flushMs?: number;
@@ -317,7 +324,7 @@ export function sortWaiting(
 }
 
 // Drops the waiting messages of the org's threads whose authors can no longer post in them.
-export function dropRefusedWaiting(options: {
+function dropRefusedWaiting(options: {
   threads: Pick<ThreadStore, "find" | "eventsAfter">;
   spaceStore: Pick<SpaceStore, "find">;
   runs: Pick<RunStore, "activeThreadIds">;
@@ -336,6 +343,28 @@ export function dropRefusedWaiting(options: {
         append({ type: "message.dropped", actor: AGENT, data: { messageId: message.id } });
       }
     });
+  }
+}
+
+// Asks the active runs of the org's threads in spaces where the agent may no longer run to stop,
+// queueing again those that wait for a decision so that a worker ends them.
+function stopBarredRuns(options: {
+  threads: Pick<ThreadStore, "find">;
+  spaceStore: Pick<SpaceStore, "find">;
+  runs: Pick<RunStore, "activeThreadIds" | "requestCancel" | "resume">;
+  bus: Pick<EventBus, "wake">;
+  runsIn: (space: Space) => boolean;
+  orgId: string;
+  now?: () => Date;
+}) {
+  const { threads, spaceStore, runs, bus, runsIn, orgId } = options;
+  for (const threadId of new Set(runs.activeThreadIds())) {
+    const thread = threads.find(threadId);
+    const space = thread && spaceStore.find(thread.spaceId);
+    if (!space || space.orgId !== orgId || runsIn(space)) continue;
+    const run = runs.requestCancel(threadId, null, options.now?.() ?? new Date());
+    if (run?.status === "waiting") runs.resume(run.id);
+    bus.wake(threadId);
   }
 }
 
@@ -371,6 +400,18 @@ export function createRunWorker(options: RunWorkerOptions) {
     options;
   const now = options.now ?? (() => new Date());
   const guidance = options.guidance ?? (() => NO_GUIDANCE);
+  const runsIn = options.runsIn ?? (() => true);
+  // When people may have lost a role in an org's spaces, their waiting messages there are dropped,
+  // and the agent stops in spaces archived or put in trash.
+  function accessChanged(orgId: string) {
+    dropRefusedWaiting({ threads, spaceStore, runs, access, log, orgId });
+    stopBarredRuns({ threads, spaceStore, runs, bus, runsIn, orgId, now });
+  }
+  options.hooks?.on("org.personalSpacesChanged", ({ orgId, allowed }) => {
+    if (!allowed) accessChanged(orgId);
+  });
+  options.hooks?.on("org.membersSettled", ({ orgId }) => accessChanged(orgId));
+  options.hooks?.on("space.accessChanged", ({ orgId }) => accessChanged(orgId));
   const leaseMs = options.leaseMs ?? 30_000;
   const pollMs = options.pollMs ?? 5_000;
   const flushMs = options.flushMs ?? 75;
@@ -798,6 +839,10 @@ export function createRunWorker(options: RunWorkerOptions) {
     const thread = threads.find(run.threadId);
     const space = thread && spaceStore.find(thread.spaceId);
     if (!thread || !space) throw new LeaseLost(run.id);
+    if (!runsIn(space)) {
+      controller.abort({ kind: "cancel" } satisfies Abort);
+      throw controller.signal.reason;
+    }
     let model = await replying(execution, space, thread);
     // A run queued again after a decision takes in only the messages sent to steer it.
     const resumed = transcript(thread.id).rows.some(

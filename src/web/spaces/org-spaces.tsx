@@ -1,7 +1,9 @@
-// A team org's spaces, for its owners: who may make spaces and whether members get a private one,
-// then every space in the org. Shared spaces open their settings, where owners change their
-// members and defaults, and are deleted while they have no threads; members' private spaces are
-// listed with their person, and stay theirs. Reading a space's threads still takes a role in it.
+// A team org's spaces, for its owners: who may make spaces and whether members may make a private
+// one, then every space in the org with how many threads it has. Shared spaces open their
+// settings, where owners change their members and defaults, and are deleted while they have no
+// threads; members' private spaces are listed with their person and never open, and owners may
+// put them in trash with their threads, and restore them from there. Reading a space's threads
+// still takes a role in it.
 
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
@@ -48,7 +50,11 @@ import { orgSpacesPage } from "@/web/api/list-queries";
 import { meQuery } from "@/web/auth/queries";
 import { teamSettingsQuery } from "@/web/orgs/queries";
 import { ConfirmDialog } from "@/web/components/confirm-dialog";
+import { plural } from "@/web/lib/plural";
+import { ownSpaceGoes } from "@/web/spaces/delete-own-space";
 import { useDeleteSpace, useTeamSettings } from "@/web/spaces/mutations";
+import { SpaceTrash } from "@/web/spaces/space-trash";
+import { Button } from "@/web/components/ui/button";
 
 const orgSpacesRoute = getRouteApi("/_app/org/spaces");
 
@@ -75,6 +81,8 @@ function SpaceSettingsCard() {
   const switchId = useId();
   const settings = useQuery(teamSettingsQuery);
   const settingsChange = useTeamSettings();
+  // Turning members' spaces off waits for a confirmation.
+  const [confirming, setConfirming] = useState(false);
 
   return (
     <SettingsCard title="Settings" state={settings}>
@@ -108,27 +116,37 @@ function SpaceSettingsCard() {
           </Field>
           <Field orientation="horizontal">
             <FieldContent>
-              <FieldLabel htmlFor={switchId}>Private member spaces</FieldLabel>
-              <FieldDescription>
-                Each member gets a space of their own on joining, which only they can see. Turning
-                this off keeps the ones already made.
-              </FieldDescription>
+              <FieldLabel htmlFor={switchId}>Personal spaces</FieldLabel>
+              <FieldDescription>Members can make a private space of their own.</FieldDescription>
             </FieldContent>
             <Switch
               id={switchId}
               checked={settings.data.memberSpaces}
-              onCheckedChange={(memberSpaces) => settingsChange.mutate({ memberSpaces })}
+              onCheckedChange={(memberSpaces) =>
+                memberSpaces ? settingsChange.mutate({ memberSpaces }) : setConfirming(true)
+              }
             />
           </Field>
           <FieldError>{settingsChange.error?.message}</FieldError>
         </FieldGroup>
       )}
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        title="Turn off personal spaces?"
+        description="Members' personal spaces will be archived until this is turned back on."
+        action="Turn off"
+        onConfirm={() => {
+          setConfirming(false);
+          settingsChange.mutate({ memberSpaces: false });
+        }}
+      />
     </SettingsCard>
   );
 }
 
-// Each space's name and what it is, its members and what everyone gets when it is shared, when it
-// was made, and its menu. Its kind only narrows them.
+// Each space's name and what it is, its members and what everyone gets when it is shared, how many
+// threads it has, when it was made, and its menu. Its kind only narrows them.
 function spacesColumns(onSettings: (space: OrgSpace) => void, onDelete: (space: OrgSpace) => void) {
   const everyoneOf = (space: OrgSpace) =>
     space.kind === "shared"
@@ -138,6 +156,13 @@ function spacesColumns(onSettings: (space: OrgSpace) => void, onDelete: (space: 
       : "—";
   const membersOf = (space: OrgSpace) =>
     `${space.memberCount} ${space.memberCount === 1 ? "member" : "members"}`;
+  const threadsOf = (space: OrgSpace) => plural(space.threadCount, "thread");
+  const deleteItem = (space: OrgSpace) => (
+    <DropdownMenuItem variant="destructive" onClick={() => onDelete(space)}>
+      <Trash2Icon />
+      Delete
+    </DropdownMenuItem>
+  );
   return [
     nameColumn<OrgSpace>("Space", (space) => (
       <Subject
@@ -152,13 +177,14 @@ function spacesColumns(onSettings: (space: OrgSpace) => void, onDelete: (space: 
               {space.ownerName && space.name !== `${space.ownerName}'s Space`
                 ? `Private · ${space.ownerName}`
                 : "Private"}
+              {space.archived && " · Archived"}
             </span>
           )
         }
         folded={
           space.kind === "shared"
             ? `${membersOf(space)} · Everyone: ${everyoneOf(space)}`
-            : undefined
+            : threadsOf(space)
         }
       />
     )),
@@ -177,6 +203,7 @@ function spacesColumns(onSettings: (space: OrgSpace) => void, onDelete: (space: 
         className: "hidden px-3 py-2.5 whitespace-nowrap text-muted-foreground sm:table-cell",
       },
     },
+    contextColumn<OrgSpace>("threads", "Threads", threadsOf, "whitespace-nowrap"),
     contextColumn<OrgSpace>(
       "created",
       "Created",
@@ -188,7 +215,7 @@ function spacesColumns(onSettings: (space: OrgSpace) => void, onDelete: (space: 
         <ActionsMenu
           label={space.name}
           destructive={
-            space.hasThreads ? (
+            space.threadCount > 0 ? (
               <WithTooltip label="Only a space without threads can be deleted">
                 <div>
                   <DropdownMenuItem variant="destructive" disabled>
@@ -198,10 +225,7 @@ function spacesColumns(onSettings: (space: OrgSpace) => void, onDelete: (space: 
                 </div>
               </WithTooltip>
             ) : (
-              <DropdownMenuItem variant="destructive" onClick={() => onDelete(space)}>
-                <Trash2Icon />
-                Delete
-              </DropdownMenuItem>
+              deleteItem(space)
             )
           }
         >
@@ -210,7 +234,9 @@ function spacesColumns(onSettings: (space: OrgSpace) => void, onDelete: (space: 
             Space settings
           </DropdownMenuItem>
         </ActionsMenu>
-      ) : null,
+      ) : (
+        <ActionsMenu label={space.name} destructive={deleteItem(space)} />
+      ),
     ),
     filterColumn<OrgSpace>("kind", "Kind", KIND_FILTER),
   ];
@@ -257,6 +283,7 @@ export function OrgSpaces() {
       <SettingsTitle
         title="Spaces"
         description="Every space in the organization. Opening a space's settings lets you change its members, including yourself, to read its threads."
+        action={owner && <SpaceTrash trigger={<Button variant="outline" size="sm" />} />}
       />
       {me.data && !owner ? (
         <EmptyState
@@ -292,7 +319,11 @@ export function OrgSpaces() {
           deletion.reset();
         }}
         title={`Delete ${deleting?.name ?? ""}?`}
-        description="This cannot be undone."
+        description={
+          deleting?.kind === "personal"
+            ? ownSpaceGoes(deleting.threadCount)
+            : "This cannot be undone."
+        }
         error={deletion.error?.message}
         disabled={deletion.isPending}
         action="Delete"

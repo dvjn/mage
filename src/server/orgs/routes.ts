@@ -118,31 +118,35 @@ export function orgRoutes(options: { identity: Identity; orgs: Orgs; groups: Gro
         const params = { ...pageParams(query), ...(role && { role }), ...(status && { status }) };
         return c.json(orgs.people(signedIn(c.var.principal), params), 200);
       })
-      .patch("/v1/org/members/:userId", setOrgRole, (c) => {
+      .patch("/v1/org/members/:userId", setOrgRole, async (c) => {
         const { role } = c.req.valid("json");
-        orgs.setRole(signedIn(c.var.principal), c.req.param("userId"), role);
+        await orgs.setRole(signedIn(c.var.principal), c.req.param("userId"), role);
         return c.json({ ok: true }, 200);
       })
-      .delete("/v1/org/members/:userId", (c) => {
-        orgs.removeMember(signedIn(c.var.principal), c.req.param("userId"));
+      .delete("/v1/org/members/:userId", async (c) => {
+        await orgs.removeMember(signedIn(c.var.principal), c.req.param("userId"));
         return c.json({ ok: true }, 200);
       })
-      .post("/v1/org/members", newOrgMember, (c) => {
+      .post("/v1/org/members", newOrgMember, async (c) => {
         const { userId, role } = c.req.valid("json");
-        orgs.addMember(signedIn(c.var.principal), userId, role);
+        await orgs.addMember(signedIn(c.var.principal), userId, role);
         return c.json({ ok: true }, 200);
       })
-      .post("/v1/org/groups", newGroupLink, (c) => {
+      .post("/v1/org/groups", newGroupLink, async (c) => {
         const { groupId, role } = c.req.valid("json");
-        orgs.linkGroup(signedIn(c.var.principal), groupId, role);
+        await orgs.linkGroup(signedIn(c.var.principal), groupId, role);
         return c.json({ ok: true }, 200);
       })
-      .patch("/v1/org/groups/:id", setOrgRole, (c) => {
-        orgs.setGroupRole(signedIn(c.var.principal), c.req.param("id"), c.req.valid("json").role);
+      .patch("/v1/org/groups/:id", setOrgRole, async (c) => {
+        await orgs.setGroupRole(
+          signedIn(c.var.principal),
+          c.req.param("id"),
+          c.req.valid("json").role,
+        );
         return c.json({ ok: true }, 200);
       })
-      .delete("/v1/org/groups/:id", (c) => {
-        orgs.unlinkGroup(signedIn(c.var.principal), c.req.param("id"));
+      .delete("/v1/org/groups/:id", async (c) => {
+        await orgs.unlinkGroup(signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
       })
       .get("/v1/directory/people", pageQuery, (c) => {
@@ -192,8 +196,8 @@ export function orgRoutes(options: { identity: Identity; orgs: Orgs; groups: Gro
       .get("/v1/org/settings", (c) => {
         return c.json(orgs.settings(signedIn(c.var.principal)), 200);
       })
-      .patch("/v1/org/settings", teamSettingsChange, (c) => {
-        return c.json(orgs.setSettings(signedIn(c.var.principal), c.req.valid("json")), 200);
+      .patch("/v1/org/settings", teamSettingsChange, async (c) => {
+        return c.json(await orgs.setSettings(signedIn(c.var.principal), c.req.valid("json")), 200);
       })
       .get("/v1/org/groups", pageQuery, (c) => {
         return c.json(

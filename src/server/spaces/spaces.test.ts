@@ -4,13 +4,13 @@ import * as schema from "@/server/schema.ts";
 import { setup } from "@/server/testing/workspace.ts";
 
 describe("spaces", () => {
-  it("starts every personal org with a space named for the user, owned by them", async () => {
+  it("starts every personal org with a personal space, owned by its user", async () => {
     const { db, signUp, listSpaces } = setup();
     const { userId, cookie } = await signUp("Ada Lovelace", "ada@example.com");
 
     expect(await listSpaces(cookie)).toEqual([
       expect.objectContaining({
-        name: "Ada Lovelace's Space",
+        name: "Personal Space",
         kind: "personal",
         primary: true,
         role: "owner",
@@ -31,24 +31,22 @@ describe("spaces", () => {
     const renamed = await api("PATCH", `/spaces/${work.id}`, cookie, { name: "Research" });
     expect(renamed.status).toBe(200);
     expect((await listSpaces(cookie)).map((space) => space.name)).toEqual([
-      "Ada Lovelace's Space",
+      "Personal Space",
       "Research",
     ]);
 
     expect((await api("DELETE", `/spaces/${work.id}`, cookie)).status).toBe(200);
-    expect((await listSpaces(cookie)).map((space) => space.name)).toEqual(["Ada Lovelace's Space"]);
+    expect((await listSpaces(cookie)).map((space) => space.name)).toEqual(["Personal Space"]);
   });
 
-  it("neither renames nor deletes the first space, which is named for its person", async () => {
+  it("neither renames nor deletes the first space, its personal space", async () => {
     const { api, signUp, listSpaces } = setup();
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
     const [yours] = await listSpaces(cookie);
 
     expect((await api("PATCH", `/spaces/${yours?.id}`, cookie, { name: "Home" })).status).toBe(409);
     expect((await api("DELETE", `/spaces/${yours?.id}`, cookie)).status).toBe(409);
-    expect(await listSpaces(cookie)).toEqual([
-      expect.objectContaining({ name: "Ada Lovelace's Space" }),
-    ]);
+    expect(await listSpaces(cookie)).toEqual([expect.objectContaining({ name: "Personal Space" })]);
   });
 
   it("needs a name of 1 to 80 characters", async () => {
@@ -66,9 +64,7 @@ describe("spaces", () => {
     const grace = await signUp("Grace Hopper", "grace@example.com");
     const work = await createSpace(ada.cookie, "Work");
 
-    expect((await listSpaces(grace.cookie)).map((space) => space.name)).toEqual([
-      "Grace Hopper's Space",
-    ]);
+    expect((await listSpaces(grace.cookie)).map((space) => space.name)).toEqual(["Personal Space"]);
     expect((await api("PATCH", `/spaces/${work.id}`, grace.cookie, { name: "Mine" })).status).toBe(
       404,
     );

@@ -12,6 +12,7 @@ import {
   newThreadSchema,
   pendingChangeSchema,
   retrySchema,
+  threadMoveSchema,
   threadReadSchema,
   threadUpdateSchema,
 } from "@/shared/threads/requests.ts";
@@ -25,6 +26,8 @@ const newThread = jsonBody(
 );
 
 const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or a folder");
+
+const threadMove = jsonBody(threadMoveSchema, "Give a space");
 
 const message = jsonBody(messageInputSchema, "text is required; mode is steer, queue or interrupt");
 
@@ -112,6 +115,10 @@ export function threadRoutes(options: {
       const changes = c.req.valid("json");
       const thread = await threads.update(signedIn(c.var.principal), c.req.param("id"), changes);
       return c.json(thread, 200);
+    })
+    .post("/v1/threads/:id/move", threadMove, (c) => {
+      const { spaceId } = c.req.valid("json");
+      return c.json(threads.move(signedIn(c.var.principal), c.req.param("id"), spaceId), 200);
     })
     .delete("/v1/threads/:id", (c) => {
       threads.remove(signedIn(c.var.principal), c.req.param("id"));

@@ -3,8 +3,8 @@
 // queues for the next reply; the split button also interrupts the reply and sends at once, and the
 // stop button stops it. Everyone sees the tray; each author can edit their own waiting messages,
 // switch them between steering and queueing, or remove them. While the agent waits for a decision
-// on a tool call, the composer says so. Viewers only read, and a line where the composer would be
-// says so. Offline, nothing sends or stops until the app is back online.
+// on a tool call, the composer says so. Viewers only read, as does everyone in an archived space,
+// and a line where the composer would be says so. Offline, nothing sends or stops until the app is back online.
 
 import { ChevronDownIcon, EyeIcon, SquareIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useRef, useState } from "react";
@@ -38,6 +38,7 @@ export function Composer({
   running,
   waiting,
   readOnly,
+  notice = "You can view this thread",
   sending,
   stopping,
   onSend,
@@ -48,6 +49,8 @@ export function Composer({
   // What the agent waits for from people, if anything.
   waiting?: "answer" | "decision" | null;
   readOnly?: boolean;
+  // What the line in its place says while it is read-only.
+  notice?: string;
   sending: boolean;
   stopping: boolean;
   // Throws when the message is not posted, so the composer keeps the text.
@@ -75,7 +78,7 @@ export function Composer({
     return (
       <p className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
         <EyeIcon className="size-4 shrink-0" aria-hidden />
-        You can view this thread
+        {notice}
       </p>
     );
   }

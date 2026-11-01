@@ -38,12 +38,12 @@ test("signing up lands in their own space in the personal org and keeps the sess
   const sidebar = page.locator("[data-sidebar=sidebar]");
   await expect(sidebar.getByText("Ada Lovelace").first()).toBeVisible();
   await expect(page.getByRole("button", { name: "Account menu" })).toContainText("Ada Lovelace");
-  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Ada Lovelace's Space");
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Personal Space");
 
   const url = page.url();
   await page.reload();
   await expect(page).toHaveURL(url);
-  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Ada Lovelace's Space");
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Personal Space");
 
   await page.goto("/login");
   await expect(page).toHaveURL(url);

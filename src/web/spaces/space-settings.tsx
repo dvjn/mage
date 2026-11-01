@@ -1,6 +1,7 @@
 // A space's settings, in pages: General (renaming it, unless it is a person's own space named for
 // them, the model and reasoning effort its new threads start with, or the org's, and deleting it
-// when it is not the primary space, and the agent's instructions there), Members for a shared space,
+// when it is not the primary space, or with its threads when it is a team member's own, and the
+// agent's instructions there), Members for a shared space,
 // the agent's Tools and MCPs there, with one table of MCP servers, the org's that the space may
 // turn off for itself beside its own, and a page for each of its own, and its Skills. They are
 // there only for those who manage it (its owners, and a team org's owners). A team org's owner who manages a space without being in it reads its threads once
@@ -31,6 +32,8 @@ import { spacesQuery } from "@/web/spaces/queries";
 import { spaceThreadsQuery } from "@/web/threads/queries";
 import { NotFound } from "@/web/shell/not-found";
 import { DeleteCard } from "@/web/shell/delete-card";
+import { meQuery } from "@/web/auth/queries";
+import { ownSpaceGoes } from "@/web/spaces/delete-own-space";
 import { useDeleteSpace, useRenameSpace, useSpaceDefaults } from "@/web/spaces/mutations";
 
 const spaceSettingsRoute = getRouteApi("/_app/s/$spaceId/settings");
@@ -117,7 +120,9 @@ function SpaceModel({ space }: { space: SpaceSummary }) {
   );
 }
 
-function DeleteSpace({ space }: { space: SpaceSummary }) {
+// A team org member's own space goes to trash with its threads; any other is deleted once it has
+// none.
+function DeleteSpace({ space, own }: { space: SpaceSummary; own: boolean }) {
   const navigate = useNavigate();
   const threads = useQuery({ ...spaceThreadsQuery(space.id), enabled: space.role !== null });
   const remove = useDeleteSpace(() => navigate({ to: "/" }));
@@ -129,13 +134,15 @@ function DeleteSpace({ space }: { space: SpaceSummary }) {
     <DeleteCard
       title="Delete space"
       description={
-        count > 0
-          ? `It has ${count} ${count === 1 ? "thread" : "threads"}; only a space without threads can be deleted.`
-          : "Only a space without threads can be deleted."
+        own
+          ? "It goes to trash with its threads."
+          : count > 0
+            ? `It has ${count} ${count === 1 ? "thread" : "threads"}; only a space without threads can be deleted.`
+            : "Only a space without threads can be deleted."
       }
-      blocked={count > 0}
+      blocked={!own && count > 0}
       confirmTitle={`Delete ${space.name}?`}
-      confirmDescription="This cannot be undone."
+      confirmDescription={own ? ownSpaceGoes(count) : "This cannot be undone."}
       action="Delete"
       error={remove.error?.message}
       disabled={remove.isPending}
@@ -211,10 +218,13 @@ export function SpaceSettingsShell() {
 }
 
 // Its name, unless it is a person's own space named for them, the model and effort its new
-// threads start with, and deleting it when it is not the primary space.
+// threads start with, and deleting it when it is not the primary space, or with its threads when
+// it is a team member's own.
 export function SpaceGeneral() {
   const { space } = useSettingsSpace();
+  const me = useQuery(meQuery);
   if (!space) return null;
+  const own = me.data?.org.kind === "team" && space.kind === "personal";
   return (
     <>
       <SettingsTitle
@@ -224,7 +234,7 @@ export function SpaceGeneral() {
       {!namedForPerson(space) && <SpaceName key={space.id} space={space} />}
       <SpaceModel space={space} />
       <SpaceInstructions spaceId={space.id} spaceName={space.name} />
-      {!space.primary && <DeleteSpace space={space} />}
+      {(own || !space.primary) && <DeleteSpace space={space} own={own} />}
     </>
   );
 }

@@ -1,7 +1,8 @@
 // Changes to threads: starting one, posting to it and changing or withdrawing a waiting message,
 // stopping and retrying its runs, deciding on and answering its tool calls, its model and effort,
-// and renaming, moving and deleting it. What the server answers with merges into the thread's
-// events; a failure that only an action of the moment can show goes to a toast.
+// and renaming, moving to a folder or another space, and deleting it. What the server answers with
+// merges into the thread's events; a failure that only an action of the moment can show goes to a
+// toast.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
@@ -196,6 +197,26 @@ export function useMoveThread() {
         queryClient.invalidateQueries({ queryKey: ["spaces", thread.spaceId] }),
       ]),
     onError: (failed) => toast(failed.message),
+  });
+}
+
+// Moves a thread to the top of another space.
+export function useMoveThreadToSpace(thread: { id: string; spaceId: string }) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (spaceId: string) => {
+      const res = await apiClient.v1.threads[":id"].move.$post({
+        param: { id: thread.id },
+        json: { spaceId },
+      });
+      if (!res.ok) throw new Error(await errorOf(res));
+    },
+    onSuccess: (_, spaceId) =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: threadQuery(thread.id).queryKey }),
+        queryClient.invalidateQueries({ queryKey: ["spaces", thread.spaceId] }),
+        queryClient.invalidateQueries({ queryKey: ["spaces", spaceId] }),
+      ]),
   });
 }
 

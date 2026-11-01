@@ -246,6 +246,20 @@
       "when": 1793425260205,
       "tag": "0034_mcp_server_slugs",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1793459096090,
+      "tag": "0035_personal_spaces",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1793480369361,
+      "tag": "0036_space_retention",
+      "breakpoints": true
     }
   ]
 }

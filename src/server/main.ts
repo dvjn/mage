@@ -6,7 +6,7 @@ import { serve } from "@hono/node-server";
 
 import { createRichReplies } from "@/server/agent/rich-replies.ts";
 import { createRunStore } from "@/server/agent/run-store.ts";
-import { createRunWorker, dropRefusedWaiting, type RunWorker } from "@/server/agent/runs.ts";
+import { createRunWorker, type RunWorker } from "@/server/agent/runs.ts";
 import { createSystemTools } from "@/server/agent/system-tools.ts";
 import { createToolPolicies } from "@/server/agent/tool-policies.ts";
 import { createToolPolicyStore } from "@/server/agent/tool-policy-store.ts";
@@ -119,17 +119,12 @@ const deltas = createDeltaStore(db);
 const bus = createEventBus();
 const transact = createTransact(db);
 const log = createThreadLog({ threads: threadStore, bus, transact });
-// When people may have lost a role in an org's spaces, their waiting messages there are dropped.
-function accessChanged(orgId: string) {
-  dropRefusedWaiting({ threads: threadStore, spaceStore, runs: runStore, access, log, orgId });
-}
 const spaces = createSpaces({
   spaces: spaceStore,
   threads: threadStore,
   models,
   directory,
   settings: settingStore,
-  accessChanged,
   hooks,
 });
 const folderStore = createFolderStore(db);
@@ -222,6 +217,8 @@ const worker = createRunWorker({
     toolsets: tools.guidanceIn(space),
   }),
   logger,
+  runsIn: (space) => spaces.runsIn(space),
+  hooks,
 });
 
 const orgs = createOrgs({
@@ -232,7 +229,7 @@ const orgs = createOrgs({
   threads: threadStore,
   runs: runStore,
   settings: settingStore,
-  accessChanged,
+  hooks,
   baseUrl: config.baseUrl,
   teamOrgs: config.teamOrgs,
   operatorEmails: config.operatorEmails,
@@ -313,12 +310,27 @@ export default app;
 // each change; the agent worker runs there too, one at a time.
 const developing = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === true;
 if (import.meta.main || developing) {
-  const shared = globalThis as { agentWorker?: RunWorker };
+  const shared = globalThis as {
+    agentWorker?: RunWorker;
+    spaceSweep?: ReturnType<typeof setInterval>;
+  };
   await shared.agentWorker?.stop();
   // Runs a stopped server left running are settled before anyone reads them.
   worker.recover();
   worker.start();
   shared.agentWorker = worker;
+  // Spaces kept in trash or archived for too long are deleted on start and then every hour.
+  const sweep = () => {
+    try {
+      const deleted = spaces.sweep();
+      if (deleted > 0) logger.info({ deleted }, "deleted expired spaces");
+    } catch (err) {
+      logger.error({ err }, "could not delete expired spaces");
+    }
+  };
+  clearInterval(shared.spaceSweep);
+  sweep();
+  shared.spaceSweep = setInterval(sweep, 60 * 60 * 1000).unref();
 }
 
 if (import.meta.main) {

@@ -3,13 +3,14 @@
 // back, joining through one, adding people and linking groups from the directory, removing members,
 // the settings owners choose for the org's spaces, and renaming and deleting a team org. A member's
 // role is the highest of their own and their linked groups'; whenever one of those changes, the org
-// is settled, and people who joined get their own space and those who left lose what they had. A
-// team org keeps at least one owner in their own right, so the directory cannot leave it without.
+// is settled, and the app told who joined and who left.
+// A team org keeps at least one owner in their own right, so the directory cannot leave it without.
 
 import { createHash, randomBytes } from "node:crypto";
 
 import type { RunStore } from "@/server/agent/runs.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
+import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { SpaceStore, Spaces } from "@/server/spaces/service.ts";
 import type { ThreadStore } from "@/server/threads/service.ts";
 import type {
@@ -67,7 +68,8 @@ export interface OrgSettings {
   defaultEffort: Effort | null;
   // Who may make shared spaces in a team org.
   spaceCreation: "members" | "owners";
-  // Whether each member of a team org gets a private space of their own on joining.
+  // Whether a team org's members may make a private space of their own; while not, the ones made
+  // are archived.
   memberSpaces: boolean;
   // Whether a space's managers may add MCP servers for it, and its threads use them.
   spaceMcpServers: boolean;
@@ -91,20 +93,29 @@ export interface OrgSettingStore {
 export interface OrgsOptions {
   directory: Directory;
   invites: OrgInviteStore;
-  spaces: Pick<Spaces, "ensureMemberSpace" | "list">;
+  spaces: Pick<Spaces, "list">;
   spaceStore: Pick<SpaceStore, "create" | "find">;
   threads: Pick<ThreadStore, "find">;
   // The agent's runs, stopped in an org being deleted.
   runs: Pick<RunStore, "activeThreadIds" | "requestCancel">;
   settings: Pick<OrgSettingStore, "get" | "setTeamSettings">;
-  // Told when people may have lost a role in the org's spaces.
-  accessChanged?: (orgId: string) => void;
+  hooks?: Hooks;
   // Where the app is served; invite links lead there.
   baseUrl: string;
   // Who may create team orgs, and the accounts that run the server.
   teamOrgs: "everyone" | "operator";
   operatorEmails: string[];
   now?: () => Date;
+}
+
+declare module "@/server/kernel/hooks.ts" {
+  interface HookEvents {
+    // The org allows its members' own spaces again, or no longer does and they are archived.
+    "org.personalSpacesChanged": { orgId: string; allowed: boolean };
+    // The org's members were settled: some joined or came back, some left, or someone's role
+    // changed, so people may have lost a role in its spaces.
+    "org.membersSettled": { orgId: string; joined: string[]; left: string[] };
+  }
 }
 
 export type Orgs = ReturnType<typeof createOrgs>;
@@ -133,7 +144,6 @@ export function maskEmail(email: string) {
 export function createOrgs(options: OrgsOptions) {
   const { directory, invites, spaces, spaceStore, threads, runs, settings, baseUrl } = options;
   const now = options.now ?? (() => new Date());
-  const accessChanged = options.accessChanged ?? (() => {});
 
   function canCreate(email: string) {
     return options.teamOrgs === "everyone" || options.operatorEmails.includes(email.toLowerCase());
@@ -155,12 +165,11 @@ export function createOrgs(options: OrgsOptions) {
     return directory.directOwnerCount(orgId);
   }
 
-  // Brings the org's members, or only the users', in line with their roles; those who joined get
-  // their own space, and if anyone lost a role their waiting messages are checked.
-  function settle(orgId: string, userIds?: string[]) {
-    const settled = directory.settle(orgId, now(), userIds);
-    for (const userId of settled.joined) spaces.ensureMemberSpace(orgId, userId);
-    if (settled.changed) accessChanged(orgId);
+  // Brings the org's members, or only the users', in line with their roles, and tells the app
+  // when anything changed.
+  async function settle(orgId: string, userIds?: string[]) {
+    const { joined, left, changed } = directory.settle(orgId, now(), userIds);
+    if (changed) await options.hooks?.run("org.membersSettled", { orgId, joined, left });
   }
 
   function requireDirectoryPerson(userId: string) {
@@ -258,8 +267,8 @@ export function createOrgs(options: OrgsOptions) {
       return orgId && directory.roleIn(orgId, account.userId) ? orgId : null;
     },
 
-    // A team org with its creator as owner, its General space open to everyone in it, and the
-    // creator's own space when the org gives members one.
+    // A team org with its creator as owner and its General space open to everyone in it. Its
+    // members' own spaces start off; its owners may allow them.
     async create(account: Account, name: string) {
       if (!canCreate(account.email)) {
         throw new ServiceError(403, "Only the server's operators can create organizations");
@@ -272,7 +281,7 @@ export function createOrgs(options: OrgsOptions) {
         everyoneRole: "messager",
         createdBy: account.userId,
       });
-      spaces.ensureMemberSpace(org.id, account.userId);
+      settings.setTeamSettings(org.id, { memberSpaces: false });
       return { orgId: org.id, spaceId: general.id };
     },
 
@@ -403,7 +412,7 @@ export function createOrgs(options: OrgsOptions) {
         if (!role) return { orgId: found.orgId, spaceId: null };
         const list = spaces
           .list({ userId: account.userId, orgId: found.orgId, role })
-          .filter((space) => space.role);
+          .filter((space) => space.role && !space.archived);
         const space = list.find((s) => s.kind === "shared") ?? list[0];
         return { orgId: found.orgId, spaceId: space?.id ?? null };
       };
@@ -421,24 +430,28 @@ export function createOrgs(options: OrgsOptions) {
         throw new ServiceError(410, REFUSED.used, "used");
       }
       await directory.addMember(found.orgId, account.userId, found.role);
-      spaces.ensureMemberSpace(found.orgId, account.userId);
+      await options.hooks?.run("org.membersSettled", {
+        orgId: found.orgId,
+        joined: [account.userId],
+        left: [],
+      });
       return landing();
     },
 
     // Gives the member a role of their own; their role is then the higher of it and their groups'.
-    setRole(principal: Principal, userId: string, role: OrgRole) {
+    async setRole(principal: Principal, userId: string, role: OrgRole) {
       requireOwner(principal);
       const member = standing(principal.orgId, userId);
       if (member.directRole === "owner" && role !== "owner" && ownerCount(principal.orgId) === 1) {
         throw new ServiceError(409, "An organization needs at least one owner");
       }
       directory.setDirectRole(principal.orgId, userId, role);
-      settle(principal.orgId, [userId]);
+      await settle(principal.orgId, [userId]);
     },
 
     // Takes back the member's own role. Without a linked group to keep them in, they leave the org
     // with their roles in its spaces, and their waiting messages there are dropped.
-    removeMember(principal: Principal, userId: string) {
+    async removeMember(principal: Principal, userId: string) {
       requireOwner(principal);
       const member = standing(principal.orgId, userId);
       if (!member.directRole) {
@@ -451,41 +464,41 @@ export function createOrgs(options: OrgsOptions) {
         throw new ServiceError(409, "An organization needs at least one owner");
       }
       directory.setDirectRole(principal.orgId, userId, null);
-      settle(principal.orgId, [userId]);
+      await settle(principal.orgId, [userId]);
     },
 
     // Adds someone from the directory with a role of their own.
-    addMember(principal: Principal, userId: string, role: OrgRole) {
+    async addMember(principal: Principal, userId: string, role: OrgRole) {
       requireOwner(principal);
       requireDirectoryPerson(userId);
       directory.setDirectRole(principal.orgId, userId, role);
-      settle(principal.orgId, [userId]);
+      await settle(principal.orgId, [userId]);
     },
 
     // Links a directory group: everyone active in it is a member with at least the role.
-    linkGroup(principal: Principal, groupId: string, role: OrgRole) {
+    async linkGroup(principal: Principal, groupId: string, role: OrgRole) {
       requireOwner(principal);
       if (!directory.group(groupId)) throw new ServiceError(404, "Group not found");
       if (directory.linkedRole(principal.orgId, groupId)) {
         throw new ServiceError(409, "That group is already linked");
       }
       directory.linkGroup(principal.orgId, groupId, role);
-      settle(principal.orgId);
+      await settle(principal.orgId);
     },
 
-    setGroupRole(principal: Principal, groupId: string, role: OrgRole) {
+    async setGroupRole(principal: Principal, groupId: string, role: OrgRole) {
       requireOwner(principal);
       requireLinked(principal.orgId, groupId);
       directory.linkGroup(principal.orgId, groupId, role);
-      settle(principal.orgId);
+      await settle(principal.orgId);
     },
 
     // Unlinks the group with the roles the org's spaces gave it; people in only through it leave.
-    unlinkGroup(principal: Principal, groupId: string) {
+    async unlinkGroup(principal: Principal, groupId: string) {
       requireOwner(principal);
       requireLinked(principal.orgId, groupId);
       directory.unlinkGroup(principal.orgId, groupId);
-      settle(principal.orgId);
+      await settle(principal.orgId);
     },
 
     // A page of the directory's people by name, with their role in the org, for adding them.
@@ -503,9 +516,9 @@ export function createOrgs(options: OrgsOptions) {
     // The directory changed the person or the groups they are in. Once it turned them off or
     // deleted them, their own roles in team orgs go, except where they are the last owner in their
     // own right. Each team org they are in, or could be through a group, is settled for them.
-    directoryChanged(userId: string, active: boolean) {
+    async directoryChanged(userId: string, active: boolean) {
       if (!active) directory.clearDirectRoles(userId);
-      for (const orgId of directory.orgsToSettle(userId)) settle(orgId, [userId]);
+      for (const orgId of directory.orgsToSettle(userId)) await settle(orgId, [userId]);
     },
 
     rename(principal: Principal, name: string) {
@@ -530,9 +543,14 @@ export function createOrgs(options: OrgsOptions) {
 
     settings: teamSettings,
 
-    setSettings(principal: Principal, changes: Partial<TeamSettings>): TeamSettings {
+    async setSettings(principal: Principal, changes: Partial<TeamSettings>): Promise<TeamSettings> {
       requireOwner(principal);
+      const before = settings.get(principal.orgId).memberSpaces;
       settings.setTeamSettings(principal.orgId, changes);
+      const allowed = changes.memberSpaces;
+      if (allowed !== undefined && allowed !== before) {
+        await options.hooks?.run("org.personalSpacesChanged", { orgId: principal.orgId, allowed });
+      }
       return teamSettings(principal);
     },
   };

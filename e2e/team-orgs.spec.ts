@@ -175,7 +175,7 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await spaceMembers.getByRole("button", { name: "About Grace Hopper" }).hover();
   await expect(page.getByText(graceEmail).last()).toBeVisible();
 
-  // Owners see every space of the org, members' private ones marked with their person.
+  // Owners see every space of the org; members make none of their own until it is allowed.
   await page.goto("/org/general");
   await page
     .getByRole("navigation", { name: "Organization settings" })
@@ -184,7 +184,8 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await expect(page).toHaveURL("/org/spaces");
   const spaces = page.getByRole("table", { name: "Spaces" });
   await expect(spaces.getByRole("row", { name: "Loom room" })).toBeVisible();
-  await expect(spaces.getByRole("row", { name: "Grace Hopper's Space" })).toContainText("Private");
+  await expect(spaces.getByRole("row", { name: /'s Space/ })).toHaveCount(0);
+  await expect(page.getByRole("switch", { name: "Personal spaces" })).not.toBeChecked();
   await expect(page.getByLabel("Who can create spaces")).toContainText("Every member");
 
   // Grace reads the thread but cannot write in it.
@@ -225,6 +226,145 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await expect(
     transcript(page).getByRole("article", { name: "Message from Grace Hopper" }).first(),
   ).toContainText("former member");
+});
+
+test("personal spaces: allowed, made, archived read-only, a thread moved out, restored", async ({
+  page,
+}) => {
+  await page.goto("/signup");
+  await fillSignUp(page, "Ada Lovelace", `ada-${crypto.randomUUID()}@example.com`);
+  await expect(page).toHaveURL(/\/s\/[^/]+$/);
+  await openSpaceMenu(page);
+  await page.getByRole("menuitem", { name: "New organization" }).click();
+  await page.getByLabel("Organization name").fill("Difference Engines");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL("/org/general");
+
+  // Off in a new org, and nobody can make one.
+  await page.goto("/org/spaces");
+  const allowed = page.getByRole("switch", { name: "Personal spaces" });
+  await expect(allowed).not.toBeChecked();
+  await openSpaceMenu(page);
+  await expect(page.getByRole("menuitem", { name: "Create my space" })).toBeHidden();
+  await page.reload();
+
+  // Allowed, Ada makes hers and writes in it.
+  await allowed.click();
+  await expect(allowed).toBeChecked();
+  await openSpaceMenu(page);
+  await page.getByRole("menuitem", { name: "Create my space" }).click();
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Personal Space");
+  const own = page.url();
+  await send(page, "Notes on the engine");
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  await expect(transcript(page).getByRole("article", { name: "Message from Agent" })).toHaveText(
+    /I have read 1 message/,
+  );
+  const thread = page.url();
+  await openSpaceMenu(page);
+  await expect(page.getByRole("menuitem", { name: "Create my space" })).toBeHidden();
+
+  // Turned off, after a confirmation, her space is archived.
+  await page.goto("/org/spaces");
+  await allowed.click();
+  const confirm = page.getByRole("alertdialog");
+  await expect(confirm).toContainText(
+    "Members' personal spaces will be archived until this is turned back on.",
+  );
+  await confirm.getByRole("button", { name: "Turn off" }).click();
+  await expect(allowed).not.toBeChecked();
+  await expect(page.getByRole("table", { name: "Spaces" })).toContainText("Archived");
+
+  // She reads it, but cannot write in it.
+  await page.goto(own);
+  await expect(page.getByText("This space is archived")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delete space" })).toBeVisible();
+  await page.goto(thread);
+  await expect(transcript(page)).toContainText("Notes on the engine");
+  await expect(page.getByText("This space is archived")).toBeVisible();
+  await expect(page.getByLabel("Message", { exact: true })).toBeHidden();
+  await openSpaceMenu(page);
+  await expect(page.getByRole("menuitem", { name: "Personal Space" })).toBeVisible();
+  await page.reload();
+
+  // She moves the thread to General, where she writes in it again.
+  await page.getByRole("button", { name: "Move" }).click();
+  const move = page.getByRole("dialog");
+  await move.getByLabel("Space").click();
+  await page.getByRole("option", { name: "General" }).click();
+  await move.getByRole("button", { name: "Move" }).click();
+  await expect(page.locator("[data-slot=breadcrumb]")).toContainText("General");
+  await expect(page.getByLabel("Message", { exact: true })).toBeVisible();
+
+  // Turned back on, her space is hers to write in again.
+  await page.goto("/org/spaces");
+  await allowed.click();
+  await expect(allowed).toBeChecked();
+  await page.goto(own);
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Personal Space");
+  await expect(page.getByText("This space is archived")).toBeHidden();
+  await expect(page.getByLabel("Message", { exact: true })).toBeVisible();
+});
+
+test("personal spaces: deleted to trash, restored, and deleted for good", async ({ page }) => {
+  await page.goto("/signup");
+  await fillSignUp(page, "Ada Lovelace", `ada-${crypto.randomUUID()}@example.com`);
+  await expect(page).toHaveURL(/\/s\/[^/]+$/);
+  await openSpaceMenu(page);
+  await page.getByRole("menuitem", { name: "New organization" }).click();
+  await page.getByLabel("Organization name").fill("Difference Engines");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL("/org/general");
+  await page.goto("/org/spaces");
+  await page.getByRole("switch", { name: "Personal spaces" }).click();
+  await expect(page.getByRole("switch", { name: "Personal spaces" })).toBeChecked();
+  await openSpaceMenu(page);
+  await page.getByRole("menuitem", { name: "Create my space" }).click();
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Personal Space");
+  const own = page.url();
+  await send(page, "Notes on the engine");
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+
+  // Deleted, it goes to trash with its thread.
+  await page.goto(`${own}/settings`);
+  await page.getByRole("button", { name: "Delete space" }).click();
+  const confirm = page.getByRole("alertdialog");
+  await expect(confirm).toContainText("It goes to trash with its thread for 30 days.");
+  await confirm.getByRole("button", { name: "Delete" }).click();
+  await expect(page).not.toHaveURL(own);
+  await openSpaceMenu(page);
+  await expect(page.getByRole("menuitem", { name: "Personal Space" })).toBeHidden();
+  await page.keyboard.press("Escape");
+
+  // The org's owners find it under Trash, and restore it.
+  await page.goto("/org/spaces");
+  await expect(page.getByRole("table", { name: "Spaces" })).not.toContainText("Personal Space");
+  await page.getByRole("button", { name: "Trash" }).click();
+  const trash = page.getByRole("dialog", { name: "Trash" });
+  const trashed = trash.getByRole("listitem", { name: "Personal Space" });
+  await expect(trashed).toContainText("1 thread");
+  await trashed.getByRole("button", { name: "Restore" }).click();
+  await expect(trash).toContainText("Nothing in trash");
+  await page.keyboard.press("Escape");
+  await page.goto(own);
+  await expect(page.getByRole("table", { name: "Threads" })).toContainText("Notes on the engine");
+
+  // Deleted again, she finds it under Trash in her space menu, and deletes it for good.
+  await page.goto(`${own}/settings`);
+  await page.getByRole("button", { name: "Delete space" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Delete" }).click();
+  await expect(page).not.toHaveURL(`${own}/settings`);
+  await openSpaceMenu(page);
+  await page.getByRole("menuitem", { name: "Trash" }).click();
+  await trash
+    .getByRole("listitem", { name: "Personal Space" })
+    .getByRole("button", { name: "Delete" })
+    .click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Delete" }).click();
+  await expect(trash).toContainText("Nothing in trash");
+  await page.keyboard.press("Escape");
+  await page.goto(own);
+  await expect(page.getByText("This space does not exist or is not yours.")).toBeVisible();
 });
 
 test("an owner renames an org and then deletes it", async ({ page }) => {

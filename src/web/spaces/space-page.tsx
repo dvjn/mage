@@ -1,12 +1,13 @@
 // A space: a new thread's composer for those who can write in it, and its threads a page at a time
 // by when they were last active, each with its status for the reader and who has written in it,
 // narrowed by title or newest message, to one folder, once there are any, and to those that need
-// the reader or have something new for them.
+// the reader or have something new for them. A person's own archived space only lists its threads,
+// and may be deleted with them.
 
 import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
-import { LockIcon, MessagesSquareIcon } from "lucide-react";
+import { ArchiveIcon, LockIcon, MessagesSquareIcon, Trash2Icon } from "lucide-react";
 import { useEffect } from "react";
 import * as z from "zod";
 
@@ -20,6 +21,7 @@ import { lenient, tableSearchSchema } from "@/web/lib/data-table";
 import { rememberSpace } from "@/web/spaces/last-space";
 import { spaceThreadsPage } from "@/web/api/list-queries";
 import { spaceFoldersQuery } from "@/web/folders/queries";
+import { DeleteOwnSpace } from "@/web/spaces/delete-own-space";
 import { spacesQuery } from "@/web/spaces/queries";
 import { PageHeader, pageWidth } from "@/web/shell/page-header";
 import { NotFound } from "@/web/shell/not-found";
@@ -40,7 +42,8 @@ export function SpacePage() {
   const space = spaces.data?.find((s) => s.id === spaceId);
   // A team org's owner who manages the space without being in it does not see its threads.
   const reads = space?.role !== null;
-  const writes = space?.role === "owner" || space?.role === "messager";
+  const archived = !!space?.archived;
+  const writes = !archived && (space?.role === "owner" || space?.role === "messager");
   const page = useQuery({ ...spaceThreadsPage(spaceId)(search), enabled: reads });
   const folders = useQuery({ ...spaceFoldersQuery(spaceId), enabled: reads });
 
@@ -75,9 +78,28 @@ export function SpacePage() {
 
   return (
     <>
-      <PageHeader crumbs={[{ label: space?.name ?? "" }]} />
+      <PageHeader crumbs={[{ label: space?.name ?? "" }]}>
+        {space && archived && (
+          <div className="px-4">
+            <DeleteOwnSpace
+              space={space}
+              threads={page.data?.total}
+              trigger={<Button variant="outline" size="sm" />}
+            >
+              <Trash2Icon />
+              Delete space
+            </DeleteOwnSpace>
+          </div>
+        )}
+      </PageHeader>
       <div className={cn(pageWidth, "flex flex-col gap-6 p-4 pb-12")}>
         {writes && <NewThreadComposer spaceId={spaceId} />}
+        {archived && (
+          <p className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+            <ArchiveIcon className="size-4 shrink-0" aria-hidden />
+            This space is archived
+          </p>
+        )}
         <ThreadTable
           label="Threads"
           page={page}
@@ -91,9 +113,11 @@ export function SpacePage() {
           empty={{
             icon: <MessagesSquareIcon />,
             title: "No threads yet",
-            description: writes
-              ? "Write above to start one."
-              : "Threads show here once someone who can write in this space starts one.",
+            description: archived
+              ? undefined
+              : writes
+                ? "Write above to start one."
+                : "Threads show here once someone who can write in this space starts one.",
           }}
         />
       </div>

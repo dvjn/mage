@@ -211,7 +211,7 @@ export const groupMemberPageSchema = pageSchema(groupMemberSchema);
 export const teamSettingsSchema = z.object({
   // Who may make shared spaces.
   spaceCreation: z.enum(["members", "owners"]),
-  // Whether each member gets a private space of their own on joining.
+  // Whether members may make a private space of their own; while not, the ones made are archived.
   memberSpaces: z.boolean(),
 });
 

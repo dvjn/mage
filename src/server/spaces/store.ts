@@ -1,13 +1,14 @@
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { alias } from "drizzle-orm/sqlite-core";
 import { ulid } from "ulid";
 
 import { FIRST_SPACE_NAME, spaceNameFor } from "@/shared/spaces.ts";
 import { type Db, writeLock } from "@/server/db/db.ts";
 import { after, containing, pageLimit, pageOf } from "@/server/db/paging.ts";
-import { scimGroup, user } from "@/server/orgs/schema.ts";
+import { organization, scimGroup, user } from "@/server/orgs/schema.ts";
 
 import { space, spaceMember } from "./schema.ts";
-import type { Grant, Space, SpaceRole, SpaceStore, Subject } from "./service.ts";
+import type { Grant, Space, SpaceRole, SpaceStore, Subject, TrashedSpace } from "./service.ts";
 
 // What follows a person's name in their first space's name, as the one naming function gives it.
 const SPACE_SUFFIX = spaceNameFor({ name: FIRST_SPACE_NAME, kind: "personal", primary: true }, "");
@@ -22,6 +23,9 @@ const columns = {
   defaultEffort: space.defaultEffort,
   everyoneRole: space.everyoneRole,
   createdBy: space.createdBy,
+  archivedAt: space.archivedAt,
+  trashedAt: space.trashedAt,
+  trashedBy: space.trashedBy,
   createdAt: space.createdAt,
   updatedAt: space.updatedAt,
 };
@@ -44,7 +48,9 @@ export function createSpaceStore(db: Db): SpaceStore {
   // groups, and to everyone in the org while they are a member of it.
   function roleRows(userId: string, where: { orgId: string } | { spaceId: string }) {
     const scope =
-      "orgId" in where ? sql`s.organization_id = ${where.orgId}` : sql`s.id = ${where.spaceId}`;
+      "orgId" in where
+        ? sql`s.organization_id = ${where.orgId} and s.trashed_at is null`
+        : sql`s.id = ${where.spaceId} and s.trashed_at is null`;
     return db.all<{ spaceId: string; role: SpaceRole }>(sql`
       select sm.space_id as spaceId, sm.role as role
         from space_member sm join space s on s.id = sm.space_id
@@ -92,7 +98,7 @@ export function createSpaceStore(db: Db): SpaceStore {
       return db
         .select(columns)
         .from(space)
-        .where(eq(space.organizationId, orgId))
+        .where(and(eq(space.organizationId, orgId), isNull(space.trashedAt)))
         .orderBy(desc(space.primary), asc(space.createdAt), asc(space.id))
         .all();
     },
@@ -195,7 +201,7 @@ export function createSpaceStore(db: Db): SpaceStore {
                     then coalesce(u.name, 'A former member') || ${SPACE_SUFFIX} else s.name end
                  as displayName
           from space s left join user u on u.id = s.created_by
-         where s.organization_id = ${orgId}`;
+         where s.organization_id = ${orgId} and s.trashed_at is null`;
       const where = sql`${containing(params.q, sql`displayName`)}
         ${params.kind ? sql`and kind = ${params.kind}` : sql``}
         ${
@@ -221,13 +227,13 @@ export function createSpaceStore(db: Db): SpaceStore {
           const found = db.select(columns).from(space).where(eq(space.id, row.id)).get()!;
           const counts = db.get<{ members: number; threads: number }>(sql`
             select (select count(*) from space_member where space_id = ${row.id}) as members,
-                   exists(select 1 from thread where space_id = ${row.id}) as threads`);
+                   (select count(*) from thread where space_id = ${row.id}) as threads`);
           return {
             ...found,
             displayName: row.displayName,
             ownerName: row.ownerName,
             memberCount: counts?.members ?? 0,
-            hasThreads: !!counts?.threads,
+            threadCount: counts?.threads ?? 0,
           };
         }),
       };
@@ -275,6 +281,7 @@ export function createSpaceStore(db: Db): SpaceStore {
               eq(space.kind, "personal"),
               eq(space.primary, true),
               eq(space.createdBy, userId),
+              isNull(space.trashedAt),
             ),
           )
           .get() ?? null
@@ -286,7 +293,13 @@ export function createSpaceStore(db: Db): SpaceStore {
       return db
         .select(columns)
         .from(space)
-        .where(and(eq(space.organizationId, orgId), inArray(space.defaultModel, refs)))
+        .where(
+          and(
+            eq(space.organizationId, orgId),
+            inArray(space.defaultModel, refs),
+            isNull(space.trashedAt),
+          ),
+        )
         .orderBy(asc(space.name))
         .all();
     },
@@ -315,6 +328,50 @@ export function createSpaceStore(db: Db): SpaceStore {
 
     delete(id) {
       db.delete(space).where(eq(space.id, id)).run();
+    },
+
+    setArchivedAt(id, at) {
+      db.update(space).set({ archivedAt: at }).where(eq(space.id, id)).run();
+    },
+
+    trash(id, by, at) {
+      db.update(space).set({ trashedAt: at, trashedBy: by }).where(eq(space.id, id)).run();
+    },
+
+    untrash(id) {
+      db.update(space).set({ trashedAt: null, trashedBy: null }).where(eq(space.id, id)).run();
+    },
+
+    trashedIn(orgId) {
+      const trasher = alias(user, "trasher");
+      return db
+        .select({
+          ...columns,
+          ownerName: user.name,
+          trashedByName: trasher.name,
+          threadCount: sql<number>`(select count(*) from thread where space_id = ${space.id})`,
+        })
+        .from(space)
+        .leftJoin(user, eq(user.id, space.createdBy))
+        .leftJoin(trasher, eq(trasher.id, space.trashedBy))
+        .where(and(eq(space.organizationId, orgId), isNotNull(space.trashedAt)))
+        .orderBy(desc(space.trashedAt), desc(space.id))
+        .all() as TrashedSpace[];
+    },
+
+    trashedBefore(at) {
+      return db.select(columns).from(space).where(lte(space.trashedAt, at)).all();
+    },
+
+    memberSpaces() {
+      return db
+        .select(columns)
+        .from(space)
+        .innerJoin(organization, eq(organization.id, space.organizationId))
+        .where(
+          and(eq(organization.kind, "team"), eq(space.kind, "personal"), isNull(space.trashedAt)),
+        )
+        .all();
     },
   };
 }

@@ -18,7 +18,7 @@ async function signUp(page: Page) {
   await page.getByLabel("Confirm password").fill("correct horse battery");
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(/\/s\/[^/]+$/);
-  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Ada Lovelace's Space");
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Personal Space");
 }
 
 function messages(page: Page) {
@@ -56,7 +56,7 @@ test("a second space can be made, renamed and switched from the sidebar header",
   await signUp(page);
   const sidebar = page.locator("[data-sidebar=sidebar]");
   const switcher = page.getByRole("button", { name: "Switch space" });
-  await expect(switcher).toContainText("AL");
+  await expect(switcher).toContainText("PS");
   await expect(switcher).toContainText("Personal");
   await page.getByLabel("Message", { exact: true }).fill("Engines");
   await page.getByLabel("Message", { exact: true }).press("Enter");
@@ -86,9 +86,9 @@ test("a second space can be made, renamed and switched from the sidebar header",
   await switcher.click();
   const menu = page.getByRole("menu");
   await expect(menu.getByRole("menuitem", { name: "Mills" })).toContainText("(active)");
-  await menu.getByRole("menuitem", { name: "Ada Lovelace's Space" }).click();
-  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Ada Lovelace's Space");
-  await expect(switcher).toContainText("Ada Lovelace's Space");
+  await menu.getByRole("menuitem", { name: "Personal Space" }).click();
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Personal Space");
+  await expect(switcher).toContainText("Personal Space");
   await expect(sidebar.getByRole("link", { name: "Engines" })).toBeVisible();
   await settings.click();
   await expect(page.getByRole("button", { name: "Delete space" })).toHaveCount(0);
@@ -112,7 +112,7 @@ test("an empty space is deleted from its settings, after a confirmation", async 
   await confirm.getByRole("button", { name: "Delete" }).click();
 
   await expect(page).toHaveURL(/\/s\/[^/]+$/);
-  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Ada Lovelace's Space");
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Personal Space");
   await switcher.click();
   await expect(page.getByRole("menuitem", { name: "Scratch" })).toHaveCount(0);
 });

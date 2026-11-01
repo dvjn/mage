@@ -20,7 +20,10 @@ export type NeedsYouItem =
 export function useNeedsYou(): { items: NeedsYouItem[]; total: number } {
   const place = usePlace();
   const me = useQuery(meQuery);
-  const spaceId = place?.kind === "space" && place.space.role ? place.space.id : undefined;
+  const spaceId =
+    place?.kind === "space" && place.space.role && !place.space.archived
+      ? place.space.id
+      : undefined;
   const threads = useQuery({ ...spaceThreadsQuery(spaceId ?? ""), enabled: !!spaceId });
   const shared = useQuery(sharedThreadsQuery);
   const userId = me.data?.user.id;

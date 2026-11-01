@@ -1,9 +1,10 @@
 // The sidebar's header: where the person is. In a space, its initials and name over how its org is
 // named to them; in the threads shared with them, "Shared with you" over how many there are. Its
 // menu switches to another space, the active one checked: the person's own spaces, then those they
-// joined with their role, then the threads shared with them, counted, and making a new space where the
-// org lets them; above them the org this tab is in, opening its settings, and below them switching
-// to another org and making a new one. A search at the top narrows the spaces as you type, and
+// joined with their role, then their own archived space and the trash, when it holds spaces they
+// may restore, then the threads shared with them, counted, and making a new space, or their own
+// one, where the org lets them; above them the org this tab is in, opening its settings, and below
+// them switching to another org and making a new one. A search at the top narrows the spaces as you type, and
 // Enter opens the first match; the orgs' submenu has its own. The spaces scroll between the org
 // header, which steps aside while searching, and "New space" and what sits below it.
 
@@ -16,6 +17,7 @@ import {
   ChevronsUpDownIcon,
   PlusIcon,
   SettingsIcon,
+  Trash2Icon,
   UsersIcon,
 } from "lucide-react";
 import { useState } from "react";
@@ -24,6 +26,7 @@ import { orgSubtitle } from "@/shared/me.ts";
 import { type OrgSummary } from "@/shared/orgs.ts";
 import { type SpaceSummary } from "@/shared/spaces.ts";
 import { NameDialog } from "@/web/components/name-dialog";
+import { useToast } from "@/web/shell/toaster";
 import { Badge } from "@/web/components/ui/badge";
 import {
   DropdownMenu,
@@ -54,9 +57,10 @@ import { switchOrg, tabOrg } from "@/web/lib/org-tab";
 import { meQuery } from "@/web/auth/queries";
 import { sharedThreadsQuery } from "@/web/guests/queries";
 import { orgsQuery, teamSettingsQuery } from "@/web/orgs/queries";
-import { spacesQuery } from "@/web/spaces/queries";
+import { spacesQuery, spaceTrashQuery } from "@/web/spaces/queries";
+import { SpaceTrash } from "@/web/spaces/space-trash";
 import { ROLE_LABELS } from "@/web/spaces/roles";
-import { useCreateOrg, useCreateSpace } from "@/web/spaces/mutations";
+import { useCreateMySpace, useCreateOrg, useCreateSpace } from "@/web/spaces/mutations";
 
 function SpaceRow({
   space,
@@ -67,7 +71,7 @@ function SpaceRow({
   space: SpaceSummary;
   active: boolean;
   onSelect: () => void;
-  // A space the person manages but is not in.
+  // A space the person manages but is not in, or their own archived one.
   muted?: boolean;
 }) {
   return (
@@ -190,6 +194,7 @@ function NoMatch({ children }: { children: string }) {
 export function SpaceSwitcher() {
   const { isMobile } = useSidebar();
   const navigate = useNavigate();
+  const toast = useToast();
   const me = useQuery(meQuery);
   const spaces = useQuery(spacesQuery);
   const sharedThreads = useQuery(sharedThreadsQuery);
@@ -199,26 +204,38 @@ export function SpaceSwitcher() {
   const [adding, setAdding] = useState(false);
   const [creatingOrg, setCreatingOrg] = useState(false);
   const createSpace = useCreateSpace();
+  const mine = useCreateMySpace();
   const newOrg = useCreateOrg();
   const tab = tabOrg();
   const active = place?.kind === "space" ? place.space : undefined;
   const team = me.data?.org.kind === "team";
   const settings = useQuery({ ...teamSettingsQuery, enabled: team });
+  const trash = useQuery({ ...spaceTrashQuery, enabled: team });
+  const [trashOpen, setTrashOpen] = useState(false);
   const canCreate =
     !team || me.data?.role === "owner" || settings.data?.spaceCreation === "members";
-  const yours = spaces.data?.filter((space) => space.role === "owner") ?? [];
+  const yours = spaces.data?.filter((space) => space.role === "owner" && !space.archived) ?? [];
   const joined =
     spaces.data?.filter((space) => space.role === "messager" || space.role === "viewer") ?? [];
+  const archived = spaces.data?.filter((space) => space.archived) ?? [];
+  // A team org's member may make a space of their own once, while the org allows it.
+  const canCreateMine =
+    team &&
+    !!settings.data?.memberSpaces &&
+    !!spaces.data &&
+    !spaces.data.some((space) => space.kind === "personal" && space.role === "owner");
   const [query, setQuery] = useState("");
   const { contains } = useDropdownMenuFilter();
   const shownYours = yours.filter((space) => contains(space.name, query));
   const shownJoined = joined.filter((space) => contains(space.name, query));
+  const shownArchived = archived.filter((space) => contains(space.name, query));
   const orgsInline = isMobile && (orgs.data?.orgs.length ?? 0) > 1;
   const shownOrgs = orgsInline
     ? (orgs.data?.orgs ?? []).filter((one) => contains(orgLabel(one), query))
     : [];
   const nothing =
-    query.trim() !== "" && shownYours.length + shownJoined.length + shownOrgs.length === 0;
+    query.trim() !== "" &&
+    shownYours.length + shownJoined.length + shownArchived.length + shownOrgs.length === 0;
 
   function create(name: string) {
     return createSpace.mutateAsync(name).then(
@@ -226,6 +243,13 @@ export function SpaceSwitcher() {
         navigate({ to: "/s/$spaceId", params: { spaceId: space.id } }).then(() => undefined),
       (failed: Error) => failed.message,
     );
+  }
+
+  function createMine() {
+    mine.mutate(undefined, {
+      onSuccess: (space) => navigate({ to: "/s/$spaceId", params: { spaceId: space.id } }),
+      onError: (failed) => toast(failed.message),
+    });
   }
 
   function createOrg(name: string) {
@@ -330,6 +354,33 @@ export function SpaceSwitcher() {
                     ))}
                   </DropdownMenuGroup>
                 )}
+                {shownArchived.length > 0 && (
+                  <DropdownMenuGroup>
+                    <DropdownMenuLabel className="text-xs text-muted-foreground">
+                      Archived
+                    </DropdownMenuLabel>
+                    {shownArchived.map((space) => (
+                      <SpaceRow
+                        key={space.id}
+                        space={space}
+                        active={space.id === active?.id}
+                        onSelect={() => open(space)}
+                        muted
+                      />
+                    ))}
+                  </DropdownMenuGroup>
+                )}
+                {query.trim() === "" && !!trash.data?.length && (
+                  <DropdownMenuItem className="gap-2 p-2" onClick={() => setTrashOpen(true)}>
+                    <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">
+                      <Trash2Icon className="size-4" />
+                    </div>
+                    <span>Trash</span>
+                    <span className="ml-auto text-xs text-muted-foreground tabular-nums">
+                      {trash.data.length}
+                    </span>
+                  </DropdownMenuItem>
+                )}
                 {/* On a phone a submenu would cover the menu, so the orgs list inline. */}
                 {orgsInline && shownOrgs.length > 0 && (
                   <DropdownMenuGroup>
@@ -347,10 +398,11 @@ export function SpaceSwitcher() {
                   </NoMatch>
                 )}
               </DropdownMenuList>
-              {canCreate && (
+              {(canCreate || canCreateMine) && (
                 <DropdownMenuGroup className="shrink-0">
                   <DropdownMenuSeparator />
-                  <AddRow label="New space" onSelect={() => setAdding(true)} />
+                  {canCreate && <AddRow label="New space" onSelect={() => setAdding(true)} />}
+                  {canCreateMine && <AddRow label="Create my space" onSelect={createMine} />}
                 </DropdownMenuGroup>
               )}
               <DropdownMenuSeparator />
@@ -406,6 +458,7 @@ export function SpaceSwitcher() {
           onOpenChange={setCreatingOrg}
           onSubmit={createOrg}
         />
+        <SpaceTrash open={trashOpen} onOpenChange={setTrashOpen} />
         <NameDialog
           title="New space"
           action="Create"

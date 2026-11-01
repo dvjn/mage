@@ -160,8 +160,9 @@ export const orgSetting = sqliteTable("org_setting", {
   spaceCreation: text("space_creation", { enum: ["members", "owners"] })
     .default("members")
     .notNull(),
-  // Whether each member of a team org gets a private space of their own on joining.
-  memberSpaces: integer("member_spaces", { mode: "boolean" }).default(true).notNull(),
+  // Whether a team org's members may make a private space of their own; while not, the ones made
+  // are archived.
+  memberSpaces: integer("member_spaces", { mode: "boolean" }).default(false).notNull(),
   // Whether a space's managers may add MCP servers for it, and its threads use them.
   spaceMcpServers: integer("space_mcp_servers", { mode: "boolean" }).default(true).notNull(),
   // Whether a space's managers may add skills for it, and its threads use them.

@@ -1,5 +1,6 @@
-// Changes to spaces: making one, its name, the model and effort its threads start with, who has a role in it,
-// and deleting it; and how the org makes them, and making a team org from the switcher.
+// Changes to spaces: making one, or the person's own, its name, the model and effort its threads start with, who has a role in it,
+// deleting it, and restoring it from trash or deleting it for good; and how the org makes them, and
+// making a team org from the switcher.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -9,7 +10,7 @@ import type { Effort } from "@/shared/threads/thread.ts";
 import { apiClient } from "@/web/api/api-client";
 import { errorOf } from "@/web/api/api-errors";
 import { teamSettingsQuery } from "@/web/orgs/queries";
-import { spacesQuery } from "@/web/spaces/queries";
+import { spacesQuery, spaceTrashQuery } from "@/web/spaces/queries";
 
 export function useRenameSpace(spaceId: string) {
   const queryClient = useQueryClient();
@@ -39,8 +40,8 @@ export function useSpaceDefaults(spaceId: string) {
   });
 }
 
-// Deletes a space; the spaces are read again once `leave`, when given, has taken the person
-// elsewhere.
+// Deletes a space, or puts a member's own one in trash; the spaces are read again once `leave`,
+// when given, has taken the person elsewhere.
 export function useDeleteSpace(leave?: () => Promise<void>) {
   const queryClient = useQueryClient();
   return useMutation({
@@ -50,11 +51,40 @@ export function useDeleteSpace(leave?: () => Promise<void>) {
     },
     onSuccess: async () => {
       await leave?.();
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["org-spaces"] }),
-        queryClient.invalidateQueries({ queryKey: spacesQuery.queryKey }),
-      ]);
+      await trashChanged(queryClient);
     },
+  });
+}
+
+async function trashChanged(queryClient: ReturnType<typeof useQueryClient>) {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: ["org-spaces"] }),
+    queryClient.invalidateQueries({ queryKey: spacesQuery.queryKey }),
+    queryClient.invalidateQueries({ queryKey: spaceTrashQuery.queryKey }),
+  ]);
+}
+
+// Takes a space out of trash as it was.
+export function useRestoreSpace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (spaceId: string) => {
+      const res = await apiClient.v1.spaces.trash[":id"].restore.$post({ param: { id: spaceId } });
+      if (!res.ok) throw new Error(await errorOf(res));
+    },
+    onSuccess: () => trashChanged(queryClient),
+  });
+}
+
+// Deletes a space in trash for good.
+export function usePurgeSpace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (spaceId: string) => {
+      const res = await apiClient.v1.spaces.trash[":id"].$delete({ param: { id: spaceId } });
+      if (!res.ok) throw new Error(await errorOf(res));
+    },
+    onSuccess: () => trashChanged(queryClient),
   });
 }
 
@@ -64,6 +94,19 @@ export function useCreateSpace() {
   return useMutation({
     mutationFn: async (name: string) => {
       const res = await apiClient.v1.spaces.$post({ json: { name } });
+      if (!res.ok) throw new Error(await errorOf(res));
+      return spaceSchema.parse(await res.json());
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: spacesQuery.queryKey }),
+  });
+}
+
+// Makes the person's own space in their team org, answering it.
+export function useCreateMySpace() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.v1.spaces.mine.$post();
       if (!res.ok) throw new Error(await errorOf(res));
       return spaceSchema.parse(await res.json());
     },
@@ -82,7 +125,8 @@ export function useCreateOrg() {
   });
 }
 
-// How the org's members make spaces: who may, and whether each has one of their own.
+// How the org's members make spaces: who may, and whether each may have one of their own, which
+// archives or restores those made.
 export function useTeamSettings() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -91,7 +135,11 @@ export function useTeamSettings() {
       if (!res.ok) throw new Error(await errorOf(res));
       queryClient.setQueryData(teamSettingsQuery.queryKey, (await res.json()) as TeamSettings);
     },
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: spacesQuery.queryKey }),
+    onSuccess: () =>
+      Promise.all([
+        queryClient.invalidateQueries({ queryKey: spacesQuery.queryKey }),
+        queryClient.invalidateQueries({ queryKey: ["org-spaces"] }),
+      ]),
   });
 }
 

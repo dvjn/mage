@@ -32,6 +32,7 @@ import { Spinner } from "@/web/components/ui/spinner";
 import { folderCrumb } from "@/web/folders/folder-choice";
 import { spaceFoldersQuery } from "@/web/folders/queries";
 import { ShareDialog } from "@/web/guests/share-dialog";
+import { ArchivedThreadActions } from "@/web/threads/archived-thread-actions";
 import { useOnline } from "@/web/lib/online";
 import { modelsQuery } from "@/web/models/queries";
 import { ThreadPickers } from "@/web/models/thread-pickers";
@@ -79,6 +80,9 @@ export function ThreadPage() {
   const access = detail.data?.access;
   const guest = access?.via === "guest";
   const role = access?.via === "space" ? access.role : undefined;
+  // Its space is archived: it can be read, moved out and deleted, nothing more.
+  const archived = !!detail.data?.archived;
+  const writer = !archived && (role === "owner" || role === "messager");
   const space = spaces.data?.find((s) => s.id === thread?.spaceId);
   const folders = useQuery({
     ...spaceFoldersQuery(thread?.spaceId ?? ""),
@@ -213,7 +217,7 @@ export function ThreadPage() {
 
   // The last row, when it ends a run that failed or was stopped and nothing has run since.
   const last = transcript.rows.at(-1);
-  const canRetry = role !== "viewer" && !run && transcript.pending.length === 0;
+  const canRetry = role !== "viewer" && !archived && !run && transcript.pending.length === 0;
   const retryable =
     canRetry && (last?.kind === "failure" || last?.kind === "stop") ? last : undefined;
 
@@ -265,7 +269,7 @@ export function ThreadPage() {
                   spaceId: thread.spaceId,
                   folders: folders.data ?? [],
                   value: thread.folderId,
-                  canMove: role === "owner" || role === "messager",
+                  canMove: writer,
                   onChange: (folderId) => move(folderId),
                 }),
               ].filter((crumb) => crumb !== null)
@@ -273,7 +277,8 @@ export function ThreadPage() {
           { label: thread?.title ?? "" },
         ]}
       >
-        {(role === "owner" || role === "messager") && <ShareDialog threadId={threadId} />}
+        {writer && <ShareDialog threadId={threadId} />}
+        {archived && !guest && thread && <ArchivedThreadActions thread={thread} />}
       </PageHeader>
       <ReplyActions.Provider value={replyActions}>
         {detail.data ? (
@@ -311,7 +316,7 @@ export function ThreadPage() {
                         tools={detail.data?.tools}
                         actions={{
                           ...(row === retryable && { retry: () => retry(retryable.runId) }),
-                          ...(!guest && { pickModel: () => setPicking(true) }),
+                          ...(!guest && !archived && { pickModel: () => setPicking(true) }),
                           ...(row.kind === "tool" &&
                             policy?.canDecide === true &&
                             (row.toolId === ASK_TOOL
@@ -361,7 +366,8 @@ export function ThreadPage() {
           <Composer
             running={!!run}
             waiting={waiting}
-            readOnly={role === "viewer"}
+            readOnly={role === "viewer" || archived}
+            notice={archived ? "This space is archived" : undefined}
             sending={posting.isPending}
             stopping={!!run && run.id === stopped}
             onSend={send}

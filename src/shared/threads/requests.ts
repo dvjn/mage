@@ -39,6 +39,9 @@ export const threadUpdateSchema = z.object({
   folderId: z.string().min(1).nullable().optional(),
 });
 
+// The space a thread moves to, at its top.
+export const threadMoveSchema = z.object({ spaceId: z.string().min(1) });
+
 // A person's decision on a tool call waiting for one.
 export const toolDecisionSchema = z.object({
   allow: z.boolean(),

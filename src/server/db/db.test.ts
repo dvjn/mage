@@ -174,3 +174,58 @@ describe("tool policies in place of tool modes", () => {
     ]);
   });
 });
+
+describe("personal spaces opt-in", () => {
+  it("keeps each team org's setting, storing the old default for those without one", () => {
+    const { db, statements } = before("0035_personal_spaces");
+    for (const statement of [
+      "insert into organization (id, name, slug, created_at, kind) values ('o1', 'Ada', 'ada', 0, 'personal'), ('t1', 'Looms', 'looms', 0, 'team'), ('t2', 'Engines', 'engines', 0, 'team'), ('t3', 'Codes', 'codes', 0, 'team')",
+      "insert into org_setting (organization_id, member_spaces, default_model) values ('t2', 0, 'codex/gpt'), ('t3', 1, null)",
+    ]) {
+      db.run(sql.raw(statement));
+    }
+
+    for (const statement of statements) db.run(sql.raw(statement));
+
+    expect(
+      db.all(
+        sql.raw("select organization_id, member_spaces, default_model from org_setting order by 1"),
+      ),
+    ).toEqual([
+      { organization_id: "t1", member_spaces: 1, default_model: null },
+      { organization_id: "t2", member_spaces: 0, default_model: "codex/gpt" },
+      { organization_id: "t3", member_spaces: 1, default_model: null },
+    ]);
+    // An org that stores a setting from here on starts with them off.
+    db.run(sql.raw("insert into org_setting (organization_id) values ('o1')"));
+    expect(
+      db.get(sql.raw("select member_spaces from org_setting where organization_id = 'o1'")),
+    ).toEqual({ member_spaces: 0 });
+  });
+});
+
+describe("clearing out members' spaces made for them", () => {
+  it("deletes team orgs' personal spaces without threads, and keeps the rest", () => {
+    const { db, statements } = before("0036_space_retention");
+    for (const statement of [
+      "insert into organization (id, name, slug, created_at, kind) values ('o1', 'Ada', 'ada', 0, 'personal'), ('t1', 'Looms', 'looms', 0, 'team')",
+      "insert into space (id, organization_id, kind, name, is_primary) values ('own', 'o1', 'personal', 'Your space', 1), ('empty', 't1', 'personal', 'Your space', 1), ('used', 't1', 'personal', 'Your space', 1), ('general', 't1', 'shared', 'General', 0)",
+      "insert into space_member (space_id, subject_kind, subject_id, role, source) values ('empty', 'user', 'u1', 'owner', 'direct'), ('used', 'user', 'u2', 'owner', 'direct')",
+      "insert into thread (id, space_id) values ('th', 'used')",
+    ]) {
+      db.run(sql.raw(statement));
+    }
+
+    for (const statement of statements) db.run(sql.raw(statement));
+
+    expect(db.all(sql.raw("select id from space order by 1"))).toEqual([
+      { id: "general" },
+      { id: "own" },
+      { id: "used" },
+    ]);
+    expect(db.all(sql.raw("select space_id from space_member"))).toEqual([{ space_id: "used" }]);
+    expect(
+      db.get(sql.raw("select archived_at, trashed_at, trashed_by from space where id = 'used'")),
+    ).toEqual({ archived_at: null, trashed_at: null, trashed_by: null });
+  });
+});

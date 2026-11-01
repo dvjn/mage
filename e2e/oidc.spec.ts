@@ -26,7 +26,7 @@ test("continuing with the identity provider makes an account with its own space"
   const email = uniqueEmail();
   await continueWithIdp(page, "Grace Hopper", email);
   await expect(page.getByRole("button", { name: "Account menu" })).toContainText(email);
-  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Grace Hopper's Space");
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Personal Space");
   await expect(page.getByRole("button", { name: "Switch space" })).toContainText("Personal");
 });
 

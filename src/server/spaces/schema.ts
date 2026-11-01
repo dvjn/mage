@@ -21,6 +21,12 @@ export const space = sqliteTable(
     // The role every member of the org has in a shared space, now and later; null for none.
     everyoneRole: text("everyone_role", { enum: ["messager", "viewer"] }),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    // Since when a member's own space has been archived, which starts its countdown to deletion;
+    // null while it is not. Whether it is archived is still worked out when asked.
+    archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+    // When it went to trash, and by whom; trash is emptied after a while.
+    trashedAt: integer("trashed_at", { mode: "timestamp_ms" }),
+    trashedBy: text("trashed_by").references(() => user.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),

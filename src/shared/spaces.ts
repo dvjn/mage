@@ -23,6 +23,9 @@ export const spaceSchema = z.object({
   role: spaceRoleSchema.nullable(),
   // The reader may change its settings and who is in it.
   manage: z.boolean(),
+  // A member's own space while their org does not allow them: its person may read it, move its
+  // threads out and delete them or it, nothing more.
+  archived: z.boolean(),
   // The role everyone in the org has in a shared space; null for none.
   everyoneRole: everyoneRoleSchema.nullable(),
   // The model ref and reasoning effort its new threads start with; null takes the org's.
@@ -34,11 +37,12 @@ export const spaceSchema = z.object({
 export type SpaceSummary = z.infer<typeof spaceSchema>;
 
 // A space as a team org's owners see it in the list of all its spaces: who made it, how many people
-// and groups have a role there, and whether it has threads, which keep it from being deleted.
+// and groups have a role there, and how many threads it has, which keep a shared one from being
+// deleted.
 export const orgSpaceSchema = spaceSchema.extend({
   ownerName: z.string().nullable(),
   memberCount: z.number().int(),
-  hasThreads: z.boolean(),
+  threadCount: z.number().int(),
 });
 
 export type OrgSpace = z.infer<typeof orgSpaceSchema>;
@@ -52,6 +56,23 @@ export const orgSpaceFilterSchema = tableQuerySchema.extend({
 });
 
 export const spaceListSchema = z.array(spaceSchema);
+
+// A member's own space in trash, as whoever put it there and the org's owners see it.
+export const trashedSpaceSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  ownerName: z.string().nullable(),
+  trashedByName: z.string().nullable(),
+  trashedAt: z.iso.datetime(),
+  threadCount: z.number().int(),
+});
+
+export type TrashedSpaceSummary = z.infer<typeof trashedSpaceSchema>;
+
+export const trashedSpaceListSchema = z.array(trashedSpaceSchema);
+
+// How long a space stays in trash before it is deleted for good.
+export const TRASH_DAYS = 30;
 
 export const spaceNameSchema = z.object({ name: z.string().trim().min(1).max(80) });
 
@@ -115,11 +136,16 @@ export function namedForPerson(space: { kind: "personal" | "shared"; primary: bo
   return space.kind === "personal" && space.primary;
 }
 
-// A space's name as everyone sees it: a person's own space is named for them, following their name;
-// any other space goes by its own.
+// What a person's own space is called to them.
+export const OWN_SPACE_NAME = "Personal Space";
+
+// A space's name as a person sees it: their own space is their personal space, someone else's is
+// named for its person, following their name; any other space goes by its own.
 export function spaceNameFor(
   space: { name: string; kind: "personal" | "shared"; primary: boolean },
   ownerName: string,
+  own = false,
 ) {
-  return namedForPerson(space) ? `${ownerName}'s Space` : space.name;
+  if (!namedForPerson(space)) return space.name;
+  return own ? OWN_SPACE_NAME : `${ownerName}'s Space`;
 }

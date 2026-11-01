@@ -140,7 +140,7 @@ export function createGuestStore(db: Db): GuestStore {
         .innerJoin(space, eq(space.id, thread.spaceId))
         .innerJoin(organization, eq(organization.id, space.organizationId))
         .leftJoin(creator, eq(creator.id, space.createdBy))
-        .where(and(eq(threadGuest.userId, userId), active(now)))
+        .where(and(eq(threadGuest.userId, userId), active(now), isNull(space.trashedAt)))
         .orderBy(desc(thread.updatedAt), desc(thread.id))
         .all()
         .map(({ space: host, ownerName, ...row }) => {
@@ -156,7 +156,7 @@ export function createGuestStore(db: Db): GuestStore {
           join space s on s.id = t.space_id
           join organization o on o.id = s.organization_id
           left join user c on c.id = s.created_by`,
-        where: sql`g.user_id = ${userId} and g.revoked_at is null
+        where: sql`g.user_id = ${userId} and g.revoked_at is null and s.trashed_at is null
           and (g.access_until is null or g.access_until > ${now.getTime()})`,
         // Where the thread is as its list says: a person's own space alone, any other with its org.
         columns: sql`, s.name as space_name, s.kind as space_kind, s.is_primary as space_primary,

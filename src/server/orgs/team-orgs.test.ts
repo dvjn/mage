@@ -38,13 +38,37 @@ function accept(workspace: Workspace, who: { cookie: string }, token: string) {
   return workspace.api("POST", "/org-invites/accept", who.cookie, { token });
 }
 
-// Ada's team org with Grace in it as a member.
-async function withGrace() {
+// Ada's team org with Grace in it as a member; with `ownSpaces`, the org allows personal spaces
+// and each has made theirs.
+async function withGrace({ ownSpaces = false } = {}) {
   const workspace = await teamOrg();
   const signedUp = await workspace.signUp("Grace Hopper", "grace@example.com");
   const token = await inviteToken(workspace, workspace.ada, "grace@example.com");
   expect((await accept(workspace, signedUp, token)).status).toBe(200);
-  return { ...workspace, grace: { ...signedUp, orgId: workspace.orgId } };
+  const grace = { ...signedUp, orgId: workspace.orgId };
+  if (ownSpaces) {
+    await allowOwnSpaces(workspace, workspace.ada, true);
+    await ownSpace(workspace, workspace.ada);
+    await ownSpace(workspace, grace);
+  }
+  return { ...workspace, grace };
+}
+
+async function allowOwnSpaces(workspace: Workspace, who: Person, memberSpaces: boolean) {
+  const res = await workspace.api(
+    "PATCH",
+    "/org/settings",
+    who.cookie,
+    { memberSpaces },
+    who.orgId,
+  );
+  expect(res.status).toBe(200);
+}
+
+async function ownSpace(workspace: Workspace, who: Person) {
+  const res = await workspace.api("POST", "/spaces/mine", who.cookie, undefined, who.orgId);
+  expect(res.status).toBe(200);
+  return (await res.json()) as SpaceBody;
 }
 
 async function spacesOf(workspace: Workspace, who: Person) {
@@ -98,7 +122,7 @@ async function newGroup(workspace: Workspace, who: Person, name: string, members
 }
 
 describe("team orgs", () => {
-  it("makes its creator the owner, with a General space open to everyone and their own space", async () => {
+  it("makes its creator the owner, with a General space open to everyone and none of their own", async () => {
     const { api, ada, orgId, generalId } = await teamOrg();
 
     const orgs = (await (await api("GET", "/orgs", ada.cookie)).json()) as {
@@ -119,7 +143,6 @@ describe("team orgs", () => {
     });
     const res = await api("GET", "/spaces", ada.cookie, undefined, orgId);
     expect(await res.json()).toEqual([
-      expect.objectContaining({ name: "Ada Lovelace's Space", kind: "personal", primary: true }),
       expect.objectContaining({
         id: generalId,
         name: "General",
@@ -211,10 +234,7 @@ describe("org invites", () => {
     const joined = await accept(workspace, grace, token);
     expect(await joined.json()).toEqual({ orgId: workspace.orgId, spaceId: generalId });
     const spaces = await spacesOf(workspace, { ...grace, orgId: workspace.orgId });
-    expect(spaces).toEqual([
-      expect.objectContaining({ name: "Grace Hopper's Space", kind: "personal", role: "owner" }),
-      expect.objectContaining({ id: generalId, role: "messager" }),
-    ]);
+    expect(spaces).toEqual([expect.objectContaining({ id: generalId, role: "messager" })]);
     // Used once; Grace opening it again just goes to the org.
     expect((await accept(workspace, grace, token)).status).toBe(200);
     const again = await inviteToken(workspace, ada, "hedy@example.com");
@@ -432,7 +452,7 @@ describe("roles in a team org's spaces", () => {
   });
 
   it("lets org owners manage shared spaces they are not in, but read them only once they add themselves", async () => {
-    const workspace = await withGrace();
+    const workspace = await withGrace({ ownSpaces: true });
     const { api, ada, grace } = workspace;
     const secret = await newSpace(workspace, grace, "Secret");
     const thread = (await (
@@ -501,10 +521,10 @@ describe("roles in a team org's spaces", () => {
     );
   });
 
-  it("gives no member a space of their own when the org turns that off", async () => {
+  it("gives nobody a space of their own on joining, even where the org allows them", async () => {
     const workspace = await teamOrg();
-    const { api, ada, signUp } = workspace;
-    await api("PATCH", "/org/settings", ada.cookie, { memberSpaces: false }, ada.orgId);
+    const { ada, signUp } = workspace;
+    await allowOwnSpaces(workspace, ada, true);
     const grace = await signUp("Grace Hopper", "grace@example.com");
     const token = await inviteToken(workspace, ada, "grace@example.com");
     await accept(workspace, grace, token);
@@ -514,7 +534,7 @@ describe("roles in a team org's spaces", () => {
   });
 
   it("refuses roles in a private space", async () => {
-    const workspace = await withGrace();
+    const workspace = await withGrace({ ownSpaces: true });
     const mine = (await spacesOf(workspace, workspace.ada)).find(
       (space) => space.kind === "personal",
     )!;
@@ -624,7 +644,7 @@ describe("renaming and deleting a team org", () => {
 
 describe("the org's spaces for its owners", () => {
   it("lists every space, private ones with their person, and only to owners", async () => {
-    const workspace = await withGrace();
+    const workspace = await withGrace({ ownSpaces: true });
     const { api, ada, grace } = workspace;
     await newSpace(workspace, grace, "Compilers");
 
@@ -666,12 +686,12 @@ describe("the org's spaces for its owners", () => {
 });
 
 describe("naming spaces", () => {
-  it("names a member's first space for its person, to them and to everyone else", async () => {
-    const workspace = await withGrace();
+  it("calls a member's first space their personal space, and names it for them to everyone else", async () => {
+    const workspace = await withGrace({ ownSpaces: true });
     const { api, ada, grace, db } = workspace;
 
     const own = (await spacesOf(workspace, grace)).find((space) => space.kind === "personal");
-    expect(own?.name).toBe("Grace Hopper's Space");
+    expect(own?.name).toBe("Personal Space");
     const all = (
       (await (
         await api("GET", "/org/spaces", ada.cookie, undefined, ada.orgId)
@@ -686,18 +706,23 @@ describe("naming spaces", () => {
       .set({ name: "Grace B. Hopper" })
       .where(eq(schema.user.id, grace.userId))
       .run();
-    const renamed = (await spacesOf(workspace, grace)).find((space) => space.kind === "personal");
+    const renamed = (
+      (await (
+        await api("GET", "/org/spaces", ada.cookie, undefined, ada.orgId)
+      ).json()) as Page<SpaceBody>
+    ).items.find((space) => space.id === own?.id);
     expect(renamed?.name).toBe("Grace B. Hopper's Space");
-    // It keeps her name.
+    // It cannot be renamed.
     expect(
       (await api("PATCH", `/spaces/${own?.id}`, grace.cookie, { name: "Mine" }, grace.orgId))
         .status,
     ).toBe(409);
   });
 
-  it("names only a person's own space for them", () => {
+  it("names only a person's own space for them, or as their personal space to them", () => {
     const first = { name: FIRST_SPACE_NAME, kind: "personal" as const, primary: true };
     expect(spaceNameFor(first, "Grace Hopper")).toBe("Grace Hopper's Space");
+    expect(spaceNameFor(first, "Grace Hopper", true)).toBe("Personal Space");
     expect(spaceNameFor({ ...first, name: "Notes" }, "Grace Hopper")).toBe("Grace Hopper's Space");
     expect(spaceNameFor({ ...first, primary: false, name: "Notes" }, "Grace Hopper")).toBe("Notes");
     expect(spaceNameFor({ ...first, kind: "shared" }, "Grace Hopper")).toBe(FIRST_SPACE_NAME);
@@ -811,7 +836,7 @@ describe("long lists", () => {
   });
 
   it("searches, narrows and pages the org's spaces by number", async () => {
-    const workspace = await withGrace();
+    const workspace = await withGrace({ ownSpaces: true });
     const { ada, api, generalId } = workspace;
     for (const name of ["Alpha", "Beta", "Gamma"]) await newSpace(workspace, ada, name);
     await api("PUT", `/spaces/${generalId}/everyone`, ada.cookie, { role: "viewer" }, ada.orgId);

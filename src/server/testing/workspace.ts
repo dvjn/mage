@@ -13,7 +13,7 @@ import { expect } from "vite-plus/test";
 
 import { createRichReplies } from "@/server/agent/rich-replies.ts";
 import { createRunStore } from "@/server/agent/run-store.ts";
-import { createRunWorker, dropRefusedWaiting, type RunWorkerOptions } from "@/server/agent/runs.ts";
+import { createRunWorker, type RunWorkerOptions } from "@/server/agent/runs.ts";
 import { createSystemTools } from "@/server/agent/system-tools.ts";
 import { createToolPolicies } from "@/server/agent/tool-policies.ts";
 import { createToolPolicyStore } from "@/server/agent/tool-policy-store.ts";
@@ -194,15 +194,12 @@ export function setup(
   }
   const directory = createDirectory(db, auth);
   const settingStore = createOrgSettingStore(db);
-  const accessChanged = (orgId: string) =>
-    dropRefusedWaiting({ threads: threadStore, spaceStore, runs: runStore, access, log, orgId });
   const spaces = createSpaces({
     spaces: spaceStore,
     threads: threadStore,
     models,
     directory,
     settings: settingStore,
-    accessChanged,
     hooks,
   });
   const folderStore = createFolderStore(db);
@@ -354,6 +351,8 @@ export function setup(
         toolsets: tools.guidanceIn(space),
       }),
       logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
+      runsIn: (space) => spaces.runsIn(space),
+      hooks,
       ...workerOptions,
       ...options,
     });
@@ -367,7 +366,7 @@ export function setup(
     threads: threadStore,
     runs: runStore,
     settings: settingStore,
-    accessChanged,
+    hooks,
     baseUrl,
     teamOrgs,
     operatorEmails,

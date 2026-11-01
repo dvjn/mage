@@ -155,7 +155,7 @@ const homeRoute = createRoute({
       onlineManager.isOnline()
         ? await context.queryClient.fetchQuery(spacesQuery)
         : await restored.then(() => context.queryClient.getQueryData(spacesQuery.queryKey) ?? [])
-    ).filter((s) => s.role);
+    ).filter((s) => s.role && !s.archived);
     const last = lastSpace();
     const space = spaces.find((s) => s.id === last) ?? spaces[0];
     if (space) throw redirect({ to: "/s/$spaceId", params: { spaceId: space.id } });

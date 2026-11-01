@@ -18,7 +18,7 @@ async function signUp(page: Page, name: string) {
   await page.getByLabel("Confirm password").fill("correct horse battery");
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(/\/s\/[^/]+$/);
-  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText(`${name}'s Space`);
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Personal Space");
 }
 
 async function signOut(page: Page) {

@@ -10,6 +10,8 @@ export function NavThreads() {
   const place = usePlace();
   if (!place) return null;
   if (place.kind === "shared") return <SharedThreads />;
+  // An archived space's threads are only on its page.
+  if (place.space.archived) return null;
   // A space its org's owner manages without being in it shows them only its settings.
   if (place.space.role === null) return <SpaceSection space={place.space} onNewFolder={() => {}} />;
   return <SpaceThreads key={place.space.id} space={place.space} />;

@@ -33,7 +33,7 @@ export interface AuthOptions {
   oidc?: { issuer: string; clientId: string; clientSecret: string } | null;
   // The bearer token a SCIM directory provisions with, and what to tell when the directory changed
   // a person or the groups they are in; `active` is false once it turned them off or deleted them.
-  scim?: { token: string; changed: (userId: string, active: boolean) => void } | null;
+  scim?: { token: string; changed: (userId: string, active: boolean) => Promise<void> } | null;
   hooks?: Hooks;
 }
 
@@ -220,11 +220,11 @@ export function createAuth(options: AuthOptions) {
                 },
               },
               projection: {
-                reconcileUser: ({ userId, active }) => {
+                reconcileUser: async ({ userId, active }) => {
                   if (!active) {
                     db.delete(schema.session).where(eq(schema.session.userId, userId)).run();
                   }
-                  directory.changed(userId, active);
+                  await directory.changed(userId, active);
                 },
               },
             }),

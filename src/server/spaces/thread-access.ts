@@ -1,7 +1,8 @@
 // The one rule for what a person may do in a thread. Members of its space act as their role there
 // allows; anyone else may act only as a guest of that one thread while their access lasts, reading
 // it, posting in it, changing their own waiting messages, and stopping or retrying the agent.
-// Everything else about the thread and its space stays with the space's members.
+// Everything else about the thread and its space stays with the space's members. In an archived
+// space a guest only reads, and in one in trash not even that.
 
 import type { GuestStore } from "@/server/guests/service.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
@@ -11,7 +12,7 @@ import { ServiceError } from "@/server/kernel/errors.ts";
 import type { SpaceRole, SpaceAction, Spaces } from "./service.ts";
 
 export interface ThreadAccessOptions {
-  spaces: Pick<Spaces, "can" | "findVisible" | "require">;
+  spaces: Pick<Spaces, "can" | "findVisible" | "require" | "isArchived" | "isGone">;
   threads: Pick<ThreadStore, "find">;
   guests: Pick<GuestStore, "find" | "hostSpaceName">;
   now?: () => Date;
@@ -20,8 +21,9 @@ export interface ThreadAccessOptions {
 export type ThreadAccess = ReturnType<typeof createThreadAccess>;
 
 // Reading the thread; posting, changing one's waiting messages, stopping and retrying the agent;
-// renaming it, moving it and changing its model; inviting and revoking guests; deleting it.
-export type ThreadAction = "read" | "post" | "arrange" | "share" | "delete";
+// renaming it, moving it between folders and changing its model; inviting and revoking guests;
+// deleting it or moving it to another space.
+export type ThreadAction = "read" | "post" | "arrange" | "share" | "delete" | "move";
 
 // What each action needs of a member's role in the space.
 const SPACE_ACTION: Record<ThreadAction, SpaceAction> = {
@@ -29,7 +31,8 @@ const SPACE_ACTION: Record<ThreadAction, SpaceAction> = {
   post: "message",
   arrange: "message",
   share: "message",
-  delete: "manage",
+  delete: "remove",
+  move: "remove",
 };
 
 const GUEST_ALLOWED: readonly ThreadAction[] = ["read", "post"];
@@ -46,7 +49,7 @@ export function createThreadAccess(options: ThreadAccessOptions) {
   // Whether the person was a guest of the thread, and whether that access still holds.
   function guestOf(who: Who, thread: Thread) {
     const guest = guests.find(thread.id, who.userId);
-    if (!guest) return null;
+    if (!guest || spaces.isGone(thread.spaceId)) return null;
     const ended = !!guest.revokedAt || (!!guest.accessUntil && guest.accessUntil <= now());
     return { ended };
   }
@@ -61,13 +64,19 @@ export function createThreadAccess(options: ThreadAccessOptions) {
     return { via: "guest", spaceName: guests.hostSpaceName(thread.id) ?? "" };
   }
 
+  function guestMay(thread: Thread, action: ThreadAction) {
+    return (
+      action === "read" || (GUEST_ALLOWED.includes(action) && !spaces.isArchived(thread.spaceId))
+    );
+  }
+
   return {
     of,
 
     can(who: Who, thread: Thread, action: ThreadAction) {
       const space = spaces.findVisible(who, thread.spaceId);
       if (space) return spaces.can(who, space, SPACE_ACTION[action]);
-      return guestOf(who, thread)?.ended === false && GUEST_ALLOWED.includes(action);
+      return guestOf(who, thread)?.ended === false && guestMay(thread, action);
     },
 
     // The thread and how the principal comes to it, when they may take the action. A thread they
@@ -86,6 +95,8 @@ export function createThreadAccess(options: ThreadAccessOptions) {
       if (access.via === "space") spaces.require(principal, thread.spaceId, SPACE_ACTION[action]);
       else if (!GUEST_ALLOWED.includes(action)) {
         throw new ServiceError(403, "Guests of a thread cannot do this");
+      } else if (!guestMay(thread, action)) {
+        throw new ServiceError(403, "This space is archived");
       }
       return { thread, access };
     },

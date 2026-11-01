@@ -18,7 +18,7 @@ async function signUp(page: Page) {
   await page.getByLabel("Confirm password").fill("correct horse battery");
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(/\/s\/[^/]+$/);
-  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Ada Lovelace's Space");
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Personal Space");
 }
 
 // Starts a thread from the space page and comes back to the space.
@@ -101,7 +101,7 @@ test("Ctrl+K lists every thread, searches everywhere or in this space, and finds
   // The scope narrows the search to this space, and back.
   const scope = dialog.getByRole("group", { name: "Where to search" });
   await expect(scope.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
-  await scope.getByRole("button", { name: "Ada Lovelace's Space" }).click();
+  await scope.getByRole("button", { name: "Personal Space" }).click();
   await expect(dialog.getByRole("option")).toHaveCount(2);
   // Tab switches to the space's folders, and back.
   await dialog.getByRole("combobox").press("Tab");

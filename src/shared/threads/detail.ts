@@ -41,6 +41,8 @@ export const threadDetailSchema = z.object({
   thread: threadSchema,
   events: z.array(anyThreadEventSchema),
   access: threadAccessSchema,
+  // Its space is archived: it can be read, moved out and deleted, nothing more.
+  archived: z.boolean(),
   // How far the reader had seen it: the seq of the newest event they saw, 0 when none.
   seenSeq: z.number().int().nonnegative(),
   // The reader's level for each tool here: whether they may run it, and so decide on its calls.

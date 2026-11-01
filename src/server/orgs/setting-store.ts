@@ -38,7 +38,7 @@ export function createOrgSettingStore(db: Db): OrgSettingStore {
         titleModel: row?.titleModel ?? null,
         defaultEffort: row?.defaultEffort ?? null,
         spaceCreation: row?.spaceCreation ?? "members",
-        memberSpaces: row?.memberSpaces ?? true,
+        memberSpaces: row?.memberSpaces ?? false,
         spaceMcpServers: row?.spaceMcpServers ?? true,
         spaceSkills: row?.spaceSkills ?? true,
       };

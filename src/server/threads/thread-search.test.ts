@@ -58,7 +58,7 @@ describe("thread search", () => {
 
     expect(results.map(({ id, spaceId, spaceName }) => ({ id, spaceId, spaceName }))).toEqual(
       expect.arrayContaining([
-        { id: notes.id, spaceId: yours.id, spaceName: "Ada Lovelace's Space" },
+        { id: notes.id, spaceId: yours.id, spaceName: "Personal Space" },
         { id: plans.id, spaceId: work.id, spaceName: "Work" },
       ]),
     );

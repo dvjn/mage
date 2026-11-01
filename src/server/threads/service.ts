@@ -10,7 +10,9 @@
 // the call it waits for, its newest notable event, its last run's failure, and how far they have
 // seen it, which reading it and posting in it move on. Each reader's inbox follows those changes
 // for every thread they can read. Who may do each is the thread access rule's; a thread's guests
-// find it, and post in it, beside the threads of their own spaces.
+// find it, and post in it, beside the threads of their own spaces. Threads of an archived space stay
+// out of search and inboxes; its person opens them from the space itself, and may move them to a
+// space where they can post.
 
 import { type Run, type RunStore, startRun } from "@/server/agent/runs.ts";
 import type { Tools } from "@/server/agent/tools.ts";
@@ -187,6 +189,8 @@ export interface ThreadStore {
       model?: string | null;
       effort?: Effort | null;
       folderId?: string | null;
+      // Moves it to another space.
+      spaceId?: string;
     },
   ): Thread;
   // Deletes the thread with its events.
@@ -393,10 +397,16 @@ export function createThreads(options: ThreadsOptions) {
     });
   }
 
-  // The thread as the reader's inbox tells it, or null when they cannot read it.
+  // How the reader comes to the thread, when they can read it and its space is not archived.
+  function listedAccess(principal: Principal, thread: Thread) {
+    const via = access.of(principal, thread);
+    return via && !spaces.isArchived(thread.spaceId) ? via : null;
+  }
+
+  // The thread as the reader's inbox tells it, or null when it is not in their inbox.
   function inboxItem(principal: Principal, id: string): InboxItem | null {
     const thread = threads.find(id);
-    const via = thread && access.of(principal, thread);
+    const via = thread && listedAccess(principal, thread);
     if (!thread || !via) return null;
     const [item] = itemsOf(principal.userId, [thread], runs.activeIn([id]));
     return { kind: "thread", thread: item!, shared: via.via === "guest" };
@@ -580,7 +590,7 @@ export function createThreads(options: ThreadsOptions) {
       const names = new Map(
         spaces
           .list(principal)
-          .filter((space) => spaces.canSee(principal, space))
+          .filter((space) => !space.archived && spaces.canSee(principal, space))
           .map((space) => [space.id, space.name]),
       );
       const needle = text.toLowerCase();
@@ -589,6 +599,7 @@ export function createThreads(options: ThreadsOptions) {
         : guests
             .threadsOf(principal.userId, now())
             .filter(({ thread }) => !names.has(thread.spaceId))
+            .filter(({ thread }) => !spaces.isArchived(thread.spaceId))
             .filter(({ thread }) => (thread.title ?? UNTITLED).toLowerCase().includes(needle))
             .map(({ thread, spaceName }) => ({ thread, spaceName, shared: true }));
       const found = [
@@ -675,6 +686,7 @@ export function createThreads(options: ThreadsOptions) {
         events,
         access: via,
         seenSeq: reads.seen(principal.userId, [id]).get(id) ?? 0,
+        archived: spaces.isArchived(thread.spaceId),
         pendingTools: Object.fromEntries(
           rows.flatMap((row) =>
             row.kind === "tool" && row.state === "pending" && row.waits && space
@@ -733,6 +745,18 @@ export function createThreads(options: ThreadsOptions) {
       return threadSummary(updated);
     },
 
+    // Moves the thread to the top of another space of the org where the principal can post; its
+    // events and guests go with it.
+    move(principal: Principal, id: string, spaceId: string) {
+      const thread = visible(principal, id, "move");
+      if (thread.spaceId === spaceId) throw new ServiceError(409, "The thread is already there");
+      spaces.require(principal, spaceId, "message");
+      if (runs.active(id)) throw new ServiceError(409, "Stop the agent before moving this thread");
+      const moved = threads.update(id, { spaceId, folderId: null });
+      bus.activity({ threadId: id });
+      return threadSummary(moved);
+    },
+
     // Its events go with it.
     remove(principal: Principal, id: string) {
       const thread = visible(principal, id, "delete");
@@ -752,8 +776,8 @@ export function createThreads(options: ThreadsOptions) {
 
     // Delivers what changes for the principal in the threads they can read: each such thread as it
     // now reads for them, a few at a time, how far they saw a thread, and each thread they can no
-    // longer read, deleted or with their access ended. `recheck` finds the threads they lost access
-    // to without anything happening in them. Returns the function that stops it.
+    // longer read, deleted, with their access ended or in a space now archived. `recheck` finds the
+    // threads they lost without anything happening in them. Returns the function that stops it.
     inbox(principal: Principal, deliver: (item: InboxItem) => void) {
       // The threads they could read when last looked at; their shared ones from the start.
       const known = new Set(
@@ -800,7 +824,8 @@ export function createThreads(options: ThreadsOptions) {
         },
         recheck() {
           for (const id of known) {
-            if (readable(principal, id)) continue;
+            const thread = threads.find(id);
+            if (thread && listedAccess(principal, thread)) continue;
             known.delete(id);
             deliver({ kind: "gone", threadId: id });
           }

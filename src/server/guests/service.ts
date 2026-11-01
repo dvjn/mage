@@ -81,7 +81,8 @@ export interface GuestStore {
     threadId: string,
     now: Date,
   ): (ThreadGuest & { name: string; invitedByName: string | null })[];
-  // The threads the user is an active guest in at `now`, most recently active first.
+  // The threads the user is an active guest in at `now`, but those of spaces in trash, most
+  // recently active first.
   threadsOf(userId: string, now: Date): GuestThread[];
   // Those of them the filter keeps, matching text in their title or the place they are in; those
   // the window takes, every match without one.
