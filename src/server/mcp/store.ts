@@ -31,6 +31,8 @@ const columns = {
   status: mcpServer.status,
   error: mcpServer.error,
   serverInfo: mcpServer.serverInfo,
+  instructions: mcpServer.instructions,
+  instructionsCut: mcpServer.instructionsCut,
   tools: mcpServer.tools,
   toolsReadAt: mcpServer.toolsReadAt,
   createdBy: mcpServer.createdBy,

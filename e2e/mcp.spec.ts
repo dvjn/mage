@@ -1,6 +1,11 @@
 import { expect, type Page, test } from "@playwright/test";
 
-import { MCP_API_KEY, MCP_BEARER_TOKEN, MODERN_REVISION } from "./mcp-server.ts";
+import {
+  MCP_API_KEY,
+  MCP_BEARER_TOKEN,
+  MODERN_REVISION,
+  NOTES_INSTRUCTIONS,
+} from "./mcp-server.ts";
 import { mcpServer } from "./servers.ts";
 
 // Sign-ups are rate limited per client address; each person counts as their own client, in every
@@ -142,6 +147,25 @@ test("an org's header-authorized MCP server lists its tools, and a call that ask
       name: /^Notes › Delete note · Failed · allowed by Ada Lovelace/,
     }),
   ).toBeVisible();
+});
+
+test("an MCP server's instructions show on its page, and reach the agent's prompt", async ({
+  page,
+}) => {
+  const spaceId = await signUp(page);
+  await page.goto("/org/tools");
+  await addServer(page, "Notes", `${mcpServer}/headers/mcp`, withBearer(MCP_BEARER_TOKEN));
+
+  const instructions = page.getByText(NOTES_INSTRUCTIONS);
+  await expect(instructions).toBeHidden();
+  await page.getByRole("button", { name: "Instructions from the server" }).click();
+  await expect(instructions).toBeVisible();
+
+  await page.goto(`/s/${spaceId}`);
+  await write(page, "/prompt");
+  const reply = transcript(page).getByRole("article", { name: "Message from Agent" });
+  await expect(reply).toContainText("From the MCP server Notes, about its tools mcp.notes.*:");
+  await expect(reply).toContainText(NOTES_INSTRUCTIONS);
 });
 
 test("OAuth MCP servers of either revision are authorized in the browser and list their tools", async ({

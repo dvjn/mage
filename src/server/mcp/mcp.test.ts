@@ -5,7 +5,12 @@ import { modelToolNames } from "@/server/agent/tools.ts";
 import * as schema from "@/server/schema.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { MCP_ORIGIN, setup } from "@/server/testing/workspace.ts";
-import { mcpHeadersInputSchema, type McpServerSummary, mcpSlugOf } from "@/shared/mcp.ts";
+import {
+  MCP_INSTRUCTIONS_MAX,
+  mcpHeadersInputSchema,
+  type McpServerSummary,
+  mcpSlugOf,
+} from "@/shared/mcp.ts";
 import type { ThreadDetail } from "@/shared/threads/detail.ts";
 import type { ActorSummary } from "@/shared/threads/events.ts";
 import {
@@ -22,8 +27,16 @@ import {
   MCP_BEARER_TOKEN,
   MODERN_REVISION,
   mcpStandIn,
+  NOTES_INSTRUCTIONS,
 } from "../../../e2e/mcp-server.ts";
-import { mergeHeaders, outputOf, riskOfAnnotations, secretHint, uniqueSlug } from "./service.ts";
+import {
+  keptInstructions,
+  mergeHeaders,
+  outputOf,
+  riskOfAnnotations,
+  secretHint,
+  uniqueSlug,
+} from "./service.ts";
 
 // Makes an org policy every call of which waits for anyone who can edit the thread, and gives its id.
 async function signOff(
@@ -847,6 +860,99 @@ describe("MCP tools in a thread", () => {
     second.reply("Hi.");
     await worker.idle();
     expect(second.tools.some((tool) => tool.startsWith("mcp"))).toBe(false);
+  });
+});
+
+describe("an MCP server's instructions", () => {
+  it("are trimmed, cut to the cap and marked so, and none when empty", () => {
+    expect(keptInstructions("  Be brief.\n")).toEqual({
+      instructions: "Be brief.",
+      instructionsCut: false,
+    });
+    expect(keptInstructions("x".repeat(MCP_INSTRUCTIONS_MAX))).toEqual({
+      instructions: "x".repeat(MCP_INSTRUCTIONS_MAX),
+      instructionsCut: false,
+    });
+    expect(keptInstructions(`${"x".repeat(MCP_INSTRUCTIONS_MAX)}y`)).toEqual({
+      instructions: "x".repeat(MCP_INSTRUCTIONS_MAX),
+      instructionsCut: true,
+    });
+    expect(keptInstructions("  ")).toEqual({ instructions: null, instructionsCut: false });
+    expect(keptInstructions(null)).toEqual({ instructions: null, instructionsCut: false });
+  });
+
+  it("are kept each time its tools are read, in either revision, and kept while it is down", async () => {
+    const { ada, add, api, mcpNetwork } = await orgWithServers();
+    const refresh = async (id: string) =>
+      (await (
+        await api("POST", `/mcp-servers/${id}/refresh`, ada.cookie)
+      ).json()) as McpServerSummary;
+    const { body } = await add({ name: "Open", url: `${MCP_ORIGIN}/mcp`, auth: { kind: "none" } });
+    expect(body).toMatchObject({ instructions: NOTES_INSTRUCTIONS, instructionsCut: false });
+    const modern = await add({
+      name: "Modern",
+      url: `${MCP_ORIGIN}/modern/mcp`,
+      auth: { kind: "none" },
+    });
+    expect(modern.body).toMatchObject({ instructions: NOTES_INSTRUCTIONS });
+
+    mcpNetwork.handle = mcpStandIn({
+      origin: MCP_ORIGIN,
+      instructions: `  ${"y".repeat(MCP_INSTRUCTIONS_MAX + 10)}  `,
+    });
+    expect(await refresh(body.id)).toMatchObject({
+      instructions: "y".repeat(MCP_INSTRUCTIONS_MAX),
+      instructionsCut: true,
+    });
+
+    mcpNetwork.up = false;
+    expect(await refresh(body.id)).toMatchObject({ status: "error", instructionsCut: true });
+
+    mcpNetwork.up = true;
+    mcpNetwork.handle = mcpStandIn({ origin: MCP_ORIGIN, instructions: null });
+    expect(await refresh(body.id)).toMatchObject({ instructions: null, instructionsCut: false });
+  });
+
+  it("reach the prompt after the space's, only for servers with a tool on in the space", async () => {
+    const { ada, api, thread, post, model, worker, start, mcpNetwork } = await mcpThread();
+    mcpNetwork.handle = mcpStandIn({ origin: MCP_ORIGIN, instructions: "Search before writing." });
+    const other = (await (
+      await api("POST", "/org/mcp-servers", ada.cookie, {
+        name: "Other",
+        url: `${MCP_ORIGIN}/mcp`,
+        auth: { kind: "none" },
+      })
+    ).json()) as McpServerSummary;
+    await api("PUT", `/spaces/${thread.spaceId}/instructions`, ada.cookie, { text: "Cite ids." });
+    start();
+
+    await post(ada, "Hello");
+    const first = await model.next();
+    first.reply("Hi.");
+    await worker.idle();
+    const prompt = first.request.instructions;
+    const at = (text: string) => prompt.indexOf(text);
+    expect(at("Instructions from this space:\nCite ids.")).toBeGreaterThan(0);
+    expect(at("not the organization's")).toBeGreaterThan(at("Cite ids."));
+    expect(prompt).toContain(
+      `From the MCP server Notes, about its tools \`mcp.notes.*\`:\n${NOTES_INSTRUCTIONS}`,
+    );
+    expect(at("From the MCP server Other, about its tools `mcp.other.*`:")).toBeGreaterThan(
+      at("From the MCP server Notes"),
+    );
+
+    // With each of its tools off in the space, a server says nothing.
+    await api("PATCH", `/spaces/${thread.spaceId}/tools`, ada.cookie, {
+      toolIds: ["echo", "add_note", "delete_note"].map((tool) => `mcp:${other.id}/${tool}`),
+      policy: TOOL_OFF,
+    });
+    await post(ada, "Again");
+    const second = await model.next();
+    second.reply("Hi.");
+    await worker.idle();
+    expect(second.request.instructions).toContain("From the MCP server Notes");
+    expect(second.request.instructions).not.toContain("Search before writing.");
+    expect(second.request.instructions).not.toContain("MCP server Other");
   });
 });
 

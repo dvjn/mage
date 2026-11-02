@@ -23,6 +23,7 @@ import { randomBytes } from "node:crypto";
 
 import * as z from "zod";
 
+import type { McpServerGuidance } from "@/server/agent/context.ts";
 import type { AnyToolSpec, ToolContext, ToolOutput, Toolset } from "@/server/agent/tools.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Hooks } from "@/server/kernel/hooks.ts";
@@ -39,6 +40,7 @@ import {
   type McpHeadersInput,
   type McpServerChange,
   type McpServerSummary,
+  MCP_INSTRUCTIONS_MAX,
   mcpToolId,
   mcpSlugOf,
   mcpToolsetId,
@@ -81,6 +83,10 @@ export interface McpServer {
   status: McpStatus;
   error: string | null;
   serverInfo: { name: string; version: string } | null;
+  // What it said about using its tools when last read, as the server wrote it and kept to a cap,
+  // and whether it was cut to fit; null when it said nothing.
+  instructions: string | null;
+  instructionsCut: boolean;
   // The tools it last listed, as MCP defines them.
   tools: ToolDefinition[];
   toolsReadAt: Date | null;
@@ -117,6 +123,8 @@ export type McpServerChanges = Partial<
     | "status"
     | "error"
     | "serverInfo"
+    | "instructions"
+    | "instructionsCut"
     | "tools"
     | "toolsReadAt"
   >
@@ -279,6 +287,14 @@ function headerHints(headers: Record<string, string>) {
   return Object.entries(headers).map(([name, value]) => ({ name, hint: secretHint(value) }));
 }
 
+// A server's instructions as kept: trimmed, and cut to the cap where longer; none when empty.
+export function keptInstructions(raw: string | null) {
+  const text = raw?.trim() ?? "";
+  if (!text) return { instructions: null, instructionsCut: false };
+  if (text.length <= MCP_INSTRUCTIONS_MAX) return { instructions: text, instructionsCut: false };
+  return { instructions: text.slice(0, MCP_INSTRUCTIONS_MAX).trimEnd(), instructionsCut: true };
+}
+
 // The slug, or it with the first number from 2 that no server in `taken` has.
 export function uniqueSlug(base: string, taken: ReadonlySet<string>) {
   if (!taken.has(base)) return base;
@@ -425,6 +441,8 @@ export function createMcpServers(options: McpServersOptions) {
       status: server.status,
       error: server.error,
       serverInfo: server.serverInfo,
+      instructions: server.instructions,
+      instructionsCut: server.instructionsCut,
       toolCount: server.tools.length,
       toolsReadAt: server.toolsReadAt?.toISOString() ?? null,
       createdAt: server.createdAt.toISOString(),
@@ -474,6 +492,7 @@ export function createMcpServers(options: McpServersOptions) {
         transport: listing.transport,
         protocolVersion: listing.protocolVersion,
         serverInfo: listing.serverInfo,
+        ...keptInstructions(listing.instructions),
         tools: listing.tools,
         toolsReadAt: now(),
         status: "ok",
@@ -1066,6 +1085,28 @@ export function createMcpServers(options: McpServersOptions) {
 
     toolsetsForSpaceSettings(space: Pick<Space, "id" | "orgId">): Toolset[] {
       return [...servers.inOrg(space.orgId), ...servers.inSpace(space.id)].map(toolsetOf);
+    },
+
+    // What the servers the space uses say about their tools, for the agent's prompt: only those
+    // with a tool offered in the run, in the order their toolsets come.
+    instructionsIn(
+      space: Pick<Space, "id" | "orgId">,
+      offered: readonly Pick<AnyToolSpec, "name">[],
+    ): McpServerGuidance[] {
+      const names = new Set(offered.map((spec) => spec.name));
+      return [...orgServersIn(space), ...ownServersIn(space)].flatMap((server) =>
+        server.instructions &&
+        server.tools.some((tool) => names.has(mcpToolId(server.id, tool.name)))
+          ? [
+              {
+                name: server.name,
+                prefix: `mcp.${server.slug}.*`,
+                text: server.instructions,
+                cut: server.instructionsCut,
+              },
+            ]
+          : [],
+      );
     },
 
     // The servers the space uses, as toolsets: the org's it did not turn off, then its own, while

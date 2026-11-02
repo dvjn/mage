@@ -348,6 +348,7 @@ export function setup(
       tools,
       guidance: (space, offered) => ({
         ...instructions.textsFor(space),
+        mcpServers: mcp.instructionsIn(space, offered),
         skills: skills.listFor(space, offered),
         toolsets: tools.guidanceIn(space),
       }),

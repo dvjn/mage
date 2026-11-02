@@ -1,11 +1,11 @@
-// An MCP server's page: its switch, its connection, its tools and their policies, reading them
-// again, reconnecting, changing it in the form it was added with, and removing it. One of the
+// An MCP server's page: its switch, its connection, the instructions it gave for its tools as it
+// wrote them, its tools and their policies, reading them again, reconnecting, changing it in the form it was added with, and removing it. One of the
 // org's servers opened from a space shows there with the space's switch and the space's extra
 // rules for its tools, the rest of it the org's to manage.
 
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeftIcon, CircleAlertIcon, RefreshCwIcon } from "lucide-react";
+import { ArrowLeftIcon, ChevronRightIcon, CircleAlertIcon, RefreshCwIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import { type McpServerSummary, mcpToolsetId } from "@/shared/mcp.ts";
@@ -17,6 +17,11 @@ import { ToolsetTools } from "@/web/agent/toolset-tools";
 import { Time } from "@/web/components/time";
 import { Alert, AlertDescription, AlertTitle } from "@/web/components/ui/alert";
 import { Button } from "@/web/components/ui/button";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/web/components/ui/collapsible";
 import { FieldError } from "@/web/components/ui/field";
 import { Skeleton } from "@/web/components/ui/skeleton";
 import { Switch } from "@/web/components/ui/switch";
@@ -81,6 +86,25 @@ function AuthFact({ server }: { server: McpServerSummary }) {
         </span>
       );
   }
+}
+
+// What the server said about using its tools: its own text, shown as plain text, never rendered.
+function ServerInstructions({ server }: { server: McpServerSummary }) {
+  if (!server.instructions) return null;
+  return (
+    <Collapsible className="mt-4 rounded-md border px-3 py-2 text-sm">
+      <CollapsibleTrigger className="group/instructions flex w-full items-center gap-2 text-left text-muted-foreground hover:text-foreground">
+        <ChevronRightIcon className="size-4 transition-transform group-data-[panel-open]/instructions:rotate-90" />
+        Instructions from the server
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <pre className="mt-2 max-h-64 overflow-auto font-sans text-sm whitespace-pre-wrap text-muted-foreground">
+          {server.instructions}
+        </pre>
+        {server.instructionsCut && <p className="mt-1 text-xs text-muted-foreground">Cut short</p>}
+      </CollapsibleContent>
+    </Collapsible>
+  );
 }
 
 export function McpServerPage({ scope, serverId }: { scope: Scope; serverId: string }) {
@@ -346,6 +370,7 @@ function ServerDetail({ scope, server }: { scope: Scope; server: McpServerSummar
             {scope.kind === "org" ? "Every space of the organization" : "This space"}
           </Fact>
         </dl>
+        <ServerInstructions server={server} />
       </SettingsCard>
       <SettingsCard
         title="Tools"

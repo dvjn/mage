@@ -39,6 +39,10 @@ export const mcpServer = sqliteTable(
     error: text("error"),
     // The name and version it gave, and the tools it listed, as JSON.
     serverInfo: text("server_info", { mode: "json" }).$type<{ name: string; version: string }>(),
+    // What it said about using its tools when last read, kept to a cap, and whether it was cut to
+    // fit; null when it said nothing.
+    instructions: text("instructions"),
+    instructionsCut: integer("instructions_cut", { mode: "boolean" }).default(false).notNull(),
     tools: text("tools", { mode: "json" }).$type<unknown[]>().notNull(),
     toolsReadAt: integer("tools_read_at", { mode: "timestamp_ms" }),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),

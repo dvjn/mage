@@ -56,6 +56,8 @@ export interface McpListing {
   transport: McpTransport;
   protocolVersion: string | null;
   serverInfo: { name: string; version: string } | null;
+  // What the server said about using its tools, as it said it; null when it said nothing.
+  instructions: string | null;
   tools: ToolDefinition[];
 }
 
@@ -444,6 +446,7 @@ export function createMcpClient(options: McpClientOptions): McpClient {
           transport,
           protocolVersion: client.getNegotiatedProtocolVersion() ?? null,
           serverInfo: info ? { name: info.name, version: info.version } : null,
+          instructions: client.getInstructions() ?? null,
           tools: tools.map(definitionOf),
         };
       });

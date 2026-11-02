@@ -8,6 +8,7 @@
 // was, as servers that live only behind OAuth do. Each Streamable HTTP server also answers under
 // /modern speaking only the 2026-07-28 revision: it describes itself to server/discover, wants the
 // revision in each request's _meta, and refuses the older initialize handshake as rmcp servers do.
+// In either revision it gives instructions for using its tools, as servers may.
 
 import { createHash, randomBytes } from "node:crypto";
 
@@ -25,6 +26,8 @@ export interface McpStandInOptions {
   clients?: { id: string; secret?: string }[];
   // Where the server behind OAuth is; /mcp puts it in place of the open one.
   oauthPath?: "/oauth/mcp" | "/mcp";
+  // What it says about using its tools; null says nothing.
+  instructions?: string | null;
 }
 
 interface JsonRpc {
@@ -39,6 +42,9 @@ export const MODERN_REVISION = "2026-07-28";
 const REVISION_KEY = "io.modelcontextprotocol/protocolVersion";
 
 const SERVER_INFO = { name: "Notes", version: "1.0.0" };
+
+// What it says about using its tools, unless told otherwise.
+export const NOTES_INSTRUCTIONS = "Give every note a short title before adding it.";
 
 const TOOLS = [
   {
@@ -111,7 +117,8 @@ function token() {
 }
 
 export function mcpStandIn(options: McpStandInOptions) {
-  const { origin, oauthPath = "/oauth/mcp" } = options;
+  const { origin, oauthPath = "/oauth/mcp", instructions = NOTES_INSTRUCTIONS } = options;
+  const said = instructions === null ? {} : { instructions };
   const notes = new Map<string, { title: string; body: string }>();
   const clients = new Map<string, { secret?: string; redirectUris: string[] | null }>(
     (options.clients ?? []).map((client) => [
@@ -141,6 +148,7 @@ export function mcpStandIn(options: McpStandInOptions) {
           protocolVersion: asked.startsWith("2025") ? asked : "2025-06-18",
           capabilities: { tools: {} },
           serverInfo: SERVER_INFO,
+          ...said,
         };
       }
       case "ping":
@@ -238,6 +246,7 @@ export function mcpStandIn(options: McpStandInOptions) {
           capabilities: { tools: {} },
           ttlMs: 0,
           cacheScope: "private",
+          ...said,
           _meta: { "io.modelcontextprotocol/serverInfo": SERVER_INFO },
         };
         break;

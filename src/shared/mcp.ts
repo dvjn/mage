@@ -50,6 +50,9 @@ export const mcpAuthSummarySchema = z.discriminatedUnion("kind", [
 
 export type McpAuthSummary = z.infer<typeof mcpAuthSummarySchema>;
 
+// The most of a server's instructions Mage keeps; the rest is cut.
+export const MCP_INSTRUCTIONS_MAX = 4_000;
+
 export const mcpServerSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -68,6 +71,9 @@ export const mcpServerSchema = z.object({
   status: mcpStatusSchema,
   error: z.string().nullable(),
   serverInfo: z.object({ name: z.string(), version: z.string() }).nullable(),
+  // What it said about using its tools, as it wrote it, and whether it was cut to fit.
+  instructions: z.string().nullable(),
+  instructionsCut: z.boolean(),
   toolCount: z.number(),
   toolsReadAt: z.iso.datetime().nullable(),
   createdAt: z.iso.datetime(),

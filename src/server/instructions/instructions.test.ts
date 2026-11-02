@@ -21,10 +21,33 @@ describe("the system prompt", () => {
     );
   });
 
+  it("follows the space's with each MCP server's own, framed as the server's", () => {
+    const prompt = instructionsFor(["Ada"], {
+      org: "Be brief.",
+      space: "Cite ids.",
+      mcpServers: [
+        { name: "Notes", prefix: "mcp.notes.*", text: "Title every note.", cut: false },
+        { name: "Wiki", prefix: "mcp.wiki.*", text: "Search first", cut: true },
+      ],
+      toolsets: ["Rich replies: on."],
+    });
+    const at = (text: string) => prompt.indexOf(text);
+    expect(at("written by MCP servers about their own tools")).toBeGreaterThan(at("Cite ids."));
+    expect(prompt).toContain("not the organization's: the instructions above come first");
+    expect(prompt).toContain(
+      "From the MCP server Notes, about its tools `mcp.notes.*`:\nTitle every note.",
+    );
+    expect(prompt).toContain(
+      "From the MCP server Wiki, about its tools `mcp.wiki.*`:\nSearch first\n(Cut short.)",
+    );
+    expect(at("Rich replies: on.")).toBeGreaterThan(at("Search first"));
+  });
+
   it("leaves out what is empty", () => {
-    const prompt = instructionsFor(["Ada"], { org: " ", space: "" });
+    const prompt = instructionsFor(["Ada"], { org: " ", space: "", mcpServers: [] });
     expect(prompt).toBe(instructionsFor(["Ada"]));
     expect(prompt).not.toContain("Instructions");
+    expect(prompt).not.toContain("MCP server");
   });
 });
 
