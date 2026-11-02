@@ -19,12 +19,15 @@ export function QuestionCard({
   input,
   definition,
   answer,
+  settling = false,
   continued,
 }: {
   row: ToolRow;
   input: AskInput;
   definition: ToolDefinition | undefined;
   answer?: RowActions["answer"];
+  // Who may answer is not known yet, so the card is neither open nor paused.
+  settling?: boolean;
   continued: boolean;
 }) {
   return (
@@ -33,14 +36,17 @@ export function QuestionCard({
       author="Agent"
       at={row.requestedAt}
       label="Questions from Agent"
-      note={!answer && <span>Paused</span>}
+      note={!answer && !settling && <span>Paused</span>}
       continued={continued}
     >
       <div className="flex flex-col gap-3 rounded-lg border px-3 py-2.5">
         <div className="flex min-w-0 items-center gap-2 text-sm">
           <MessageCircleQuestionIcon
             aria-hidden
-            className={cn("size-4 shrink-0", answer ? "text-status-waiting" : "text-status-paused")}
+            className={cn(
+              "size-4 shrink-0",
+              answer || settling ? "text-status-waiting" : "text-status-paused",
+            )}
           />
           <ToolCrumb row={row} definition={definition} className="font-semibold" />
         </div>

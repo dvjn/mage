@@ -17,6 +17,7 @@ export function TranscriptItem({
   tools = [],
   turn,
   connection,
+  settling,
 }: {
   row: TranscriptRow;
   actions?: RowActions;
@@ -24,6 +25,8 @@ export function TranscriptItem({
   tools?: ToolDefinition[];
   // For a waiting call that would run with the reader's own credentials, their connection.
   connection?: ToolConnection;
+  // For a waiting call, that who may decide on it is not known yet.
+  settling?: boolean;
   // Where the row sits in the agent's turn, for the agent's own rows.
   turn: AgentTurn | null;
 }) {
@@ -44,6 +47,7 @@ export function TranscriptItem({
           decide={actions.decide}
           answer={actions.answer}
           connection={connection}
+          settling={settling}
           turn={turn ?? { continued: false, model: null }}
         />
       );

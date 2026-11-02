@@ -7,7 +7,7 @@
 // it first selects them with the tool search instead. Shown what the calls gave back, it says so,
 // and calls those of the lines it has not called yet that are offered by then, as after a tool that
 // turned others on. A `/fail <text>` line makes it fail with that text after its words. A `/prompt`
-// line makes it say its system prompt in place of its words, and a `/say` line makes it reply with
+// line makes it say its system prompt, a line at a time, in place of its words, and a `/say` line makes it reply with
 // the rest of the message, a few characters at a time.
 // Its lists stand in for hosts' lists: they take any key starting with `sk-`.
 
@@ -62,6 +62,11 @@ function toolLines(text: string) {
     }
     return { toolId: toolId!, input };
   });
+}
+
+// Words as they stream, each after the first led by its space.
+function spaced(words: string[]) {
+  return words.map((word, index) => (index === 0 ? word : ` ${word}`));
 }
 
 function saidBy(result: ModelToolResult) {
@@ -127,20 +132,20 @@ export function createFakeGateway(): ModelGateway {
           offered.has(TOOL_SEARCH) &&
           unoffered.length > 0 &&
           !wanted.some(({ toolId }) => toolId === TOOL_SEARCH);
-        const words =
+        const pieces =
           last?.role === "tool"
-            ? last.results.map(saidBy).join(" ").split(" ")
+            ? spaced(last.results.map(saidBy).join(" ").split(" "))
             : PROMPT_LINE.test(said)
-              ? request.instructions.split(" ")
-              : [
+              ? request.instructions.split(/(?<=\n)/)
+              : spaced([
                   ...wordsFor(messages),
                   ...(selects ? [] : unoffered).flatMap((toolId) =>
                     `I cannot use ${toolId} here.`.split(" "),
                   ),
-                ];
-        for (const [index, word] of words.entries()) {
+                ]);
+        for (const piece of pieces) {
           await delay(WORD_MS, undefined, { signal });
-          yield { type: "delta", text: index === 0 ? word : ` ${word}` };
+          yield { type: "delta", text: piece };
         }
         const failure = last?.role === "user" ? FAIL_LINE.exec(said) : null;
         if (failure) throw new Error(failure[1]);
@@ -149,9 +154,9 @@ export function createFakeGateway(): ModelGateway {
           ...wanted.filter(({ toolId }) => offered.has(toolId)),
         ].map((call) => ({ callId: ulid(), ...call }));
         for (const call of calls) yield { type: "tool-call", ...call };
-        const text = words.join(" ");
+        const text = pieces.join("");
         messages.push({ role: "assistant", text, toolCalls: calls });
-        yield { type: "step-end", usage: { inputTokens: 10, outputTokens: words.length } };
+        yield { type: "step-end", usage: { inputTokens: 10, outputTokens: pieces.length } };
         // The calls run elsewhere; the request ends with them.
         if (calls.length > 0) return;
       }

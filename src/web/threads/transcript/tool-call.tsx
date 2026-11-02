@@ -18,6 +18,7 @@ export function ToolCall({
   answer,
   turn,
   connection,
+  settling,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
@@ -26,6 +27,8 @@ export function ToolCall({
   turn: AgentTurn;
   // The reader's own connection, for a call that would run with it.
   connection?: ToolConnection;
+  // That who may decide is not known yet.
+  settling?: boolean;
 }) {
   const asked = row.toolId === ASK_TOOL ? askInputSchema.safeParse(row.input) : null;
   if (asked?.success && row.state === "pending" && row.waits) {
@@ -35,6 +38,7 @@ export function ToolCall({
         input={asked.data}
         definition={definition}
         answer={answer}
+        settling={settling}
         continued={turn.continued}
       />
     );
@@ -61,6 +65,7 @@ export function ToolCall({
         definition={definition}
         decide={decide}
         connection={connection}
+        settling={settling}
         continued={turn.continued}
       />
     );

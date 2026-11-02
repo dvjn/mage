@@ -328,6 +328,9 @@ export function ThreadPage() {
                         turn={agentTurnOf(transcript.rows, index)}
                         tools={detail.data?.tools}
                         connection={policy?.connection}
+                        settling={
+                          savedRow.kind === "tool" && savedRow.state === "pending" && !policy
+                        }
                         actions={{
                           ...(row === retryable && { retry: () => retry(retryable.runId) }),
                           ...(!guest && !archived && { pickModel: () => setPicking(true) }),

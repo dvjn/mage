@@ -1,9 +1,9 @@
 // A tool call waiting for a decision: a card from the agent headed by the tool under a hand, tagged
 // when the call asks each time, with the input and Allow, Allow for now and Deny in a row, enabled
-// for the people who may run the tool and marked paused for everyone else. Allow for now shows
-// unless every call asks or needs review. A call that runs with its approver's own login asks an
-// approver with no working connection to connect first, then applies their choice; a sign-in
-// that leaves the page applies it on the way back.
+// for the people who may run the tool, marked paused for everyone else, and neither until that is
+// known. Allow for now shows unless every call asks or needs review. A call that runs with its
+// approver's own login asks an approver with no working connection to connect first, then applies
+// their choice; a sign-in that leaves the page applies it on the way back.
 
 import { cn } from "cn";
 import { HandIcon } from "lucide-react";
@@ -48,6 +48,7 @@ export function ToolCard({
   definition,
   decide,
   connection,
+  settling = false,
   continued,
 }: {
   row: ToolRow;
@@ -55,6 +56,8 @@ export function ToolCard({
   decide?: RowActions["decide"];
   // The reader's own connection, for a call that would run with it.
   connection?: ToolConnection;
+  // Who may decide is not known yet, so the card is neither open nor paused.
+  settling?: boolean;
   continued: boolean;
 }) {
   const [deciding, setDeciding] = useState(false);
@@ -85,7 +88,7 @@ export function ToolCard({
         {label}
       </ConfirmationAction>
     );
-    if (decide) return action;
+    if (decide || settling) return action;
     return (
       <WithTooltip
         label={
@@ -108,7 +111,7 @@ export function ToolCard({
       author="Agent"
       at={row.requestedAt}
       label="Approval request"
-      note={!decide && <span>Paused</span>}
+      note={!decide && !settling && <span>Paused</span>}
       continued={continued}
     >
       <Confirmation
@@ -119,7 +122,10 @@ export function ToolCard({
         <div className="flex min-w-0 items-center gap-2">
           <HandIcon
             aria-hidden
-            className={cn("size-4 shrink-0", decide ? "text-status-waiting" : "text-status-paused")}
+            className={cn(
+              "size-4 shrink-0",
+              decide || settling ? "text-status-waiting" : "text-status-paused",
+            )}
           />
           <ConfirmationTitle className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
             <ToolCrumb row={row} definition={definition} className="font-semibold" />
