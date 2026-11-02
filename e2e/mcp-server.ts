@@ -2,14 +2,16 @@
 // server whose tools are open at /mcp, behind headers at /headers/mcp, behind OAuth at /oauth/mcp,
 // and over the older HTTP+SSE transport at /sse. At /people/mcp each person brings their own
 // bearer token, person-<name>, and echo says the text back as that name. Its OAuth comes from its
-// own small authorization server: protected resource and server metadata, client registration, an
-// authorize page that approves at once, and tokens with their renewal. POST /control/revoke forgets
-// every token, as when a person revokes the app, and /control/revoke-person?name= one person's. It can instead keep its OAuth server at /mcp, where the open one
-// was, as servers that live only behind OAuth do. Each Streamable HTTP server also answers under
-// /modern speaking only the 2026-07-28 revision: it describes itself to server/discover, wants the
-// revision in each request's _meta, and refuses the older initialize handshake as rmcp servers do.
-// In either revision it gives instructions for using its tools, as servers may, and lists a few
-// resources: a text guide, a small image, and at /people/mcp who the caller is.
+// own small authorization server: protected resource and server metadata, client registration or,
+// when given a way to fetch them, client metadata documents by their HTTPS address, an authorize
+// page that approves at once, and tokens with their renewal. POST /control/revoke forgets every
+// token, as when a person revokes the app, and /control/revoke-person?name= one person's. It can
+// instead keep its OAuth server at /mcp, where the open one was, as servers that live only behind
+// OAuth do. Each Streamable HTTP server also answers under /modern speaking only the 2026-07-28
+// revision: it describes itself to server/discover, wants the revision in each request's _meta,
+// and refuses the older initialize handshake as rmcp servers do. In either revision it gives
+// instructions for using its tools, as servers may, and lists a few resources: a text guide, a
+// small image, and at /people/mcp who the caller is.
 
 import { createHash, randomBytes } from "node:crypto";
 
@@ -25,6 +27,9 @@ export interface McpStandInOptions {
   // Whether clients may register themselves; when not, only these clients are known.
   registration?: boolean;
   clients?: { id: string; secret?: string }[];
+  // Fetches a client metadata document; given it, the server takes a document's HTTPS address as a
+  // client_id, and says so in its metadata.
+  clientDocuments?: (url: string) => Promise<Response>;
   // Where the server behind OAuth is; /mcp puts it in place of the open one.
   oauthPath?: "/oauth/mcp" | "/mcp";
   // What it says about using its tools; null says nothing.
@@ -360,6 +365,7 @@ export function mcpStandIn(options: McpStandInOptions) {
       authorization_endpoint: `${origin}/authorize`,
       token_endpoint: `${origin}/token`,
       ...(options.registration !== false && { registration_endpoint: `${origin}/register` }),
+      ...(options.clientDocuments && { client_id_metadata_document_supported: true }),
       response_types_supported: ["code"],
       grant_types_supported: ["authorization_code", "refresh_token"],
       code_challenge_methods_supported: ["S256"],
@@ -376,9 +382,22 @@ export function mcpStandIn(options: McpStandInOptions) {
     return json({ ...metadata, client_id: id, client_id_issued_at: Math.floor(Date.now() / 1000) });
   }
 
-  function authorize(url: URL) {
+  // A client named by its metadata document's address, known once the document names itself.
+  async function documentClient(id: string) {
+    if (!options.clientDocuments || !id.startsWith("https://")) return undefined;
+    const res = await options.clientDocuments(id);
+    if (!res.ok) return undefined;
+    const document = (await res.json()) as { client_id?: string; redirect_uris?: string[] };
+    if (document.client_id !== id) return undefined;
+    const client = { redirectUris: document.redirect_uris ?? [] };
+    clients.set(id, client);
+    return client;
+  }
+
+  async function authorize(url: URL) {
     const params = url.searchParams;
-    const client = clients.get(params.get("client_id") ?? "");
+    const id = params.get("client_id") ?? "";
+    const client = clients.get(id) ?? (await documentClient(id));
     const redirectUri = params.get("redirect_uri") ?? "";
     if (!client || (client.redirectUris && !client.redirectUris.includes(redirectUri))) {
       return new Response("Unknown client or redirect", { status: 400 });

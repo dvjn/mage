@@ -33,7 +33,7 @@ import { ServiceError } from "@/server/kernel/errors.ts";
 import { createEventBus } from "@/server/kernel/event-bus.ts";
 import { createHooks } from "@/server/kernel/hooks.ts";
 import { createLogger } from "@/server/kernel/logger.ts";
-import { createMcpClient } from "@/server/mcp/client.ts";
+import { createMcpClient, mcpOAuthClientAt } from "@/server/mcp/client.ts";
 import { createMcpServers } from "@/server/mcp/service.ts";
 import { createMcpCredentialStore, createMcpServerStore } from "@/server/mcp/store.ts";
 import type { Connections } from "@/server/models/connections.ts";
@@ -237,7 +237,7 @@ export function setup(
     ),
     client: createMcpClient({
       fetch: mcpFetch,
-      oauth: { clientName: "Mage", redirectUrl: `${baseUrl}/api/mcp/oauth/callback` },
+      oauth: mcpOAuthClientAt(baseUrl),
       version: "test",
     }),
     spaces,

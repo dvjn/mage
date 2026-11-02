@@ -50,6 +50,10 @@ export function mcpRoutes(options: { identity: Identity; mcp: McpServers }) {
         });
         return c.redirect(returnTo ?? mcpServerPage(server), 302);
       })
+      // Mage's OAuth client metadata document, which authorization servers fetch by its address.
+      .get("/mcp/oauth/client.json", (c) => {
+        return c.json(mcp.clientDocument(), 200, { "Cache-Control": "public, max-age=3600" });
+      })
       .get("/v1/mcp-connections", (c) => {
         return c.json(mcp.connections(signedIn(c.var.principal)), 200);
       })

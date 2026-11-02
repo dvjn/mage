@@ -79,7 +79,9 @@ function AuthFact({ server }: { server: McpServerSummary }) {
             <span className="text-xs text-muted-foreground">
               {auth.registration === "manual"
                 ? "Client entered"
-                : "Client registered by the server"}
+                : auth.registration === "document"
+                  ? "Client metadata document"
+                  : "Client registered by the server"}
               : <span className="font-mono">{auth.clientId}</span>
             </span>
           )}

@@ -4,15 +4,18 @@
 // 2026-07-28 one where the server offers it and the older initialize handshake where it does not;
 // a call to a server that answered with an older revision before goes straight to the handshake.
 // Headers go only to the server's own origin. OAuth follows the MCP authorization spec through the
-// client's own flow (discovery, registration, PKCE, resource indicators, renewal), its state kept
-// wherever the caller keeps it. Whether an address answers as an MCP server is asked with a first
-// initialize request of its own, and any JSON-RPC answer to it counts, even a refusal from a
-// server that speaks only a later revision.
+// client's own flow (discovery, client choice, PKCE, resource indicators, renewal), its state kept
+// wherever the caller keeps it. The client Mage is with an authorization server is one people
+// entered; else, where the server takes them and Mage is served over HTTPS, the address of Mage's
+// client metadata document; else one the server registers. Whether an address answers as an MCP
+// server is asked with a first initialize request of its own, and any JSON-RPC answer to it
+// counts, even a refusal from a server that speaks only a later revision.
 
 import {
   auth,
   Client,
   type FetchLike,
+  isHttpsUrl,
   isJSONRPCErrorResponse,
   OAuthError,
   type OAuthClientProvider,
@@ -106,10 +109,47 @@ export class McpError extends Error {
 // protected-resource metadata), asking for other authorization, as something else, or not at all.
 export type McpAnswer = "mcp" | "auth" | "other" | "unreachable";
 
-// The OAuth client Mage registers as, and where the authorization server sends people back.
+// The OAuth client Mage is: its name and home page, where the authorization server sends people
+// back, and where its client metadata document is published.
 export interface McpOAuthClient {
-  redirectUrl: string;
   clientName: string;
+  clientUri: string;
+  redirectUrl: string;
+  documentUrl: string;
+}
+
+// The OAuth client Mage is when served at the base URL.
+export function mcpOAuthClientAt(baseUrl: string): McpOAuthClient {
+  return {
+    clientName: "Mage",
+    clientUri: baseUrl,
+    redirectUrl: `${baseUrl}/api/mcp/oauth/callback`,
+    documentUrl: `${baseUrl}/api/mcp/oauth/client.json`,
+  };
+}
+
+// What Mage says of itself as an OAuth client, when registering and in its metadata document: a
+// public client that signs people in with a code and renews its tokens.
+function clientMetadataOf(client: McpOAuthClient) {
+  return {
+    client_name: client.clientName,
+    client_uri: client.clientUri,
+    redirect_uris: [client.redirectUrl],
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    token_endpoint_auth_method: "none",
+  };
+}
+
+// Mage's client metadata document: the same for every request, its client_id its own address.
+export function mcpClientDocument(client: McpOAuthClient) {
+  return { client_id: client.documentUrl, ...clientMetadataOf(client) };
+}
+
+// The document's address, where authorization servers may fetch it: only an HTTPS one counts as a
+// client_id, so Mage served over plain HTTP registers instead.
+function documentUrlOf(client: McpOAuthClient) {
+  return isHttpsUrl(client.documentUrl) ? client.documentUrl : undefined;
 }
 
 export interface McpClient {
@@ -126,6 +166,8 @@ export interface McpClient {
   // Every resource the server lists, all pages of them.
   listResources(target: McpTarget, signal?: AbortSignal): Promise<McpResource[]>;
   readResource(target: McpTarget, uri: string, signal?: AbortSignal): Promise<McpResourceContent[]>;
+  // The client metadata document Mage publishes.
+  clientDocument(): ReturnType<typeof mcpClientDocument>;
   // Starts authorizing Mage: the address to send the person to, with `state` and the PKCE
   // verifier kept in `pending`; or null when the tokens held are still good or were renewed.
   authorize(
@@ -164,22 +206,36 @@ function providerOf(oauth: McpOAuthStore, client: McpOAuthClient, flow: Flow): O
     change(state);
     oauth.save(state);
   };
+  const documentUrl = documentUrlOf(client);
   return {
     get redirectUrl() {
       return client.redirectUrl;
     },
     get clientMetadata() {
-      return {
-        client_name: client.clientName,
-        redirect_uris: [client.redirectUrl],
-        grant_types: ["authorization_code", "refresh_token"],
-        response_types: ["code"],
-        token_endpoint_auth_method: "none",
-      };
+      return clientMetadataOf(client);
     },
+    ...(documentUrl && { clientMetadataUrl: documentUrl }),
     ...(flow.state && { state: () => flow.state! }),
-    clientInformation: () => oauth.load().client as never,
-    saveClientInformation: (info) => update((state) => (state.client = { ...info })),
+    // A metadata document client is the document's address: one at another address, as when
+    // Mage's base URL changed, is forgotten with the tokens issued to it, and a client chosen again.
+    clientInformation() {
+      const state = oauth.load();
+      if (state.document && state.client?.client_id !== documentUrl) {
+        update((stale) => {
+          delete stale.client;
+          delete stale.document;
+          delete stale.tokens;
+        });
+        return undefined;
+      }
+      return state.client as never;
+    },
+    saveClientInformation: (info) =>
+      update((state) => {
+        state.client = { ...info };
+        if (!state.manual && documentUrl && info.client_id === documentUrl) state.document = true;
+        else delete state.document;
+      }),
     tokens: () => oauth.load().tokens as never,
     saveTokens: (tokens) => update((state) => (state.tokens = { ...tokens })),
     discoveryState: () => oauth.load().discovery as never,
@@ -194,12 +250,15 @@ function providerOf(oauth: McpOAuthStore, client: McpOAuthClient, flow: Flow): O
       if (!flow.verifier.value) throw new McpError("needs_auth", "Authorize Mage again.");
       return flow.verifier.value;
     },
-    // A client people entered is kept; one the server registered is registered again.
+    // A client people entered is kept; any other is chosen again.
     invalidateCredentials: (scope) =>
       update((state) => {
         if (scope === "all" || scope === "tokens") delete state.tokens;
         if (scope === "all" || scope === "discovery") delete state.discovery;
-        if ((scope === "all" || scope === "client") && !state.manual) delete state.client;
+        if ((scope === "all" || scope === "client") && !state.manual) {
+          delete state.client;
+          delete state.document;
+        }
       }),
   };
 }
@@ -330,6 +389,7 @@ function definitionOf(tool: {
 
 export function createMcpClient(options: McpClientOptions): McpClient {
   const { fetch, oauth: oauthClient, version } = options;
+  const document = mcpClientDocument(oauthClient);
 
   function transportOf(kind: McpTransport, url: string, auth: McpAuth) {
     const common = {
@@ -508,6 +568,10 @@ export function createMcpClient(options: McpClientOptions): McpClient {
           ...("blob" in part && typeof part.blob === "string" && { blob: part.blob }),
         }));
       });
+    },
+
+    clientDocument() {
+      return document;
     },
 
     async authorize(url, oauth, state, pending) {

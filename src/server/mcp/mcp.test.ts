@@ -327,6 +327,23 @@ async function authorizeInBrowser(
 }
 
 describe("OAuth", () => {
+  it("publishes Mage's client metadata document to anyone", async () => {
+    const { app } = setup();
+    const res = await app.request("/api/mcp/oauth/client.json");
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toMatch(/^application\/json/);
+    expect(res.headers.get("cache-control")).toBe("public, max-age=3600");
+    expect(await res.json()).toEqual({
+      client_id: "http://localhost:4783/api/mcp/oauth/client.json",
+      client_name: "Mage",
+      client_uri: "http://localhost:4783",
+      redirect_uris: ["http://localhost:4783/api/mcp/oauth/callback"],
+      grant_types: ["authorization_code", "refresh_token"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    });
+  });
+
   it("registers Mage, authorizes it with PKCE for the server, and keeps the tokens sealed", async () => {
     const workspace = await orgWithServers();
     const { add, db } = workspace;

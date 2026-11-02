@@ -32,9 +32,15 @@ export type McpCredentialMode = z.infer<typeof mcpCredentialModeSchema>;
 // A stored header as people may see it again: its name, and the end of its value.
 export const mcpHeaderSummarySchema = z.object({ name: z.string(), hint: z.string() });
 
+// How Mage came to be the OAuth client it is with a server's authorization server: registered by
+// it, by the address of Mage's client metadata document, or entered by people.
+export const mcpRegistrationSchema = z.enum(["dynamic", "document", "manual"]);
+
+export type McpRegistration = z.infer<typeof mcpRegistrationSchema>;
+
 // How a server is authorized, without its secrets: headers by name; for OAuth, the client Mage
-// is (registered by the server itself, or entered, with the end of its secret), the authorization
-// server, and whether Mage holds tokens.
+// is (registered by the server itself, its metadata document, or entered, with the end of its
+// secret), the authorization server, and whether Mage holds tokens.
 export const mcpAuthSummarySchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("none") }),
   z.object({ kind: z.literal("headers"), headers: z.array(mcpHeaderSummarySchema) }),
@@ -42,7 +48,7 @@ export const mcpAuthSummarySchema = z.discriminatedUnion("kind", [
     kind: z.literal("oauth"),
     clientId: z.string().nullable(),
     clientSecretHint: z.string().nullable(),
-    registration: z.enum(["dynamic", "manual"]).nullable(),
+    registration: mcpRegistrationSchema.nullable(),
     issuer: z.string().nullable(),
     authorized: z.boolean(),
   }),

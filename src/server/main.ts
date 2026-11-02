@@ -25,7 +25,7 @@ import { loadConfig } from "@/server/kernel/config.ts";
 import { createEventBus } from "@/server/kernel/event-bus.ts";
 import { createHooks } from "@/server/kernel/hooks.ts";
 import { createLogger, createPrettyDestination } from "@/server/kernel/logger.ts";
-import { createMcpClient } from "@/server/mcp/client.ts";
+import { createMcpClient, mcpOAuthClientAt } from "@/server/mcp/client.ts";
 import { createMcpServers } from "@/server/mcp/service.ts";
 import { createMcpCredentialStore, createMcpServerStore } from "@/server/mcp/store.ts";
 import { createModelChoiceStore } from "@/server/models/choice-store.ts";
@@ -139,7 +139,7 @@ const mcp = createMcpServers({
   credentials: createMcpCredentialStore(db, cipher),
   client: createMcpClient({
     fetch,
-    oauth: { clientName: "Mage", redirectUrl: `${config.baseUrl}/api/mcp/oauth/callback` },
+    oauth: mcpOAuthClientAt(config.baseUrl),
     version: "0.0.0",
   }),
   spaces,

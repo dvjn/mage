@@ -45,6 +45,7 @@ import {
   type McpConnection,
   type McpCredentialMode,
   type McpHeadersInput,
+  type McpRegistration,
   type McpServerChange,
   type McpServerSummary,
   MCP_INSTRUCTIONS_MAX,
@@ -112,9 +113,10 @@ export interface McpServer {
 export interface McpSettings {
   // Header names, each with the end of its value.
   headers?: { name: string; hint: string }[];
-  // The OAuth client: entered by people, or registered by the authorization server; its issuer.
+  // The OAuth client: entered by people, Mage's metadata document, or registered by the
+  // authorization server; its issuer.
   clientId?: string | null;
-  registration?: "dynamic" | "manual" | null;
+  registration?: McpRegistration | null;
   issuer?: string | null;
 }
 
@@ -182,6 +184,8 @@ export interface McpOAuthState {
   client?: Record<string, unknown>;
   // Whether people entered the client, so that it is kept when the server forgets it.
   manual?: boolean;
+  // Whether the client is the address of Mage's client metadata document.
+  document?: boolean;
   tokens?: Record<string, unknown>;
   discovery?: Record<string, unknown>;
 }
@@ -531,7 +535,13 @@ export function createMcpServers(options: McpServersOptions) {
     const oauth = credentials.get(serverId, SHARED)?.oauth;
     const clientId = (oauth?.client?.client_id as string | undefined) ?? null;
     const issuer = (oauth?.tokens?.issuer as string | undefined) ?? server.settings.issuer ?? null;
-    const registration = clientId ? (oauth?.manual ? "manual" : "dynamic") : null;
+    const registration = !clientId
+      ? null
+      : oauth?.manual
+        ? "manual"
+        : oauth?.document
+          ? "document"
+          : "dynamic";
     const next: McpSettings = { ...server.settings, clientId, issuer, registration };
     if (JSON.stringify(next) !== JSON.stringify(server.settings)) {
       servers.update(serverId, { settings: next });
@@ -964,6 +974,7 @@ export function createMcpServers(options: McpServersOptions) {
         oauth: {
           ...(shared?.client && { client: shared.client }),
           ...(shared?.manual && { manual: true }),
+          ...(shared?.document && { document: true }),
           ...(shared?.discovery && { discovery: shared.discovery }),
         },
       });
@@ -1006,6 +1017,10 @@ export function createMcpServers(options: McpServersOptions) {
   return {
     summary,
     resourceTools,
+
+    clientDocument() {
+      return client.clientDocument();
+    },
 
     // The servers with personal credentials the person may connect to, the org's and those of the
     // spaces they can see, each with their own connection to it, if any.
