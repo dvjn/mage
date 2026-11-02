@@ -27,6 +27,7 @@ const columns = {
   error: run.error,
   errorKind: run.errorKind,
   errorDetail: run.errorDetail,
+  toolsOn: run.toolsOn,
   inputTokens: run.inputTokens,
   outputTokens: run.outputTokens,
   createdAt: run.createdAt,
@@ -193,6 +194,19 @@ export function createRunStore(db: Db): RunStore {
       const row = db
         .update(run)
         .set({ model, updatedAt: new Date() })
+        .where(held(lease))
+        .returning({ id: run.id })
+        .get();
+      if (!row) throw new LeaseLost(lease.runId);
+    },
+
+    turnOn(lease, toolIds) {
+      const current = db.select({ toolsOn: run.toolsOn }).from(run).where(held(lease)).get();
+      if (!current) throw new LeaseLost(lease.runId);
+      const toolsOn = [...new Set([...current.toolsOn, ...toolIds])];
+      const row = db
+        .update(run)
+        .set({ toolsOn, updatedAt: new Date() })
         .where(held(lease))
         .returning({ id: run.id })
         .get();

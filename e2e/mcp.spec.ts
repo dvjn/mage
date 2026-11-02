@@ -334,3 +334,51 @@ test("a space turns one of the org's MCP servers off for itself alone", async ({
   await expect(inSpace).toBeDisabled();
   await expect(inSpace).not.toBeChecked();
 });
+
+test("the agent lists a server's resources and reads one", async ({ page }) => {
+  const spaceId = await signUp(page);
+  await page.goto("/org/tools");
+  await addServer(page, "Notes", `${mcpServer}/headers/mcp`, withBearer(MCP_BEARER_TOKEN));
+  await expect(page.getByText("Connected").first()).toBeVisible();
+
+  await page.goto(`/s/${spaceId}`);
+  await write(page, "/tool mcp._.list_resources {}");
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  await expect(
+    transcript(page).getByRole("button", { name: /^MCP › List resources · Ran/ }),
+  ).toBeVisible();
+  await expect(transcript(page)).toContainText("notes://guide");
+
+  await write(page, '/tool mcp._.read_resource {"server":"notes","uri":"notes://guide"}');
+  await expect(
+    transcript(page).getByRole("button", { name: /^MCP › Read resource · Ran/ }),
+  ).toBeVisible();
+  await expect(transcript(page)).toContainText("Every note has a title and a body.");
+});
+
+test("the agent searches for a server's tool, turns it on and runs it", async ({ page }) => {
+  const spaceId = await signUp(page);
+  await page.goto("/org/tools");
+  await addServer(page, "Notes", `${mcpServer}/headers/mcp`, withBearer(MCP_BEARER_TOKEN));
+  await expect(page.getByText("Connected").first()).toBeVisible();
+  // The tool search is always on: its switch is on and disabled.
+  await page.goto("/org/tools");
+  await expect(page.getByRole("switch", { name: "Thread: on", exact: true })).toBeVisible();
+  const own = page.getByRole("switch", { name: "MCP: on", exact: true });
+  await expect(own).toBeChecked();
+  await expect(own).toBeDisabled();
+
+  await page.goto(`/s/${spaceId}`);
+  await write(
+    page,
+    '/tool mcp._.search_tools {"query":"echo"}\n/tool mcp.notes.echo {"text":"found"}',
+  );
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  // Left out at first, the tool is searched for, turned on, then called.
+  await expect(transcript(page)).toContainText("I cannot use mcp.notes.echo here.");
+  await expect(
+    transcript(page).getByRole("button", { name: /^MCP › Search tools · Ran/ }),
+  ).toBeVisible();
+  await expect(transcript(page).getByRole("button", { name: /^Notes › Echo · Ran/ })).toBeVisible();
+  await expect(transcript(page)).toContainText('Tool mcp.notes.echo said: ok {"text":"found"}');
+});

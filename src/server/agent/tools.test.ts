@@ -1,14 +1,15 @@
 import { and, eq } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
+import * as z from "zod";
 
 import * as schema from "@/server/schema.ts";
 import type { ToolRisk } from "@/shared/threads/events.ts";
-import { EDITORS, TOOL_OFF } from "@/shared/tools.ts";
+import { EDITORS, TOOL_OFF, WIRE_NAME_MAX, wireToolName } from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
 
-import type { ToolPolicyFields } from "./tools.ts";
+import { createTools, modelToolNames, type ToolPolicyFields, type Toolset } from "./tools.ts";
 import {
   canPostIn,
   canUse as canUseUnder,
@@ -656,28 +657,23 @@ describe("tool calls", () => {
     expect(second.request.effort).toBe("low");
   });
 
-  it("are not offered where the org or the space turned them off", async () => {
+  it("are not offered where the org or the space turned them off, but fixed ones always are", async () => {
     const workspace = await toolThread();
     const { ada, post, model, worker, start, toolSettings, space } = workspace;
-    toolSettings.setInOrg(ada.orgId, ["thread.info"], TOOL_OFF);
-    toolSettings.setInSpace(space.id, ["thread.move"], TOOL_OFF);
+    toolSettings.setInOrg(ada.orgId, ["thread.rename", "thread.info"], TOOL_OFF);
+    toolSettings.setInSpace(space.id, ["thread.move", "thread.ask"], TOOL_OFF);
     start();
     await post(ada, "Hello");
     const call = await answered(model.next());
     await worker.idle();
-    expect(call.tools).toEqual(["thread.rename", "thread.set_model", "thread.ask"]);
+    expect(call.tools).toEqual(["thread.set_model", "thread.ask"]);
 
     const other = await workspace.createSpace(ada.cookie, "Other");
     const thread = await workspace.createThread(ada.cookie, other.id, "Hello there");
     const elsewhere = await answered(model.next());
     await worker.idle();
     expect(thread.id).toBeDefined();
-    expect(elsewhere.tools).toEqual([
-      "thread.rename",
-      "thread.move",
-      "thread.set_model",
-      "thread.ask",
-    ]);
+    expect(elsewhere.tools).toEqual(["thread.move", "thread.set_model", "thread.ask"]);
   });
 });
 
@@ -1063,18 +1059,24 @@ describe("built-in toolset switches", () => {
         ]),
       }),
     );
-    expect(toolRegistry.offered({ id: space.id, orgId: ada.orgId })).toEqual([]);
-    expect(toolRegistry.offered({ id: elsewhere.id, orgId: ada.orgId }).length).toBeGreaterThan(0);
+    // What is always on stays.
+    const fixed = ["thread.ask"];
+    const offered = (spaceId: string) =>
+      toolRegistry.offered({ id: spaceId, orgId: ada.orgId }).map((spec) => spec.name);
+    expect(offered(space.id)).toEqual(fixed);
+    expect(offered(elsewhere.id).length).toBeGreaterThan(fixed.length);
     expect((await setOrg(false)).status).toBe(200);
     expect((await setSpace(true)).status).toBe(409);
-    expect(toolRegistry.definitions({ id: elsewhere.id, orgId: ada.orgId })).toEqual([]);
+    expect(
+      toolRegistry.definitions({ id: elsewhere.id, orgId: ada.orgId }).map((tool) => tool.name),
+    ).toEqual(fixed);
     const changeWhileOff = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
       toolIds: ["thread.rename"],
       policy: review.id,
     });
     expect(changeWhileOff.status).toBe(200);
     expect((await setOrg(true)).status).toBe(200);
-    expect(toolRegistry.offered({ id: space.id, orgId: ada.orgId })).toEqual([]);
+    expect(offered(space.id)).toEqual(fixed);
     expect((await setSpace(true)).status).toBe(200);
     const restored = await api("GET", `/spaces/${space.id}/tools`, ada.cookie);
     expect(await restored.json()).toContainEqual(
@@ -1120,23 +1122,31 @@ describe("tool settings", () => {
       (await api("PATCH", "/org/tools", ada.cookie, change(["thread.move"], "nope"))).status,
     ).toBe(404);
     const org = await api("PATCH", "/org/tools", ada.cookie, change(["thread.move"], signOff.id));
-    const [thread] = (await org.json()) as {
-      id: string;
-      title: string;
-      source: string;
-      tools: unknown[];
-    }[];
+    const thread = (
+      (await org.json()) as { id: string; title: string; source: string; tools: unknown[] }[]
+    ).find((toolset) => toolset.id === "thread");
     expect(thread).toMatchObject({ id: "thread", title: "Thread", source: "builtin" });
     expect(thread!.tools).toContainEqual(
       expect.objectContaining({ id: "thread.move", orgPolicy: signOff.id, policy: signOff.id }),
     );
     expect(thread!.tools).toContainEqual(
       expect.objectContaining({
-        id: "thread.info",
+        id: "thread.rename",
         orgPolicy: null,
-        definition: expect.objectContaining({ annotations: { readOnlyHint: true } }),
+        definition: expect.objectContaining({ annotations: { readOnlyHint: false } }),
       }),
     );
+    // What is always on shows, but takes no policy.
+    expect(thread!.tools).toContainEqual(
+      expect.objectContaining({ id: "thread.ask", fixed: true, policy: null }),
+    );
+    expect(thread!.tools).toContainEqual(
+      expect.objectContaining({ id: "thread.info", orgPolicy: null, policy: null }),
+    );
+    expect(thread!.tools.filter((tool) => (tool as { fixed?: boolean }).fixed)).toHaveLength(1);
+    expect(
+      (await api("PATCH", "/org/tools", ada.cookie, change(["thread.ask"], TOOL_OFF))).status,
+    ).toBe(404);
 
     // A space's own policy is for its tools alone, never the org's or another space's.
     const own = await api("POST", `/spaces/${space.id}/tool-policies`, ada.cookie, {
@@ -1166,7 +1176,7 @@ describe("tool settings", () => {
       "PATCH",
       `/spaces/${space.id}/tools`,
       ada.cookie,
-      change(["thread.rename", "thread.info"], TOOL_OFF),
+      change(["thread.rename"], TOOL_OFF),
     );
     await api(
       "PATCH",
@@ -1176,13 +1186,15 @@ describe("tool settings", () => {
     );
     expect(changed.status).toBe(200);
     const listed = await api("GET", `/spaces/${space.id}/tools`, ada.cookie);
-    const [inSpace] = (await listed.json()) as { tools: unknown[] }[];
+    const inSpace = ((await listed.json()) as { id: string; tools: unknown[] }[]).find(
+      (toolset) => toolset.id === "thread",
+    )!;
     expect(inSpace!.tools).toEqual([
-      expect.objectContaining({ id: "thread.info", orgPolicy: null, policy: TOOL_OFF }),
+      expect.objectContaining({ id: "thread.info", orgPolicy: null, policy: null }),
       expect.objectContaining({ id: "thread.rename", orgPolicy: null, policy: TOOL_OFF }),
       expect.objectContaining({ id: "thread.move", orgPolicy: signOff.id, policy: null }),
       expect.objectContaining({ id: "thread.set_model", orgPolicy: null, policy: spacePolicy.id }),
-      expect.objectContaining({ id: "thread.ask", orgPolicy: null, policy: null }),
+      expect.objectContaining({ id: "thread.ask", orgPolicy: null, policy: null, fixed: true }),
     ]);
     expect((await api("GET", `/spaces/${space.id}/tools`, grace.cookie)).status).toBe(403);
   });
@@ -1339,5 +1351,68 @@ describe("thread lists", () => {
     expect(await needing(hedy, "/shared-threads/page")).toMatchObject({ total: 1 });
     expect((await sidebar(ada)).needsYou).toBe(1);
     expect((await sidebar(alan)).needsYou).toBe(0);
+  });
+});
+
+describe("Mage's own toolsets", () => {
+  const unused = {} as Omit<Parameters<typeof createTools>[0], "toolsets">;
+  const toolset = (id: string, names: string[]): Toolset => ({
+    id,
+    title: id,
+    source: "builtin",
+    tools: names.map((name) => ({
+      name,
+      description: name,
+      input: z.object({}),
+      risk: () => "normal",
+      run: () => Promise.resolve({ ok: true, value: null }),
+    })),
+  });
+
+  it("each keep a name of their own, which their tools' names start with", () => {
+    expect(() =>
+      createTools({ ...unused, toolsets: [toolset("resource", ["resource.list"])] }),
+    ).not.toThrow();
+    expect(() =>
+      createTools({
+        ...unused,
+        toolsets: [toolset("resource", ["resource.list"]), toolset("resource", [])],
+      }),
+    ).toThrow("Two of Mage's own toolsets are named resource");
+    expect(() =>
+      createTools({ ...unused, toolsets: [toolset("files", ["resource.read"])] }),
+    ).toThrow("resource.read is outside its toolset's names");
+    expect(() => createTools({ ...unused, toolsets: [toolset("mcp", [])] })).toThrow();
+  });
+
+  it("take a name under mcp.* only where no server's short name can be", () => {
+    expect(() =>
+      createTools({ ...unused, toolsets: [toolset("mcp._", ["mcp._.search_tools"])] }),
+    ).not.toThrow();
+    expect(() =>
+      createTools({ ...unused, toolsets: [toolset("mcp.notes", ["mcp.notes.search"])] }),
+    ).toThrow("mcp.notes is outside its toolset's names");
+    expect(() => createTools({ ...unused, toolsets: [toolset("mcp.0", [])] })).toThrow();
+  });
+
+  it("keep their MCP tools' names on the wire, apart from every server's, and map them back", () => {
+    const own = ["mcp._.search_tools", "mcp._.list_resources", "mcp._.read_resource"];
+    // Servers whose tools come closest: one with a short name of `_`s after its first character,
+    // and tools named as Mage's own.
+    const servers = ["mcp.a_.search_tools", "mcp.a.list_resources", "mcp.a__.read_resource"];
+    const tools = [...own, ...servers, "thread.info"].map((id) => ({ id, name: id }));
+    const names = modelToolNames(tools);
+    for (const id of own) expect(names.get(id)).toBe(id);
+    const wire = [...names.values()].map(wireToolName);
+    expect(new Set(wire).size).toBe(tools.length);
+    expect(wire.every((name) => name.length <= WIRE_NAME_MAX)).toBe(true);
+    expect(own.map((id) => wireToolName(id))).toEqual([
+      "mcp_____search_tools",
+      "mcp_____list_resources",
+      "mcp_____read_resource",
+    ]);
+    // Back from the wire to each id, as a run reads the model's calls.
+    const fromWire = new Map([...names].map(([id, name]) => [wireToolName(name), id]));
+    for (const { id } of tools) expect(fromWire.get(wireToolName(names.get(id)!))).toBe(id);
   });
 });

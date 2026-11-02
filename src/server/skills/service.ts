@@ -709,7 +709,7 @@ export function createSkills(options: SkillsOptions) {
     },
 
     // The built-in Skills toolset: loading a skill that is on in the thread's space, and reading
-    // one of its files; offered only where a skill is on.
+    // one of its files; always on where a skill is on, with no switch and no policy.
     toolset(): Toolset {
       const named = (space: Pick<Space, "id" | "orgId">, name: string) =>
         effectiveIn(space).find((skill) => skill.name === name);
@@ -787,6 +787,11 @@ export function createSkills(options: SkillsOptions) {
         tools: [load, readFile],
         // Offered only where some skill is on.
         usefulIn: (space) => effectiveIn(space).length > 0,
+        fixed: true,
+        // Settings show it where the org or the space has skills.
+        listedIn: ({ orgId, spaceId }) =>
+          skills.inScope({ orgId, spaceId: null }).length > 0 ||
+          (spaceId !== null && skills.inScope({ orgId, spaceId }).length > 0),
       };
     },
   };

@@ -10,6 +10,7 @@ import { createRunWorker, type RunWorker } from "@/server/agent/runs.ts";
 import { createSystemTools } from "@/server/agent/system-tools.ts";
 import { createToolPolicies } from "@/server/agent/tool-policies.ts";
 import { createToolPolicyStore } from "@/server/agent/tool-policy-store.ts";
+import { createMcpTools, createToolSearch } from "@/server/agent/tool-search.ts";
 import { createToolSettingStore } from "@/server/agent/tool-setting-store.ts";
 import { createToolDecisions, createTools } from "@/server/agent/tools.ts";
 import { createTransact, openDatabase, pingDatabase } from "@/server/db/db.ts";
@@ -157,6 +158,7 @@ const skills = createSkills({
 });
 const tools = createTools({
   toolsets: [
+    createRichReplies(),
     createSystemTools({
       threads: threadStore,
       spaceStore,
@@ -165,7 +167,17 @@ const tools = createTools({
       models,
     }),
     skills.toolset(),
-    createRichReplies(),
+    createMcpTools(
+      [
+        createToolSearch((space) => mcp.toolsetsInSpace(space).length > 0),
+        // A server's resources follow its tools: listed only while one of them is on in the space.
+        ...mcp.resourceTools((space) => {
+          const rules = tools.rulesIn(space);
+          return (toolId) => !rules(toolId).off;
+        }),
+      ],
+      mcp.hasServers,
+    ),
   ],
   scoped: {
     inSpace: (space) => mcp.toolsetsInSpace(space),

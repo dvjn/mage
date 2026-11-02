@@ -3,9 +3,12 @@
 // milliseconds; it keeps going much longer when the newest message asks it to reply slowly, longer
 // still very slowly, and reasons for a few words first when it asks it to think. Each `/tool <id>
 // <json>` line in the newest message makes it call that tool after its words, when it is offered,
-// or say it cannot; shown what the calls gave back, it says so. A `/fail <text>` line makes it fail
-// with that text after its words. A `/prompt` line makes it say its system prompt in place of its
-// words, and a `/say` line makes it reply with the rest of the message, a few characters at a time.
+// or say it cannot. Where tools it is not offered can be searched for and no line searches itself,
+// it first selects them with the tool search instead. Shown what the calls gave back, it says so,
+// and calls those of the lines it has not called yet that are offered by then, as after a tool that
+// turned others on. A `/fail <text>` line makes it fail with that text after its words. A `/prompt`
+// line makes it say its system prompt in place of its words, and a `/say` line makes it reply with
+// the rest of the message, a few characters at a time.
 // Its lists stand in for hosts' lists: they take any key starting with `sk-`.
 
 import { setTimeout as delay } from "node:timers/promises";
@@ -22,6 +25,8 @@ import type {
 import { HOST_IDS, type HostId, hostOf } from "@/shared/hosts.ts";
 
 export const FAKE_MODEL_REF = "fake/echo";
+
+const TOOL_SEARCH = "mcp._.search_tools";
 
 const WORD_MS = 40;
 const FILLER = "and so the engine turns its wheels".split(" ");
@@ -97,7 +102,31 @@ export function createFakeGateway(): ModelGateway {
           yield { type: "step-end", usage: { inputTokens: 10, outputTokens: text.length } };
           continue;
         }
-        const wanted = toolLines(said);
+        // Once shown what its calls gave back, it calls those of the newest message's lines it has
+        // not called yet and is now offered.
+        const asked = [...messages].reverse().find((message) => message.role === "user");
+        const since = messages.slice(asked ? messages.lastIndexOf(asked) : 0);
+        const called = since.flatMap((message) =>
+          message.role === "assistant" ? (message.toolCalls ?? []).map((call) => call.toolId) : [],
+        );
+        const wanted =
+          last?.role === "tool"
+            ? toolLines(asked?.text ?? "").filter(({ toolId }) => {
+                const index = called.indexOf(toolId);
+                if (index === -1) return true;
+                called.splice(index, 1);
+                return false;
+              })
+            : toolLines(said);
+        // Tools it is not offered, which it turns on itself unless the message searches for them.
+        const unoffered = wanted
+          .filter(({ toolId }) => !offered.has(toolId))
+          .map(({ toolId }) => toolId);
+        const selects =
+          last?.role === "user" &&
+          offered.has(TOOL_SEARCH) &&
+          unoffered.length > 0 &&
+          !wanted.some(({ toolId }) => toolId === TOOL_SEARCH);
         const words =
           last?.role === "tool"
             ? last.results.map(saidBy).join(" ").split(" ")
@@ -105,9 +134,9 @@ export function createFakeGateway(): ModelGateway {
               ? request.instructions.split(" ")
               : [
                   ...wordsFor(messages),
-                  ...wanted
-                    .filter(({ toolId }) => !offered.has(toolId))
-                    .flatMap(({ toolId }) => `I cannot use ${toolId} here.`.split(" ")),
+                  ...(selects ? [] : unoffered).flatMap((toolId) =>
+                    `I cannot use ${toolId} here.`.split(" "),
+                  ),
                 ];
         for (const [index, word] of words.entries()) {
           await delay(WORD_MS, undefined, { signal });
@@ -115,9 +144,10 @@ export function createFakeGateway(): ModelGateway {
         }
         const failure = last?.role === "user" ? FAIL_LINE.exec(said) : null;
         if (failure) throw new Error(failure[1]);
-        const calls: ModelToolCall[] = wanted
-          .filter(({ toolId }) => offered.has(toolId))
-          .map((call) => ({ callId: ulid(), ...call }));
+        const calls: ModelToolCall[] = [
+          ...(selects ? [{ toolId: TOOL_SEARCH, input: { select: [...new Set(unoffered)] } }] : []),
+          ...wanted.filter(({ toolId }) => offered.has(toolId)),
+        ].map((call) => ({ callId: ulid(), ...call }));
         for (const call of calls) yield { type: "tool-call", ...call };
         const text = words.join(" ");
         messages.push({ role: "assistant", text, toolCalls: calls });

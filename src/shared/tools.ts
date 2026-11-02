@@ -151,6 +151,8 @@ export const toolSettingSchema = z.object({
   definition: toolDefinitionSchema,
   orgPolicy: toolAssignmentSchema,
   policy: toolAssignmentSchema,
+  // Always on, with no policy.
+  fixed: z.boolean().optional(),
 });
 
 export type ToolSetting = z.infer<typeof toolSettingSchema>;
@@ -164,6 +166,8 @@ export const toolsetSettingSchema = z.object({
   scope: z.enum(["org", "space"]),
   // What a toolset of no tools is for.
   description: z.string().optional(),
+  // Always on: its switch cannot turn it off.
+  fixed: z.boolean().optional(),
   // Built-in toolset switches; MCP servers expose their switches through server settings.
   enabled: z.boolean().optional(),
   orgEnabled: z.boolean().optional(),
@@ -183,6 +187,13 @@ export const toolPolicyChangeSchema = z.object({
 export type ToolPolicyChange = z.infer<typeof toolPolicyChangeSchema>;
 
 export const toolsetEnabledChangeSchema = z.object({ enabled: z.boolean() });
+
+// Built-in tools by the ids they had before, so calls made under those still show as theirs.
+export const FORMER_TOOL_IDS: Readonly<Record<string, string>> = {
+  "tools.search": "mcp._.search_tools",
+  "resource.list": "mcp._.list_resources",
+  "resource.read": "mcp._.read_resource",
+};
 
 // The most characters providers take in a tool's name.
 export const WIRE_NAME_MAX = 64;

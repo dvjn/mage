@@ -1,0 +1,1 @@
+ALTER TABLE `mcp_server` ADD `resources` integer DEFAULT false NOT NULL;

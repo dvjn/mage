@@ -17,14 +17,21 @@
 // a short name for the agent, made from its name unless given, unique among the servers any one
 // space has; its tools reach the model as mcp.<slug>.<tool>, while their ids stay with the server's
 // id, so renaming it keeps their policies and history. Servers kept from before short names get one
-// when the service starts.
+// when the service starts. The resources of servers that declare them are listed and read through
+// Mage's own Resource toolset, each call going with the credentials of the server it names.
 
 import { randomBytes } from "node:crypto";
 
 import * as z from "zod";
 
 import type { McpServerGuidance } from "@/server/agent/context.ts";
-import type { AnyToolSpec, ToolContext, ToolOutput, Toolset } from "@/server/agent/tools.ts";
+import type {
+  AnyToolSpec,
+  ToolContext,
+  ToolOutput,
+  Toolset,
+  ToolSpec,
+} from "@/server/agent/tools.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
@@ -41,6 +48,7 @@ import {
   type McpServerChange,
   type McpServerSummary,
   MCP_INSTRUCTIONS_MAX,
+  MCP_OWN_TOOLSET,
   mcpToolId,
   mcpSlugOf,
   mcpToolsetId,
@@ -59,7 +67,12 @@ import {
   type McpCallResult,
   McpError,
   type McpClient,
+  type McpResource,
 } from "./client.ts";
+import { contentsOf, listed, RESOURCE_LIST_MAX } from "./resources.ts";
+
+// Whether each tool is on in a space: not turned off by the org or the space.
+export type ToolsOn = (space: Pick<Space, "id" | "orgId">) => (toolId: string) => boolean;
 
 export interface McpServer {
   id: string;
@@ -87,6 +100,8 @@ export interface McpServer {
   // and whether it was cut to fit; null when it said nothing.
   instructions: string | null;
   instructionsCut: boolean;
+  // Whether it declared resources when last read.
+  resources: boolean;
   // The tools it last listed, as MCP defines them.
   tools: ToolDefinition[];
   toolsReadAt: Date | null;
@@ -125,6 +140,7 @@ export type McpServerChanges = Partial<
     | "serverInfo"
     | "instructions"
     | "instructionsCut"
+    | "resources"
     | "tools"
     | "toolsReadAt"
   >
@@ -493,6 +509,7 @@ export function createMcpServers(options: McpServersOptions) {
         protocolVersion: listing.protocolVersion,
         serverInfo: listing.serverInfo,
         ...keptInstructions(listing.instructions),
+        resources: listing.resources,
         tools: listing.tools,
         toolsReadAt: now(),
         status: "ok",
@@ -527,6 +544,7 @@ export function createMcpServers(options: McpServersOptions) {
       id: mcpToolsetId(server.id),
       title: server.name,
       source: "mcp",
+      prefix: `mcp.${server.slug}`,
       tools: server.tools.map((definition) => specOf(server, definition)),
     };
   }
@@ -543,16 +561,13 @@ export function createMcpServers(options: McpServersOptions) {
       ...(definition.annotations && { annotations: definition.annotations }),
       risk: () => riskOfAnnotations(definition.annotations),
       ...(server.credentials === "personal" && {
-        connection: (userId: string) => connectionOf(server, userId),
+        connection: () => (userId: string) => connectionOf(server, userId),
       }),
       run: (input, ctx) => call(server.id, definition.name, input as Record<string, unknown>, ctx),
     };
   }
 
-  // Calls the tool on the server with its shared secrets, or for personal credentials with those
-  // of the person the call runs as, saying whose they were. A server that cannot be reached says
-  // why, and is marked so for those who manage it; a person's own secrets it refuses are marked to
-  // be connected again.
+  // Calls the tool on the server.
   async function call(
     serverId: string,
     name: string,
@@ -561,6 +576,18 @@ export function createMcpServers(options: McpServersOptions) {
   ): Promise<ToolOutput> {
     const server = servers.find(serverId);
     if (!server) return { ok: false, error: "This MCP server was removed." };
+    return reach(server, ctx, async (target) => outputOf(await client.call(target, name, args)));
+  }
+
+  // Does the work on the server with its shared secrets, or for personal credentials with those of
+  // the person the call runs as, saying whose they were. A server that cannot be reached says why,
+  // and is marked so for those who manage it; a person's own secrets it refuses are marked to be
+  // connected again.
+  async function reach(
+    server: McpServer,
+    ctx: Pick<ToolContext, "runAs">,
+    work: (target: McpTarget) => Promise<ToolOutput>,
+  ): Promise<ToolOutput> {
     if (server.credentials === "personal") {
       const userId = ctx.runAs;
       if (!userId || !connectedAs(server, userId)) {
@@ -570,12 +597,12 @@ export function createMcpServers(options: McpServersOptions) {
           ...(userId && { ranAs: userId }),
         };
       }
-      return callAs(server, name, args, userId);
+      return reachAs(server, userId, work);
     }
     try {
-      const result = await client.call(targetOf(server, SHARED), name, args);
+      const output = await work(targetOf(server, SHARED));
       if (server.status !== "ok") servers.update(server.id, { status: "ok", error: null });
-      return outputOf(result);
+      return output;
     } catch (err) {
       if (!(err instanceof McpError)) throw err;
       servers.update(server.id, { status: err.kind, error: err.message });
@@ -587,15 +614,13 @@ export function createMcpServers(options: McpServersOptions) {
     }
   }
 
-  async function callAs(
+  async function reachAs(
     server: McpServer,
-    name: string,
-    args: Record<string, unknown>,
     userId: string,
+    work: (target: McpTarget) => Promise<ToolOutput>,
   ): Promise<ToolOutput> {
     try {
-      const result = await client.call(targetOf(server, own(userId)), name, args);
-      return { ...outputOf(result), ranAs: userId };
+      return { ...(await work(targetOf(server, own(userId)))), ranAs: userId };
     } catch (err) {
       if (!(err instanceof McpError)) throw err;
       if (!err.refused)
@@ -607,6 +632,138 @@ export function createMcpServers(options: McpServersOptions) {
         ranAs: userId,
       };
     }
+  }
+
+  // The servers the space uses whose resources the agent may list and read: those that declared
+  // resources and have a tool on there.
+  function resourceServersIn(space: Pick<Space, "id" | "orgId">, toolsOn: ToolsOn) {
+    const on = toolsOn(space);
+    return [...orgServersIn(space), ...ownServersIn(space)].filter(
+      (server) =>
+        server.resources && server.tools.some((tool) => on(mcpToolId(server.id, tool.name))),
+    );
+  }
+
+  // Mage's own tools for listing and reading the resources of the space's servers, of use where
+  // one has resources. A call that names a server goes with that server's credentials, as its
+  // tools' calls do: the shared ones, or the own login of the person it runs as; one that names
+  // none lists only the servers whose credentials are shared, since one call has one login.
+  function resourceTools(toolsOn: ToolsOn): AnyToolSpec[] {
+    const usefulIn = (space: Pick<Space, "id" | "orgId">) =>
+      resourceServersIn(space, toolsOn).length > 0;
+    const named = (space: Pick<Space, "id" | "orgId">, slug: string) =>
+      resourceServersIn(space, toolsOn).find((server) => server.slug === slug);
+    const missing = (space: Pick<Space, "id" | "orgId">, slug: string): ToolOutput => {
+      const slugs = resourceServersIn(space, toolsOn).map((server) => server.slug);
+      return {
+        ok: false,
+        error: slugs.length
+          ? `No server here named ${slug} has resources. Those that do: ${slugs.join(", ")}.`
+          : `No server here named ${slug} has resources. None here do.`,
+      };
+    };
+    const personalConnection = (space: Pick<Space, "id" | "orgId">, slug: string | undefined) => {
+      const server = slug ? named(space, slug) : undefined;
+      return server?.credentials === "personal"
+        ? (userId: string) => connectionOf(server, userId)
+        : null;
+    };
+    const serverInput = z
+      .string()
+      .trim()
+      .min(1)
+      .meta({ title: "Server", description: "Its short name, as in mcp.<server>.*" });
+
+    const list: ToolSpec<{ server?: string }> = {
+      name: `${MCP_OWN_TOOLSET}.list_resources`,
+      title: "List resources",
+      annotations: { readOnlyHint: true },
+      description:
+        "List the resources MCP servers here offer: each one's server, uri, name, description and type. Name a server to list only its own.",
+      input: z.object({ server: serverInput.optional() }),
+      risk: () => "normal",
+      usefulIn,
+      connection: ({ server }, space) => personalConnection(space, server),
+      async run({ server: slug }, ctx) {
+        const space = { id: ctx.spaceId, orgId: ctx.orgId };
+        if (slug) {
+          const server = named(space, slug);
+          if (!server) return missing(space, slug);
+          return reach(server, ctx, async (target) => {
+            const resources = await client.listResources(target);
+            return {
+              ok: true,
+              value: {
+                resources: resources
+                  .slice(0, RESOURCE_LIST_MAX)
+                  .map((resource) => listed(server.slug, resource)),
+                ...(resources.length > RESOURCE_LIST_MAX && { more: true }),
+              },
+            };
+          });
+        }
+        const found: ReturnType<typeof listed>[] = [];
+        const errors: string[] = [];
+        const personal: string[] = [];
+        for (const server of resourceServersIn(space, toolsOn)) {
+          if (server.credentials === "personal") {
+            personal.push(server.slug);
+            continue;
+          }
+          const output = await reach(server, ctx, async (target) => ({
+            ok: true,
+            value: await client.listResources(target),
+          }));
+          if (!output.ok) errors.push(output.error);
+          else {
+            for (const resource of output.value as McpResource[]) {
+              found.push(listed(server.slug, resource));
+            }
+          }
+        }
+        return {
+          ok: true,
+          value: {
+            resources: found.slice(0, RESOURCE_LIST_MAX),
+            ...(found.length > RESOURCE_LIST_MAX && { more: true }),
+            ...(errors.length > 0 && { errors }),
+            ...(personal.length > 0 && {
+              personal: `These servers use each person's own login; name one to list its resources: ${personal.join(", ")}.`,
+            }),
+          },
+        };
+      },
+    };
+
+    const read: ToolSpec<{ server: string; uri: string }> = {
+      name: `${MCP_OWN_TOOLSET}.read_resource`,
+      title: "Read resource",
+      annotations: { readOnlyHint: true },
+      description:
+        "Read a resource from an MCP server here, by the server and the resource's uri. Text comes back as text; binary content only as its type and size.",
+      input: z.object({
+        server: serverInput,
+        uri: z.string().trim().min(1).meta({ title: "Resource", description: "Its uri" }),
+      }),
+      risk: () => "normal",
+      usefulIn,
+      connection: ({ server }, space) => personalConnection(space, server),
+      async run({ server: slug, uri }, ctx) {
+        const space = { id: ctx.spaceId, orgId: ctx.orgId };
+        const server = named(space, slug);
+        if (!server) return missing(space, slug);
+        return reach(server, ctx, async (target) => ({
+          ok: true,
+          value: {
+            server: server.slug,
+            uri,
+            ...contentsOf(await client.readResource(target, uri)),
+          },
+        }));
+      },
+    };
+
+    return [list, read];
   }
 
   // The headers sent with a server's requests, for asking whether its address answers.
@@ -848,6 +1005,7 @@ export function createMcpServers(options: McpServersOptions) {
 
   return {
     summary,
+    resourceTools,
 
     // The servers with personal credentials the person may connect to, the org's and those of the
     // spaces they can see, each with their own connection to it, if any.
@@ -1086,6 +1244,10 @@ export function createMcpServers(options: McpServersOptions) {
     toolsetsForSpaceSettings(space: Pick<Space, "id" | "orgId">): Toolset[] {
       return [...servers.inOrg(space.orgId), ...servers.inSpace(space.id)].map(toolsetOf);
     },
+
+    // Whether the org has servers, or for a space, the org or the space.
+    hasServers: ({ orgId, spaceId }: { orgId: string; spaceId: string | null }) =>
+      servers.inOrg(orgId).length > 0 || (!!spaceId && servers.inSpace(spaceId).length > 0),
 
     // What the servers the space uses say about their tools, for the agent's prompt: only those
     // with a tool offered in the run, in the order their toolsets come.

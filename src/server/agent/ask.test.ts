@@ -204,7 +204,7 @@ describe("asking questions", () => {
     expect((await answer(ada, tools()[0]!.id, ANSWERS)).status).toBe(409);
   });
 
-  it("lets only those its policy lets use or approve it answer", async () => {
+  it("lets anyone who can post answer, whatever policy was stored for it", async () => {
     const { ada, grace, post, calls, model, worker, start, tools, answer, toolSettings, policy } =
       await askThread();
     toolSettings.setInOrg(
@@ -217,8 +217,7 @@ describe("asking questions", () => {
     await calls(["thread.ask", QUESTIONS]);
     await worker.idle();
 
-    expect((await answer(grace, tools()[0]!.id, ANSWERS)).status).toBe(403);
-    expect((await answer(ada, tools()[0]!.id, ANSWERS)).status).toBe(200);
+    expect((await answer(grace, tools()[0]!.id, ANSWERS)).status).toBe(200);
     (await model.next()).reply("Thanks.");
     await worker.idle();
     expect(tools()[0]).toMatchObject({ state: "ran" });

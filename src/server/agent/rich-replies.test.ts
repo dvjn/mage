@@ -91,7 +91,7 @@ describe("rich replies guidance", () => {
     });
   });
 
-  it("is in the agent's prompt while the toolset is on in the space", async () => {
+  it("is always in the agent's prompt, whatever switch was stored for it", async () => {
     const { ada, post, model, worker, start, toolSettings, space } = await agentThread();
     start();
     await post(ada, "Hello");
@@ -105,6 +105,6 @@ describe("rich replies guidance", () => {
     const off = await model.next();
     off.reply("Hi.");
     await worker.idle();
-    expect(off.request.instructions).not.toContain("Rich replies:");
+    expect(off.request.instructions).toContain("Rich replies:");
   });
 });

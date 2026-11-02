@@ -43,6 +43,8 @@ export const mcpServer = sqliteTable(
     // fit; null when it said nothing.
     instructions: text("instructions"),
     instructionsCut: integer("instructions_cut", { mode: "boolean" }).default(false).notNull(),
+    // Whether it declared resources when last read.
+    resources: integer("resources", { mode: "boolean" }).default(false).notNull(),
     tools: text("tools", { mode: "json" }).$type<unknown[]>().notNull(),
     toolsReadAt: integer("tools_read_at", { mode: "timestamp_ms" }),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),

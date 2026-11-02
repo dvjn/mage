@@ -1,9 +1,10 @@
 // The agent's tools in settings: the Policies card, then a card for each source of toolsets (built
 // in, MCP servers) and in it one collapsible row per toolset with counts of its tools' policies and
-// a built-in on/off switch; a built-in toolset of no tools is a plain row with its switch. For the
-// org, only its owners change them; in a space, the org's tools follow the org's policy by default
-// or take a stricter one on top, while the space's own toolsets take its policy directly. The
-// toolsets an MCP server card shows are handed to it as they are read.
+// a built-in on/off switch; a built-in toolset of no tools is a plain row with its switch, and one
+// always on has its switch on and disabled. For the org, only its owners change them; in a space,
+// the org's tools follow the org's policy by default or take a stricter one on top, while the
+// space's own toolsets take its policy directly. The toolsets an MCP server card shows are handed
+// to it as they are read.
 
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
@@ -22,7 +23,7 @@ import { PolicyChangeError, ToolPoliciesProvider } from "@/web/agent/policies/pr
 import { toolsQuery } from "@/web/agent/queries";
 import { useToolsetSwitch } from "@/web/agent/mutations";
 import { useOpenSections } from "@/web/agent/open-sections";
-import { ToolsetTools } from "@/web/agent/toolset-tools";
+import { ALWAYS_ON, ToolsetTools } from "@/web/agent/toolset-tools";
 
 // Each source's card title, in the order the cards show.
 const SOURCES: Record<ToolsetSetting["source"], string> = {
@@ -57,7 +58,10 @@ function Toolsets({ toolsets, scope, canChange, onSwitch }: ToolsProps) {
               inSpace={scope === "space"}
               orgOff={toolset.orgEnabled === false}
               checked={on}
-              disabled={!canChange || (scope === "space" && toolset.orgEnabled === false)}
+              disabled={
+                !canChange || !!toolset.fixed || (scope === "space" && toolset.orgEnabled === false)
+              }
+              why={toolset.fixed ? ALWAYS_ON : undefined}
               onCheckedChange={(enabled) => onSwitch(toolset.id, enabled)}
             />
           );
@@ -182,10 +186,7 @@ export function SpaceToolsList({
         {tools.data && (
           <>
             <Toolsets
-              toolsets={tools.data.filter(
-                (toolset) =>
-                  toolset.source !== "mcp" && (toolset.tools.length > 0 || !!toolset.description),
-              )}
+              toolsets={tools.data.filter((toolset) => toolset.source !== "mcp")}
               scope="space"
               canChange
               onSwitch={(toolsetId, enabled) => toolsetSwitch.mutate({ toolsetId, enabled })}

@@ -1,6 +1,7 @@
 // What the agent is given to reply from: a short system prompt naming Mage and the people in the
 // thread, followed by the org's instructions, the space's, what the MCP servers whose tools it is
-// offered say about them, what Mage's own toolsets on there tell it and the skills on there, when
+// offered say about them, the servers' tools left out until it searches for them, what Mage's own
+// toolsets on there tell it and the skills on there, when
 // there are any, and the thread's messages in the order the agent saw them, each person's prefixed
 // with their name, each reply with the tool calls it asked for and what they gave back. Quiet
 // asides are included; replies still being written, and replies cut short that were tried again,
@@ -10,6 +11,8 @@
 import type { ModelMessage, ModelToolResult } from "@/server/models/gateway.ts";
 import { QUIET_PREFIX } from "@/shared/threads/events.ts";
 import type { HumanRow, ToolRow, TranscriptRow } from "@/shared/transcript.ts";
+
+import { TOOL_SEARCH } from "./tool-search.ts";
 
 export interface Context {
   instructions: string;
@@ -31,12 +34,22 @@ export interface McpServerGuidance {
   cut: boolean;
 }
 
+// One server's tools left out of the request, each by its name for the model and a line of what it
+// does.
+export interface DeferredServerTools {
+  server: string;
+  prefix: string;
+  tools: { name: string; description: string }[];
+}
+
 // What the org and the space tell the agent, and the skills it may load there.
 export interface Guidance {
   org: string;
   space: string;
   // What the MCP servers whose tools are offered say about them.
   mcpServers?: McpServerGuidance[];
+  // The servers' tools left out of the request until the agent turns them on, by server.
+  deferredTools?: DeferredServerTools[];
   skills?: { name: string; description: string }[];
   // What Mage's own toolsets on in the space tell it.
   toolsets?: string[];
@@ -73,6 +86,17 @@ export function instructionsFor(people: string[], guidance: Guidance = NO_GUIDAN
         ].join("\n"),
       );
     }
+  }
+  if (guidance.deferredTools?.length) {
+    sections.push(
+      [
+        `These MCP tools are not in your tools yet. To use one, turn it on with the ${TOOL_SEARCH} tool: by a query, by its exact name with select, or by listing a server's tools. Tools turned on can be called from your next step.`,
+        ...guidance.deferredTools.flatMap((group) => [
+          `${group.server} (${group.prefix}.*):`,
+          ...group.tools.map((tool) => `- ${tool.name}: ${tool.description}`),
+        ]),
+      ].join("\n"),
+    );
   }
   for (const text of guidance.toolsets ?? []) sections.push(text);
   if (guidance.skills?.length) {

@@ -20,6 +20,7 @@ import type { ThreadAccess } from "@/server/spaces/thread-access.ts";
 import { eventSummary, type ThreadLog } from "@/server/threads/log.ts";
 import type { Thread, ThreadStore, NewEvent } from "@/server/threads/service.ts";
 import { type AskAnswers, askInputSchema, answersProblem } from "@/shared/ask.ts";
+import { mcpSlugSchema } from "@/shared/mcp.ts";
 import type { ToolRisk, ToolScope } from "@/shared/threads/events.ts";
 import {
   TOOL_OFF,
@@ -69,6 +70,18 @@ export type ToolOutput = ({ ok: true; value: unknown } | { ok: false; error: str
   ranAs?: string;
 };
 
+// An MCP server's tool a run may leave out of the model's requests until the model turns it on:
+// its id, what the model knows it by, its server and the start of its tools' names there, and
+// what it does and takes.
+export interface DeferredTool {
+  id: string;
+  name: string;
+  server: string;
+  prefix: string;
+  description: string;
+  inputSchema: JsonSchema;
+}
+
 // Where a call runs: the thread, its space and org, the run and call, and the model ref that
 // replies now. `write` appends to the thread while the run still holds it.
 export interface ToolContext {
@@ -84,6 +97,9 @@ export interface ToolContext {
   runAs: string | null;
   // What was answered, for a tool that waits for answers.
   answers?: AskAnswers;
+  // The MCP tools the run leaves out of the model's requests, those turned on among them, and a
+  // way to turn some on for the rest of the run, for the tool that searches them.
+  deferred?: { tools: DeferredTool[]; on: ReadonlySet<string>; turnOn(ids: string[]): void };
   write<T>(work: (append: (event: NewEvent, title?: string) => void) => T): T;
 }
 
@@ -104,13 +120,22 @@ export interface ToolSpec<I = unknown> {
   // What a call gives back when it succeeds, where the tool says.
   output?: z.ZodType;
   annotations?: Record<string, unknown>;
+  // One always on where it is of use: no switch turns it off and no policy applies to it.
+  fixed?: boolean;
+  // Whether a space has any use for it now; always, when not given.
+  usefulIn?(space: { id: string; orgId: string }): boolean;
   // A tool whose every call waits for someone in the thread to answer it before it runs; who may
   // answer follows its rules as approving does, and an answer counts as its writer's words.
   waitsFor?: "answer";
-  // For a tool whose calls run with the own login of the person they run as: that person's
-  // connection for it. Its calls run directly only for one connected writer; otherwise they wait
-  // for an approver, who connects first and whose login the call then runs with.
-  connection?(userId: string): ToolConnection;
+  // For a tool whose calls run with the own login of the person they run as: each person's
+  // connection a call with this input would go with, or null for a call that goes with shared
+  // credentials, as when the input names a server whose credentials are shared. Such a call runs
+  // directly only for one connected writer; otherwise it waits for an approver, who connects first
+  // and whose login it then runs with.
+  connection?(
+    input: I,
+    space: Pick<Space, "id" | "orgId">,
+  ): ((userId: string) => ToolConnection) | null;
   risk(input: I, ctx: Pick<ToolContext, "model">): ToolRisk;
   run(input: I, ctx: ToolContext): Promise<ToolOutput>;
 }
@@ -129,8 +154,21 @@ export interface Toolset {
   description?: string;
   // What the agent is told while it is on in the thread's space.
   guidance?: string;
+  // What the model's names for its tools start with, for an MCP server's: mcp.<slug>.
+  prefix?: string;
   // Whether a space has any use for it now, such as skills to load; always, when not given.
   usefulIn?(space: { id: string; orgId: string }): boolean;
+  // One of Mage's own whose tools are all fixed, and whose guidance is always given where it is of
+  // use.
+  fixed?: boolean;
+  // For a fixed one, whether the org's settings, or a space's, show it: where it may be offered.
+  // Always, when not given.
+  listedIn?(scope: { orgId: string; spaceId: string | null }): boolean;
+}
+
+// Whether the tool of the toolset is always on where it is of use.
+function fixedIn(toolset: Toolset, spec: AnyToolSpec) {
+  return !!(toolset.fixed || spec.fixed);
 }
 
 // The toolsets that come and go with what orgs and spaces add, such as their MCP servers: those
@@ -265,32 +303,83 @@ function ruleOf(policy: ToolPolicyRecord): Rule {
 
 export function createTools(options: ToolsOptions) {
   const { toolsets, settings, policies, directory, access } = options;
+  // Each of Mage's own toolsets has an id of its own, and its tools' names start with it, so no
+  // two of them can offer a tool by the same name. Under mcp.* one takes only a name no server's
+  // short name can be, so no MCP server's tool can clash with its tools either.
+  for (const [index, toolset] of toolsets.entries()) {
+    if (toolsets.findIndex((other) => other.id === toolset.id) !== index) {
+      throw new Error(`Two of Mage's own toolsets are named ${toolset.id}`);
+    }
+    const stray = toolset.tools.find((spec) => !spec.name.startsWith(`${toolset.id}.`));
+    const [root, server] = toolset.id.split(".");
+    const serverNames =
+      root === "mcp" && (server === undefined || mcpSlugSchema.safeParse(server).success);
+    if (serverNames || stray) {
+      throw new Error(`${stray?.name ?? toolset.id} is outside its toolset's names`);
+    }
+  }
   const scoped = options.scoped ?? {
     inSpace: () => [],
     forOrgSettings: () => [],
     forSpaceSettings: () => [],
   };
 
+  // The toolsets with the tools policies may be set on: those not fixed.
+  const settable = toolsets.flatMap((toolset) => {
+    const tools = toolset.tools.filter((spec) => !fixedIn(toolset, spec));
+    return tools.length > 0 ? [{ ...toolset, tools }] : [];
+  });
+  const fixedTools = new Set(
+    toolsets.flatMap((toolset) =>
+      toolset.tools.filter((spec) => fixedIn(toolset, spec)).map((spec) => spec.name),
+    ),
+  );
+
   function settingsInOrg(orgId: string) {
-    return [...toolsets, ...scoped.forOrgSettings(orgId)];
+    return [...settable, ...scoped.forOrgSettings(orgId)];
   }
 
   function settingsInSpace(space: Pick<Space, "id" | "orgId">) {
-    return [...toolsets, ...scoped.forSpaceSettings(space)];
+    return [...settable, ...scoped.forSpaceSettings(space)];
   }
 
-  // The toolsets the space has: Mage's own that are on and of use there, and those of what the org
-  // and the space added.
-  function inSpace(space: Pick<Space, "id" | "orgId">) {
+  // The toolsets settings show: Mage's own with their fixed tools, a fixed one only where it may be
+  // offered, and those of what the org and the space added.
+  function shownInOrg(orgId: string) {
+    const scope = { orgId, spaceId: null };
+    return [...listed(scope), ...scoped.forOrgSettings(orgId)];
+  }
+
+  function shownInSpace(space: Pick<Space, "id" | "orgId">) {
+    const scope = { orgId: space.orgId, spaceId: space.id };
+    return [...listed(scope), ...scoped.forSpaceSettings(space)];
+  }
+
+  function listed(scope: { orgId: string; spaceId: string | null }) {
+    return toolsets.filter((toolset) => toolset.listedIn?.(scope) ?? true);
+  }
+
+  // Every tool the space may have called, on or off, fixed ones among them.
+  function everyIn(space: Pick<Space, "id" | "orgId">) {
+    return specsOf([...toolsets, ...scoped.forSpaceSettings(space)]);
+  }
+
+  // The toolsets the space has: Mage's own of use there, with their fixed tools and, while they
+  // are on, the rest, each tool of use there too; and those of what the org and the space added.
+  function inSpace(space: Pick<Space, "id" | "orgId">): Toolset[] {
     const org = settings.toolsetsInOrg(space.orgId);
     const own = settings.toolsetsInSpace(space.id);
-    return [
-      ...toolsets.filter(
-        (set) =>
-          org.get(set.id) !== false && own.get(set.id) !== false && (set.usefulIn?.(space) ?? true),
-      ),
-      ...scoped.inSpace(space),
-    ];
+    const builtin = toolsets.flatMap((set) => {
+      if (!(set.usefulIn?.(space) ?? true)) return [];
+      const on = org.get(set.id) !== false && own.get(set.id) !== false;
+      const tools = set.tools.filter(
+        (spec) => (on || fixedIn(set, spec)) && (spec.usefulIn?.(space) ?? true),
+      );
+      // One whose tools are all off or of no use is not there; one with only guidance is, while on.
+      const there = set.tools.length > 0 ? tools.length > 0 : on || set.fixed;
+      return there ? [{ ...set, tools }] : [];
+    });
+    return [...builtin, ...scoped.inSpace(space)];
   }
 
   function specsOf(sets: Toolset[]) {
@@ -300,7 +389,7 @@ export function createTools(options: ToolsOptions) {
   // What applies to each tool in the space. The org's tools take the org's policy, or are open
   // when it set none, with the space's extra rule on top; the space's own take the space's
   // policy, or are open. Off in either is off. A policy that is gone, or not the scope's to use,
-  // lets nobody use the tool and nobody approve it.
+  // lets nobody use the tool and nobody approve it. Fixed tools are always open.
   function rulesIn(space: Pick<Space, "id" | "orgId">): (toolId: string) => ToolRules {
     const orgTools = new Set(specsOf(settingsInOrg(space.orgId)).map((spec) => spec.name));
     const org = settings.inOrg(space.orgId);
@@ -314,6 +403,7 @@ export function createTools(options: ToolsOptions) {
       return ruleOf(policy);
     };
     return (toolId) => {
+      if (fixedTools.has(toolId)) return { off: false, rule: ruleFor([OPEN]) };
       const fromOrg = orgTools.has(toolId);
       const inOrg = fromOrg ? org.get(toolId) : undefined;
       const inSpace = own.get(toolId);
@@ -357,14 +447,14 @@ export function createTools(options: ToolsOptions) {
     space: Pick<Space, "id" | "orgId">,
     model: string | null = null,
   ): ToolRisk {
-    const spec = specsOf(settingsInSpace(space)).find((tool) => tool.name === row.toolId);
+    const spec = everyIn(space).find((tool) => tool.name === row.toolId);
     const parsed = spec?.input.safeParse(row.input);
     return spec && parsed?.success ? riskOf(space, spec, parsed.data, model) : row.risk;
   }
 
   // Whether the call waits for an answer rather than a decision.
   function asks(row: Pick<ToolRow, "toolId">, space: Pick<Space, "id" | "orgId">) {
-    const spec = specsOf(settingsInSpace(space)).find((tool) => tool.name === row.toolId);
+    const spec = everyIn(space).find((tool) => tool.name === row.toolId);
     return spec?.waitsFor === "answer";
   }
 
@@ -407,12 +497,23 @@ export function createTools(options: ToolsOptions) {
     return influence;
   }
 
-  // The toolset with each tool's definition, and whether the org or the space has it.
-  function withDefinitions(
-    { tools, guidance: _guidance, ...toolset }: Toolset,
-    scope: "org" | "space",
-  ) {
-    return { ...toolset, scope, tools: tools.map(definitionOf) };
+  // The toolset with each tool's definition, whether the org or the space has it, and whether it
+  // and each tool are fixed.
+  function withDefinitions(toolset: Toolset, scope: "org" | "space") {
+    const { id, title, source, description, prefix, tools } = toolset;
+    return {
+      id,
+      title,
+      source,
+      ...(description && { description }),
+      ...(prefix && { prefix }),
+      fixed: !!toolset.fixed,
+      scope,
+      tools: tools.map((spec) => ({
+        definition: definitionOf(spec),
+        fixed: !!(toolset.fixed || spec.fixed),
+      })),
+    };
   }
 
   return {
@@ -440,6 +541,26 @@ export function createTools(options: ToolsOptions) {
     offered,
     riskOf,
 
+    // The tools the space offers from MCP servers, which a run may leave out of its requests until
+    // the model turns them on, each as the model knows it.
+    fromServers(space: Pick<Space, "id" | "orgId">, names: ModelNames): DeferredTool[] {
+      const rules = rulesIn(space);
+      return inSpace(space).flatMap((toolset) =>
+        toolset.source !== "mcp"
+          ? []
+          : toolset.tools
+              .filter((spec) => !rules(spec.name).off)
+              .map((spec) => ({
+                id: spec.name,
+                name: names.toModel(spec.name),
+                server: toolset.title,
+                prefix: toolset.prefix ?? "",
+                description: spec.description,
+                inputSchema: definitionOf(spec).inputSchema,
+              })),
+      );
+    },
+
     // What the toolsets on in the space tell the agent.
     guidanceIn(space: Pick<Space, "id" | "orgId">) {
       return inSpace(space).flatMap((toolset) => (toolset.guidance ? [toolset.guidance] : []));
@@ -449,7 +570,7 @@ export function createTools(options: ToolsOptions) {
     // calls made before.
     modelNames(space: Pick<Space, "id" | "orgId">): ModelNames {
       const names = modelToolNames(
-        specsOf(settingsInSpace(space)).map((spec) => ({
+        everyIn(space).map((spec) => ({
           id: spec.name,
           name: spec.modelName ?? spec.name,
         })),
@@ -464,15 +585,18 @@ export function createTools(options: ToolsOptions) {
     canDecide,
     rulesIn,
 
-    // The person's own connection that a call of the tool would run with, for a tool that uses
-    // each person's own credentials.
+    // The person's own connection that a call of the tool with this input would run with, for a
+    // call that uses each person's own credentials.
     connectionFor(
       space: Pick<Space, "id" | "orgId">,
       toolId: string,
       userId: string,
+      input: unknown,
     ): ToolConnection | null {
-      const spec = specsOf(settingsInSpace(space)).find((tool) => tool.name === toolId);
-      return spec?.connection?.(userId) ?? null;
+      const spec = everyIn(space).find((tool) => tool.name === toolId);
+      const parsed = spec?.input.safeParse(input);
+      if (!spec?.connection || !parsed?.success) return null;
+      return spec.connection(parsed.data, space)?.(userId) ?? null;
     },
 
     // Each tool's level for the person in the thread: whether they may use it without approval.
@@ -487,28 +611,32 @@ export function createTools(options: ToolsOptions) {
       );
     },
 
-    // The toolsets of the org, with each tool's definition.
+    // The toolsets of the org, with each tool's definition; a fixed one is always on.
     toolsetsInOrg(orgId: string) {
       const switches = settings.toolsetsInOrg(orgId);
-      return settingsInOrg(orgId).map((toolset) => ({
+      return shownInOrg(orgId).map((toolset) => ({
         ...withDefinitions(toolset, "org"),
         ...(toolset.source === "builtin" && {
-          orgEnabled: switches.get(toolset.id) !== false,
-          enabled: switches.get(toolset.id) !== false,
+          orgEnabled: !!toolset.fixed || switches.get(toolset.id) !== false,
+          enabled: !!toolset.fixed || switches.get(toolset.id) !== false,
         }),
       }));
     },
 
     // The space's: those the org offers it as the org's, and the rest as its own.
     toolsetsInSpace(space: Pick<Space, "id" | "orgId">) {
-      const org = new Set(settingsInOrg(space.orgId).map((toolset) => toolset.id));
+      const org = new Set(
+        [...toolsets, ...scoped.forOrgSettings(space.orgId)].map((toolset) => toolset.id),
+      );
       const orgSwitches = settings.toolsetsInOrg(space.orgId);
       const switches = settings.toolsetsInSpace(space.id);
-      return settingsInSpace(space).map((toolset) => ({
+      return shownInSpace(space).map((toolset) => ({
         ...withDefinitions(toolset, org.has(toolset.id) ? "org" : "space"),
         ...(toolset.source === "builtin" && {
-          orgEnabled: orgSwitches.get(toolset.id) !== false,
-          enabled: orgSwitches.get(toolset.id) !== false && switches.get(toolset.id) !== false,
+          orgEnabled: !!toolset.fixed || orgSwitches.get(toolset.id) !== false,
+          enabled:
+            !!toolset.fixed ||
+            (orgSwitches.get(toolset.id) !== false && switches.get(toolset.id) !== false),
         }),
       }));
     },
@@ -530,9 +658,11 @@ export function createTools(options: ToolsOptions) {
       space: Space,
       toolId: string,
       declared: ToolRisk,
+      input: unknown,
     ): Decision {
       const { rule } = rulesIn(space)(toolId);
-      const spec = specsOf(settingsInSpace(space)).find((tool) => tool.name === toolId);
+      const spec = everyIn(space).find((tool) => tool.name === toolId);
+      const connection = spec?.connection?.(input, space) ?? null;
       // The vouches given for now themselves, not the calls that later ran on them.
       const standing: Approval[] = rows
         .filter(
@@ -559,8 +689,8 @@ export function createTools(options: ToolsOptions) {
         rule,
         influence: influenceOf(rows, thread, space, rule),
         standing,
-        ...(spec?.connection && {
-          connected: (userId: string) => !!spec.connection?.(userId).connected,
+        ...(connection && {
+          connected: (userId: string) => connection(userId).connected,
         }),
       });
     },
@@ -678,10 +808,12 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
   ): ToolsetSetting[] {
     return toolsets.map((toolset) => ({
       ...toolset,
-      tools: toolset.tools.map((definition) => ({
+      tools: toolset.tools.map(({ definition, fixed }) => ({
         id: definition.name,
         definition,
-        ...assignmentsOf(definition.name, toolset.scope),
+        ...(fixed
+          ? { orgPolicy: null, policy: null, fixed }
+          : assignmentsOf(definition.name, toolset.scope)),
       })),
     }));
   }
@@ -728,7 +860,7 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
           throw new ServiceError(400, "This call can only be allowed once");
         }
         // A call allowed runs with its approver's own login, where its tool uses one.
-        const connection = tools.connectionFor(space, call.toolId, principal.userId);
+        const connection = tools.connectionFor(space, call.toolId, principal.userId, call.input);
         if (decision.allow && connection && !connection.connected) {
           throw new ServiceError(409, `Connect to ${connection.title} first`);
         }
@@ -829,7 +961,7 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
       if (principal.role !== "owner") throw new ServiceError(403, OWNERS_ONLY);
       const toolset = tools
         .toolsetsInOrg(principal.orgId)
-        .find((set) => set.id === toolsetId && set.source === "builtin");
+        .find((set) => set.id === toolsetId && set.source === "builtin" && !set.fixed);
       if (!toolset) throw new ServiceError(404, "Toolset not found");
       settings.setToolsetInOrg(principal.orgId, toolsetId, enabled);
     },
@@ -838,7 +970,7 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
       const space = spaces.require(principal, spaceId, "manage");
       const toolset = tools
         .toolsetsInSpace(space)
-        .find((set) => set.id === toolsetId && set.source === "builtin");
+        .find((set) => set.id === toolsetId && set.source === "builtin" && !set.fixed);
       if (!toolset) throw new ServiceError(404, "Toolset not found");
       if (enabled && !toolset.orgEnabled)
         throw new ServiceError(409, "The organization turned this toolset off");

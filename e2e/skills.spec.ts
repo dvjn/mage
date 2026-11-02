@@ -77,6 +77,12 @@ test("a repository added from a pasted command, a skill switched on, and loaded 
 
   await write(page, '/tool skills.load {"name":"release-notes"}');
   await expect(transcript(page)).toContainText("No skill named release-notes is on here");
+
+  // With skills in the org, tool settings show the Skills toolset always on.
+  await page.goto("/org/tools");
+  const skills = page.getByRole("switch", { name: "Skills: on", exact: true });
+  await expect(skills).toBeChecked();
+  await expect(skills).toBeDisabled();
 });
 
 test("a space switches an org repository off and on for itself", async ({ page }) => {

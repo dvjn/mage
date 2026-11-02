@@ -1,14 +1,21 @@
 // A toolset's tools, split under plain read-only and interactive headings, with a filter for many.
-// Each heading's picker sets all its tools at once; each tool takes a policy or is off.
+// Each heading's picker sets all its tools at once; each tool takes a policy or is off, except one
+// always on, whose picker shows On and is disabled.
 
 import { cn } from "cn";
 import { SearchIcon } from "lucide-react";
 import { useState } from "react";
 
 import { type ToolSetting, type ToolsetSetting } from "@/shared/tools.ts";
+import { Button } from "@/web/components/ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
 import { PolicyPicker } from "@/web/agent/policies/picker";
+import { PolicyDot } from "@/web/agent/policies/tags";
 import { Popover, PopoverContent, PopoverTrigger } from "@/web/components/ui/popover";
+import { WithTooltip } from "@/web/components/with-tooltip";
+
+// What a control that cannot change something always on says on hover.
+export const ALWAYS_ON = "Always on";
 
 // A toolset with more tools than this gets a filter.
 const FILTER_FROM = 8;
@@ -101,10 +108,12 @@ function ToolGroup({
   shown: ToolSetting[];
   extra: boolean;
 }) {
-  const values = new Set(tools.map((tool) => tool.policy));
+  // The picker sets only the tools not always on.
+  const settable = tools.filter((tool) => !tool.fixed);
+  const values = new Set(settable.map((tool) => tool.policy));
   // Mixed when the group's tools differ.
   const value = values.size === 1 ? [...values][0]! : null;
-  const inherited = new Set(tools.map((tool) => tool.orgPolicy));
+  const inherited = new Set(settable.map((tool) => tool.orgPolicy));
   if (shown.length === 0) return null;
   return (
     <div role="group" aria-label={name}>
@@ -112,14 +121,18 @@ function ToolGroup({
         <h3 className="text-xs font-medium tracking-wide text-muted-foreground uppercase">
           {heading} · {tools.length}
         </h3>
-        <PolicyPicker
-          label={extra ? `${name} policy in this space` : `${name} policy`}
-          value={value}
-          mixed={values.size > 1}
-          extra={extra}
-          inherited={inherited.size === 1 ? [...inherited][0]! : undefined}
-          target={{ toolIds: tools.map((tool) => tool.id), label: target }}
-        />
+        {settable.length > 0 ? (
+          <PolicyPicker
+            label={extra ? `${name} policy in this space` : `${name} policy`}
+            value={value}
+            mixed={values.size > 1}
+            extra={extra}
+            inherited={inherited.size === 1 ? [...inherited][0]! : undefined}
+            target={{ toolIds: settable.map((tool) => tool.id), label: target }}
+          />
+        ) : (
+          <AlwaysOn label={`${name} policy`} />
+        )}
       </div>
       <ul className="flex flex-col">
         {shown.map((tool) => (
@@ -168,13 +181,37 @@ function ToolRow({ tool, extra }: { tool: ToolSetting; extra: boolean }) {
       ) : (
         <span className={textClass}>{text}</span>
       )}
-      <PolicyPicker
-        label={extra ? `${label} policy in this space` : `${label} policy`}
-        value={tool.policy}
-        extra={extra}
-        inherited={tool.orgPolicy}
-        target={{ toolIds: [tool.id], label }}
-      />
+      {tool.fixed ? (
+        <AlwaysOn label={`${label} policy`} />
+      ) : (
+        <PolicyPicker
+          label={extra ? `${label} policy in this space` : `${label} policy`}
+          value={tool.policy}
+          extra={extra}
+          inherited={tool.orgPolicy}
+          target={{ toolIds: [tool.id], label }}
+        />
+      )}
     </li>
+  );
+}
+
+// In place of the picker, for what is always on: On, disabled.
+function AlwaysOn({ label }: { label: string }) {
+  return (
+    <WithTooltip label={ALWAYS_ON}>
+      <span className="shrink-0">
+        <Button
+          variant="outline"
+          size="sm"
+          aria-label={label}
+          disabled
+          className="w-32 justify-start font-normal sm:w-40"
+        >
+          <PolicyDot kind="unset" />
+          On
+        </Button>
+      </span>
+    </WithTooltip>
   );
 }

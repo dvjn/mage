@@ -8,7 +8,8 @@
 // was, as servers that live only behind OAuth do. Each Streamable HTTP server also answers under
 // /modern speaking only the 2026-07-28 revision: it describes itself to server/discover, wants the
 // revision in each request's _meta, and refuses the older initialize handshake as rmcp servers do.
-// In either revision it gives instructions for using its tools, as servers may.
+// In either revision it gives instructions for using its tools, as servers may, and lists a few
+// resources: a text guide, a small image, and at /people/mcp who the caller is.
 
 import { createHash, randomBytes } from "node:crypto";
 
@@ -28,6 +29,8 @@ export interface McpStandInOptions {
   oauthPath?: "/oauth/mcp" | "/mcp";
   // What it says about using its tools; null says nothing.
   instructions?: string | null;
+  // Whether it declares resources; it does unless told not to.
+  resources?: boolean;
 }
 
 interface JsonRpc {
@@ -97,6 +100,22 @@ const TOOLS = [
   },
 ];
 
+// What a resource read gives back: the guide as text, the logo as base64 bytes.
+export const NOTES_GUIDE = "# Notes\n\nEvery note has a title and a body.";
+const LOGO = Buffer.from("PNG-bytes-of-a-small-logo").toString("base64");
+
+const RESOURCES = [
+  {
+    uri: "notes://guide",
+    name: "guide",
+    title: "Guide",
+    description: "How notes are kept.",
+    mimeType: "text/markdown",
+  },
+  { uri: "notes://logo.png", name: "logo", mimeType: "image/png", size: 25 },
+  { uri: "notes://whoami", name: "whoami", description: "Who is asking.", mimeType: "text/plain" },
+];
+
 function text(value: unknown) {
   return typeof value === "string" ? value : "";
 }
@@ -119,6 +138,7 @@ function token() {
 export function mcpStandIn(options: McpStandInOptions) {
   const { origin, oauthPath = "/oauth/mcp", instructions = NOTES_INSTRUCTIONS } = options;
   const said = instructions === null ? {} : { instructions };
+  const capabilities = options.resources === false ? { tools: {} } : { tools: {}, resources: {} };
   const notes = new Map<string, { title: string; body: string }>();
   const clients = new Map<string, { secret?: string; redirectUris: string[] | null }>(
     (options.clients ?? []).map((client) => [
@@ -146,7 +166,7 @@ export function mcpStandIn(options: McpStandInOptions) {
         const asked = text(message.params?.protocolVersion);
         return {
           protocolVersion: asked.startsWith("2025") ? asked : "2025-06-18",
-          capabilities: { tools: {} },
+          capabilities,
           serverInfo: SERVER_INFO,
           ...said,
         };
@@ -161,6 +181,23 @@ export function mcpStandIn(options: McpStandInOptions) {
           (message.params?.arguments ?? {}) as Record<string, unknown>,
           caller,
         );
+      case "resources/list":
+        return options.resources === false ? null : { resources: RESOURCES };
+      case "resources/read":
+        return options.resources === false ? null : read(text(message.params?.uri), caller);
+      default:
+        return null;
+    }
+  }
+
+  function read(uri: string, caller?: string) {
+    switch (uri) {
+      case "notes://guide":
+        return { contents: [{ uri, mimeType: "text/markdown", text: NOTES_GUIDE }] };
+      case "notes://logo.png":
+        return { contents: [{ uri, mimeType: "image/png", blob: LOGO }] };
+      case "notes://whoami":
+        return { contents: [{ uri, mimeType: "text/plain", text: caller ?? "anyone" }] };
       default:
         return null;
     }
@@ -243,7 +280,7 @@ export function mcpStandIn(options: McpStandInOptions) {
       case "server/discover":
         result = {
           supportedVersions: [MODERN_REVISION],
-          capabilities: { tools: {} },
+          capabilities,
           ttlMs: 0,
           cacheScope: "private",
           ...said,
@@ -256,6 +293,15 @@ export function mcpStandIn(options: McpStandInOptions) {
       case "tools/call":
         result = answer(message);
         break;
+      case "resources/list":
+      case "resources/read": {
+        const found = answer(message);
+        if (found === null) {
+          return failed(message, 404, { code: -32002, message: "Resource not found" });
+        }
+        result = { ...(found as object), ttlMs: 0, cacheScope: "private" };
+        break;
+      }
       default:
         return failed(message, 404, { code: -32601, message: "Method not found" });
     }

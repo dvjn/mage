@@ -110,25 +110,16 @@ test("a layout that cannot be drawn shows its source", async ({ page }) => {
   await expect(layout).toHaveText("<div>not a layout</div>");
 });
 
-test("rich replies can be turned off for the org, and the agent is no longer told of them", async ({
+test("the agent is always told of rich replies, and settings show them always on", async ({
   page,
 }) => {
   await signUp(page, "Ada Lovelace");
-  const space = page.url();
   await write(page, "/prompt");
   await expect(replies(page).first()).toContainText("Rich replies:");
 
   await page.goto("/org/tools");
   const row = page.getByRole("region", { name: "Rich replies" });
   await expect(row).toContainText("Cards, tables and buttons in the agent's replies");
-  await row.getByRole("switch").click();
-  await expect(row.getByRole("switch")).not.toBeChecked();
-
-  // A new thread, so the reply above has no say in it.
-  await page.goto(space);
-  await write(page, "/prompt");
-  await expect(page).toHaveURL(/\/t\/[^/]+$/);
-  await expect(replies(page).first()).toContainText("Reply in Markdown.");
-  await expect(replies(page).first().locator("[aria-busy=true]")).toHaveCount(0);
-  await expect(replies(page).first()).not.toContainText("Rich replies:");
+  await expect(row.getByRole("switch")).toBeChecked();
+  await expect(row.getByRole("switch")).toBeDisabled();
 });

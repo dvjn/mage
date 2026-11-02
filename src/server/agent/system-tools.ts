@@ -1,8 +1,9 @@
 // Mage's built-in Thread toolset, whose tools act on the thread the agent replies in: reading its
 // details, renaming it, moving it to one of its space's folders, changing the model and effort it
 // replies with, and asking its people questions. Each is cheap, undone as easily, and shows in the
-// thread. Changing the model asks first when the new one comes through another connection than the
-// one replying now, since the whole thread then goes to another provider.
+// thread. Asking is always on; the rest are actions orgs and spaces set. Changing the model asks
+// first when the new one comes through another connection than the one replying now, since the
+// whole thread then goes to another provider.
 
 import * as z from "zod";
 

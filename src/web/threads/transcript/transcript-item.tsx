@@ -2,7 +2,7 @@
 // its reply under one Agent header, a failed or stopped run, and a labelled placeholder for an event
 // this client does not know yet.
 
-import type { ToolConnection, ToolDefinition } from "@/shared/tools.ts";
+import { FORMER_TOOL_IDS, type ToolConnection, type ToolDefinition } from "@/shared/tools.ts";
 import type { AgentTurn, TranscriptRow } from "@/shared/transcript.ts";
 import { AgentReply } from "@/web/threads/transcript/agent-reply";
 import { FailureNotice } from "@/web/threads/transcript/failure-notice";
@@ -20,7 +20,7 @@ export function TranscriptItem({
 }: {
   row: TranscriptRow;
   actions?: RowActions;
-  // The tools' definitions, by which their calls show.
+  // The tools' definitions, by which their calls show, those made under a tool's former id too.
   tools?: ToolDefinition[];
   // For a waiting call that would run with the reader's own credentials, their connection.
   connection?: ToolConnection;
@@ -38,7 +38,9 @@ export function TranscriptItem({
       return (
         <ToolCall
           row={row}
-          definition={tools.find((tool) => tool.name === row.toolId)}
+          definition={tools.find(
+            (tool) => tool.name === (FORMER_TOOL_IDS[row.toolId] ?? row.toolId),
+          )}
           decide={actions.decide}
           answer={actions.answer}
           connection={connection}

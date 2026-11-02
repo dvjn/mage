@@ -512,6 +512,13 @@ test("built-in toolset switches preserve policies and obey the org switch", asyn
   await expect(local).not.toBeChecked();
   await page.reload();
   await expect(local).not.toBeChecked();
+  // Asking stays on, and Details goes off with the rest.
+  const ask = picker(page.getByRole("listitem", { name: "Ask" }), "Ask");
+  await expect(ask).toContainText("On");
+  await expect(ask).toBeDisabled();
+  await ask.hover({ force: true });
+  await expect(page.locator("[data-slot=tooltip-content]")).toHaveText("Always on");
+  await expect(picker(page.getByRole("listitem", { name: "Details" }), "Details")).toBeEnabled();
   const rename = page.getByRole("listitem", { name: "Rename" });
   await expect(picker(rename, "Rename")).toContainText("Sign-off");
   await picker(rename, "Rename").click();
@@ -553,6 +560,13 @@ test("tools have their own settings page in the org and in a space", async ({ pa
   await expect(page.getByRole("heading", { name: "Tools and MCPs", exact: true })).toHaveCount(1);
   await expect(builtIn(page)).toHaveCount(1);
   await expect(builtIn(page).getByRole("region", { name: "Thread" })).toContainText("5 tools");
+  // What is always on shows with its switch on and disabled.
+  const rich = builtIn(page).getByRole("region", { name: "Rich replies" });
+  await expect(rich).toContainText("Cards, tables and buttons in the agent's replies");
+  await expect(rich.getByRole("switch")).toBeChecked();
+  await expect(rich.getByRole("switch")).toBeDisabled();
+  await rich.getByRole("switch").hover({ force: true });
+  await expect(page.locator("[data-slot=tooltip-content]")).toHaveText("Always on");
 
   // A person's own space has no members to set.
   await page.goto(`/s/${spaceId}/settings`);

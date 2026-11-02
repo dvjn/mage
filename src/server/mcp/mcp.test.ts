@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { modelToolNames } from "@/server/agent/tools.ts";
 import * as schema from "@/server/schema.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
+import type { Call } from "@/server/testing/scripted-model.ts";
 import { MCP_ORIGIN, setup } from "@/server/testing/workspace.ts";
 import {
   MCP_INSTRUCTIONS_MAX,
@@ -27,8 +28,10 @@ import {
   MCP_BEARER_TOKEN,
   MODERN_REVISION,
   mcpStandIn,
+  NOTES_GUIDE,
   NOTES_INSTRUCTIONS,
 } from "../../../e2e/mcp-server.ts";
+import { contentsOf, RESOURCE_TEXT_MAX, textLike } from "./resources.ts";
 import {
   keptInstructions,
   mergeHeaders,
@@ -678,7 +681,18 @@ async function mcpThread(url = `${MCP_ORIGIN}/headers/mcp`) {
   const id = (tool: string) => `mcp:${server.id}/${tool}`;
   // What the model knows the tool by.
   const named = (tool: string) => `mcp.notes.${tool}`;
+  // Has the model call the tool in its next step. An MCP tool is left out until searched for, so
+  // the model first turns it on by name with the tool search, a step of its own.
   async function calls(toolId: string, input: unknown) {
+    if (toolId.startsWith("mcp")) {
+      const search = await model.next();
+      search.startStep();
+      search.toolCall(`call-${model.calls.length}`, "mcp._.search_tools", {
+        select: [toolId.startsWith("mcp:") ? toolId.split("/").at(-1)! : toolId],
+      });
+      search.endStep();
+      search.end();
+    }
     const call = await model.next();
     call.startStep();
     call.toolCall(`call-${model.calls.length}`, toolId, input);
@@ -686,8 +700,11 @@ async function mcpThread(url = `${MCP_ORIGIN}/headers/mcp`) {
     call.end();
     return call;
   }
-  function toolRows() {
-    return transcriptOf(events()).rows.filter((row) => row.kind === "tool");
+  // The thread's tool calls, past those searching for tools unless asked for.
+  function toolRows(searches = false) {
+    return transcriptOf(events())
+      .rows.filter((row) => row.kind === "tool")
+      .filter((row) => searches || row.toolId !== "mcp._.search_tools");
   }
   return { ...workspace, server, id, named, calls, toolRows };
 }
@@ -704,7 +721,9 @@ describe("MCP tools in a thread", () => {
     next.reply("Written.");
     await worker.idle();
 
-    expect(first.tools).toEqual(expect.arrayContaining([named("echo"), named("add_note")]));
+    // The tool searched for is offered; the others are still listed for searching.
+    expect(first.tools).toContain(named("add_note"));
+    expect(first.request.instructions).toContain(`- ${named("echo")}: Say the text back.`);
     expect(first.request.tools?.find((tool) => tool.id === named("add_note"))?.inputSchema).toEqual(
       expect.objectContaining({ required: ["title"] }),
     );
@@ -844,8 +863,8 @@ describe("MCP tools in a thread", () => {
     const first = await model.next();
     first.reply("Hi.");
     await worker.idle();
-    expect(first.tools).not.toContain(named("echo"));
-    expect(first.tools).toContain(named("add_note"));
+    expect(first.request.instructions).not.toContain(`- ${named("echo")}:`);
+    expect(first.request.instructions).toContain(`- ${named("add_note")}:`);
 
     await api("DELETE", `/mcp-servers/${server.id}`, ada.cookie);
     expect(
@@ -860,6 +879,7 @@ describe("MCP tools in a thread", () => {
     second.reply("Hi.");
     await worker.idle();
     expect(second.tools.some((tool) => tool.startsWith("mcp"))).toBe(false);
+    expect(second.request.instructions).not.toContain("mcp.notes");
   });
 });
 
@@ -1240,11 +1260,12 @@ describe("what the model calls a server's tools", () => {
     const next = await model.next();
     next.reply("Done.");
     await worker.idle();
-    expect(first.tools).toEqual(expect.arrayContaining(["mcp.pad.echo", "mcp.pad.add_note"]));
+    expect(first.tools).toContain("mcp.pad.add_note");
+    expect(first.request.instructions).toContain("Scratchpad (mcp.pad.*):\n- mcp.pad.echo:");
     expect(workspace.toolRows().map((row) => [row.toolId, row.state])).toEqual([
       [id("add_note"), "ran"],
     ]);
-    expect(next.texts.filter((text) => text.startsWith("tool"))).toEqual([
+    expect(next.texts.filter((text) => text.startsWith("tool mcp.pad"))).toEqual([
       'tool mcp.pad.add_note: {"title":"T","body":"B"}',
     ]);
   });
@@ -1651,5 +1672,317 @@ describe("tool names for the model", () => {
     expect(names.get("c")).toMatch(/_[0-9a-f]{6}$/);
     // The same tools are named the same each run.
     expect(modelToolNames(tools)).toEqual(names);
+  });
+});
+
+describe("MCP resources", () => {
+  it("keep text as text and bytes as their type and size, cut to the cap", () => {
+    const blob = (text: string) => Buffer.from(text).toString("base64");
+    expect(
+      contentsOf([
+        { uri: "a", mimeType: "text/plain", text: "hello" },
+        { uri: "b", mimeType: "application/json", blob: blob('{"ok":true}') },
+        { uri: "c", mimeType: "image/png", blob: blob("png bytes") },
+      ]),
+    ).toEqual({
+      contents: [
+        { uri: "a", mimeType: "text/plain", text: "hello" },
+        { uri: "b", mimeType: "application/json", text: '{"ok":true}' },
+        { uri: "c", mimeType: "image/png", size: 9, note: "Binary content, not shown." },
+      ],
+    });
+    const long = contentsOf([
+      { uri: "a", text: "x".repeat(RESOURCE_TEXT_MAX - 1) },
+      { uri: "b", text: "yyy" },
+    ]);
+    expect(long.cut).toBe(true);
+    expect(long.contents[1]).toEqual({ uri: "b", text: "y" });
+    expect(textLike("application/ld+json; charset=utf-8")).toBe(true);
+    expect(textLike("application/octet-stream")).toBe(false);
+  });
+
+  it("are listed and read through the server, as built-in tools under mcp._", async () => {
+    const { ada, post, calls, model, worker, start, toolRows, db } = await mcpThread();
+    expect(
+      db.select({ resources: schema.mcpServer.resources }).from(schema.mcpServer).get(),
+    ).toEqual({ resources: true });
+    start();
+
+    await post(ada, "What resources are there?");
+    const first = await calls("mcp._.list_resources", {});
+    const second = await model.next();
+    expect(first.tools).toEqual(
+      expect.arrayContaining(["mcp._.list_resources", "mcp._.read_resource"]),
+    );
+    expect(second.texts.at(-1)).toContain('"server":"notes","uri":"notes://guide"');
+    expect(second.texts.at(-1)).toContain('"uri":"notes://logo.png"');
+    second.startStep();
+    second.toolCall("read-1", "mcp._.read_resource", { server: "notes", uri: "notes://guide" });
+    second.toolCall("read-2", "mcp._.read_resource", { server: "notes", uri: "notes://logo.png" });
+    second.toolCall("read-3", "mcp._.read_resource", { server: "nope", uri: "notes://guide" });
+    second.endStep();
+    second.end();
+    const third = await model.next();
+    third.reply("Read.");
+    await worker.idle();
+
+    const results = third.texts.slice(-3);
+    expect(JSON.parse(results[0]!.slice("result mcp._.read_resource: ".length))).toEqual({
+      ok: true,
+      value: {
+        server: "notes",
+        uri: "notes://guide",
+        contents: [{ uri: "notes://guide", mimeType: "text/markdown", text: NOTES_GUIDE }],
+      },
+    });
+    expect(results[1]).toContain('"size":25,"note":"Binary content, not shown."');
+    expect(results[2]).toContain("No server here named nope has resources. Those that do: notes.");
+    expect(toolRows().map((row) => row.state)).toEqual(["ran", "ran", "ran", "failed"]);
+  });
+
+  it("are offered only while a server that declares them has a tool on", async () => {
+    const { ada, api, post, model, worker, start, id, mcpNetwork, server } = await mcpThread();
+    start();
+    const off = await api("PATCH", "/org/tools", ada.cookie, {
+      toolIds: [id("echo"), id("add_note"), id("delete_note")],
+      policy: TOOL_OFF,
+    });
+    expect(off.status).toBe(200);
+    await post(ada, "Hello");
+    const none = await model.next();
+    none.reply("Hi.");
+    await worker.idle();
+    expect(none.tools).not.toContain("mcp._.list_resources");
+
+    await api("PATCH", "/org/tools", ada.cookie, { toolIds: [id("echo")], policy: null });
+    mcpNetwork.handle = mcpStandIn({ origin: MCP_ORIGIN, resources: false });
+    expect((await api("POST", `/mcp-servers/${server.id}/refresh`, ada.cookie)).status).toBe(200);
+    await post(ada, "Again");
+    const undeclared = await model.next();
+    undeclared.reply("Hi.");
+    await worker.idle();
+    expect(undeclared.request.instructions).toContain("- mcp.notes.echo:");
+    expect(undeclared.tools).not.toContain("mcp._.list_resources");
+  });
+
+  it("of a personal server are read with the login of the sole connected writer", async () => {
+    const workspace = await personalThread();
+    const { grace, post, calls, model, worker, start, toolRows, connect } = workspace;
+    expect((await connect(grace, "person-grace")).status).toBe(200);
+    start();
+
+    await post(grace, "Who am I?");
+    await calls("mcp._.read_resource", { server: "notes", uri: "notes://whoami" });
+    const next = await model.next();
+    next.reply("Read.");
+    await worker.idle();
+
+    expect(next.texts.at(-1)).toContain('"text":"grace"');
+    expect(toolRows()[0]).toMatchObject({ state: "ran", ranAs: { name: "Grace Hopper" } });
+  });
+
+  it("of a personal server wait for an approver with a connection, and run as them", async () => {
+    const workspace = await personalThread();
+    const { grace, server, post, calls, model, worker, start, toolRows, connect, detail, decide } =
+      workspace;
+    start();
+
+    await post(grace, "Who am I?");
+    await calls("mcp._.read_resource", { server: "notes", uri: "notes://whoami" });
+    await worker.idle();
+    const [waiting] = toolRows();
+    expect(waiting).toMatchObject({ state: "pending", waits: true });
+    expect((await detail(grace)).pendingTools?.[waiting!.id]).toMatchObject({
+      connection: { serverId: server.id, connected: false },
+    });
+    expect((await decide(grace, waiting!.id, "once")).status).toBe(409);
+    expect((await connect(grace, "person-grace")).status).toBe(200);
+    expect((await decide(grace, waiting!.id, "once")).status).toBe(200);
+    const next = await model.next();
+    next.reply("Read.");
+    await worker.idle();
+
+    expect(next.texts.at(-1)).toContain('"text":"grace"');
+    expect(toolRows()[0]).toMatchObject({ state: "ran", ranAs: { name: "Grace Hopper" } });
+  });
+
+  it("listed from every server name a personal one rather than list it with someone's login", async () => {
+    const workspace = await personalThread();
+    const { grace, post, calls, model, worker, start, toolRows } = workspace;
+    start();
+
+    await post(grace, "What is there?");
+    await calls("mcp._.list_resources", {});
+    const next = await model.next();
+    next.reply("Listed.");
+    await worker.idle();
+
+    expect(toolRows()[0]).toMatchObject({ state: "ran", waits: false });
+    expect(next.texts.at(-1)).toContain('"resources":[]');
+    expect(next.texts.at(-1)).toContain("name one to list its resources: notes.");
+  });
+});
+
+describe("searching for MCP tools", () => {
+  // Answers the model's call with the given tool calls, one step.
+  function step(call: Call, ...calls: [string, unknown][]) {
+    call.startStep();
+    for (const [index, [toolId, input]] of calls.entries()) {
+      call.toolCall(`call-${index}-${Math.random()}`, toolId, input);
+    }
+    call.endStep();
+    call.end();
+  }
+
+  it("leaves the tools out, names them in the prompt, and turns on those a query finds", async () => {
+    const { ada, post, model, worker, start, named, toolRows } = await mcpThread();
+    start();
+
+    await post(ada, "Echo hello");
+    const first = await model.next();
+    expect(first.tools).toContain("mcp._.search_tools");
+    expect(first.tools).toContain("mcp._.list_resources");
+    expect(first.tools).not.toContain(named("echo"));
+    expect(first.request.instructions).toContain(
+      `Notes (mcp.notes.*):\n- ${named("echo")}: Say the text back.`,
+    );
+    // The server's own instructions stay, before the list.
+    expect(first.request.instructions.indexOf(NOTES_INSTRUCTIONS)).toBeLessThan(
+      first.request.instructions.indexOf("Notes (mcp.notes.*)"),
+    );
+    step(
+      first,
+      [named("echo"), { text: "too soon" }],
+      ["mcp._.search_tools", { query: "echo text" }],
+    );
+    const second = await model.next();
+    expect(second.texts.slice(-2)[0]).toContain(
+      `${named("echo")} is not on yet. Search for it or select it with mcp._.search_tools first.`,
+    );
+    expect(second.texts.at(-1)).toContain(`"turnedOn":["${named("echo")}"]`);
+    expect(second.texts.at(-1)).toContain('"parameters":"text: string"');
+    expect(second.tools).toContain(named("echo"));
+    expect(second.tools).not.toContain(named("add_note"));
+    expect(second.request.instructions).not.toContain(`- ${named("echo")}:`);
+    step(second, [named("echo"), { text: "hello" }]);
+    const third = await model.next();
+    third.reply("Said.");
+    await worker.idle();
+
+    expect(third.texts.at(-1)).toBe(
+      `result ${named("echo")}: {"ok":true,"value":{"text":"hello"}}`,
+    );
+    expect(toolRows(true).map((row) => [row.toolId, row.state])).toEqual([
+      [expect.stringContaining("/echo"), "failed"],
+      ["mcp._.search_tools", "ran"],
+      [expect.stringContaining("/echo"), "ran"],
+    ]);
+  });
+
+  it("selects tools by name, says what it meant by an unknown one, and lists a server's", async () => {
+    const { ada, post, model, worker, start, named } = await mcpThread();
+    start();
+
+    await post(ada, "Look around");
+    step(
+      await model.next(),
+      ["mcp._.search_tools", { select: ["add_note", "mcp.notes.delete_nte"] }],
+      ["mcp._.search_tools", { server: "notes" }],
+    );
+    const next = await model.next();
+    next.reply("Done.");
+    await worker.idle();
+
+    const [selected, listed] = next.texts.slice(-2);
+    expect(selected).toContain(`"turnedOn":["${named("add_note")}"]`);
+    expect(selected).toContain(
+      `"unknown":[{"name":"mcp.notes.delete_nte","didYouMean":["${named("delete_note")}"]}]`,
+    );
+    expect(listed).toContain('"server":{"name":"Notes","tools":[');
+    expect(listed).toContain(`"turnedOn":[]`);
+    expect(next.tools).toContain(named("add_note"));
+    expect(next.tools).not.toContain(named("echo"));
+  });
+
+  it("keeps the tools turned on when the run resumes after a decision", async () => {
+    const { ada, api, thread, post, model, worker, start, named, toolRows, db } = await mcpThread();
+    start();
+
+    await post(ada, "Delete the missing note");
+    step(await model.next(), ["mcp._.search_tools", { select: [named("delete_note")] }]);
+    step(await model.next(), [named("delete_note"), { id: "missing" }]);
+    await worker.idle();
+    const waiting = toolRows().at(-1)!;
+    expect(waiting).toMatchObject({ state: "pending", waits: true });
+    const stored = db.select({ toolsOn: schema.run.toolsOn }).from(schema.run).get();
+    expect(stored?.toolsOn).toEqual([waiting.toolId]);
+
+    const decided = await api(
+      "POST",
+      `/threads/${thread.id}/tools/${waiting.id}/decision`,
+      ada.cookie,
+      { allow: true, scope: "once" },
+    );
+    expect(decided.status).toBe(200);
+    const resumed = await model.next();
+    expect(resumed.tools).toContain(named("delete_note"));
+    expect(resumed.texts.at(-1)).toContain("No note has id missing.");
+    resumed.reply("Gone already.");
+    await worker.idle();
+
+    // The next run starts with them left out again.
+    await post(ada, "Again");
+    const next = await model.next();
+    expect(next.tools).not.toContain(named("delete_note"));
+    next.reply("Hi.");
+    await worker.idle();
+  });
+
+  it("cannot be turned off or put under a policy, and is offered and listed only with MCP servers", async () => {
+    const { ada, api, space, post, model, worker, start, server } = await mcpThread();
+    expect((await api("PUT", "/org/toolsets/mcp._", ada.cookie, { enabled: false })).status).toBe(
+      404,
+    );
+    expect(
+      (await api("PUT", `/spaces/${space.id}/toolsets/mcp._`, ada.cookie, { enabled: false }))
+        .status,
+    ).toBe(404);
+    expect(
+      (
+        await api("PATCH", "/org/tools", ada.cookie, {
+          toolIds: ["mcp._.search_tools"],
+          policy: "off",
+        })
+      ).status,
+    ).toBe(404);
+    type Listed = { id: string; fixed?: boolean; enabled?: boolean; tools: { fixed?: boolean }[] };
+    const listed = async (path: string) =>
+      ((await (await api("GET", path, ada.cookie)).json()) as Listed[]).find(
+        (toolset) => toolset.id === "mcp._",
+      );
+    // Settings show it always on, its tools too.
+    for (const path of ["/org/tools", `/spaces/${space.id}/tools`]) {
+      const own = await listed(path);
+      expect(own).toMatchObject({ fixed: true, enabled: true });
+      expect(own!.tools.length).toBeGreaterThan(0);
+      expect(own!.tools.every((tool) => tool.fixed)).toBe(true);
+    }
+
+    start();
+    await post(ada, "Hello");
+    const on = await model.next();
+    on.reply("Hi.");
+    await worker.idle();
+    expect(on.tools).toContain("mcp._.search_tools");
+
+    await api("DELETE", `/mcp-servers/${server.id}`, ada.cookie);
+    await post(ada, "Again");
+    const none = await model.next();
+    none.reply("Hi.");
+    await worker.idle();
+    expect(none.tools).not.toContain("mcp._.search_tools");
+    expect(none.request.instructions).not.toContain("mcp._.search_tools");
+    expect(await listed("/org/tools")).toBeUndefined();
+    expect(await listed(`/spaces/${space.id}/tools`)).toBeUndefined();
   });
 });

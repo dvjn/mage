@@ -692,7 +692,7 @@ export function createThreads(options: ThreadsOptions) {
             if (row.kind !== "tool" || !space || row.state !== "pending" || !row.waits) return [];
             // The reader's own connection, for a call that would run with it once they allow it;
             // nobody learns anyone else's.
-            const connection = tools.connectionFor(space, row.toolId, principal.userId);
+            const connection = tools.connectionFor(space, row.toolId, principal.userId, row.input);
             return [
               [
                 row.id,

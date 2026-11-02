@@ -120,6 +120,8 @@ export const run = sqliteTable(
     // Why it failed, as a failure kind, and what the provider said.
     errorKind: text("error_kind", { enum: ["auth", "limit", "model", "network"] }),
     errorDetail: text("error_detail"),
+    // The MCP tools the model turned on by searching for them, by id, offered from then on.
+    toolsOn: text("tools_on", { mode: "json" }).$type<string[]>().default([]).notNull(),
     inputTokens: integer("input_tokens").default(0).notNull(),
     outputTokens: integer("output_tokens").default(0).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })

@@ -1,6 +1,7 @@
 // The switch of something the org or a space has, with its words: On or Off for what the scope
 // owns, nothing more for the org's in a space unless it is switched there (On here or Off here,
-// with a lock), and Off by organization while the org has it off.
+// with a lock), and Off by organization while the org has it off. One that cannot be changed may
+// say why on hover.
 
 import { LockIcon } from "lucide-react";
 
@@ -14,6 +15,7 @@ export function ScopedSwitch({
   orgOff,
   checked,
   disabled,
+  why,
   onCheckedChange,
 }: {
   label: string;
@@ -24,6 +26,8 @@ export function ScopedSwitch({
   orgOff: boolean;
   checked: boolean;
   disabled: boolean;
+  // Why it cannot be changed, shown on hover.
+  why?: string;
   onCheckedChange: (checked: boolean) => void;
 }) {
   const words = orgOff
@@ -33,7 +37,7 @@ export function ScopedSwitch({
       : checked
         ? "On"
         : "Off";
-  return (
+  const control = (
     <label className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
       {inSpace && here && (
         <WithTooltip label="Managed by the organization">
@@ -50,4 +54,5 @@ export function ScopedSwitch({
       />
     </label>
   );
+  return why ? <WithTooltip label={why}>{control}</WithTooltip> : control;
 }

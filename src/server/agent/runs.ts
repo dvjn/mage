@@ -13,7 +13,8 @@
 // answer to a call that asks questions, letting its lease go and keeping nothing in memory. A
 // decision or an answer queues the run again, and the worker that claims it reads the thread's log
 // to see where its calls stand, checks each approval and answer still holds, runs what it may and
-// goes on; a restart takes the same path.
+// goes on; a restart takes the same path. MCP tools stay out of the model's requests until it
+// searches for them, and those it turns on are kept with the run.
 
 import { ulid } from "ulid";
 import * as z from "zod";
@@ -45,6 +46,7 @@ import type {
 import { type PendingMessage, type ToolRow, transcriptOf } from "@/shared/transcript.ts";
 
 import { contextOf, type Guidance, humanMessage, NO_GUIDANCE } from "./context.ts";
+import { deferredByServer, TOOL_SEARCH } from "./tool-search.ts";
 import type { ToolOutput, AnyToolSpec, Tools } from "./tools.ts";
 
 export type RunStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled";
@@ -74,6 +76,8 @@ export interface Run {
   error: string | null;
   errorKind: FailureKind | null;
   errorDetail: string | null;
+  // The MCP tools the model turned on by searching for them, offered for the rest of the run.
+  toolsOn: string[];
   inputTokens: number;
   outputTokens: number;
   createdAt: Date;
@@ -131,6 +135,8 @@ export interface RunStore {
   renew(lease: Lease, expiresAt: Date): Run;
   // Records the model the run replies with.
   setModel(lease: Lease, model: string): void;
+  // Adds the tools to those the run offers from now on.
+  turnOn(lease: Lease, toolIds: readonly string[]): void;
   // Lets the lease go while the run waits for a person's decision; nothing holds it meanwhile.
   wait(lease: Lease): Run;
   // Queues a waiting run again, to be claimed like any other; false when it was not waiting.
@@ -160,7 +166,14 @@ export interface RunWorkerOptions {
   models: Pick<Models, "open" | "replyModel">;
   tools: Pick<
     Tools,
-    "offered" | "riskOf" | "forModel" | "decide" | "approvalHolds" | "answerHolds" | "modelNames"
+    | "offered"
+    | "riskOf"
+    | "forModel"
+    | "decide"
+    | "approvalHolds"
+    | "answerHolds"
+    | "modelNames"
+    | "fromServers"
   >;
   // What the org and the space tell the agent beyond Mage's own prompt, given the tools offered.
   guidance?: (space: Space, offered: readonly AnyToolSpec[]) => Guidance;
@@ -684,8 +697,17 @@ export function createRunWorker(options: RunWorkerOptions) {
     return { model, effort: picked.effort, own };
   }
 
+  // The MCP tools the run leaves out of the model's requests until it turns them on: all it could
+  // offer, those turned on, and those still left out.
+  function deferralOf(execution: Execution, space: Space) {
+    const all = tools.fromServers(space, tools.modelNames(space));
+    const on = new Set(runs.find(execution.run.id)?.toolsOn ?? []);
+    return { all, on, left: all.filter((tool) => !on.has(tool.id)) };
+  }
+
   // Records the calls a model step asked for, each with whether it waits for a decision. A call of
-  // a tool not offered, or with input the tool does not take, fails at once.
+  // a tool not offered, or left out of the request and not turned on, or with input the tool does
+  // not take, fails at once.
   function request(
     execution: Execution,
     space: Space,
@@ -697,9 +719,13 @@ export function createRunWorker(options: RunWorkerOptions) {
       if (!thread) throw new LeaseLost(run.id);
       const { rows } = transcript(run.threadId);
       const offered = tools.offered(space);
+      const { left } = deferralOf(execution, space);
       for (const call of calls) {
         const { callId, toolId, input, messageId } = call;
-        const spec = offered.find((candidate) => candidate.name === toolId);
+        const unsearched = left.find((tool) => tool.id === toolId);
+        const spec = unsearched
+          ? undefined
+          : offered.find((candidate) => candidate.name === toolId);
         const parsed = spec?.input.safeParse(input);
         const ok = !!spec && !!parsed?.success;
         const risk = ok ? tools.riskOf(space, spec, parsed.data, execution.ref) : "normal";
@@ -713,6 +739,7 @@ export function createRunWorker(options: RunWorkerOptions) {
               space,
               toolId,
               spec.risk(parsed.data, { model: execution.ref }),
+              parsed.data,
             ).kind === "wait");
         append({
           type: "tool.requested",
@@ -727,9 +754,11 @@ export function createRunWorker(options: RunWorkerOptions) {
             runId: run.id,
             callId,
             ok: false,
-            error: spec
-              ? `The input is not valid: ${z.prettifyError(parsed!.error!)}`
-              : `No tool is named ${toolId} here.`,
+            error: unsearched
+              ? `${unsearched.name} is not on yet. Search for it or select it with ${TOOL_SEARCH} first.`
+              : spec
+                ? `The input is not valid: ${z.prettifyError(parsed!.error!)}`
+                : `No tool is named ${toolId} here.`,
             ms: 0,
           },
         });
@@ -772,10 +801,10 @@ export function createRunWorker(options: RunWorkerOptions) {
           if (call.state === "allowed") {
             allowed = tools.approvalHolds(call, rows, thread, space, risk);
             // An approved call runs with its approver's own login.
-            if (spec.connection) runAs = call.decision?.by.userId ?? null;
+            if (spec.connection?.(parsed.data, space)) runAs = call.decision?.by.userId ?? null;
           } else {
             const declared = spec.risk(parsed.data, { model: execution.ref });
-            const decision = tools.decide(rows, thread, space, call.toolId, declared);
+            const decision = tools.decide(rows, thread, space, call.toolId, declared, parsed.data);
             allowed = decision.kind !== "wait";
             if (!allowed && call.waits) {
               waiting = true;
@@ -809,6 +838,8 @@ export function createRunWorker(options: RunWorkerOptions) {
     for (let next = nextCall(execution, space); next; next = nextCall(execution, space)) {
       const { call, spec, input, runAs, standingOn } = next;
       const started = now().getTime();
+      // The search for left-out tools is given them, and turns them on for the rest of the run.
+      const deferral = spec.name === TOOL_SEARCH ? deferralOf(execution, space) : null;
       let output: ToolOutput;
       try {
         output = await (spec as AnyToolSpec).run(input, {
@@ -821,6 +852,13 @@ export function createRunWorker(options: RunWorkerOptions) {
           model: execution.ref,
           runAs,
           ...(call.answers && { answers: call.answers }),
+          ...(deferral && {
+            deferred: {
+              tools: deferral.all,
+              on: deferral.on,
+              turnOn: (ids: string[]) => write(lease, run.threadId, () => runs.turnOn(lease, ids)),
+            },
+          }),
           write: (work) => write(lease, run.threadId, (append) => work(append)),
         });
       } catch (err) {
@@ -877,11 +915,19 @@ export function createRunWorker(options: RunWorkerOptions) {
       if (current.model !== model.own.model || current.effort !== model.own.effort) {
         model = await replying(execution, space, current);
       }
+      // MCP tools stay out of the request until the model turns them on with the tool search,
+      // which is offered whenever the run has any.
       const offered = tools.offered(space);
-      const { instructions, messages } = contextOf(
-        transcript(thread.id).rows,
-        guidance(space, offered),
+      const deferral = deferralOf(execution, space);
+      const left = new Set(deferral.left.map((tool) => tool.id));
+      const available = offered.filter(
+        (spec) => spec.name !== TOOL_SEARCH || deferral.all.length > 0,
       );
+      const requested = available.filter((spec) => !left.has(spec.name));
+      const { instructions, messages } = contextOf(transcript(thread.id).rows, {
+        ...guidance(space, available),
+        ...(deferral.left.length && { deferredTools: deferredByServer(deferral.left) }),
+      });
       // The model knows tools by their model names; calls and results go to it by those.
       const names = tools.modelNames(space);
       const calls: (ModelToolCall & { messageId: string })[] = [];
@@ -894,7 +940,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           sessionId: thread.id,
           ...(model.effort && { effort: model.effort }),
           beforeStep: () => boundary(execution, false),
-          tools: tools.forModel(offered).map((tool) => ({ ...tool, id: names.toModel(tool.id) })),
+          tools: tools.forModel(requested).map((tool) => ({ ...tool, id: names.toModel(tool.id) })),
         },
         controller.signal,
       );

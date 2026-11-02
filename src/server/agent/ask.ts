@@ -1,7 +1,7 @@
 // The Thread toolset's `thread.ask`: the agent puts one to four questions, each with a few options,
-// to the people in the thread and its run waits for an answer. Anyone the tool's rules let use or
-// approve it may answer, in options or their own words, or skip the questions; the first answer
-// wins, and the call gives back what was answered.
+// to the people in the thread and its run waits for an answer. It is always on and open, so anyone
+// who can post in the thread may answer, in options or their own words, or skip the questions; the
+// first answer wins, and the call gives back what was answered.
 
 import type * as z from "zod";
 
@@ -13,6 +13,7 @@ export const askTool: ToolSpec<AskInput> = {
   name: ASK_TOOL,
   title: "Ask",
   waitsFor: "answer",
+  fixed: true,
   annotations: { readOnlyHint: true },
   description:
     'Ask the people in this thread one to four questions, each with two to four options, when you need a choice made before you go on. Your turn pauses until someone answers; anyone may write their own answer instead of an option, so do not add an "Other" option. Put the option you recommend first. Do not ask what you can find out or decide yourself.',

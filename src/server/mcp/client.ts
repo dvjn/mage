@@ -58,7 +58,27 @@ export interface McpListing {
   serverInfo: { name: string; version: string } | null;
   // What the server said about using its tools, as it said it; null when it said nothing.
   instructions: string | null;
+  // Whether it declares resources the agent may list and read.
+  resources: boolean;
   tools: ToolDefinition[];
+}
+
+// A resource a server lists: its address, name, and what it says of it.
+export interface McpResource {
+  uri: string;
+  name: string;
+  title?: string;
+  description?: string;
+  mimeType?: string;
+  size?: number;
+}
+
+// One part of a read resource: text, or base64 bytes.
+export interface McpResourceContent {
+  uri: string;
+  mimeType?: string;
+  text?: string;
+  blob?: string;
 }
 
 // MCP's result of a tool call: its content, structured content where the tool gives some, and
@@ -103,6 +123,9 @@ export interface McpClient {
     args: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<McpCallResult>;
+  // Every resource the server lists, all pages of them.
+  listResources(target: McpTarget, signal?: AbortSignal): Promise<McpResource[]>;
+  readResource(target: McpTarget, uri: string, signal?: AbortSignal): Promise<McpResourceContent[]>;
   // Starts authorizing Mage: the address to send the person to, with `state` and the PKCE
   // verifier kept in `pending`; or null when the tokens held are still good or were renewed.
   authorize(
@@ -447,6 +470,7 @@ export function createMcpClient(options: McpClientOptions): McpClient {
           protocolVersion: client.getNegotiatedProtocolVersion() ?? null,
           serverInfo: info ? { name: info.name, version: info.version } : null,
           instructions: client.getInstructions() ?? null,
+          resources: !!client.getServerCapabilities()?.resources,
           tools: tools.map(definitionOf),
         };
       });
@@ -456,6 +480,33 @@ export function createMcpClient(options: McpClientOptions): McpClient {
       return using(target, async (client) => {
         const result = await client.callTool({ name, arguments: args }, { signal });
         return result as McpCallResult;
+      });
+    },
+
+    // Without a cursor the SDK walks every page itself.
+    listResources(target, signal) {
+      return using(target, async (client) => {
+        const { resources } = await client.listResources(undefined, { signal });
+        return resources.map((resource) => ({
+          uri: resource.uri,
+          name: resource.name,
+          ...(resource.title && { title: resource.title }),
+          ...(resource.description && { description: resource.description }),
+          ...(resource.mimeType && { mimeType: resource.mimeType }),
+          ...(typeof resource.size === "number" && { size: resource.size }),
+        }));
+      });
+    },
+
+    readResource(target, uri, signal) {
+      return using(target, async (client) => {
+        const { contents } = await client.readResource({ uri }, { signal });
+        return contents.map((part) => ({
+          uri: part.uri,
+          ...(part.mimeType && { mimeType: part.mimeType }),
+          ...("text" in part && typeof part.text === "string" && { text: part.text }),
+          ...("blob" in part && typeof part.blob === "string" && { blob: part.blob }),
+        }));
       });
     },
 

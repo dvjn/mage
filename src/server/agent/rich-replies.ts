@@ -1,7 +1,6 @@
-// Mage's built-in Rich replies: no tools, only what the agent is told while it is on, which is how
-// to lay out cards, figures, tables, lists, bars, buttons and forms in a `ui` block in its reply.
-// Orgs and spaces turn it on and off like Mage's other toolsets. Clicks in a layout only post
-// messages, so it needs no tool policy.
+// Mage's built-in Rich replies: no tools, only what the agent is always told, which is how to lay
+// out cards, figures, tables, lists, bars, buttons and forms in a `ui` block in its reply. Clicks
+// in a layout only post messages, so it is always on and needs no tool policy.
 
 import type { Toolset } from "./tools.ts";
 
@@ -44,5 +43,6 @@ export function createRichReplies(): Toolset {
     source: "builtin",
     tools: [],
     guidance: RICH_REPLIES_GUIDANCE,
+    fixed: true,
   };
 }
