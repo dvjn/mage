@@ -13,6 +13,7 @@ import { expect } from "vite-plus/test";
 
 import { createSubagentStore } from "@/server/agent/subagent-store.ts";
 import { createSubagents } from "@/server/agent/subagents.ts";
+import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
 import { createRichReplies } from "@/server/agent/rich-replies.ts";
 import { createRunStore } from "@/server/agent/run-store.ts";
 import { createRunWorker, type RunWorkerOptions } from "@/server/agent/runs.ts";
@@ -146,6 +147,8 @@ export function setup(
     defaultModel: null as string | null,
     defaultEffort: null as Effort | null,
     models: ["codex/gpt-big"],
+    // Refs of models that take no effort.
+    plain: [] as string[],
     // Refs turned off.
     off: [] as string[],
     titleModel: null as string | null,
@@ -274,6 +277,12 @@ export function setup(
     runs: runStore,
     log,
     bus: countingBus,
+    choosesModels: (spaceId) => {
+      const space = spaceStore.find(spaceId);
+      return !!space && tools.optionOn(space, SUBAGENTS_TOOLSET, CHOOSE_MODELS);
+    },
+    modelsIn: () =>
+      Promise.resolve(org.models.map((ref) => ({ ref, reasoning: !org.plain.includes(ref) }))),
   });
   const tools = createTools({
     toolsets: [

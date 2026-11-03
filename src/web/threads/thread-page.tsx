@@ -10,13 +10,13 @@
 // is applied on coming back here. A guest of the thread sees its space's name alone, and cannot
 // change its model; once their access ends, they are told so. When the server cannot be reached,
 // the thread as last read stays in view while it reconnects. Reading it marks it seen. A subagent's
-// thread sits under the thread that started it, says where the subagent stands, and once retired is
-// read-only with a way to bring it back for those the server lets. A subagent's call that waits on
+// thread sits under the thread that started it, and once retired is read-only, marked archived
+// with a way to bring it back for those the server lets. A subagent's call that waits on
 // someone shows in the thread that started it too, to be decided or answered from there. A link to
 // one of its rows opens the thread there, reading back to it, with the row opened and lit.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi, Link } from "@tanstack/react-router";
+import { getRouteApi } from "@tanstack/react-router";
 import { cn } from "cn";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -75,7 +75,6 @@ import { ToolCall } from "@/web/threads/transcript/tool-call";
 import { RelayMessages } from "@/web/threads/transcript/relay-message";
 import { SubagentNotice } from "@/web/threads/transcript/subagent-notice";
 import { ToolGroup } from "@/web/threads/transcript/tool-group";
-import { SUBAGENT_NEEDS, SUBAGENT_STATES } from "@/web/threads/transcript/tool-line";
 import { type ThreadAgent, ThreadAgentContext } from "@/web/threads/transcript/agent";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
 import {
@@ -402,21 +401,8 @@ export function ThreadPage() {
           { label: subagent?.name ?? thread?.title ?? "" },
         ]}
       >
-        {subagent && (
-          <span role="status" aria-label="Subagent" className="text-xs text-muted-foreground">
-            Subagent of{" "}
-            <Link
-              to="/t/$threadId"
-              params={{ threadId: subagent.parent.id }}
-              className="underline-offset-2 hover:underline"
-            >
-              {subagent.parent.title}
-            </Link>
-            {[SUBAGENT_STATES[subagent.state], subagent.needs && SUBAGENT_NEEDS[subagent.needs]]
-              .filter(Boolean)
-              .map((part) => ` · ${part}`)
-              .join("")}
-          </span>
+        {subagent?.state === "archived" && (
+          <span className="text-xs text-muted-foreground">Archived</span>
         )}
         {subagent?.canUnarchive && (
           <Button

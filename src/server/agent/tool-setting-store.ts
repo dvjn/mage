@@ -7,8 +7,10 @@ import { space } from "@/server/spaces/schema.ts";
 import type { ToolSettingStore } from "./tools.ts";
 import {
   orgToolSetting,
+  orgToolsetOption,
   orgToolsetSetting,
   spaceToolSetting,
+  spaceToolsetOption,
   spaceToolsetSetting,
 } from "./schema.ts";
 
@@ -18,6 +20,17 @@ function assignmentOf(policyId: string | null) {
 
 function policyIdOf(assignment: string) {
   return assignment === TOOL_OFF ? null : assignment;
+}
+
+// Options by toolset, then option.
+function optionsOf(rows: { toolsetId: string; option: string; enabled: boolean }[]) {
+  const options = new Map<string, Map<string, boolean>>();
+  for (const row of rows) {
+    const set = options.get(row.toolsetId) ?? new Map<string, boolean>();
+    set.set(row.option, row.enabled);
+    options.set(row.toolsetId, set);
+  }
+  return options;
 }
 
 export function createToolSettingStore(db: Db): ToolSettingStore {
@@ -52,6 +65,43 @@ export function createToolSettingStore(db: Db): ToolSettingStore {
         .values({ spaceId, toolsetId, enabled })
         .onConflictDoUpdate({
           target: [spaceToolsetSetting.spaceId, spaceToolsetSetting.toolsetId],
+          set: { enabled },
+        })
+        .run();
+    },
+
+    optionsInOrg(orgId) {
+      return optionsOf(
+        db.select().from(orgToolsetOption).where(eq(orgToolsetOption.organizationId, orgId)).all(),
+      );
+    },
+    setOptionInOrg(orgId, toolsetId, option, enabled) {
+      db.insert(orgToolsetOption)
+        .values({ organizationId: orgId, toolsetId, option, enabled })
+        .onConflictDoUpdate({
+          target: [
+            orgToolsetOption.organizationId,
+            orgToolsetOption.toolsetId,
+            orgToolsetOption.option,
+          ],
+          set: { enabled },
+        })
+        .run();
+    },
+    optionsInSpace(spaceId) {
+      return optionsOf(
+        db.select().from(spaceToolsetOption).where(eq(spaceToolsetOption.spaceId, spaceId)).all(),
+      );
+    },
+    setOptionInSpace(spaceId, toolsetId, option, enabled) {
+      db.insert(spaceToolsetOption)
+        .values({ spaceId, toolsetId, option, enabled })
+        .onConflictDoUpdate({
+          target: [
+            spaceToolsetOption.spaceId,
+            spaceToolsetOption.toolsetId,
+            spaceToolsetOption.option,
+          ],
           set: { enabled },
         })
         .run();

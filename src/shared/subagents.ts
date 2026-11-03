@@ -33,3 +33,6 @@ export const AGENT = "agent";
 export const SUBAGENTS_TOOLSET = "subagents";
 export const START_SUBAGENT = "subagents.start";
 export const SEND_SUBAGENT_MESSAGE = "subagents.send";
+
+// The Subagents toolset's option that lets the agent choose the model a subagent replies with.
+export const CHOOSE_MODELS = "choose_models";

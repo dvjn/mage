@@ -9,6 +9,7 @@ import { subagentSummarySchema } from "@/shared/subagents.ts";
 import {
   deliverySchema,
   failureKindSchema,
+  notificationKindSchema,
   subagentEndSchema,
   subagentTaskSchema,
   replyStatusSchema,
@@ -182,18 +183,21 @@ const compactionRowSchema = z.object({
   tokensAfter: z.number().int().nonnegative().nullable(),
 });
 
-// A message from another agent: a subagent's, or one from the agent that started this thread's
-// subagent, the first of them its task, with what the subagent was set to do beside it, and the
-// call that sent it, where known and the reader may read its thread: that thread and the call's
-// row there, what the call's tool is called, and what the thread goes by.
+// A notification: what it tells and the agent whose thread it came from. A message from another
+// agent, a subagent's or one from the agent that started this thread's subagent, says whom it went
+// to, and the first of them is its task, with what the subagent was set to do beside it. Where the
+// reader may read the thread it came from, it links back: to the call that made it, with what the
+// call's tool is called and what the thread goes by, or to the row it came of.
 const relayRowSchema = z.object({
   ...rowFields,
   kind: z.literal("relay"),
   postedAt: z.string(),
+  type: notificationKindSchema,
   from: senderSchema,
-  to: z.string(),
+  to: z.string().optional(),
   text: z.string(),
   task: subagentTaskSchema.optional(),
+  source: z.object({ threadId: z.string(), rowId: z.string() }).optional(),
   sentBy: z
     .object({
       threadId: z.string(),

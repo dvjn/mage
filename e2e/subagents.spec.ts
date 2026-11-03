@@ -84,16 +84,17 @@ test("the agent starts subagents, who report back, go idle and can be resumed an
     transcript(page).getByRole("button", { name: /^Subagents › Start · Writer · Idle/ }),
   ).toBeVisible();
 
-  // The result comes back as a message, folded into one line until opened, and the agent is told
-  // they went idle.
+  // The result comes back as a message, folded into one line until opened; the writer sent
+  // nothing, so the agent is told it ended without reporting.
   const relayed = transcript(page).getByRole("article", { name: "Message from Researcher" });
   const relayLine = relayed.getByRole("button", { name: "Researcher → Agent" });
   await expect(relayLine).toBeVisible();
   await expect(relayed).not.toContainText("Recommend BullMQ");
   await relayLine.click();
   await expect(relayed).toContainText("Recommend BullMQ");
-  const notice = transcript(page).getByRole("status", { name: "Subagents" });
-  await expect(notice.first()).toContainText(/subagents? idle/);
+  await expect(
+    transcript(page).getByRole("button", { name: "Writer ended its run without reporting." }),
+  ).toBeVisible();
   await idle(page);
 
   // Under the thread's row in the sidebar as rows of their own that are never new, open once they
@@ -118,11 +119,8 @@ test("the agent starts subagents, who report back, go idle and can be resumed an
   await group.click();
   await transcript(page).getByRole("link", { name: "Open Writer" }).click();
   await expect(page).not.toHaveURL(parentUrl);
-  await expect(page.getByRole("status", { name: "Subagent" })).toHaveText(
-    "Subagent of Queue library · Idle",
-  );
   await expect(
-    page.getByRole("status", { name: "Subagent" }).getByRole("link", { name: "Queue library" }),
+    page.locator("[data-slot=breadcrumb]").getByRole("link", { name: "Queue library" }),
   ).toBeVisible();
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Writer");
   const task = transcript(page).getByRole("article", { name: "Message from Agent" }).first();
@@ -142,15 +140,75 @@ test("the agent starts subagents, who report back, go idle and can be resumed an
   const writerUrl = page.url();
   await page.goto(parentUrl);
   await write(page, call("subagents.archive", { subagent: "Writer" }));
+  // The agent may still be on the writer's notice when the message arrives.
+  await expect(
+    transcript(page).getByRole("button", { name: /^Subagents › Archive.* · Ran/ }),
+  ).toBeVisible();
   await idle(page);
   await page.goto(writerUrl);
-  await expect(page.getByRole("status", { name: "Subagent" })).toContainText("Archived");
+  await expect(page.getByText("Archived", { exact: true })).toBeVisible();
   await expect(page.getByText("This subagent is archived")).toBeVisible();
   await page.getByRole("button", { name: "Unarchive" }).click();
-  await expect(page.getByRole("status", { name: "Subagent" })).toHaveText(
-    "Subagent of Queue library · Idle",
-  );
+  await expect(page.getByRole("button", { name: "Unarchive" })).toHaveCount(0);
+  await expect(page.getByText("Archived", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Message", { exact: true })).toBeEditable();
+});
+
+test("an agent whose turn ended is woken by its subagent's message", async ({ page }) => {
+  await signUp(page);
+  await queueLibrary(page);
+  await write(page, call("subagents.start", { name: "Writer", task: "Draft the notes" }));
+  const ended = transcript(page).getByRole("button", {
+    name: "Writer ended its run without reporting.",
+  });
+  await expect(ended).toBeVisible();
+  await idle(page);
+  const parentUrl = page.url();
+
+  // The notice opens on the subagent's last words and a way to its thread.
+  await ended.click();
+  await expect(transcript(page).getByRole("article", { name: "Notification" })).toContainText(
+    "Its last message",
+  );
+  await transcript(page).getByRole("link", { name: "Open", exact: true }).click();
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Writer");
+  await write(page, call("subagents.send", { to: "agent", text: "Notes drafted" }));
+  await idle(page);
+
+  // The idle agent took the message in, and replied.
+  await page.goto(parentUrl);
+  await expect(
+    transcript(page)
+      .getByRole("article", { name: "Message from Writer" })
+      .getByRole("button", { name: "Writer → Agent" }),
+  ).toBeVisible();
+  await expect(
+    transcript(page).getByRole("article", { name: "Message from Agent" }).last(),
+  ).toContainText("I have read");
+  await idle(page);
+});
+
+test("a watch on all idle wakes the agent once all its subagents are idle", async ({ page }) => {
+  await signUp(page);
+  await queueLibrary(page);
+  await write(
+    page,
+    [
+      call("subagents.start", {
+        name: "Researcher",
+        task: call("subagents.send", { to: "agent", text: "Recommend BullMQ" }),
+      }),
+      call("subagents.start", {
+        name: "Writer",
+        task: call("subagents.send", { to: "agent", text: "Notes drafted" }),
+      }),
+      call("subagents.watch", { when: "all_idle" }),
+    ].join("\n"),
+  );
+  const fired = transcript(page).getByRole("button", { name: "All idle: Researcher, Writer" });
+  await expect(fired).toHaveCount(1);
+  await idle(page);
+  await expect(fired).toHaveCount(1);
 });
 
 test("a send links to the message it delivered, which links back to the send", async ({ page }) => {

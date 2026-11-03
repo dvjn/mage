@@ -1,5 +1,5 @@
 // Changes to the org's or a space's tools: setting tools to a policy, switching a built-in toolset
-// on or off, and making, changing and removing policies.
+// or one of its options on or off, and making, changing and removing policies.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
@@ -58,6 +58,38 @@ export function useToolsetSwitch(scope: Scope) {
     onSuccess: async (toolsets) => {
       queryClient.setQueryData(toolsQuery(scope).queryKey, toolsets);
       await queryClient.invalidateQueries({ queryKey: ["spaces"] });
+    },
+  });
+}
+
+// Turns a built-in toolset's option on or off.
+export function useToolsetOption(scope: Scope) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      toolsetId,
+      option,
+      enabled,
+    }: {
+      toolsetId: string;
+      option: string;
+      enabled: boolean;
+    }) => {
+      const res =
+        scope.kind === "org"
+          ? await apiClient.v1.org.toolsets[":toolsetId"].options[":option"].$put({
+              param: { toolsetId, option },
+              json: { enabled },
+            })
+          : await apiClient.v1.spaces[":id"].toolsets[":toolsetId"].options[":option"].$put({
+              param: { id: scope.spaceId, toolsetId, option },
+              json: { enabled },
+            });
+      if (!res.ok) throw new Error(await errorOf(res));
+      return toolsetSettingListSchema.parse(await res.json());
+    },
+    onSuccess: (toolsets) => {
+      queryClient.setQueryData(toolsQuery(scope).queryKey, toolsets);
     },
   });
 }

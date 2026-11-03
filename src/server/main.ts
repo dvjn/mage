@@ -6,6 +6,7 @@ import { serve } from "@hono/node-server";
 
 import { createSubagentStore } from "@/server/agent/subagent-store.ts";
 import { createSubagents } from "@/server/agent/subagents.ts";
+import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
 import { createRichReplies } from "@/server/agent/rich-replies.ts";
 import { createRunStore } from "@/server/agent/run-store.ts";
 import { createRunWorker, type RunWorker } from "@/server/agent/runs.ts";
@@ -161,6 +162,11 @@ const subagents = createSubagents({
   runs: runStore,
   log,
   bus,
+  choosesModels: (spaceId) => {
+    const space = spaceStore.find(spaceId);
+    return !!space && tools.optionOn(space, SUBAGENTS_TOOLSET, CHOOSE_MODELS);
+  },
+  modelsIn: async (orgId) => (await models.resolveModels(orgId)).models,
 });
 const tools = createTools({
   toolsets: [

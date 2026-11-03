@@ -17,7 +17,7 @@ import {
   type TranscriptRow,
 } from "@/shared/transcript.ts";
 
-import { noticeMessage, relayMessage } from "./context.ts";
+import { noticeMessage, notificationLine } from "./context.ts";
 
 // About how many tokens of the most recent conversation are kept word for word.
 export const KEEP_TOKENS = 20_000;
@@ -148,8 +148,10 @@ export function conversationText(rows: readonly TranscriptRow[]) {
   for (const row of rows) {
     if (row.kind === "human") {
       if (!asksToCompact(row)) lines.push(`[${row.author.name}]: ${row.command?.text ?? row.text}`);
-    } else if (row.kind === "relay" || row.kind === "notice") {
-      lines.push((row.kind === "relay" ? relayMessage(row) : noticeMessage(row)).text);
+    } else if (row.kind === "relay") {
+      lines.push(notificationLine(row));
+    } else if (row.kind === "notice") {
+      lines.push(noticeMessage(row).text);
     } else if (row.kind === "agent") {
       if (readReply(row) && row.text) lines.push(`[Agent]: ${row.text}`);
     } else if (row.kind === "tool") {

@@ -600,3 +600,32 @@ test("tools have their own settings page in the org and in a space", async ({ pa
   await page.goto(`/s/${spaceId}/settings/members`);
   await expect(page).toHaveURL(/\/settings$/);
 });
+
+test("the org lets the agent choose subagents' models, and a space turns it off for itself", async ({
+  page,
+}) => {
+  await signUp(page, "Ada Lovelace");
+  const spaceId = spaceIdOf(page);
+  const label = "Let the agent choose subagents' models";
+  const open = async (url: string) => {
+    await page.goto(url);
+    const toggle = page
+      .getByRole("region", { name: "Subagents" })
+      .getByRole("button", { name: /^Subagents \d+ tools?/ });
+    await expect(toggle).toBeVisible();
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+  };
+  await open("/org/tools");
+  const inOrg = page.getByRole("switch", { name: `${label}: on`, exact: true });
+  await expect(inOrg).not.toBeChecked();
+  await inOrg.click();
+  await expect(inOrg).toBeChecked();
+
+  await open(`/s/${spaceId}/settings/tools`);
+  const inSpace = page.getByRole("switch", { name: `${label}: on in this space`, exact: true });
+  await expect(inSpace).toBeChecked();
+  await inSpace.click();
+  await expect(inSpace).not.toBeChecked();
+  await page.reload();
+  await expect(inSpace).not.toBeChecked();
+});

@@ -6,9 +6,10 @@
 // carries how it was decided, what was answered to the questions it asked, and what it gave back. A
 // compaction sits where it was made, with the summary the agent reads from then on in place of what
 // came before. Another agent's message waits in the inbox and takes its place when the agent takes
-// it in, as a person's does; subagents that end runs one after another are told in one row where
-// the first was. Folded one event at a time, it also keeps for each row the last event that changed
-// it and where it sits in the agent's turn.
+// it in, as a person's does, and so does any other notification; subagents that ended runs one
+// after another, as older threads were told, show in one row where the first was. Folded one
+// event at a time, it also keeps for each row the last event that changed it and where it sits in
+// the agent's turn.
 
 import type { AskAnswers } from "@/shared/ask.ts";
 import { COMPACT } from "@/shared/threads/commands.ts";
@@ -18,6 +19,7 @@ import {
   type Cause,
   type Delivery,
   type FailureKind,
+  type NotificationKind,
   type SubagentEnd,
   type SubagentTask,
   type ReplyPart,
@@ -159,22 +161,24 @@ export interface CompactionRow {
   tokensAfter: number | null;
 }
 
-// A message from another agent, once the agent here took it in: from a subagent, or from the agent
-// that started this thread's subagent, the first of them its task. With whom it went to, and the
-// people whose words steered it, who count as steering what the agent here does with it, and the
-// call that sent it, where known.
+// A notification, once the agent here took it in: what it tells, the agent whose thread it came
+// from, and the people whose words it carries, who count as steering what the agent here does with
+// it; with the call or the row there it came of, where known. A message from another agent, the
+// first of them in a subagent's thread its task, also says whom it went to.
 export interface RelayRow {
   kind: "relay";
-  // The message's id.
+  // The notification's id.
   id: string;
   seq: number;
   postedAt: string;
+  type: NotificationKind;
   from: Sender;
-  to: string;
+  to?: string;
   text: string;
   steeredBy: Steering[];
   task?: SubagentTask;
   call?: Cause;
+  rowId?: string;
 }
 
 // A subagent that ended a run, as the thread that started it is told.
@@ -416,12 +420,31 @@ export function createFold(): TranscriptFold {
           id: event.id,
           seq: event.seq,
           postedAt: event.createdAt,
+          type: "message",
           from,
           to,
           text: textOf(parts),
           steeredBy,
           ...(task && { task }),
           ...(call && { call }),
+        });
+        break;
+      }
+      case "notification": {
+        const { kind, source, text, people, to, task } = event.data;
+        const { callId, rowId, ...from } = source;
+        inbox.set(event.id, {
+          id: event.id,
+          seq: event.seq,
+          postedAt: event.createdAt,
+          type: kind,
+          from,
+          ...(to !== undefined && { to }),
+          text,
+          steeredBy: people,
+          ...(task && { task }),
+          ...(callId && { call: { threadId: source.threadId, callId } }),
+          ...(rowId && { rowId }),
         });
         break;
       }

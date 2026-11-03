@@ -1,6 +1,6 @@
-// A thread's events as the API shows them: its messages, people's and other agents', when the agent
-// took each one in, the agent's runs and the replies each run wrote, its tool calls, its
-// compactions, its subagents' runs that ended, and the pieces of a reply in progress.
+// A thread's events as the API shows them: people's messages and the notifications its agent is
+// sent, when the agent took each one in, the agent's runs and the replies each run wrote, its tool
+// calls, its compactions, and the pieces of a reply in progress.
 
 import * as z from "zod";
 
@@ -120,6 +120,28 @@ export const causeSchema = z.object({ threadId: z.string(), callId: z.string() }
 
 export type Cause = z.infer<typeof causeSchema>;
 
+// What a notification tells the agent it reaches: another agent's message; that a subagent ended
+// a run without sending its starter anything, failed, or was stopped; or that the subagents a
+// watch was set on went idle.
+export const notificationKindSchema = z.enum([
+  "message",
+  "agent.ended",
+  "agent.failed",
+  "agent.stopped",
+  "agent.idle",
+]);
+
+export type NotificationKind = z.infer<typeof notificationKindSchema>;
+
+// What made a notification: the agent whose thread it came from, and the call or the row there it
+// came of, where there is one.
+export const notificationSourceSchema = senderSchema.extend({
+  callId: z.string().optional(),
+  rowId: z.string().optional(),
+});
+
+export type NotificationSource = z.infer<typeof notificationSourceSchema>;
+
 // Where a subagent stands once its run ended: waiting for more, stopped, or failed.
 export const subagentEndSchema = z.enum(["idle", "stopped", "failed"]);
 
@@ -139,9 +161,8 @@ export const eventDataSchemas = {
   "message.withdrawn": z.object({ messageId: z.string() }),
   // A message the agent had not taken in yet was dropped: its author can no longer post.
   "message.dropped": z.object({ messageId: z.string() }),
-  // Another agent's message to this thread's agent, with the people whose words steered it; it
-  // waits like a person's until the agent takes it in. The first one in a subagent's thread is its
-  // task.
+  // No longer written: another agent's message to this thread's agent, with the people whose words
+  // steered it, now a notification. The first one in a subagent's thread is its task.
   "agent.message": z.object({
     parts: z.array(textPartSchema),
     from: senderSchema,
@@ -152,7 +173,19 @@ export const eventDataSchemas = {
     // The call that sent it; older messages do not say.
     call: causeSchema.optional(),
   }),
-  // One of the thread's subagents ended a run with nothing more to do, and the last thing it said.
+  // Something the thread's agent is told, with everyone whose words it carries, who count as
+  // steering what the agent does with it. It waits like a person's message until the agent takes
+  // it in. A message names whom it was sent to, and the first in a subagent's thread is its task.
+  notification: z.object({
+    kind: notificationKindSchema,
+    source: notificationSourceSchema,
+    text: z.string(),
+    people: z.array(steeringSchema),
+    to: z.string().optional(),
+    task: subagentTaskSchema.optional(),
+  }),
+  // No longer written: one of the thread's subagents ended a run with nothing more to do, and the
+  // last thing it said.
   "subagent.ended": z.object({
     threadId: z.string(),
     name: z.string(),
@@ -292,6 +325,7 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("message.withdrawn"),
   eventSchema("message.dropped"),
   eventSchema("agent.message"),
+  eventSchema("notification"),
   eventSchema("subagent.ended"),
   eventSchema("subagent.limited"),
   eventSchema("message.admitted"),

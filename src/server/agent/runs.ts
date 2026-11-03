@@ -16,10 +16,10 @@
 // goes on; a restart takes the same path. MCP tools stay out of the model's requests until it
 // searches for them, and those it turns on are kept with the run. A message asking to compact the
 // thread waits for the run before it to end, and gets a run of its own that writes the summary and
-// replies with nothing; other runs leave it waiting. Other agents' messages wait like a steer: each
-// boundary takes them in, and those left when a run ends start the next. What a thread offers and
-// tells the agent, and what it reads ahead of the thread, can depend on the thread, as a subagent's
-// do; and whoever needs to hears of each run that ends.
+// replies with nothing; other runs leave it waiting. Notifications wait like a steer: each
+// boundary takes all of them in together, and those left when a run ends start the next. What a
+// thread offers and tells the agent, and what it reads ahead of the thread, can depend on the
+// thread, as a subagent's do; and whoever needs to hears of each run that ends.
 
 import { ulid } from "ulid";
 import * as z from "zod";
@@ -56,7 +56,13 @@ import {
 } from "@/shared/transcript.ts";
 
 import { compact } from "./compaction.ts";
-import { contextOf, type Guidance, humanMessage, NO_GUIDANCE, relayMessage } from "./context.ts";
+import {
+  contextOf,
+  type Guidance,
+  humanMessage,
+  NO_GUIDANCE,
+  notificationsMessage,
+} from "./context.ts";
 import { deferredByServer, TOOL_SEARCH } from "./tool-search.ts";
 import type { ToolOutput, AnyToolSpec, Tools } from "./tools.ts";
 
@@ -692,9 +698,9 @@ export function createRunWorker(options: RunWorkerOptions) {
   }
 
   // At a step boundary: stops the run when asked to, otherwise takes in the waiting messages
-  // (all of them before the first model call, afterwards only those sent to steer, and other
-  // agents') and returns them, in the order they were sent. Those asking to compact the thread
-  // wait for runs of their own.
+  // (all of them before the first model call, afterwards only those sent to steer) in the order
+  // they were sent, then every notification waiting, and returns them, the notifications as one.
+  // Those asking to compact the thread wait for runs of their own.
   function boundary(execution: Execution, all: boolean): ModelMessage[] {
     const { run, lease, controller } = execution;
     const admitted = write(lease, run.threadId, (append) => {
@@ -702,27 +708,24 @@ export function createRunWorker(options: RunWorkerOptions) {
       stopIfAsked(execution, current);
       if (controller.signal.aborted) return [];
       const { pending, inbox } = transcript(run.threadId);
-      const waiting = [
-        ...admissible(run.threadId, pending, append)
-          .filter((message) => !asksToCompact(message) && (all || message.mode === "steer"))
-          .map((message) => ({ seq: message.seq, id: message.id, said: humanMessage(message) })),
-        ...inbox.map((message) => ({
-          seq: message.seq,
-          id: message.id,
-          said: relayMessage(message),
-        })),
-      ].toSorted((a, b) => a.seq - b.seq);
-      if (waiting.length > 0) {
+      const people = admissible(run.threadId, pending, append).filter(
+        (message) => !asksToCompact(message) && (all || message.mode === "steer"),
+      );
+      const ids = [...people, ...inbox].map((message) => message.id);
+      if (ids.length > 0) {
         append({
           type: "message.admitted",
           actor: AGENT,
-          data: { runId: run.id, messageIds: waiting.map((message) => message.id) },
+          data: { runId: run.id, messageIds: ids },
         });
       }
-      return waiting;
+      return [
+        ...people.map(humanMessage),
+        ...(inbox.length > 0 ? [notificationsMessage(inbox)] : []),
+      ];
     });
     if (controller.signal.aborted) throw controller.signal.reason;
-    return admitted.map((message) => message.said);
+    return admitted;
   }
 
   // The tools the thread's agent may call now.

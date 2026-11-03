@@ -1,7 +1,7 @@
 // The agent's tools in settings: the Policies card, then a card for each source of toolsets (built
 // in, MCP servers) and in it one collapsible row per toolset with counts of its tools' policies and
-// a built-in on/off switch; a built-in toolset of no tools is a plain row with its switch, and one
-// always on has its switch on and disabled. For the org, only its owners change them; in a space,
+// a built-in on/off switch, and opening on its options' switches, then its tools; a built-in toolset
+// of no tools is a plain row with its switch, and one always on has its switch on and disabled. For the org, only its owners change them; in a space,
 // the org's tools follow the org's policy by default or take a stricter one on top, while the
 // space's own toolsets take its policy directly. The toolsets an MCP server card shows are handed
 // to it as they are read.
@@ -21,7 +21,7 @@ import { PoliciesCard } from "@/web/agent/policies/card";
 import { PolicyCounts } from "@/web/agent/policies/tags";
 import { PolicyChangeError, ToolPoliciesProvider } from "@/web/agent/policies/provider";
 import { toolsQuery } from "@/web/agent/queries";
-import { useToolsetSwitch } from "@/web/agent/mutations";
+import { useToolsetOption, useToolsetSwitch } from "@/web/agent/mutations";
 import { useOpenSections } from "@/web/agent/open-sections";
 import { ALWAYS_ON, ToolsetTools } from "@/web/agent/toolset-tools";
 
@@ -36,9 +36,39 @@ interface ToolsProps {
   scope: "org" | "space";
   canChange: boolean;
   onSwitch?: (toolsetId: string, enabled: boolean) => void;
+  onOption?: (toolsetId: string, option: string, enabled: boolean) => void;
 }
 
-function Toolsets({ toolsets, scope, canChange, onSwitch }: ToolsProps) {
+// A built-in toolset's option with its switch; in a space, one the org has off stays off.
+function ToolsetOption({
+  option,
+  scope,
+  canChange,
+  onCheckedChange,
+}: {
+  option: NonNullable<ToolsetSetting["options"]>[number];
+  scope: "org" | "space";
+  canChange: boolean;
+  onCheckedChange: (enabled: boolean) => void;
+}) {
+  const orgOff = scope === "space" && !option.orgEnabled;
+  return (
+    <div className="flex items-center gap-3 py-1">
+      <p className="min-w-0 flex-1 text-sm">{option.title}</p>
+      <ScopedSwitch
+        label={option.title}
+        inSpace={scope === "space"}
+        here={scope === "space" && option.orgEnabled && !option.enabled}
+        orgOff={orgOff}
+        checked={option.enabled}
+        disabled={!canChange || orgOff}
+        onCheckedChange={onCheckedChange}
+      />
+    </div>
+  );
+}
+
+function Toolsets({ toolsets, scope, canChange, onSwitch, onOption }: ToolsProps) {
   const sections = useOpenSections(scope);
   // A card only for a source that has toolsets.
   const sources = (Object.keys(SOURCES) as ToolsetSetting["source"][])
@@ -104,6 +134,16 @@ function Toolsets({ toolsets, scope, canChange, onSwitch }: ToolsProps) {
               on={on}
               control={control}
             >
+              {onOption &&
+                toolset.options?.map((option) => (
+                  <ToolsetOption
+                    key={option.id}
+                    option={option}
+                    scope={scope}
+                    canChange={canChange}
+                    onCheckedChange={(enabled) => onOption(toolset.id, option.id, enabled)}
+                  />
+                ))}
               <ToolsetTools toolset={toolset} scope={scope} />
             </SettingsRow>
           );
@@ -147,10 +187,11 @@ export function OrgToolsList({
   const scope = { kind: "org" } as const;
   const tools = useQuery(toolsQuery(scope));
   const toolsetSwitch = useToolsetSwitch(scope);
+  const toolsetOption = useToolsetOption(scope);
   return (
     <ToolPoliciesProvider scope={scope} canChange={canManage}>
       <PoliciesCard />
-      <ToolsetsState state={tools} error={toolsetSwitch.error?.message}>
+      <ToolsetsState state={tools} error={(toolsetSwitch.error ?? toolsetOption.error)?.message}>
         {tools.data && (
           <>
             <Toolsets
@@ -158,6 +199,9 @@ export function OrgToolsList({
               scope="org"
               canChange={canManage}
               onSwitch={(toolsetId, enabled) => toolsetSwitch.mutate({ toolsetId, enabled })}
+              onOption={(toolsetId, option, enabled) =>
+                toolsetOption.mutate({ toolsetId, option, enabled })
+              }
             />
             {mcp(tools.data.filter((toolset) => toolset.source === "mcp"))}
           </>
@@ -179,10 +223,11 @@ export function SpaceToolsList({
   const scope = { kind: "space", spaceId } as const;
   const tools = useQuery(toolsQuery(scope));
   const toolsetSwitch = useToolsetSwitch(scope);
+  const toolsetOption = useToolsetOption(scope);
   return (
     <ToolPoliciesProvider scope={scope} canChange>
       <PoliciesCard />
-      <ToolsetsState state={tools} error={toolsetSwitch.error?.message}>
+      <ToolsetsState state={tools} error={(toolsetSwitch.error ?? toolsetOption.error)?.message}>
         {tools.data && (
           <>
             <Toolsets
@@ -190,6 +235,9 @@ export function SpaceToolsList({
               scope="space"
               canChange
               onSwitch={(toolsetId, enabled) => toolsetSwitch.mutate({ toolsetId, enabled })}
+              onOption={(toolsetId, option, enabled) =>
+                toolsetOption.mutate({ toolsetId, option, enabled })
+              }
             />
             {mcp(tools.data.filter((toolset) => toolset.source === "mcp"))}
           </>

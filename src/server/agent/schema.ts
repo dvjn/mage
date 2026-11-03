@@ -89,6 +89,34 @@ export const spaceToolsetSetting = sqliteTable(
   (table) => [primaryKey({ columns: [table.spaceId, table.toolsetId] })],
 );
 
+// An option of a built-in toolset an org turned on or off for its spaces; one not set is off.
+export const orgToolsetOption = sqliteTable(
+  "org_toolset_option",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    toolsetId: text("toolset_id").notNull(),
+    option: text("option").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.organizationId, table.toolsetId, table.option] })],
+);
+
+// An option a space turned off for itself, or back on while the org has it on.
+export const spaceToolsetOption = sqliteTable(
+  "space_toolset_option",
+  {
+    spaceId: text("space_id")
+      .notNull()
+      .references(() => space.id, { onDelete: "cascade" }),
+    toolsetId: text("toolset_id").notNull(),
+    option: text("option").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.spaceId, table.toolsetId, table.option] })],
+);
+
 // A wake-up of the agent in a thread. At most one run per thread is queued, running or waiting.
 export const run = sqliteTable(
   "run",

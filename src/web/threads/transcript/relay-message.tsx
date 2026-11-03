@@ -1,11 +1,13 @@
-// Another agent's message, folded into one line like a tool call's, naming who sent it and to whom:
-// from a subagent, or from the agent that started this subagent. It opens on the message, with the
-// call that sent it, or for older messages the thread an agent's message came from, and for the
-// first, its task, what the subagent was set to do beside it. Messages in a row fold into one line
-// of how many, from whom and to whom, which opens on theirs.
+// A notification, folded into one line like a tool call's. Another agent's message names who sent
+// it and to whom: a subagent, or the agent that started this subagent. It opens on the message,
+// with the call that sent it, or for older messages the thread an agent's message came from, and
+// for the first, its task, what the subagent was set to do beside it. Any other notification shows
+// its first line, and opens on the rest with a link to where it came from. Notifications in a row
+// fold into one line of how many, which for messages alone says from whom and to whom, and opens
+// on theirs.
 
 import { Link } from "@tanstack/react-router";
-import { BotIcon, ChevronRightIcon } from "lucide-react";
+import { BellIcon, BotIcon, ChevronRightIcon } from "lucide-react";
 
 import { cn } from "cn";
 
@@ -34,7 +36,7 @@ const LINE =
 function endsOf(row: RelayRow, agentName: string) {
   return {
     author: row.from.main ? agentName : row.from.name,
-    to: row.to === AGENT ? agentName : row.to,
+    to: row.to === AGENT ? agentName : (row.to ?? ""),
   };
 }
 
@@ -63,7 +65,10 @@ export function RelayMessages({ rows, opened, onOpenChange }: { rows: RelayRow[]
     />
   ));
   if (rows.length === 1) return <div className="pl-9">{messages}</div>;
-  const label = `${rows.length} messages · ${authors.join(", ")} → ${recipients.join(", ")}`;
+  const onlyMessages = rows.every((row) => row.type === "message");
+  const count = `${rows.length} ${onlyMessages ? "messages" : "notifications"}`;
+  const ways = onlyMessages ? `${authors.join(", ")} → ${recipients.join(", ")}` : null;
+  const label = ways ? `${count} · ${ways}` : count;
   return (
     <Collapsible
       open={rows.some((row) => opened.has(runId(row)))}
@@ -74,10 +79,8 @@ export function RelayMessages({ rows, opened, onOpenChange }: { rows: RelayRow[]
         <ChevronRightIcon className="transition-transform group-data-[panel-open]/relays:rotate-90" />
         <BotIcon />
         <span className="flex min-w-0 flex-1 items-center gap-1">
-          <span className="shrink-0 font-medium">{rows.length} messages</span>
-          <span className="min-w-0 truncate">
-            · {authors.join(", ")} → {recipients.join(", ")}
-          </span>
+          <span className="shrink-0 font-medium">{count}</span>
+          {ways && <span className="min-w-0 truncate">· {ways}</span>}
         </span>
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-1 flex flex-col gap-1 pl-5">{messages}</CollapsibleContent>
@@ -98,6 +101,9 @@ export function RelayMessage({
   const { agentName } = useThreadAgent();
   const { author, to } = endsOf(row, agentName);
   const lit = useRowFocus()?.lit === row.id;
+  if (row.type !== "message") {
+    return <Notice row={row} open={open} onOpenChange={onOpenChange} lit={lit} />;
+  }
   return (
     <article
       id={rowElementId(row.id)}
@@ -172,6 +178,66 @@ export function RelayMessage({
             </p>
           )}
         </CollapsibleContent>
+      </Collapsible>
+    </article>
+  );
+}
+
+// A notification other than a message: its first line, opening on the rest and on where it came
+// from.
+function Notice({
+  row,
+  open,
+  onOpenChange,
+  lit,
+}: {
+  row: RelayRow;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  lit: boolean;
+}) {
+  const [headline = "", ...rest] = row.text.split("\n");
+  const body = rest.join("\n").trim();
+  const link = row.sentBy ?? row.source;
+  return (
+    <article
+      id={rowElementId(row.id)}
+      aria-label="Notification"
+      data-lit={lit || undefined}
+      className={cn(
+        "rounded-md transition-colors duration-700",
+        lit && "bg-accent ring-2 ring-ring/40",
+      )}
+    >
+      <Collapsible
+        open={open}
+        onOpenChange={onOpenChange}
+        className="text-xs text-muted-foreground"
+      >
+        <div className="flex items-center gap-2">
+          <CollapsibleTrigger
+            aria-label={headline}
+            className={cn("group/notice min-w-0 flex-1", LINE)}
+          >
+            <ChevronRightIcon className="transition-transform group-data-[panel-open]/notice:rotate-90" />
+            <BellIcon />
+            <span className="min-w-0 truncate">{headline}</span>
+          </CollapsibleTrigger>
+          {open && link && (
+            <RowLink
+              threadId={link.threadId}
+              rowId={link.rowId}
+              className="shrink-0 rounded-md px-1.5 py-0.5 font-medium text-foreground hover:bg-muted"
+            >
+              Open
+            </RowLink>
+          )}
+        </div>
+        {body && (
+          <CollapsibleContent className="mt-1 pl-5 text-sm text-foreground">
+            <MessageResponse>{body}</MessageResponse>
+          </CollapsibleContent>
+        )}
       </Collapsible>
     </article>
   );

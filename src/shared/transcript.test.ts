@@ -238,4 +238,45 @@ describe("createFold", () => {
     ]);
     expect(rows[1]).toMatchObject({ from: { name: "Writer" }, to: "agent", text: "Draft one" });
   });
+
+  it("holds notifications until taken in, as older agents' messages are", () => {
+    seq = 0;
+    const fold = createFold();
+    fold.add(
+      event("agent.message", {
+        parts: [{ type: "text", text: "Draft one" }],
+        from: { threadId: "h1", name: "Writer", main: false },
+        to: "agent",
+        steeredBy: [],
+        call: { threadId: "h1", callId: "c1" },
+      }),
+    );
+    fold.add(
+      event("notification", {
+        kind: "agent.ended",
+        source: { threadId: "h2", name: "Critic", main: false, rowId: "r1" },
+        text: "Critic ended its run without reporting.",
+        people: [{ userId: "ada", name: "Ada Lovelace", via: ["Agent", "Critic"] }],
+      }),
+    );
+    expect(fold.transcript().inbox).toHaveLength(2);
+    fold.add(event("message.admitted", { ...run, messageIds: ["e1", "e2"] }));
+    const { rows, inbox } = fold.transcript();
+    expect(inbox).toEqual([]);
+    expect(rows).toEqual([
+      expect.objectContaining({
+        kind: "relay",
+        type: "message",
+        text: "Draft one",
+        call: { threadId: "h1", callId: "c1" },
+      }),
+      expect.objectContaining({
+        kind: "relay",
+        type: "agent.ended",
+        from: { threadId: "h2", name: "Critic", main: false },
+        rowId: "r1",
+        steeredBy: [{ userId: "ada", name: "Ada Lovelace", via: ["Agent", "Critic"] }],
+      }),
+    ]);
+  });
 });

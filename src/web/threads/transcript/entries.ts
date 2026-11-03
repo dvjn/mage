@@ -3,8 +3,9 @@
 // agent's turn reads as one block, its lines close together and its reply text a little apart from
 // them; only a new author or turn is set apart in full. A subagent's call that waits for a decision
 // or for answers shows as its card right after the entry with the line that started the subagent.
-// Other agents' messages, a run of them folded into one, and subagents that ended runs show as
-// lines of the turn they follow, or open one.
+// Notifications, a run of other agents' messages or of other notifications folded into one, and
+// subagents that ended runs, as older threads were told, show as lines of the turn they follow,
+// or open one.
 
 import type {
   AgentRow,
@@ -121,7 +122,10 @@ export function transcriptEntries(rows: readonly ShownRow[]): TranscriptEntry[] 
     const row = shown[i]!;
     if (row.kind === "relay") {
       const relays = [row];
-      for (let later = shown[i + 1]; later?.kind === "relay"; later = shown[i + relays.length])
+      // Messages fold with messages, and other notifications with each other.
+      const kin = (other: ShownRow | undefined): other is RelayRow =>
+        other?.kind === "relay" && (other.type === "message") === (row.type === "message");
+      for (let later = shown[i + 1]; kin(later); later = shown[i + relays.length])
         relays.push(later);
       entries.push({
         kind: "relays",

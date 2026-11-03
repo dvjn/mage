@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { AgentRow, ShownRow, ToolRow } from "@/shared/threads/rows.ts";
+import type { AgentRow, RelayRow, ShownRow, ToolRow } from "@/shared/threads/rows.ts";
 import { transcriptEntries } from "@/web/threads/transcript/entries.ts";
 
 let order = 0;
@@ -67,7 +67,7 @@ function human(id: string): ShownRow {
   };
 }
 
-function relay(id: string): ShownRow {
+function relay(id: string, type: RelayRow["type"] = "message"): ShownRow {
   return {
     kind: "relay",
     id,
@@ -75,6 +75,7 @@ function relay(id: string): ShownRow {
     seq: order,
     turn: null,
     postedAt: "2026-11-01T00:00:00.000Z",
+    type,
     from: { threadId: "subagent1", name: "Researcher", main: false },
     to: "agent",
     text: "Research complete",
@@ -240,6 +241,22 @@ describe("transcriptEntries", () => {
       ["n2", "close"],
       ["relays:m4", ["m4"], "close"],
       ["r1", "apart"],
+    ]);
+  });
+
+  it("folds other notifications with each other, apart from messages", () => {
+    const rows = [
+      human("h"),
+      relay("m1"),
+      relay("e1", "agent.ended"),
+      relay("e2", "agent.idle"),
+      relay("m2"),
+    ];
+    expect(shape(rows)).toEqual([
+      ["h", "apart"],
+      ["relays:m1", ["m1"], "apart"],
+      ["relays:e1", ["e1", "e2"], "close"],
+      ["relays:m2", ["m2"], "close"],
     ]);
   });
 

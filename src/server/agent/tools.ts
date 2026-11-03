@@ -163,6 +163,8 @@ export interface Toolset {
   prefix?: string;
   // Whether a space has any use for it now, such as skills to load; always, when not given.
   usefulIn?(space: { id: string; orgId: string }): boolean;
+  // For one of Mage's own, the options orgs and spaces may turn on, each off until they do.
+  options?: { id: string; title: string }[];
   // One of Mage's own whose tools are all fixed, and whose guidance is always given where it is of
   // use.
   fixed?: boolean;
@@ -208,6 +210,11 @@ export interface ToolSettingStore {
   setToolsetInOrg(orgId: string, toolsetId: string, enabled: boolean): void;
   toolsetsInSpace(spaceId: string): Map<string, boolean>;
   setToolsetInSpace(spaceId: string, toolsetId: string, enabled: boolean): void;
+  // The options of built-in toolsets set on or off, by toolset and then option.
+  optionsInOrg(orgId: string): Map<string, Map<string, boolean>>;
+  setOptionInOrg(orgId: string, toolsetId: string, option: string, enabled: boolean): void;
+  optionsInSpace(spaceId: string): Map<string, Map<string, boolean>>;
+  setOptionInSpace(spaceId: string, toolsetId: string, option: string, enabled: boolean): void;
 }
 
 // A reusable access rule: who can use its tools without approval, and who approves everyone else.
@@ -531,7 +538,11 @@ export function createTools(options: ToolsOptions) {
   // skill, and starting a subagent the subagent.
   function namesIn(space: Pick<Space, "id" | "orgId"> | null) {
     let now: ((toolId: string) => ToolNames | null) | undefined;
-    return (row: Pick<ToolRow, "toolId" | "input" | "state" | "title" | "toolset">): ToolNames => {
+    return (
+      row: Pick<ToolRow, "toolId" | "input" | "state" | "title" | "toolset"> & {
+        output?: ToolRow["output"];
+      },
+    ): ToolNames => {
       now ??= space ? namesNow(space) : () => null;
       const names = now(row.toolId) ??
         (row.title ? { title: row.title, toolset: row.toolset ?? null } : null) ??
@@ -543,9 +554,11 @@ export function createTools(options: ToolsOptions) {
       if (row.toolId === LOAD_SKILL && typeof skill === "string") {
         return { ...names, title: row.state === "ran" ? `Loaded ${skill}` : `Load ${skill}` };
       }
-      // Starting a subagent names the subagent.
+      // Starting a subagent names the subagent, and the model it was given.
       if (toolIdNow(row.toolId) === START_SUBAGENT && typeof skill === "string") {
-        return { ...names, title: `${names.title} · ${skill}` };
+        const model = row.output?.ok && (row.output.value as { model?: unknown } | null)?.model;
+        const given = typeof model === "string" ? ` · ${model.slice(model.indexOf("/") + 1)}` : "";
+        return { ...names, title: `${names.title} · ${skill}${given}` };
       }
       return names;
     };
@@ -670,13 +683,29 @@ export function createTools(options: ToolsOptions) {
     // The toolsets of the org, with each tool's definition; a fixed one is always on.
     toolsetsInOrg(orgId: string) {
       const switches = settings.toolsetsInOrg(orgId);
+      const options = settings.optionsInOrg(orgId);
       return shownInOrg(orgId).map((toolset) => ({
         ...withDefinitions(toolset, "org"),
         ...(toolset.source === "builtin" && {
           orgEnabled: !!toolset.fixed || switches.get(toolset.id) !== false,
           enabled: !!toolset.fixed || switches.get(toolset.id) !== false,
         }),
+        ...(toolset.options && {
+          options: toolset.options.map(({ id, title }) => {
+            const on = options.get(toolset.id)?.get(id) === true;
+            return { id, title, orgEnabled: on, enabled: on };
+          }),
+        }),
       }));
+    },
+
+    // Whether the built-in toolset's option is on in the space: the org turned it on, and the
+    // space did not turn it off.
+    optionOn(space: Pick<Space, "id" | "orgId">, toolsetId: string, option: string) {
+      return (
+        settings.optionsInOrg(space.orgId).get(toolsetId)?.get(option) === true &&
+        settings.optionsInSpace(space.id).get(toolsetId)?.get(option) !== false
+      );
     },
 
     // The space's: those the org offers it as the org's, and the rest as its own.
@@ -686,6 +715,8 @@ export function createTools(options: ToolsOptions) {
       );
       const orgSwitches = settings.toolsetsInOrg(space.orgId);
       const switches = settings.toolsetsInSpace(space.id);
+      const orgOptions = settings.optionsInOrg(space.orgId);
+      const options = settings.optionsInSpace(space.id);
       return shownInSpace(space).map((toolset) => ({
         ...withDefinitions(toolset, org.has(toolset.id) ? "org" : "space"),
         ...(toolset.source === "builtin" && {
@@ -693,6 +724,13 @@ export function createTools(options: ToolsOptions) {
           enabled:
             !!toolset.fixed ||
             (orgSwitches.get(toolset.id) !== false && switches.get(toolset.id) !== false),
+        }),
+        ...(toolset.options && {
+          options: toolset.options.map(({ id, title }) => {
+            const orgOn = orgOptions.get(toolset.id)?.get(id) === true;
+            const on = orgOn && options.get(toolset.id)?.get(id) !== false;
+            return { id, title, orgEnabled: orgOn, enabled: on };
+          }),
         }),
       }));
     },
@@ -1020,6 +1058,34 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
         .find((set) => set.id === toolsetId && set.source === "builtin" && !set.fixed);
       if (!toolset) throw new ServiceError(404, "Toolset not found");
       settings.setToolsetInOrg(principal.orgId, toolsetId, enabled);
+    },
+
+    // Turns the built-in toolset's option on or off for the org's spaces.
+    setOrgToolsetOption(principal: Principal, toolsetId: string, option: string, enabled: boolean) {
+      if (principal.role !== "owner") throw new ServiceError(403, OWNERS_ONLY);
+      const toolset = tools.toolsetsInOrg(principal.orgId).find((set) => set.id === toolsetId);
+      if (!toolset?.options?.some((one) => one.id === option)) {
+        throw new ServiceError(404, "Option not found");
+      }
+      settings.setOptionInOrg(principal.orgId, toolsetId, option, enabled);
+    },
+
+    // Turns the option off in the space, or back on while the org has it on.
+    setSpaceToolsetOption(
+      principal: Principal,
+      spaceId: string,
+      toolsetId: string,
+      option: string,
+      enabled: boolean,
+    ) {
+      const space = spaces.require(principal, spaceId, "manage");
+      const toolset = tools.toolsetsInSpace(space).find((set) => set.id === toolsetId);
+      const found = toolset?.options?.find((one) => one.id === option);
+      if (!found) throw new ServiceError(404, "Option not found");
+      if (enabled && !found.orgEnabled) {
+        throw new ServiceError(409, "The organization turned this option off");
+      }
+      settings.setOptionInSpace(spaceId, toolsetId, option, enabled);
     },
 
     setSpaceToolset(principal: Principal, spaceId: string, toolsetId: string, enabled: boolean) {

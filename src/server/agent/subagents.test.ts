@@ -7,7 +7,17 @@ import type { ThreadListItem } from "@/shared/threads/list.ts";
 import type { ShownRow } from "@/shared/threads/rows.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
+import { NOTIFICATIONS_HEADING } from "./context.ts";
 import { LIVE_LIMIT, MESSAGE_LIMIT, RUNNING_LIMIT } from "./subagents.ts";
+
+// The notifications the model is given together, and that as the call's texts show it.
+function notifications(...lines: string[]) {
+  return [NOTIFICATIONS_HEADING, ...lines].join("\n\n");
+}
+
+function notified(...lines: string[]) {
+  return `user: ${notifications(...lines)}`;
+}
 
 // A thread whose agent starts subagents, with the model's calls taken by the thread they are made
 // in.
@@ -83,7 +93,7 @@ async function subagentThread() {
     return (await res.json()) as { rows: ShownRow[]; subagent?: { state: string } | null };
   }
 
-  // Answers every call made in the thread from now until the test ends.
+  // Answers every call made in the thread from now until stopped, or until the test ends.
   function keepAnswering(threadId: string) {
     let on = true;
     void (async () => {
@@ -101,6 +111,9 @@ async function subagentThread() {
     onTestFinished(() => {
       on = false;
     });
+    return () => {
+      on = false;
+    };
   }
 
   return {
@@ -128,7 +141,9 @@ function lines(rows: ReturnType<typeof transcriptOf>["rows"]) {
       case "tool":
         return `${row.toolId} (${row.state})`;
       case "relay":
-        return `${row.from.name} → ${row.to}: ${row.text}`;
+        return row.type === "message"
+          ? `${row.from.name} → ${row.to}: ${row.text}`
+          : `${row.type}: ${row.text.split("\n")[0]}`;
       case "notice":
         return `notice: ${row.subagents.map((subagent) => `${subagent.name} ${subagent.state}`).join(", ")}`;
       default:
@@ -138,10 +153,9 @@ function lines(rows: ReturnType<typeof transcriptOf>["rows"]) {
 }
 
 describe("subagents", () => {
-  it("start in threads of their own, work on their task, and go idle with a notice", async () => {
+  it("start in threads of their own, work on their task, and tell their starter when they end without reporting", async () => {
     const workspace = await subagentThread();
-    const { ada, post, thread, start, calls, answer, callIn, rowsOf, subagentNamed, until } =
-      workspace;
+    const { ada, post, thread, start, calls, answer, callIn, rowsOf, subagentNamed } = workspace;
     start();
     await post(ada, "Research queues");
     await calls(thread.id, ["subagents.start", { name: "Researcher", task: "Compare queues" }]);
@@ -153,25 +167,45 @@ describe("subagents", () => {
     expect(child.title).toBe("Researcher");
 
     const first = await callIn(subagentId);
-    expect(first.texts).toEqual([`user: [Agent of Research queues] Compare queues`]);
+    expect(first.texts).toEqual([notified("[Agent of Research queues] Compare queues")]);
     expect(first.request.instructions).toContain("You are a subagent labelled Researcher");
+    expect(first.request.instructions).toContain("even when you found nothing");
     expect(first.request.instructions).not.toContain("You can start subagents");
     first.reply("BullMQ wins.");
-    await workspace.worker.idle();
 
-    // Its reply stays in its own thread; its starter is told it went idle.
+    // Its reply stays in its own thread; having sent nothing, its starter is told, with its last
+    // message, and wakes on it.
+    const told = await callIn(thread.id);
+    expect(told.texts.at(-1)).toBe(
+      notified("Researcher ended its run without reporting.\n\nIts last message:\n\nBullMQ wins."),
+    );
+    told.reply("Noted.");
+    await workspace.worker.idle();
     expect(lines(rowsOf(subagentId))).toEqual([
       "Research queues → Researcher: Compare queues",
       "Agent: BullMQ wins.",
     ]);
-    await until(() => rowsOf(thread.id).some((row) => row.kind === "notice"));
     expect(lines(rowsOf(thread.id))).toEqual([
       "Ada Lovelace: Research queues",
       "Agent: On it.",
       "subagents.start (ran)",
       "Agent: Started.",
-      "notice: Researcher idle",
+      "agent.ended: Researcher ended its run without reporting.",
+      "Agent: Noted.",
     ]);
+    // The notice links to the row it came of, and carries who steered the subagent.
+    const notice = rowsOf(thread.id).find((row) => row.kind === "relay");
+    expect(notice).toMatchObject({
+      from: { threadId: subagentId, name: "Researcher" },
+      rowId: rowsOf(subagentId).at(-1)!.id,
+      steeredBy: [{ userId: ada.userId, via: ["Agent", "Researcher"] }],
+    });
+    expect(
+      (await workspace.rowsShown(thread.id, ada.cookie)).rows.find((row) => row.kind === "relay"),
+    ).toMatchObject({
+      type: "agent.ended",
+      source: { threadId: subagentId, rowId: rowsOf(subagentId).at(-1)!.id },
+    });
     // The space lists the thread, not the subagent's, which shows under it.
     const { threads } = await workspace.sidebar(ada.cookie);
     expect(threads.map((item) => item.id)).toEqual([thread.id]);
@@ -203,7 +237,7 @@ describe("subagents", () => {
 
     // The message wakes the agent that started it.
     const woken = await callIn(thread.id);
-    expect(woken.texts.at(-1)).toContain("user: [Subagent Researcher] BullMQ wins");
+    expect(woken.texts.at(-1)).toBe(notified("[Subagent Researcher] BullMQ wins"));
     // Nothing the subagent said goes along with it.
     expect(woken.texts.join("\n")).not.toContain("Sent.");
     woken.startStep();
@@ -214,9 +248,14 @@ describe("subagents", () => {
     await answer(thread.id, "Asked.");
 
     const again = await callIn(subagentId);
-    expect(again.texts.at(-1)).toBe("user: [Agent of Research queues] And Graphile?");
+    expect(again.texts.at(-1)).toBe(notified("[Agent of Research queues] And Graphile?"));
     again.reply("Graphile too.");
+    await answer(thread.id, "Noted.");
     await workspace.worker.idle();
+    // Having reported, its first run ends without a notice; its second, which did not, has one.
+    expect(lines(rowsOf(thread.id)).filter((line) => line.startsWith("agent."))).toEqual([
+      "agent.ended: Researcher ended its run without reporting.",
+    ]);
     expect(lines(rowsOf(thread.id))).toContain("Researcher → agent: BullMQ wins");
   });
 
@@ -231,6 +270,7 @@ describe("subagents", () => {
       ["subagents.send", { to: "Nobody", text: "Hi" }],
     );
     await answer(thread.id);
+    workspace.keepAnswering(thread.id);
     const writer = subagentNamed("Writer");
     await calls(writer, ["subagents.send", { to: "Writer", text: "Hi" }]);
     await answer(writer);
@@ -264,6 +304,7 @@ describe("subagents", () => {
     main.endStep();
     main.end();
     await answer(thread.id, "Sent both.");
+    workspace.keepAnswering(thread.id);
     await workspace.until(
       () => workspace.rowsOf(thread.id).filter((row) => row.kind === "tool").length === 3,
     );
@@ -276,8 +317,7 @@ describe("subagents", () => {
     busy.delta("Drafting.");
     busy.endStep();
     expect(busy.boundary()).toEqual([
-      { role: "user", text: "[Agent of Go] First" },
-      { role: "user", text: "[Agent of Go] Second" },
+      { role: "user", text: notifications("[Agent of Go] First", "[Agent of Go] Second") },
     ]);
     busy.reply("Done both.");
     await workspace.worker.idle();
@@ -292,16 +332,19 @@ describe("subagents", () => {
     await post(ada, "Go");
     const starter = await calls(thread.id, ["subagents.start", { name: "Whole", task: "Look" }]);
     await answer(thread.id);
+    workspace.keepAnswering(thread.id);
     const whole = await callIn(subagentNamed("Whole"));
     const starterOnly = [
       "subagents.start",
-      "subagents.wait",
       "subagents.stop",
       "subagents.archive",
+      "subagents.unarchive",
     ];
     expect(whole.tools).toEqual(starter.tools.filter((id) => !starterOnly.includes(id)));
+    expect(starter.tools).not.toContain("subagents.wait");
     expect(whole.tools).toContain("subagents.send");
     expect(whole.tools).toContain("subagents.list");
+    expect(whole.tools).toContain("subagents.watch");
     expect(whole.tools).not.toContain("thread.rename");
     whole.reply("Looked.");
     await workspace.worker.idle();
@@ -319,13 +362,14 @@ describe("subagents", () => {
       { name: "Forked", task: "Compare queues", fork: true },
     ]);
     await answer(thread.id);
+    workspace.keepAnswering(thread.id);
     const forked = await callIn(subagentNamed("Forked"));
     expect(forked.texts).toEqual([
       "user: [Ada Lovelace] We chose Postgres",
       "assistant: Noted.",
       "user: [Ada Lovelace] Now research queues",
       "assistant: On it.",
-      "user: [Agent of We chose Postgres] Compare queues",
+      notified("[Agent of We chose Postgres] Compare queues"),
     ]);
     forked.reply("Done.");
     await workspace.worker.idle();
@@ -342,6 +386,7 @@ describe("subagents", () => {
     ]) as [string, unknown][];
     await calls(thread.id, ...starts);
     await answer(thread.id);
+    workspace.keepAnswering(thread.id);
     const outputs = () =>
       rowsOf(thread.id).flatMap((row) => (row.kind === "tool" && row.output ? [row.output] : []));
     await workspace.until(() => outputs().length === LIVE_LIMIT + 1);
@@ -368,6 +413,49 @@ describe("subagents", () => {
     expect(workspace.subagents.summaryOf(subagentNamed(`H${LIVE_LIMIT - 1}`))?.state).toBe("idle");
   });
 
+  it("are unarchived by the agent that started them, to take messages again", async () => {
+    const workspace = await subagentThread();
+    const { ada, post, thread, start, calls, answer, callIn, subagentNamed, rowsOf } = workspace;
+    start();
+    await post(ada, "Go");
+    await calls(
+      thread.id,
+      ["subagents.start", { name: "Scout", task: "Look" }],
+      ["subagents.unarchive", { subagent: "Scout" }],
+    );
+    await answer(thread.id);
+    const quiet = workspace.keepAnswering(thread.id);
+    const scout = subagentNamed("Scout");
+    (await callIn(scout)).reply("Looked.");
+    await workspace.worker.idle();
+    quiet();
+
+    await post(ada, "Archive it, then bring it back for more");
+    await calls(
+      thread.id,
+      ["subagents.archive", { subagent: "Scout" }],
+      ["subagents.unarchive", { subagent: "Scout" }],
+      ["subagents.send", { to: "Scout", text: "Look again" }],
+    );
+    await answer(thread.id);
+    workspace.keepAnswering(thread.id);
+    const again = await callIn(scout);
+    expect(again.texts.at(-1)).toBe(notified("[Agent of Go] Look again"));
+    again.reply("Looked again.");
+    await workspace.worker.idle();
+    expect(workspace.subagents.summaryOf(scout)?.state).toBe("idle");
+    const outputs = rowsOf(thread.id).flatMap((row) =>
+      row.kind === "tool" && row.output ? [row.output] : [],
+    );
+    // One that is live is not unarchived.
+    expect(outputs[1]).toEqual({ ok: false, error: "Scout is not archived." });
+    expect(outputs.slice(2)).toEqual([
+      { ok: true, value: { id: scout, name: "Scout", state: "archived" } },
+      { ok: true, value: { id: scout, name: "Scout", state: "idle" } },
+      { ok: true, value: { sent: ["Scout"] } },
+    ]);
+  });
+
   it("stop and archive, refusing messages until a person brings them back", async () => {
     const workspace = await subagentThread();
     const { ada, alan, post, thread, start, calls, answer, callIn, subagentNamed, rowsOf, api } =
@@ -381,12 +469,13 @@ describe("subagents", () => {
     working.startStep();
     await post(ada, "Stop it");
     await calls(thread.id, ["subagents.stop", { subagent: "Slow" }]);
-    await answer(thread.id);
-    await workspace.worker.idle();
-    expect(workspace.subagents.summaryOf(slow)?.state).toBe("stopped");
+    const quiet = workspace.keepAnswering(thread.id);
     await workspace.until(() =>
-      lines(rowsOf(thread.id)).some((line) => line === "notice: Slow stopped"),
+      lines(rowsOf(thread.id)).some((line) => line === "agent.stopped: Slow was stopped."),
     );
+    await workspace.worker.idle();
+    quiet();
+    expect(workspace.subagents.summaryOf(slow)?.state).toBe("stopped");
 
     await post(ada, "Retire it");
     await calls(
@@ -427,6 +516,7 @@ describe("subagents", () => {
     await workspace.api("POST", `/threads/${slow}/messages`, ada.cookie, { text: "Carry on" });
     const resumed = await callIn(slow);
     expect(resumed.texts.at(-1)).toBe("user: [Ada Lovelace] Carry on");
+    workspace.keepAnswering(thread.id);
     resumed.reply("Carried on.");
     await workspace.worker.idle();
   });
@@ -445,29 +535,149 @@ describe("subagents", () => {
     await workspace.worker.idle();
     expect(workspace.runStore.active(thread.id)).toBeNull();
     expect(workspace.subagents.summaryOf(subagentNamed("Slow"))?.state).toBe("stopped");
+    // Stopped with it, the subagent does not wake it again.
+    expect(workspace.rowsOf(thread.id).filter((row) => row.kind === "relay")).toEqual([]);
   });
 
-  it("wait until their subagents are done", async () => {
+  it("watch their subagents, told once when all are idle, and at once when they already are", async () => {
     const workspace = await subagentThread();
-    const { ada, post, thread, start, calls, callIn, subagentNamed, rowsOf } = workspace;
+    const { ada, post, thread, start, calls, answer, callIn, subagentNamed, rowsOf, until } =
+      workspace;
     start();
     await post(ada, "Go");
     await calls(
       thread.id,
       ["subagents.start", { name: "A", task: "Work" }],
-      ["subagents.wait", { timeout: 30 }],
+      ["subagents.start", { name: "B", task: "Work" }],
+      ["subagents.watch", { when: "all_idle" }],
     );
-    await workspace.until(() => workspace.subagentStore.ofParents([thread.id]).length === 1);
-    const working = await callIn(subagentNamed("A"));
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    const waiting = rowsOf(thread.id).filter((row) => row.kind === "tool")[1];
-    expect(waiting?.kind === "tool" && waiting.state).toBe("pending");
-    working.reply("Finished.");
-    const after = await callIn(thread.id);
-    expect(after.texts.join("\n")).toContain('"timedOut":false');
-    expect(after.texts.join("\n")).toContain('"last":"Finished."');
-    after.reply("Both done.");
+    await answer(thread.id, "Watching.");
+    const quiet = workspace.keepAnswering(thread.id);
+    const a = subagentNamed("A");
+    const b = subagentNamed("B");
+    const idleLines = () =>
+      lines(rowsOf(thread.id)).filter((line) => line.startsWith("agent.idle"));
+    await calls(a, ["subagents.send", { to: "agent", text: "A done" }]);
+    await answer(a, "Sent.");
+    await until(() => workspace.subagents.summaryOf(a)?.state === "idle");
+    expect(idleLines()).toEqual([]);
+    await calls(b, ["subagents.send", { to: "agent", text: "B done" }]);
+    await answer(b, "Sent.");
     await workspace.worker.idle();
+    expect(idleLines()).toEqual(["agent.idle: All idle: A, B"]);
+    // It carries who steered the subagents, and links back to the call that set it.
+    expect(
+      rowsOf(thread.id).find((row) => row.kind === "relay" && row.type === "agent.idle"),
+    ).toMatchObject({
+      steeredBy: [
+        { userId: ada.userId, via: ["Agent", "A"] },
+        { userId: ada.userId, via: ["Agent", "B"] },
+      ],
+      call: { threadId: thread.id, callId: "call-3" },
+    });
+
+    // It fires only once.
+    await workspace.api("POST", `/threads/${a}/messages`, ada.cookie, { text: "Again" });
+    await calls(a, ["subagents.send", { to: "agent", text: "A again" }]);
+    await answer(a, "Sent.");
+    await workspace.worker.idle();
+    quiet();
+    expect(idleLines()).toHaveLength(1);
+
+    // Set when its subagents are idle already, one fires at once.
+    await post(ada, "Watch again");
+    await calls(thread.id, ["subagents.watch", { when: "any_idle", subagents: ["B"] }]);
+    const after = await callIn(thread.id);
+    expect(after.texts.at(-1)).toBe(notified("Idle: B"));
+    after.reply("Noted.");
+    await workspace.worker.idle();
+    const watches = rowsOf(thread.id).flatMap((row) =>
+      row.kind === "tool" && row.toolId === "subagents.watch" ? [row.output] : [],
+    );
+    expect(watches.at(-1)).toEqual({
+      ok: true,
+      value: { when: "any_idle", subagents: [{ id: b, name: "B" }] },
+    });
+  });
+
+  it("watch the others started with them, any of them idle", async () => {
+    const workspace = await subagentThread();
+    const { ada, post, thread, start, calls, answer, callIn, subagentNamed, rowsOf, until } =
+      workspace;
+    start();
+    await post(ada, "Go");
+    await calls(
+      thread.id,
+      ["subagents.start", { name: "A", task: "Work" }],
+      ["subagents.start", { name: "B", task: "Work" }],
+      ["subagents.watch", { when: "any_idle", subagents: ["Nobody"] }],
+    );
+    await answer(thread.id);
+    workspace.keepAnswering(thread.id);
+    const a = subagentNamed("A");
+    const b = subagentNamed("B");
+    const busy = await callIn(b);
+    await calls(a, ["subagents.watch", { when: "any_idle" }]);
+    await answer(a, "Watching.");
+    await until(() =>
+      rowsOf(a).some(
+        (row) => row.kind === "tool" && row.toolId === "subagents.watch" && !!row.output,
+      ),
+    );
+    busy.reply("Done.");
+    const woken = await callIn(a);
+    expect(woken.texts.at(-1)).toBe(notified("Idle: B"));
+    woken.reply("Noted.");
+    await workspace.worker.idle();
+    const watched = rowsOf(a).find(
+      (row) => row.kind === "tool" && row.toolId === "subagents.watch",
+    );
+    expect(watched?.kind === "tool" && watched.output).toEqual({
+      ok: true,
+      value: { when: "any_idle", subagents: [{ id: b, name: "B" }] },
+    });
+    const refused = rowsOf(thread.id).find(
+      (row) => row.kind === "tool" && row.toolId === "subagents.watch",
+    );
+    expect(refused?.kind === "tool" && refused.output).toEqual({
+      ok: false,
+      error: "No live subagent is labelled Nobody. Subagents: A, B.",
+    });
+  });
+
+  it("tell their starter when they fail, but not when they wait for a person", async () => {
+    const workspace = await subagentThread();
+    const { ada, post, thread, start, calls, answer, callIn, subagentNamed, rowsOf, until } =
+      workspace;
+    // Only Ada renames threads directly.
+    const policy = workspace.toolPolicyStore.create({
+      orgId: ada.orgId,
+      spaceId: null,
+      name: "Ada only",
+      color: "orange",
+      use: "some",
+      users: [`user:${ada.userId}`],
+      approvers: [`user:${ada.userId}`],
+      independent: false,
+    });
+    workspace.toolSettings.setInOrg(ada.orgId, ["thread.rename"], policy.id);
+    start();
+    await post(workspace.grace, "Go");
+    await calls(
+      thread.id,
+      ["subagents.start", { name: "Faulty", task: "Work" }],
+      ["subagents.start", { name: "Namer", task: "Rename your thread" }],
+    );
+    await answer(thread.id);
+    workspace.keepAnswering(thread.id);
+    const namer = subagentNamed("Namer");
+    await calls(namer, ["thread.rename", { title: "Named" }]);
+    await until(() => workspace.runStore.active(namer)?.status === "waiting");
+    (await callIn(subagentNamed("Faulty"))).fail("boom");
+    const notices = () => lines(rowsOf(thread.id)).filter((line) => line.startsWith("agent."));
+    await until(() => notices().length > 0);
+    await until(() => !workspace.runStore.active(thread.id));
+    expect(notices()).toEqual(["agent.failed: Faulty failed: The model failed: boom"]);
   });
 
   it("carry the people who steered them, so a call waits unless they all could make it", async () => {
@@ -490,6 +700,7 @@ describe("subagents", () => {
     await post(grace, "Rename the subagent's thread");
     await calls(thread.id, ["subagents.start", { name: "Namer", task: "Rename your thread" }]);
     await answer(thread.id);
+    const quiet = workspace.keepAnswering(thread.id);
     const namer = subagentNamed("Namer");
     await calls(namer, ["thread.rename", { title: "Named" }]);
     await workspace.until(() => workspace.runStore.active(namer)?.status === "waiting");
@@ -506,6 +717,7 @@ describe("subagents", () => {
     expect(decided.status).toBe(200);
     await answer(namer, "Renamed.");
     await workspace.worker.idle();
+    quiet();
     expect(workspace.threadStore.find(namer)?.title).toBe("Named");
 
     // Ada's words alone let the next subagent's call run directly.
@@ -533,6 +745,7 @@ describe("subagents", () => {
       ["subagents.start", { name: "Critic", task: "Critique" }],
     );
     await answer(thread.id);
+    workspace.keepAnswering(thread.id);
     const writer = subagentNamed("Writer");
     const critic = subagentNamed("Critic");
     (await callIn(writer)).reply("Waiting for notes.");
@@ -543,10 +756,9 @@ describe("subagents", () => {
       ["subagents.list", {}],
     );
     const woken = await callIn(writer);
-    expect(woken.texts.at(-1)).toBe("user: [Subagent Critic] Tighten the intro");
+    expect(woken.texts.at(-1)).toBe(notified("[Subagent Critic] Tighten the intro"));
     woken.reply("Tightened.");
     await answer(critic);
-    (await callIn(thread.id)).reply("Noted.");
     await workspace.worker.idle();
     const outputs = rowsOf(critic).flatMap((row) =>
       row.kind === "tool" && row.output ? [row.output] : [],
@@ -572,27 +784,33 @@ describe("subagents", () => {
       ["subagents.start", { name: "Critic", task: "Critique" }],
     );
     await answer(thread.id);
+    workspace.keepAnswering(thread.id);
     const writer = subagentNamed("Writer");
     const critic = subagentNamed("Critic");
     (await callIn(writer)).reply("Waiting for notes.");
     await calls(critic, ["subagents.send", { to: ["Writer", "agent"], text: "Tighten it" }]);
     (await callIn(writer)).reply("Tightened.");
     await answer(critic);
-    (await callIn(thread.id)).reply("Noted.");
     await workspace.worker.idle();
 
     // Each message records the call that sent it, in the thread it was made in.
     const sent = (threadId: string) =>
       workspace.threadStore
         .eventsAfter(threadId, 0)
-        .flatMap((event) => (event.type === "agent.message" ? [event] : []));
-    expect(sent(writer).map((event) => event.data.call)).toEqual([
+        .flatMap((event) =>
+          event.type === "notification" && event.data.kind === "message" ? [event] : [],
+        );
+    const callOf = (event: ReturnType<typeof sent>[number]) => ({
+      threadId: event.data.source.threadId,
+      callId: event.data.source.callId,
+    });
+    expect(sent(writer).map(callOf)).toEqual([
       { threadId: thread.id, callId: "call-1" },
       { threadId: critic, callId: "call-3" },
     ]);
     const [toAgent] = sent(thread.id);
     const [, toWriter] = sent(writer);
-    expect(toAgent?.data.call).toEqual({ threadId: critic, callId: "call-3" });
+    expect(callOf(toAgent!)).toEqual({ threadId: critic, callId: "call-3" });
 
     // The send links to each message it delivered, named as the reader sees its receiver; the
     // starts to the tasks they gave.
@@ -691,6 +909,7 @@ describe("subagents", () => {
       ["subagents.start", { name: "Critic", task: "Critique" }],
     );
     await answer(thread.id);
+    workspace.keepAnswering(thread.id);
     const writer = subagentNamed("Writer");
     const critic = subagentNamed("Critic");
     (await callIn(writer)).reply("Ready.");
@@ -785,6 +1004,7 @@ describe("subagents", () => {
     await post(grace, "Rename the subagent's thread");
     await calls(thread.id, ["subagents.start", { name: "Namer", task: "Rename your thread" }]);
     await answer(thread.id);
+    workspace.keepAnswering(thread.id);
     const namer = subagentNamed("Namer");
     await calls(namer, ["thread.rename", { title: "Named" }]);
     await workspace.until(() => workspace.runStore.active(namer)?.status === "waiting");
@@ -860,9 +1080,11 @@ describe("subagents", () => {
     await post(ada, "Go");
     await calls(thread.id, ["subagents.start", { name: "Scout", task: "Look" }]);
     await answer(thread.id);
+    const quiet = workspace.keepAnswering(thread.id);
     const [first] = subagentStore.ofParents([thread.id]);
     (await callIn(first!.threadId)).reply("Looked.");
     await workspace.worker.idle();
+    quiet();
 
     await post(ada, "Again");
     await calls(
@@ -873,6 +1095,7 @@ describe("subagents", () => {
       ["subagents.list", { subagent: "scout" }],
     );
     await answer(thread.id);
+    workspace.keepAnswering(thread.id);
     const second = subagentStore.ofParents([thread.id]).at(-1)!;
     (await callIn(second.threadId)).reply("Looked again.");
     await workspace.worker.idle();
@@ -903,9 +1126,12 @@ describe("subagents", () => {
     });
     expect(named("helpers.message")).toEqual({ title: "Send", toolset: "Subagents" });
     expect(named("helpers.status")).toEqual({ title: "List", toolset: "Subagents" });
+    // Waits, since removed, show as watches.
+    expect(named("subagents.wait")).toEqual({ title: "Watch", toolset: "Subagents" });
+    expect(named("helpers.wait")).toEqual({ title: "Watch", toolset: "Subagents" });
   });
 
-  it("are never new to anyone, nor make the thread that started them new", async () => {
+  it("are never new to anyone", async () => {
     const workspace = await subagentThread();
     const { ada, post, thread, start, calls, answer, callIn, subagentNamed, api, until } =
       workspace;
@@ -919,6 +1145,7 @@ describe("subagents", () => {
     // Ada has read the thread before the subagent writes.
     const seq = workspace.threadStore.find(thread.id)!.lastEventSeq;
     expect((await api("PUT", `/threads/${thread.id}/read`, ada.cookie, { seq })).status).toBe(200);
+    workspace.keepAnswering(thread.id);
     first.reply("BullMQ wins.");
     await workspace.worker.idle();
 
@@ -926,9 +1153,112 @@ describe("subagents", () => {
     const [subagent] = listed!.subagents!;
     expect(subagent).toMatchObject({ threadId: subagentId, status: "read" });
     expect(subagent!.activity.lastNotableSeq).toBe(0);
-    expect(listed!.status).toBe("read");
     // Its thread opens at the newest, with nothing marked new.
     const res = await api("GET", `/threads/${subagentId}`, ada.cookie);
     expect(((await res.json()) as { newFrom: string | null }).newFrom).toBeNull();
+  });
+
+  it("are given a model of the agent's choosing only where the org lets it choose", async () => {
+    const workspace = await subagentThread();
+    const { ada, post, thread, start, calls, answer, rowsOf, api, space, threadStore } = workspace;
+    workspace.org.models.push("codex/gpt-mini", "codex/gpt-plain");
+    workspace.org.plain.push("codex/gpt-plain");
+    const option = (path: string, enabled: boolean) =>
+      api("PUT", `${path}/toolsets/subagents/options/choose_models`, ada.cookie, { enabled });
+    const chosen = async (scope: string) => {
+      const res = await api("GET", `${scope}/tools`, ada.cookie);
+      const toolsets = (await res.json()) as {
+        id: string;
+        options?: { id: string; enabled: boolean; orgEnabled: boolean }[];
+      }[];
+      return toolsets.find((toolset) => toolset.id === "subagents")?.options;
+    };
+    const subagentThreadOf = (name: string) =>
+      threadStore.find(
+        workspace.subagentStore.ofParents([thread.id]).findLast((one) => one.name === name)!
+          .threadId,
+      )!;
+    // Starts the subagents in one step, each answered once.
+    async function startAll(...inputs: object[]) {
+      const call = await calls(
+        thread.id,
+        ...inputs.map((input) => ["subagents.start", input] as [string, unknown]),
+      );
+      await answer(thread.id);
+      const quiet = workspace.keepAnswering(thread.id);
+      await workspace.until(
+        () =>
+          rowsOf(thread.id).filter((row) => row.kind === "tool" && row.output).length >=
+          startedSoFar + inputs.length,
+      );
+      startedSoFar += inputs.length;
+      for (const subagent of workspace.subagentStore.ofParents([thread.id])) {
+        workspace.keepAnswering(subagent.threadId);
+      }
+      await workspace.worker.idle();
+      quiet();
+      return call;
+    }
+    let startedSoFar = 0;
+    const parent = threadStore.find(thread.id)!;
+    start();
+
+    // Off until the org turns it on: a start takes a model and an effort, but they are ignored.
+    expect(await chosen("/org")).toEqual([
+      {
+        id: "choose_models",
+        title: "Let the agent choose subagents' models",
+        enabled: false,
+        orgEnabled: false,
+      },
+    ]);
+    await post(ada, "Go");
+    const off = await startAll({ name: "Ignored", task: "Work", model: "codex/gpt-mini" });
+    const startTool = JSON.stringify(
+      off.request.tools?.find((tool) => tool.id === "subagents.start"),
+    );
+    expect(startTool).toContain('"model"');
+    expect(startTool).toContain('"effort"');
+    expect(subagentThreadOf("Ignored")).toMatchObject({
+      model: parent.model,
+      effort: parent.effort,
+    });
+
+    // On, they are used where valid, and the start line names the model.
+    expect((await option("/org", true)).status).toBe(200);
+    expect(await chosen(`/spaces/${space.id}`)).toEqual([
+      expect.objectContaining({ enabled: true, orgEnabled: true }),
+    ]);
+    await post(ada, "Again");
+    await startAll(
+      { name: "Mini", task: "Work", model: "codex/gpt-mini", effort: "low" },
+      { name: "Same", task: "Work" },
+      { name: "Nope", task: "Work", model: "codex/nope" },
+      { name: "Plain", task: "Work", model: "codex/gpt-plain", effort: "high" },
+    );
+    expect(subagentThreadOf("Mini")).toMatchObject({ model: "codex/gpt-mini", effort: "low" });
+    // Not chosen, it is the starter's.
+    expect(subagentThreadOf("Same")).toMatchObject({ model: parent.model, effort: parent.effort });
+    const refused = rowsOf(thread.id).flatMap((row) =>
+      row.kind === "tool" && row.output && !row.output.ok ? [row.output.error] : [],
+    );
+    expect(refused).toEqual([
+      "codex/nope is not a model this space can use. Models: codex/gpt-big, codex/gpt-mini, codex/gpt-plain.",
+      "codex/gpt-plain takes no effort.",
+    ]);
+    const titles = (await workspace.rowsShown(thread.id, ada.cookie)).rows.flatMap((row) =>
+      row.kind === "tool" ? [row.title] : [],
+    );
+    expect(titles).toContain("Start · Mini · gpt-mini");
+    expect(titles).toContain("Start · Ignored");
+
+    // A space turns it off for itself, and a model given is ignored again.
+    expect((await option(`/spaces/${space.id}`, false)).status).toBe(200);
+    expect(await chosen(`/spaces/${space.id}`)).toEqual([
+      expect.objectContaining({ enabled: false, orgEnabled: true }),
+    ]);
+    await post(ada, "Once more");
+    await startAll({ name: "Here", task: "Work", model: "codex/gpt-mini" });
+    expect(subagentThreadOf("Here")).toMatchObject({ model: parent.model });
   });
 });

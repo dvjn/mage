@@ -44,9 +44,10 @@ const SUBAGENT_TOOLS = [
   "subagents.start",
   "subagents.send",
   "subagents.list",
-  "subagents.wait",
+  "subagents.watch",
   "subagents.stop",
   "subagents.archive",
+  "subagents.unarchive",
 ];
 
 const run = true;

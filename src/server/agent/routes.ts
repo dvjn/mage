@@ -106,5 +106,17 @@ export function toolRoutes(options: { tools: ToolDecisions; toolPolicies: ToolPo
         c.req.valid("json").enabled,
       );
       return c.json(tools.spaceTools(principal, c.req.param("id")), 200);
+    })
+    .put("/v1/org/toolsets/:toolsetId/options/:option", toolsetEnabledChange, (c) => {
+      const principal = signedIn(c.var.principal);
+      const { toolsetId, option } = c.req.param();
+      tools.setOrgToolsetOption(principal, toolsetId, option, c.req.valid("json").enabled);
+      return c.json(tools.orgTools(principal), 200);
+    })
+    .put("/v1/spaces/:id/toolsets/:toolsetId/options/:option", toolsetEnabledChange, (c) => {
+      const principal = signedIn(c.var.principal);
+      const { id, toolsetId, option } = c.req.param();
+      tools.setSpaceToolsetOption(principal, id, toolsetId, option, c.req.valid("json").enabled);
+      return c.json(tools.spaceTools(principal, id), 200);
     });
 }

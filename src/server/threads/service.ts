@@ -313,7 +313,12 @@ interface Reader {
 }
 
 // The subagent tools whose calls act on one subagent.
-const SUBAGENT_ACTIONS = new Set([START_SUBAGENT, "subagents.stop", "subagents.archive"]);
+const SUBAGENT_ACTIONS = new Set([
+  START_SUBAGENT,
+  "subagents.stop",
+  "subagents.archive",
+  "subagents.unarchive",
+]);
 
 const causeKey = (call: Cause) => `${call.threadId}:${call.callId}`;
 
@@ -726,9 +731,13 @@ export function createThreads(options: ThreadsOptions) {
       return { ...message, ...place, ...shownCommand(command) };
     }
     if (row.kind === "relay") {
-      const { steeredBy: _steeredBy, call: _call, ...message } = row;
+      const { steeredBy: _steeredBy, call: _call, rowId, ...message } = row;
       const sentBy = sentByOf(row, reader);
-      return { ...message, ...place, ...(sentBy && { sentBy }) };
+      const source =
+        rowId && readable(reader.principal, row.from.threadId)
+          ? { threadId: row.from.threadId, rowId }
+          : null;
+      return { ...message, ...place, ...(sentBy && { sentBy }), ...(source && { source }) };
     }
     return { ...row, ...place };
   }
@@ -740,8 +749,14 @@ export function createThreads(options: ThreadsOptions) {
     const known = sentTo.get(threadId) ?? { last: 0, byCall: new Map<string, string[]>() };
     for (const event of threads.eventsAfter(threadId, known.last)) {
       known.last = event.seq;
-      if (event.type !== "agent.message" || !event.data.call) continue;
-      const key = causeKey(event.data.call);
+      const sent =
+        event.type === "agent.message"
+          ? event.data.call
+          : event.type === "notification" && event.data.source.callId
+            ? { threadId: event.data.source.threadId, callId: event.data.source.callId }
+            : undefined;
+      if (!sent) continue;
+      const key = causeKey(sent);
       known.byCall.set(key, [...(known.byCall.get(key) ?? []), event.id]);
     }
     sentTo.set(threadId, known);

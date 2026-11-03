@@ -171,6 +171,18 @@ export const toolsetSettingSchema = z.object({
   // Built-in toolset switches; MCP servers expose their switches through server settings.
   enabled: z.boolean().optional(),
   orgEnabled: z.boolean().optional(),
+  // A built-in toolset's options, each off unless set on: whether it is on, and whether the org has
+  // it on.
+  options: z
+    .array(
+      z.object({
+        id: z.string(),
+        title: z.string(),
+        enabled: z.boolean(),
+        orgEnabled: z.boolean(),
+      }),
+    )
+    .optional(),
   tools: z.array(toolSettingSchema),
 });
 
@@ -196,7 +208,8 @@ export const FORMER_TOOL_IDS: Readonly<Record<string, string>> = {
   "helpers.start": "subagents.start",
   "helpers.message": "subagents.send",
   "helpers.status": "subagents.list",
-  "helpers.wait": "subagents.wait",
+  "helpers.wait": "subagents.watch",
+  "subagents.wait": "subagents.watch",
   "helpers.stop": "subagents.stop",
   "helpers.archive": "subagents.archive",
 };

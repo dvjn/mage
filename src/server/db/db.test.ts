@@ -362,3 +362,35 @@ describe("renaming helpers to subagents", () => {
     expect(db.all(sql.raw("select thread_id from subagent"))).toEqual([]);
   });
 });
+
+describe("adding toolset options", () => {
+  it("keeps the toolset settings there were, and holds options for orgs and spaces", () => {
+    const { db, statements } = before("0047_toolset_options");
+    for (const statement of [
+      "insert into organization (id, name, slug, created_at, kind) values ('o1', 'Ada', 'ada', 0, 'personal')",
+      "insert into space (id, organization_id, kind, name) values ('s1', 'o1', 'team', 'Lab')",
+      "insert into org_toolset_setting (organization_id, toolset_id, enabled) values ('o1', 'subagents', 1)",
+    ]) {
+      db.run(sql.raw(statement));
+    }
+
+    for (const statement of statements) db.run(sql.raw(statement));
+
+    for (const statement of [
+      "insert into org_toolset_option (organization_id, toolset_id, option, enabled) values ('o1', 'subagents', 'choose_models', 1)",
+      "insert into space_toolset_option (space_id, toolset_id, option, enabled) values ('s1', 'subagents', 'choose_models', 0)",
+    ]) {
+      db.run(sql.raw(statement));
+    }
+    expect(db.all(sql.raw("select toolset_id, enabled from org_toolset_setting"))).toEqual([
+      { toolset_id: "subagents", enabled: 1 },
+    ]);
+    expect(db.all(sql.raw("select option, enabled from space_toolset_option"))).toEqual([
+      { option: "choose_models", enabled: 0 },
+    ]);
+    // A space's options go with it.
+    db.run(sql.raw("pragma foreign_keys = on"));
+    db.run(sql.raw("delete from space where id = 's1'"));
+    expect(db.all(sql.raw("select option from space_toolset_option"))).toEqual([]);
+  });
+});
