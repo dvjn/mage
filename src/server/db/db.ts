@@ -1,6 +1,7 @@
-// Opens the SQLite file in WAL mode and applies pending migrations, and runs store work in one
-// transaction that holds the write lock from its start. The auth library's transactions await
-// between their statements, so they get their own kind: one at a time, on the same connection.
+// Opens the SQLite file in WAL mode and applies pending migrations with foreign keys held off,
+// and runs store work in one transaction that holds the write lock from its start. The auth
+// library's transactions await between their statements, so they get their own kind: one at a
+// time, on the same connection.
 
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -21,7 +22,14 @@ export function openDatabase(file: string): Db {
   const client = new Database(file);
   client.pragma("journal_mode = WAL");
   const db = drizzle({ client });
+  // Migrations run in one transaction, where a migration cannot turn foreign keys off itself, so
+  // rebuilding a table would cascade into the rows that refer to it. They are off while migrations
+  // run, and the data must still hold together before they are on again.
+  client.pragma("foreign_keys = OFF");
   migrate(db, { migrationsFolder: path.join(import.meta.dirname, "migrations") });
+  const broken = client.pragma("foreign_key_check") as unknown[];
+  if (broken.length > 0) throw new Error(`migrations left ${broken.length} broken references`);
+  client.pragma("foreign_keys = ON");
   return db;
 }
 

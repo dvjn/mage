@@ -44,6 +44,39 @@ describe("openDatabase", () => {
     );
     expect(table).toEqual({ name: "__drizzle_migrations" });
   });
+
+  it("rebuilds a table without cascading into the rows that refer to it", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "mage-db-"));
+    try {
+      const file = path.join(dir, "mage.db");
+      const folder = path.join(dir, "migrations");
+      cpSync(MIGRATIONS, folder, { recursive: true });
+      const journalPath = path.join(folder, "meta/_journal.json");
+      const journal = JSON.parse(readFileSync(journalPath, "utf8")) as {
+        entries: { tag: string }[];
+      };
+      const index = journal.entries.findIndex((entry) => entry.tag === "0042_remove_folders");
+      journal.entries = journal.entries.slice(0, index);
+      writeFileSync(journalPath, JSON.stringify(journal));
+      const client = new Database(file);
+      migrate(drizzle({ client }), { migrationsFolder: folder });
+      client.exec(`
+        insert into organization (id, name, slug, created_at, kind) values ('o1', 'Ada', 'ada', 0, 'personal');
+        insert into space (id, organization_id, kind, name) values ('s1', 'o1', 'team', 'Lab');
+        insert into folder (id, space_id, name) values ('f1', 's1', 'Plans');
+        insert into thread (id, space_id, folder_id) values ('t1', 's1', 'f1');
+        insert into thread_event (id, thread_id, seq, type, actor_kind, data) values ('e1', 't1', 1, 'message.posted', 'user', '{}');
+      `);
+      client.close();
+
+      const db = openDatabase(file);
+      expect(db.$client.prepare("select id from thread_event").all()).toEqual([{ id: "e1" }]);
+      expect(db.$client.pragma("foreign_keys", { simple: true })).toBe(1);
+      db.$client.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("removing the Claude sign-in", () => {
