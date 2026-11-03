@@ -21,6 +21,7 @@ const columns = {
   primary: space.primary,
   defaultModel: space.defaultModel,
   defaultEffort: space.defaultEffort,
+  agentName: space.agentName,
   everyoneRole: space.everyoneRole,
   createdBy: space.createdBy,
   archivedAt: space.archivedAt,
@@ -313,12 +314,13 @@ export function createSpaceStore(db: Db): SpaceStore {
         .get() as Space;
     },
 
-    setDefaults(id, { model, effort }) {
+    setDefaults(id, { model, effort, agentName }) {
       return db
         .update(space)
         .set({
           ...(model !== undefined && { defaultModel: model }),
           ...(effort !== undefined && { defaultEffort: effort }),
+          ...(agentName !== undefined && { agentName }),
           updatedAt: new Date(),
         })
         .where(eq(space.id, id))

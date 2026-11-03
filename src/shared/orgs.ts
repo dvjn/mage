@@ -38,6 +38,14 @@ export type OrgList = z.infer<typeof orgListSchema>;
 
 export const orgNameSchema = z.object({ name: z.string().trim().min(1).max(80) });
 
+// What the agent of an org's threads goes by where people see it, until the org names it.
+export const DEFAULT_AGENT_NAME = "Agent";
+
+// The name the org's agent goes by.
+export const agentNameSchema = z.object({ name: z.string().trim().min(1).max(40) });
+
+export type AgentName = z.infer<typeof agentNameSchema>;
+
 // A new team org and the space to open in it.
 export const createdOrgSchema = z.object({ orgId: z.string(), spaceId: z.string() });
 

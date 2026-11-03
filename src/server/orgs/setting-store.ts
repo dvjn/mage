@@ -29,6 +29,7 @@ export function createOrgSettingStore(db: Db): OrgSettingStore {
           memberSpaces: orgSetting.memberSpaces,
           spaceMcpServers: orgSetting.spaceMcpServers,
           spaceSkills: orgSetting.spaceSkills,
+          agentName: orgSetting.agentName,
         })
         .from(orgSetting)
         .where(eq(orgSetting.organizationId, orgId))
@@ -41,6 +42,7 @@ export function createOrgSettingStore(db: Db): OrgSettingStore {
         memberSpaces: row?.memberSpaces ?? false,
         spaceMcpServers: row?.spaceMcpServers ?? true,
         spaceSkills: row?.spaceSkills ?? true,
+        agentName: row?.agentName ?? null,
       };
     },
 
@@ -66,6 +68,10 @@ export function createOrgSettingStore(db: Db): OrgSettingStore {
 
     setSpaceSkills(orgId, allowed) {
       set(orgId, { spaceSkills: allowed });
+    },
+
+    setAgentName(orgId, name) {
+      set(orgId, { agentName: name });
     },
   };
 }

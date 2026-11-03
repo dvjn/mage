@@ -77,8 +77,8 @@ export const MESSAGE_LIMIT = 30;
 // How long a wait for subagents lasts when not told, and at most, in seconds.
 const WAIT_SECONDS = 120;
 const WAIT_LIMIT_SECONDS = 600;
-// What the agent of a thread is named where its words carried on into a subagent's thread, and as
-// it shows.
+// What stands for the agent of a thread where its words carried on into a subagent's thread; it
+// shows as the name that agent goes by. No subagent may be labelled so.
 export const AGENT_NAME = "Agent";
 
 // What the agent of a thread that can start subagents is told about them.
@@ -128,14 +128,17 @@ export function steeringIn(rows: readonly TranscriptRow[]): Steering[] {
 
 // Everyone whose words steered the thread's agent, named `self`, in one line, each person once by
 // the shortest way their words came: "Steered by Ada Lovelace, and Priya Nair via Critic → Writer".
-export function steeringLine(rows: readonly TranscriptRow[], self: string) {
+// The agent that started subagents shows as `agentName`.
+export function steeringLine(rows: readonly TranscriptRow[], self: string, agentName = AGENT_NAME) {
   const shortest = new Map<string, Steering>();
   for (const entry of steeringIn(rows)) {
     const known = shortest.get(entry.userId);
     if (!known || entry.via.length < known.via.length) shortest.set(entry.userId, entry);
   }
   const names = [...shortest.values()].map((entry) =>
-    entry.via.length > 0 ? `${entry.name} via ${[...entry.via, self].join(" → ")}` : entry.name,
+    entry.via.length > 0
+      ? `${entry.name} via ${[...entry.via.map((via) => (via === AGENT_NAME ? agentName : via)), self].join(" → ")}`
+      : entry.name,
   );
   if (names.length === 0) return null;
   const listed =

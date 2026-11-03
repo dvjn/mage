@@ -20,6 +20,7 @@ import { cn } from "cn";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AskAnswers } from "@/shared/ask.ts";
+import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import type { CommandInput } from "@/shared/threads/commands.ts";
 import type { Delivery, ToolScope } from "@/shared/threads/events.ts";
 import type { ShownRow, ToolRow } from "@/shared/threads/rows.ts";
@@ -72,7 +73,7 @@ import { type EntryGap, transcriptEntries } from "@/web/threads/transcript/entri
 import { ToolCall } from "@/web/threads/transcript/tool-call";
 import { ToolGroup } from "@/web/threads/transcript/tool-group";
 import { SUBAGENT_NEEDS, SUBAGENT_STATES } from "@/web/threads/transcript/tool-line";
-import { AGENT_NAME, type ThreadAgent, ThreadAgentContext } from "@/web/threads/transcript/agent";
+import { type ThreadAgent, ThreadAgentContext } from "@/web/threads/transcript/agent";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { TranscriptItem } from "@/web/threads/transcript/transcript-item";
 
@@ -204,14 +205,16 @@ export function ThreadPage() {
   const modelChange = useThreadModel(threadId);
   const subagent = detail.data?.subagent ?? null;
   const unarchiving = useUnarchiveSubagent(threadId, thread?.spaceId);
-  // Who writes the thread's agent rows: a subagent by its label in its own thread.
+  // Who writes the thread's agent rows: the name its space or org gave the agent, or a subagent by
+  // its label in its own thread.
   const label = subagent?.name;
+  const agentName = detail.data?.agentName ?? DEFAULT_AGENT_NAME;
   const agent = useMemo<ThreadAgent>(
     () => ({
-      self: label ? { name: label, subagent: true } : { name: AGENT_NAME, subagent: false },
-      agentName: AGENT_NAME,
+      self: label ? { name: label, subagent: true } : { name: agentName, subagent: false },
+      agentName,
     }),
-    [label],
+    [label, agentName],
   );
 
   // Reads the page of rows before the first here.

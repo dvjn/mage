@@ -626,6 +626,63 @@ describe("subagents", () => {
     });
   });
 
+  it("show the agent by the name its space, else its org, gave it", async () => {
+    const workspace = await subagentThread();
+    const { ada, grace, post, thread, start, calls, answer, subagentNamed, rowsOf, api } =
+      workspace;
+    const policy = workspace.toolPolicyStore.create({
+      orgId: ada.orgId,
+      spaceId: null,
+      name: "Ada only",
+      color: "orange",
+      use: "some",
+      users: [`user:${ada.userId}`],
+      approvers: [`user:${ada.userId}`],
+      independent: false,
+    });
+    workspace.toolSettings.setInOrg(ada.orgId, ["thread.rename"], policy.id);
+    const named = async () =>
+      ((await (await api("GET", "/org/agent", grace.cookie)).json()) as { name: string }).name;
+    expect(await named()).toBe("Agent");
+    expect((await api("PATCH", "/org/agent", grace.cookie, { name: "Mira" })).status).toBe(403);
+    expect((await api("PATCH", "/org/agent", ada.cookie, { name: "Mira" })).status).toBe(200);
+    expect(await named()).toBe("Mira");
+
+    start();
+    await post(grace, "Rename the subagent's thread");
+    const first = await calls(thread.id, [
+      "subagents.start",
+      { name: "Namer", task: "Rename your thread" },
+    ]);
+    expect(first.request.instructions).toContain("You are Mira, the agent in Mage");
+    await answer(thread.id);
+    const namer = subagentNamed("Namer");
+    const told = await calls(namer, ["thread.rename", { title: "Named" }]);
+    expect(told.request.instructions).not.toContain("Mira");
+    await workspace.until(() => workspace.runStore.active(namer)?.status === "waiting");
+    const waiting = rowsOf(namer).find((row) => row.kind === "tool")!;
+
+    // Its thread and the subagent's say the name, as the line of whose words steered a call does.
+    const shown = async (threadId: string) => {
+      const res = await api("GET", `/threads/${threadId}`, ada.cookie);
+      return (await res.json()) as { agentName: string; rows: ShownRow[] };
+    };
+    const steering = async () =>
+      (await shown(namer)).rows.find((row) => row.id === waiting.id) as { steering?: string };
+    expect((await shown(thread.id)).agentName).toBe("Mira");
+    expect((await shown(namer)).agentName).toBe("Mira");
+    expect((await steering()).steering).toBe("Steered by Grace Hopper via Mira → Namer");
+
+    // The space's name wins, and without one the org's shows again.
+    const defaults = (agentName: string | null) =>
+      api("PATCH", `/spaces/${workspace.space.id}/defaults`, ada.cookie, { agentName });
+    expect((await defaults("Scribe")).status).toBe(200);
+    expect((await shown(thread.id)).agentName).toBe("Scribe");
+    expect((await steering()).steering).toBe("Steered by Grace Hopper via Scribe → Namer");
+    expect((await defaults(null)).status).toBe(200);
+    expect((await shown(thread.id)).agentName).toBe("Mira");
+  });
+
   it("show a subagent's waiting call on the line that started it, to be decided from there", async () => {
     const workspace = await subagentThread();
     const { ada, grace, post, thread, start, calls, answer, subagentNamed, rowsOf, api } =
@@ -668,6 +725,30 @@ describe("subagents", () => {
     expect(await startLine(grace.cookie)).toMatchObject({
       subagentCall: { id: waiting.id, actions: [] },
     });
+
+    // The agent shows by the name its org gives it, and its space's where that names it too.
+    const named = await api("PATCH", "/org/agent", ada.cookie, { name: "Mira" });
+    expect(named.status).toBe(200);
+    expect(await (await api("GET", "/org/agent", grace.cookie)).json()).toEqual({ name: "Mira" });
+    expect((await api("PATCH", "/org/agent", grace.cookie, { name: "Nope" })).status).toBe(403);
+    expect(await startLine(ada.cookie)).toMatchObject({
+      subagentCall: { steering: "Steered by Grace Hopper via Mira → Namer" },
+    });
+    const head = async (id: string) =>
+      ((await (await api("GET", `/threads/${id}`, ada.cookie)).json()) as { agentName: string })
+        .agentName;
+    expect(await head(thread.id)).toBe("Mira");
+    const spaced = await api("PATCH", `/spaces/${workspace.space.id}/defaults`, ada.cookie, {
+      agentName: "Atlas",
+    });
+    expect(spaced.status).toBe(200);
+    expect(await head(namer)).toBe("Atlas");
+    expect(await startLine(ada.cookie)).toMatchObject({
+      subagentCall: { steering: "Steered by Grace Hopper via Atlas → Namer" },
+    });
+    // Emptied, the space follows the org again.
+    await api("PATCH", `/spaces/${workspace.space.id}/defaults`, ada.cookie, { agentName: null });
+    expect(await head(thread.id)).toBe("Mira");
     expect((await workspace.sidebar(ada.cookie)).threads[0]!.status).toBe("waiting");
 
     // Deciding on it from there decides the subagent's call, which then leaves the line.

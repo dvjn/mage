@@ -50,7 +50,7 @@ import { createGitReader } from "@/server/skills/git.ts";
 import { createSkills } from "@/server/skills/service.ts";
 import { createSkillStore } from "@/server/skills/store.ts";
 import { createZipReader } from "@/server/skills/zip.ts";
-import { type Space, type SpaceRole, createSpaces } from "@/server/spaces/service.ts";
+import { agentNameIn, type Space, type SpaceRole, createSpaces } from "@/server/spaces/service.ts";
 import { createSpaceStore } from "@/server/spaces/store.ts";
 import { createThreadAccess } from "@/server/spaces/thread-access.ts";
 import { createDeltaStore } from "@/server/threads/delta-store.ts";
@@ -316,6 +316,7 @@ export function setup(
   // The model refs threads were named with.
   const titledWith: string[] = [];
   const threads = createThreads({
+    agentNameIn: (space) => agentNameIn(settingStore, space),
     spaces,
     spaceStore,
     access,
@@ -366,6 +367,7 @@ export function setup(
         ...instructions.textsFor(space),
         mcpServers: mcp.instructionsIn(space, offered),
         skills: skills.listFor(space, offered),
+        agentName: agentNameIn(settingStore, space),
         ...subagents.guidance(thread, tools.guidanceIn(space)),
       }),
       narrow: (thread, offered) => subagents.toolsOf(thread, offered),

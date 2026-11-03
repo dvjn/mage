@@ -5,6 +5,7 @@ import { type ApiEnv, signedIn, jsonBody, queryOf } from "@/server/http.ts";
 import type { Me } from "@/shared/me.ts";
 import {
   acceptOrgInviteSchema,
+  agentNameSchema,
   memberFilterSchema,
   newGroupLinkSchema,
   newOrgInviteSchema,
@@ -27,6 +28,8 @@ function accountOf(account: SignedIn | null) {
 }
 
 const orgName = jsonBody(orgNameSchema, "A name of 1 to 80 characters is required");
+
+const agentName = jsonBody(agentNameSchema, "A name of 1 to 40 characters is required");
 
 const newOrgInvite = jsonBody(newOrgInviteSchema, "Give an email address and a role");
 
@@ -192,6 +195,12 @@ export function orgRoutes(options: { identity: Identity; orgs: Orgs; groups: Gro
       .delete("/v1/org/invites/:id", (c) => {
         orgs.revokeInvite(signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
+      })
+      .get("/v1/org/agent", (c) => {
+        return c.json(orgs.agentName(signedIn(c.var.principal)), 200);
+      })
+      .patch("/v1/org/agent", agentName, (c) => {
+        return c.json(orgs.setAgentName(signedIn(c.var.principal), c.req.valid("json").name), 200);
       })
       .get("/v1/org/settings", (c) => {
         return c.json(orgs.settings(signedIn(c.var.principal)), 200);

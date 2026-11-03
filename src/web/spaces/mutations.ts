@@ -29,7 +29,11 @@ export function useRenameSpace(spaceId: string) {
 export function useSpaceDefaults(spaceId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (json: { model?: string | null; effort?: Effort | null }) => {
+    mutationFn: async (json: {
+      model?: string | null;
+      effort?: Effort | null;
+      agentName?: string | null;
+    }) => {
       const res = await apiClient.v1.spaces[":id"].defaults.$patch({
         param: { id: spaceId },
         json,

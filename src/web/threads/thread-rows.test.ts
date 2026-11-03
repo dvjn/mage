@@ -41,6 +41,7 @@ function detail(rows: ShownRow[], before: number | null, lastEventSeq = 0): Thre
     },
     access: { via: "space", role: "owner" },
     archived: false,
+    agentName: "Agent",
     can: { post: true, arrange: true, share: true },
     levels: {},
     tools: [],

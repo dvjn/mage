@@ -6,12 +6,10 @@ import { useQuery } from "@tanstack/react-query";
 import { createContext, useContext } from "react";
 
 import { cn } from "cn";
+import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
 import { initialsOf } from "@/web/lib/initials";
 import { modelsQuery } from "@/web/models/queries";
-
-// What the agent of a thread that starts subagents goes by where it is named.
-export const AGENT_NAME = "Agent";
 
 // An agent as rows name it: the thread's agent, or a subagent by its label.
 export interface AgentName {
@@ -19,15 +17,16 @@ export interface AgentName {
   subagent: boolean;
 }
 
-// Who writes the thread's agent rows, and what the agent that starts subagents goes by.
+// Who writes the thread's agent rows, and what the agent that starts subagents goes by: the name
+// its space or org gave it, or the usual one.
 export interface ThreadAgent {
   self: AgentName;
   agentName: string;
 }
 
 export const ThreadAgentContext = createContext<ThreadAgent>({
-  self: { name: AGENT_NAME, subagent: false },
-  agentName: AGENT_NAME,
+  self: { name: DEFAULT_AGENT_NAME, subagent: false },
+  agentName: DEFAULT_AGENT_NAME,
 });
 
 export function useThreadAgent() {

@@ -24,7 +24,7 @@
 // brings it back.
 
 import { anythingToCompact } from "@/server/agent/compaction.ts";
-import { AGENT_NAME, type Subagents, steeringLine } from "@/server/agent/subagents.ts";
+import { type Subagents, steeringLine } from "@/server/agent/subagents.ts";
 import { type Run, type RunStore, startRun } from "@/server/agent/runs.ts";
 import type { Tools } from "@/server/agent/tools.ts";
 import type { GuestStore, GuestThread } from "@/server/guests/service.ts";
@@ -36,6 +36,7 @@ import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
 import type { Access, ThreadAccess, ThreadAction } from "@/server/spaces/thread-access.ts";
 import { ASK_TOOL } from "@/shared/ask.ts";
 import type { SharedThread } from "@/shared/guests.ts";
+import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import { START_SUBAGENT } from "@/shared/subagents.ts";
 import type { Page, PageParams } from "@/shared/paging.ts";
 import { plainText } from "@/shared/plain-text.ts";
@@ -270,6 +271,9 @@ export interface ThreadsOptions {
     Tools,
     "levelsFor" | "canDecide" | "asks" | "riskForCall" | "definitions" | "connectionFor" | "namesIn"
   >;
+  // What the agent of the space's threads goes by where people see it; the usual name when not
+  // given.
+  agentNameIn?: (space: Space) => string;
   // The subagents threads' agents start, when given.
   subagents?: Pick<Subagents, "find" | "summaryOf" | "ofParents" | "stopAll" | "unarchive">;
   now?: () => Date;
@@ -459,6 +463,7 @@ export function createThreads(options: ThreadsOptions) {
     subagents,
   } = options;
   const now = options.now ?? (() => new Date());
+  const agentNameOf = options.agentNameIn ?? (() => DEFAULT_AGENT_NAME);
   const transcripts = createTranscripts(threads);
 
   // Asks the thread's active run to stop, queueing it again when it waits for a decision so that a
@@ -676,7 +681,11 @@ export function createThreads(options: ThreadsOptions) {
       // Where other agents' messages steered the call, whose words they carried.
       const steering =
         transcript.rows.some((other) => other.kind === "relay") &&
-        steeringLine(transcript.rows, subagents?.find(thread.id)?.name ?? AGENT_NAME);
+        steeringLine(
+          transcript.rows,
+          subagents?.find(thread.id)?.name ?? agentNameOf(space),
+          agentNameOf(space),
+        );
       const waiting = { ...call, ...(steering && { steering }) };
       if (tools.asks(row, space)) return { ...waiting, canAnswer: may };
       const risk = tools.riskForCall(row, space, model);
@@ -729,6 +738,7 @@ export function createThreads(options: ThreadsOptions) {
     const subagent = subagentOf(principal, thread);
     return {
       ...(subagent && { subagent }),
+      agentName: space ? agentNameOf(space) : DEFAULT_AGENT_NAME,
       thread: threadSummary(thread),
       access: via,
       archived: spaces.isArchived(thread.spaceId),

@@ -1,4 +1,4 @@
-// Changes to the org: its name, deleting it, and its people: adding, inviting, their roles and
+// Changes to the org: its name and its agent's, deleting it, and its people: adding, inviting, their roles and
 // removing them.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -7,7 +7,7 @@ import { createdOrgInviteSchema, type OrgRole } from "@/shared/orgs.ts";
 import { apiClient } from "@/web/api/api-client";
 import { errorOf } from "@/web/api/api-errors";
 import { meQuery } from "@/web/auth/queries";
-import { orgsQuery } from "@/web/orgs/queries";
+import { agentNameQuery, orgsQuery } from "@/web/orgs/queries";
 
 export function useRenameOrg() {
   const queryClient = useQueryClient();
@@ -21,6 +21,17 @@ export function useRenameOrg() {
         queryClient.invalidateQueries({ queryKey: meQuery.queryKey }),
         queryClient.invalidateQueries({ queryKey: orgsQuery.queryKey }),
       ]),
+  });
+}
+
+export function useAgentName() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (name: string) => {
+      const res = await apiClient.v1.org.agent.$patch({ json: { name } });
+      if (!res.ok) throw new Error(await errorOf(res));
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: agentNameQuery.queryKey }),
   });
 }
 

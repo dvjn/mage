@@ -3,7 +3,7 @@
 
 import * as z from "zod";
 
-import { lockSchema } from "@/shared/orgs.ts";
+import { agentNameSchema, lockSchema } from "@/shared/orgs.ts";
 import { pageSchema, tableQuerySchema } from "@/shared/paging.ts";
 import { effortSchema } from "@/shared/threads/thread.ts";
 
@@ -31,6 +31,8 @@ export const spaceSchema = z.object({
   // The model ref and reasoning effort its new threads start with; null takes the org's.
   defaultModel: z.string().nullable(),
   defaultEffort: effortSchema.nullable(),
+  // What the agent of its threads goes by where people see it; null takes the org's.
+  agentName: z.string().nullable(),
   createdAt: z.iso.datetime(),
 });
 
@@ -81,8 +83,16 @@ export const spaceDefaultsSchema = z
   .object({
     model: z.string().min(1).nullable().optional(),
     effort: effortSchema.nullable().optional(),
+    agentName: agentNameSchema.shape.name.nullable().optional(),
   })
-  .refine((changes) => changes.model !== undefined || changes.effort !== undefined);
+  .refine(
+    (changes) =>
+      changes.model !== undefined ||
+      changes.effort !== undefined ||
+      changes.agentName !== undefined,
+  );
+
+export type SpaceDefaultsChange = z.infer<typeof spaceDefaultsSchema>;
 
 // A person's or group's role in a space: the role given, the role a person ends up with and what
 // gives it when it is not their own, the groups that also cover them, and a group's size.

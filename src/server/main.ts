@@ -50,7 +50,7 @@ import { createGitReader } from "@/server/skills/git.ts";
 import { createSkills } from "@/server/skills/service.ts";
 import { createSkillStore } from "@/server/skills/store.ts";
 import { createZipReader } from "@/server/skills/zip.ts";
-import { createSpaces } from "@/server/spaces/service.ts";
+import { agentNameIn, createSpaces } from "@/server/spaces/service.ts";
 import { createSpaceStore } from "@/server/spaces/store.ts";
 import { createThreadAccess } from "@/server/spaces/thread-access.ts";
 import { createDeltaStore } from "@/server/threads/delta-store.ts";
@@ -237,6 +237,7 @@ const worker = createRunWorker({
     ...instructions.textsFor(space),
     mcpServers: mcp.instructionsIn(space, offered),
     skills: skills.listFor(space, offered),
+    agentName: agentNameIn(settingStore, space),
     ...subagents.guidance(thread, tools.guidanceIn(space)),
   }),
   narrow: (thread, offered) => subagents.toolsOf(thread, offered),
@@ -271,6 +272,7 @@ const app = createApp({
   models,
   spaces,
   threads: createThreads({
+    agentNameIn: (space) => agentNameIn(settingStore, space),
     spaces,
     spaceStore,
     access,

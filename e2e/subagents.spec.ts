@@ -283,3 +283,52 @@ test("a subagent's call that waits is decided from the thread that started it", 
     }),
   ).toBeVisible();
 });
+
+test("the agent goes by the name its org gives it, or its space's", async ({ page }) => {
+  await signUp(page);
+  const spaceId = new URL(page.url()).pathname.split("/")[2]!;
+  await page.goto("/org/general");
+  const orgName = page.getByLabel("Agent name");
+  await expect(orgName).toHaveValue("Agent");
+  await orgName.fill("Mira");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
+
+  await page.goto(`/s/${spaceId}/new`);
+  await write(page, call("subagents.start", { name: "Writer", task: "Draft the notes" }));
+  await expect(
+    transcript(page).getByRole("article", { name: "Message from Mira" }).first(),
+  ).toBeVisible();
+  await idle(page);
+  const threadUrl = page.url();
+
+  // A space's name wins; emptied, it follows the org's again.
+  await page.goto(`/s/${spaceId}/settings`);
+  const spaceName = page.getByLabel("Agent name");
+  await expect(spaceName).toHaveAttribute("placeholder", "Mira");
+  await spaceName.fill("Atlas");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
+  await page.goto(threadUrl);
+  await expect(
+    transcript(page).getByRole("article", { name: "Message from Atlas" }).first(),
+  ).toBeVisible();
+  await transcript(page).getByRole("link", { name: "Open Writer" }).click();
+  await expect(
+    transcript(page)
+      .getByRole("article", { name: "Message from Atlas" })
+      .getByRole("button", { name: "Atlas → Writer" }),
+  ).toBeVisible();
+  await expect(
+    transcript(page).getByRole("article", { name: "Message from Writer" }).first(),
+  ).toBeVisible();
+
+  await page.goto(`/s/${spaceId}/settings`);
+  await page.getByLabel("Agent name").fill("");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByRole("button", { name: "Save" })).toHaveCount(0);
+  await page.goto(threadUrl);
+  await expect(
+    transcript(page).getByRole("article", { name: "Message from Mira" }).first(),
+  ).toBeVisible();
+});

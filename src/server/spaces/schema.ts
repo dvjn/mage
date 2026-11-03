@@ -18,6 +18,8 @@ export const space = sqliteTable(
     // The model ref and reasoning effort its new threads start with; null takes the org's.
     defaultModel: text("default_model"),
     defaultEffort: text("default_effort", { enum: ["low", "medium", "high"] }),
+    // What the agent of its threads goes by where people see it; null takes the org's.
+    agentName: text("agent_name"),
     // The role every member of the org has in a shared space, now and later; null for none.
     everyoneRole: text("everyone_role", { enum: ["messager", "viewer"] }),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),

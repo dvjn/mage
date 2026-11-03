@@ -167,6 +167,8 @@ export const orgSetting = sqliteTable("org_setting", {
   spaceMcpServers: integer("space_mcp_servers", { mode: "boolean" }).default(true).notNull(),
   // Whether a space's managers may add skills for it, and its threads use them.
   spaceSkills: integer("space_skills", { mode: "boolean" }).default(true).notNull(),
+  // What the agent of the org's threads goes by where people see it; null for the usual name.
+  agentName: text("agent_name"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })
     .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
     .notNull(),

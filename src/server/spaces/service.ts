@@ -19,11 +19,13 @@ import type { Directory, OrgRole } from "@/server/orgs/directory.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { OrgSettingStore } from "@/server/orgs/service.ts";
 import type { ThreadStore } from "@/server/threads/service.ts";
+import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import type { PageParams, Page } from "@/shared/paging.ts";
 import {
   FIRST_SPACE_NAME,
   TRASH_DAYS,
   namedForPerson,
+  type SpaceDefaultsChange,
   type SpaceMembers,
   spaceNameFor,
 } from "@/shared/spaces.ts";
@@ -60,6 +62,8 @@ export interface Space {
   // The model ref and reasoning effort its new threads start with; null takes the org's.
   defaultModel: string | null;
   defaultEffort: Effort | null;
+  // What the agent of its threads goes by where people see it; null takes the org's.
+  agentName: string | null;
   // The role everyone in the org has in a shared space; null for none.
   everyoneRole: EveryoneRole | null;
   // Null once the user who made it is gone.
@@ -71,6 +75,15 @@ export interface Space {
   trashedBy: string | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+// What the agent of the space's threads goes by: the space's name for it, else its org's, else the
+// usual one.
+export function agentNameIn(
+  settings: Pick<OrgSettingStore, "get">,
+  space: Pick<Space, "orgId" | "agentName">,
+) {
+  return space.agentName ?? settings.get(space.orgId).agentName ?? DEFAULT_AGENT_NAME;
 }
 
 // A member's own space in trash, with its person, who put it there and how many threads it has.
@@ -133,7 +146,7 @@ export interface SpaceStore {
   withDefaultModel(orgId: string, refs: string[]): Space[];
   rename(id: string, name: string): Space;
   // Null goes back to the org's; a field left out is kept.
-  setDefaults(id: string, changes: { model?: string | null; effort?: Effort | null }): Space;
+  setDefaults(id: string, changes: SpaceDefaultsChange): Space;
   delete(id: string): void;
   setArchivedAt(id: string, at: Date | null): void;
   trash(id: string, by: string, at: Date): void;
@@ -452,12 +465,9 @@ export function createSpaces(options: SpacesOptions) {
       return view(principal, spaces.rename(id, name));
     },
 
-    // A default model must be one the org can use now; null goes back to the org's.
-    async setDefaults(
-      principal: Principal,
-      id: string,
-      changes: { model?: string | null; effort?: Effort | null },
-    ) {
+    // A default model must be one the org can use now; null goes back to the org's, as it does for
+    // the agent's name.
+    async setDefaults(principal: Principal, id: string, changes: SpaceDefaultsChange) {
       require(principal, id, "manage");
       if (changes.model) await models.requireModel(principal.orgId, changes.model);
       // Seen again after the model check, which waits on providers.

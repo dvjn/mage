@@ -1,5 +1,5 @@
-// The organization's general settings: its name, which a team org's owners change, a team org's
-// first steps until it has a model provider, the models its threads start with and that name them,
+// The organization's general settings: its name, which a team org's owners change, the name its
+// agent goes by, which its owners change, a team org's first steps until it has a model provider, the models its threads start with and that name them,
 // the agent's instructions in every space, and deleting a team org.
 
 import { useQuery } from "@tanstack/react-query";
@@ -16,9 +16,9 @@ import { Input } from "@/web/components/ui/input";
 import { switchOrg } from "@/web/lib/org-tab";
 import { meQuery } from "@/web/auth/queries";
 import { connectionsQuery } from "@/web/models/queries";
-import { orgsQuery } from "@/web/orgs/queries";
+import { agentNameQuery, orgsQuery } from "@/web/orgs/queries";
 import { DeleteCard } from "@/web/shell/delete-card";
-import { useDeleteOrg, useRenameOrg } from "@/web/orgs/mutations";
+import { useAgentName, useDeleteOrg, useRenameOrg } from "@/web/orgs/mutations";
 
 // Until a team org can reply, where to start: a model provider, then its people.
 function FirstSteps() {
@@ -82,6 +82,45 @@ function OrgName({ name, canManage }: { name: string; canManage: boolean }) {
   );
 }
 
+// The name the agent goes by in the org's threads; its owners change it.
+function AgentName({ name, canManage }: { name: string; canManage: boolean }) {
+  const id = useId();
+  const [draft, setDraft] = useState(name);
+  const save = useAgentName();
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    save.mutate(draft.trim());
+  }
+
+  return (
+    <form onSubmit={submit}>
+      <FieldGroup>
+        <Field>
+          <FieldLabel htmlFor={id}>Agent name</FieldLabel>
+          <Input
+            id={id}
+            value={draft}
+            onChange={(event) => setDraft(event.target.value)}
+            maxLength={40}
+            required
+            disabled={!canManage}
+            autoComplete="off"
+          />
+        </Field>
+        <FieldError>{save.error?.message}</FieldError>
+        {canManage && draft.trim() !== name && (
+          <div>
+            <Button type="submit" disabled={save.isPending || !draft.trim()}>
+              Save
+            </Button>
+          </div>
+        )}
+      </FieldGroup>
+    </form>
+  );
+}
+
 // Deletes a team org once its owner types its name; the tab then opens their personal org.
 function DeleteOrg({ name }: { name: string }) {
   const id = useId();
@@ -134,6 +173,7 @@ export function OrgGeneral() {
   const personal = me.data?.org.kind === "personal";
   const team = me.data?.org.kind === "team";
   const owner = team && role === "owner";
+  const agentName = useQuery(agentNameQuery);
   return (
     <>
       <SettingsTitle
@@ -153,6 +193,19 @@ export function OrgGeneral() {
         state={me}
       >
         {me.data && <OrgName key={me.data.org.name} name={me.data.org.name} canManage={!!owner} />}
+      </SettingsCard>
+      <SettingsCard
+        title="Agent"
+        description="Shown in threads. Spaces can choose their own."
+        state={agentName}
+      >
+        {agentName.data && (
+          <AgentName
+            key={agentName.data.name}
+            name={agentName.data.name}
+            canManage={role === "owner"}
+          />
+        )}
       </SettingsCard>
       <ModelsCard canManage={role === "owner"} />
       <OrgInstructions />

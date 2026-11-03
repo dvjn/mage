@@ -43,6 +43,19 @@ describe("the system prompt", () => {
     expect(at("Rich replies: on.")).toBeGreaterThan(at("Search first"));
   });
 
+  it("says the name the agent goes by, when it has its own and is not a subagent", () => {
+    expect(instructionsFor(["Ada"], { org: "", space: "", agentName: "Mira" })).toMatch(
+      /^You are Mira, the agent in Mage/,
+    );
+    expect(instructionsFor(["Ada"], { org: "", space: "", agentName: "Agent" })).toMatch(
+      /^You are the agent in Mage/,
+    );
+    const subagent = { name: "Scout", parent: "Notes" };
+    expect(instructionsFor(["Ada"], { org: "", space: "", agentName: "Mira", subagent })).toMatch(
+      /^You are the agent in Mage/,
+    );
+  });
+
   it("leaves out what is empty", () => {
     const prompt = instructionsFor(["Ada"], { org: " ", space: "", mcpServers: [] });
     expect(prompt).toBe(instructionsFor(["Ada"]));

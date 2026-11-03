@@ -1,5 +1,6 @@
 // A space's settings, in pages: General (renaming it, unless it is a person's own space named for
-// them, the model and reasoning effort its new threads start with, or the org's, and deleting it
+// them, the model and reasoning effort its new threads start with, or the org's, the name its agent
+// goes by, or the org's, and deleting it
 // when it is not the primary space, or with its threads when it is a team member's own, and the
 // agent's instructions there), Members for a shared space,
 // the agent's Tools and MCPs there, with one table of MCP servers, the org's that the space may
@@ -29,6 +30,7 @@ import { Input } from "@/web/components/ui/input";
 import { rememberSpace } from "@/web/spaces/last-space";
 import { defaultEffortQuery, defaultModelQuery, modelsQuery } from "@/web/models/queries";
 import { spacesQuery } from "@/web/spaces/queries";
+import { agentNameQuery } from "@/web/orgs/queries";
 import { spaceThreadsQuery } from "@/web/threads/queries";
 import { NotFound } from "@/web/shell/not-found";
 import { DeleteCard } from "@/web/shell/delete-card";
@@ -116,6 +118,48 @@ function SpaceModel({ space }: { space: SpaceSummary }) {
         </div>
         <FieldError>{defaults.error?.message}</FieldError>
       </FieldGroup>
+    </SettingsCard>
+  );
+}
+
+// The name the agent goes by in the space's threads; left empty, the org's.
+function SpaceAgentName({ space }: { space: SpaceSummary }) {
+  const id = useId();
+  const orgName = useQuery(agentNameQuery);
+  const [draft, setDraft] = useState(space.agentName ?? "");
+  const defaults = useSpaceDefaults(space.id);
+  const changed = draft.trim() !== (space.agentName ?? "");
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    defaults.mutate({ agentName: draft.trim() || null });
+  }
+
+  return (
+    <SettingsCard title="Agent" description="Shown in threads. Empty uses the organization's.">
+      <form onSubmit={submit}>
+        <FieldGroup>
+          <Field>
+            <FieldLabel htmlFor={id}>Agent name</FieldLabel>
+            <Input
+              id={id}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder={orgName.data?.name}
+              maxLength={40}
+              autoComplete="off"
+            />
+          </Field>
+          <FieldError>{defaults.error?.message}</FieldError>
+          {changed && (
+            <div>
+              <Button type="submit" disabled={defaults.isPending}>
+                Save
+              </Button>
+            </div>
+          )}
+        </FieldGroup>
+      </form>
     </SettingsCard>
   );
 }
@@ -231,6 +275,7 @@ export function SpaceGeneral() {
       />
       {!namedForPerson(space) && <SpaceName key={space.id} space={space} />}
       <SpaceModel space={space} />
+      <SpaceAgentName key={space.agentName} space={space} />
       <SpaceInstructions spaceId={space.id} spaceName={space.name} />
       {(own || !space.primary) && <DeleteSpace space={space} own={own} />}
     </>

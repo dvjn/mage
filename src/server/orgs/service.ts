@@ -1,9 +1,9 @@
 // Orgs and who is in them: the orgs a person belongs to, creating team orgs, a team org's members
 // and their roles, inviting people by email with single-use links shown once, taking the links
 // back, joining through one, adding people and linking groups from the directory, removing members,
-// the settings owners choose for the org's spaces, and renaming and deleting a team org. A member's
-// role is the highest of their own and their linked groups'; whenever one of those changes, the org
-// is settled, and the app told who joined and who left.
+// the settings owners choose for the org's spaces, the name its agent goes by, and renaming and
+// deleting a team org. A member's role is the highest of their own and their linked groups';
+// whenever one of those changes, the org is settled, and the app told who joined and who left.
 // A team org keeps at least one owner in their own right, so the directory cannot leave it without.
 
 import { createHash, randomBytes } from "node:crypto";
@@ -13,13 +13,15 @@ import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { SpaceStore, Spaces } from "@/server/spaces/service.ts";
 import type { ThreadStore } from "@/server/threads/service.ts";
-import type {
-  CreatedOrgInvite,
-  JoinPreview,
-  OrgList,
-  OrgMember,
-  OrgPerson,
-  TeamSettings,
+import {
+  type AgentName,
+  type CreatedOrgInvite,
+  DEFAULT_AGENT_NAME,
+  type JoinPreview,
+  type OrgList,
+  type OrgMember,
+  type OrgPerson,
+  type TeamSettings,
 } from "@/shared/orgs.ts";
 import type { Page, PageParams } from "@/shared/paging.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
@@ -75,6 +77,8 @@ export interface OrgSettings {
   spaceMcpServers: boolean;
   // Whether a space's managers may add skills for it, and its threads use them.
   spaceSkills: boolean;
+  // What the agent of the org's threads goes by where people see it, or null for the usual name.
+  agentName: string | null;
 }
 
 export interface OrgSettingStore {
@@ -88,6 +92,7 @@ export interface OrgSettingStore {
   ): void;
   setSpaceMcpServers(orgId: string, allowed: boolean): void;
   setSpaceSkills(orgId: string, allowed: boolean): void;
+  setAgentName(orgId: string, name: string | null): void;
 }
 
 export interface OrgsOptions {
@@ -98,7 +103,7 @@ export interface OrgsOptions {
   threads: Pick<ThreadStore, "find">;
   // The agent's runs, stopped in an org being deleted.
   runs: Pick<RunStore, "activeThreadIds" | "requestCancel">;
-  settings: Pick<OrgSettingStore, "get" | "setTeamSettings">;
+  settings: Pick<OrgSettingStore, "get" | "setTeamSettings" | "setAgentName">;
   hooks?: Hooks;
   // Where the app is served; invite links lead there.
   baseUrl: string;
@@ -542,6 +547,20 @@ export function createOrgs(options: OrgsOptions) {
     },
 
     settings: teamSettings,
+
+    // What the agent of the org's threads goes by where people see it.
+    agentName(principal: Principal): AgentName {
+      return { name: settings.get(principal.orgId).agentName ?? DEFAULT_AGENT_NAME };
+    },
+
+    // Names the org's agent, for its owners; the usual name is kept as none.
+    setAgentName(principal: Principal, name: string): AgentName {
+      if (principal.role !== "owner") {
+        throw new ServiceError(403, "Only the organization's owners can do this");
+      }
+      settings.setAgentName(principal.orgId, name === DEFAULT_AGENT_NAME ? null : name);
+      return { name };
+    },
 
     async setSettings(principal: Principal, changes: Partial<TeamSettings>): Promise<TeamSettings> {
       requireOwner(principal);

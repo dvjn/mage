@@ -27,6 +27,7 @@ function spaceSummary(space: SpaceView): SpaceSummary {
     everyoneRole,
     defaultModel,
     defaultEffort,
+    agentName,
   } = space;
   return {
     id,
@@ -39,6 +40,7 @@ function spaceSummary(space: SpaceView): SpaceSummary {
     everyoneRole,
     defaultModel,
     defaultEffort,
+    agentName,
     createdAt: space.createdAt.toISOString(),
   };
 }
@@ -47,7 +49,7 @@ const spaceName = jsonBody(spaceNameSchema, "A name of 1 to 80 characters is req
 
 const spaceDefaults = jsonBody(
   spaceDefaultsSchema,
-  "Give a model ref or null, or an effort of low, medium, high or null",
+  "Give a model ref or null, an effort of low, medium, high or null, or an agent name or null",
 );
 
 const setSpaceMember = jsonBody(

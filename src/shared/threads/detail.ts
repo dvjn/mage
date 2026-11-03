@@ -73,6 +73,8 @@ export const threadHeadSchema = z.object({
   defaults: threadDefaultsSchema,
   // For a subagent's thread, the subagent.
   subagent: threadSubagentSchema.nullable().optional(),
+  // What the agent of its space's threads goes by.
+  agentName: z.string(),
   // The model it names, its own or the default, and the one that replies: the same, or while that
   // one is turned off or gone, the space's default, then the org's; null when none can. Null with
   // no model at all.

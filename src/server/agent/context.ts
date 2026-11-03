@@ -13,6 +13,7 @@
 // conversation of the thread that started it, as it was when it started.
 
 import type { ModelMessage, ModelToolResult } from "@/server/models/gateway.ts";
+import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import { QUIET_PREFIX } from "@/shared/threads/events.ts";
 import type {
   HumanRow,
@@ -112,9 +113,16 @@ export interface Guidance {
   toolsets?: string[];
   // For a subagent, what it is.
   subagent?: SubagentGuidance;
+  // What the agent goes by where people see it, when the org or the space named it.
+  agentName?: string;
 }
 
 export const NO_GUIDANCE: Guidance = { org: "", space: "" };
+
+// The name the agent is told it goes by, for one that is not a subagent and has a name of its own.
+function named({ agentName, subagent }: Guidance) {
+  return agentName && agentName !== DEFAULT_AGENT_NAME && !subagent ? `${agentName}, ` : "";
+}
 
 // What heads the summary of a compacted thread's earlier conversation.
 export const COMPACTED_HEADING = "Summary of the earlier conversation in this thread, compacted.";
@@ -126,7 +134,7 @@ export function instructionsFor(
 ) {
   const sections = [
     [
-      "You are the agent in Mage, a workspace where people talk with you and with each other in shared threads.",
+      `You are ${named(guidance)}the agent in Mage, a workspace where people talk with you and with each other in shared threads.`,
       `The people in this thread: ${people.join(", ")}.`,
       "Each of their messages starts with the writer's name in brackets, like [Ada Lovelace]. Your replies do not start with a name.",
       `A message starting with ${QUIET_PREFIX} is an aside between people: take it in as context, but do not answer it.`,
