@@ -67,6 +67,31 @@ function human(id: string): ShownRow {
   };
 }
 
+function relay(id: string): ShownRow {
+  return {
+    kind: "relay",
+    id,
+    order: order++,
+    seq: order,
+    turn: null,
+    postedAt: "2026-11-01T00:00:00.000Z",
+    from: { threadId: "subagent1", name: "Researcher", main: false },
+    to: "agent",
+    text: "Research complete",
+  } as ShownRow;
+}
+
+function notice(id: string): ShownRow {
+  return {
+    kind: "notice",
+    id,
+    order: order++,
+    seq: order,
+    turn: null,
+    subagents: [{ threadId: "subagent1", name: "Researcher", state: "idle", last: "Done" }],
+  };
+}
+
 const thought = (id: string) => step(id, { reasoning: "Thinking it over" });
 const reply = (id: string) => step(id, { text: "Done" });
 // A step that only called tools, which shows as nothing.
@@ -75,7 +100,7 @@ const silent = (id: string) => step(id, { turn: null });
 // Each entry as its key and, for a run, the ids it holds.
 function shape(rows: ShownRow[]) {
   return transcriptEntries(rows).map((entry) =>
-    entry.kind === "calls"
+    entry.kind === "calls" || entry.kind === "relays"
       ? [entry.key, entry.rows.map((row) => row.id), entry.gap]
       : [entry.key, entry.gap],
   );
@@ -193,5 +218,39 @@ describe("transcriptEntries", () => {
       ["r1", "near"],
     ]);
     expect(entries[1]).toMatchObject({ row: { id: "w1" }, subagent: { threadId: "subagent1" } });
+  });
+
+  it("joins notices and agents' messages to the turn they follow, folding messages in a row", () => {
+    const rows = [
+      call("c1", { turn: turn(false) }),
+      call("c2"),
+      notice("n1"),
+      relay("m1"),
+      relay("m2"),
+      relay("m3"),
+      notice("n2"),
+      relay("m4"),
+      // The agent's next turn.
+      step("r1", { text: "Done", turn: turn(false) }),
+    ];
+    expect(shape(rows)).toEqual([
+      ["calls:c1", ["c1", "c2"], "apart"],
+      ["n1", "close"],
+      ["relays:m1", ["m1", "m2", "m3"], "close"],
+      ["n2", "close"],
+      ["relays:m4", ["m4"], "close"],
+      ["r1", "apart"],
+    ]);
+  });
+
+  it("opens a turn with messages that follow none, and keeps their run's key as it grows", () => {
+    const first = [human("h"), relay("m1")];
+    const grown = [...first, relay("m2"), notice("n1")];
+    expect(shape(grown)).toEqual([
+      ["h", "apart"],
+      ["relays:m1", ["m1", "m2"], "apart"],
+      ["n1", "close"],
+    ]);
+    expect(transcriptEntries(first)[1]?.key).toBe(transcriptEntries(grown)[1]?.key);
   });
 });

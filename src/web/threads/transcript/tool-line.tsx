@@ -1,5 +1,6 @@
 // A tool call as one line with the tool and what became of the call, which opens on its input and
-// output. A call that started a subagent says where the subagent stands now, with a way to open it.
+// output. A call that started a subagent says where the subagent stands now, with a way to open it,
+// and a subagent call opens on links to where it had its effect too. A link to the call opens it.
 
 import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
@@ -14,7 +15,7 @@ import { type ReactNode } from "react";
 
 import type { SubagentState } from "@/shared/subagents.ts";
 import type { ToolDefinition } from "@/shared/tools.ts";
-import type { ToolRow } from "@/shared/threads/rows.ts";
+import type { CallEffect, ToolRow } from "@/shared/threads/rows.ts";
 import { ToolInput, ToolOutput } from "@/web/agent/tool-value";
 import {
   Collapsible,
@@ -22,6 +23,7 @@ import {
   CollapsibleTrigger,
 } from "@/web/components/ui/collapsible";
 import { Spinner } from "@/web/components/ui/spinner";
+import { lineKey, rowElementId, RowLink, useRowFocus } from "@/web/threads/transcript/row-focus";
 import { GIVES_WAY, ToolCrumb, toolPath } from "@/web/threads/transcript/tool-crumb";
 
 // Where a subagent stands, in words.
@@ -35,6 +37,13 @@ export const SUBAGENT_STATES: Record<SubagentState, string> = {
 
 // What a working subagent waits on, in words.
 export const SUBAGENT_NEEDS = { approval: "needs approval", answer: "asked a question" } as const;
+
+// Where a subagent call had its effect, in words.
+const EFFECTS: Record<CallEffect["kind"], (name: string) => string> = {
+  task: (name) => `Task in ${name}`,
+  message: (name) => `Message to ${name}`,
+  thread: (name) => name,
+};
 
 // How long a call took to run, from a second on; nothing below that.
 function duration(ms: number | null) {
@@ -118,8 +127,20 @@ export function ToolLine({
       {took && <span className="shrink-0 tabular-nums">{took}</span>}
     </CollapsibleTrigger>
   );
+  const focus = useRowFocus();
+  const lit = focus?.lit === row.id;
   return (
-    <Collapsible className={cn("text-xs text-muted-foreground", !framed && "pl-9")}>
+    <Collapsible
+      id={rowElementId(row.id)}
+      data-lit={lit || undefined}
+      open={focus ? focus.opened.has(lineKey(row.id)) : undefined}
+      onOpenChange={focus ? (open) => focus.onOpenChange([lineKey(row.id)], open) : undefined}
+      className={cn(
+        "rounded-md text-xs text-muted-foreground transition-colors duration-700",
+        !framed && "pl-9",
+        lit && "bg-accent ring-2 ring-ring/40",
+      )}
+    >
       {subagent ? (
         <div className="flex items-center gap-2">
           {trigger}
@@ -136,6 +157,20 @@ export function ToolLine({
         trigger
       )}
       <CollapsibleContent className="mt-1 flex flex-col gap-3 rounded-md bg-muted px-3 py-2">
+        {row.effects && (
+          <nav aria-label="Effects" className="flex flex-wrap gap-1.5">
+            {row.effects.map((effect) => (
+              <RowLink
+                key={`${effect.threadId}:${effect.rowId ?? ""}`}
+                threadId={effect.threadId}
+                rowId={effect.rowId}
+                className="rounded-md border bg-background px-1.5 py-0.5 font-medium text-foreground hover:bg-accent"
+              >
+                {EFFECTS[effect.kind](effect.name)}
+              </RowLink>
+            ))}
+          </nav>
+        )}
         <ToolInput value={row.input} schema={definition?.inputSchema} />
         {row.output && <ToolOutput output={row.output} schema={definition?.outputSchema} />}
       </CollapsibleContent>

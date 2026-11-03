@@ -127,7 +127,7 @@ test("the agent starts subagents, who report back, go idle and can be resumed an
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Writer");
   const task = transcript(page).getByRole("article", { name: "Message from Agent" }).first();
   await task.getByRole("button", { name: "Agent → Writer" }).click();
-  await expect(task).toContainText("from Queue library");
+  await expect(task).toContainText("Sent by Subagents › Start · Writer in Queue library");
   await expect(task).toContainText("Draft the notes");
 
   // A person writing there resumes it, and its replies there go by its label.
@@ -151,6 +151,47 @@ test("the agent starts subagents, who report back, go idle and can be resumed an
     "Subagent of Queue library · Idle",
   );
   await expect(page.getByLabel("Message", { exact: true })).toBeEditable();
+});
+
+test("a send links to the message it delivered, which links back to the send", async ({ page }) => {
+  await signUp(page);
+  await queueLibrary(page);
+  await write(
+    page,
+    [
+      call("subagents.start", { name: "Writer", task: "Draft the notes" }),
+      call("subagents.send", { to: "Writer", text: "Shorter, please" }),
+    ].join("\n"),
+  );
+  await idle(page);
+  const parentUrl = page.url();
+
+  // The send's line opens on a link to the message, which opens it in the writer's thread, lit.
+  await transcript(page)
+    .getByRole("button", { name: /^2 tool calls · Subagents/ })
+    .click();
+  const sendLine = transcript(page).getByRole("button", { name: /^Subagents › Send · Ran/ });
+  await sendLine.click();
+  await transcript(page).getByRole("link", { name: "Message to Writer" }).click();
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Writer");
+  const message = transcript(page)
+    .getByRole("article", { name: "Message from Agent" })
+    .filter({ hasText: "Shorter, please" });
+  await expect(message).toBeVisible();
+  await expect(message).toHaveAttribute("data-lit", "true");
+  await expect(message).toBeInViewport();
+
+  // Its backlink leads to the send, opened and lit, from a fresh load of the thread.
+  await message.getByRole("link", { name: "Subagents › Send" }).click();
+  await expect(page).toHaveURL(new RegExp(`^${parentUrl}\\?row=`));
+  await page.reload();
+  const lit = transcript(page).locator("[data-lit]");
+  await expect(lit).toHaveCount(1);
+  await expect(lit.getByRole("button", { name: /^Subagents › Send · Ran/ })).toHaveAttribute(
+    "aria-expanded",
+    "true",
+  );
+  await expect(lit.getByRole("link", { name: "Message to Writer" })).toBeVisible();
 });
 
 test("subagents message each other, counted on the line that started them, and steer each other's calls", async ({
@@ -194,7 +235,7 @@ test("subagents message each other, counted on the line that started them, and s
   // The messages between them show only as a count on the line that started them.
   await expect(
     transcript(page).getByRole("button", {
-      name: /^2 tool calls · Subagents · Writer ⇄ Critic · 1 message/,
+      name: /^2 tool calls · Subagents$/,
     }),
   ).toBeVisible();
   await expect(transcript(page).getByRole("article", { name: "Message from Critic" })).toHaveCount(

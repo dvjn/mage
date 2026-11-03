@@ -15,6 +15,7 @@ import { COMPACT } from "@/shared/threads/commands.ts";
 import {
   type ActorSummary,
   type AnyThreadEvent,
+  type Cause,
   type Delivery,
   type FailureKind,
   type SubagentEnd,
@@ -160,7 +161,8 @@ export interface CompactionRow {
 
 // A message from another agent, once the agent here took it in: from a subagent, or from the agent
 // that started this thread's subagent, the first of them its task. With whom it went to, and the
-// people whose words steered it, who count as steering what the agent here does with it.
+// people whose words steered it, who count as steering what the agent here does with it, and the
+// call that sent it, where known.
 export interface RelayRow {
   kind: "relay";
   // The message's id.
@@ -172,6 +174,7 @@ export interface RelayRow {
   text: string;
   steeredBy: Steering[];
   task?: SubagentTask;
+  call?: Cause;
 }
 
 // A subagent that ended a run, as the thread that started it is told.
@@ -340,6 +343,8 @@ export interface TranscriptFold {
   transcript(): Transcript;
   changedAt(index: number): number;
   turnAt(index: number): AgentTurn | null;
+  // The index of the row with the id; -1 when there is none.
+  indexOf(id: string): number;
 }
 
 export function createFold(): TranscriptFold {
@@ -406,7 +411,7 @@ export function createFold(): TranscriptFold {
         pending.delete(event.data.messageId);
         break;
       case "agent.message": {
-        const { parts, from, to, steeredBy, task } = event.data;
+        const { parts, from, to, steeredBy, task, call } = event.data;
         inbox.set(event.id, {
           id: event.id,
           seq: event.seq,
@@ -416,6 +421,7 @@ export function createFold(): TranscriptFold {
           text: textOf(parts),
           steeredBy,
           ...(task && { task }),
+          ...(call && { call }),
         });
         break;
       }
@@ -705,6 +711,10 @@ export function createFold(): TranscriptFold {
 
     turnAt(index) {
       return turns[index] ?? null;
+    },
+
+    indexOf(id) {
+      return indexOf.get(id) ?? -1;
     },
   };
 }

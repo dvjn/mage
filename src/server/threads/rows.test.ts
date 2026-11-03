@@ -18,8 +18,8 @@ async function asides(count: number) {
       await workspace.api("GET", `/threads/${thread.id}`, who.cookie)
     ).json()) as ThreadDetail;
   }
-  async function page(who: { cookie: string }, before: number, limit?: number) {
-    const query = `before=${before}${limit ? `&limit=${limit}` : ""}`;
+  async function page(who: { cookie: string }, before: number, limit?: number, at?: string) {
+    const query = `before=${before}${limit ? `&limit=${limit}` : ""}${at ? `&at=${at}` : ""}`;
     const res = await workspace.api("GET", `/threads/${thread.id}/rows?${query}`, who.cookie);
     return { status: res.status, body: (await res.json()) as RowsPage };
   }
@@ -45,6 +45,22 @@ describe("a thread's rows", () => {
     expect(orders(first.body.rows)).toEqual([0, 49, 50]);
     expect(first.body.before).toBeNull();
     expect(orders((await page(ada, 20, 5)).body.rows)).toEqual([15, 19, 5]);
+  });
+
+  it("come as a page reaching back to a row, for a link to it", async () => {
+    const { ada, page } = await asides(250);
+    const target = (await page(ada, 50)).body.rows[20]!;
+
+    const reaching = (await page(ada, 150, undefined, target.id)).body;
+    expect(orders(reaching.rows)).toEqual([20, 149, 130]);
+    expect(reaching.rows[0]!.id).toBe(target.id);
+    expect(reaching.before).toBe(20);
+    // A row within the usual page, past it, or none by the id, gives the usual page.
+    expect(orders((await page(ada, 150, undefined, reaching.rows[90]!.id)).body.rows)).toEqual([
+      50, 149, 100,
+    ]);
+    expect(orders((await page(ada, 10, undefined, target.id)).body.rows)).toEqual([0, 9, 10]);
+    expect(orders((await page(ada, 150, undefined, "nothing")).body.rows)).toEqual([50, 149, 100]);
   });
 
   it("reach back to the first row a reader has not seen", async () => {

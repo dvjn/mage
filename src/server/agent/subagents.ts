@@ -31,9 +31,8 @@ import {
   type SubagentState,
   type SubagentSummary,
 } from "@/shared/subagents.ts";
-import type { SubagentTask, Sender, Steering } from "@/shared/threads/events.ts";
+import type { Cause, SubagentTask, Sender, Steering } from "@/shared/threads/events.ts";
 import { UNTITLED } from "@/shared/threads/thread.ts";
-import { toolIdNow } from "@/shared/tools.ts";
 import {
   type AgentRow,
   type Transcript,
@@ -153,24 +152,6 @@ function needsOf({ run, rows }: Transcript): SubagentNeeds | undefined {
   return call?.kind === "tool" && call.toolId === ASK_TOOL ? "answer" : "approval";
 }
 
-// The messages the subagent exchanged with each of the others started with it, by their labels:
-// those it took in or has waiting, and those it sent.
-function talksOf({ rows, inbox }: Transcript) {
-  const counts = new Map<string, number>();
-  const add = (name: string, count = 1) => counts.set(name, (counts.get(name) ?? 0) + count);
-  for (const message of [...rows, ...inbox]) {
-    if ("from" in message && !message.from.main) add(message.from.name);
-  }
-  for (const row of rows) {
-    if (row.kind !== "tool" || toolIdNow(row.toolId) !== SEND_SUBAGENT_MESSAGE || !row.output?.ok)
-      continue;
-    const sent = (row.output.value as { sent?: unknown } | null)?.sent;
-    if (!Array.isArray(sent)) continue;
-    for (const name of sent) if (typeof name === "string" && name !== AGENT) add(name);
-  }
-  return [...counts].map(([name, messages]) => ({ with: name, messages }));
-}
-
 // How many messages the subagents took in, or have waiting, from one another.
 function receivedFromSubagents({ rows, inbox }: Transcript) {
   return [...rows, ...inbox].filter((message) => "from" in message && !message.from.main).length;
@@ -218,12 +199,7 @@ export function createSubagents(options: SubagentsOptions) {
     subagent: SubagentRecord,
     read = transcript(subagent.threadId),
   ): SubagentSummary {
-    const talks = talksOf(read);
-    const base = {
-      threadId: subagent.threadId,
-      name: subagent.name,
-      ...(talks.length > 0 && { talks }),
-    };
+    const base = { threadId: subagent.threadId, name: subagent.name };
     if (subagent.archivedAt) return { ...base, state: "archived" };
     if (runs.active(subagent.threadId)) {
       const needs = needsOf(read);
@@ -255,7 +231,8 @@ export function createSubagents(options: SubagentsOptions) {
     );
   }
 
-  // Leaves another agent's message in the thread's inbox, and wakes its agent when it may run.
+  // Leaves another agent's message in the thread's inbox, with the call that sent it, and wakes
+  // its agent when it may run.
   function deliver(
     threadId: string,
     message: {
@@ -264,6 +241,7 @@ export function createSubagents(options: SubagentsOptions) {
       to: string;
       steeredBy: Steering[];
       task?: SubagentTask;
+      call: Cause;
     },
   ) {
     log.write(threadId, (append) => {
@@ -290,8 +268,8 @@ export function createSubagents(options: SubagentsOptions) {
   }
 
   // Refuses messages between the starter's subagents past the limit, telling its agent the first
-  // time one is refused.
-  function limitBetween(parentThreadId: string, sending: number) {
+  // time one is refused, and by which call.
+  function limitBetween(parentThreadId: string, sending: number, call: Cause) {
     const sent = subagents
       .ofParents([parentThreadId])
       .reduce((total, subagent) => total + receivedFromSubagents(transcript(subagent.threadId)), 0);
@@ -304,7 +282,7 @@ export function createSubagents(options: SubagentsOptions) {
         append({
           type: "subagent.limited",
           actor: { kind: "agent" },
-          data: { limit: MESSAGE_LIMIT },
+          data: { limit: MESSAGE_LIMIT, call },
         }),
       );
     }
@@ -445,6 +423,7 @@ export function createSubagents(options: SubagentsOptions) {
             ...(input.instructions && { instructions: input.instructions }),
             ...(input.fork && { fork: { callId: ctx.callId, seq: parent.lastEventSeq } }),
           },
+          call: { threadId: parent.id, callId: ctx.callId },
         });
         bus.activity({ threadId: parent.id });
         return { id: thread.id, name: subagent.name, state: summaryOf(subagent).state };
@@ -471,15 +450,16 @@ export function createSubagents(options: SubagentsOptions) {
         const labels = typeof to === "string" ? [to] : to;
         const { from, via } = senderOf(thread);
         const steeredBy = carried(thread, via);
+        const call = { threadId: thread.id, callId: ctx.callId };
         const me = subagents.find(thread.id);
         if (me) {
           const toAgent = labels.some((label) => sameName(label, AGENT));
           const others = labels.filter((label) => !sameName(label, AGENT));
           const siblings = others.length > 0 ? pick(me.parentThreadId, others, me.threadId) : [];
-          if (siblings.length > 0) limitBetween(me.parentThreadId, siblings.length);
-          if (toAgent) deliver(me.parentThreadId, { text, from, to: AGENT, steeredBy });
+          if (siblings.length > 0) limitBetween(me.parentThreadId, siblings.length, call);
+          if (toAgent) deliver(me.parentThreadId, { text, from, to: AGENT, steeredBy, call });
           for (const sibling of siblings) {
-            deliver(sibling.threadId, { text, from, to: sibling.name, steeredBy });
+            deliver(sibling.threadId, { text, from, to: sibling.name, steeredBy, call });
           }
           return { sent: [...(toAgent ? [AGENT] : []), ...siblings.map((one) => one.name)] };
         }
@@ -488,7 +468,7 @@ export function createSubagents(options: SubagentsOptions) {
         }
         const recipients = pick(thread.id, labels);
         for (const subagent of recipients) {
-          deliver(subagent.threadId, { text, from, to: subagent.name, steeredBy });
+          deliver(subagent.threadId, { text, from, to: subagent.name, steeredBy, call });
         }
         return { sent: recipients.map((subagent) => subagent.name) };
       });
@@ -589,7 +569,7 @@ export function createSubagents(options: SubagentsOptions) {
         const [found] = pick(ctx.threadId, [subagent]);
         if (!stopRun(found!.threadId, null))
           throw new ToolRefusal(`${found!.name} is not working.`);
-        return { name: found!.name, state: "stopped" };
+        return { id: found!.threadId, name: found!.name, state: "stopped" };
       });
     },
   };
@@ -608,7 +588,7 @@ export function createSubagents(options: SubagentsOptions) {
         stopRun(found!.threadId, null);
         subagents.setArchived(found!.threadId, now());
         bus.activity({ threadId: found!.threadId });
-        return { name: found!.name, state: "archived" };
+        return { id: found!.threadId, name: found!.name, state: "archived" };
       });
     },
   };
@@ -626,6 +606,19 @@ export function createSubagents(options: SubagentsOptions) {
     },
 
     find: (threadId: string) => subagents.find(threadId),
+
+    // The threads the thread's agent sends messages to, retired subagents' among them, each with
+    // the label it was sent by: for the agent that started subagents, theirs; for a subagent, its
+    // starter's, as agent, and the others started with it.
+    reach(threadId: string): { threadId: string; name: string; main: boolean }[] {
+      const me = subagents.find(threadId);
+      const parentId = me?.parentThreadId ?? threadId;
+      const others = subagents
+        .ofParents([parentId])
+        .filter((subagent) => subagent.threadId !== threadId)
+        .map((subagent) => ({ threadId: subagent.threadId, name: subagent.name, main: false }));
+      return me ? [{ threadId: parentId, name: AGENT, main: true }, ...others] : others;
+    },
 
     summaryOf(threadId: string) {
       const subagent = subagents.find(threadId);

@@ -115,6 +115,11 @@ export const subagentTaskSchema = z.object({
 
 export type SubagentTask = z.infer<typeof subagentTaskSchema>;
 
+// The tool call that made an event in another thread: the thread it was made in, and its id.
+export const causeSchema = z.object({ threadId: z.string(), callId: z.string() });
+
+export type Cause = z.infer<typeof causeSchema>;
+
 // Where a subagent stands once its run ended: waiting for more, stopped, or failed.
 export const subagentEndSchema = z.enum(["idle", "stopped", "failed"]);
 
@@ -144,6 +149,8 @@ export const eventDataSchemas = {
     to: z.string(),
     steeredBy: z.array(steeringSchema),
     task: subagentTaskSchema.optional(),
+    // The call that sent it; older messages do not say.
+    call: causeSchema.optional(),
   }),
   // One of the thread's subagents ended a run with nothing more to do, and the last thing it said.
   "subagent.ended": z.object({
@@ -152,8 +159,12 @@ export const eventDataSchemas = {
     state: subagentEndSchema,
     last: z.string(),
   }),
-  // The thread's subagents sent each other as many messages as they may; more are refused.
-  "subagent.limited": z.object({ limit: z.number().int().positive() }),
+  // The thread's subagents sent each other as many messages as they may; more are refused. With
+  // the call first refused, in its subagent's thread.
+  "subagent.limited": z.object({
+    limit: z.number().int().positive(),
+    call: causeSchema.optional(),
+  }),
   // The agent took these messages in, in this order, during the run.
   "message.admitted": z.object({ runId: z.string(), messageIds: z.array(z.string()).min(1) }),
   // The agent began a reply with the model ref; its place in the thread is this event's seq.

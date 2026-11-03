@@ -19,9 +19,10 @@
 // subagent's thread is read like any other, though nothing in it is ever new to anyone, and listed
 // under the thread whose agent started it, which takes in the most pressing of its subagents'
 // statuses; that thread's lines for starting each subagent show where it stands now, with the call
-// it waits on as the reader would see it in the subagent's thread. Stopping a thread's agent stops
-// its subagents too, and a retired subagent's thread is read-only until someone who can post there
-// brings it back.
+// it waits on as the reader would see it in the subagent's thread. Each subagent call links to
+// where it had its effect, and each message another agent sent links back to the call that sent
+// it, in the threads the reader may read. Stopping a thread's agent stops its subagents too, and a
+// retired subagent's thread is read-only until someone who can post there brings it back.
 
 import { anythingToCompact } from "@/server/agent/compaction.ts";
 import { type Subagents, steeringLine } from "@/server/agent/subagents.ts";
@@ -37,13 +38,14 @@ import type { Access, ThreadAccess, ThreadAction } from "@/server/spaces/thread-
 import { ASK_TOOL } from "@/shared/ask.ts";
 import type { SharedThread } from "@/shared/guests.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
-import { START_SUBAGENT } from "@/shared/subagents.ts";
+import { SEND_SUBAGENT_MESSAGE, START_SUBAGENT } from "@/shared/subagents.ts";
 import type { Page, PageParams } from "@/shared/paging.ts";
 import { plainText } from "@/shared/plain-text.ts";
 import { statusOf, type ThreadShow, type ThreadStatus } from "@/shared/thread-status.ts";
 import { COMPACT, type CommandInput, type ThreadCommand } from "@/shared/threads/commands.ts";
 import type { ThreadCan, ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
 import {
+  type Cause,
   type Delivery,
   QUIET_PREFIX,
   type ThreadFeedItem,
@@ -61,6 +63,7 @@ import {
   type ShownModel,
 } from "@/shared/threads/list.ts";
 import {
+  type CallEffect,
   ROWS_PAGE,
   type RowsPage,
   type RowsUpdate,
@@ -72,7 +75,9 @@ import { type Effort, UNTITLED, type ThreadSummary } from "@/shared/threads/thre
 import { toolIdNow } from "@/shared/tools.ts";
 import type {
   PendingMessage,
+  RelayRow,
   SentCommand,
+  ToolRow as TranscriptToolRow,
   Transcript,
   TranscriptFold,
 } from "@/shared/transcript.ts";
@@ -275,7 +280,10 @@ export interface ThreadsOptions {
   // given.
   agentNameIn?: (space: Space) => string;
   // The subagents threads' agents start, when given.
-  subagents?: Pick<Subagents, "find" | "summaryOf" | "ofParents" | "stopAll" | "unarchive">;
+  subagents?: Pick<
+    Subagents,
+    "find" | "summaryOf" | "ofParents" | "reach" | "stopAll" | "unarchive"
+  >;
   now?: () => Date;
 }
 
@@ -300,7 +308,14 @@ interface Reader {
   can: ThreadCan;
   // What each tool call is called where it shows.
   names: ReturnType<Tools["namesIn"]>;
+  // Other threads' transcripts read for this reader's rows, each read once.
+  folds: Map<string, TranscriptFold>;
 }
+
+// The subagent tools whose calls act on one subagent.
+const SUBAGENT_ACTIONS = new Set([START_SUBAGENT, "subagents.stop", "subagents.archive"]);
+
+const causeKey = (call: Cause) => `${call.threadId}:${call.callId}`;
 
 // The parts of a row that are the reader's, which can change while the row itself does not.
 function readerPartsOf(row: ShownRow) {
@@ -647,6 +662,7 @@ export function createThreads(options: ThreadsOptions) {
       model: runs.active(thread.id)?.model ?? null,
       can: canIn(principal, thread),
       names: tools.namesIn(space),
+      folds: new Map(),
     };
   }
 
@@ -669,12 +685,14 @@ export function createThreads(options: ThreadsOptions) {
       const started = startedSubagent(row);
       const subagent = started ? subagents?.summaryOf(started) : null;
       const subagentCall = subagent?.needs && waitingIn(subagent.threadId, reader.principal);
+      const effects = effectsOf(row, reader);
       const call = {
         ...row,
         ...place,
         ...reader.names(row),
         ...(subagent && { subagent }),
         ...(subagentCall && { subagentCall }),
+        ...(effects.length > 0 && { effects }),
       };
       if (row.state !== "pending" || !row.waits || !space) return call;
       const may = tools.canDecide(userId, row, transcript.rows, thread, space, model);
@@ -708,10 +726,75 @@ export function createThreads(options: ThreadsOptions) {
       return { ...message, ...place, ...shownCommand(command) };
     }
     if (row.kind === "relay") {
-      const { steeredBy: _steeredBy, ...message } = row;
-      return { ...message, ...place };
+      const { steeredBy: _steeredBy, call: _call, ...message } = row;
+      const sentBy = sentByOf(row, reader);
+      return { ...message, ...place, ...(sentBy && { sentBy }) };
     }
     return { ...row, ...place };
+  }
+
+  // The messages subagent calls sent to each thread, by the call, as far as its log was read; each
+  // read takes in only what was added since.
+  const sentTo = new Map<string, { last: number; byCall: Map<string, string[]> }>();
+  function messagesSentBy(threadId: string, call: Cause) {
+    const known = sentTo.get(threadId) ?? { last: 0, byCall: new Map<string, string[]>() };
+    for (const event of threads.eventsAfter(threadId, known.last)) {
+      known.last = event.seq;
+      if (event.type !== "agent.message" || !event.data.call) continue;
+      const key = causeKey(event.data.call);
+      known.byCall.set(key, [...(known.byCall.get(key) ?? []), event.id]);
+    }
+    sentTo.set(threadId, known);
+    return known.byCall.get(causeKey(call)) ?? [];
+  }
+
+  // Where the reader's thread's subagent call had its effect, in the threads they may read: the
+  // task a start gave, each message a send delivered, and the thread a stop or archive acted on.
+  function effectsOf(row: TranscriptToolRow, reader: Reader): CallEffect[] {
+    if (!subagents || !row.output?.ok) return [];
+    const tool = toolIdNow(row.toolId);
+    const value = (row.output.value ?? {}) as { id?: unknown; name?: unknown; sent?: unknown };
+    const call = { threadId: reader.thread.id, callId: row.id };
+    const effects: CallEffect[] = [];
+    if (SUBAGENT_ACTIONS.has(tool) && typeof value.id === "string") {
+      const name = typeof value.name === "string" ? value.name : "";
+      if (tool !== START_SUBAGENT) effects.push({ kind: "thread", threadId: value.id, name });
+      for (const rowId of tool === START_SUBAGENT ? messagesSentBy(value.id, call) : []) {
+        effects.push({ kind: "task", threadId: value.id, rowId, name });
+      }
+    } else if (tool === SEND_SUBAGENT_MESSAGE && Array.isArray(value.sent)) {
+      const reach = subagents.reach(reader.thread.id);
+      const agentName = reader.space ? agentNameOf(reader.space) : DEFAULT_AGENT_NAME;
+      for (const label of value.sent) {
+        for (const to of reach.filter((one) => one.name === label)) {
+          for (const rowId of messagesSentBy(to.threadId, call)) {
+            const name = to.main ? agentName : to.name;
+            effects.push({ kind: "message", threadId: to.threadId, rowId, name });
+          }
+        }
+      }
+    }
+    return effects.filter((effect) => readable(reader.principal, effect.threadId));
+  }
+
+  // The call that sent another agent's message, as the reader may follow it back: in a thread they
+  // may read, named as its line there is.
+  function sentByOf(row: RelayRow, reader: Reader) {
+    const call = row.call;
+    const thread = call && threads.find(call.threadId);
+    if (!call || !thread || !access.can(reader.principal, thread, "read")) return null;
+    const fold = reader.folds.get(thread.id) ?? transcripts.of(thread.id);
+    reader.folds.set(thread.id, fold);
+    const sending = fold.transcript().rows[fold.indexOf(call.callId)];
+    if (sending?.kind !== "tool") return null;
+    const { title, toolset } = reader.names(sending);
+    return {
+      threadId: thread.id,
+      rowId: sending.id,
+      title,
+      toolset,
+      thread: subagents?.find(thread.id)?.name ?? thread.title ?? UNTITLED,
+    };
   }
 
   // The call the subagent's run waits on, as the reader sees it in the subagent's thread.
@@ -1042,14 +1125,22 @@ export function createThreads(options: ThreadsOptions) {
       };
     },
 
-    // The rows before the place `before`, at most `limit` of them, as the reader sees them.
-    rows(principal: Principal, id: string, before: number, limit = ROWS_PAGE): RowsPage {
+    // The rows before the place `before`, at most `limit` of them, or with `at` as many as reach
+    // back to the row with that id when it is before them, as the reader sees them.
+    rows(
+      principal: Principal,
+      id: string,
+      before: number,
+      limit = ROWS_PAGE,
+      at?: string,
+    ): RowsPage {
       const thread = visible(principal, id);
       const fold = transcripts.of(id);
       const transcript = fold.transcript();
       const reader = readerOf(principal, thread);
       const end = Math.min(before, transcript.rows.length);
-      const start = Math.max(0, end - limit);
+      const target = at === undefined ? -1 : fold.indexOf(at);
+      const start = Math.max(0, Math.min(end - limit, target === -1 ? end : target));
       const rows = [];
       for (let index = start; index < end; index++) {
         rows.push(shownRow(fold, transcript, index, reader));

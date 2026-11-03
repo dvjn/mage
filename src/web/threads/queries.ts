@@ -64,11 +64,11 @@ export function threadCommandsQuery(threadId: string) {
   });
 }
 
-// The rows of the thread before the place `before`.
-export async function earlierRows(threadId: string, before: number) {
+// The rows of the thread before the place `before`, or with `at` as many as reach back to that row.
+export async function earlierRows(threadId: string, before: number, at?: string) {
   const res = await apiClient.v1.threads[":id"].rows.$get({
     param: { id: threadId },
-    query: { before: String(before) },
+    query: { before: String(before), ...(at && { at }) },
   });
   if (!res.ok) throw new Error("could not read the thread's earlier rows");
   return rowsPageSchema.parse(await res.json());

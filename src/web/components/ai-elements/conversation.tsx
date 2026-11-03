@@ -15,6 +15,8 @@ export type ConversationProps = Omit<ComponentProps<typeof StickToBottom>, "chil
   // Content after `openAt` is still growing: it is not followed, even when it fits at first,
   // until the reader reaches the end.
   holdOpenAt?: boolean;
+  // The id of an element to bring into view, without sticking to the end, once it is there.
+  scrollTo?: string;
 };
 
 // Opens at the end, or at `openAt`, and stays at the end as content grows unless the reader
@@ -24,6 +26,7 @@ export const Conversation = ({
   children,
   openAt,
   holdOpenAt,
+  scrollTo,
   ...props
 }: ConversationProps) => (
   <StickToBottom
@@ -35,8 +38,31 @@ export const Conversation = ({
   >
     {children}
     <OpenScrolled at={openAt} hold={holdOpenAt} />
+    <ScrolledTo id={scrollTo} />
   </StickToBottom>
 );
+
+// How far down the view an element scrolled to sits, as a share of the view's height.
+const SCROLL_TO_SHARE = 0.3;
+
+// Scrolls the element with the id to near the top third of the view, once it is in the content,
+// and stops following the end. Coming after the opening scroll, it wins over it.
+const ScrolledTo = ({ id }: { id?: string }) => {
+  const { state, scrollRef, stopScroll } = useStickToBottomContext();
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current;
+    const element = id ? document.getElementById(id) : null;
+    if (!scroll || !element || !scroll.contains(element)) return;
+    const top =
+      scroll.scrollTop +
+      element.getBoundingClientRect().top -
+      scroll.getBoundingClientRect().top -
+      scroll.clientHeight * SCROLL_TO_SHARE;
+    stopScroll();
+    state.scrollTop = Math.max(0, top);
+  }, [id, scrollRef, state, stopScroll]);
+  return null;
+};
 
 // The room left above the element a conversation opens at.
 const OPEN_AT_OFFSET_PX = 24;

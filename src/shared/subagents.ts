@@ -14,14 +14,13 @@ export const subagentNeedsSchema = z.enum(["approval", "answer"]);
 
 export type SubagentNeeds = z.infer<typeof subagentNeedsSchema>;
 
-// A subagent as lines and lists show it: its thread, the name it was given, where it stands, what
-// it waits on, and how many messages it exchanged with each of the others started with it.
+// A subagent as lines and lists show it: its thread, the name it was given, where it stands and what
+// it waits on.
 export const subagentSummarySchema = z.object({
   threadId: z.string(),
   name: z.string(),
   state: subagentStateSchema,
   needs: subagentNeedsSchema.optional(),
-  talks: z.array(z.object({ with: z.string(), messages: z.number().int().positive() })).optional(),
 });
 
 export type SubagentSummary = z.infer<typeof subagentSummarySchema>;

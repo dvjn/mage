@@ -397,6 +397,17 @@ describe("subagents", () => {
     await answer(thread.id);
     await workspace.worker.idle();
     expect(workspace.subagents.summaryOf(slow)?.state).toBe("archived");
+    // The start links to the task it gave, the stop and the archive to the subagent's thread, and
+    // the refused send to nothing.
+    const shown = (await workspace.rowsShown(thread.id, ada.cookie)).rows.flatMap((row) =>
+      row.kind === "tool" ? [row.effects] : [],
+    );
+    expect(shown).toEqual([
+      [{ kind: "task", threadId: slow, rowId: expect.any(String), name: "Slow" }],
+      [{ kind: "thread", threadId: slow, name: "Slow" }],
+      [{ kind: "thread", threadId: slow, name: "Slow" }],
+      undefined,
+    ]);
     const tools = rowsOf(thread.id).filter((row) => row.kind === "tool");
     expect(tools.at(-1)?.kind === "tool" && tools.at(-1)?.output).toEqual({
       ok: false,
@@ -548,8 +559,80 @@ describe("subagents", () => {
     const listed = outputs[2]?.ok ? (outputs[2].value as { subagents: { name: string }[] }) : null;
     expect(listed?.subagents.map((subagent) => subagent.name)).toEqual(["Writer"]);
     // Each side counts the messages between them.
-    expect(workspace.subagents.summaryOf(writer)?.talks).toEqual([{ with: "Critic", messages: 1 }]);
-    expect(workspace.subagents.summaryOf(critic)?.talks).toEqual([{ with: "Writer", messages: 1 }]);
+  });
+
+  it("link each call to the messages it sent, and each message back to its call", async () => {
+    const workspace = await subagentThread();
+    const { ada, post, thread, start, calls, answer, callIn, subagentNamed, rowsShown } = workspace;
+    start();
+    await post(ada, "Go");
+    await calls(
+      thread.id,
+      ["subagents.start", { name: "Writer", task: "Write" }],
+      ["subagents.start", { name: "Critic", task: "Critique" }],
+    );
+    await answer(thread.id);
+    const writer = subagentNamed("Writer");
+    const critic = subagentNamed("Critic");
+    (await callIn(writer)).reply("Waiting for notes.");
+    await calls(critic, ["subagents.send", { to: ["Writer", "agent"], text: "Tighten it" }]);
+    (await callIn(writer)).reply("Tightened.");
+    await answer(critic);
+    (await callIn(thread.id)).reply("Noted.");
+    await workspace.worker.idle();
+
+    // Each message records the call that sent it, in the thread it was made in.
+    const sent = (threadId: string) =>
+      workspace.threadStore
+        .eventsAfter(threadId, 0)
+        .flatMap((event) => (event.type === "agent.message" ? [event] : []));
+    expect(sent(writer).map((event) => event.data.call)).toEqual([
+      { threadId: thread.id, callId: "call-1" },
+      { threadId: critic, callId: "call-3" },
+    ]);
+    const [toAgent] = sent(thread.id);
+    const [, toWriter] = sent(writer);
+    expect(toAgent?.data.call).toEqual({ threadId: critic, callId: "call-3" });
+
+    // The send links to each message it delivered, named as the reader sees its receiver; the
+    // starts to the tasks they gave.
+    const criticRows = (await rowsShown(critic, ada.cookie)).rows;
+    expect(criticRows.find((row) => row.kind === "tool")).toMatchObject({
+      effects: [
+        { kind: "message", threadId: thread.id, rowId: toAgent!.id, name: "Agent" },
+        { kind: "message", threadId: writer, rowId: toWriter!.id, name: "Writer" },
+      ],
+    });
+    const [task] = sent(critic);
+    const mainRows = (await rowsShown(thread.id, ada.cookie)).rows;
+    expect(mainRows.flatMap((row) => (row.kind === "tool" ? [row.effects] : []))).toEqual([
+      [{ kind: "task", threadId: writer, rowId: sent(writer)[0]!.id, name: "Writer" }],
+      [{ kind: "task", threadId: critic, rowId: task!.id, name: "Critic" }],
+    ]);
+
+    // Each message links back to the call that sent it, named as its line is.
+    expect(mainRows.find((row) => row.id === toAgent!.id)).toMatchObject({
+      kind: "relay",
+      sentBy: { threadId: critic, rowId: "call-3", title: "Send", toolset: "Subagents" },
+    });
+    expect(
+      (await rowsShown(writer, ada.cookie)).rows.filter((row) => row.kind === "relay"),
+    ).toEqual([
+      expect.objectContaining({
+        sentBy: {
+          threadId: thread.id,
+          rowId: "call-1",
+          title: "Start · Writer",
+          toolset: "Subagents",
+          thread: "Go",
+        },
+      }),
+      expect.objectContaining({
+        sentBy: expect.objectContaining({ threadId: critic, rowId: "call-3", thread: "Critic" }),
+      }),
+    ]);
+    // What the message records stays the server's.
+    expect(mainRows.find((row) => row.id === toAgent!.id)).not.toHaveProperty("call");
   });
 
   it(`send each other at most ${MESSAGE_LIMIT} messages, telling their starter once`, async () => {

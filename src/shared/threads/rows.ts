@@ -80,6 +80,18 @@ export const toolActionSchema = z.enum(["allow", "allow_for_now", "deny"]);
 
 export type ToolAction = z.infer<typeof toolActionSchema>;
 
+// Where a subagent call had its effect, as the reader may follow it: the task it gave a subagent it
+// started, a message it sent, or the subagent's thread it stopped or archived; with whom that was,
+// as they show, and the row there, where it is one.
+export const callEffectSchema = z.object({
+  kind: z.enum(["task", "message", "thread"]),
+  threadId: z.string(),
+  rowId: z.string().optional(),
+  name: z.string(),
+});
+
+export type CallEffect = z.infer<typeof callEffectSchema>;
+
 const callRowSchema = z.object({
   ...rowFields,
   kind: z.literal("tool"),
@@ -124,6 +136,8 @@ const callRowSchema = z.object({
   steering: z.string().optional(),
   // For a call that started a subagent, the subagent as it is now.
   subagent: subagentSummarySchema.optional(),
+  // For a subagent call, where it had its effect, in the threads the reader may read.
+  effects: z.array(callEffectSchema).optional(),
 });
 
 // A call that started a subagent also carries the subagent's call that waits for a decision or for
@@ -169,7 +183,9 @@ const compactionRowSchema = z.object({
 });
 
 // A message from another agent: a subagent's, or one from the agent that started this thread's
-// subagent, the first of them its task, with what the subagent was set to do beside it.
+// subagent, the first of them its task, with what the subagent was set to do beside it, and the
+// call that sent it, where known and the reader may read its thread: that thread and the call's
+// row there, what the call's tool is called, and what the thread goes by.
 const relayRowSchema = z.object({
   ...rowFields,
   kind: z.literal("relay"),
@@ -178,6 +194,15 @@ const relayRowSchema = z.object({
   to: z.string(),
   text: z.string(),
   task: subagentTaskSchema.optional(),
+  sentBy: z
+    .object({
+      threadId: z.string(),
+      rowId: z.string(),
+      title: z.string(),
+      toolset: z.string().nullable(),
+      thread: z.string(),
+    })
+    .optional(),
 });
 
 // Subagents that ended runs, told together: each with where it stands and the last thing it said.
@@ -264,10 +289,12 @@ export const rowsUpdateSchema = z.object({
 
 export type RowsUpdate = z.infer<typeof rowsUpdateSchema>;
 
-// What a page of earlier rows is asked for: the rows before a place, and at most how many.
+// What a page of earlier rows is asked for: the rows before a place, and at most how many, or as
+// many as reach back to the row with the id `at`.
 export const rowsQuerySchema = z.object({
   before: z.coerce.number().int().nonnegative(),
   limit: z.coerce.number().int().min(1).max(ROWS_PAGE).optional(),
+  at: z.string().min(1).optional(),
 });
 
 // The rows before a place, and the place of the first of them, or null once they reach the start.

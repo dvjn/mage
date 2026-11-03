@@ -1,16 +1,13 @@
 // How each row of a thread's transcript looks: a person's message, an agent's turn of tool calls
 // and its reply under one Agent header, a failed or stopped run, where the thread was compacted,
-// another agent's message, subagents that ended runs, and a labelled placeholder for an event this
-// client does not know yet.
+// and a labelled placeholder for an event this client does not know yet.
 
-import type { ShownRow } from "@/shared/threads/rows.ts";
 import { FORMER_TOOL_IDS, type ToolDefinition } from "@/shared/tools.ts";
 import { AgentReply } from "@/web/threads/transcript/agent-reply";
 import { CompactionDivider } from "@/web/threads/transcript/compaction-divider";
+import type { OwnRow } from "@/web/threads/transcript/entries";
 import { FailureNotice } from "@/web/threads/transcript/failure-notice";
-import { SubagentNotice } from "@/web/threads/transcript/subagent-notice";
 import { HumanMessage } from "@/web/threads/transcript/human-message";
-import { RelayMessage } from "@/web/threads/transcript/relay-message";
 import { RetryButton } from "@/web/threads/transcript/retry-button";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
@@ -20,7 +17,7 @@ export function TranscriptItem({
   actions = {},
   tools = [],
 }: {
-  row: ShownRow;
+  row: OwnRow;
   actions?: RowActions;
   // The tools' definitions, by which their calls' input and output show, those made under a
   // tool's former id too.
@@ -58,10 +55,6 @@ export function TranscriptItem({
       );
     case "compaction":
       return <CompactionDivider row={row} />;
-    case "relay":
-      return <RelayMessage row={row} />;
-    case "notice":
-      return <SubagentNotice row={row} />;
     case "limit":
       return (
         <p role="status" className="text-center text-xs text-muted-foreground">

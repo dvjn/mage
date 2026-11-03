@@ -43,12 +43,16 @@ const threadRead = jsonBody(threadReadSchema, "seq is required");
 
 const threadPageQuery = queryOf(threadPageQuerySchema);
 
-// `?before=` with the place of the first row the page has, and `?limit=` with how many to read.
-const rowsQuery = validator("query", (value: { before?: string; limit?: string }, c) => {
-  const parsed = rowsQuerySchema.safeParse(value);
-  if (!parsed.success) return c.json({ error: "before must be a place, limit at most 100" }, 400);
-  return parsed.data;
-});
+// `?before=` with the place of the first row the page has, and `?limit=` with how many to read, or
+// `?at=` with the id of a row the page reaches back to.
+const rowsQuery = validator(
+  "query",
+  (value: { before?: string; limit?: string; at?: string }, c) => {
+    const parsed = rowsQuerySchema.safeParse(value);
+    if (!parsed.success) return c.json({ error: "before must be a place, limit at most 100" }, 400);
+    return parsed.data;
+  },
+);
 
 // `?q=` with the text to find in thread titles.
 const threadSearch = validator("query", (value: { q?: string }, c) => {
@@ -121,9 +125,9 @@ export function threadRoutes(options: {
       return c.json(await threads.get(signedIn(c.var.principal), c.req.param("id")), 200);
     })
     .get("/v1/threads/:id/rows", rowsQuery, (c) => {
-      const { before, limit } = c.req.valid("query");
+      const { before, limit, at } = c.req.valid("query");
       const principal = signedIn(c.var.principal);
-      return c.json(threads.rows(principal, c.req.param("id"), before, limit), 200);
+      return c.json(threads.rows(principal, c.req.param("id"), before, limit, at), 200);
     })
     .patch("/v1/threads/:id", threadUpdate, async (c) => {
       const changes = c.req.valid("json");

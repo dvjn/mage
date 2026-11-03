@@ -12,7 +12,8 @@
 // the thread as last read stays in view while it reconnects. Reading it marks it seen. A subagent's
 // thread sits under the thread that started it, says where the subagent stands, and once retired is
 // read-only with a way to bring it back for those the server lets. A subagent's call that waits on
-// someone shows in the thread that started it too, to be decided or answered from there.
+// someone shows in the thread that started it too, to be decided or answered from there. A link to
+// one of its rows opens the thread there, reading back to it, with the row opened and lit.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
@@ -71,10 +72,18 @@ import { withEarlier } from "@/web/threads/thread-rows";
 import { AgentStarting } from "@/web/threads/transcript/agent-starting";
 import { type EntryGap, transcriptEntries } from "@/web/threads/transcript/entries";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
+import { RelayMessages } from "@/web/threads/transcript/relay-message";
+import { SubagentNotice } from "@/web/threads/transcript/subagent-notice";
 import { ToolGroup } from "@/web/threads/transcript/tool-group";
 import { SUBAGENT_NEEDS, SUBAGENT_STATES } from "@/web/threads/transcript/tool-line";
 import { type ThreadAgent, ThreadAgentContext } from "@/web/threads/transcript/agent";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
+import {
+  lineKey,
+  relayRunKey,
+  rowElementId,
+  RowFocusContext,
+} from "@/web/threads/transcript/row-focus";
 import { TranscriptItem } from "@/web/threads/transcript/transcript-item";
 
 const threadRoute = getRouteApi("/_app/t/$threadId");
@@ -86,6 +95,9 @@ const ENTRY_GAPS: Record<EntryGap, string | undefined> = {
   close: "-mt-3",
   near: "-mt-2",
 };
+
+// How long the row a link led to stays lit.
+const LIT_MS = 3000;
 
 export function ThreadPage() {
   const { threadId } = threadRoute.useParams();
@@ -138,11 +150,11 @@ export function ThreadPage() {
   );
 
   const entries = useMemo(() => transcriptEntries(rows), [rows]);
-  // The calls of the runs the reader opened; a run stays open while any of its calls is here, as it
-  // grows and as earlier rows join it.
-  const [openCalls, setOpenCalls] = useState<ReadonlySet<string>>(() => new Set());
-  const toggleCalls = useCallback((ids: string[], open: boolean) => {
-    setOpenCalls((current) => {
+  // The calls of the runs the reader opened, and the agents' messages and runs of them; a run stays
+  // open while any of its rows is here, as it grows and as earlier rows join it.
+  const [openRows, setOpenRows] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleRows = useCallback((ids: string[], open: boolean) => {
+    setOpenRows((current) => {
       const next = new Set(current);
       for (const id of ids) {
         if (open) next.add(id);
@@ -190,7 +202,8 @@ export function ThreadPage() {
       ? undefined
       : entries.find((entry) => {
           if (entry.kind === "subagent") return false;
-          const last = entry.kind === "calls" ? entry.rows.at(-1)! : entry.row;
+          const last =
+            entry.kind === "calls" || entry.kind === "relays" ? entry.rows.at(-1)! : entry.row;
           return last.order >= newFromOrder;
         })?.key;
   const stoppedAt = useRef<HTMLDivElement>(null);
@@ -275,7 +288,7 @@ export function ThreadPage() {
 
   // A call the reader allowed as they signed in with its server, which the page applies once the
   // browser is back here.
-  const { allow, scope } = threadRoute.useSearch();
+  const { allow, scope, row: target } = threadRoute.useSearch();
   const navigate = threadRoute.useNavigate();
   const allowing = useRef<string>(undefined);
   useEffect(() => {
@@ -284,6 +297,41 @@ export function ThreadPage() {
     void navigate({ search: {}, replace: true });
     void decide(allow, true, scope ?? "once");
   });
+
+  // The row a link led to: once the thread is open it is read back to, when it is in an earlier
+  // page, and once here it opens, with the run it is in, is scrolled to and lit for a moment.
+  const [focused, setFocused] = useState<string>();
+  const [lit, setLit] = useState<string>();
+  const reaching = useRef<string>(undefined);
+  useEffect(() => {
+    const key = target && `${threadId}:${target}`;
+    if (!key || !target || !opened || focused === key) return;
+    if (!rows.some((row) => row.id === target)) {
+      if (before === null || reaching.current === key) return;
+      reaching.current = key;
+      void earlierRows(threadId, before, target).then(
+        (page) =>
+          queryClient.setQueryData(
+            threadQuery(threadId).queryKey,
+            (current) => current && withEarlier(current, page),
+          ),
+        () => {},
+      );
+      return;
+    }
+    setFocused(key);
+    toggleRows([target, relayRunKey(target), lineKey(target)], true);
+    setLit(target);
+  });
+  useEffect(() => {
+    if (!lit) return;
+    const timer = setTimeout(() => setLit(undefined), LIT_MS);
+    return () => clearTimeout(timer);
+  }, [lit]);
+  const focus = useMemo(
+    () => ({ opened: openRows, onOpenChange: toggleRows, ...(lit && { lit }) }),
+    [openRows, toggleRows, lit],
+  );
 
   // What the reader may do from a row.
   function actionsFor(row: ShownRow): RowActions {
@@ -384,89 +432,100 @@ export function ThreadPage() {
         {archived && !guest && thread && <ArchivedThreadActions thread={thread} />}
       </PageHeader>
       <ThreadAgentContext.Provider value={agent}>
-        <ReplyActions.Provider value={replyActions}>
-          {detail.data ? (
-            // The cached thread shows at once; it opens again where the reader stopped once read.
-            <Conversation
-              key={`${threadId}:${opened?.openedAt ?? ""}`}
-              openAt={stoppedAt}
-              holdOpenAt={opened?.hold}
-              aria-label="Events"
-              className="min-h-0"
-              resize={arriving ? "smooth" : "instant"}
-            >
-              <ConversationContent className={cn(pageWidth, "gap-4")}>
-                {rows.length === 0 ? (
-                  <ConversationEmptyState description="Write the first message below." />
-                ) : (
-                  <>
-                    <ConversationEarlier
-                      more={before !== null}
-                      first={rows[0]?.id}
-                      onLoad={loadEarlier}
-                    />
-                    {entries.map((entry) => (
-                      <Fragment key={entry.key}>
-                        {entry.key === newEntry && (
-                          // Where the reader stopped; takes no room in the rows' gap.
-                          <div ref={stoppedAt} aria-hidden className="-my-2 h-0 shrink-0" />
-                        )}
-                        <div className={ENTRY_GAPS[entry.gap]}>
-                          {entry.kind === "calls" ? (
-                            <ToolGroup
-                              rows={entry.rows}
-                              calls={entry.calls}
-                              turn={entry.turn}
-                              tools={detail.data?.tools ?? []}
-                              open={entry.calls.some((call) => openCalls.has(call.id))}
-                              onOpenChange={(open) =>
-                                toggleCalls(
-                                  entry.calls.map((call) => call.id),
-                                  open,
-                                )
-                              }
-                            />
-                          ) : entry.kind === "subagent" ? (
-                            <ToolCall
-                              row={entry.row}
-                              definition={detail.data?.tools.find(
-                                (tool) => tool.name === entry.row.toolId,
-                              )}
-                              turn={{ continued: false, model: null }}
-                              subagent={entry.subagent.name}
-                              decide={actionsFor(entry.row).decide}
-                              answer={actionsFor(entry.row).answer}
-                            />
-                          ) : (
-                            <TranscriptItem
-                              row={entry.row}
-                              tools={detail.data?.tools}
-                              actions={actionsFor(entry.row)}
-                            />
-                          )}
-                        </div>
-                      </Fragment>
-                    ))}
-                  </>
-                )}
-                {run &&
-                  !run.waiting &&
-                  !rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
-                    <div className={rows.at(-1)?.turn ? ENTRY_GAPS.near : undefined}>
-                      <AgentStarting
-                        at={run.createdAt}
-                        continued={!!rows.at(-1)?.turn}
-                        compacting={run.compacting}
+        <RowFocusContext.Provider value={focus}>
+          <ReplyActions.Provider value={replyActions}>
+            {detail.data ? (
+              // The cached thread shows at once; it opens again where the reader stopped once read.
+              <Conversation
+                key={`${threadId}:${opened?.openedAt ?? ""}`}
+                openAt={stoppedAt}
+                holdOpenAt={opened?.hold}
+                scrollTo={lit && rowElementId(lit)}
+                aria-label="Events"
+                className="min-h-0"
+                resize={arriving ? "smooth" : "instant"}
+              >
+                <ConversationContent className={cn(pageWidth, "gap-4")}>
+                  {rows.length === 0 ? (
+                    <ConversationEmptyState description="Write the first message below." />
+                  ) : (
+                    <>
+                      <ConversationEarlier
+                        more={before !== null}
+                        first={rows[0]?.id}
+                        onLoad={loadEarlier}
                       />
-                    </div>
+                      {entries.map((entry) => (
+                        <Fragment key={entry.key}>
+                          {entry.key === newEntry && (
+                            // Where the reader stopped; takes no room in the rows' gap.
+                            <div ref={stoppedAt} aria-hidden className="-my-2 h-0 shrink-0" />
+                          )}
+                          <div className={ENTRY_GAPS[entry.gap]}>
+                            {entry.kind === "calls" ? (
+                              <ToolGroup
+                                rows={entry.rows}
+                                calls={entry.calls}
+                                turn={entry.turn}
+                                tools={detail.data?.tools ?? []}
+                                open={entry.calls.some((call) => openRows.has(call.id))}
+                                onOpenChange={(open) =>
+                                  toggleRows(
+                                    entry.calls.map((call) => call.id),
+                                    open,
+                                  )
+                                }
+                              />
+                            ) : entry.kind === "relays" ? (
+                              <RelayMessages
+                                rows={entry.rows}
+                                opened={openRows}
+                                onOpenChange={toggleRows}
+                              />
+                            ) : entry.kind === "notice" ? (
+                              <SubagentNotice row={entry.row} />
+                            ) : entry.kind === "subagent" ? (
+                              <ToolCall
+                                row={entry.row}
+                                definition={detail.data?.tools.find(
+                                  (tool) => tool.name === entry.row.toolId,
+                                )}
+                                turn={{ continued: false, model: null }}
+                                subagent={entry.subagent.name}
+                                decide={actionsFor(entry.row).decide}
+                                answer={actionsFor(entry.row).answer}
+                              />
+                            ) : (
+                              <TranscriptItem
+                                row={entry.row}
+                                tools={detail.data?.tools}
+                                actions={actionsFor(entry.row)}
+                              />
+                            )}
+                          </div>
+                        </Fragment>
+                      ))}
+                    </>
                   )}
-              </ConversationContent>
-              <ConversationScrollButton />
-            </Conversation>
-          ) : (
-            <div className="min-h-0 flex-1" />
-          )}
-        </ReplyActions.Provider>
+                  {run &&
+                    !run.waiting &&
+                    !rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
+                      <div className={rows.at(-1)?.turn ? ENTRY_GAPS.near : undefined}>
+                        <AgentStarting
+                          at={run.createdAt}
+                          continued={!!rows.at(-1)?.turn}
+                          compacting={run.compacting}
+                        />
+                      </div>
+                    )}
+                </ConversationContent>
+                <ConversationScrollButton />
+              </Conversation>
+            ) : (
+              <div className="min-h-0 flex-1" />
+            )}
+          </ReplyActions.Provider>
+        </RowFocusContext.Provider>
       </ThreadAgentContext.Provider>
       <div className={cn(pageWidth, "p-4 pt-0")}>
         <div className="flex flex-col gap-2">
