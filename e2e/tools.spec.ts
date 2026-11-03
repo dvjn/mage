@@ -114,7 +114,36 @@ test("the agent renames a thread at once when the owner alone asked", async ({ p
   await line(page, /^Thread › Rename · Ran$/).click();
   const input = transcript(page).getByRole("region", { name: "Input" });
   await expect(input).toHaveText("InputTitleEngines");
+  await input.getByRole("button", { name: "Raw input" }).click();
+  await expect(input.locator("pre")).toHaveText('{\n  "title": "Engines"\n}');
   await expect(transcript(page).getByRole("region", { name: "Output" })).toContainText("Engines");
+});
+
+test("a turn's calls fold into one line that opens on them", async ({ page }) => {
+  await signUp(page, "Ada Lovelace");
+  await startThread(
+    page,
+    [
+      "Think it over",
+      '/tool thread.rename {"title":"Gears"}',
+      '/tool thread.rename {"title":"Levers"}',
+      '/tool thread.rename {"title":"Engines"}',
+    ].join("\n"),
+  );
+
+  const group = line(page, /^3 tool calls · Thread$/);
+  await expect(group).toBeVisible();
+  await expect(replies(page).last()).toHaveText(/Tool thread.rename said: ok/);
+  await expect(line(page, /^Thread › Rename · Ran$/)).toHaveCount(0);
+
+  await group.click();
+  await expect(line(page, /^Thread › Rename · Ran$/)).toHaveCount(3);
+  await line(page, /^Thread › Rename · Ran$/)
+    .last()
+    .click();
+  await expect(transcript(page).getByRole("region", { name: "Input" })).toHaveText(
+    "InputTitleEngines",
+  );
 });
 
 // Makes an org policy every call of which waits for anyone who can edit the thread, or with the

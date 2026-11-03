@@ -1,7 +1,7 @@
 "use client";
 
 import { cn } from "cn";
-import { BrainIcon, ChevronDownIcon } from "lucide-react";
+import { BrainIcon, ChevronRightIcon } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
 import { createContext, memo, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { Streamdown } from "streamdown";
@@ -137,11 +137,11 @@ export const ReasoningTrigger = memo(
       >
         {children ?? (
           <>
+            <ChevronRightIcon
+              className={cn("size-4 transition-transform", isOpen && "rotate-90")}
+            />
             <BrainIcon className="size-4" />
             {getThinkingMessage(isStreaming, duration)}
-            <ChevronDownIcon
-              className={cn("size-4 transition-transform", isOpen ? "rotate-180" : "rotate-0")}
-            />
           </>
         )}
       </CollapsibleTrigger>

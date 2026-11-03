@@ -19,6 +19,20 @@ const ENDINGS: Partial<Record<AgentRow["status"], string>> = {
   failed: "Cut short",
 };
 
+// What the model thought, as a line the size of a tool call's that opens on it, folded away once
+// the model answers.
+export function ReplyReasoning({ row }: { row: AgentRow }) {
+  return (
+    <Reasoning
+      isStreaming={row.status === "streaming" && !row.text}
+      duration={row.thoughtMs === null ? undefined : Math.max(1, Math.ceil(row.thoughtMs / 1000))}
+    >
+      <ReasoningTrigger className="gap-1.5 py-0.5 text-xs [&>svg]:size-3.5" />
+      <ReasoningContent className="mt-1">{row.reasoning}</ReasoningContent>
+    </Reasoning>
+  );
+}
+
 export function AgentReply({ row, continued }: { row: AgentRow; continued: boolean }) {
   const ending = ENDINGS[row.status];
   const streaming = row.status === "streaming";
@@ -42,19 +56,9 @@ export function AgentReply({ row, continued }: { row: AgentRow; continued: boole
       actions={!streaming && <CopyButton label="Copy message" value={row.text} />}
     >
       <div className="flex flex-col gap-2 text-sm" aria-busy={streaming}>
-        {row.reasoning && (
-          <Reasoning
-            isStreaming={streaming && !row.text}
-            duration={
-              row.thoughtMs === null ? undefined : Math.max(1, Math.ceil(row.thoughtMs / 1000))
-            }
-          >
-            <ReasoningTrigger />
-            <ReasoningContent>{row.reasoning}</ReasoningContent>
-          </Reasoning>
-        )}
-        {streaming && !row.text ? (
-          !row.reasoning && caret
+        {row.reasoning && <ReplyReasoning row={row} />}
+        {!row.text ? (
+          streaming && !row.reasoning && caret
         ) : (
           <RichReply
             text={row.text}

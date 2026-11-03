@@ -13,8 +13,7 @@ import { type ReactNode } from "react";
 
 import type { ToolDefinition } from "@/shared/tools.ts";
 import type { ToolRow } from "@/shared/threads/rows.ts";
-import { callResultOf } from "@/web/agent/tool-layout";
-import { ToolInput, ToolResult } from "@/web/agent/tool-value";
+import { ToolInput, ToolOutput } from "@/web/agent/tool-value";
 import {
   Collapsible,
   CollapsibleContent,
@@ -101,9 +100,7 @@ export function ToolLine({
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-1 flex flex-col gap-3 rounded-md bg-muted px-3 py-2">
         <ToolInput value={row.input} schema={definition?.inputSchema} />
-        {row.output && (
-          <ToolResult result={callResultOf(row.output)} schema={definition?.outputSchema} />
-        )}
+        {row.output && <ToolOutput output={row.output} schema={definition?.outputSchema} />}
       </CollapsibleContent>
     </Collapsible>
   );

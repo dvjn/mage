@@ -17,19 +17,24 @@ export function ToolCall({
   decide,
   answer,
   turn,
+  framed,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
   decide?: RowActions["decide"];
   answer?: RowActions["answer"];
   turn: AgentTurn;
+  // Inside a run of calls, which carries the turn's header and the indent.
+  framed?: boolean;
 }) {
   const asked = row.toolId === ASK_TOOL ? askInputSchema.safeParse(row.input) : null;
   if (asked?.success && row.state === "pending" && row.waits) {
     return <QuestionCard row={row} input={asked.data} answer={answer} continued={turn.continued} />;
   }
   if (asked?.success && row.answers) {
-    const line = turn.continued ? (
+    const line = framed ? (
+      <ToolLine row={row} definition={definition} framed />
+    ) : turn.continued ? (
       <ToolLine row={row} definition={definition} />
     ) : (
       <ToolOpening row={row} definition={definition} turn={turn} />
@@ -37,7 +42,7 @@ export function ToolCall({
     return (
       <div className="flex flex-col gap-1">
         {line}
-        <div className="pl-9">
+        <div className={framed ? undefined : "pl-9"}>
           <GivenAnswers input={asked.data} answers={row.answers} />
         </div>
       </div>
@@ -48,6 +53,7 @@ export function ToolCall({
       <ToolCard row={row} definition={definition} decide={decide} continued={turn.continued} />
     );
   }
+  if (framed) return <ToolLine row={row} definition={definition} framed />;
   if (!turn.continued) return <ToolOpening row={row} definition={definition} turn={turn} />;
   return <ToolLine row={row} definition={definition} />;
 }

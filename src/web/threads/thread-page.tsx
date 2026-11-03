@@ -66,9 +66,20 @@ import {
 import { Composer, PendingTray, RunStatus } from "@/web/threads/thread-composer";
 import { withEarlier } from "@/web/threads/thread-rows";
 import { AgentStarting } from "@/web/threads/transcript/agent-starting";
+import { type EntryGap, transcriptEntries } from "@/web/threads/transcript/entries";
+import { ToolGroup } from "@/web/threads/transcript/tool-group";
+import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { TranscriptItem } from "@/web/threads/transcript/transcript-item";
 
 const threadRoute = getRouteApi("/_app/t/$threadId");
+
+// The rows sit a turn apart; an entry that continues the agent's turn draws up close to the line
+// before it, or near where text or a card meets the rest of the turn.
+const ENTRY_GAPS: Record<EntryGap, string | undefined> = {
+  apart: undefined,
+  close: "-mt-3",
+  near: "-mt-2",
+};
 
 export function ThreadPage() {
   const { threadId } = threadRoute.useParams();
@@ -124,6 +135,21 @@ export function ThreadPage() {
     [saved, streaming],
   );
 
+  const entries = useMemo(() => transcriptEntries(rows), [rows]);
+  // The calls of the runs the reader opened; a run stays open while any of its calls is here, as it
+  // grows and as earlier rows join it.
+  const [openCalls, setOpenCalls] = useState<ReadonlySet<string>>(() => new Set());
+  const toggleCalls = useCallback((ids: string[], open: boolean) => {
+    setOpenCalls((current) => {
+      const next = new Set(current);
+      for (const id of ids) {
+        if (open) next.add(id);
+        else next.delete(id);
+      }
+      return next;
+    });
+  }, []);
+
   // The thread as first read from the server on this visit, or as cached when it cannot answer:
   // its rows, and the first row the reader had not seen by then that is not their own nor a reply
   // still being written. It opens there, or at the end when there is none, and a line marks that
@@ -154,6 +180,16 @@ export function ThreadPage() {
   }
   const opened = visit?.threadId === threadId ? visit : undefined;
   const arriving = !!opened && opened.rows !== saved;
+  // The entry the line above what is new marks: the one with the first new row, or the first after
+  // it where that row shows as nothing.
+  const newFromOrder = rows.find((row) => row.id === opened?.newFrom)?.order;
+  const newEntry =
+    newFromOrder === undefined
+      ? undefined
+      : entries.find((entry) => {
+          const last = entry.kind === "calls" ? entry.rows.at(-1)! : entry.row;
+          return last.order >= newFromOrder;
+        })?.key;
   const stoppedAt = useRef<HTMLDivElement>(null);
   useMarkRead(threadId, notFound || ended || !opened ? undefined : thread?.lastEventSeq);
 
@@ -217,6 +253,23 @@ export function ThreadPage() {
     void navigate({ search: {}, replace: true });
     void decide(allow, true, scope ?? "once");
   });
+
+  // What the reader may do from a row.
+  function actionsFor(row: ShownRow): RowActions {
+    return {
+      ...((row.kind === "failure" || row.kind === "stop") &&
+        row.canRetry && { retry: () => retry(row.runId) }),
+      ...(can?.arrange && { pickModel: () => setPicking(true) }),
+      ...(row.kind === "tool" &&
+        !!row.actions?.length && {
+          decide: (allow: boolean, scope: ToolScope) => decide(row.id, allow, scope),
+        }),
+      ...(row.kind === "tool" &&
+        row.canAnswer && {
+          answer: (answers: AskAnswers | null) => answer(row.id, answers),
+        }),
+    };
+  }
 
   // A click in a reply's layout posts as the person who clicked, for those who may post.
   const replyActions = can?.post
@@ -303,30 +356,35 @@ export function ThreadPage() {
                     first={rows[0]?.id}
                     onLoad={loadEarlier}
                   />
-                  {rows.map((row) => (
-                    <Fragment key={row.id}>
-                      {row.id === opened?.newFrom && (
+                  {entries.map((entry) => (
+                    <Fragment key={entry.key}>
+                      {entry.key === newEntry && (
                         // Where the reader stopped; takes no room in the rows' gap.
                         <div ref={stoppedAt} aria-hidden className="-my-2 h-0 shrink-0" />
                       )}
-                      <TranscriptItem
-                        row={row}
-                        tools={detail.data?.tools}
-                        actions={{
-                          ...((row.kind === "failure" || row.kind === "stop") &&
-                            row.canRetry && { retry: () => retry(row.runId) }),
-                          ...(can?.arrange && { pickModel: () => setPicking(true) }),
-                          ...(row.kind === "tool" &&
-                            !!row.actions?.length && {
-                              decide: (allow: boolean, scope: ToolScope) =>
-                                decide(row.id, allow, scope),
-                            }),
-                          ...(row.kind === "tool" &&
-                            row.canAnswer && {
-                              answer: (answers: AskAnswers | null) => answer(row.id, answers),
-                            }),
-                        }}
-                      />
+                      <div className={ENTRY_GAPS[entry.gap]}>
+                        {entry.kind === "calls" ? (
+                          <ToolGroup
+                            rows={entry.rows}
+                            calls={entry.calls}
+                            turn={entry.turn}
+                            tools={detail.data?.tools ?? []}
+                            open={entry.calls.some((call) => openCalls.has(call.id))}
+                            onOpenChange={(open) =>
+                              toggleCalls(
+                                entry.calls.map((call) => call.id),
+                                open,
+                              )
+                            }
+                          />
+                        ) : (
+                          <TranscriptItem
+                            row={entry.row}
+                            tools={detail.data?.tools}
+                            actions={actionsFor(entry.row)}
+                          />
+                        )}
+                      </div>
                     </Fragment>
                   ))}
                 </>
@@ -334,11 +392,13 @@ export function ThreadPage() {
               {run &&
                 !run.waiting &&
                 !rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
-                  <AgentStarting
-                    at={run.createdAt}
-                    continued={!!rows.at(-1)?.turn}
-                    compacting={run.compacting}
-                  />
+                  <div className={rows.at(-1)?.turn ? ENTRY_GAPS.near : undefined}>
+                    <AgentStarting
+                      at={run.createdAt}
+                      continued={!!rows.at(-1)?.turn}
+                      compacting={run.compacting}
+                    />
+                  </div>
                 )}
             </ConversationContent>
             <ConversationScrollButton />
