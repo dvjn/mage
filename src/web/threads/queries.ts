@@ -1,5 +1,6 @@
 import { queryOptions } from "@tanstack/react-query";
 
+import { threadCommandsSchema } from "@/shared/threads/commands.ts";
 import { type ThreadDetail, threadDetailSchema } from "@/shared/threads/detail.ts";
 import { threadSidebarSchema } from "@/shared/threads/list.ts";
 import { rowsPageSchema } from "@/shared/threads/rows.ts";
@@ -46,6 +47,19 @@ export function threadQuery(threadId: string) {
       const fetched = threadDetailSchema.parse(await res.json());
       const shown = client.getQueryData<ThreadDetail>(queryKey);
       return shown ? withFreshRead(fetched, shown) : fetched;
+    },
+  });
+}
+
+// The commands the reader may send in the thread.
+export function threadCommandsQuery(threadId: string) {
+  return queryOptions({
+    queryKey: ["threads", threadId, "commands"],
+    staleTime: 30_000,
+    queryFn: async () => {
+      const res = await apiClient.v1.threads[":id"].commands.$get({ param: { id: threadId } });
+      if (!res.ok) throw new Error("could not read the thread's commands");
+      return threadCommandsSchema.parse(await res.json());
     },
   });
 }

@@ -4,10 +4,12 @@
 // the place its run reserved when the reply began. A reply cut short and then tried again stays in
 // view but is left out of what the agent reads. A tool call the agent asked for sits where it asked,
 // and carries how it was decided, what was answered to the questions it asked, and what it gave
-// back. Folded one event at a time, it also keeps for each row the last event that changed it and
-// where it sits in the agent's turn.
+// back. A compaction sits where it was made, with the summary the agent reads from then on in place
+// of what came before. Folded one event at a time, it also keeps for each row the last event that
+// changed it and where it sits in the agent's turn.
 
 import type { AskAnswers } from "@/shared/ask.ts";
+import { COMPACT } from "@/shared/threads/commands.ts";
 import {
   type ActorSummary,
   type AnyThreadEvent,
@@ -24,6 +26,14 @@ import {
 
 type Person = Extract<ActorSummary, { kind: "user" }>;
 
+// The command a message was sent as: its name, what followed it, and what the agent reads in its
+// place, where that differs from the message.
+export interface SentCommand {
+  name: string;
+  args: string;
+  text?: string;
+}
+
 export interface HumanRow {
   kind: "human";
   // The message's id.
@@ -36,6 +46,7 @@ export interface HumanRow {
   quiet: boolean;
   // Written by a guest of the thread.
   guest?: true;
+  command?: SentCommand;
 }
 
 export interface AgentRow {
@@ -126,6 +137,21 @@ export interface ToolRow {
   standingOn?: string;
 }
 
+// The thread compacted for the agent: by whom, null for the agent itself, the summary it reads in
+// place of the rows before the one at `firstKeptSeq`, the focus it was asked to keep, and about how
+// many tokens it read before and after.
+export interface CompactionRow {
+  kind: "compaction";
+  id: string;
+  seq: number;
+  by: Person | null;
+  summary: string;
+  firstKeptSeq: number;
+  focus?: string;
+  tokensBefore: number;
+  tokensAfter: number | null;
+}
+
 // An event this client does not know how to show.
 export interface UnknownRow {
   kind: "unknown";
@@ -134,7 +160,19 @@ export interface UnknownRow {
   type: string;
 }
 
-export type TranscriptRow = HumanRow | AgentRow | ToolRow | FailureRow | StopRow | UnknownRow;
+export type TranscriptRow =
+  | HumanRow
+  | AgentRow
+  | ToolRow
+  | FailureRow
+  | StopRow
+  | CompactionRow
+  | UnknownRow;
+
+// Whether the message asks for the thread to be compacted.
+export function asksToCompact(message: { command?: SentCommand }) {
+  return message.command?.name === COMPACT;
+}
 
 // A message posted while the agent was busy, waiting to be taken in.
 export interface PendingMessage {
@@ -146,6 +184,7 @@ export interface PendingMessage {
   mode: Delivery;
   // Written by a guest of the thread.
   guest?: true;
+  command?: SentCommand;
 }
 
 export interface ActiveRun {
@@ -156,6 +195,8 @@ export interface ActiveRun {
   createdAt: string;
   // The tool call it waits on a decision or an answer for, if any.
   waitingOn: string | null;
+  // It compacts the thread, as someone asked.
+  compacting: boolean;
 }
 
 export interface Transcript {
@@ -262,6 +303,8 @@ export function createFold(): TranscriptFold {
   const people = new Map<string, Person>();
   // Approvals of calls older threads paused, kept for when they ran.
   const parked = new Map<string, NonNullable<ToolRow["decision"]>>();
+  // The runs that compact the thread: those that took in a message asking for it, and retries.
+  const compacting = new Set<string>();
   const personOf = (userId: string): Person =>
     people.get(userId) ?? { kind: "user", userId, name: "(former member)" };
 
@@ -289,6 +332,7 @@ export function createFold(): TranscriptFold {
           postedAt: event.createdAt,
           text: textOf(event.data.parts),
           ...(event.data.guest && { guest: true as const }),
+          ...(event.data.command && { command: event.data.command }),
         };
         if (event.data.quiet) push({ kind: "human", ...message, quiet: true });
         else pending.set(event.id, { ...message, mode: event.data.mode });
@@ -310,6 +354,7 @@ export function createFold(): TranscriptFold {
           const message = pending.get(id);
           if (!message) continue;
           pending.delete(id);
+          if (asksToCompact(message)) compacting.add(event.data.runId);
           const { mode: _mode, ...admitted } = message;
           push({ kind: "human", ...admitted, seq: event.seq, quiet: false });
         }
@@ -350,6 +395,9 @@ export function createFold(): TranscriptFold {
         break;
       }
       case "run.created":
+        if (event.data.reason === "retry" && compacting.has(event.data.continuesRunId ?? "")) {
+          compacting.add(event.data.runId);
+        }
         if (event.data.reason === "retry") {
           for (const reply of replies.values()) {
             if (reply.runId === event.data.continuesRunId && reply.status !== "completed") {
@@ -364,6 +412,7 @@ export function createFold(): TranscriptFold {
           reason: event.data.reason,
           createdAt: event.createdAt,
           waitingOn: null,
+          compacting: false,
         };
         break;
       case "run.failed": {
@@ -465,6 +514,25 @@ export function createFold(): TranscriptFold {
         touch(call.id);
         break;
       }
+      case "thread.compacted": {
+        const { summary, firstKeptSeq, focus, tokensBefore, tokensAfter, usage: used } = event.data;
+        push({
+          kind: "compaction",
+          id: event.id,
+          seq: event.seq,
+          by: event.actor.kind === "user" ? event.actor : null,
+          summary,
+          firstKeptSeq,
+          ...(focus && { focus }),
+          tokensBefore,
+          tokensAfter: tokensAfter ?? null,
+        });
+        if (used) {
+          usage.inputTokens += used.inputTokens;
+          usage.outputTokens += used.outputTokens;
+        }
+        break;
+      }
       case "thread.renamed":
         if (event.data.usage) {
           usage.inputTokens += event.data.usage.inputTokens;
@@ -529,6 +597,7 @@ export function createFold(): TranscriptFold {
     transcript() {
       if (run) {
         const runId = run.id;
+        run.compacting = compacting.has(runId);
         run.waitingOn =
           [...calls.values()].find(
             (call) => call.runId === runId && call.waits && call.state === "pending",

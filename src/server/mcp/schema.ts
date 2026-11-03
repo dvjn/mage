@@ -46,6 +46,8 @@ export const mcpServer = sqliteTable(
     // Whether it declared resources when last read.
     resources: integer("resources", { mode: "boolean" }).default(false).notNull(),
     tools: text("tools", { mode: "json" }).$type<unknown[]>().notNull(),
+    // The prompts it offered when last read, as JSON; none when it declared no prompts.
+    prompts: text("prompts", { mode: "json" }).$type<unknown[]>().default([]).notNull(),
     toolsReadAt: integer("tools_read_at", { mode: "timestamp_ms" }),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })

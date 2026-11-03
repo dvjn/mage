@@ -2,6 +2,7 @@
 
 import * as z from "zod";
 
+import { commandInputSchema } from "@/shared/threads/commands.ts";
 import { deliverySchema, toolScopeSchema } from "@/shared/threads/events.ts";
 import { effortSchema } from "@/shared/threads/thread.ts";
 
@@ -10,6 +11,8 @@ const messageTextSchema = z.string().trim().min(1).max(100_000);
 export const messageInputSchema = z.object({
   text: messageTextSchema,
   mode: deliverySchema.default("steer"),
+  // The command the text starts with, when it is sent as one.
+  command: commandInputSchema.optional(),
 });
 
 // A change to a message still waiting: its text, or steering instead of queueing or back.

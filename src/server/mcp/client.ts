@@ -64,6 +64,21 @@ export interface McpListing {
   // Whether it declares resources the agent may list and read.
   resources: boolean;
   tools: ToolDefinition[];
+  // The prompts it offers people as commands; none when it declares no prompts.
+  prompts: McpPrompt[];
+}
+
+// A prompt a server offers: its name, what it says of it, and the arguments it takes in order.
+export interface McpPrompt {
+  name: string;
+  title?: string;
+  description?: string;
+  arguments: { name: string; description?: string; required: boolean }[];
+}
+
+// What a prompt gave back: its messages, each one's role and content as MCP sends it.
+export interface McpPromptResult {
+  messages: { role: string; content: Record<string, unknown> }[];
 }
 
 // A resource a server lists: its address, name, and what it says of it.
@@ -166,6 +181,12 @@ export interface McpClient {
   // Every resource the server lists, all pages of them.
   listResources(target: McpTarget, signal?: AbortSignal): Promise<McpResource[]>;
   readResource(target: McpTarget, uri: string, signal?: AbortSignal): Promise<McpResourceContent[]>;
+  getPrompt(
+    target: McpTarget,
+    name: string,
+    args: Record<string, string>,
+    signal?: AbortSignal,
+  ): Promise<McpPromptResult>;
   // The client metadata document Mage publishes.
   clientDocument(): ReturnType<typeof mcpClientDocument>;
   // Starts authorizing Mage: the address to send the person to, with `state` and the PKCE
@@ -387,6 +408,27 @@ function definitionOf(tool: {
   };
 }
 
+// The prompts a server offers, all pages of them, when it declares prompts; a server that fails to
+// list them offers none, so its tools are still read.
+async function promptsOf(client: Client): Promise<McpPrompt[]> {
+  if (!client.getServerCapabilities()?.prompts) return [];
+  try {
+    const { prompts } = await client.listPrompts();
+    return prompts.map((prompt) => ({
+      name: prompt.name,
+      ...(prompt.title && { title: prompt.title }),
+      ...(prompt.description && { description: prompt.description }),
+      arguments: (prompt.arguments ?? []).map((argument) => ({
+        name: argument.name,
+        ...(argument.description && { description: argument.description }),
+        required: !!argument.required,
+      })),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export function createMcpClient(options: McpClientOptions): McpClient {
   const { fetch, oauth: oauthClient, version } = options;
   const document = mcpClientDocument(oauthClient);
@@ -532,6 +574,7 @@ export function createMcpClient(options: McpClientOptions): McpClient {
           instructions: client.getInstructions() ?? null,
           resources: !!client.getServerCapabilities()?.resources,
           tools: tools.map(definitionOf),
+          prompts: await promptsOf(client),
         };
       });
     },
@@ -567,6 +610,18 @@ export function createMcpClient(options: McpClientOptions): McpClient {
           ...("text" in part && typeof part.text === "string" && { text: part.text }),
           ...("blob" in part && typeof part.blob === "string" && { blob: part.blob }),
         }));
+      });
+    },
+
+    getPrompt(target, name, args, signal) {
+      return using(target, async (client) => {
+        const { messages } = await client.getPrompt({ name, arguments: args }, { signal });
+        return {
+          messages: messages.map((message) => ({
+            role: message.role,
+            content: message.content as Record<string, unknown>,
+          })),
+        };
       });
     },
 

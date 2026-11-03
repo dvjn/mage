@@ -288,6 +288,13 @@
       "when": 1793608618573,
       "tag": "0040_mcp_tool_search",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1793631530151,
+      "tag": "0041_mcp_server_prompts",
+      "breakpoints": true
     }
   ]
 }

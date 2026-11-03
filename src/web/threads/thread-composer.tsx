@@ -3,12 +3,16 @@
 // queues for the next reply; the split button also interrupts the reply and sends at once, and the
 // stop button stops it. Everyone sees the tray; each author can edit their own waiting messages,
 // switch them between steering and queueing, or remove them. While the agent waits for a decision
-// on a tool call, the composer says so. Viewers only read, as does everyone in an archived space,
-// and a line where the composer would be says so. Offline, nothing sends or stops until the app is back online.
+// on a tool call, the composer says so. A message starting with a slash opens the menu of the
+// commands the reader may send, and one whose first word names one of them is sent as it; one that
+// needs the reader's own connection to an MCP server offers to connect first. Viewers only read, as
+// does everyone in an archived space, and a line where the composer would be says so. Offline,
+// nothing sends or stops until the app is back online.
 
 import { ChevronDownIcon, EyeIcon, SquareIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useRef, useState } from "react";
 
+import { type CommandInput, commandOf, type ThreadCommand } from "@/shared/threads/commands.ts";
 import { type Delivery, QUIET_PREFIX } from "@/shared/threads/events.ts";
 import type { PendingMessage } from "@/shared/threads/rows.ts";
 import {
@@ -32,6 +36,13 @@ import { InputGroupButton } from "@/web/components/ui/input-group";
 import { Spinner } from "@/web/components/ui/spinner";
 import { Textarea } from "@/web/components/ui/textarea";
 import { useOnline } from "@/web/lib/online";
+import { useConnectFlow } from "@/web/mcp/connect";
+import {
+  COMMAND_MENU,
+  CommandMenu,
+  commandOptionId,
+  matchingCommands,
+} from "@/web/threads/command-menu";
 import { useWaitingMessage } from "@/web/threads/mutations";
 
 export function Composer({
@@ -44,6 +55,8 @@ export function Composer({
   onSend,
   onStop,
   tools,
+  commands = [],
+  onConnected,
 }: {
   running: boolean;
   // What the agent waits for from people, if anything.
@@ -54,13 +67,44 @@ export function Composer({
   sending: boolean;
   stopping: boolean;
   // Throws when the message is not posted, so the composer keeps the text.
-  onSend: (text: string, mode: Delivery) => Promise<void>;
+  onSend: (text: string, mode: Delivery, command?: CommandInput) => Promise<void>;
   onStop: () => void;
   tools?: ReactNode;
+  // The commands the reader may send.
+  commands?: readonly ThreadCommand[];
+  // Called once the reader connected to a server one of the commands needs.
+  onConnected?: () => Promise<unknown>;
 }) {
   const mode = useRef<Delivery>("steer");
   const textarea = useRef<HTMLTextAreaElement>(null);
   const online = useOnline();
+  const [draft, setDraft] = useState("");
+  const [active, setActive] = useState(0);
+  // The text the menu was closed on, which keeps it closed until the text changes.
+  const [closedOn, setClosedOn] = useState<string | null>(null);
+  const matches = closedOn === draft ? [] : matchingCommands(commands, draft);
+  const picking = matches.length > 0;
+  const chosen = Math.min(active, matches.length - 1);
+  // The command the text names, when the reader must connect to its server before sending it.
+  const named = commandOf(draft);
+  const needs = commands.find(
+    (command) => command.name === named?.name && command.connection?.connected === false,
+  )?.connection;
+  const connect = useConnectFlow(needs);
+
+  function show(text: string) {
+    setDraft(text);
+    setActive(0);
+  }
+
+  function pick(command: ThreadCommand) {
+    const text = `/${command.name} `;
+    if (textarea.current) {
+      textarea.current.value = text;
+      textarea.current.focus();
+    }
+    show(text);
+  }
 
   function submitAs(next: Delivery) {
     mode.current = next;
@@ -68,6 +112,29 @@ export function Composer({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (picking && !event.nativeEvent.isComposing) {
+      const step = event.key === "ArrowDown" ? 1 : event.key === "ArrowUp" ? -1 : 0;
+      if (step) {
+        event.preventDefault();
+        setActive((chosen + step + matches.length) % matches.length);
+        return;
+      }
+      // Enter on a command typed in full sends it.
+      const whole = draft === `/${matches[chosen]!.name}`;
+      if (
+        (event.key === "Enter" && !event.shiftKey && !event.altKey && !whole) ||
+        event.key === "Tab"
+      ) {
+        event.preventDefault();
+        pick(matches[chosen]!);
+        return;
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setClosedOn(draft);
+        return;
+      }
+    }
     if (event.key !== "Enter" || !event.altKey || event.shiftKey) return;
     if (event.nativeEvent.isComposing) return;
     event.preventDefault();
@@ -84,18 +151,53 @@ export function Composer({
   }
 
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className="relative flex flex-col gap-1.5">
+      {picking && <CommandMenu commands={matches} active={chosen} onPick={pick} />}
+      {needs && (
+        <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+          <span>Connect to {needs.title} to send this</span>
+          <Button
+            size="xs"
+            variant="outline"
+            disabled={connect.busy}
+            onClick={() =>
+              void connect.start(async () => {
+                await onConnected?.();
+              }, window.location.pathname)
+            }
+          >
+            Connect
+          </Button>
+          {connect.dialog}
+        </div>
+      )}
       <PromptInput
         onSubmit={(message) => {
-          const chosen = mode.current;
+          const delivery = mode.current;
           mode.current = "steer";
-          return onSend(message.text, chosen);
+          const command = commandOf(message.text);
+          const known = command && commands.some((found) => found.name === command.name);
+          show("");
+          // A message that is not posted goes back in the composer.
+          return onSend(message.text, delivery, known ? command : undefined).catch(
+            (err: unknown) => {
+              if (textarea.current && !textarea.current.value) {
+                textarea.current.value = message.text;
+                show(message.text);
+              }
+              throw err;
+            },
+          );
         }}
       >
         <PromptInputBody>
           <PromptInputTextarea
             ref={textarea}
             aria-label="Message"
+            aria-autocomplete="list"
+            aria-controls={picking ? COMMAND_MENU : undefined}
+            aria-activedescendant={picking ? commandOptionId(chosen) : undefined}
+            onChange={(event) => show(event.currentTarget.value)}
             placeholder={
               !online
                 ? "You are offline"
@@ -234,17 +336,20 @@ function WaitingItem({
                 {message.mode === "steer" ? "Queue instead" : "Steer instead"}
               </Button>
             )}
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={busy}
-              onClick={() => {
-                setDraft(message.text);
-                setEditing(true);
-              }}
-            >
-              Edit
-            </Button>
+            {/* A command stands for what it was sent as; it is removed and sent again instead. */}
+            {!message.command && (
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={busy}
+                onClick={() => {
+                  setDraft(message.text);
+                  setEditing(true);
+                }}
+              >
+                Edit
+              </Button>
+            )}
             <Button size="xs" variant="ghost" disabled={busy} onClick={() => void remove()}>
               Remove
             </Button>

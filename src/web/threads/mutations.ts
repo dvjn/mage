@@ -8,6 +8,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 
 import type { AskAnswers } from "@/shared/ask.ts";
+import type { CommandInput } from "@/shared/threads/commands.ts";
 import type { Delivery, ToolScope } from "@/shared/threads/events.ts";
 import { type Effort, threadSchema } from "@/shared/threads/thread.ts";
 import { apiClient } from "@/web/api/api-client";
@@ -53,10 +54,18 @@ export function useCreateThread(spaceId: string) {
 export function usePostMessage(threadId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({ text, mode }: { text: string; mode: Delivery }) => {
+    mutationFn: async ({
+      text,
+      mode,
+      command,
+    }: {
+      text: string;
+      mode: Delivery;
+      command?: CommandInput;
+    }) => {
       const res = await apiClient.v1.threads[":id"].messages.$post({
         param: { id: threadId },
-        json: { text, mode },
+        json: { text, mode, ...(command && { command }) },
       });
       if (!res.ok) throw new Error(await errorOf(res));
     },

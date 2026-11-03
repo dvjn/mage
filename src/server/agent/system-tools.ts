@@ -1,16 +1,16 @@
 // Mage's built-in Thread toolset, whose tools act on the thread the agent replies in: reading its
 // details, renaming it, moving it to one of its space's folders, changing the model and effort it
-// replies with, and asking its people questions. Each is cheap, undone as easily, and shows in the
-// thread. Asking is always on; the rest are actions orgs and spaces set. Changing the model asks
-// first when the new one comes through another connection than the one replying now, since the
-// whole thread then goes to another provider.
+// replies with, compacting what it reads of it, and asking its people questions. Each is cheap and
+// shows in the thread. Asking is always on; the rest are actions orgs and spaces set. Changing the
+// model asks first when the new one comes through another connection than the one replying now,
+// since the whole thread then goes to another provider.
 
 import * as z from "zod";
 
 import type { FolderStore } from "@/server/folders/service.ts";
 import type { GuestStore } from "@/server/guests/service.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
-import type { Models } from "@/server/models/service.ts";
+import type { Models, OpenModel } from "@/server/models/service.ts";
 import type { SpaceStore } from "@/server/spaces/service.ts";
 import { eventSummary } from "@/server/threads/log.ts";
 import type { ThreadStore } from "@/server/threads/service.ts";
@@ -18,6 +18,7 @@ import { effortSchema } from "@/shared/threads/thread.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
 import { askTool } from "./ask.ts";
+import { compact as compactThread } from "./compaction.ts";
 import type { Toolset, ToolSpec } from "./tools.ts";
 
 export interface SystemToolsOptions {
@@ -26,8 +27,13 @@ export interface SystemToolsOptions {
   folders: Pick<FolderStore, "find" | "listInSpace">;
   guests: Pick<GuestStore, "activeIn">;
   models: Pick<Models, "replyModel" | "requireModel">;
+  // Opens the model a thread replies with, to write the summary that compacts it.
+  open: (orgId: string, ref: string) => Promise<OpenModel>;
   now?: () => Date;
 }
+
+// How long writing a summary may take.
+const COMPACT_TIMEOUT_MS = 5 * 60 * 1000;
 
 // The connection part of a model ref.
 function connectionOf(ref: string) {
@@ -35,7 +41,7 @@ function connectionOf(ref: string) {
 }
 
 export function createSystemTools(options: SystemToolsOptions): Toolset {
-  const { threads, spaceStore, folders, guests, models } = options;
+  const { threads, spaceStore, folders, guests, models, open } = options;
   const now = options.now ?? (() => new Date());
 
   function threadOf(id: string) {
@@ -162,10 +168,43 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
     },
   };
 
+  const compact: ToolSpec<{ focus?: string }> = {
+    name: "thread.compact",
+    title: "Compact",
+    annotations: { readOnlyHint: false },
+    description:
+      "Summarise the earlier part of this thread, so that from your next step you read the summary in its place and the most recent part in full. People still see the whole thread. Use it when the thread has grown long; give a focus to say what the summary must keep.",
+    input: z.object({
+      focus: z
+        .string()
+        .trim()
+        .min(1)
+        .max(2000)
+        .optional()
+        .meta({ title: "Focus", description: "What the summary must keep" }),
+    }),
+    risk: () => "normal",
+    async run({ focus }, ctx) {
+      if (!ctx.model) return { ok: false, error: "No model replies in this thread." };
+      const done = await compactThread({
+        threadId: ctx.threadId,
+        rows: transcriptOf(threads.eventsAfter(ctx.threadId, 0).map(eventSummary)).rows,
+        model: await open(ctx.orgId, ctx.model),
+        ...(focus && { focus }),
+        actor: ctx.actor,
+        write: (work) => ctx.write(work),
+        signal: AbortSignal.timeout(COMPACT_TIMEOUT_MS),
+      });
+      if (!done) return { ok: false, error: "There is nothing to compact yet." };
+      const { summarised, tokensBefore, tokensAfter } = done;
+      return { ok: true, value: { summarised, tokensBefore, tokensAfter } };
+    },
+  };
+
   return {
     id: "thread",
     title: "Thread",
     source: "builtin",
-    tools: [info, rename, move, setModel, askTool],
+    tools: [info, rename, move, setModel, compact, askTool],
   };
 }

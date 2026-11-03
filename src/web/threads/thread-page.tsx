@@ -17,6 +17,7 @@ import { cn } from "cn";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AskAnswers } from "@/shared/ask.ts";
+import type { CommandInput } from "@/shared/threads/commands.ts";
 import type { Delivery, ToolScope } from "@/shared/threads/events.ts";
 import type { ShownRow } from "@/shared/threads/rows.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
@@ -58,6 +59,7 @@ import {
   earlierRows,
   spaceThreadsQuery,
   ThreadAccessEnded,
+  threadCommandsQuery,
   ThreadNotFound,
   threadQuery,
 } from "@/web/threads/queries";
@@ -91,6 +93,7 @@ export function ThreadPage() {
     ...spaceFoldersQuery(thread?.spaceId ?? ""),
     enabled: !!thread && !guest,
   });
+  const commands = useQuery({ ...threadCommandsQuery(threadId), enabled: !!can?.post });
 
   // A guest's thread is not in one of their own spaces.
   useEffect(() => {
@@ -176,9 +179,9 @@ export function ThreadPage() {
   }, [queryClient, threadId, before]);
 
   // Throws when the message is not posted, so the composer keeps the text.
-  async function send(text: string, mode: Delivery) {
+  async function send(text: string, mode: Delivery, command?: CommandInput) {
     if (!text.trim()) return;
-    await posting.mutateAsync({ text, mode });
+    await posting.mutateAsync({ text, mode, ...(command && { command }) });
     setVisit((shown) => shown && { ...shown, newFrom: undefined });
     refreshList();
   }
@@ -331,7 +334,11 @@ export function ThreadPage() {
               {run &&
                 !run.waiting &&
                 !rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
-                  <AgentStarting at={run.createdAt} continued={!!rows.at(-1)?.turn} />
+                  <AgentStarting
+                    at={run.createdAt}
+                    continued={!!rows.at(-1)?.turn}
+                    compacting={run.compacting}
+                  />
                 )}
             </ConversationContent>
             <ConversationScrollButton />
@@ -368,6 +375,8 @@ export function ThreadPage() {
             stopping={!!run && run.id === stopped}
             onSend={send}
             onStop={stop}
+            commands={can?.post ? commands.data : undefined}
+            onConnected={() => commands.refetch()}
             tools={
               // A guest uses the model the thread's space chose.
               !guest && (

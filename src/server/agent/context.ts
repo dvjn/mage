@@ -1,17 +1,19 @@
 // What the agent is given to reply from: a short system prompt naming Mage and the people in the
 // thread, followed by the org's instructions, the space's, what the MCP servers whose tools it is
 // offered say about them, the servers' tools left out until it searches for them, what Mage's own
-// toolsets on there tell it and the skills on there, when
-// there are any, and the thread's messages in the order the agent saw them, each person's prefixed
-// with their name, each reply with the tool calls it asked for and what they gave back. Quiet
+// toolsets on there tell it and the skills on there, when there are any, and the thread's messages
+// in the order the agent saw them, each person's prefixed with their name, a command they sent read
+// as what it stands for, each reply with the tool calls it asked for and what they gave back. Quiet
 // asides are included; replies still being written, and replies cut short that were tried again,
 // are not. A call that did not run gives back only that it was not approved, or that its questions
-// were skipped.
+// were skipped. Once the thread is compacted, the summary closes the system prompt and the messages
+// start where the compaction cut it.
 
 import type { ModelMessage, ModelToolResult } from "@/server/models/gateway.ts";
 import { QUIET_PREFIX } from "@/shared/threads/events.ts";
 import type { HumanRow, ToolRow, TranscriptRow } from "@/shared/transcript.ts";
 
+import { readOf } from "./compaction.ts";
 import { TOOL_SEARCH } from "./tool-search.ts";
 
 export interface Context {
@@ -19,8 +21,10 @@ export interface Context {
   messages: ModelMessage[];
 }
 
-export function humanMessage(row: Pick<HumanRow, "author" | "text">): ModelMessage {
-  return { role: "user", text: `[${row.author.name}] ${row.text}` };
+// A person's message as the agent reads it: what a command they sent stands for, or what they
+// wrote.
+export function humanMessage(row: Pick<HumanRow, "author" | "text" | "command">): ModelMessage {
+  return { role: "user", text: `[${row.author.name}] ${row.command?.text ?? row.text}` };
 }
 
 // What an MCP server says about using its tools: written by the server, not by anyone in the org,
@@ -57,7 +61,14 @@ export interface Guidance {
 
 export const NO_GUIDANCE: Guidance = { org: "", space: "" };
 
-export function instructionsFor(people: string[], guidance: Guidance = NO_GUIDANCE) {
+// What heads the summary of a compacted thread's earlier conversation.
+export const COMPACTED_HEADING = "Summary of the earlier conversation in this thread, compacted.";
+
+export function instructionsFor(
+  people: string[],
+  guidance: Guidance = NO_GUIDANCE,
+  summary: string | null = null,
+) {
   const sections = [
     [
       "You are the agent in Mage, a workspace where people talk with you and with each other in shared threads.",
@@ -107,6 +118,11 @@ export function instructionsFor(people: string[], guidance: Guidance = NO_GUIDAN
       ].join("\n"),
     );
   }
+  if (summary) {
+    sections.push(
+      `${COMPACTED_HEADING} It stands in place of the messages it covers; those since follow in full.\n${summary}`,
+    );
+  }
   return sections.join("\n\n");
 }
 
@@ -130,10 +146,12 @@ function resultOf(row: ToolRow): ModelToolResult | null {
 }
 
 export function contextOf(
-  rows: readonly TranscriptRow[],
+  thread: readonly TranscriptRow[],
   guidance: Guidance = NO_GUIDANCE,
 ): Context {
   const people = new Set<string>();
+  for (const row of thread) if (row.kind === "human") people.add(row.author.name);
+  const { summary, rows } = readOf(thread);
   const messages: ModelMessage[] = [];
   const calls = new Map<string, ToolRow[]>();
   for (const row of rows) {
@@ -142,7 +160,6 @@ export function contextOf(
   }
   for (const row of rows) {
     if (row.kind === "human") {
-      people.add(row.author.name);
       messages.push(humanMessage(row));
     } else if (row.kind === "agent" && row.status !== "streaming" && !row.retried) {
       const settled = (calls.get(row.id) ?? [])
@@ -165,5 +182,5 @@ export function contextOf(
       }
     }
   }
-  return { instructions: instructionsFor([...people], guidance), messages };
+  return { instructions: instructionsFor([...people], guidance, summary), messages };
 }

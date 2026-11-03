@@ -1,6 +1,7 @@
 // A person's message: an avatar, who wrote it and when, noted when its author was a guest of the
-// thread or was removed from its org, then its text as markdown, with a copy button on hover; the
-// signed-in person's own rows carry their avatar in the accent colour.
+// thread or was removed from its org, then its text as markdown, or the command it was sent as and
+// what followed it, with a copy button on hover; the signed-in person's own rows carry their avatar
+// in the accent colour.
 
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
@@ -41,7 +42,16 @@ export function HumanMessage({ row }: { row: HumanRow }) {
       actions={<CopyButton label="Copy message" value={row.text} />}
     >
       <div className={cn("flex flex-col gap-2 text-sm", row.quiet && "text-muted-foreground")}>
-        <MessageResponse>{row.text}</MessageResponse>
+        {row.command ? (
+          <p className="whitespace-pre-wrap">
+            <code className="rounded-md bg-muted px-1.5 py-0.5 font-mono text-xs">
+              /{row.command.name}
+            </code>
+            {row.command.args && ` ${row.command.args}`}
+          </p>
+        ) : (
+          <MessageResponse>{row.text}</MessageResponse>
+        )}
       </div>
     </TranscriptRowFrame>
   );

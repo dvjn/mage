@@ -11,7 +11,9 @@
 // revision: it describes itself to server/discover, wants the revision in each request's _meta,
 // and refuses the older initialize handshake as rmcp servers do. In either revision it gives
 // instructions for using its tools, as servers may, and lists a few resources: a text guide, a
-// small image, and at /people/mcp who the caller is.
+// small image, and at /people/mcp who the caller is. It offers one prompt, a greeting whose text
+// starts with the line on which the stand-in model says the rest back, then embeds the guide and an
+// image.
 
 import { createHash, randomBytes } from "node:crypto";
 
@@ -36,6 +38,8 @@ export interface McpStandInOptions {
   instructions?: string | null;
   // Whether it declares resources; it does unless told not to.
   resources?: boolean;
+  // Whether it declares prompts; it does unless told not to.
+  prompts?: boolean;
 }
 
 interface JsonRpc {
@@ -121,6 +125,42 @@ const RESOURCES = [
   { uri: "notes://whoami", name: "whoami", description: "Who is asking.", mimeType: "text/plain" },
 ];
 
+const PROMPTS = [
+  {
+    name: "greet",
+    title: "Greet",
+    description: "Greet someone by name.",
+    arguments: [
+      { name: "name", description: "Whom to greet", required: true },
+      { name: "tone", description: "How" },
+    ],
+  },
+];
+
+// The greeting's messages: what the stand-in model says back, the guide, and an image.
+function greeting(args: Record<string, unknown>) {
+  const tone = text(args.tone);
+  return {
+    messages: [
+      {
+        role: "user",
+        content: {
+          type: "text",
+          text: `/say\nHello, ${text(args.name)}${tone ? `, ${tone}` : ""}!`,
+        },
+      },
+      {
+        role: "user",
+        content: {
+          type: "resource",
+          resource: { uri: "notes://guide", mimeType: "text/markdown", text: NOTES_GUIDE },
+        },
+      },
+      { role: "user", content: { type: "image", data: LOGO, mimeType: "image/png" } },
+    ],
+  };
+}
+
 function text(value: unknown) {
   return typeof value === "string" ? value : "";
 }
@@ -143,7 +183,11 @@ function token() {
 export function mcpStandIn(options: McpStandInOptions) {
   const { origin, oauthPath = "/oauth/mcp", instructions = NOTES_INSTRUCTIONS } = options;
   const said = instructions === null ? {} : { instructions };
-  const capabilities = options.resources === false ? { tools: {} } : { tools: {}, resources: {} };
+  const capabilities = {
+    tools: {},
+    ...(options.resources !== false && { resources: {} }),
+    ...(options.prompts !== false && { prompts: {} }),
+  };
   const notes = new Map<string, { title: string; body: string }>();
   const clients = new Map<string, { secret?: string; redirectUris: string[] | null }>(
     (options.clients ?? []).map((client) => [
@@ -190,6 +234,12 @@ export function mcpStandIn(options: McpStandInOptions) {
         return options.resources === false ? null : { resources: RESOURCES };
       case "resources/read":
         return options.resources === false ? null : read(text(message.params?.uri), caller);
+      case "prompts/list":
+        return options.prompts === false ? null : { prompts: PROMPTS };
+      case "prompts/get":
+        return options.prompts === false || message.params?.name !== "greet"
+          ? null
+          : greeting((message.params?.arguments ?? {}) as Record<string, unknown>);
       default:
         return null;
     }
@@ -298,6 +348,15 @@ export function mcpStandIn(options: McpStandInOptions) {
       case "tools/call":
         result = answer(message);
         break;
+      case "prompts/list":
+      case "prompts/get": {
+        const found = answer(message);
+        if (found === null) {
+          return failed(message, 404, { code: -32602, message: "Prompt not found" });
+        }
+        result = { ...(found as object), ttlMs: 0, cacheScope: "private" };
+        break;
+      }
       case "resources/list":
       case "resources/read": {
         const found = answer(message);

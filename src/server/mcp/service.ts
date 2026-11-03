@@ -18,7 +18,9 @@
 // space has; its tools reach the model as mcp.<slug>.<tool>, while their ids stay with the server's
 // id, so renaming it keeps their policies and history. Servers kept from before short names get one
 // when the service starts. The resources of servers that declare them are listed and read through
-// Mage's own Resource toolset, each call going with the credentials of the server it names.
+// Mage's own Resource toolset, each call going with the credentials of the server it names. The
+// prompts a server offers are kept with its tools, and people run them as commands, each going
+// with the credentials the server's calls go with: for personal ones, the sender's own.
 
 import { randomBytes } from "node:crypto";
 
@@ -70,8 +72,10 @@ import {
   type McpCallResult,
   McpError,
   type McpClient,
+  type McpPrompt,
   type McpResource,
 } from "./client.ts";
+import { promptArguments, promptText } from "./prompts.ts";
 import { contentsOf, listed, RESOURCE_LIST_MAX } from "./resources.ts";
 
 // Whether each tool is on in a space: not turned off by the org or the space.
@@ -107,6 +111,8 @@ export interface McpServer {
   resources: boolean;
   // The tools it last listed, as MCP defines them.
   tools: ToolDefinition[];
+  // The prompts it last offered.
+  prompts: McpPrompt[];
   toolsReadAt: Date | null;
   createdBy: string | null;
   createdAt: Date;
@@ -146,6 +152,7 @@ export type McpServerChanges = Partial<
     | "instructionsCut"
     | "resources"
     | "tools"
+    | "prompts"
     | "toolsReadAt"
   >
 >;
@@ -517,6 +524,7 @@ export function createMcpServers(options: McpServersOptions) {
         ...keptInstructions(listing.instructions),
         resources: listing.resources,
         tools: listing.tools,
+        prompts: listing.prompts,
         toolsReadAt: now(),
         status: "ok",
         error: null,
@@ -1016,9 +1024,59 @@ export function createMcpServers(options: McpServersOptions) {
     }
   }
 
+  // The servers the space uses that offer prompts, by their short names.
+  function promptServersIn(space: Pick<Space, "id" | "orgId">) {
+    return [...orgServersIn(space), ...ownServersIn(space)].filter(
+      (server) => server.prompts.length > 0,
+    );
+  }
+
   return {
     summary,
     resourceTools,
+
+    // The prompts the servers the space uses offer, each with its server, and for a server whose
+    // credentials are personal the person's own connection to it.
+    promptsIn(space: Pick<Space, "id" | "orgId">, userId: string) {
+      return promptServersIn(space).flatMap((server) =>
+        server.prompts.map((prompt) => ({
+          server: server.slug,
+          serverName: server.name,
+          prompt,
+          ...(server.credentials === "personal" && {
+            connection: connectionOf(server, userId),
+          }),
+        })),
+      );
+    },
+
+    // Gets one of those prompts for the person with the words they gave after it, as the text the
+    // agent reads; null when the space has no such prompt. Refuses arguments it requires and was
+    // not given, and a server whose credentials are personal that the person has not connected to.
+    async runPrompt(
+      space: Pick<Space, "id" | "orgId">,
+      userId: string,
+      slug: string,
+      name: string,
+      args: string,
+    ) {
+      const server = promptServersIn(space).find((candidate) => candidate.slug === slug);
+      const prompt = server?.prompts.find((candidate) => candidate.name === name);
+      if (!server || !prompt) return null;
+      const { values, missing } = promptArguments(prompt, args);
+      if (missing.length > 0) {
+        throw new ServiceError(400, `/${slug}:${name} needs ${missing.join(", ")}`);
+      }
+      if (server.credentials === "personal" && !connectedAs(server, userId)) {
+        throw new ServiceError(409, `Connect to ${server.name} first`);
+      }
+      const output = await reach(server, { runAs: userId }, async (target) => ({
+        ok: true,
+        value: promptText(await client.getPrompt(target, prompt.name, values)),
+      }));
+      if (!output.ok) throw new ServiceError(502, output.error);
+      return { server: server.name, text: output.value as string };
+    },
 
     clientDocument() {
       return client.clientDocument();

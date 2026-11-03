@@ -1,10 +1,11 @@
 // How each row of a thread's transcript looks: a person's message, an agent's turn of tool calls and
-// its reply under one Agent header, a failed or stopped run, and a labelled placeholder for an event
-// this client does not know yet.
+// its reply under one Agent header, a failed or stopped run, where the thread was compacted, and a
+// labelled placeholder for an event this client does not know yet.
 
 import type { ShownRow } from "@/shared/threads/rows.ts";
 import { FORMER_TOOL_IDS, type ToolDefinition } from "@/shared/tools.ts";
 import { AgentReply } from "@/web/threads/transcript/agent-reply";
+import { CompactionDivider } from "@/web/threads/transcript/compaction-divider";
 import { FailureNotice } from "@/web/threads/transcript/failure-notice";
 import { HumanMessage } from "@/web/threads/transcript/human-message";
 import { RetryButton } from "@/web/threads/transcript/retry-button";
@@ -52,6 +53,8 @@ export function TranscriptItem({
           {actions.retry && <RetryButton onRetry={actions.retry} />}
         </div>
       );
+    case "compaction":
+      return <CompactionDivider row={row} />;
     case "unknown":
       return (
         <div className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">

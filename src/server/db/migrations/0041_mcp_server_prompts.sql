@@ -1,0 +1,1 @@
+ALTER TABLE `mcp_server` ADD `prompts` text DEFAULT '[]' NOT NULL;

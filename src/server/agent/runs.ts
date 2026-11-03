@@ -14,7 +14,9 @@
 // decision or an answer queues the run again, and the worker that claims it reads the thread's log
 // to see where its calls stand, checks each approval and answer still holds, runs what it may and
 // goes on; a restart takes the same path. MCP tools stay out of the model's requests until it
-// searches for them, and those it turns on are kept with the run.
+// searches for them, and those it turns on are kept with the run. A message asking to compact the
+// thread waits for the run before it to end, and gets a run of its own that writes the summary and
+// replies with nothing; other runs leave it waiting.
 
 import { ulid } from "ulid";
 import * as z from "zod";
@@ -43,8 +45,14 @@ import type {
   FailureKind,
   RunReason,
 } from "@/shared/threads/events.ts";
-import { type PendingMessage, type ToolRow, transcriptOf } from "@/shared/transcript.ts";
+import {
+  asksToCompact,
+  type PendingMessage,
+  type ToolRow,
+  transcriptOf,
+} from "@/shared/transcript.ts";
 
+import { compact } from "./compaction.ts";
 import { contextOf, type Guidance, humanMessage, NO_GUIDANCE } from "./context.ts";
 import { deferredByServer, TOOL_SEARCH } from "./tool-search.ts";
 import type { ToolOutput, AnyToolSpec, Tools } from "./tools.ts";
@@ -530,7 +538,9 @@ export function createRunWorker(options: RunWorkerOptions) {
             reason: first.mode === "interrupt" ? "interrupt" : "queued_input",
           }
         : null;
-    if (next) startRun(runs, append, next);
+    // A message asking to compact the thread is taken in by the run that does it, at once.
+    const admit = !retry && first && asksToCompact(first) ? [first.id] : [];
+    if (next) startRun(runs, append, next, admit);
     return next !== null;
   }
 
@@ -660,7 +670,7 @@ export function createRunWorker(options: RunWorkerOptions) {
 
   // At a step boundary: stops the run when asked to, otherwise takes in the waiting messages
   // (all of them before the first model call, afterwards only those sent to steer) and returns
-  // them.
+  // them. Those asking to compact the thread wait for runs of their own.
   function boundary(execution: Execution, all: boolean): ModelMessage[] {
     const { run, lease, controller } = execution;
     const admitted = write(lease, run.threadId, (append) => {
@@ -668,7 +678,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       stopIfAsked(execution, current);
       if (controller.signal.aborted) return [];
       const waiting = admissible(run.threadId, transcript(run.threadId).pending, append).filter(
-        (message) => all || message.mode === "steer",
+        (message) => !asksToCompact(message) && (all || message.mode === "steer"),
       );
       if (waiting.length > 0) {
         append({
@@ -897,6 +907,47 @@ export function createRunWorker(options: RunWorkerOptions) {
     }
   }
 
+  // The message that woke the run when it asks to compact the thread, and so the run is one that
+  // compacts it; null otherwise.
+  function compactionAsked(run: Run) {
+    const [trigger] = threads.eventsAfter(run.threadId, run.triggerSeq - 1);
+    if (trigger?.seq !== run.triggerSeq || trigger.type !== "message") return null;
+    if (trigger.actor.kind !== "user" || !trigger.data.command) return null;
+    return asksToCompact(trigger.data)
+      ? { id: trigger.id, by: trigger.actor, focus: trigger.data.command.args }
+      : null;
+  }
+
+  // Compacts the thread with its model for whoever asked, taking in their message if it still
+  // waits. With nothing to summarise, it leaves the thread as it is.
+  async function compactFor(
+    execution: Execution,
+    model: Replying,
+    asked: NonNullable<ReturnType<typeof compactionAsked>>,
+  ) {
+    const { run, lease, controller } = execution;
+    write(lease, run.threadId, (append) => {
+      stopIfAsked(execution, runs.hold(lease));
+      if (controller.signal.aborted) return;
+      if (!transcript(run.threadId).pending.some((message) => message.id === asked.id)) return;
+      append({
+        type: "message.admitted",
+        actor: AGENT,
+        data: { runId: run.id, messageIds: [asked.id] },
+      });
+    });
+    if (controller.signal.aborted) throw controller.signal.reason;
+    await compact({
+      threadId: run.threadId,
+      rows: transcript(run.threadId).rows,
+      model: model.model,
+      ...(asked.focus && { focus: asked.focus }),
+      actor: asked.by,
+      write: (work) => write(lease, run.threadId, work),
+      signal: controller.signal,
+    });
+  }
+
   // Adds each step's token use to `usage`.
   async function drive(execution: Execution, reply: ReturnType<typeof replies>, usage: ModelUsage) {
     const { run, controller } = execution;
@@ -908,6 +959,11 @@ export function createRunWorker(options: RunWorkerOptions) {
       throw controller.signal.reason;
     }
     let model = await replying(execution, space, thread);
+    const asked = compactionAsked(run);
+    if (asked) {
+      await compactFor(execution, model, asked);
+      return;
+    }
     // A run queued again after a decision takes in only the messages sent to steer it.
     const resumed = transcript(thread.id).rows.some(
       (row) => row.kind === "tool" && row.runId === run.id,

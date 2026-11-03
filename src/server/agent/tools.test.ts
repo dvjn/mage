@@ -417,6 +417,7 @@ describe("tool calls", () => {
       "thread.rename",
       "thread.move",
       "thread.set_model",
+      "thread.compact",
       "thread.ask",
     ]);
     expect(threadStore.find(thread.id)?.title).toBe("Engines");
@@ -667,14 +668,19 @@ describe("tool calls", () => {
     await post(ada, "Hello");
     const call = await answered(model.next());
     await worker.idle();
-    expect(call.tools).toEqual(["thread.set_model", "thread.ask"]);
+    expect(call.tools).toEqual(["thread.set_model", "thread.compact", "thread.ask"]);
 
     const other = await workspace.createSpace(ada.cookie, "Other");
     const thread = await workspace.createThread(ada.cookie, other.id, "Hello there");
     const elsewhere = await answered(model.next());
     await worker.idle();
     expect(thread.id).toBeDefined();
-    expect(elsewhere.tools).toEqual(["thread.move", "thread.set_model", "thread.ask"]);
+    expect(elsewhere.tools).toEqual([
+      "thread.move",
+      "thread.set_model",
+      "thread.compact",
+      "thread.ask",
+    ]);
   });
 });
 
@@ -1197,6 +1203,7 @@ describe("tool settings", () => {
       expect.objectContaining({ id: "thread.rename", orgPolicy: null, policy: TOOL_OFF }),
       expect.objectContaining({ id: "thread.move", orgPolicy: signOff.id, policy: null }),
       expect.objectContaining({ id: "thread.set_model", orgPolicy: null, policy: spacePolicy.id }),
+      expect.objectContaining({ id: "thread.compact", orgPolicy: null, policy: null }),
       expect.objectContaining({ id: "thread.ask", orgPolicy: null, policy: null, fixed: true }),
     ]);
     expect((await api("GET", `/spaces/${space.id}/tools`, grace.cookie)).status).toBe(403);

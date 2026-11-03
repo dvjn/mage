@@ -41,6 +41,9 @@ const rowFields = {
   turn: agentTurnSchema.nullable(),
 };
 
+// The command a message was sent as, as the person typed it: its name and what followed it.
+const sentCommandSchema = z.object({ name: z.string(), args: z.string() });
+
 const humanRowSchema = z.object({
   ...rowFields,
   kind: z.literal("human"),
@@ -50,6 +53,7 @@ const humanRowSchema = z.object({
   quiet: z.boolean(),
   // Written by a guest of the thread.
   guest: z.literal(true).optional(),
+  command: sentCommandSchema.optional(),
 });
 
 const agentRowSchema = z.object({
@@ -137,6 +141,20 @@ const stopRowSchema = z.object({
   canRetry,
 });
 
+// The thread compacted for the agent: by whom, null for the agent itself, the summary it reads from
+// then on in place of what came before, the focus it was asked to keep, and about how many tokens
+// it read before and after.
+const compactionRowSchema = z.object({
+  ...rowFields,
+  kind: z.literal("compaction"),
+  by: personSchema.nullable(),
+  summary: z.string(),
+  firstKeptSeq: z.number().int().nonnegative(),
+  focus: z.string().optional(),
+  tokensBefore: z.number().int().nonnegative(),
+  tokensAfter: z.number().int().nonnegative().nullable(),
+});
+
 // An event this client does not know how to show.
 const unknownRowSchema = z.object({ ...rowFields, kind: z.literal("unknown"), type: z.string() });
 
@@ -146,6 +164,7 @@ export const shownRowSchema = z.discriminatedUnion("kind", [
   toolRowSchema,
   failureRowSchema,
   stopRowSchema,
+  compactionRowSchema,
   unknownRowSchema,
 ]);
 
@@ -154,6 +173,7 @@ export type HumanRow = z.infer<typeof humanRowSchema>;
 export type AgentRow = z.infer<typeof agentRowSchema>;
 export type ToolRow = z.infer<typeof toolRowSchema>;
 export type FailureRow = z.infer<typeof failureRowSchema>;
+export type CompactionRow = z.infer<typeof compactionRowSchema>;
 export type AgentTurn = z.infer<typeof agentTurnSchema>;
 
 // A message posted while the agent was busy, waiting to be taken in.
@@ -165,16 +185,18 @@ export const pendingMessageSchema = z.object({
   text: z.string(),
   mode: deliverySchema,
   guest: z.literal(true).optional(),
+  command: sentCommandSchema.optional(),
 });
 
 export type PendingMessage = z.infer<typeof pendingMessageSchema>;
 
-// The run under way: since when, and whether it waits for answers to the agent's questions or for
-// a decision on a call.
+// The run under way: since when, whether it waits for answers to the agent's questions or for a
+// decision on a call, and whether it compacts the thread.
 export const shownRunSchema = z.object({
   id: z.string(),
   createdAt: z.string(),
   waiting: z.enum(["answer", "decision"]).nullable(),
+  compacting: z.literal(true).optional(),
 });
 
 export type ShownRun = z.infer<typeof shownRunSchema>;

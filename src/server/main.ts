@@ -57,6 +57,7 @@ import { createDeltaStore } from "@/server/threads/delta-store.ts";
 import { createThreadLog } from "@/server/threads/log.ts";
 import { createThreadReadStore } from "@/server/threads/read-store.ts";
 import { createThreads } from "@/server/threads/service.ts";
+import { createCommands } from "@/server/threads/commands.ts";
 import { createThreadStore } from "@/server/threads/store.ts";
 import { createTitles } from "@/server/threads/titles.ts";
 
@@ -165,6 +166,8 @@ const tools = createTools({
       folders: folderStore,
       guests: guestStore,
       models,
+      // The model that replies, opened as the worker opens it.
+      open: (orgId, ref) => runModels.open(orgId, ref),
     }),
     skills.toolset(),
     createMcpTools(
@@ -274,6 +277,7 @@ const app = createApp({
     log,
     bus,
     tools,
+    commands: createCommands({ skills, prompts: mcp }),
     // The stand-in model answers every request alike, so it names no threads.
     ...(!config.fakeModels && {
       titles: createTitles({ models, threads: threadStore, log, logger }),

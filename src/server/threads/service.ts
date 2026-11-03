@@ -13,8 +13,11 @@
 // Each reader's inbox follows those changes for every thread they can read. Who may do each is the
 // thread access rule's; a thread's guests find it, and post in it, beside the threads of their own
 // spaces. Threads of an archived space stay out of search and inboxes; its person opens them from
-// the space itself, and may move them to a space where they can post.
+// the space itself, and may move them to a space where they can post. People who can post may send
+// a message as one of the thread's commands, kept with what the agent reads for it, or ask for the
+// thread to be compacted, once the run under way ends.
 
+import { anythingToCompact } from "@/server/agent/compaction.ts";
 import { type Run, type RunStore, startRun } from "@/server/agent/runs.ts";
 import type { Tools } from "@/server/agent/tools.ts";
 import type { Folders } from "@/server/folders/service.ts";
@@ -30,6 +33,7 @@ import type { SharedThread } from "@/shared/guests.ts";
 import type { Page, PageParams } from "@/shared/paging.ts";
 import { plainText } from "@/shared/plain-text.ts";
 import { statusOf, type ThreadShow } from "@/shared/thread-status.ts";
+import { COMPACT, type CommandInput, type ThreadCommand } from "@/shared/threads/commands.ts";
 import type { ThreadCan, ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
 import {
   type Delivery,
@@ -56,8 +60,14 @@ import {
 } from "@/shared/threads/rows.ts";
 import type { ThreadSearchResult } from "@/shared/threads/search.ts";
 import { type Effort, UNTITLED, type ThreadSummary } from "@/shared/threads/thread.ts";
-import type { Transcript, TranscriptFold } from "@/shared/transcript.ts";
+import type {
+  PendingMessage,
+  SentCommand,
+  Transcript,
+  TranscriptFold,
+} from "@/shared/transcript.ts";
 
+import type { Commands } from "./commands.ts";
 import type { Append, ThreadLog } from "./log.ts";
 import type { Titles } from "./titles.ts";
 import { createTranscripts } from "./transcripts.ts";
@@ -249,6 +259,8 @@ export interface ThreadsOptions {
   bus: EventBus;
   // Names threads after their first message, when given.
   titles?: Pick<Titles, "name">;
+  // The commands people send in threads, when given.
+  commands?: Pick<Commands, "list" | "expand">;
   // The agent's tools, for each reader's level for them.
   tools: Pick<
     Tools,
@@ -288,6 +300,16 @@ function readerPartsOf(row: ShownRow) {
   return "";
 }
 
+// A command as its message shows it: what the person typed, without what the agent reads for it.
+function shownCommand(command: SentCommand | undefined) {
+  return command && { command: { name: command.name, args: command.args } };
+}
+
+// The messages waiting for the agent as readers see them.
+function shownPending(pending: readonly PendingMessage[]) {
+  return pending.map(({ command, ...message }) => ({ ...message, ...shownCommand(command) }));
+}
+
 // The rows whose reader's parts can change while they do not: the calls waiting for a decision or
 // for answers, and a last row from which a failed or stopped run is tried again.
 function liveIndexes({ rows }: Transcript) {
@@ -309,8 +331,22 @@ function shownRun({ run, rows }: Transcript): ShownRun | null {
     : call.kind === "tool" && call.toolId === ASK_TOOL
       ? "answer"
       : "decision";
-  return { id: run.id, createdAt: run.createdAt, waiting };
+  return {
+    id: run.id,
+    createdAt: run.createdAt,
+    waiting,
+    ...(run.compacting && { compacting: true as const }),
+  };
 }
+
+// Mage's own command, which anyone who can post may send.
+const COMPACT_COMMAND: ThreadCommand = {
+  name: COMPACT,
+  description: "Summarise earlier messages for the agent",
+  argumentHint: "[focus]",
+  kind: "builtin",
+  tag: null,
+};
 
 // The index of the first row the reader had not seen up to `seen` that is not their own nor a
 // reply still being written; -1 when there is none.
@@ -384,6 +420,7 @@ export function createThreads(options: ThreadsOptions) {
     titles,
     tools,
     reads,
+    commands,
   } = options;
   const now = options.now ?? (() => new Date());
   const transcripts = createTranscripts(threads);
@@ -557,6 +594,10 @@ export function createThreads(options: ThreadsOptions) {
       const idle = !transcript.run && transcript.pending.length === 0;
       return { ...row, ...place, canRetry: last && idle && reader.can.post };
     }
+    if (row.kind === "human") {
+      const { command, ...message } = row;
+      return { ...message, ...place, ...shownCommand(command) };
+    }
     return { ...row, ...place };
   }
 
@@ -584,11 +625,18 @@ export function createThreads(options: ThreadsOptions) {
     };
   }
 
-  // Stores the message. When it is not quiet and the agent is idle, a run starts that takes it in;
-  // while a run is under way it waits to steer that run or to start the next one, and an interrupt
-  // also asks the run under way to stop.
-  function post(principal: Principal, thread: Thread, text: string, mode: Delivery, guest = false) {
-    const quiet = text.startsWith(QUIET_PREFIX);
+  // Stores the message, with the command it was sent as. When it is not quiet and the agent is
+  // idle, a run starts that takes it in; while a run is under way it waits to steer that run or to
+  // start the next one, and an interrupt also asks the run under way to stop.
+  function post(
+    principal: Principal,
+    thread: Thread,
+    text: string,
+    mode: Delivery,
+    guest = false,
+    command?: SentCommand,
+  ) {
+    const quiet = !command && text.startsWith(QUIET_PREFIX);
     let first = false;
     const { events } = log.write(thread.id, (append) => {
       first = threads.find(thread.id)?.title === null;
@@ -596,7 +644,13 @@ export function createThreads(options: ThreadsOptions) {
         {
           type: "message",
           actor: { kind: "user", userId: principal.userId },
-          data: { parts: [{ type: "text", text }], quiet, mode, ...(guest && { guest }) },
+          data: {
+            parts: [{ type: "text", text }],
+            quiet,
+            mode,
+            ...(guest && { guest }),
+            ...(command && { command }),
+          },
         },
         // Names the thread when nothing has yet.
         titleFrom(text),
@@ -625,7 +679,7 @@ export function createThreads(options: ThreadsOptions) {
     principal: Principal,
     id: string,
     messageId: string,
-    change: (append: Append) => void,
+    change: (append: Append, message: PendingMessage) => void,
   ) {
     const thread = visible(principal, id, "post");
     const { events } = log.write(thread.id, (append) => {
@@ -635,7 +689,7 @@ export function createThreads(options: ThreadsOptions) {
       if (message.author.userId !== principal.userId) {
         throw new ServiceError(403, "Only its author can change a message");
       }
-      change(append);
+      change(append, message);
     });
     bus.wake(thread.id);
     return events[0]!;
@@ -853,7 +907,7 @@ export function createThreads(options: ThreadsOptions) {
         rows,
         before: start > 0 ? start : null,
         newFrom: from === -1 ? null : transcript.rows[from]!.id,
-        pending: transcript.pending,
+        pending: shownPending(transcript.pending),
         run: shownRun(transcript),
       };
     },
@@ -992,9 +1046,51 @@ export function createThreads(options: ThreadsOptions) {
       };
     },
 
+    // The commands the reader may send in the thread; none for those who may not post.
+    commands(principal: Principal, id: string): ThreadCommand[] {
+      const thread = visible(principal, id);
+      const space = spaceStore.find(thread.spaceId);
+      if (!space || !access.can(principal, thread, "post")) return [];
+      const others = (commands?.list(space, principal.userId) ?? []).filter(
+        (command) => command.name !== COMPACT,
+      );
+      return [COMPACT_COMMAND, ...others];
+    },
+
     postMessage(principal: Principal, id: string, text: string, mode: Delivery = "steer") {
       const { thread, access: via } = access.require(principal, id, "post");
       return post(principal, thread, text, mode, via.via === "guest");
+    },
+
+    // Posts the message as the command it starts with, kept with what the agent reads for it; one
+    // naming a command the thread does not have is refused.
+    async postCommand(
+      principal: Principal,
+      id: string,
+      text: string,
+      mode: Delivery,
+      command: CommandInput,
+    ) {
+      const { thread, access: via } = access.require(principal, id, "post");
+      if (command.name === COMPACT) {
+        // Compacting waits for the run under way; with nothing to summarise it is not asked for.
+        const rows = transcripts.of(thread.id).transcript().rows;
+        if (!runs.active(thread.id) && !anythingToCompact(rows)) {
+          throw new ServiceError(409, "There is nothing to compact yet");
+        }
+        const delivery = mode === "steer" ? "queue" : mode;
+        return post(principal, thread, text, delivery, via.via === "guest", command);
+      }
+      const space = spaceStore.find(thread.spaceId);
+      const expanded =
+        space && commands ? await commands.expand(space, principal.userId, command, text) : null;
+      if (expanded === null) throw new ServiceError(400, `There is no /${command.name} here`);
+      // Seen again after the command, which may wait on an MCP server.
+      const again = access.require(principal, id, "post");
+      return post(principal, again.thread, text, mode, again.access.via === "guest", {
+        ...command,
+        text: expanded,
+      });
     },
 
     // Changes the text of a waiting message, or whether it steers or waits for the next run.
@@ -1004,7 +1100,10 @@ export function createThreads(options: ThreadsOptions) {
       messageId: string,
       change: { text?: string; mode?: "steer" | "queue" },
     ) {
-      return changePending(principal, id, messageId, (append) =>
+      return changePending(principal, id, messageId, (append, message) => {
+        if (change.text !== undefined && message.command) {
+          throw new ServiceError(409, "A command can't be edited; remove it and send it again");
+        }
         append({
           type: "message.changed",
           actor: { kind: "user", userId: principal.userId },
@@ -1013,8 +1112,8 @@ export function createThreads(options: ThreadsOptions) {
             ...(change.text !== undefined && { parts: [{ type: "text", text: change.text }] }),
             ...(change.mode && { mode: change.mode }),
           },
-        }),
-      );
+        });
+      });
     },
 
     // Takes back a waiting message.
@@ -1103,7 +1202,8 @@ export function createThreads(options: ThreadsOptions) {
         if (fold.last <= last && rows.length === 0) return;
         last = Math.max(last, fold.last);
         const run = shownRun(transcript);
-        deliver({ kind: "rows", update: { seq: last, rows, pending: transcript.pending, run } });
+        const pending = shownPending(transcript.pending);
+        deliver({ kind: "rows", update: { seq: last, rows, pending, run } });
       }
       function send(item: ThreadFeedItem) {
         if (item.kind === "event") {

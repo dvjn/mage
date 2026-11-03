@@ -1,6 +1,6 @@
 // A thread's events as the API shows them: its messages, when the agent took each one in, the
-// agent's runs and the replies each run wrote, its tool calls, and the pieces of a reply in
-// progress.
+// agent's runs and the replies each run wrote, its tool calls, its compactions, and the pieces of a
+// reply in progress.
 
 import * as z from "zod";
 
@@ -38,6 +38,8 @@ export const messageDataSchema = z.object({
   mode: deliverySchema.default("steer"),
   // Written by a guest of the thread rather than a member of its space.
   guest: z.boolean().optional(),
+  // Sent as a command: its name and what followed it, and what the agent reads in its place.
+  command: z.object({ name: z.string(), args: z.string(), text: z.string().optional() }).optional(),
 });
 
 export type MessageData = z.infer<typeof messageDataSchema>;
@@ -123,6 +125,18 @@ export const eventDataSchemas = {
   "run.completed": z.object({ runId: z.string() }),
   // The agent named the thread after its first message, with the tokens that took.
   "thread.renamed": z.object({ title: z.string(), usage: usageSchema.optional() }),
+  // The thread was compacted, by the person who asked or by the agent: from here the agent reads
+  // the summary in place of the rows before the one at `firstKeptSeq`, then those from it on.
+  // With the focus it was asked to keep, about how many tokens the agent read before and after,
+  // and the tokens the summary took.
+  "thread.compacted": z.object({
+    summary: z.string(),
+    firstKeptSeq: z.number().int().positive(),
+    focus: z.string().optional(),
+    tokensBefore: z.number().int().nonnegative(),
+    tokensAfter: z.number().int().nonnegative().optional(),
+    usage: usageSchema.optional(),
+  }),
   // `error` says what happened; when the failure has a kind, `connection` is the kind of connection
   // the model is reached through, `detail` what the provider said and `resetsAt` when a limit
   // resets. Older events can name the Claude sign-in, since removed.
@@ -219,6 +233,7 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("run.failed"),
   eventSchema("run.cancelled"),
   eventSchema("thread.renamed"),
+  eventSchema("thread.compacted"),
   eventSchema("tool.requested"),
   eventSchema("tool.approved"),
   eventSchema("tool.answered"),

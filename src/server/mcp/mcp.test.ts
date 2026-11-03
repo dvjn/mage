@@ -247,7 +247,11 @@ describe("an org's MCP servers", () => {
       serverInfo: { name: "Notes", version: "1.0.0" },
       toolCount: 3,
     });
-    expect(await methodsOf(mcpNetwork.requests)).toEqual(["server/discover", "tools/list"]);
+    expect(await methodsOf(mcpNetwork.requests)).toEqual([
+      "server/discover",
+      "tools/list",
+      "prompts/list",
+    ]);
   });
 
   it("ask again which revision a server speaks when read again, as one may move to a later one", async () => {

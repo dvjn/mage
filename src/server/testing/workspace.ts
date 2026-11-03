@@ -57,6 +57,7 @@ import { createDeltaStore } from "@/server/threads/delta-store.ts";
 import { createThreadLog } from "@/server/threads/log.ts";
 import { createThreadReadStore } from "@/server/threads/read-store.ts";
 import { createThreads } from "@/server/threads/service.ts";
+import { createCommands } from "@/server/threads/commands.ts";
 import { createThreadStore } from "@/server/threads/store.ts";
 import { createTitles } from "@/server/threads/titles.ts";
 import { type ModelPair, replyCandidates } from "@/shared/models.ts";
@@ -265,6 +266,7 @@ export function setup(
         folders: folderStore,
         guests: guestStore,
         models: { replyModel, requireModel: models.requireModel },
+        open: () => model.open(),
       }),
       skills.toolset(),
       createMcpTools(
@@ -327,6 +329,7 @@ export function setup(
     log,
     bus: countingBus,
     tools,
+    commands: createCommands({ skills, prompts: mcp }),
     ...(titles && {
       titles: createTitles({
         models: {

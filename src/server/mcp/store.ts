@@ -5,6 +5,7 @@ import type { ToolDefinition } from "@/shared/tools.ts";
 import type { Cipher } from "@/server/kernel/cipher.ts";
 import type { Db } from "@/server/db/db.ts";
 
+import type { McpPrompt } from "./client.ts";
 import type {
   McpCredentialStore,
   McpHolder,
@@ -35,15 +36,17 @@ const columns = {
   instructionsCut: mcpServer.instructionsCut,
   resources: mcpServer.resources,
   tools: mcpServer.tools,
+  prompts: mcpServer.prompts,
   toolsReadAt: mcpServer.toolsReadAt,
   createdBy: mcpServer.createdBy,
   createdAt: mcpServer.createdAt,
 };
 
-type Row = Omit<McpServer, "settings" | "tools" | "slug"> & {
+type Row = Omit<McpServer, "settings" | "tools" | "prompts" | "slug"> & {
   slug: string | null;
   settings: Record<string, unknown>;
   tools: unknown[];
+  prompts: unknown[];
 };
 
 function serverOf(row: Row): McpServer {
@@ -52,6 +55,7 @@ function serverOf(row: Row): McpServer {
     slug: row.slug ?? "",
     settings: row.settings as McpSettings,
     tools: row.tools as ToolDefinition[],
+    prompts: row.prompts as McpPrompt[],
   };
 }
 

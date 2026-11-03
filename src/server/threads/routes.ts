@@ -30,7 +30,10 @@ const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or a fo
 
 const threadMove = jsonBody(threadMoveSchema, "Give a space");
 
-const message = jsonBody(messageInputSchema, "text is required; mode is steer, queue or interrupt");
+const message = jsonBody(
+  messageInputSchema,
+  "text is required; mode is steer, queue or interrupt; command a name and args",
+);
 
 const pendingChange = jsonBody(pendingChangeSchema, "Give a text, or a mode of steer or queue");
 
@@ -225,10 +228,17 @@ export function threadRoutes(options: {
         inbox.stop();
       });
     })
-    .post("/v1/threads/:id/messages", message, (c) => {
-      const { text, mode } = c.req.valid("json");
+    .get("/v1/threads/:id/commands", (c) => {
+      return c.json(threads.commands(signedIn(c.var.principal), c.req.param("id")), 200);
+    })
+    .post("/v1/threads/:id/messages", message, async (c) => {
+      const { text, mode, command } = c.req.valid("json");
       const principal = signedIn(c.var.principal);
-      return c.json(threads.postMessage(principal, c.req.param("id"), text, mode), 202);
+      const id = c.req.param("id");
+      const posted = command
+        ? await threads.postCommand(principal, id, text, mode, command)
+        : threads.postMessage(principal, id, text, mode);
+      return c.json(posted, 202);
     })
     .patch("/v1/threads/:id/messages/:messageId", pendingChange, (c) => {
       const { id, messageId } = c.req.param();
