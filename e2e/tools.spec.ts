@@ -115,7 +115,7 @@ test("the agent renames a thread at once when the owner alone asked", async ({ p
   const input = transcript(page).getByRole("region", { name: "Input" });
   await expect(input).toHaveText("InputTitleEngines");
   await input.getByRole("button", { name: "Raw input" }).click();
-  await expect(input.locator("pre")).toHaveText('{\n  "title": "Engines"\n}');
+  await expect(input.locator("pre")).toContainText('"title": "Engines"');
   await expect(transcript(page).getByRole("region", { name: "Output" })).toContainText("Engines");
 });
 

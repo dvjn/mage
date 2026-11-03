@@ -22,7 +22,6 @@ import {
   type ValueLayout,
 } from "@/web/agent/tool-layout";
 import { MessageResponse } from "@/web/components/ai-elements/message";
-import { CopyButton } from "@/web/components/copy-button";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { Alert, AlertDescription } from "@/web/components/ui/alert";
 import { Badge } from "@/web/components/ui/badge";
@@ -338,6 +337,13 @@ function rawText(value: unknown) {
   return typeof value === "string" ? value : (JSON.stringify(value, null, 2) ?? String(value));
 }
 
+// The text as a Markdown code block in the language given, fenced past any backticks it holds.
+function fenced(text: string, language: string) {
+  const longest = Math.max(2, ...[...text.matchAll(/`+/g)].map((run) => run[0].length));
+  const fence = "`".repeat(longest + 1);
+  return `${fence}${language}\n${text}\n${fence}`;
+}
+
 // An input or output under its title, laid out, or as it is while its raw toggle is pressed.
 function Block({ title, value, children }: { title: string; value: unknown; children: ReactNode }) {
   const [raw, setRaw] = useState(false);
@@ -361,15 +367,10 @@ function Block({ title, value, children }: { title: string; value: unknown; chil
       {!raw ? (
         children
       ) : (
-        <div className="relative">
-          <pre className="max-h-80 overflow-auto rounded-md border bg-background p-2 pr-8 font-mono text-xs break-words whitespace-pre-wrap text-foreground">
-            {text}
-          </pre>
-          <CopyButton
-            value={text}
-            label={`Copy ${title.toLowerCase()}`}
-            className="absolute top-1 right-1"
-          />
+        <div className="max-h-80 overflow-auto">
+          <MessageResponse>
+            {fenced(text, typeof value === "string" ? "text" : "json")}
+          </MessageResponse>
         </div>
       )}
     </section>
