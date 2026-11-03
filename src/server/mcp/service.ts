@@ -29,6 +29,7 @@ import type {
   AnyToolSpec,
   ToolContext,
   ToolOutput,
+  ToolNames,
   Toolset,
   ToolSpec,
 } from "@/server/agent/tools.ts";
@@ -51,6 +52,7 @@ import {
   MCP_INSTRUCTIONS_MAX,
   MCP_OWN_TOOLSET,
   mcpToolId,
+  mcpToolOf,
   mcpSlugOf,
   mcpToolsetId,
   type NewMcpServer as McpServerInput,
@@ -1164,6 +1166,14 @@ export function createMcpServers(options: McpServersOptions) {
     remove(principal: Principal, id: string) {
       manageable(principal, id);
       servers.delete(id);
+    },
+
+    // What the model knows one of a server's tools by, for a server that no longer lists it.
+    named(toolId: string): ToolNames | null {
+      const tool = mcpToolOf(toolId);
+      const server = tool && servers.find(tool.serverId);
+      if (!tool || !server?.slug) return null;
+      return { title: `mcp.${server.slug}.${tool.name}`, toolset: null };
     },
 
     // Starts authorizing Mage with the server's authorization server, for everyone who uses it:

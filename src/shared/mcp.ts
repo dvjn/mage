@@ -305,3 +305,9 @@ export function mcpToolsetId(serverId: string) {
 export function mcpToolId(serverId: string, toolName: string) {
   return `mcp:${serverId}/${toolName}`;
 }
+
+// The server and the tool's own name in a tool's id, for one of an MCP server's tools.
+export function mcpToolOf(toolId: string): { serverId: string; name: string } | null {
+  const match = /^mcp:([^/]+)\/(.+)$/s.exec(toolId);
+  return match ? { serverId: match[1]!, name: match[2]! } : null;
+}

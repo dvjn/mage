@@ -7,6 +7,7 @@ import * as z from "zod";
 import {
   shownModelSchema,
   threadActivitySchema,
+  threadStatusSchema,
   threadParticipantsSchema,
 } from "@/shared/threads/list.ts";
 import { threadSchema } from "@/shared/threads/thread.ts";
@@ -91,6 +92,7 @@ export const sharedThreadSchema = threadSchema.extend({
   shownModel: shownModelSchema.nullable(),
   participants: threadParticipantsSchema,
   activity: threadActivitySchema,
+  status: threadStatusSchema,
 });
 
 export type SharedThread = z.infer<typeof sharedThreadSchema>;

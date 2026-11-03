@@ -1,7 +1,7 @@
 // A tool call that opens the agent's turn, under the Agent header.
 
 import type { ToolDefinition } from "@/shared/tools.ts";
-import type { AgentTurn, ToolRow } from "@/shared/transcript.ts";
+import type { AgentTurn, ToolRow } from "@/shared/threads/rows.ts";
 import { agentAvatar, useModelName } from "@/web/threads/transcript/agent";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
 import { ToolLine } from "@/web/threads/transcript/tool-line";

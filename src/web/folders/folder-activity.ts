@@ -5,8 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 
 import type { FolderSummary } from "@/shared/folders.ts";
-import { needsYou, statusOf } from "@/shared/thread-status.ts";
-import { meQuery } from "@/web/auth/queries";
+import { needsYou } from "@/shared/thread-status.ts";
 import { spaceFoldersQuery } from "@/web/folders/queries";
 import { spaceThreadsQuery } from "@/web/threads/queries";
 
@@ -17,10 +16,8 @@ export interface FolderActivity {
 }
 
 export function useFolderActivity(spaceId: string | undefined) {
-  const me = useQuery(meQuery);
   const folders = useQuery({ ...spaceFoldersQuery(spaceId ?? ""), enabled: !!spaceId });
   const threads = useQuery({ ...spaceThreadsQuery(spaceId ?? ""), enabled: !!spaceId });
-  const userId = me.data?.user.id;
   return useMemo(() => {
     const list = threads.data?.threads ?? [];
     const latest = new Map<string, string>();
@@ -30,7 +27,7 @@ export function useFolderActivity(spaceId: string | undefined) {
       if ((latest.get(thread.folderId) ?? "") < thread.updatedAt) {
         latest.set(thread.folderId, thread.updatedAt);
       }
-      if (userId && needsYou(statusOf(thread.activity, userId))) needing.add(thread.folderId);
+      if (needsYou(thread.status)) needing.add(thread.folderId);
     }
     const counted = (folder: FolderSummary): FolderActivity => ({
       folder,
@@ -45,5 +42,5 @@ export function useFolderActivity(spaceId: string | undefined) {
     return (folders.data ?? [])
       .map(counted)
       .toSorted((a, b) => activeAt(b.folder).localeCompare(activeAt(a.folder)));
-  }, [folders.data, threads.data, userId]);
+  }, [folders.data, threads.data]);
 }

@@ -3,13 +3,10 @@
 // of the previous 7 days. A last row leads to the search for those left out. Rows stay where they
 // are while the pointer is over the list.
 
-import { useQuery } from "@tanstack/react-query";
 import { SearchIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
-import { statusOf } from "@/shared/thread-status.ts";
-import type { ThreadActivity } from "@/shared/threads/list.ts";
-import { meQuery } from "@/web/auth/queries";
+import type { ThreadStatus } from "@/shared/thread-status.ts";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "@/web/components/ui/sidebar";
 import { groupOf, type ThreadGroup } from "@/web/threads/thread-groups";
 
@@ -22,17 +19,17 @@ const LIMITS: Partial<Record<ThreadGroup, number>> = {
   Older: 0,
 };
 
-type Grouped = { id: string; updatedAt: string; activity: ThreadActivity };
+type Grouped = { id: string; updatedAt: string; status: ThreadStatus };
 
 // Where each thread sits in the list: its group and place in it.
 type Layout = Map<string, { group: ThreadGroup; index: number }>;
 
-function layoutOf(threads: Grouped[], userId: string | undefined, now: Date): Layout {
+function layoutOf(threads: Grouped[], now: Date): Layout {
   return new Map(
     threads.map((thread, index) => [
       thread.id,
       {
-        group: groupOf(userId ? statusOf(thread.activity, userId) : "read", thread.updatedAt, now),
+        group: groupOf(thread.status, thread.updatedAt, now),
         index,
       },
     ]),
@@ -75,18 +72,16 @@ export function GroupedThreads<T extends Grouped>({
   // What the list says while it is read or empty.
   children?: ReactNode;
 }) {
-  const me = useQuery(meQuery);
-  const userId = me.data?.user.id;
   // The layout while the pointer is over the list, so rows do not move under it.
   const [held, setHeld] = useState<Layout | null>(null);
   const now = new Date();
-  const fresh = layoutOf(threads, userId, now);
+  const fresh = layoutOf(threads, now);
   const groups = grouping(threads, held ?? fresh, fresh);
   const shown = groups.reduce((sum, g) => sum + g.list.length, 0);
   const hidden = Math.max(total, threads.length) - shown;
   return (
     <SidebarMenu
-      onPointerEnter={() => setHeld(layoutOf(threads, userId, now))}
+      onPointerEnter={() => setHeld(layoutOf(threads, now))}
       onPointerLeave={() => setHeld(null)}
     >
       {groups.map(({ group, list }) => (

@@ -1,43 +1,24 @@
-// Keeps a thread's cached events current and its replies in progress streaming: follows its live
-// event stream from the newest event already cached, merges each event in once, in seq order, shows
-// a title the agent gives the thread, reads the thread again after a tool call ran, as it may have
-// moved it or changed its model, and gathers the pieces of each reply still being written. The
-// browser reconnects on its own and resumes after the last event it saw; the server sends each
-// reply's pieces again from the start, and the ones already here are skipped. A lost stream asks
-// whether the server answers at all; when it does not, the app is offline. When the server says
-// the reader's guest access has ended, following stops and the thread is read again, which tells
-// them so.
+// Keeps a thread's cached rows current and its replies in progress streaming: follows its live
+// stream from the newest event already cached, merges in the rows each new event changed, as the
+// reader sees them, with the messages waiting and the run under way, takes the thread as the server
+// now has it once it is renamed, moved or set to another model, and gathers the pieces of each
+// reply still being written. The browser reconnects on its own and resumes after the last event it
+// saw; the server sends each reply's pieces again from the start, and the ones already here are
+// skipped. A lost stream asks whether the server answers at all; when it does not, the app is
+// offline. When the server says the reader's guest access has ended, following stops and the
+// thread is read again, which tells them so.
 
-import { type QueryClient, useQueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 
-import {
-  type AnyThreadEvent,
-  anyThreadEventSchema,
-  type DeltaBatch,
-  deltaBatchSchema,
-} from "@/shared/threads/events.ts";
+import { threadHeadSchema } from "@/shared/threads/detail.ts";
+import { type DeltaBatch, deltaBatchSchema } from "@/shared/threads/events.ts";
+import { rowsUpdateSchema } from "@/shared/threads/rows.ts";
 import { sharedThreadsQuery } from "@/web/guests/queries";
 import { checkServer, useOnline } from "@/web/lib/online";
 import { tabOrg } from "@/web/lib/org-tab";
 import { threadQuery } from "@/web/threads/queries";
-import { withEvents } from "@/web/threads/thread-detail";
-
-// Adds the events the cache does not have yet.
-export function mergeEvents(queryClient: QueryClient, threadId: string, events: AnyThreadEvent[]) {
-  queryClient.setQueryData(threadQuery(threadId).queryKey, (detail) =>
-    detail ? withEvents(detail, events) : detail,
-  );
-}
-
-// Shows the title the agent gave the thread.
-function renamed(queryClient: QueryClient, threadId: string, data: unknown) {
-  const title = (data as { title?: unknown }).title;
-  if (typeof title !== "string") return;
-  queryClient.setQueryData(threadQuery(threadId).queryKey, (detail) =>
-    detail ? { ...detail, thread: { ...detail.thread, title } } : detail,
-  );
-}
+import { withHead, withUpdate } from "@/web/threads/thread-rows";
 
 // A reply's pieces so far, of its answer and of its reasoning, joined.
 export interface Streaming {
@@ -67,7 +48,7 @@ export function withPieces(
 
 // The text so far of each reply in progress, by message id, and whether the stream is lost and
 // being reconnected while the server answers. Once it is back, the thread is read again.
-export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () => void) {
+export function useThreadEvents(threadId: string, ready: boolean) {
   const queryClient = useQueryClient();
   const online = useOnline();
   const [streaming, setStreaming] = useState<ReadonlyMap<string, Streaming>>(new Map());
@@ -77,7 +58,8 @@ export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () =
     setStreaming(new Map());
     setReconnecting(false);
     if (!ready || !online) return;
-    const after = queryClient.getQueryData(threadQuery(threadId).queryKey)?.thread.lastEventSeq;
+    const { queryKey } = threadQuery(threadId);
+    const after = queryClient.getQueryData(queryKey)?.thread.lastEventSeq;
     // A stream cannot send headers, so it names the tab's org in its address.
     const org = tabOrg();
     const source = new EventSource(
@@ -96,22 +78,22 @@ export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () =
       if (!lost) return;
       lost = false;
       setReconnecting(false);
-      void queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
+      void queryClient.invalidateQueries({ queryKey });
     });
-    source.addEventListener("thread-event", (message) => {
-      const event = anyThreadEventSchema.safeParse(JSON.parse(message.data as string));
-      if (!event.success) return;
-      mergeEvents(queryClient, threadId, [event.data]);
-      if (event.data.type === "thread.renamed") renamed(queryClient, threadId, event.data.data);
-      if (event.data.type === "tool.ran" || event.data.type === "tool.requested") {
-        void queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
-      }
-      onEvent?.();
+    source.addEventListener("rows", (message) => {
+      const update = rowsUpdateSchema.safeParse(JSON.parse(message.data as string));
+      if (!update.success) return;
+      queryClient.setQueryData(queryKey, (detail) => detail && withUpdate(detail, update.data));
+    });
+    source.addEventListener("thread", (message) => {
+      const head = threadHeadSchema.safeParse(JSON.parse(message.data as string));
+      if (!head.success) return;
+      queryClient.setQueryData(queryKey, (detail) => detail && withHead(detail, head.data));
     });
     source.addEventListener("access-ended", () => {
       source.close();
       setReconnecting(false);
-      void queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
+      void queryClient.invalidateQueries({ queryKey });
       void queryClient.invalidateQueries({ queryKey: sharedThreadsQuery.queryKey });
     });
     source.addEventListener("message-delta", (message) => {
@@ -122,7 +104,7 @@ export function useThreadEvents(threadId: string, ready: boolean, onEvent?: () =
       closed = true;
       source.close();
     };
-  }, [queryClient, threadId, ready, online, onEvent]);
+  }, [queryClient, threadId, ready, online]);
 
   return { streaming, reconnecting };
 }

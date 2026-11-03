@@ -382,3 +382,29 @@ test("the agent searches for a server's tool, turns it on and runs it", async ({
   await expect(transcript(page).getByRole("button", { name: /^Notes › Echo · Ran/ })).toBeVisible();
   await expect(transcript(page)).toContainText('Tool mcp.notes.echo said: ok {"text":"found"}');
 });
+
+test("a call to a server's tool keeps its name once the server is removed", async ({ page }) => {
+  const spaceId = await signUp(page);
+  await page.goto("/org/tools");
+  const serverId = await addServer(
+    page,
+    "Notes",
+    `${mcpServer}/headers/mcp`,
+    withBearer(MCP_BEARER_TOKEN),
+  );
+  await expect(page.getByText("Connected").first()).toBeVisible();
+
+  await page.goto(`/s/${spaceId}`);
+  await write(
+    page,
+    '/tool mcp._.search_tools {"query":"echo"}\n/tool mcp.notes.echo {"text":"found"}',
+  );
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  const line = transcript(page).getByRole("button", { name: /^Notes › Echo · Ran/ });
+  await expect(line).toBeVisible();
+
+  expect((await page.request.delete(`/api/v1/mcp-servers/${serverId}`)).ok()).toBe(true);
+  await page.reload();
+  await expect(line).toBeVisible();
+  await expect(transcript(page)).not.toContainText(`mcp:${serverId}`);
+});

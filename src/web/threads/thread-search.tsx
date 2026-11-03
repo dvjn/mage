@@ -14,10 +14,8 @@ import { cn } from "cn";
 import { FolderIcon, XIcon } from "lucide-react";
 import { createContext, type ReactNode, use, useCallback, useEffect, useState } from "react";
 
-import { statusOf } from "@/shared/thread-status.ts";
 import { type ThreadSearchResult, threadSearchListSchema } from "@/shared/threads/search.ts";
 import { apiClient } from "@/web/api/api-client";
-import { meQuery } from "@/web/auth/queries";
 import { SegmentedControl } from "@/web/components/segmented-control";
 import { ShortTime } from "@/web/components/time";
 import { Badge } from "@/web/components/ui/badge";
@@ -36,7 +34,7 @@ import { useShortcut } from "@/web/lib/shortcuts";
 import { useActiveSpace } from "@/web/spaces/active-space";
 import { groupOf, grouped } from "@/web/threads/thread-groups";
 import { RowLead, rowTitle } from "@/web/threads/thread-row";
-import { NeedsYouDot, useThreadStatus } from "@/web/threads/thread-status";
+import { NeedsYouDot } from "@/web/threads/thread-status";
 import { ThreadTitle } from "@/web/threads/thread-title";
 
 const DEBOUNCE_MS = 200;
@@ -85,7 +83,7 @@ function useDebounced<T>(value: T, ms: number) {
 
 // A found thread on one line: its status, its title, where it is, and how long ago it was active.
 function ResultRow({ thread, place }: { thread: ThreadSearchResult; place?: string }) {
-  const status = useThreadStatus(thread.activity);
+  const { status } = thread;
   return (
     <>
       <ThreadTitle thread={thread} className={cn(rowTitle, status === "unread" && "font-medium")} />
@@ -106,7 +104,6 @@ function ResultRow({ thread, place }: { thread: ThreadSearchResult; place?: stri
 function ThreadSearchDialog({ start, onClose }: { start: SearchStart; onClose: () => void }) {
   const navigate = useNavigate();
   const space = useActiveSpace();
-  const me = useQuery(meQuery);
   const sharedThreads = useQuery(sharedThreadsQuery);
   const folders = useFolderActivity(space?.role ? space.id : undefined);
   const [text, setText] = useState("");
@@ -120,16 +117,13 @@ function ThreadSearchDialog({ start, onClose }: { start: SearchStart; onClose: (
     // The last results stay while the next ones load.
     placeholderData: keepPreviousData,
   });
-  const userId = me.data?.user.id;
   const inScope = (result: ThreadSearchResult) =>
     folderId !== null ||
     scope === "all" ||
     (scope === "shared" ? result.shared : result.spaceId === space?.id);
   const shown = (results.data ?? []).filter(inScope);
   const now = new Date();
-  const groups = grouped(shown, (result) =>
-    groupOf(userId ? statusOf(result.activity, userId) : "read", result.updatedAt, now),
-  );
+  const groups = grouped(shown, (result) => groupOf(result.status, result.updatedAt, now));
   const folderNames = new Map(folders.map((f) => [f.folder.id, f.folder.name]));
   const placeOf = (result: ThreadSearchResult) => {
     if (folderId) return undefined;

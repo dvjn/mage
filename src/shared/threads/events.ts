@@ -146,6 +146,9 @@ export const eventDataSchemas = {
     input: z.unknown(),
     risk: toolRiskSchema,
     waits: z.boolean(),
+    // What the tool and its toolset were called when it was asked for, for a tool that was there.
+    title: z.string().optional(),
+    toolset: z.string().optional(),
   }),
   // The actor approved the call.
   "tool.approved": z.object({ runId: z.string(), callId: z.string(), scope: toolScopeSchema }),

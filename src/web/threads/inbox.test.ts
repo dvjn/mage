@@ -30,6 +30,7 @@ function item(
       lastSeenSeq: 0,
       canApprove: false,
     },
+    status: "unread",
     ...changes,
   };
 }
@@ -66,5 +67,11 @@ describe("the inbox's changes to cached lists", () => {
     expect(seen[0]?.activity.lastSeenSeq).toBe(3);
     expect(withSeen(seen, "a", 2)[0]?.activity.lastSeenSeq).toBe(3);
     expect(without([older, newer], "a").map((t) => t.id)).toEqual(["b"]);
+  });
+
+  it("show a thread read at once once its newest notable event is seen, and leave the rest to the server", () => {
+    expect(withSeen([older], "a", 1)[0]?.status).toBe("read");
+    const failed = item("f", "2026-10-02T00:00:00.000Z", { status: "failed" });
+    expect(withSeen([failed], "f", 5)[0]?.status).toBe("failed");
   });
 });

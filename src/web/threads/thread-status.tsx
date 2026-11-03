@@ -7,24 +7,16 @@
 // as a dot on its model's mark instead. A small dot in the waiting colour says a folder holds a
 // thread that needs them.
 
-import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { HandIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
 
 import { ASK_TOOL } from "@/shared/ask.ts";
-import { statusOf, type ThreadStatus } from "@/shared/thread-status.ts";
+import type { ThreadStatus } from "@/shared/thread-status.ts";
 import type { ThreadActivity } from "@/shared/threads/list.ts";
-import { meQuery } from "@/web/auth/queries";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/web/components/ui/tooltip";
 import { useMinute } from "@/web/hooks/use-minute";
 
 const clock = new Intl.DateTimeFormat(undefined, { timeStyle: "short" });
-
-// The thread's status for whoever is signed in; read until they are known.
-export function useThreadStatus(activity: ThreadActivity): ThreadStatus {
-  const me = useQuery(meQuery);
-  return me.data ? statusOf(activity, me.data.user.id) : "read";
-}
 
 // How long ago, in whole minutes, as the tooltip says it.
 function minutesSince(iso: string) {

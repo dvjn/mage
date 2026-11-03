@@ -16,6 +16,7 @@ import {
   threadReadSchema,
   threadUpdateSchema,
 } from "@/shared/threads/requests.ts";
+import { rowsQuerySchema } from "@/shared/threads/rows.ts";
 import { threadSearchSchema } from "@/shared/threads/search.ts";
 
 import type { Threads } from "./service.ts";
@@ -40,6 +41,13 @@ const threadRead = jsonBody(threadReadSchema, "seq is required");
 const threadPageQuery = queryOf(threadPageQuerySchema);
 
 const spaceThreadPageQuery = queryOf(spaceThreadPageQuerySchema);
+
+// `?before=` with the place of the first row the page has, and `?limit=` with how many to read.
+const rowsQuery = validator("query", (value: { before?: string; limit?: string }, c) => {
+  const parsed = rowsQuerySchema.safeParse(value);
+  if (!parsed.success) return c.json({ error: "before must be a place, limit at most 100" }, 400);
+  return parsed.data;
+});
 
 // `?q=` with the text to find in thread titles, and `?folder=` with the folder to look in.
 const threadSearch = validator("query", (value: { q?: string; folder?: string }, c) => {
@@ -111,6 +119,11 @@ export function threadRoutes(options: {
     .get("/v1/threads/:id", async (c) => {
       return c.json(await threads.get(signedIn(c.var.principal), c.req.param("id")), 200);
     })
+    .get("/v1/threads/:id/rows", rowsQuery, (c) => {
+      const { before, limit } = c.req.valid("query");
+      const principal = signedIn(c.var.principal);
+      return c.json(threads.rows(principal, c.req.param("id"), before, limit), 200);
+    })
     .patch("/v1/threads/:id", threadUpdate, async (c) => {
       const changes = c.req.valid("json");
       const thread = await threads.update(signedIn(c.var.principal), c.req.param("id"), changes);
@@ -137,17 +150,20 @@ export function threadRoutes(options: {
           writing = writing.then(send, send);
           return writing;
         }
-        // Events carry their seq as the id a reconnecting browser resumes after; reply pieces
-        // carry none, and are sent again from the start of each reply on reconnecting.
+        // Rows carry the seq of the newest event they reach as the id a reconnecting browser
+        // resumes after; reply pieces carry none, and are sent again from the start of each reply
+        // on reconnecting.
         const unsubscribe = threads.follow(principal, id, after, (item) => {
           void write(() =>
-            item.kind === "event"
+            item.kind === "rows"
               ? stream.writeSSE({
-                  id: String(item.event.seq),
-                  event: "thread-event",
-                  data: JSON.stringify(item.event),
+                  id: String(item.update.seq),
+                  event: "rows",
+                  data: JSON.stringify(item.update),
                 })
-              : stream.writeSSE({ event: "message-delta", data: JSON.stringify(item.delta) }),
+              : item.kind === "thread"
+                ? stream.writeSSE({ event: "thread", data: JSON.stringify(item.head) })
+                : stream.writeSSE({ event: "message-delta", data: JSON.stringify(item.delta) }),
           );
         });
         stream.onAbort(unsubscribe);

@@ -159,7 +159,18 @@ const LONG_REPLY = Array.from({ length: 50 }, (_, i) => `Streamed line ${i + 1}.
 // The thread as the person signed in on `page` reads it from the server.
 async function read(page: Page, thread: string) {
   const res = await page.request.get(`/api/v1/threads/${thread}`);
-  return (await res.json()) as { seenSeq: number; events: { seq: number; type: string }[] };
+  return (await res.json()) as {
+    thread: { spaceId: string };
+    rows: { kind: string; seq: number }[];
+  };
+}
+
+// How far the person signed in on `page` has seen the thread, as its space's list says.
+async function seenSeq(page: Page, thread: string) {
+  const { spaceId } = (await read(page, thread)).thread;
+  const res = await page.request.get(`/api/v1/spaces/${spaceId}/threads`);
+  const list = (await res.json()) as { id: string; activity: { lastSeenSeq: number } }[];
+  return list.find((item) => item.id === thread)?.activity.lastSeenSeq ?? 0;
 }
 
 // Waits for the reply to start, answering its seq.
@@ -167,8 +178,7 @@ async function replyStarted(page: Page, thread: string) {
   let started = 0;
   await expect
     .poll(async () => {
-      started =
-        (await read(page, thread)).events.find((e) => e.type === "message.started")?.seq ?? 0;
+      started = (await read(page, thread)).rows.find((row) => row.kind === "agent")?.seq ?? 0;
       return started;
     })
     .toBeGreaterThan(0);
@@ -236,11 +246,96 @@ test("coming back while the reader's own reply streams opens at the end and foll
     .getByRole("link", { name: /^Catching up/ })
     .click();
   // Read again on coming back, the reply still streaming is not marked new.
-  await expect.poll(async () => (await read(page, thread)).seenSeq).toBeGreaterThanOrEqual(started);
+  await expect.poll(() => seenSeq(page, thread)).toBeGreaterThanOrEqual(started);
   const reply = transcript(page).getByRole("article", { name: "Message from Agent" });
   await expect(reply).not.toContainText("Streamed line 50.");
   await expect(reply).toContainText("Streamed line 50.", { timeout: 20_000 });
   await expect(reply.getByText("Streamed line 50.")).toBeInViewport();
   // Following the growing reply scrolls smoothly, so the end is reached a moment after it grows.
   await expect.poll(() => distanceFromEnd(page)).toBeLessThan(2);
+});
+
+// Where the note is from the top of the transcript's view.
+async function topOf(page: Page, n: number) {
+  const top = (await transcript(page).boundingBox())!.y;
+  return (await note(page, n).boundingBox())!.y - top;
+}
+
+// Scrolls to the top until the earliest note is read.
+async function readToStart(page: Page) {
+  await expect(async () => {
+    await page.evaluate(`${scroller}.scrollTop = 0`);
+    await expect(note(page, 1)).toBeAttached({ timeout: 500 });
+  }).toPass();
+}
+
+test("a thread of hundreds of rows opens at its end, and reads earlier rows as the reader scrolls up, without a jump", async ({
+  page,
+}) => {
+  const email = await signUp(page, "Ada Lovelace");
+  const long = addNotesThread(email, "Long notes", 320);
+  // The first page of earlier rows waits until the view is measured.
+  let held: (() => Promise<void>) | undefined;
+  await page.route(
+    (url) => url.pathname.endsWith("/rows"),
+    (route) => {
+      if (held) return route.continue();
+      held = () => route.continue();
+    },
+  );
+
+  await page.goto(`/t/${long}`);
+  await expect(note(page, 320)).toBeInViewport();
+  expect(await distanceFromEnd(page)).toBeLessThan(2);
+  await expect(note(page, 221)).toBeAttached();
+  await expect(note(page, 220)).toHaveCount(0);
+
+  await page.evaluate(`${scroller}.scrollTop = 0`);
+  await expect.poll(() => held !== undefined).toBe(true);
+  await expect(note(page, 221)).toBeInViewport();
+  const before = await topOf(page, 221);
+  await held!();
+  await expect(note(page, 220)).toBeAttached();
+  expect(Math.abs((await topOf(page, 221)) - before)).toBeLessThan(2);
+
+  // Once the start is read, nothing more loads and the top stays the top.
+  await readToStart(page);
+  await page.evaluate(`${scroller}.scrollTop = 0`);
+  await expect(note(page, 1)).toBeInViewport();
+});
+
+test("a new line in an older page of the thread is where it opens", async ({
+  page,
+  browser,
+}, testInfo) => {
+  const email = await signUp(page, "Ada Lovelace");
+  const grace = await someoneElse(browser, testInfo.parallelIndex, "Grace Hopper");
+  const thread = addNotesThread(email, "Catching up", 30, { email: grace.email, count: 250 });
+
+  await page.goto(`/t/${thread}`);
+  await expect(note(page, 31)).toBeInViewport();
+  await expect.poll(() => topOf(page, 31)).toBeLessThan(80);
+  await expect(note(page, 280)).not.toBeInViewport();
+  await expect(page.getByRole("button", { name: "Scroll to end" })).toBeVisible();
+});
+
+test("a row changes live at the end while the thread's earlier pages are read", async ({
+  page,
+}) => {
+  const email = await signUp(page, "Ada Lovelace");
+  const long = addNotesThread(email, "Long notes", 250);
+  await page.goto(`/t/${long}`);
+  await expect(note(page, 250)).toBeInViewport();
+  await readToStart(page);
+
+  const box = page.getByLabel("Message", { exact: true });
+  await box.fill("/say\nFresh at the end.");
+  await box.press("Enter");
+  const reply = transcript(page).getByRole("article", { name: "Message from Agent" });
+  await expect(reply).toContainText("Fresh at the end.");
+  await expect(reply.locator("[aria-busy=true]")).toHaveCount(0);
+  await expect(note(page, 1)).toBeAttached();
+  await expect(note(page, 120)).toBeAttached();
+  await page.getByRole("button", { name: "Scroll to end" }).click();
+  await expect(reply.getByText("Fresh at the end.")).toBeInViewport();
 });

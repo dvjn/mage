@@ -2,8 +2,8 @@
 // answers under its line once given, and otherwise its line.
 
 import { ASK_TOOL, askInputSchema } from "@/shared/ask.ts";
-import type { ToolConnection, ToolDefinition } from "@/shared/tools.ts";
-import type { AgentTurn, ToolRow } from "@/shared/transcript.ts";
+import type { AgentTurn, ToolRow } from "@/shared/threads/rows.ts";
+import type { ToolDefinition } from "@/shared/tools.ts";
 import { GivenAnswers } from "@/web/agent/question-form";
 import { QuestionCard } from "@/web/threads/transcript/question-card";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
@@ -17,31 +17,16 @@ export function ToolCall({
   decide,
   answer,
   turn,
-  connection,
-  settling,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
   decide?: RowActions["decide"];
   answer?: RowActions["answer"];
   turn: AgentTurn;
-  // The reader's own connection, for a call that would run with it.
-  connection?: ToolConnection;
-  // That who may decide is not known yet.
-  settling?: boolean;
 }) {
   const asked = row.toolId === ASK_TOOL ? askInputSchema.safeParse(row.input) : null;
   if (asked?.success && row.state === "pending" && row.waits) {
-    return (
-      <QuestionCard
-        row={row}
-        input={asked.data}
-        definition={definition}
-        answer={answer}
-        settling={settling}
-        continued={turn.continued}
-      />
-    );
+    return <QuestionCard row={row} input={asked.data} answer={answer} continued={turn.continued} />;
   }
   if (asked?.success && row.answers) {
     const line = turn.continued ? (
@@ -60,14 +45,7 @@ export function ToolCall({
   }
   if (row.state === "pending" && row.waits) {
     return (
-      <ToolCard
-        row={row}
-        definition={definition}
-        decide={decide}
-        connection={connection}
-        settling={settling}
-        continued={turn.continued}
-      />
+      <ToolCard row={row} definition={definition} decide={decide} continued={turn.continued} />
     );
   }
   if (!turn.continued) return <ToolOpening row={row} definition={definition} turn={turn} />;

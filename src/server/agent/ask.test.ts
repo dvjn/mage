@@ -101,10 +101,10 @@ describe("asking questions", () => {
     });
     expect(await activityFor(alan)).toMatchObject({ canApprove: false });
     const detail = (await (await api("GET", `/threads/${thread.id}`, grace.cookie)).json()) as {
-      pendingTools: Record<string, { canDecide: boolean }>;
+      rows: { kind: string; canAnswer?: boolean }[];
     };
-    expect(Object.values(detail.pendingTools)).toEqual([
-      expect.objectContaining({ canDecide: true }),
+    expect(detail.rows.filter((row) => row.kind === "tool")).toEqual([
+      expect.objectContaining({ canAnswer: true }),
     ]);
   });
 

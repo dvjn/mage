@@ -2,8 +2,8 @@
 // its reply under one Agent header, a failed or stopped run, and a labelled placeholder for an event
 // this client does not know yet.
 
-import { FORMER_TOOL_IDS, type ToolConnection, type ToolDefinition } from "@/shared/tools.ts";
-import type { AgentTurn, TranscriptRow } from "@/shared/transcript.ts";
+import type { ShownRow } from "@/shared/threads/rows.ts";
+import { FORMER_TOOL_IDS, type ToolDefinition } from "@/shared/tools.ts";
 import { AgentReply } from "@/web/threads/transcript/agent-reply";
 import { FailureNotice } from "@/web/threads/transcript/failure-notice";
 import { HumanMessage } from "@/web/threads/transcript/human-message";
@@ -15,28 +15,20 @@ export function TranscriptItem({
   row,
   actions = {},
   tools = [],
-  turn,
-  connection,
-  settling,
 }: {
-  row: TranscriptRow;
+  row: ShownRow;
   actions?: RowActions;
-  // The tools' definitions, by which their calls show, those made under a tool's former id too.
+  // The tools' definitions, by which their calls' input and output show, those made under a
+  // tool's former id too.
   tools?: ToolDefinition[];
-  // For a waiting call that would run with the reader's own credentials, their connection.
-  connection?: ToolConnection;
-  // For a waiting call, that who may decide on it is not known yet.
-  settling?: boolean;
-  // Where the row sits in the agent's turn, for the agent's own rows.
-  turn: AgentTurn | null;
 }) {
   switch (row.kind) {
     case "human":
       return <HumanMessage row={row} />;
     case "agent":
       // A step that only called tools shows as its calls.
-      if (!turn) return null;
-      return <AgentReply row={row} continued={turn.continued} />;
+      if (!row.turn) return null;
+      return <AgentReply row={row} continued={row.turn.continued} />;
     case "tool":
       return (
         <ToolCall
@@ -46,9 +38,7 @@ export function TranscriptItem({
           )}
           decide={actions.decide}
           answer={actions.answer}
-          connection={connection}
-          settling={settling}
-          turn={turn ?? { continued: false, model: null }}
+          turn={row.turn ?? { continued: false, model: null }}
         />
       );
     case "failure":

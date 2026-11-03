@@ -8,6 +8,7 @@ import { EDITORS, TOOL_OFF, WIRE_NAME_MAX, wireToolName } from "@/shared/tools.t
 import { transcriptOf } from "@/shared/transcript.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
+import type { ThreadFollowItem } from "@/server/threads/service.ts";
 
 import { createTools, modelToolNames, type ToolPolicyFields, type Toolset } from "./tools.ts";
 import {
@@ -827,8 +828,10 @@ describe("independent review", () => {
       });
       expect(changed.status).toBe(200);
       const detail = await api("GET", `/threads/${thread.id}`, ada.cookie);
-      expect(await detail.json()).toMatchObject({
-        pendingTools: { [callId]: { risk: next ? "ask" : "normal", canDecide: true } },
+      const { rows } = (await detail.json()) as { rows: { id: string }[] };
+      expect(rows.find((row) => row.id === callId)).toMatchObject({
+        risk: next ? "ask" : "normal",
+        actions: next ? ["allow", "deny"] : ["allow", "allow_for_now", "deny"],
       });
       const listed = await api("GET", `/spaces/${space.id}/threads`, ada.cookie);
       expect(await listed.json()).toContainEqual(
@@ -1414,5 +1417,78 @@ describe("Mage's own toolsets", () => {
     // Back from the wire to each id, as a run reads the model's calls.
     const fromWire = new Map([...names].map(([id, name]) => [wireToolName(name), id]));
     for (const { id } of tools) expect(fromWire.get(wireToolName(names.get(id)!))).toBe(id);
+  });
+});
+
+describe("waiting calls as each reader sees them", () => {
+  type Workspace = Awaited<ReturnType<typeof toolThread>>;
+
+  // The thread's waiting call as the reader reads it.
+  async function waitingFor({ threads, thread, ada }: Workspace, who: { userId: string }) {
+    const reader = { userId: who.userId, orgId: ada.orgId, role: "member" as const };
+    const { rows } = await threads.get(reader, thread.id);
+    return rows.find((row) => row.kind === "tool" && row.state === "pending");
+  }
+
+  it("offer Allow for now where a call may be, and leave it paused for those who may not decide", async () => {
+    const workspace = await toolThread();
+    const { ada, alan, hedy, post, calls, worker, start } = workspace;
+    start();
+    await post(hedy, "Rename it");
+    workspace.revokeHedy();
+    await calls(["thread.rename", { title: "Looms" }]);
+    await worker.idle();
+
+    expect(await waitingFor(workspace, ada)).toMatchObject({
+      risk: "normal",
+      actions: ["allow", "allow_for_now", "deny"],
+    });
+    expect(await waitingFor(workspace, alan)).toMatchObject({ actions: [] });
+  });
+
+  it("offer a call that asks every time only once", async () => {
+    const workspace = await toolThread();
+    const { ada, post, calls, worker, start } = workspace;
+    start();
+    await post(ada, "Switch providers");
+    await calls(["thread.set_model", { model: "key-2/other", effort: "low" }]);
+    await worker.idle();
+
+    expect(await waitingFor(workspace, ada)).toMatchObject({
+      risk: "ask",
+      actions: ["allow", "deny"],
+    });
+  });
+
+  it("leave a call needing review paused for whoever wrote last, and tell a follower when that changes", async () => {
+    const workspace = await toolThread();
+    const { ada, grace, space, post, calls, worker, start, threads, thread } = workspace;
+    workspace.toolSettings.setInSpace(
+      space.id,
+      ["thread.rename"],
+      workspace.policy({ independent: true }).id,
+    );
+    start();
+    await post(ada, "Rename it");
+    await calls(["thread.rename", { title: "Engines" }]);
+    await worker.idle();
+    const asAda = { userId: ada.userId, orgId: ada.orgId, role: "member" as const };
+    const sent: ThreadFollowItem[] = [];
+    const newest = threads.visible(asAda, thread.id).lastEventSeq;
+    const stop = threads.follow(asAda, thread.id, newest, (item) => sent.push(item));
+
+    expect(await waitingFor(workspace, ada)).toMatchObject({ risk: "review", actions: [] });
+    expect(await waitingFor(workspace, grace)).toMatchObject({ actions: ["allow", "deny"] });
+
+    // Grace writes last now, so Ada may review the call, though the call itself did not change.
+    const asGrace = { userId: grace.userId, orgId: ada.orgId, role: "member" as const };
+    threads.postMessage(asGrace, thread.id, "// Go ahead");
+    stop();
+    const last = sent.at(-1);
+    expect(last?.kind === "rows" && last.update.rows).toEqual([
+      expect.objectContaining({ kind: "tool", actions: ["allow", "deny"] }),
+      expect.objectContaining({ kind: "human", text: "// Go ahead" }),
+    ]);
+    expect(await waitingFor(workspace, grace)).toMatchObject({ actions: [] });
   });
 });

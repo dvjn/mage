@@ -89,7 +89,21 @@ describe("what a thread holds for each reader", () => {
     expect(statusOf(await listed(workspace, ada.cookie), ada.userId)).toBe("read");
   });
 
-  it("keeps how far a reader saw from moving back, gives it with the thread, and hides threads they cannot read", async () => {
+  it("gives each reader the status the thread shows them", async () => {
+    const workspace = await agentThread();
+    const { ada, grace, post, api, space, thread } = workspace;
+    await post(grace, "// Between us");
+    const statusFor = async (who: { cookie: string }) => {
+      const res = await api("GET", `/spaces/${space.id}/threads`, who.cookie);
+      const list = threadListSchema.parse(await res.json());
+      return list.find((item) => item.id === thread.id)?.status;
+    };
+
+    expect(await statusFor(ada)).toBe("unread");
+    expect(await statusFor(grace)).toBe("read");
+  });
+
+  it("keeps how far a reader saw from moving back, gives it with the thread's entry, and hides threads they cannot read", async () => {
     const workspace = await agentThread();
     const { ada, post, api, thread, signUp } = workspace;
     await post(ada, "// One");
@@ -101,9 +115,7 @@ describe("what a thread holds for each reader", () => {
     expect(
       await (await api("PUT", `/threads/${thread.id}/read`, ada.cookie, { seq: 1 })).json(),
     ).toEqual({ seq: 2 });
-    expect(await (await api("GET", `/threads/${thread.id}`, ada.cookie)).json()).toMatchObject({
-      seenSeq: 2,
-    });
+    expect(await listed(workspace, ada.cookie)).toMatchObject({ lastSeenSeq: 2 });
     const stranger = await signUp("Hedy Lamarr", "hedy@example.com");
     expect(
       (await api("PUT", `/threads/${thread.id}/read`, stranger.cookie, { seq: 1 })).status,
@@ -168,13 +180,18 @@ describe("a person's inbox", () => {
       event: "thread",
       data: { shared: false, thread: { id: thread.id } },
     });
-    expect(statusOf(told.data.thread.activity, ada.userId)).toBe("unread");
+    expect(told.data.thread.status).toBe("unread");
     expect((await alanInbox.nextInbox()).event).toBe("thread");
 
     await api("PUT", `/threads/${thread.id}/read`, ada.cookie, { seq: 1 });
     expect(await adaInbox.nextInbox()).toEqual({
       event: "thread-read",
       data: { threadId: thread.id, seq: 1 },
+    });
+    // Then the thread again, with the status that follows from it.
+    expect(await adaInbox.nextInbox()).toMatchObject({
+      event: "thread",
+      data: { thread: { id: thread.id, status: "read" } },
     });
 
     // Alan hears nothing of Ada's reads; the stranger hears nothing at all.

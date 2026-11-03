@@ -5,7 +5,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 
-import type { HumanRow } from "@/shared/transcript.ts";
+import type { HumanRow } from "@/shared/threads/rows.ts";
 import { meQuery } from "@/web/auth/queries";
 import { MessageResponse } from "@/web/components/ai-elements/message";
 import { CopyButton } from "@/web/components/copy-button";

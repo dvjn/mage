@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { agentTurnOf, type TranscriptRow } from "@/shared/transcript.ts";
+import type { AnyThreadEvent } from "@/shared/threads/events.ts";
+import { agentTurnOf, createFold, type TranscriptRow } from "@/shared/transcript.ts";
 
 const row = (kind: string, extra: object = {}) => ({ kind, id: kind, ...extra }) as TranscriptRow;
 const human = row("human");
@@ -46,5 +47,146 @@ describe("agentTurnOf", () => {
     expect(agentTurnOf([human, row("failure")], 1)).toBeNull();
     expect(agentTurnOf([human, row("stop")], 1)).toBeNull();
     expect(agentTurnOf([human], 1)).toBeNull();
+  });
+});
+
+describe("createFold", () => {
+  const ada = { kind: "user", userId: "ada", name: "Ada Lovelace" };
+  const agent = { kind: "agent" };
+  let seq = 0;
+  function event(type: string, data: object, actor: object = agent): AnyThreadEvent {
+    seq += 1;
+    return {
+      id: `e${seq}`,
+      threadId: "t",
+      seq,
+      type,
+      data,
+      actor: actor as AnyThreadEvent["actor"],
+      createdAt: new Date(Date.UTC(2026, 10, 1, 0, 0, seq)).toISOString(),
+    };
+  }
+  const message = (text: string, quiet = false) =>
+    event("message", { parts: [{ type: "text", text }], quiet, mode: "steer" }, ada);
+  const run = { runId: "r1" };
+
+  // The fold of the events, and for each row its kind, place and the seq that last changed it.
+  function folded(...events: AnyThreadEvent[]) {
+    const fold = createFold();
+    const changes: [string, number][][] = [];
+    for (const each of events) {
+      fold.add(each);
+      changes.push(fold.transcript().rows.map((row, index) => [row.kind, fold.changedAt(index)]));
+    }
+    return { fold, changes };
+  }
+
+  it("keeps each row's place, and the last event that changed it", () => {
+    seq = 0;
+    const { fold, changes } = folded(
+      message("// Aside", true),
+      message("Hello"),
+      event("run.created", { ...run, reason: null, continuesRunId: null }, ada),
+      event("message.admitted", { ...run, messageIds: ["e2"] }),
+      event("message.started", { ...run, messageId: "m1", model: "a/b" }),
+      event("message.completed", {
+        ...run,
+        messageId: "m1",
+        parts: [{ type: "text", text: "Hi" }],
+        status: "completed",
+      }),
+      event("run.completed", run),
+    );
+
+    expect(changes).toEqual([
+      [["human", 1]],
+      // A message the agent has not taken in is no row yet.
+      [["human", 1]],
+      [["human", 1]],
+      [
+        ["human", 1],
+        ["human", 4],
+      ],
+      [
+        ["human", 1],
+        ["human", 4],
+        ["agent", 5],
+      ],
+      [
+        ["human", 1],
+        ["human", 4],
+        ["agent", 6],
+      ],
+      [
+        ["human", 1],
+        ["human", 4],
+        ["agent", 6],
+      ],
+    ]);
+    expect(fold.last).toBe(7);
+    expect(fold.turnAt(2)).toEqual({ continued: false, model: "a/b" });
+    expect(fold.turnAt(0)).toBeNull();
+  });
+
+  it("changes a call as it is decided and runs, and the turn of the calls before a reply", () => {
+    seq = 0;
+    const requested = (callId: string) =>
+      event("tool.requested", {
+        ...run,
+        callId,
+        messageId: "m1",
+        toolId: "thread.rename",
+        input: { title: "Looms" },
+        risk: "normal",
+        waits: callId === "c1",
+      });
+    const { fold, changes } = folded(
+      message("// Rename it", true),
+      event("message.started", { ...run, messageId: "m1", model: "a/b" }),
+      event("message.completed", { ...run, messageId: "m1", parts: [], status: "completed" }),
+      requested("c1"),
+      requested("c2"),
+      event("tool.approved", { ...run, callId: "c1", scope: "once" }, ada),
+      event("tool.ran", { ...run, callId: "c1", ok: true, ms: 3 }),
+      event("message.started", { ...run, messageId: "m2", model: "a/c" }),
+    );
+
+    // The step that only called tools shows as its calls; the second call continues the turn.
+    expect(fold.turnAt(1)).toBeNull();
+    expect(changes[4]).toEqual([
+      ["human", 1],
+      ["agent", 3],
+      ["tool", 4],
+      ["tool", 5],
+    ]);
+    expect(changes[6]![2]).toEqual(["tool", 7]);
+    // The reply names the turn's model, which changes the calls before it.
+    expect(changes[7]).toEqual([
+      ["human", 1],
+      ["agent", 3],
+      ["tool", 8],
+      ["tool", 8],
+      ["agent", 8],
+    ]);
+    expect([fold.turnAt(2), fold.turnAt(3), fold.turnAt(4)]).toEqual([
+      { continued: false, model: "a/c" },
+      { continued: true, model: "a/c" },
+      { continued: true, model: "a/c" },
+    ]);
+  });
+
+  it("marks the replies a retry tries again as changed", () => {
+    seq = 0;
+    const { changes } = folded(
+      event("message.started", { ...run, messageId: "m1" }),
+      event("message.completed", { ...run, messageId: "m1", parts: [], status: "failed" }),
+      event("run.failed", { ...run, error: "Down" }),
+      event("run.created", { runId: "r2", reason: "retry", continuesRunId: "r1" }, ada),
+    );
+
+    expect(changes.at(-1)).toEqual([
+      ["agent", 4],
+      ["failure", 3],
+    ]);
   });
 });

@@ -5,7 +5,7 @@ import { cn } from "cn";
 import type { UIMessage } from "ai";
 import { ArrowDownIcon, DownloadIcon } from "lucide-react";
 import type { ComponentProps, ReactNode, RefObject } from "react";
-import { useCallback, useLayoutEffect } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { StickToBottom, useStickToBottomContext } from "use-stick-to-bottom";
 
 export type ConversationProps = Omit<ComponentProps<typeof StickToBottom>, "children"> & {
@@ -65,6 +65,59 @@ const OpenScrolled = ({ at, hold }: { at?: RefObject<HTMLElement | null>; hold?:
     state.scrollTop = end;
   }, [at, hold, scrollRef, state, stopScroll]);
   return null;
+};
+
+// How far above the view earlier content is asked for, so it is there before the reader reaches it.
+const EARLIER_MARGIN_PX = 600;
+
+// Goes first in the content: while there is `more` before it, asks for it with `onLoad` once the
+// top comes near the view, and again while it stays near once that has arrived. What is in view
+// stays where it is as the earlier content arrives above it; `first` names the content's first
+// item, which changes when it has.
+export const ConversationEarlier = ({
+  more,
+  first,
+  onLoad,
+}: {
+  more: boolean;
+  first: string | undefined;
+  onLoad: () => Promise<unknown>;
+}) => {
+  const { scrollRef, state } = useStickToBottomContext();
+  const top = useRef<HTMLDivElement>(null);
+  // The item that was first, and how far it was from the top of the view, as content was asked for.
+  const anchor = useRef<{ element: Element; at: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const root = scrollRef.current;
+    const target = top.current;
+    if (!more || loading || !root || !target) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        observer.disconnect();
+        const element = target.nextElementSibling;
+        anchor.current = element && { element, at: element.getBoundingClientRect().top };
+        setLoading(true);
+        void onLoad().finally(() => setLoading(false));
+      },
+      { root, rootMargin: `${EARLIER_MARGIN_PX}px 0px 0px 0px` },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [more, loading, onLoad, scrollRef]);
+
+  useLayoutEffect(() => {
+    const kept = anchor.current;
+    if (!kept) return;
+    anchor.current = null;
+    if (!kept.element.isConnected) return;
+    const moved = kept.element.getBoundingClientRect().top - kept.at;
+    if (moved !== 0) state.scrollTop += moved;
+  }, [first, state]);
+
+  return <div ref={top} aria-hidden className="-mb-4 h-0 shrink-0" />;
 };
 
 export type ConversationContentProps = ComponentProps<typeof StickToBottom.Content>;

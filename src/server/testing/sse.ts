@@ -1,6 +1,6 @@
-// Reads a thread's live event stream, or a person's inbox stream, in the tests, one frame at a time.
+// Reads a thread's live stream, or a person's inbox stream, in the tests, one frame at a time.
 
-import type { ThreadEventSummary } from "@/shared/threads/events.ts";
+import type { RowsUpdate } from "@/shared/threads/rows.ts";
 
 import type { setup } from "./workspace.ts";
 
@@ -19,14 +19,14 @@ export async function openStream(
   });
   const frames = framesOf(res);
 
-  // The next event, skipping heartbeats.
-  async function nextEvent() {
+  // The next rows sent, skipping heartbeats.
+  async function nextRows() {
     const frame = await frames.nextItem();
-    const event = JSON.parse(frame.data!) as ThreadEventSummary;
-    return { ...event, sseId: frame.id, sseEvent: frame.event };
+    const update = JSON.parse(frame.data!) as RowsUpdate;
+    return { ...update, sseId: frame.id, sseEvent: frame.event };
   }
 
-  return { res, ...frames, nextEvent };
+  return { res, ...frames, nextRows };
 }
 
 // Opens the person's inbox stream and reads it one frame at a time.

@@ -7,7 +7,6 @@ import type { OrgMember, OrgPerson } from "@/shared/orgs.ts";
 import type { Page } from "@/shared/paging.ts";
 import { FIRST_SPACE_NAME, type SpaceMembers, spaceNameFor } from "@/shared/spaces.ts";
 import type { ThreadDetail } from "@/shared/threads/detail.ts";
-import { transcriptOf } from "@/shared/transcript.ts";
 
 type Workspace = ReturnType<typeof setup>;
 type Person = { userId: string; orgId: string; cookie: string };
@@ -312,11 +311,9 @@ describe("org invites", () => {
     const thread = (await (
       await api("GET", `/threads/${threads[0]!.id}`, ada.cookie, undefined, ada.orgId)
     ).json()) as ThreadDetail;
-    expect(thread.events[0]?.actor).toEqual({
-      kind: "user",
-      userId: grace.userId,
-      name: "Grace Hopper",
-      former: true,
+    expect(thread.rows[0]).toMatchObject({
+      kind: "human",
+      author: { kind: "user", userId: grace.userId, name: "Grace Hopper", former: true },
     });
 
     const token = await inviteToken(workspace, ada, "grace@example.com");
@@ -324,11 +321,8 @@ describe("org invites", () => {
     const after = (await (
       await api("GET", `/threads/${threads[0]!.id}`, ada.cookie, undefined, ada.orgId)
     ).json()) as ThreadDetail;
-    expect(after.events[0]?.actor).toEqual({
-      kind: "user",
-      userId: grace.userId,
-      name: "Grace Hopper",
-    });
+    const author = after.rows[0]?.kind === "human" ? after.rows[0].author : undefined;
+    expect(author).toEqual({ kind: "user", userId: grace.userId, name: "Grace Hopper" });
   });
 });
 
@@ -398,8 +392,9 @@ describe("org members", () => {
     const detail = (await (
       await api("GET", `/threads/${thread.id}`, ada.cookie, undefined, orgId)
     ).json()) as ThreadDetail;
-    expect(transcriptOf(detail.events).pending).toEqual([]);
-    expect(detail.events.map((event) => event.type)).toContain("message.dropped");
+    expect(detail.pending).toEqual([]);
+    const events = workspace.threadStore.eventsAfter(thread.id, 0);
+    expect(events.map((event) => event.type)).toContain("message.dropped");
     expect((await api("GET", "/spaces", grace.cookie, undefined, orgId)).status).toBe(404);
   });
 });

@@ -1,19 +1,18 @@
 // Changes to threads: starting one, posting to it and changing or withdrawing a waiting message,
 // stopping and retrying its runs, deciding on and answering its tool calls, its model and effort,
-// and renaming, moving to a folder or another space, and deleting it. What the server answers with
-// merges into the thread's events; a failure that only an action of the moment can show goes to a
-// toast.
+// and renaming, moving to a folder or another space, and deleting it. What they change in the
+// thread's rows arrives with its live stream; a failure that only an action of the moment can show
+// goes to a toast.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 
 import type { AskAnswers } from "@/shared/ask.ts";
-import { anyThreadEventSchema, type Delivery, type ToolScope } from "@/shared/threads/events.ts";
+import type { Delivery, ToolScope } from "@/shared/threads/events.ts";
 import { type Effort, threadSchema } from "@/shared/threads/thread.ts";
 import { apiClient } from "@/web/api/api-client";
 import { errorOf } from "@/web/api/api-errors";
 import { useToast } from "@/web/shell/toaster";
-import { mergeEvents } from "@/web/threads/event-stream";
 import { spaceThreadsQuery, threadQuery } from "@/web/threads/queries";
 
 // Makes a thread in the space with its first message, in a folder or at its top, and opens it.
@@ -60,18 +59,14 @@ export function usePostMessage(threadId: string) {
         json: { text, mode },
       });
       if (!res.ok) throw new Error(await errorOf(res));
-      return anyThreadEventSchema.parse(await res.json());
     },
-    onSuccess: async (event) => {
-      mergeEvents(queryClient, threadId, [event]);
-      await queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
-    },
+    // Read again too, for when the live stream is reconnecting.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey }),
   });
 }
 
 // Changes or withdraws a message still waiting its turn.
 export function useWaitingMessage(threadId: string, messageId: string) {
-  const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (change: { text?: string; mode?: "steer" | "queue" } | null) => {
       const param = { id: threadId, messageId };
@@ -79,8 +74,6 @@ export function useWaitingMessage(threadId: string, messageId: string) {
         ? await apiClient.v1.threads[":id"].messages[":messageId"].$patch({ param, json: change })
         : await apiClient.v1.threads[":id"].messages[":messageId"].$delete({ param });
       if (!res.ok) throw new Error(await errorOf(res));
-      const event = anyThreadEventSchema.safeParse(await res.json());
-      if (event.success) mergeEvents(queryClient, threadId, [event.data]);
     },
   });
 }
@@ -98,7 +91,6 @@ export function useStopRun(threadId: string) {
 }
 
 export function useRetryRun(threadId: string) {
-  const queryClient = useQueryClient();
   const toast = useToast();
   return useMutation({
     mutationFn: async (runId: string) => {
@@ -107,14 +99,12 @@ export function useRetryRun(threadId: string) {
         json: { runId },
       });
       if (!res.ok) throw new Error(await errorOf(res));
-      return anyThreadEventSchema.parse(await res.json());
     },
-    onSuccess: (event) => mergeEvents(queryClient, threadId, [event]),
     onError: (failed) => toast(failed.message),
   });
 }
 
-// Approves or denies a tool call; the decision arrives with the thread's events.
+// Approves or denies a tool call; the decision arrives with the thread's rows.
 export function useToolDecision(threadId: string) {
   const toast = useToast();
   return useMutation({
@@ -137,7 +127,7 @@ export function useToolDecision(threadId: string) {
   });
 }
 
-// Answers the questions a call asks, or skips them; the answer arrives with the thread's events.
+// Answers the questions a call asks, or skips them; the answer arrives with the thread's rows.
 export function useToolAnswer(threadId: string) {
   const toast = useToast();
   return useMutation({

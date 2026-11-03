@@ -1,30 +1,31 @@
 // A thread: its transcript as it happens, opened where the reader stopped with a line above what
-// is new to them, or else at the newest, and kept scrolled to the newest once they reach it, what
-// the agent is doing and the messages waiting for it, a composer to post, steer, queue, interrupt
-// and stop, trying the last reply again when it failed or was stopped, and the thread's model with,
-// for a model that can think, its reasoning effort, or the defaults it follows, named as such, with
-// a way back to them. Its space's owners and messagers can share it from its header. Those a
-// tool's policy lets approve decide on the agent's calls of it that wait, those it lets use or
-// approve it answer the agent's questions, and while the agent waits the composer says on what; a
-// call allowed while signing in with its server is applied on coming back here. A guest of the
-// thread sees its space's name alone, and cannot change its model; once their access ends, they are
-// told so. When the server cannot be reached, the thread as last read stays in view while it
-// reconnects. Reading it marks it seen.
+// is new to them, or else at the newest, and kept scrolled to the newest once they reach it, with
+// earlier rows read as the reader scrolls up to them; what the agent is doing and the messages
+// waiting for it, a composer to post, steer, queue, interrupt and stop, trying the last reply again
+// when it failed or was stopped, and the thread's model with, for a model that can think, its
+// reasoning effort, or the defaults it follows, named as such, with a way back to them. Those who
+// may share it do so from its header. What the reader may do in it, and with each of its rows, is
+// the server's to say: decide on the agent's calls that wait, answer the agent's questions, retry;
+// while the agent waits the composer says on what; a call allowed while signing in with its server
+// is applied on coming back here. A guest of the thread sees its space's name alone, and cannot
+// change its model; once their access ends, they are told so. When the server cannot be reached,
+// the thread as last read stays in view while it reconnects. Reading it marks it seen.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import { cn } from "cn";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { ASK_TOOL, type AskAnswers } from "@/shared/ask.ts";
+import type { AskAnswers } from "@/shared/ask.ts";
 import type { Delivery, ToolScope } from "@/shared/threads/events.ts";
+import type { ShownRow } from "@/shared/threads/rows.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
-import { agentTurnOf, transcriptOf } from "@/shared/transcript.ts";
 import { AuthCard, AuthFrame } from "@/web/auth/auth-frame";
 import { meQuery } from "@/web/auth/queries";
 import {
   Conversation,
   ConversationContent,
+  ConversationEarlier,
   ConversationEmptyState,
   ConversationScrollButton,
 } from "@/web/components/ai-elements/conversation";
@@ -54,12 +55,14 @@ import {
   useToolDecision,
 } from "@/web/threads/mutations";
 import {
+  earlierRows,
   spaceThreadsQuery,
   ThreadAccessEnded,
   ThreadNotFound,
   threadQuery,
 } from "@/web/threads/queries";
 import { Composer, PendingTray, RunStatus } from "@/web/threads/thread-composer";
+import { withEarlier } from "@/web/threads/thread-rows";
 import { AgentStarting } from "@/web/threads/transcript/agent-starting";
 import { TranscriptItem } from "@/web/threads/transcript/transcript-item";
 
@@ -77,13 +80,12 @@ export function ThreadPage() {
   const [stopped, setStopped] = useState<string>();
   const [picking, setPicking] = useState(false);
   const thread = detail.data?.thread;
-  const events = detail.data?.events;
+  const saved = detail.data?.rows;
   const access = detail.data?.access;
   const guest = access?.via === "guest";
-  const role = access?.via === "space" ? access.role : undefined;
+  const can = detail.data?.can;
   // Its space is archived: it can be read, moved out and deleted, nothing more.
   const archived = !!detail.data?.archived;
-  const writer = !archived && (role === "owner" || role === "messager");
   const space = spaces.data?.find((s) => s.id === thread?.spaceId);
   const folders = useQuery({
     ...spaceFoldersQuery(thread?.spaceId ?? ""),
@@ -109,30 +111,26 @@ export function ThreadPage() {
   // The thread cannot be read or followed right now; what is shown is what was last read. Offline,
   // the sidebar says so instead.
   const offline = online && !notFound && !ended && (detail.failureCount > 0 || reconnecting);
-  const transcript = useMemo(
+  // The rows with the text so far of each reply still being written.
+  const rows = useMemo(
     () =>
-      transcriptOf(
-        events ?? [],
-        new Map(
-          [...streaming].map(([messageId, { text, reasoning }]) => [
-            messageId,
-            { text, reasoning },
-          ]),
-        ),
-      ),
-    [events, streaming],
+      (saved ?? []).map((row): ShownRow => {
+        const pieces = row.kind === "agent" && row.status === "streaming" && streaming.get(row.id);
+        return pieces ? { ...row, text: pieces.text, reasoning: pieces.reasoning } : row;
+      }),
+    [saved, streaming],
   );
 
   // The thread as first read from the server on this visit, or as cached when it cannot answer:
-  // its events, and the first row the reader had not seen by then that is not their own nor a
-  // reply still being written. It opens there, or at the end when there is none, and a line marks
-  // that row until they post; while the agent is at work it is held there, not following the
-  // reply, until the reader reaches the end. Until more events arrive, what renders late, such as
-  // an image, lands at the end at once; what arrives after scrolls in. The thread is marked seen
-  // once it is read.
+  // its rows, and the first row the reader had not seen by then that is not their own nor a reply
+  // still being written. It opens there, or at the end when there is none, and a line marks that
+  // row until they post; while the agent is at work it is held there, not following the reply,
+  // until the reader reaches the end. Until more rows arrive, what renders late, such as an image,
+  // lands at the end at once; what arrives after scrolls in. The thread is marked seen once it is
+  // read.
   const [visit, setVisit] = useState<{
     threadId: string;
-    events: unknown;
+    rows: unknown;
     openedAt?: string;
     newFrom?: string;
     hold: boolean;
@@ -142,28 +140,21 @@ export function ThreadPage() {
     (!detail.isFetching || detail.failureCount > 0) &&
     visit?.threadId !== threadId
   ) {
-    const seen = detail.data.seenSeq;
-    const reader = me.data?.user.id;
-    const newFrom = transcript.rows.find(
-      (row) =>
-        row.seq > seen &&
-        !(row.kind === "human" && row.author.userId === reader) &&
-        !(row.kind === "agent" && row.status === "streaming"),
-    )?.id;
+    const newFrom = detail.data.newFrom ?? undefined;
     setVisit({
       threadId,
-      events: detail.data.events,
+      rows: detail.data.rows,
       openedAt: newFrom,
       newFrom,
-      hold: !!transcript.run,
+      hold: !!detail.data.run,
     });
   }
   const opened = visit?.threadId === threadId ? visit : undefined;
-  const arriving = !!opened && opened.events !== events;
+  const arriving = !!opened && opened.rows !== saved;
   const stoppedAt = useRef<HTMLDivElement>(null);
   useMarkRead(threadId, notFound || ended || !opened ? undefined : thread?.lastEventSeq);
 
-  const run = transcript.run;
+  const run = detail.data?.run;
   const posting = usePostMessage(threadId);
   const stopping = useStopRun(threadId);
   const retrying = useRetryRun(threadId);
@@ -171,6 +162,18 @@ export function ThreadPage() {
   const answering = useToolAnswer(threadId);
   const modelChange = useThreadModel(threadId);
   const moving = useMoveThread();
+
+  // Reads the page of rows before the first here.
+  const before = detail.data?.before ?? null;
+  const loadEarlier = useCallback(async () => {
+    if (before === null) return;
+    const page = await earlierRows(threadId, before).catch(() => null);
+    if (!page) return;
+    queryClient.setQueryData(
+      threadQuery(threadId).queryKey,
+      (current) => current && withEarlier(current, page),
+    );
+  }, [queryClient, threadId, before]);
 
   // Throws when the message is not posted, so the composer keeps the text.
   async function send(text: string, mode: Delivery) {
@@ -190,12 +193,12 @@ export function ThreadPage() {
     retrying.mutate(runId);
   }
 
-  // Approves or denies a tool call; the decision arrives with the thread's events.
+  // Approves or denies a tool call; the decision arrives with the thread's rows.
   function decide(callId: string, allow: boolean, scope: ToolScope) {
     return decision.mutateAsync({ callId, allow, scope }).catch(() => {});
   }
 
-  // Answers the questions a call asks, or skips them; the answer arrives with the thread's events.
+  // Answers the questions a call asks, or skips them; the answer arrives with the thread's rows.
   function answer(callId: string, answers: AskAnswers | null) {
     return answering.mutateAsync({ callId, answers }).catch(() => {});
   }
@@ -212,27 +215,10 @@ export function ThreadPage() {
     void decide(allow, true, scope ?? "once");
   });
 
-  // What the run waits for: an answer to the agent's questions, or a decision on a call.
-  const waitingOn = run?.waitingOn
-    ? transcript.rows.find((row) => row.kind === "tool" && row.id === run.waitingOn)
-    : undefined;
-  const waiting = waitingOn
-    ? waitingOn.kind === "tool" && waitingOn.toolId === ASK_TOOL
-      ? "answer"
-      : "decision"
-    : null;
-
   // A click in a reply's layout posts as the person who clicked, for those who may post.
-  const replyActions =
-    access && role !== "viewer"
-      ? { send: (text: string) => void send(text, "queue").catch(() => {}) }
-      : {};
-
-  // The last row, when it ends a run that failed or was stopped and nothing has run since.
-  const last = transcript.rows.at(-1);
-  const canRetry = role !== "viewer" && !archived && !run && transcript.pending.length === 0;
-  const retryable =
-    canRetry && (last?.kind === "failure" || last?.kind === "stop") ? last : undefined;
+  const replyActions = can?.post
+    ? { send: (text: string) => void send(text, "queue").catch(() => {}) }
+    : {};
 
   // Changes the thread's model or reasoning effort.
   function change(json: { model: string | null } | { effort: Effort | null }) {
@@ -282,7 +268,7 @@ export function ThreadPage() {
                   spaceId: thread.spaceId,
                   folders: folders.data ?? [],
                   value: thread.folderId,
-                  canMove: writer,
+                  canMove: !!can?.arrange,
                   onChange: (folderId) => move(folderId),
                 }),
               ].filter((crumb) => crumb !== null)
@@ -290,7 +276,7 @@ export function ThreadPage() {
           { label: thread?.title ?? "" },
         ]}
       >
-        {writer && <ShareDialog threadId={threadId} />}
+        {can?.share && <ShareDialog threadId={threadId} />}
         {archived && !guest && thread && <ArchivedThreadActions thread={thread} />}
       </PageHeader>
       <ReplyActions.Provider value={replyActions}>
@@ -305,19 +291,16 @@ export function ThreadPage() {
             resize={arriving ? "smooth" : "instant"}
           >
             <ConversationContent className={cn(pageWidth, "gap-4")}>
-              {transcript.rows.length === 0 ? (
+              {rows.length === 0 ? (
                 <ConversationEmptyState description="Write the first message below." />
               ) : (
-                transcript.rows.map((savedRow, index) => {
-                  const policy =
-                    savedRow.kind === "tool" && savedRow.state === "pending"
-                      ? detail.data?.pendingTools?.[savedRow.id]
-                      : undefined;
-                  const row =
-                    policy && savedRow.kind === "tool"
-                      ? { ...savedRow, risk: policy.risk }
-                      : savedRow;
-                  return (
+                <>
+                  <ConversationEarlier
+                    more={before !== null}
+                    first={rows[0]?.id}
+                    onLoad={loadEarlier}
+                  />
+                  {rows.map((row) => (
                     <Fragment key={row.id}>
                       {row.id === opened?.newFrom && (
                         // Where the reader stopped; takes no room in the rows' gap.
@@ -325,38 +308,30 @@ export function ThreadPage() {
                       )}
                       <TranscriptItem
                         row={row}
-                        turn={agentTurnOf(transcript.rows, index)}
                         tools={detail.data?.tools}
-                        connection={policy?.connection}
-                        settling={
-                          savedRow.kind === "tool" && savedRow.state === "pending" && !policy
-                        }
                         actions={{
-                          ...(row === retryable && { retry: () => retry(retryable.runId) }),
-                          ...(!guest && !archived && { pickModel: () => setPicking(true) }),
+                          ...((row.kind === "failure" || row.kind === "stop") &&
+                            row.canRetry && { retry: () => retry(row.runId) }),
+                          ...(can?.arrange && { pickModel: () => setPicking(true) }),
                           ...(row.kind === "tool" &&
-                            policy?.canDecide === true &&
-                            (row.toolId === ASK_TOOL
-                              ? { answer: (answers: AskAnswers | null) => answer(row.id, answers) }
-                              : {
-                                  decide: (allow: boolean, scope: ToolScope) =>
-                                    decide(row.id, allow, scope),
-                                })),
+                            !!row.actions?.length && {
+                              decide: (allow: boolean, scope: ToolScope) =>
+                                decide(row.id, allow, scope),
+                            }),
+                          ...(row.kind === "tool" &&
+                            row.canAnswer && {
+                              answer: (answers: AskAnswers | null) => answer(row.id, answers),
+                            }),
                         }}
                       />
                     </Fragment>
-                  );
-                })
+                  ))}
+                </>
               )}
               {run &&
-                !run.waitingOn &&
-                !transcript.rows.some(
-                  (row) => row.kind === "agent" && row.status === "streaming",
-                ) && (
-                  <AgentStarting
-                    at={run.createdAt}
-                    continued={agentTurnOf(transcript.rows, transcript.rows.length - 1) !== null}
-                  />
+                !run.waiting &&
+                !rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
+                  <AgentStarting at={run.createdAt} continued={!!rows.at(-1)?.turn} />
                 )}
             </ConversationContent>
             <ConversationScrollButton />
@@ -378,12 +353,16 @@ export function ThreadPage() {
             </div>
           )}
           <RunStatus stopping={!!run && run.id === stopped} />
-          <PendingTray threadId={threadId} pending={transcript.pending} me={me.data?.user.id} />
+          <PendingTray
+            threadId={threadId}
+            pending={detail.data?.pending ?? []}
+            me={me.data?.user.id}
+          />
           <FieldError>{posting.error?.message}</FieldError>
           <Composer
             running={!!run}
-            waiting={waiting}
-            readOnly={role === "viewer" || archived}
+            waiting={run?.waiting ?? null}
+            readOnly={!!detail.data && !can?.post}
             notice={archived ? "This space is archived" : undefined}
             sending={posting.isPending}
             stopping={!!run && run.id === stopped}

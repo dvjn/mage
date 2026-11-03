@@ -12,7 +12,7 @@ import {
 import { type ReactNode } from "react";
 
 import type { ToolDefinition } from "@/shared/tools.ts";
-import type { ToolRow } from "@/shared/transcript.ts";
+import type { ToolRow } from "@/shared/threads/rows.ts";
 import { callResultOf } from "@/web/agent/tool-layout";
 import { ToolInput, ToolResult } from "@/web/agent/tool-value";
 import {
@@ -88,13 +88,13 @@ export function ToolLine({
   return (
     <Collapsible className={cn("text-xs text-muted-foreground", !framed && "pl-9")}>
       <CollapsibleTrigger
-        aria-label={`${toolPath(row, definition)} · ${outcome}`}
+        aria-label={`${toolPath(row)} · ${outcome}`}
         className="group/tool flex w-full items-center gap-1.5 rounded-md py-0.5 text-left hover:text-foreground [&>svg]:size-3.5 [&>svg]:shrink-0"
       >
         <ChevronRightIcon className="transition-transform group-data-[panel-open]/tool:rotate-90" />
         {icon}
         <span className="flex min-w-0 flex-1 items-center gap-1">
-          <ToolCrumb row={row} definition={definition} className="font-medium" />
+          <ToolCrumb row={row} className="font-medium" />
           <span className={GIVES_WAY}>· {outcome}</span>
         </span>
         {took && <span className="shrink-0 tabular-nums">{took}</span>}

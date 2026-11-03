@@ -4,7 +4,8 @@
 // the place its run reserved when the reply began. A reply cut short and then tried again stays in
 // view but is left out of what the agent reads. A tool call the agent asked for sits where it asked,
 // and carries how it was decided, what was answered to the questions it asked, and what it gave
-// back.
+// back. Folded one event at a time, it also keeps for each row the last event that changed it and
+// where it sits in the agent's turn.
 
 import type { AskAnswers } from "@/shared/ask.ts";
 import {
@@ -102,6 +103,9 @@ export interface ToolRow {
   // The reply whose model step asked for it.
   messageId: string;
   toolId: string;
+  // What the tool and its toolset were called when the call was asked for, where recorded.
+  title?: string;
+  toolset?: string;
   input: unknown;
   risk: ToolRisk;
   // It needed a person's approval when asked for.
@@ -169,22 +173,90 @@ function textOf(parts: ReplyPart[], type: ReplyPart["type"] = "text") {
     .join("");
 }
 
-// A reply still being written: its answer and its reasoning so far.
-export interface StreamingReply {
-  text: string;
-  reasoning: string;
+// Where a row sits in the agent's turn.
+export interface AgentTurn {
+  // It follows another of the agent's rows, so the turn's first row alone carries the Agent header.
+  continued: boolean;
+  // The model the turn's reply was written with, when known.
+  model: string | null;
 }
 
-// `streaming` holds the replies still being written, by message id.
-export function transcriptOf(
-  events: readonly AnyThreadEvent[],
-  streaming: ReadonlyMap<string, StreamingReply> = new Map(),
-): Transcript {
+// Whether an agent row shows: one that only called tools shows as its calls.
+function showsAgent(row: AgentRow) {
+  return !(row.status === "completed" && !row.text && !row.reasoning);
+}
+
+// The agent's rows, its tool calls and replies, follow one another in its turns.
+function inTurn(row: TranscriptRow) {
+  return row.kind === "tool" || row.kind === "agent";
+}
+
+function showsInTurn(row: TranscriptRow) {
+  return row.kind === "tool" || (row.kind === "agent" && showsAgent(row));
+}
+
+// The turn of each row from `start` to `end`, a run of the agent's rows with none of its rows on
+// either side.
+function turnsOf(rows: readonly TranscriptRow[], start: number, end: number) {
+  const turns: (AgentTurn | null)[] = [];
+  let continued = false;
+  for (let i = start; i <= end; i++) {
+    const shown = showsInTurn(rows[i]!);
+    turns.push(shown ? { continued, model: null } : null);
+    if (shown) continued = true;
+  }
+  let model: string | null = null;
+  for (let i = end; i >= start; i--) {
+    const row = rows[i]!;
+    if (row.kind === "agent" && showsAgent(row)) model = row.model;
+    const turn = turns[i - start];
+    if (turn) turn.model = model;
+  }
+  return turns;
+}
+
+// The first and last index of the run of the agent's rows around `index`.
+function turnAround(rows: readonly TranscriptRow[], index: number): [number, number] {
+  let start = index;
+  while (start > 0 && inTurn(rows[start - 1]!)) start--;
+  let end = index;
+  while (end < rows.length - 1 && inTurn(rows[end + 1]!)) end++;
+  return [start, end];
+}
+
+// For a row of the agent's, a tool call or a reply that shows, what turn it belongs to. Null for
+// any other row.
+export function agentTurnOf(rows: readonly TranscriptRow[], index: number): AgentTurn | null {
+  const row = rows[index];
+  if (!row || !inTurn(row)) return null;
+  const [start, end] = turnAround(rows, index);
+  return turnsOf(rows, start, end)[index - start] ?? null;
+}
+
+// A thread's transcript folded one event at a time as its log grows. Rows are only ever added at
+// the end, so a row's index is its place for good; for each, the fold keeps the seq of the last
+// event that changed it or its place in the agent's turn, and that place.
+export interface TranscriptFold {
+  // The seq of the newest event folded in; 0 before any.
+  readonly last: number;
+  add(event: AnyThreadEvent): void;
+  // The transcript so far. Its rows are the fold's own, which later events change.
+  transcript(): Transcript;
+  changedAt(index: number): number;
+  turnAt(index: number): AgentTurn | null;
+}
+
+export function createFold(): TranscriptFold {
   const rows: TranscriptRow[] = [];
+  const indexOf = new Map<string, number>();
+  // By row index.
+  const changed: number[] = [];
+  const turns: (AgentTurn | null)[] = [];
   const pending = new Map<string, PendingMessage>();
   const replies = new Map<string, AgentRow>();
   const calls = new Map<string, ToolRow>();
   let run: ActiveRun | null = null;
+  let last = 0;
   const usage: Usage = { inputTokens: 0, outputTokens: 0 };
   // Everyone who wrote or acted in the thread, by id, as events last named them.
   const people = new Map<string, Person>();
@@ -193,11 +265,17 @@ export function transcriptOf(
   const personOf = (userId: string): Person =>
     people.get(userId) ?? { kind: "user", userId, name: "(former member)" };
 
-  for (const raw of events) {
+  // Folds the event in, adding the rows it makes with `push` and naming the rows it changes with
+  // `touch`.
+  function apply(
+    raw: AnyThreadEvent,
+    push: (row: TranscriptRow) => void,
+    touch: (id: string) => void,
+  ) {
     const parsed = threadEventSchema.safeParse(raw);
     if (!parsed.success) {
-      rows.push({ kind: "unknown", id: raw.id, seq: raw.seq, type: raw.type });
-      continue;
+      push({ kind: "unknown", id: raw.id, seq: raw.seq, type: raw.type });
+      return;
     }
     const event = parsed.data;
     if (event.actor.kind === "user") people.set(event.actor.userId, event.actor);
@@ -212,7 +290,7 @@ export function transcriptOf(
           text: textOf(event.data.parts),
           ...(event.data.guest && { guest: true as const }),
         };
-        if (event.data.quiet) rows.push({ kind: "human", ...message, quiet: true });
+        if (event.data.quiet) push({ kind: "human", ...message, quiet: true });
         else pending.set(event.id, { ...message, mode: event.data.mode });
         break;
       }
@@ -233,7 +311,7 @@ export function transcriptOf(
           if (!message) continue;
           pending.delete(id);
           const { mode: _mode, ...admitted } = message;
-          rows.push({ kind: "human", ...admitted, seq: event.seq, quiet: false });
+          push({ kind: "human", ...admitted, seq: event.seq, quiet: false });
         }
         break;
       case "message.started": {
@@ -244,15 +322,15 @@ export function transcriptOf(
           runId: event.data.runId,
           model: event.data.model ?? null,
           startedAt: event.createdAt,
-          text: streaming.get(event.data.messageId)?.text ?? "",
-          reasoning: streaming.get(event.data.messageId)?.reasoning ?? "",
+          text: "",
+          reasoning: "",
           thoughtMs: null,
           status: "streaming",
           usage: null,
           retried: false,
         };
         replies.set(reply.id, reply);
-        rows.push(reply);
+        push(reply);
         break;
       }
       case "message.completed": {
@@ -268,6 +346,7 @@ export function transcriptOf(
           usage.inputTokens += event.data.usage.inputTokens;
           usage.outputTokens += event.data.usage.outputTokens;
         }
+        touch(reply.id);
         break;
       }
       case "run.created":
@@ -275,6 +354,7 @@ export function transcriptOf(
           for (const reply of replies.values()) {
             if (reply.runId === event.data.continuesRunId && reply.status !== "completed") {
               reply.retried = true;
+              touch(reply.id);
             }
           }
         }
@@ -288,7 +368,7 @@ export function transcriptOf(
         break;
       case "run.failed": {
         const { runId, error, kind, connection, detail, resetsAt } = event.data;
-        rows.push({
+        push({
           kind: "failure",
           id: event.id,
           seq: event.seq,
@@ -303,7 +383,7 @@ export function transcriptOf(
         break;
       }
       case "tool.requested": {
-        const { runId, callId, messageId, toolId, input, risk, waits } = event.data;
+        const { runId, callId, messageId, toolId, input, risk, waits, title, toolset } = event.data;
         const call: ToolRow = {
           kind: "tool",
           id: callId,
@@ -311,6 +391,8 @@ export function transcriptOf(
           runId,
           messageId,
           toolId,
+          ...(title && { title }),
+          ...(toolset && { toolset }),
           input,
           risk,
           waits,
@@ -321,7 +403,7 @@ export function transcriptOf(
           ms: null,
         };
         calls.set(callId, call);
-        rows.push(call);
+        push(call);
         break;
       }
       case "tool.approved":
@@ -341,6 +423,7 @@ export function transcriptOf(
             seq: event.seq,
           };
         }
+        touch(call.id);
         break;
       }
       case "tool.answered": {
@@ -349,6 +432,7 @@ export function transcriptOf(
         call.state = "allowed";
         call.answers = event.data.answers;
         call.decision = { allow: true, scope: "once", by: event.actor, seq: event.seq };
+        touch(call.id);
         break;
       }
       // Older threads paused a call for its person to connect; it shows as waiting for approval,
@@ -360,6 +444,7 @@ export function transcriptOf(
         call.state = "pending";
         call.waits = true;
         call.decision = null;
+        touch(call.id);
         break;
       }
       case "tool.ran": {
@@ -377,6 +462,7 @@ export function transcriptOf(
           ? { ok: true, value: event.data.value ?? null }
           : { ok: false, error: event.data.error ?? "The tool failed." };
         call.ms = event.data.ms;
+        touch(call.id);
         break;
       }
       case "thread.renamed":
@@ -389,7 +475,7 @@ export function transcriptOf(
         if (run?.id === event.data.runId) run = null;
         break;
       case "run.cancelled":
-        rows.push({
+        push({
           kind: "stop",
           id: event.id,
           seq: event.seq,
@@ -401,49 +487,68 @@ export function transcriptOf(
     }
   }
 
-  if (run) {
-    const runId = run.id;
-    run.waitingOn =
-      [...calls.values()].find(
-        (call) => call.runId === runId && call.waits && call.state === "pending",
-      )?.id ?? null;
-  }
-  return { rows, pending: [...pending.values()], run, usage };
+  return {
+    get last() {
+      return last;
+    },
+
+    add(raw) {
+      last = Math.max(last, raw.seq);
+      const touched = new Set<number>();
+      apply(
+        raw,
+        (row) => {
+          indexOf.set(row.id, rows.length);
+          touched.add(rows.length);
+          rows.push(row);
+          turns.push(null);
+        },
+        (id) => {
+          const index = indexOf.get(id);
+          if (index !== undefined) touched.add(index);
+        },
+      );
+      for (const index of touched) changed[index] = raw.seq;
+      // A row's turn follows from the agent's rows around it, so the turns of each run of them a
+      // changed row is in are worked out again.
+      const done = new Set<number>();
+      for (const index of touched) {
+        if (done.has(index) || !inTurn(rows[index]!)) continue;
+        const [start, end] = turnAround(rows, index);
+        turnsOf(rows, start, end).forEach((turn, offset) => {
+          const at = start + offset;
+          done.add(at);
+          const before = turns[at];
+          if (before?.continued === turn?.continued && before?.model === turn?.model) return;
+          turns[at] = turn;
+          changed[at] = raw.seq;
+        });
+      }
+    },
+
+    transcript() {
+      if (run) {
+        const runId = run.id;
+        run.waitingOn =
+          [...calls.values()].find(
+            (call) => call.runId === runId && call.waits && call.state === "pending",
+          )?.id ?? null;
+      }
+      return { rows, pending: [...pending.values()], run, usage };
+    },
+
+    changedAt(index) {
+      return changed[index] ?? 0;
+    },
+
+    turnAt(index) {
+      return turns[index] ?? null;
+    },
+  };
 }
 
-// Whether an agent row shows: one that only called tools shows as its calls.
-function showsAgent(row: AgentRow) {
-  return !(row.status === "completed" && !row.text && !row.reasoning);
-}
-
-// Where a row sits in the agent's turn.
-export interface AgentTurn {
-  // It follows another of the agent's rows, so the turn's first row alone carries the Agent header.
-  continued: boolean;
-  // The model the turn's reply was written with, when known.
-  model: string | null;
-}
-
-// For a row of the agent's, a tool call or a reply that shows, what turn it belongs to. Null for
-// any other row.
-export function agentTurnOf(rows: TranscriptRow[], index: number): AgentTurn | null {
-  const row = rows[index];
-  if (!row || (row.kind !== "tool" && !(row.kind === "agent" && showsAgent(row)))) return null;
-  let continued = false;
-  for (let i = index - 1; i >= 0; i--) {
-    const before = rows[i]!;
-    if (before.kind === "agent" && !showsAgent(before)) continue;
-    continued = before.kind === "tool" || before.kind === "agent";
-    break;
-  }
-  let model: string | null = null;
-  for (let i = index; i < rows.length; i++) {
-    const next = rows[i]!;
-    if (next.kind === "agent" && showsAgent(next)) {
-      model = next.model;
-      break;
-    }
-    if (next.kind !== "tool" && next.kind !== "agent") break;
-  }
-  return { continued, model };
+export function transcriptOf(events: readonly AnyThreadEvent[]): Transcript {
+  const fold = createFold();
+  for (const event of events) fold.add(event);
+  return fold.transcript();
 }

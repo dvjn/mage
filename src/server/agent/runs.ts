@@ -174,6 +174,7 @@ export interface RunWorkerOptions {
     | "answerHolds"
     | "modelNames"
     | "fromServers"
+    | "namesNow"
   >;
   // What the org and the space tell the agent beyond Mage's own prompt, given the tools offered.
   guidance?: (space: Space, offered: readonly AnyToolSpec[]) => Guidance;
@@ -720,6 +721,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       const { rows } = transcript(run.threadId);
       const offered = tools.offered(space);
       const { left } = deferralOf(execution, space);
+      const named = tools.namesNow(space);
       for (const call of calls) {
         const { callId, toolId, input, messageId } = call;
         const unsearched = left.find((tool) => tool.id === toolId);
@@ -741,10 +743,21 @@ export function createRunWorker(options: RunWorkerOptions) {
               spec.risk(parsed.data, { model: execution.ref }),
               parsed.data,
             ).kind === "wait");
+        const names = named(toolId);
         append({
           type: "tool.requested",
           actor: AGENT,
-          data: { runId: run.id, callId, messageId, toolId, input, risk, waits },
+          data: {
+            runId: run.id,
+            callId,
+            messageId,
+            toolId,
+            input,
+            risk,
+            waits,
+            ...(names && { title: names.title }),
+            ...(names?.toolset && { toolset: names.toolset }),
+          },
         });
         if (spec && parsed?.success) continue;
         append({

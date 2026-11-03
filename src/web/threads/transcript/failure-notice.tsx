@@ -3,7 +3,7 @@
 import { Link } from "@tanstack/react-router";
 import { type ReactNode } from "react";
 
-import type { FailureRow } from "@/shared/transcript.ts";
+import type { FailureRow } from "@/shared/threads/rows.ts";
 import { Button } from "@/web/components/ui/button";
 import { useMinute } from "@/web/hooks/use-minute";
 import { timeUntil } from "@/web/lib/time";

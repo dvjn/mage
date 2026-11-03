@@ -5,13 +5,14 @@
 // is read again when it lacks the thread; the pages of tables of threads it is in are read again. How far they saw a thread, here or on another device,
 // clears what was new, and a thread gone for them leaves every list. After the stream was lost the
 // lists are read again, as they are once the app is back online; offline it does not follow.
-// Reading a thread records how far it was seen, at once in the lists and the thread here.
+// Reading a thread records how far it was seen, at once in the lists here.
 // The open thread is marked seen as it opens and as new events arrive while it is in view.
 
 import { type QueryClient, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef } from "react";
 
 import type { SharedThread } from "@/shared/guests.ts";
+import type { ThreadStatus } from "@/shared/thread-status.ts";
 import {
   type ThreadActivity,
   type ThreadListItem,
@@ -22,9 +23,9 @@ import { apiClient } from "@/web/api/api-client";
 import { sharedThreadsQuery } from "@/web/guests/queries";
 import { checkServer, useOnline } from "@/web/lib/online";
 import { tabOrg } from "@/web/lib/org-tab";
-import { spaceThreadsQuery, threadQuery } from "@/web/threads/queries";
+import { spaceThreadsQuery } from "@/web/threads/queries";
 
-type Listed = { id: string; updatedAt: string; activity: ThreadActivity };
+type Listed = { id: string; updatedAt: string; activity: ThreadActivity; status: ThreadStatus };
 
 // Most recently active first, as the server lists them.
 function newestFirst<T extends Listed>(list: T[]) {
@@ -47,13 +48,18 @@ export function withSharedThread(
   return newestFirst(list.map((item) => (item.id === thread.id ? { ...item, ...thread } : item)));
 }
 
-// The list with the thread seen up to `seq`, never moving back.
+// The list with the thread seen up to `seq`, never moving back: what was new up to there is no
+// longer, until the server says the status that follows.
 export function withSeen<T extends Listed>(list: T[], threadId: string, seq: number): T[] {
-  return list.map((item) =>
-    item.id === threadId && item.activity.lastSeenSeq < seq
-      ? { ...item, activity: { ...item.activity, lastSeenSeq: seq } }
-      : item,
-  );
+  return list.map((item) => {
+    if (item.id !== threadId || item.activity.lastSeenSeq >= seq) return item;
+    const read = item.status === "unread" && item.activity.lastNotableSeq <= seq;
+    return {
+      ...item,
+      activity: { ...item.activity, lastSeenSeq: seq },
+      ...(read && { status: "read" as const }),
+    };
+  });
 }
 
 export function without<T extends Listed>(list: T[], threadId: string): T[] {
@@ -82,12 +88,9 @@ function eachList(queryClient: QueryClient, change: <T extends Listed>(list: T[]
   );
 }
 
-// Records here that the thread was seen up to `seq`, in the lists and the thread as last read.
+// Records here that the thread was seen up to `seq`, in the lists.
 export function seenHere(queryClient: QueryClient, threadId: string, seq: number) {
   eachList(queryClient, (list) => withSeen(list, threadId, seq));
-  queryClient.setQueryData(threadQuery(threadId).queryKey, (detail) =>
-    detail && detail.seenSeq < seq ? { ...detail, seenSeq: seq } : detail,
-  );
 }
 
 // Tells the server the thread was seen up to `seq`, showing it here at once.

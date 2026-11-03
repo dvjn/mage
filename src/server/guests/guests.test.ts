@@ -194,7 +194,7 @@ describe("thread access", () => {
     const { app, api, ada, hedy, thread, listening } = workspace;
     await letIn(workspace, ada, thread.id, hedy);
     const stream = await openStream(app, hedy.cookie, thread.id);
-    expect((await stream.nextEvent()).seq).toBe(1);
+    expect((await stream.nextRows()).seq).toBe(1);
 
     await api("DELETE", `/threads/${thread.id}/guests/${hedy.userId}`, ada.cookie);
     let frame = await stream.next();

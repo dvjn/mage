@@ -1,15 +1,15 @@
 // The one status a thread shows a reader in its list, from what it holds for them, highest first:
 // the agent waits for a decision they may make; its last run failed after they last looked; the
 // agent is working, or waits for someone else to decide (paused); something new came from someone
-// else; or nothing new. A list of threads can show all of them, those that need the reader, or
-// those with something new for them.
+// else; or nothing new. The server works it out for each reader of its lists. A list of threads
+// can show all of them, those that need the reader, or those with something new for them.
 
 import * as z from "zod";
 
 import { tableQuerySchema } from "@/shared/paging.ts";
-import type { ThreadActivity } from "@/shared/threads/list.ts";
+import type { ThreadActivity, threadStatusSchema } from "@/shared/threads/list.ts";
 
-export type ThreadStatus = "waiting" | "failed" | "working" | "paused" | "unread" | "read";
+export type ThreadStatus = z.infer<typeof threadStatusSchema>;
 
 export function statusOf(activity: ThreadActivity, me: string): ThreadStatus {
   const { run, failed, lastSeenSeq } = activity;

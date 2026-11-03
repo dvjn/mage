@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useMemo } from "react";
 
 import type { SharedThread } from "@/shared/guests.ts";
-import { needsYou, statusOf } from "@/shared/thread-status.ts";
+import { needsYou } from "@/shared/thread-status.ts";
 import type { ThreadListItem } from "@/shared/threads/list.ts";
 import { meQuery } from "@/web/auth/queries";
 import { sharedThreadsQuery } from "@/web/guests/queries";
@@ -30,7 +30,7 @@ export function useNeedsYou(): { items: NeedsYouItem[]; total: number } {
   return useMemo(() => {
     if (!userId) return { items: [], total: 0 };
     const sidebar = spaceId ? threads.data : undefined;
-    const needing = (item: NeedsYouItem) => needsYou(statusOf(item.thread.activity, userId));
+    const needing = (item: NeedsYouItem) => needsYou(item.thread.status);
     const mine = (sidebar?.threads ?? [])
       .map((thread) => ({ kind: "space", thread }) as const)
       .filter(needing);

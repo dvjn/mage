@@ -10,7 +10,7 @@ import { ChevronDownIcon, EyeIcon, SquareIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useRef, useState } from "react";
 
 import { type Delivery, QUIET_PREFIX } from "@/shared/threads/events.ts";
-import type { PendingMessage } from "@/shared/transcript.ts";
+import type { PendingMessage } from "@/shared/threads/rows.ts";
 import {
   PromptInputBody,
   PromptInputFooter,

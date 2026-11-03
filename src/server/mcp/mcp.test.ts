@@ -59,6 +59,11 @@ async function signOff(
 
 const bearer = [{ name: "Authorization", value: `Bearer ${MCP_BEARER_TOKEN}` }];
 
+// The row of the thread as its reader sees it.
+function rowIn(detail: ThreadDetail, id: string) {
+  return detail.rows.find((row) => row.id === id);
+}
+
 // The JSON-RPC methods the requests sent were for.
 function methodsOf(requests: Request[]) {
   return Promise.all(
@@ -1365,8 +1370,8 @@ describe("personal credentials", () => {
     await worker.idle();
     const [waiting] = toolRows();
     expect(waiting).toMatchObject({ state: "pending", waits: true });
-    expect((await detail(grace)).pendingTools?.[waiting!.id]).toMatchObject({
-      canDecide: true,
+    expect(rowIn(await detail(grace), waiting!.id)).toMatchObject({
+      actions: ["allow", "allow_for_now", "deny"],
       connection: { serverId: server.id, kind: "headers", headers: ["authorization"] },
     });
     expect(await methodsOf(workspace.mcpNetwork.requests)).not.toContain("tools/call");
@@ -1428,13 +1433,13 @@ describe("personal credentials", () => {
     await worker.idle();
     const callId = toolRows()[0]!.id;
     // Grace has no connection; Ada sees an ordinary approval with her own connection.
-    expect((await detail(ada)).pendingTools?.[callId]).toEqual({
+    expect(rowIn(await detail(ada), callId)).toMatchObject({
       risk: "normal",
-      canDecide: true,
+      actions: ["allow", "allow_for_now", "deny"],
       connection: expect.objectContaining({ connected: true }),
     });
-    expect((await detail(grace)).pendingTools?.[callId]).toMatchObject({
-      canDecide: true,
+    expect(rowIn(await detail(grace), callId)).toMatchObject({
+      actions: ["allow", "allow_for_now", "deny"],
       connection: { connected: false },
     });
     expect(events().map((event) => event.type)).not.toContain("tool.blocked");
@@ -1518,7 +1523,7 @@ describe("personal credentials", () => {
     await calls("mcp.notes.echo", { text: "hi" });
     await worker.idle();
     const callId = toolRows()[0]!.id;
-    expect((await workspace.detail(grace)).pendingTools?.[callId]).toMatchObject({ risk: "ask" });
+    expect(rowIn(await workspace.detail(grace), callId)).toMatchObject({ risk: "ask" });
     expect((await workspace.decide(grace, callId, "for_now")).status).toBe(400);
   });
 
@@ -1809,7 +1814,7 @@ describe("MCP resources", () => {
     await worker.idle();
     const [waiting] = toolRows();
     expect(waiting).toMatchObject({ state: "pending", waits: true });
-    expect((await detail(grace)).pendingTools?.[waiting!.id]).toMatchObject({
+    expect(rowIn(await detail(grace), waiting!.id)).toMatchObject({
       connection: { serverId: server.id, connected: false },
     });
     expect((await decide(grace, waiting!.id, "once")).status).toBe(409);
@@ -2001,5 +2006,70 @@ describe("searching for MCP tools", () => {
     expect(none.request.instructions).not.toContain("mcp._.search_tools");
     expect(await listed("/org/tools")).toBeUndefined();
     expect(await listed(`/spaces/${space.id}/tools`)).toBeUndefined();
+  });
+});
+
+describe("what a tool call is called", () => {
+  it("is its tool's title and server, recorded when asked for and kept once the server is removed", async () => {
+    const workspace = await mcpThread();
+    const { ada, api, thread, post, calls, model, worker, start, id, events, server } = workspace;
+    start();
+
+    await post(ada, "Write a note");
+    await calls(id("add_note"), { title: "Engines" });
+    const next = await model.next();
+    next.reply("Written.");
+    await worker.idle();
+
+    const requested = events().find(
+      (event) =>
+        event.type === "tool.requested" &&
+        (event.data as { toolId: string }).toolId === id("add_note"),
+    );
+    expect(requested?.data).toMatchObject({ title: "Add note", toolset: "Notes" });
+    const callId = (requested!.data as { callId: string }).callId;
+    const shown = async () => {
+      const res = await api("GET", `/threads/${thread.id}`, ada.cookie);
+      return rowIn((await res.json()) as ThreadDetail, callId);
+    };
+    expect(await shown()).toMatchObject({ title: "Add note", toolset: "Notes" });
+
+    // The server lists the tool under another title now.
+    const stored = workspace.mcpServerStore.find(server.id)!;
+    workspace.mcpServerStore.update(server.id, {
+      tools: stored.tools.map((tool) =>
+        tool.name === "add_note" ? { ...tool, title: "Write note" } : tool,
+      ),
+    });
+    expect(await shown()).toMatchObject({ title: "Write note", toolset: "Notes" });
+
+    // It no longer lists the tool: the names the call was asked for under.
+    workspace.mcpServerStore.update(server.id, {
+      tools: stored.tools.filter((tool) => tool.name !== "add_note"),
+    });
+    expect(await shown()).toMatchObject({ title: "Add note", toolset: "Notes" });
+
+    workspace.mcpServerStore.update(server.id, { tools: stored.tools });
+    expect((await api("DELETE", `/mcp-servers/${server.id}`, ada.cookie)).status).toBe(200);
+    expect(await shown()).toMatchObject({ title: "Add note", toolset: "Notes" });
+  });
+
+  it("for a call recorded without names is what the model knows it by, else its own name", async () => {
+    const { ada, api, server, tools, space, id } = await mcpThread();
+    const call = (toolId: string, input: unknown = {}, state: "ran" | "pending" = "ran") =>
+      tools.namesIn({ id: space.id, orgId: ada.orgId })({ toolId, input, state });
+
+    expect(call(id("delete_note"))).toEqual({ title: "Delete note", toolset: "Notes" });
+    expect(call(id("gone"))).toEqual({ title: "mcp.notes.gone", toolset: null });
+    expect((await api("DELETE", `/mcp-servers/${server.id}`, ada.cookie)).status).toBe(200);
+    expect(call(id("delete_note"))).toEqual({ title: "delete_note", toolset: null });
+
+    // Mage's own, under their former ids too, and loading a skill names the skill.
+    expect(call("mcp._.search_tools")).toMatchObject({ title: "Search tools" });
+    expect(call("tools.search")).toEqual(call("mcp._.search_tools"));
+    expect(call("skills.load", { name: "review" })).toMatchObject({ title: "Loaded review" });
+    expect(call("skills.load", { name: "review" }, "pending")).toMatchObject({
+      title: "Load review",
+    });
   });
 });

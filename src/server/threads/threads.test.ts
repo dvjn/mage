@@ -3,15 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import * as schema from "@/server/schema.ts";
 import { setup } from "@/server/testing/workspace.ts";
+import type { ThreadDetail } from "@/shared/threads/detail.ts";
 
 import { titleFrom } from "./service.ts";
-
-type EventBody = {
-  seq: number;
-  type: string;
-  actor: { kind: string; userId?: string; name?: string };
-  data: { parts: { type: string; text: string }[] };
-};
 
 describe("threads", () => {
   it("starts untitled on the org's default model", async () => {
@@ -43,13 +37,11 @@ describe("threads", () => {
     await api("POST", `/threads/${thread.id}/messages`, cookie, { text: "Another question" });
 
     const res = await api("GET", `/threads/${thread.id}`, cookie);
-    const body = (await res.json()) as { thread: { title: string }; events: EventBody[] };
+    const body = (await res.json()) as ThreadDetail;
     expect(body.thread.title).toBe("How do engines compute?");
-    const messages = body.events.filter((event) => event.type === "message");
-    expect(messages.map((event) => event.data.parts[0]?.text)).toEqual([
-      "How do\n engines   compute?",
-      "Another question",
-    ]);
+    // The first was taken in; the second waits for the agent.
+    expect(body.rows).toMatchObject([{ kind: "human", text: "How do\n engines   compute?" }]);
+    expect(body.pending).toMatchObject([{ text: "Another question" }]);
   });
 
   it("keeps a title someone set before the first message", async () => {
@@ -193,10 +185,14 @@ describe("event log", () => {
     await api("POST", `/threads/${thread.id}/messages`, ada.cookie, { text: "Hi Grace" });
     db.delete(schema.user).where(eq(schema.user.id, grace.userId)).run();
 
-    const { events } = await threads.get(ada, thread.id);
-    const messages = events.filter((event) => event.type === "message");
+    // Ada's first message was taken in; the two after it wait for the agent.
+    const { rows, pending } = await threads.get(ada, thread.id);
+    const authors = [
+      ...rows.flatMap((row) => (row.kind === "human" ? [row.author] : [])),
+      ...pending.map((message) => message.author),
+    ];
 
-    expect(messages.map((event) => event.actor)).toEqual([
+    expect(authors).toEqual([
       { kind: "user", userId: ada.userId, name: "Ada Lovelace" },
       { kind: "user", userId: grace.userId, name: "(former member)" },
       { kind: "user", userId: ada.userId, name: "Ada Lovelace" },

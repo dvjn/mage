@@ -1,7 +1,7 @@
 // A tool call waiting for a decision: a card from the agent headed by the tool under a hand, tagged
-// when the call asks each time, with the input and Allow, Allow for now and Deny in a row, enabled
-// for the people who may run the tool, marked paused for everyone else, and neither until that is
-// known. Allow for now shows unless every call asks or needs review. A call that runs with its
+// when the call asks each time, with the input and the choices the server offers the reader in a
+// row: Allow, Allow for now unless every call asks or needs review, and Deny. Someone who may not
+// decide sees Allow and Deny disabled and the card marked paused. A call that runs with its
 // approver's own login asks an approver with no working connection to connect first, then applies
 // their choice; a sign-in that leaves the page applies it on the way back.
 
@@ -10,8 +10,8 @@ import { HandIcon } from "lucide-react";
 import { useState } from "react";
 
 import type { ToolRisk, ToolScope } from "@/shared/threads/events.ts";
-import type { ToolConnection, ToolDefinition } from "@/shared/tools.ts";
-import type { ToolRow } from "@/shared/transcript.ts";
+import type { ToolDefinition } from "@/shared/tools.ts";
+import type { ToolRow } from "@/shared/threads/rows.ts";
 import { ToolInput } from "@/web/agent/tool-value";
 import {
   Confirmation,
@@ -47,20 +47,17 @@ export function ToolCard({
   row,
   definition,
   decide,
-  connection,
-  settling = false,
   continued,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
   decide?: RowActions["decide"];
-  // The reader's own connection, for a call that would run with it.
-  connection?: ToolConnection;
-  // Who may decide is not known yet, so the card is neither open nor paused.
-  settling?: boolean;
   continued: boolean;
 }) {
   const [deciding, setDeciding] = useState(false);
+  const actions = row.actions ?? [];
+  // The reader's own connection, for a call that would run with it.
+  const { connection } = row;
   // An approver with no working connection connects as they allow, and the call runs as them.
   const mustConnect = !!decide && !!connection && !connection.connected;
   const connect = useConnectFlow(mustConnect ? connection : undefined);
@@ -88,7 +85,7 @@ export function ToolCard({
         {label}
       </ConfirmationAction>
     );
-    if (decide || settling) return action;
+    if (decide) return action;
     return (
       <WithTooltip
         label={
@@ -111,7 +108,7 @@ export function ToolCard({
       author="Agent"
       at={row.requestedAt}
       label="Approval request"
-      note={!decide && !settling && <span>Paused</span>}
+      note={!decide && <span>Paused</span>}
       continued={continued}
     >
       <Confirmation
@@ -122,13 +119,10 @@ export function ToolCard({
         <div className="flex min-w-0 items-center gap-2">
           <HandIcon
             aria-hidden
-            className={cn(
-              "size-4 shrink-0",
-              decide || settling ? "text-status-waiting" : "text-status-paused",
-            )}
+            className={cn("size-4 shrink-0", decide ? "text-status-waiting" : "text-status-paused")}
           />
           <ConfirmationTitle className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
-            <ToolCrumb row={row} definition={definition} className="font-semibold" />
+            <ToolCrumb row={row} className="font-semibold" />
           </ConfirmationTitle>
           {tag && (
             <Badge variant="outline" className="shrink-0 text-muted-foreground">
@@ -147,7 +141,8 @@ export function ToolCard({
         <ConfirmationRequest>
           <ConfirmationActions className="w-full flex-col items-stretch self-stretch sm:flex-row sm:items-center sm:justify-start">
             {button("Allow", true, "once", "default")}
-            {row.risk === "normal" && button("Allow for now", true, "for_now", "secondary")}
+            {actions.includes("allow_for_now") &&
+              button("Allow for now", true, "for_now", "secondary")}
             {button("Deny", false, "once", "outline")}
           </ConfirmationActions>
         </ConfirmationRequest>

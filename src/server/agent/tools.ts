@@ -20,9 +20,11 @@ import type { ThreadAccess } from "@/server/spaces/thread-access.ts";
 import { eventSummary, type ThreadLog } from "@/server/threads/log.ts";
 import type { Thread, ThreadStore, NewEvent } from "@/server/threads/service.ts";
 import { type AskAnswers, askInputSchema, answersProblem } from "@/shared/ask.ts";
-import { mcpSlugSchema } from "@/shared/mcp.ts";
+import { mcpSlugSchema, mcpToolOf } from "@/shared/mcp.ts";
+import { LOAD_SKILL } from "@/shared/skills.ts";
 import type { ToolRisk, ToolScope } from "@/shared/threads/events.ts";
 import {
+  FORMER_TOOL_IDS,
   TOOL_OFF,
   WIRE_NAME_MAX,
   wireToolName,
@@ -178,6 +180,15 @@ export interface ScopedToolsets {
   // Settings include servers that are off so their permissions can be reviewed before enabling.
   forOrgSettings(orgId: string): Toolset[];
   forSpaceSettings(space: { id: string; orgId: string }): Toolset[];
+  // What a tool the toolsets no longer have is called, as what added it still knows it; null for
+  // a tool of none of theirs.
+  named(toolId: string): ToolNames | null;
+}
+
+// What a tool is called where its calls show, and the toolset or MCP server it comes in.
+export interface ToolNames {
+  title: string;
+  toolset: string | null;
 }
 
 // What an org or a space set each tool to, for the tools it set: a policy's id, or "off". A tool
@@ -322,6 +333,7 @@ export function createTools(options: ToolsOptions) {
     inSpace: () => [],
     forOrgSettings: () => [],
     forSpaceSettings: () => [],
+    named: () => null,
   };
 
   // The toolsets with the tools policies may be set on: those not fixed.
@@ -497,6 +509,41 @@ export function createTools(options: ToolsOptions) {
     return influence;
   }
 
+  // What each tool the space may have called is called now, with its toolset, those called under
+  // a former id among them.
+  function namesNow(space: Pick<Space, "id" | "orgId">): (toolId: string) => ToolNames | null {
+    const names = new Map<string, ToolNames>();
+    for (const toolset of [...toolsets, ...scoped.forSpaceSettings(space)]) {
+      for (const spec of toolset.tools) {
+        if (names.has(spec.name)) continue;
+        names.set(spec.name, { title: spec.title ?? spec.name, toolset: toolset.title });
+      }
+    }
+    return (toolId) => names.get(FORMER_TOOL_IDS[toolId] ?? toolId) ?? null;
+  }
+
+  // What each call is called where it shows: as its tool is called now; else as it was when the
+  // call was asked for; else by what the model knows it by, where what added it is still there;
+  // else by its id, or for an MCP server's tool, its own name there. Loading a skill names the
+  // skill.
+  function namesIn(space: Pick<Space, "id" | "orgId"> | null) {
+    let now: ((toolId: string) => ToolNames | null) | undefined;
+    return (row: Pick<ToolRow, "toolId" | "input" | "state" | "title" | "toolset">): ToolNames => {
+      now ??= space ? namesNow(space) : () => null;
+      const names = now(row.toolId) ??
+        (row.title ? { title: row.title, toolset: row.toolset ?? null } : null) ??
+        scoped.named(row.toolId) ?? {
+          title: mcpToolOf(row.toolId)?.name ?? row.toolId,
+          toolset: null,
+        };
+      const skill = (row.input as { name?: unknown } | null)?.name;
+      if (row.toolId === LOAD_SKILL && typeof skill === "string") {
+        return { ...names, title: row.state === "ran" ? `Loaded ${skill}` : `Load ${skill}` };
+      }
+      return names;
+    };
+  }
+
   // The toolset with each tool's definition, whether the org or the space has it, and whether it
   // and each tool are fixed.
   function withDefinitions(toolset: Toolset, scope: "org" | "space") {
@@ -540,6 +587,8 @@ export function createTools(options: ToolsOptions) {
 
     offered,
     riskOf,
+    namesNow,
+    namesIn,
 
     // The tools the space offers from MCP servers, which a run may leave out of its requests until
     // the model turns them on, each as the model knows it.

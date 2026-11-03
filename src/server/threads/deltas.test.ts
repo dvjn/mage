@@ -88,8 +88,8 @@ describe("streamed replies", () => {
 
     const stream = await openStream(app, ada.cookie, thread.id, { after: 0 });
     const frames = [];
-    // The four events so far, then the stored pieces.
-    for (let i = 0; i < 5; i += 1) frames.push(await stream.nextItem());
+    // The rows so far, then the stored pieces.
+    for (let i = 0; i < 2; i += 1) frames.push(await stream.nextItem());
     call.delta(" levers");
     frames.push(await stream.nextItem());
     call.endStep();
@@ -99,14 +99,14 @@ describe("streamed replies", () => {
     await stream.close();
 
     expect(frames.map((frame) => frame.event)).toEqual([
-      "thread-event",
-      "thread-event",
-      "thread-event",
-      "thread-event",
+      "rows",
       "message-delta",
       "message-delta",
-      "thread-event",
+      "rows",
     ]);
+    expect(JSON.parse(frames[0]!.data!)).toMatchObject({
+      rows: [{ kind: "human" }, { kind: "agent", status: "streaming", text: "" }],
+    });
     const batches = frames
       .filter((frame) => frame.event === "message-delta")
       .map((frame) => JSON.parse(frame.data!) as DeltaBatch);
@@ -115,8 +115,7 @@ describe("streamed replies", () => {
       { index: 2, texts: [" levers"] },
     ]);
     expect(JSON.parse(frames.at(-1)!.data!)).toMatchObject({
-      type: "message.completed",
-      data: { parts: [{ type: "text", text: "Gears and levers" }] },
+      rows: [{ kind: "agent", text: "Gears and levers", status: "completed" }],
     });
   });
 

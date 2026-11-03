@@ -283,6 +283,7 @@ export function setup(
       inSpace: (space) => mcp.toolsetsInSpace(space),
       forOrgSettings: (orgId) => mcp.toolsetsForOrgSettings(orgId),
       forSpaceSettings: (space) => mcp.toolsetsForSpaceSettings(space),
+      named: (toolId) => mcp.named(toolId),
     },
     settings: toolSettings,
     policies: toolPolicyStore,

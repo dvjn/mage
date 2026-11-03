@@ -24,12 +24,7 @@ import { Badge } from "@/web/components/ui/badge";
 import { SidebarMenuButton, SidebarMenuItem } from "@/web/components/ui/sidebar";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { MakerMark, ModelTile, modelLabel } from "@/web/models/marks";
-import {
-  StatusDot,
-  StatusGlyph,
-  useStatusLabel,
-  useThreadStatus,
-} from "@/web/threads/thread-status";
+import { StatusDot, StatusGlyph, useStatusLabel } from "@/web/threads/thread-status";
 import { ThreadTitle } from "@/web/threads/thread-title";
 import { writerLine, writersInFull } from "@/web/threads/writers";
 
@@ -45,6 +40,7 @@ type Listed = {
   shownModel: ShownModel | null;
   participants: ThreadParticipants;
   activity: ThreadActivity;
+  status: ThreadStatus;
 };
 
 interface RowProps {
@@ -125,7 +121,7 @@ const pageRowColour =
   "[--row:var(--background)] hover:[--row:color-mix(in_oklab,var(--muted)_75%,var(--background))]";
 
 function PageRow({ thread, place, badge, time }: PageRowProps) {
-  const status = useThreadStatus(thread.activity);
+  const { status } = thread;
   return (
     <Link
       to="/t/$threadId"
@@ -203,7 +199,7 @@ const leadOnSidebar =
 export const rowTitle = "min-w-0 flex-1 truncate text-[13px]";
 
 function SidebarRow({ thread, place, title, isActive, children }: SidebarRowProps) {
-  const status = useThreadStatus(thread.activity);
+  const { status } = thread;
   const button = (
     <SidebarMenuButton
       isActive={isActive}

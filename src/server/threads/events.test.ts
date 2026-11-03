@@ -17,26 +17,38 @@ async function withThread(messages: string[]) {
 }
 
 describe("live thread events", () => {
-  it("replays the events after the cursor, then sends new ones as they are posted", async () => {
+  it("sends the rows changed after the cursor, then the rows each new event changes", async () => {
     const { app, ada, thread, post } = await withThread(["one", "two", "three"]);
 
     const stream = await openStream(app, ada.cookie, thread.id, { after: 1 });
     expect(stream.res.headers.get("content-type")).toContain("text/event-stream");
-    const two = await stream.nextEvent();
-    const three = await stream.nextEvent();
+    const replayed = await stream.nextRows();
     await post("four");
-    const four = await stream.nextEvent();
+    const four = await stream.nextRows();
     await stream.close();
 
-    expect([two, three, four].map((event) => [event.sseId, event.seq, event.sseEvent])).toEqual([
-      ["2", 2, "thread-event"],
-      ["3", 3, "thread-event"],
-      ["4", 4, "thread-event"],
+    expect([replayed, four].map((update) => [update.sseId, update.seq, update.sseEvent])).toEqual([
+      ["3", 3, "rows"],
+      ["4", 4, "rows"],
+    ]);
+    expect(replayed.rows.map((row) => [row.order, row.seq])).toEqual([
+      [1, 2],
+      [2, 3],
     ]);
     expect(four).toMatchObject({
-      type: "message",
-      actor: { kind: "user", name: "Ada Lovelace" },
-      data: { parts: [{ type: "text", text: "// four" }], quiet: true },
+      rows: [
+        {
+          kind: "human",
+          order: 3,
+          seq: 4,
+          author: { kind: "user", name: "Ada Lovelace" },
+          text: "// four",
+          quiet: true,
+          turn: null,
+        },
+      ],
+      pending: [],
+      run: null,
     });
   });
 
@@ -44,10 +56,11 @@ describe("live thread events", () => {
     const { app, ada, thread } = await withThread(["one", "two", "three"]);
 
     const stream = await openStream(app, ada.cookie, thread.id, { lastEventId: "2" });
-    const next = await stream.nextEvent();
+    const next = await stream.nextRows();
     await stream.close();
 
     expect(next.seq).toBe(3);
+    expect(next.rows.map((row) => row.order)).toEqual([2]);
   });
 
   it("sends a heartbeat comment while nothing happens", async () => {
@@ -64,7 +77,7 @@ describe("live thread events", () => {
     const { app, ada, thread, listening } = await withThread(["one"]);
 
     const stream = await openStream(app, ada.cookie, thread.id);
-    await stream.nextEvent();
+    await stream.nextRows();
     expect(listening.count).toBe(1);
     await stream.close();
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -77,7 +90,7 @@ describe("live thread events", () => {
     const grace = join(await signUp("Grace Hopper", "grace@example.com"), thread.spaceId, "viewer");
 
     const stream = await openStream(app, grace.cookie, thread.id);
-    await stream.nextEvent();
+    await stream.nextRows();
     db.run(sql`delete from space_member where subject_id = ${grace.userId}`);
     let frame = await stream.next();
     while (frame.comment === "heartbeat") frame = await stream.next();
@@ -92,7 +105,7 @@ describe("live thread events", () => {
 
     const stream = await openStream(app, ada.cookie, thread.id);
     const inbox = await openInbox(app, ada.cookie);
-    await Promise.all([stream.nextEvent(), inbox.next()]);
+    await Promise.all([stream.nextRows(), inbox.next()]);
     shutdown.abort();
 
     await expect(stream.nextItem()).rejects.toThrow("stream ended");
@@ -112,30 +125,34 @@ describe("live thread events", () => {
 
 describe("following a thread", () => {
   for (const when of ["before", "after"] as const) {
-    it(`delivers an event appended during the replay once, read ${when} it`, async () => {
+    it(`delivers a row added during the replay once, read ${when} it`, async () => {
       const { threads, threadStore, ada, thread } = await withThread(["one", "two"]);
       const eventsAfter = threadStore.eventsAfter.bind(threadStore);
       // An event arrives while the stored ones are being read.
+      let arrived = false;
       threadStore.eventsAfter = (id, after) => {
-        if (when === "after") {
-          const stored = eventsAfter(id, after);
+        const arrive = () => {
+          if (arrived) return;
+          arrived = true;
           threads.postMessage(ada, id, "// three");
-          return stored;
-        }
-        threads.postMessage(ada, id, "// three");
-        return eventsAfter(id, after);
+        };
+        if (when === "before") arrive();
+        const stored = eventsAfter(id, after);
+        arrive();
+        return stored;
       };
-      const delivered: number[] = [];
+      const delivered: string[] = [];
 
       const stop = threads.follow(ada, thread.id, 0, (item) => {
-        if (item.kind === "event") delivered.push(item.event.seq);
+        if (item.kind !== "rows") return;
+        for (const row of item.update.rows) if (row.kind === "human") delivered.push(row.text);
       });
       threadStore.eventsAfter = eventsAfter;
       threads.postMessage(ada, thread.id, "// four");
       stop();
       threads.postMessage(ada, thread.id, "// five");
 
-      expect(delivered).toEqual([1, 2, 3, 4]);
+      expect(delivered).toEqual(["// one", "// two", "// three", "// four"]);
     });
   }
 });

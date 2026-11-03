@@ -1,18 +1,19 @@
 // Threads in the spaces a person can see: starting them, naming them after their first message,
 // finding them by title, moving them between the space's folders, deleting them, posting messages
-// to their event logs, reading them back with each event's author and following new events and
-// reply pieces as they are stored. A message posted while the agent is idle wakes it at once; one
+// to their event logs, and reading them back as each reader sees them: their transcript's rows, a
+// page at a time from the newest, with what the reader may do from each, and as the log grows the
+// rows each new event changed, with the pieces of replies in progress. A message posted while the agent is idle wakes it at once; one
 // posted while it is busy steers the run, waits for the next one, or interrupts the run, and its
 // author can change it until the agent takes it in. Anyone who can post can stop the run, or try
 // the last one again when it failed or was stopped; a run waiting for a decision on a tool call is
 // queued again to be stopped. Lists say each thread's model and its provider, who has written in
 // it and what it holds for the reader: what the agent is doing in it, whether they may decide on
 // the call it waits for, its newest notable event, its last run's failure, and how far they have
-// seen it, which reading it and posting in it move on. Each reader's inbox follows those changes
-// for every thread they can read. Who may do each is the thread access rule's; a thread's guests
-// find it, and post in it, beside the threads of their own spaces. Threads of an archived space stay
-// out of search and inboxes; its person opens them from the space itself, and may move them to a
-// space where they can post.
+// seen it, which reading it and posting in it move on, and the one status all that shows them.
+// Each reader's inbox follows those changes for every thread they can read. Who may do each is the
+// thread access rule's; a thread's guests find it, and post in it, beside the threads of their own
+// spaces. Threads of an archived space stay out of search and inboxes; its person opens them from
+// the space itself, and may move them to a space where they can post.
 
 import { type Run, type RunStore, startRun } from "@/server/agent/runs.ts";
 import type { Tools } from "@/server/agent/tools.ts";
@@ -23,12 +24,13 @@ import type { EventBus } from "@/server/kernel/event-bus.ts";
 import type { Models } from "@/server/models/service.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
-import type { ThreadAccess, ThreadAction } from "@/server/spaces/thread-access.ts";
+import type { Access, ThreadAccess, ThreadAction } from "@/server/spaces/thread-access.ts";
+import { ASK_TOOL } from "@/shared/ask.ts";
 import type { SharedThread } from "@/shared/guests.ts";
 import type { Page, PageParams } from "@/shared/paging.ts";
 import { plainText } from "@/shared/plain-text.ts";
 import { statusOf, type ThreadShow } from "@/shared/thread-status.ts";
-import type { ThreadDetail } from "@/shared/threads/detail.ts";
+import type { ThreadCan, ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
 import {
   type Delivery,
   QUIET_PREFIX,
@@ -45,12 +47,20 @@ import {
   SIDEBAR_LIMIT,
   type ShownModel,
 } from "@/shared/threads/list.ts";
+import {
+  ROWS_PAGE,
+  type RowsPage,
+  type RowsUpdate,
+  type ShownRow,
+  type ShownRun,
+} from "@/shared/threads/rows.ts";
 import type { ThreadSearchResult } from "@/shared/threads/search.ts";
 import { type Effort, UNTITLED, type ThreadSummary } from "@/shared/threads/thread.ts";
-import { transcriptOf } from "@/shared/transcript.ts";
+import type { Transcript, TranscriptFold } from "@/shared/transcript.ts";
 
-import { type Append, eventSummary, type ThreadLog } from "./log.ts";
+import type { Append, ThreadLog } from "./log.ts";
 import type { Titles } from "./titles.ts";
+import { createTranscripts } from "./transcripts.ts";
 
 export type TitleSource = "message" | "agent" | "person";
 
@@ -240,11 +250,78 @@ export interface ThreadsOptions {
   // Names threads after their first message, when given.
   titles?: Pick<Titles, "name">;
   // The agent's tools, for each reader's level for them.
-  tools: Pick<Tools, "levelsFor" | "canDecide" | "riskForCall" | "definitions" | "connectionFor">;
+  tools: Pick<
+    Tools,
+    "levelsFor" | "canDecide" | "asks" | "riskForCall" | "definitions" | "connectionFor" | "namesIn"
+  >;
   now?: () => Date;
 }
 
 export type Threads = ReturnType<typeof createThreads>;
+
+// What a thread's follower is told: the rows the log's new events changed, with the waiting
+// messages and the run as they now are; the pieces of a reply in progress; and the thread itself
+// once it is renamed, moved or set to another model.
+export type ThreadFollowItem =
+  | { kind: "rows"; update: RowsUpdate }
+  | { kind: "delta"; delta: DeltaBatch }
+  | { kind: "thread"; head: ThreadHead };
+
+// Who reads a thread and what they may do in it, for the parts of its rows that are theirs.
+interface Reader {
+  userId: string;
+  thread: Thread;
+  space: Space | null;
+  // The model the run under way replies with, by which a waiting call's risk is worked out.
+  model: string | null;
+  can: ThreadCan;
+  // What each tool call is called where it shows.
+  names: ReturnType<Tools["namesIn"]>;
+}
+
+// The parts of a row that are the reader's, which can change while the row itself does not.
+function readerPartsOf(row: ShownRow) {
+  if (row.kind === "tool") {
+    return JSON.stringify([row.risk, row.actions, row.canAnswer, row.connection]);
+  }
+  if (row.kind === "failure" || row.kind === "stop") return JSON.stringify([row.canRetry]);
+  return "";
+}
+
+// The rows whose reader's parts can change while they do not: the calls waiting for a decision or
+// for answers, and a last row from which a failed or stopped run is tried again.
+function liveIndexes({ rows }: Transcript) {
+  const live = new Set<number>();
+  rows.forEach((row, index) => {
+    if (row.kind === "tool" && row.state === "pending" && row.waits) live.add(index);
+  });
+  const last = rows.at(-1);
+  if (last?.kind === "failure" || last?.kind === "stop") live.add(rows.length - 1);
+  return live;
+}
+
+// The run under way, and whether it waits for answers to the agent's questions or for a decision.
+function shownRun({ run, rows }: Transcript): ShownRun | null {
+  if (!run) return null;
+  const call = run.waitingOn ? rows.find((row) => row.id === run.waitingOn) : undefined;
+  const waiting = !call
+    ? null
+    : call.kind === "tool" && call.toolId === ASK_TOOL
+      ? "answer"
+      : "decision";
+  return { id: run.id, createdAt: run.createdAt, waiting };
+}
+
+// The index of the first row the reader had not seen up to `seen` that is not their own nor a
+// reply still being written; -1 when there is none.
+function newFromOf({ rows }: Transcript, seen: number, userId: string) {
+  return rows.findIndex(
+    (row) =>
+      row.seq > seen &&
+      !(row.kind === "human" && row.author.userId === userId) &&
+      !(row.kind === "agent" && row.status === "streaming"),
+  );
+}
 
 const TITLE_LENGTH = 60;
 export const SEARCH_LIMIT = 200;
@@ -309,6 +386,7 @@ export function createThreads(options: ThreadsOptions) {
     reads,
   } = options;
   const now = options.now ?? (() => new Date());
+  const transcripts = createTranscripts(threads);
 
   // Asks the thread's active run to stop, queueing it again when it waits for a decision so that a
   // worker ends it; null when there is none.
@@ -332,7 +410,7 @@ export function createThreads(options: ThreadsOptions) {
         canApprove: false,
       };
     }
-    const transcript = transcriptOf(threads.eventsAfter(run.threadId, 0).map(eventSummary));
+    const transcript = transcripts.of(run.threadId).transcript();
     const call = transcript.rows.find(
       (row) => row.kind === "tool" && row.id === transcript.run?.waitingOn,
     );
@@ -393,6 +471,7 @@ export function createThreads(options: ThreadsOptions) {
         shownModel: shownModel(thread),
         participants: participantsOf(writers.get(thread.id)),
         activity,
+        status: statusOf(activity, userId),
       };
     });
   }
@@ -421,6 +500,88 @@ export function createThreads(options: ThreadsOptions) {
   // The thread when the principal may take the action in it.
   function visible(principal: Principal, id: string, action: ThreadAction = "read"): Thread {
     return access.require(principal, id, action).thread;
+  }
+
+  function canIn(principal: Principal, thread: Thread): ThreadCan {
+    return {
+      post: access.can(principal, thread, "post"),
+      arrange: access.can(principal, thread, "arrange"),
+      share: access.can(principal, thread, "share"),
+    };
+  }
+
+  function readerOf(principal: Principal, thread: Thread): Reader {
+    const space = spaceStore.find(thread.spaceId);
+    return {
+      userId: principal.userId,
+      thread,
+      space,
+      model: runs.active(thread.id)?.model ?? null,
+      can: canIn(principal, thread),
+      names: tools.namesIn(space),
+    };
+  }
+
+  // The row at `index` as the reader sees it: with its place, the last event that changed it, its
+  // turn, for a call what its tool is called, and what they may do from it. A call waiting for a decision says what they may decide,
+  // none while it waits on others, under the risk its tool's policy gives it now, with their own
+  // connection for a call that would run with it, and nobody else's; one waiting for answers, whether
+  // they may give them; and the last row of a run that failed or was stopped, whether they may try
+  // it again, which they may while nothing else runs or waits to.
+  function shownRow(
+    fold: TranscriptFold,
+    transcript: Transcript,
+    index: number,
+    reader: Reader,
+  ): ShownRow {
+    const row = transcript.rows[index]!;
+    const place = { order: index, seq: fold.changedAt(index), turn: fold.turnAt(index) };
+    const { space, userId, thread, model } = reader;
+    if (row.kind === "tool") {
+      const call = { ...row, ...place, ...reader.names(row) };
+      if (row.state !== "pending" || !row.waits || !space) return call;
+      const may = tools.canDecide(userId, row, transcript.rows, thread, space, model);
+      if (tools.asks(row, space)) return { ...call, canAnswer: may };
+      const risk = tools.riskForCall(row, space, model);
+      const connection = tools.connectionFor(space, row.toolId, userId, row.input);
+      const forNow = risk === "normal" ? (["allow_for_now"] as const) : [];
+      return {
+        ...call,
+        risk,
+        actions: may ? ["allow", ...forNow, "deny"] : [],
+        ...(connection && { connection }),
+      };
+    }
+    if (row.kind === "failure" || row.kind === "stop") {
+      const last = index === transcript.rows.length - 1;
+      const idle = !transcript.run && transcript.pending.length === 0;
+      return { ...row, ...place, canRetry: last && idle && reader.can.post };
+    }
+    return { ...row, ...place };
+  }
+
+  // The thread as the reader sees it, without its rows: what they may do in it, the defaults it
+  // follows, and the model it names and the one that replies, which differ while the one it names
+  // is turned off.
+  async function headOf(principal: Principal, thread: Thread, via: Access): Promise<ThreadHead> {
+    const space = spaceStore.find(thread.spaceId);
+    const defaults = space ? models.defaults(space) : { model: null, effort: null };
+    // The default that replies, with its effort.
+    const following = space && (await models.replyModel(space, { model: null, effort: null }));
+    const used = following?.used ? { used: following.used, effort: following.effort } : null;
+    return {
+      thread: threadSummary(thread),
+      access: via,
+      archived: spaces.isArchived(thread.spaceId),
+      can: canIn(principal, thread),
+      levels: space ? tools.levelsFor(principal.userId, thread, space) : {},
+      tools: space ? tools.definitions(space) : [],
+      defaults: { ...defaults, used: used && { ...used.used, effort: used.effort } },
+      // The thread's own org decides, whoever reads it.
+      model: space
+        ? await models.replyModel(space, { model: thread.model, effort: thread.effort })
+        : null,
+    };
   }
 
   // Stores the message. When it is not quiet and the agent is idle, a run starts that takes it in;
@@ -468,7 +629,7 @@ export function createThreads(options: ThreadsOptions) {
   ) {
     const thread = visible(principal, id, "post");
     const { events } = log.write(thread.id, (append) => {
-      const pending = transcriptOf(threads.eventsAfter(thread.id, 0).map(eventSummary)).pending;
+      const pending = transcripts.of(thread.id).transcript().pending;
       const message = pending.find((m) => m.id === messageId);
       if (!message) throw new ServiceError(409, "The agent has already taken this message in");
       if (message.author.userId !== principal.userId) {
@@ -495,7 +656,7 @@ export function createThreads(options: ThreadsOptions) {
       runs.activeIn(shared.map(({ thread }) => thread.id)),
     );
     return shared.map((shared, index) => {
-      const { shownModel, participants, activity } = items[index]!;
+      const { shownModel, participants, activity, status } = items[index]!;
       return {
         ...threadSummary(shared.thread),
         spaceName: shared.spaceName,
@@ -507,6 +668,7 @@ export function createThreads(options: ThreadsOptions) {
         shownModel,
         participants,
         activity,
+        status,
       };
     });
   }
@@ -528,7 +690,7 @@ export function createThreads(options: ThreadsOptions) {
     const asking = rows.filter((row) => row.waiting && !row.failed).map((row) => row.thread);
     const yours = new Set(
       itemsOf(userId, asking, runs.activeIn(asking.map((thread) => thread.id)))
-        .filter((item) => statusOf(item.activity, userId) === "waiting")
+        .filter((item) => item.status === "waiting")
         .map((item) => item.id),
     );
     const needing = rows.filter((row) => row.failed || yours.has(row.thread.id));
@@ -575,9 +737,7 @@ export function createThreads(options: ThreadsOptions) {
       const { rows, counts, failed } = threads.sidebar(principal.userId, spaceId, SIDEBAR_LIMIT);
       const list = rows.map((row) => row.thread);
       const items = itemsOf(principal.userId, list, runs.activeIn(list.map((thread) => thread.id)));
-      const waitingOnYou = items.filter(
-        (item) => statusOf(item.activity, principal.userId) === "waiting",
-      ).length;
+      const waitingOnYou = items.filter((item) => item.status === "waiting").length;
       const { null: loose = 0, ...folders } = Object.fromEntries(counts);
       return { threads: items, loose, folders, needsYou: failed + waitingOnYou };
     },
@@ -622,6 +782,7 @@ export function createThreads(options: ThreadsOptions) {
         shared,
         shownModel: items[index]!.shownModel,
         activity: items[index]!.activity,
+        status: items[index]!.status,
       }));
     },
 
@@ -669,57 +830,47 @@ export function createThreads(options: ThreadsOptions) {
       return threadSummary(threads.find(thread.id) ?? thread);
     },
 
-    // The thread with its events, how far the reader had seen it, the defaults it follows, and the
-    // model it names and the one that replies, which differ while the one it names is turned off.
+    // The thread as the reader sees it, with its newest rows, reaching back to the first they had
+    // not seen, the messages waiting for the agent and the run under way.
     async get(principal: Principal, id: string): Promise<ThreadDetail> {
       const { thread, access: via } = access.require(principal, id);
-      const space = spaceStore.find(thread.spaceId);
-      const defaults = space ? models.defaults(space) : { model: null, effort: null };
-      // The default that replies, with its effort.
-      const following = space && (await models.replyModel(space, { model: null, effort: null }));
-      const used = following?.used ? { used: following.used, effort: following.effort } : null;
-      const events = threads.eventsAfter(id, 0).map(eventSummary);
-      const rows = transcriptOf(events).rows;
-      const activeRun = runs.active(id);
+      const head = await headOf(principal, thread, via);
+      // Read after the models, which wait on providers, so the rows are the newest.
+      const fold = transcripts.of(id);
+      const transcript = fold.transcript();
+      const reader = readerOf(principal, threads.find(id) ?? thread);
+      const seen = reads.seen(principal.userId, [id]).get(id) ?? 0;
+      const from = newFromOf(transcript, seen, principal.userId);
+      const total = transcript.rows.length;
+      const start = Math.min(Math.max(0, total - ROWS_PAGE), from === -1 ? total : from);
+      const rows = [];
+      for (let index = start; index < total; index++) {
+        rows.push(shownRow(fold, transcript, index, reader));
+      }
       return {
-        thread: threadSummary(thread),
-        events,
-        access: via,
-        seenSeq: reads.seen(principal.userId, [id]).get(id) ?? 0,
-        archived: spaces.isArchived(thread.spaceId),
-        pendingTools: Object.fromEntries(
-          rows.flatMap((row) => {
-            if (row.kind !== "tool" || !space || row.state !== "pending" || !row.waits) return [];
-            // The reader's own connection, for a call that would run with it once they allow it;
-            // nobody learns anyone else's.
-            const connection = tools.connectionFor(space, row.toolId, principal.userId, row.input);
-            return [
-              [
-                row.id,
-                {
-                  risk: tools.riskForCall(row, space, activeRun?.model ?? null),
-                  canDecide: tools.canDecide(
-                    principal.userId,
-                    row,
-                    rows,
-                    thread,
-                    space,
-                    activeRun?.model ?? null,
-                  ),
-                  ...(connection && { connection }),
-                },
-              ],
-            ];
-          }),
-        ),
-        levels: space ? tools.levelsFor(principal.userId, thread, space) : {},
-        tools: space ? tools.definitions(space) : [],
-        defaults: { ...defaults, used: used && { ...used.used, effort: used.effort } },
-        // The thread's own org decides, whoever reads it.
-        model: space
-          ? await models.replyModel(space, { model: thread.model, effort: thread.effort })
-          : null,
+        ...head,
+        thread: { ...head.thread, lastEventSeq: Math.max(head.thread.lastEventSeq, fold.last) },
+        rows,
+        before: start > 0 ? start : null,
+        newFrom: from === -1 ? null : transcript.rows[from]!.id,
+        pending: transcript.pending,
+        run: shownRun(transcript),
       };
+    },
+
+    // The rows before the place `before`, at most `limit` of them, as the reader sees them.
+    rows(principal: Principal, id: string, before: number, limit = ROWS_PAGE): RowsPage {
+      const thread = visible(principal, id);
+      const fold = transcripts.of(id);
+      const transcript = fold.transcript();
+      const reader = readerOf(principal, thread);
+      const end = Math.min(before, transcript.rows.length);
+      const start = Math.max(0, end - limit);
+      const rows = [];
+      for (let index = start; index < end; index++) {
+        rows.push(shownRow(fold, transcript, index, reader));
+      }
+      return { rows, before: start > 0 ? start : null };
     },
 
     readable,
@@ -778,7 +929,8 @@ export function createThreads(options: ThreadsOptions) {
     },
 
     // Delivers what changes for the principal in the threads they can read: each such thread as it
-    // now reads for them, a few at a time, how far they saw a thread, and each thread they can no
+    // now reads for them, a few at a time, how far they saw a thread, then that thread again with the
+    // status it now has for them, and each thread they can no
     // longer read, deleted, with their access ended or in a space now archived. `recheck` finds the
     // threads they lost without anything happening in them. Returns the function that stops it.
     inbox(principal: Principal, deliver: (item: InboxItem) => void) {
@@ -804,7 +956,11 @@ export function createThreads(options: ThreadsOptions) {
       const unsubscribe = bus.onActivity((change) => {
         const { threadId, read, gone } = change;
         if (read) {
-          if (read.userId === principal.userId) deliver({ kind: "read", threadId, seq: read.seq });
+          if (read.userId !== principal.userId) return;
+          deliver({ kind: "read", threadId, seq: read.seq });
+          // Its status for them follows from how far they saw it.
+          pending.add(threadId);
+          timer ??= setTimeout(flush, INBOX_DELAY_MS);
           return;
         }
         if (gone) {
@@ -904,27 +1060,54 @@ export function createThreads(options: ThreadsOptions) {
       return events[0]!;
     },
 
-    // Delivers the thread's events with seq above `after` in order, then the pieces stored so far
-    // of the replies in progress, then each new event and piece as it is stored, each exactly
-    // once. Listening starts before the stored ones are read, so none falls between the two.
-    // Returns the function that stops it.
+    // Delivers, as the reader sees them, the rows events with seq above `after` changed, then the
+    // pieces stored so far of the replies in progress, then the rows each new event changes and
+    // each piece as it is stored, each exactly once. With the rows go the waiting messages and the
+    // run, and any row whose parts that are the reader's changed while the row did not, as when
+    // someone else writes and a call can no longer be allowed for now. The thread itself is
+    // delivered again once it is renamed, moved or set to another model. Listening starts before
+    // the stored ones are read, so none falls between the two. Returns the function that stops it.
     follow(
       principal: Principal,
       id: string,
       after: number,
-      deliver: (item: ThreadFeedItem) => void,
+      deliver: (item: ThreadFollowItem) => void,
     ): () => void {
-      visible(principal, id);
+      const first = visible(principal, id);
+      const release = transcripts.hold(id);
+      let stopped = false;
       let last = after;
+      // The reader's parts of each live row as last delivered, by row id.
+      const told = new Map<string, string>();
       // The next piece number to send, by reply.
       const pieces = new Map<string, number>();
       let replaying = true;
       const held: ThreadFeedItem[] = [];
+      function sendRows() {
+        const thread = threads.find(id);
+        if (!thread) return;
+        const fold = transcripts.of(id);
+        const transcript = fold.transcript();
+        const reader = readerOf(principal, thread);
+        const live = liveIndexes(transcript);
+        const rows: ShownRow[] = [];
+        transcript.rows.forEach((row, index) => {
+          const changed = fold.changedAt(index) > last;
+          if (!changed && !live.has(index) && !told.has(row.id)) return;
+          const shown = shownRow(fold, transcript, index, reader);
+          const parts = readerPartsOf(shown);
+          if (changed || told.get(row.id) !== parts) rows.push(shown);
+          if (live.has(index)) told.set(row.id, parts);
+          else told.delete(row.id);
+        });
+        if (fold.last <= last && rows.length === 0) return;
+        last = Math.max(last, fold.last);
+        const run = shownRun(transcript);
+        deliver({ kind: "rows", update: { seq: last, rows, pending: transcript.pending, run } });
+      }
       function send(item: ThreadFeedItem) {
         if (item.kind === "event") {
-          if (item.event.seq <= last) return;
-          last = item.event.seq;
-          deliver(item);
+          if (item.event.seq > last) sendRows();
           return;
         }
         const { messageId, index, texts } = item.delta;
@@ -936,17 +1119,44 @@ export function createThreads(options: ThreadsOptions) {
           delta: { ...item.delta, index: index + sent, texts: texts.slice(sent) },
         });
       }
+      // What the thread was named, set to and where it was, as last delivered.
+      const placeOf = (thread: Thread) =>
+        JSON.stringify([
+          thread.title,
+          thread.model,
+          thread.effort,
+          thread.folderId,
+          thread.spaceId,
+        ]);
+      let place = placeOf(first);
       const unsubscribe = bus.subscribe(id, (item) => {
         if (replaying) held.push(item);
         else send(item);
       });
-      for (const event of threads.eventsAfter(id, after)) {
-        send({ kind: "event", event: eventSummary(event) });
-      }
+      const stopActivity = bus.onActivity((change) => {
+        if (change.threadId !== id || change.read || change.gone) return;
+        const thread = threads.find(id);
+        if (!thread || placeOf(thread) === place) return;
+        place = placeOf(thread);
+        const via = access.of(principal, thread);
+        if (!via) return;
+        void headOf(principal, thread, via).then(
+          (head) => {
+            if (!stopped) deliver({ kind: "thread", head });
+          },
+          () => {},
+        );
+      });
+      sendRows();
       for (const delta of deltas.inThread(id)) send({ kind: "delta", delta });
       replaying = false;
       for (const item of held) send(item);
-      return unsubscribe;
+      return () => {
+        stopped = true;
+        unsubscribe();
+        stopActivity();
+        release();
+      };
     },
   };
 }

@@ -2,7 +2,7 @@
 // model thought first, folded away once it answers, then its Markdown with any layouts it wrote
 // drawn in place; a reply that was cut short says so.
 
-import type { AgentRow } from "@/shared/transcript.ts";
+import type { AgentRow } from "@/shared/threads/rows.ts";
 import { MessageResponse } from "@/web/components/ai-elements/message";
 import {
   Reasoning,

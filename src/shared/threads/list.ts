@@ -50,12 +50,24 @@ export const shownModelSchema = z.object({
 
 export type ShownModel = z.infer<typeof shownModelSchema>;
 
+// The one status a thread shows a reader in its lists, worked out on the server from what it holds
+// for them.
+export const threadStatusSchema = z.enum([
+  "waiting",
+  "failed",
+  "working",
+  "paused",
+  "unread",
+  "read",
+]);
+
 // A thread in its space's list, with the model it shows (null with none at all), who has written
-// in it, and what it holds for the reader.
+// in it, what it holds for the reader and the status that shows them.
 export const threadListItemSchema = threadSchema.extend({
   shownModel: shownModelSchema.nullable(),
   participants: threadParticipantsSchema,
   activity: threadActivitySchema,
+  status: threadStatusSchema,
 });
 
 export type ThreadListItem = z.infer<typeof threadListItemSchema>;
