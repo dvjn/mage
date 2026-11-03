@@ -31,7 +31,7 @@ export function statused(
 ) {
   return sql`
     with listed as (
-      select t.id, t.space_id, t.folder_id, t.title, t.title_source, t.model, t.effort,
+      select t.id, t.space_id, t.title, t.title_source, t.model, t.effort,
              t.created_by, t.parent_thread_id, t.root_thread_id, t.last_event_seq,
              t.created_at, t.updated_at, t.last_message_text, r.status as run_status,
              coalesce(tr.last_seen_seq, 0) as seen,
@@ -80,7 +80,6 @@ export function windowOf(window: ListWindow | undefined) {
 export interface StatusedRow {
   id: string;
   space_id: string;
-  folder_id: string | null;
   title: string | null;
   title_source: Thread["titleSource"];
   model: string | null;
@@ -100,7 +99,6 @@ export function listedThread(row: StatusedRow): ListedThread {
     thread: {
       id: row.id,
       spaceId: row.space_id,
-      folderId: row.folder_id,
       title: row.title,
       titleSource: row.title_source,
       model: row.model,

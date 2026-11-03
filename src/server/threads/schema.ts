@@ -8,7 +8,6 @@ import {
   primaryKey,
 } from "drizzle-orm/sqlite-core";
 
-import { folder } from "@/server/folders/schema.ts";
 import { user } from "@/server/orgs/schema.ts";
 import { space } from "@/server/spaces/schema.ts";
 
@@ -20,8 +19,6 @@ export const thread = sqliteTable(
     spaceId: text("space_id")
       .notNull()
       .references(() => space.id, { onDelete: "cascade" }),
-    // Null when the thread is at the space's top level.
-    folderId: text("folder_id").references(() => folder.id),
     // Null until the first message names it or someone sets it.
     title: text("title"),
     // Who named it: its first message, the agent after it, or a person; null while untitled.
@@ -46,10 +43,7 @@ export const thread = sqliteTable(
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
   },
-  (table) => [
-    index("thread_space_idx").on(table.spaceId, table.updatedAt),
-    index("thread_folder_idx").on(table.folderId),
-  ],
+  (table) => [index("thread_space_idx").on(table.spaceId, table.updatedAt)],
 );
 
 // What happened in a thread, numbered 1, 2, 3… per thread with no gaps.

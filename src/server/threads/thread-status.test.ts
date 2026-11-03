@@ -22,7 +22,7 @@ function activity(facts: Partial<ThreadActivity> = {}): ThreadActivity {
 }
 
 const since = new Date(0).toISOString();
-const waiting = { status: "waiting" as const, since, toolId: "thread.move" };
+const waiting = { status: "waiting" as const, since, toolId: "thread.rename" };
 const running = { status: "running" as const, since };
 
 describe("a thread's status", () => {

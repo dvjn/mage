@@ -7,7 +7,6 @@ async function sharedSpace() {
   const ada = await workspace.signUp("Ada Lovelace", "ada@example.com");
   const space = await workspace.yourSpace(ada.cookie);
   const thread = await workspace.createThread(ada.cookie, space.id, "Engines");
-  const folder = await workspace.createFolder(ada.cookie, space.id, "Looms");
   const grace = workspace.join(
     await workspace.signUp("Grace Hopper", "grace@example.com"),
     space.id,
@@ -18,7 +17,7 @@ async function sharedSpace() {
     space.id,
     "messager",
   );
-  return { ...workspace, ada, grace, alan, space, thread, folder };
+  return { ...workspace, ada, grace, alan, space, thread };
 }
 
 describe("space roles", () => {
@@ -30,26 +29,22 @@ describe("space roles", () => {
     ]);
     const reads = [
       api("GET", `/spaces/${space.id}/threads`, grace.cookie),
-      api("GET", `/spaces/${space.id}/folders`, grace.cookie),
       api("GET", `/threads/${thread.id}`, grace.cookie),
     ];
-    expect((await Promise.all(reads)).map((res) => res.status)).toEqual([200, 200, 200]);
+    expect((await Promise.all(reads)).map((res) => res.status)).toEqual([200, 200]);
   });
 
   it("refuses a viewer anything that writes", async () => {
-    const { api, grace, space, thread, folder } = await sharedSpace();
+    const { api, grace, space, thread } = await sharedSpace();
 
     const writes = [
       api("POST", `/spaces/${space.id}/threads`, grace.cookie, { text: "Hi" }),
       api("POST", `/threads/${thread.id}/messages`, grace.cookie, { text: "Hi" }),
       api("PATCH", `/threads/${thread.id}`, grace.cookie, { title: "Mine" }),
       api("DELETE", `/threads/${thread.id}`, grace.cookie),
-      api("POST", `/spaces/${space.id}/folders`, grace.cookie, { name: "Mine" }),
-      api("PATCH", `/folders/${folder.id}`, grace.cookie, { name: "Mine" }),
-      api("DELETE", `/folders/${folder.id}`, grace.cookie),
       api("PATCH", `/spaces/${space.id}`, grace.cookie, { name: "Mine" }),
     ];
-    expect((await Promise.all(writes)).map((res) => res.status)).toEqual(Array(8).fill(403));
+    expect((await Promise.all(writes)).map((res) => res.status)).toEqual(Array(5).fill(403));
   });
 
   it("lets a messager post and arrange threads but not manage the space", async () => {

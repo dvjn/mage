@@ -15,13 +15,8 @@ async function space() {
   );
   const { id: spaceId } = await workspace.yourSpace(ada.cookie);
   let clock = Date.parse("2026-10-01T00:00:00Z");
-  function thread(title: string, { folderId = null as string | null, at = 0 } = {}) {
-    const made = workspace.threadStore.create({
-      spaceId,
-      folderId,
-      model: null,
-      createdBy: ada.userId,
-    });
+  function thread(title: string, { at = 0 } = {}) {
+    const made = workspace.threadStore.create({ spaceId, model: null, createdBy: ada.userId });
     workspace.threadStore.update(made.id, { title });
     clock += 1000;
     workspace.db.run(sql`update thread set updated_at = ${at || clock} where id = ${made.id}`);
@@ -106,31 +101,24 @@ describe("a space's threads listed in the database", () => {
     expect(titles(ada.userId, { text: "100%" }).titles).toEqual([]);
   });
 
-  it("narrows by folder, text and status together", async () => {
-    const { ada, grace, thread, said, failed, titles, createFolder, spaceId } = await space();
-    const folder = await createFolder(ada.cookie, spaceId, "Looms");
-    const inside = thread("Alpha inside", { folderId: folder.id });
+  it("narrows by text and status together", async () => {
+    const { ada, grace, thread, said, failed, titles } = await space();
+    const inside = thread("Alpha inside");
     said(inside, grace.userId, "Hello");
-    const quiet = thread("Alpha quiet", { folderId: folder.id });
+    const quiet = thread("Alpha quiet");
     said(quiet, ada.userId, "Mine");
     const outside = thread("Alpha outside");
     said(outside, grace.userId, "Hello");
-    const broken = thread("Beta broken", { folderId: folder.id });
+    const broken = thread("Beta broken");
     failed(broken);
 
-    expect(
-      titles(ada.userId, { folderId: folder.id, text: "alpha" }, { limit: 10, offset: 0 }),
-    ).toEqual({ titles: ["Alpha quiet", "Alpha inside"], total: 2 });
-    expect(
-      titles(
-        ada.userId,
-        { folderId: folder.id, text: "alpha", show: "unread" },
-        {
-          limit: 10,
-          offset: 0,
-        },
-      ),
-    ).toEqual({ titles: ["Alpha inside"], total: 1 });
+    expect(titles(ada.userId, { text: "alpha" }, { limit: 10, offset: 0 })).toEqual({
+      titles: ["Alpha outside", "Alpha quiet", "Alpha inside"],
+      total: 3,
+    });
+    expect(titles(ada.userId, { text: "alpha", show: "unread" }, { limit: 10, offset: 0 })).toEqual(
+      { titles: ["Alpha outside", "Alpha inside"], total: 2 },
+    );
     expect(titles(ada.userId, { show: "unread" }).titles).toEqual([
       "Alpha outside",
       "Alpha inside",
@@ -171,26 +159,22 @@ describe("a space's threads listed in the database", () => {
 });
 
 describe("a space's sidebar threads", () => {
-  it("takes the newest few of each folder, with counts and what says something", async () => {
-    const { ada, grace, thread, said, failed, threadStore, createFolder, spaceId } = await space();
-    const folder = await createFolder(ada.cookie, spaceId, "Looms");
-    const unread = thread("Old news", { folderId: folder.id });
+  it("takes the newest few, with the count and what says something", async () => {
+    const { ada, grace, thread, said, failed, threadStore, spaceId } = await space();
+    const unread = thread("Old news");
     said(unread, grace.userId, "Hello");
     const broken = thread("Old failure");
     failed(broken);
-    for (let n = 1; n <= 3; n++) thread(`Folder ${n}`, { folderId: folder.id });
     for (let n = 1; n <= 3; n++) thread(`Top ${n}`);
 
-    const { rows, counts, failed: failures } = threadStore.sidebar(ada.userId, spaceId, 2);
+    const { rows, total, failed: failures } = threadStore.sidebar(ada.userId, spaceId, 2);
     expect(rows.map((row) => threadStore.find(row.thread.id)?.title)).toEqual([
       "Top 3",
       "Top 2",
-      "Folder 3",
-      "Folder 2",
       "Old failure",
       "Old news",
     ]);
-    expect(Object.fromEntries(counts)).toEqual({ [folder.id]: 4, null: 4 });
+    expect(total).toBe(5);
     expect(failures).toBe(1);
   });
 });

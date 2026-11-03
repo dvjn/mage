@@ -103,17 +103,8 @@ test("Ctrl+K lists every thread, searches everywhere or in this space, and finds
   await expect(scope.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
   await scope.getByRole("button", { name: "Personal Space" }).click();
   await expect(dialog.getByRole("option")).toHaveCount(2);
-  // Tab switches to the space's folders, and back.
+  // Tab cycles the scopes.
   await dialog.getByRole("combobox").press("Tab");
-  await expect(dialog.getByRole("button", { name: /^Folders \d/ })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
-  await expect(dialog.getByText("No folder matches.")).toBeVisible();
-  await dialog.getByRole("combobox").press("Tab");
-  await expect(dialog.getByRole("button", { name: /^Threads \d/ })).toHaveAttribute(
-    "aria-pressed",
-    "true",
-  );
+  await expect(scope.getByRole("button", { name: "All" })).toHaveAttribute("aria-pressed", "true");
   await expect(dialog.getByRole("option")).toHaveCount(2);
 });

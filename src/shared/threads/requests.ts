@@ -23,11 +23,10 @@ export const pendingChangeSchema = z
   })
   .refine((change) => change.text !== undefined || change.mode !== undefined);
 
-// A new thread: its first message, its folder, and the model and effort it starts with instead of
-// its space's defaults.
+// A new thread: its first message, and the model and effort it starts with instead of its space's
+// defaults.
 export const newThreadSchema = z.object({
   text: messageTextSchema.optional(),
-  folderId: z.string().min(1).nullable().optional(),
   model: z.string().min(1).optional(),
   effort: effortSchema.optional(),
 });
@@ -38,8 +37,6 @@ export const threadUpdateSchema = z.object({
   model: z.string().min(1).nullable().optional(),
   // Null follows the space's default effort.
   effort: effortSchema.nullable().optional(),
-  // Null moves the thread to the top of its space.
-  folderId: z.string().min(1).nullable().optional(),
 });
 
 // The space a thread moves to, at its top.

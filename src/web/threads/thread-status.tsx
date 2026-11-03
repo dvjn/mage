@@ -4,8 +4,7 @@
 // it waits for someone else), at the size a list asks for, with what it means in words on hover and
 // for screen readers, so the status never rests on colour alone; nothing while there is nothing
 // new. The spinner holds still for those who ask for less motion. A one-line row shows the status
-// as a dot on its model's mark instead. A small dot in the waiting colour says a folder holds a
-// thread that needs them.
+// as a dot on its model's mark instead.
 
 import { cn } from "cn";
 import { HandIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
@@ -139,16 +138,5 @@ export function StatusGlyph({
       <TooltipTrigger render={glyph} />
       <TooltipContent>{tooltip}</TooltipContent>
     </Tooltip>
-  );
-}
-
-// The dot that says a folder holds a thread that needs the person.
-export function NeedsYouDot({ className }: { className?: string }) {
-  return (
-    <span
-      role="img"
-      aria-label="Needs you"
-      className={cn("size-1.5 shrink-0 rounded-full bg-status-waiting", className)}
-    />
   );
 }

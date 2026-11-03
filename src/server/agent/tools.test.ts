@@ -415,7 +415,6 @@ describe("tool calls", () => {
     expect(first.tools).toEqual([
       "thread.info",
       "thread.rename",
-      "thread.move",
       "thread.set_model",
       "thread.compact",
       "thread.ask",
@@ -437,20 +436,17 @@ describe("tool calls", () => {
     ]);
   });
 
-  it("fail at once with input the tool does not take, and say which folders there are", async () => {
-    const { ada, post, calls, model, worker, start, createFolder, space, tools } =
-      await toolThread();
-    await createFolder(ada.cookie, space.id, "Research");
+  it("fail at once with input the tool does not take", async () => {
+    const { ada, post, calls, model, worker, start, tools } = await toolThread();
     start();
 
-    await post(ada, "Move it");
-    await calls(["thread.rename", { name: "x" }], ["thread.move", { folder: "Nowhere" }]);
+    await post(ada, "Rename it");
+    await calls(["thread.rename", { name: "x" }]);
     const next = await answered(model.next());
     await worker.idle();
 
-    expect(tools().map((row) => row.state)).toEqual(["failed", "failed"]);
-    expect(next.texts.at(-2)).toContain("The input is not valid");
-    expect(next.texts.at(-1)).toContain("The folders here: Research.");
+    expect(tools().map((row) => row.state)).toEqual(["failed"]);
+    expect(next.texts.at(-1)).toContain("The input is not valid");
   });
 
   it("wait for a decision when someone who can no longer message wrote, letting the lease go", async () => {
@@ -458,15 +454,14 @@ describe("tool calls", () => {
     const { ada, hedy, grace, post, calls, model, runStore, thread, makeWorker, start } = workspace;
     const first = makeWorker();
     start(first);
-    await post(hedy, "Please move this to Research");
+    await post(hedy, "Please rename this to Research");
     workspace.revokeHedy();
-    await workspace.createFolder(ada.cookie, workspace.space.id, "Research");
-    await calls(["thread.move", { folder: "Research" }]);
+    await calls(["thread.rename", { title: "Research" }]);
     await first.idle();
 
     const waiting = runStore.active(thread.id);
     expect(waiting).toMatchObject({ status: "waiting", leaseOwner: null });
-    expect(workspace.transcript().at(-1)).toBe("thread.move (pending)");
+    expect(workspace.transcript().at(-1)).toBe("thread.rename (pending)");
     expect(transcriptOf(workspace.events()).run?.waitingOn).toBe(workspace.tools()[0]!.id);
 
     // A restart leaves a waiting run be.
@@ -483,11 +478,13 @@ describe("tool calls", () => {
     await second.idle();
 
     expect(workspace.transcript().slice(-2)).toEqual([
-      "thread.move (ran by Grace Hopper)",
+      "thread.rename (ran by Grace Hopper)",
       "Agent (completed): Done.",
     ]);
-    expect(next.texts.at(-1)).toBe('result thread.move: {"ok":true,"value":{"folder":"Research"}}');
-    expect(workspace.threadStore.find(thread.id)?.folderId).not.toBeNull();
+    expect(next.texts.at(-1)).toBe(
+      'result thread.rename: {"ok":true,"value":{"title":"Research"}}',
+    );
+    expect(workspace.threadStore.find(thread.id)?.title).toBe("Research");
   });
 
   it("refuse decisions from viewers and people whose access ended", async () => {
@@ -663,24 +660,19 @@ describe("tool calls", () => {
     const workspace = await toolThread();
     const { ada, post, model, worker, start, toolSettings, space } = workspace;
     toolSettings.setInOrg(ada.orgId, ["thread.rename", "thread.info"], TOOL_OFF);
-    toolSettings.setInSpace(space.id, ["thread.move", "thread.ask"], TOOL_OFF);
+    toolSettings.setInSpace(space.id, ["thread.set_model", "thread.ask"], TOOL_OFF);
     start();
     await post(ada, "Hello");
     const call = await answered(model.next());
     await worker.idle();
-    expect(call.tools).toEqual(["thread.set_model", "thread.compact", "thread.ask"]);
+    expect(call.tools).toEqual(["thread.compact", "thread.ask"]);
 
     const other = await workspace.createSpace(ada.cookie, "Other");
     const thread = await workspace.createThread(ada.cookie, other.id, "Hello there");
     const elsewhere = await answered(model.next());
     await worker.idle();
     expect(thread.id).toBeDefined();
-    expect(elsewhere.tools).toEqual([
-      "thread.move",
-      "thread.set_model",
-      "thread.compact",
-      "thread.ask",
-    ]);
+    expect(elsewhere.tools).toEqual(["thread.set_model", "thread.compact", "thread.ask"]);
   });
 });
 
@@ -1122,21 +1114,27 @@ describe("tool settings", () => {
     const signOff = (await made.json()) as { id: string };
 
     expect(
-      (await api("PATCH", "/org/tools", grace.cookie, change(["thread.move"], signOff.id))).status,
+      (await api("PATCH", "/org/tools", grace.cookie, change(["thread.compact"], signOff.id)))
+        .status,
     ).toBe(403);
     expect(
       (await api("PATCH", "/org/tools", ada.cookie, change(["thread.nope"], signOff.id))).status,
     ).toBe(404);
     expect(
-      (await api("PATCH", "/org/tools", ada.cookie, change(["thread.move"], "nope"))).status,
+      (await api("PATCH", "/org/tools", ada.cookie, change(["thread.compact"], "nope"))).status,
     ).toBe(404);
-    const org = await api("PATCH", "/org/tools", ada.cookie, change(["thread.move"], signOff.id));
+    const org = await api(
+      "PATCH",
+      "/org/tools",
+      ada.cookie,
+      change(["thread.compact"], signOff.id),
+    );
     const thread = (
       (await org.json()) as { id: string; title: string; source: string; tools: unknown[] }[]
     ).find((toolset) => toolset.id === "thread");
     expect(thread).toMatchObject({ id: "thread", title: "Thread", source: "builtin" });
     expect(thread!.tools).toContainEqual(
-      expect.objectContaining({ id: "thread.move", orgPolicy: signOff.id, policy: signOff.id }),
+      expect.objectContaining({ id: "thread.compact", orgPolicy: signOff.id, policy: signOff.id }),
     );
     expect(thread!.tools).toContainEqual(
       expect.objectContaining({
@@ -1166,7 +1164,7 @@ describe("tool settings", () => {
     const spacePolicy = (await own.json()) as { id: string; spaceId: string };
     expect(spacePolicy.spaceId).toBe(space.id);
     expect(
-      (await api("PATCH", "/org/tools", ada.cookie, change(["thread.move"], spacePolicy.id)))
+      (await api("PATCH", "/org/tools", ada.cookie, change(["thread.compact"], spacePolicy.id)))
         .status,
     ).toBe(404);
     const other = await createSpace(ada.cookie, "Other");
@@ -1176,7 +1174,7 @@ describe("tool settings", () => {
           "PATCH",
           `/spaces/${other.id}/tools`,
           ada.cookie,
-          change(["thread.move"], spacePolicy.id),
+          change(["thread.compact"], spacePolicy.id),
         )
       ).status,
     ).toBe(404);
@@ -1201,9 +1199,8 @@ describe("tool settings", () => {
     expect(inSpace!.tools).toEqual([
       expect.objectContaining({ id: "thread.info", orgPolicy: null, policy: null }),
       expect.objectContaining({ id: "thread.rename", orgPolicy: null, policy: TOOL_OFF }),
-      expect.objectContaining({ id: "thread.move", orgPolicy: signOff.id, policy: null }),
       expect.objectContaining({ id: "thread.set_model", orgPolicy: null, policy: spacePolicy.id }),
-      expect.objectContaining({ id: "thread.compact", orgPolicy: null, policy: null }),
+      expect.objectContaining({ id: "thread.compact", orgPolicy: signOff.id, policy: null }),
       expect.objectContaining({ id: "thread.ask", orgPolicy: null, policy: null, fixed: true }),
     ]);
     expect((await api("GET", `/spaces/${space.id}/tools`, grace.cookie)).status).toBe(403);
@@ -1264,7 +1261,10 @@ describe("tool settings", () => {
       independent: false,
     });
 
-    await api("PATCH", "/org/tools", ada.cookie, { toolIds: ["thread.move"], policy: policy.id });
+    await api("PATCH", "/org/tools", ada.cookie, {
+      toolIds: ["thread.compact"],
+      policy: policy.id,
+    });
     const listed = (await (await api("GET", "/org/tool-policies", grace.cookie)).json()) as {
       id: string;
       toolCount: number;
@@ -1279,7 +1279,7 @@ describe("tool settings", () => {
     expect(
       (await api("DELETE", `/spaces/${space.id}/tool-policies/${policy.id}`, ada.cookie)).status,
     ).toBe(404);
-    await api("PATCH", "/org/tools", ada.cookie, { toolIds: ["thread.move"], policy: null });
+    await api("PATCH", "/org/tools", ada.cookie, { toolIds: ["thread.compact"], policy: null });
     expect((await api("DELETE", `/org/tool-policies/${policy.id}`, ada.cookie)).status).toBe(200);
     expect(await (await api("GET", "/org/tool-policies", ada.cookie)).json()).toEqual([]);
   });

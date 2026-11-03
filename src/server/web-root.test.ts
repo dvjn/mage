@@ -6,7 +6,6 @@ import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
-import type { Folders } from "@/server/folders/service.ts";
 import type { Guests } from "@/server/guests/service.ts";
 import type { Instructions } from "@/server/instructions/service.ts";
 import { createLogger } from "@/server/kernel/logger.ts";
@@ -36,7 +35,6 @@ const app = createApp({
   connections: {} as Connections,
   models: {} as Models,
   spaces: {} as Spaces,
-  folders: {} as Folders,
   threads: {} as Threads,
   guests: {} as Guests,
   orgs: {} as Orgs,

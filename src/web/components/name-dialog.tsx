@@ -1,4 +1,4 @@
-// Asks for a name, to make or rename a space, a folder or a thread, or label an API key, where it
+// Asks for a name, to make or rename a space or a thread, or label an API key, where it
 // may be left empty. It opens from its trigger, or
 // from its owner when it has no trigger.
 

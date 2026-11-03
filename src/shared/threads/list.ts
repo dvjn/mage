@@ -74,17 +74,15 @@ export type ThreadListItem = z.infer<typeof threadListItemSchema>;
 
 export const threadListSchema = z.array(threadListItemSchema);
 
-// How many threads of each folder, and of the top of a space, its sidebar lists.
+// How many threads of a space its sidebar lists.
 export const SIDEBAR_LIMIT = 30;
 
-// A space's threads as its sidebar lists them for the reader: the newest of each folder and of the
-// top of the space, up to the limit, and beside them, older, those that say what a closed folder
-// holds and those that need the reader; how many threads the top of the space and each folder hold,
-// by id; and how many threads need the reader in all.
+// A space's threads as its sidebar lists them for the reader: the newest up to the limit, and
+// beside them, older, those that need the reader; how many threads the space holds; and how many
+// threads need the reader in all.
 export const threadSidebarSchema = z.object({
   threads: z.array(threadListItemSchema),
-  loose: z.number().int(),
-  folders: z.record(z.string(), z.number().int()),
+  total: z.number().int(),
   needsYou: z.number().int(),
 });
 

@@ -45,7 +45,6 @@ const inviteColumns = {
 const threadColumns = {
   id: thread.id,
   spaceId: thread.spaceId,
-  folderId: thread.folderId,
   title: thread.title,
   titleSource: thread.titleSource,
   model: thread.model,

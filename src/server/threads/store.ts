@@ -18,7 +18,6 @@ const NOTABLE = ["message", "message.completed", "run.failed"];
 const columns = {
   id: thread.id,
   spaceId: thread.spaceId,
-  folderId: thread.folderId,
   title: thread.title,
   titleSource: thread.titleSource,
   model: thread.model,
@@ -194,8 +193,7 @@ export function createThreadStore(db: Db): ThreadStore {
     },
 
     listed(reader, spaceId, filter, window) {
-      const where = sql`t.space_id = ${spaceId}
-        ${filter.folderId ? sql`and t.folder_id = ${filter.folderId}` : sql``}`;
+      const where = sql`t.space_id = ${spaceId}`;
       const listed = statused(reader, { from: sql`from thread t`, where });
       const keep = kept(filter, sql`coalesce(title, ${UNTITLED})`, sql`last_message_text`);
       const rows = db.all<StatusedRow>(
@@ -216,26 +214,25 @@ export function createThreadStore(db: Db): ThreadStore {
       const rows = db.all<StatusedRow>(sql`${listed},
         placed as (
           select *,
-                 row_number() over (partition by folder_id ${newestFirst}) as in_folder,
-                 row_number() over (partition by folder_id, status ${newestFirst}) as in_status,
-                 row_number() over (partition by status ${newestFirst}) as in_space
+                 row_number() over (${newestFirst}) as in_space,
+                 row_number() over (partition by status ${newestFirst}) as in_status
             from statused
         )
         select * from placed
-         where in_folder <= ${limit}
+         where in_space <= ${limit}
             or (status <> 'read' and in_status = 1)
             or run_status = 'waiting'
-            or (status = 'failed' and in_space <= ${limit})
+            or (status = 'failed' and in_status <= ${limit})
          ${newestFirst}`);
-      const counts = db.all<{ folderId: string | null; n: number }>(sql`
-        select folder_id as folderId, count(*) as n from thread
-         where space_id = ${spaceId} group by folder_id`);
+      const total = db.get<{ n: number }>(
+        sql`select count(*) as n from thread where space_id = ${spaceId}`,
+      );
       const failed = db.get<{ n: number }>(
         sql`${listed} select count(*) as n from statused where status = 'failed'`,
       );
       return {
         rows: rows.map(listedThread),
-        counts: new Map(counts.map((row) => [row.folderId, row.n])),
+        total: total?.n ?? 0,
         failed: failed?.n ?? 0,
       };
     },
@@ -244,7 +241,7 @@ export function createThreadStore(db: Db): ThreadStore {
       return !!db.select({ id: thread.id }).from(thread).where(eq(thread.spaceId, spaceId)).get();
     },
 
-    search(spaceIds, text, limit, untitled, folderId) {
+    search(spaceIds, text, limit, untitled) {
       if (spaceIds.length === 0) return [];
       // The text's own % and _ match only themselves.
       const pattern = `%${text.replace(/[\\%_]/g, "\\$&")}%`;
@@ -254,7 +251,6 @@ export function createThreadStore(db: Db): ThreadStore {
         .where(
           and(
             inArray(thread.spaceId, spaceIds),
-            folderId ? eq(thread.folderId, folderId) : undefined,
             sql`lower(coalesce(${thread.title}, ${untitled})) like lower(${pattern}) escape '\\'`,
           ),
         )

@@ -4,7 +4,6 @@ import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
 import { createApp } from "@/server/app.ts";
 import { openDatabase } from "@/server/db/db.ts";
-import type { Folders } from "@/server/folders/service.ts";
 import type { Guests } from "@/server/guests/service.ts";
 import type { Instructions } from "@/server/instructions/service.ts";
 import { createLogger } from "@/server/kernel/logger.ts";
@@ -24,7 +23,6 @@ import type { Orgs } from "./service.ts";
 const unusedConnections = {} as Connections;
 const unusedModels = {} as Models;
 const unusedSpaces = {} as Spaces;
-const unusedFolders = {} as Folders;
 const unusedThreads = {} as Threads;
 const unusedGuests = {} as Guests;
 
@@ -43,7 +41,6 @@ function setup(options: Pick<AuthOptions, "oidc"> = {}, db = openDatabase(":memo
     connections: unusedConnections,
     models: unusedModels,
     spaces: unusedSpaces,
-    folders: unusedFolders,
     threads: unusedThreads,
     guests: unusedGuests,
     orgs: {} as Orgs,

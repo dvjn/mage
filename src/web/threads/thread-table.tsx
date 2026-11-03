@@ -1,6 +1,6 @@
 // A page's table of threads, read a page at a time: one column of thread rows, without a header,
-// narrowed by the toolbar's search, by All, Needs you or Unread, and in a space by folder, all kept
-// in the page's address. While there are no threads at all it gives way to its empty state, with no
+// narrowed by the toolbar's search and by All, Needs you or Unread, both kept in the page's
+// address. While there are no threads at all it gives way to its empty state, with no
 // toolbar.
 
 import type { ColumnDef } from "@tanstack/react-table";
@@ -11,12 +11,7 @@ import type { ShownModel, ThreadActivity, ThreadParticipants } from "@/shared/th
 import { DataTable, type Empty } from "@/web/components/data-table/data-table";
 import { DataTableToolbar } from "@/web/components/data-table/data-table-toolbar";
 import { useDataTable } from "@/web/hooks/use-data-table";
-import {
-  type DataTableFeatures,
-  type FilterOption,
-  type TableSearch,
-  withoutUnset,
-} from "@/web/lib/data-table";
+import { type DataTableFeatures, type TableSearch, withoutUnset } from "@/web/lib/data-table";
 import { filterColumn } from "@/web/shell/people-table";
 import { ThreadRow } from "@/web/threads/thread-row";
 import { ThreadShowControl } from "@/web/threads/thread-show";
@@ -32,7 +27,7 @@ type Thread = {
   status: ThreadStatus;
 };
 
-type ThreadSearch = TableSearch & { show?: ThreadShow; folder?: string };
+type ThreadSearch = TableSearch & { show?: ThreadShow };
 
 export function ThreadTable<T extends Thread, S extends ThreadSearch>({
   label,
@@ -40,17 +35,14 @@ export function ThreadTable<T extends Thread, S extends ThreadSearch>({
   search,
   onSearch,
   row,
-  folders,
   empty,
 }: {
   label: string;
   page: { data?: { items: T[]; total: number }; error: unknown };
   search: S;
   onSearch: (search: (previous: S) => S) => void;
-  // What the row says besides the thread itself: where it is, its badge and its time.
-  row: (thread: T) => { place?: string; badge?: string; time: React.ReactNode };
-  // The space's folders, to narrow to one.
-  folders?: FilterOption[];
+  // What the row says besides the thread itself: where it is and its time.
+  row: (thread: T) => { place?: string; time: React.ReactNode };
   empty: Empty;
 }) {
   const columns: ColumnDef<DataTableFeatures, T>[] = [
@@ -61,7 +53,6 @@ export function ThreadTable<T extends Thread, S extends ThreadSearch>({
       meta: { className: "p-0" },
     },
     filterColumn<T>("show", "Show"),
-    ...(folders?.length ? [filterColumn<T>("folder", "Folder", folders)] : []),
   ];
   const table = useDataTable({
     columns,
@@ -70,10 +61,10 @@ export function ThreadTable<T extends Thread, S extends ThreadSearch>({
     getRowId: (thread) => thread.id,
     search,
     onSearch: (changes) => onSearch((previous) => withoutUnset({ ...previous, ...changes })),
-    filters: folders?.length ? ["show", "folder"] : ["show"],
-    hidden: ["show", "folder"],
+    filters: ["show"],
+    hidden: ["show"],
   });
-  const narrowed = !!(search.q || search.show || search.folder);
+  const narrowed = !!(search.q || search.show);
   const any = narrowed || !!page.data?.total;
   return (
     <DataTable

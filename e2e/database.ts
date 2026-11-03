@@ -82,37 +82,14 @@ function primarySpaceOf(db: Database.Database, email: string) {
 // sorted by it come out the same every time.
 let lastAdded = 0;
 
-// Adds `count` threads, titled `${prefix} 1` and on, to the primary space of the user with `email`,
-// in the folder named `folder` (made if missing) when one is given.
-export function addThreads(
-  email: string,
-  count: number,
-  { prefix = "Thread", folder }: { prefix?: string; folder?: string } = {},
-) {
+// Adds `count` threads, titled `${prefix} 1` and on, to the primary space of the user with `email`.
+export function addThreads(email: string, count: number, { prefix = "Thread" } = {}) {
   const db = open();
   try {
     const space = primarySpaceOf(db, email);
     db.transaction(() => {
-      let folderId: string | null = null;
-      if (folder) {
-        folderId =
-          (
-            db
-              .prepare("select id from folder where space_id = ? and name = ?")
-              .get(space.id, folder) as { id: string } | undefined
-          )?.id ?? null;
-        if (!folderId) {
-          folderId = randomUUID();
-          db.prepare("insert into folder (id, space_id, name, created_by) values (?, ?, ?, ?)").run(
-            folderId,
-            space.id,
-            folder,
-            space.userId,
-          );
-        }
-      }
       const insert = db.prepare(
-        "insert into thread (id, space_id, title, title_source, created_by, folder_id, created_at, updated_at) values (?, ?, ?, 'message', ?, ?, ?, ?)",
+        "insert into thread (id, space_id, title, title_source, created_by, created_at, updated_at) values (?, ?, ?, 'message', ?, ?, ?)",
       );
       for (let index = 1; index <= count; index += 1) {
         lastAdded = Math.max(Date.now(), lastAdded + 1);
@@ -121,7 +98,6 @@ export function addThreads(
           space.id,
           `${prefix} ${index}`,
           space.userId,
-          folderId,
           lastAdded,
           lastAdded,
         );

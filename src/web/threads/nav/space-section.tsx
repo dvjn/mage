@@ -1,8 +1,8 @@
-// The sidebar's space section: starts a thread or a folder and opens the space's settings, as the
-// person's role allows.
+// The sidebar's space section: starts a thread and opens the space's settings, as the person's
+// role allows.
 
 import { Link, useMatchRoute } from "@tanstack/react-router";
-import { FolderPlusIcon, PlusIcon, Settings2Icon } from "lucide-react";
+import { PlusIcon, Settings2Icon } from "lucide-react";
 
 import type { SpaceSummary } from "@/shared/spaces.ts";
 import { ShortcutHint } from "@/web/components/shortcut-keys";
@@ -15,13 +15,7 @@ import {
 } from "@/web/components/ui/sidebar";
 import { useNewThread } from "@/web/threads/nav/use-new-thread";
 
-export function SpaceSection({
-  space,
-  onNewFolder,
-}: {
-  space: SpaceSummary;
-  onNewFolder: () => void;
-}) {
+export function SpaceSection({ space }: { space: SpaceSummary }) {
   const matchRoute = useMatchRoute();
   const newThread = useNewThread();
   const writer = space.role === "owner" || space.role === "messager";
@@ -40,15 +34,6 @@ export function SpaceSection({
               <PlusIcon />
               <span>New thread</span>
               <ShortcutHint id="newThread" />
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        )}
-        {writer && (
-          <SidebarMenuItem>
-            <SidebarMenuButton onClick={onNewFolder}>
-              <FolderPlusIcon />
-              <span>New folder</span>
-              <ShortcutHint id="newFolder" />
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}

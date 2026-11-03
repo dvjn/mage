@@ -9,10 +9,9 @@ import {
 } from "@/shared/threads/list.ts";
 import { threadSchema } from "@/shared/threads/thread.ts";
 
-// Text to find in thread titles, every thread without any, and the folder to look in, if one.
+// Text to find in thread titles; every thread without any.
 export const threadSearchSchema = z.object({
   q: z.string().trim().max(200).default(""),
-  folder: z.string().max(100).optional(),
 });
 
 // A thread found by title, with the space it is in, whether it is one shared with the reader from

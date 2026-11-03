@@ -14,15 +14,12 @@ function settled(queryClient: QueryClient, queryKey: readonly unknown[]) {
 describe("shouldPersist", () => {
   const queryClient = new QueryClient();
 
-  it.each([
-    ["me"],
-    ["spaces"],
-    ["spaces", "s1", "folders"],
-    ["spaces", "s1", "threads"],
-    ["threads", "t1"],
-  ])("keeps %j", (...queryKey) => {
-    expect(shouldPersist(settled(queryClient, queryKey))).toBe(true);
-  });
+  it.each([["me"], ["spaces"], ["spaces", "s1", "threads"], ["threads", "t1"]])(
+    "keeps %j",
+    (...queryKey) => {
+      expect(shouldPersist(settled(queryClient, queryKey))).toBe(true);
+    },
+  );
 
   it.each([["session"], ["connections"], ["models"], ["default-model"], ["codex-attempt", "a1"]])(
     "leaves %j out",

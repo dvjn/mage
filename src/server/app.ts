@@ -8,8 +8,6 @@ import { requestId, type RequestIdVariables } from "hono/request-id";
 import { toolRoutes } from "@/server/agent/routes.ts";
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
-import { folderRoutes } from "@/server/folders/routes.ts";
-import type { Folders } from "@/server/folders/service.ts";
 import { guestRoutes } from "@/server/guests/routes.ts";
 import type { Guests } from "@/server/guests/service.ts";
 import { instructionRoutes } from "@/server/instructions/routes.ts";
@@ -47,8 +45,6 @@ export interface AppOptions {
   models: Models;
   // The spaces the signed-in user can see in their org.
   spaces: Spaces;
-  // The folders that arrange those spaces' threads.
-  folders: Folders;
   // Threads in those spaces and the ones shared with the user, and their events.
   threads: Threads;
   // Invite links to threads and the guests they let in.
@@ -123,7 +119,6 @@ function createApi(options: AppOptions) {
     .route("/", orgRoutes(options))
     .route("/", modelRoutes(options))
     .route("/", spaceRoutes(options))
-    .route("/", folderRoutes(options))
     .route("/", threadRoutes(options))
     .route("/", guestRoutes(options))
     .route("/", toolRoutes(options))

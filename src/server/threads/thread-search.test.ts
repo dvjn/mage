@@ -16,7 +16,7 @@ function workspace() {
   }
   // A titled thread straight in the store, in any space.
   function storedThread(spaceId: string, createdBy: string, title: string) {
-    const thread = env.threadStore.create({ spaceId, folderId: null, model: null, createdBy });
+    const thread = env.threadStore.create({ spaceId, model: null, createdBy });
     return env.threadStore.update(thread.id, { title });
   }
   return { ...env, search, storedThread };
@@ -128,23 +128,6 @@ describe("thread search", () => {
       expect(found.map((result) => result.title)).toEqual(["Looms", "Engines"]);
       expect(found[0]).toHaveProperty("activity.lastSeenSeq");
     }
-  });
-
-  it("looks only in the folder given, which hides the shared threads", async () => {
-    const { api, signUp, yourSpace, createThread, createFolder } = workspace();
-    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
-    const space = await yourSpace(cookie);
-    const engines = await createFolder(cookie, space.id, "Engines");
-    const pistons = await createThread(cookie, space.id, "Pistons");
-    await createThread(cookie, space.id, "Pistons at the top");
-    await api("PATCH", `/threads/${pistons.id}`, cookie, { folderId: engines.id });
-
-    const res = await api("GET", `/threads/search?q=pistons&folder=${engines.id}`, cookie);
-    expect(((await res.json()) as ResultBody[]).map((result) => result.title)).toEqual(["Pistons"]);
-    // Another person's folder holds nothing they can see.
-    const grace = await signUp("Grace Hopper", "grace@example.com");
-    const theirs = await api("GET", `/threads/search?folder=${engines.id}`, grace.cookie);
-    expect(await theirs.json()).toEqual([]);
   });
 
   it("refuses text over 200 characters", async () => {

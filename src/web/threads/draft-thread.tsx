@@ -1,13 +1,11 @@
 // A new thread before its first message: the composer, ready to write in, with the model and
 // effort pickers on the space's defaults, then its org's, which can be changed before sending;
-// sending makes the thread with them, in the folder it was started from or at the top of the
-// space, and opens it. Nothing is made until then. The folder can be changed from the breadcrumb.
+// sending makes the thread with them and opens it. Nothing is made until then.
 // Someone who can only view the space is sent to it instead, as they cannot start threads.
 
 import { useQuery } from "@tanstack/react-query";
-import { getRouteApi, Navigate, useNavigate } from "@tanstack/react-router";
+import { getRouteApi, Navigate } from "@tanstack/react-router";
 import { cn } from "cn";
-import { FolderIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { type ModelPair, replyCandidates } from "@/shared/models.ts";
@@ -18,8 +16,6 @@ import {
   ConversationEmptyState,
 } from "@/web/components/ai-elements/conversation";
 import { FieldError } from "@/web/components/ui/field";
-import { folderCrumb } from "@/web/folders/folder-choice";
-import { spaceFoldersQuery } from "@/web/folders/queries";
 import { defaultEffortQuery, defaultModelQuery, modelsQuery } from "@/web/models/queries";
 import { ThreadPickers } from "@/web/models/thread-pickers";
 import { PageHeader, pageWidth } from "@/web/shell/page-header";
@@ -32,7 +28,7 @@ const draftRoute = getRouteApi("/_app/s/$spaceId/new");
 
 // Writing a new thread's first message, on the model and effort picked beside it or the space's
 // defaults; sending makes the thread and opens it.
-export function NewThreadComposer({ spaceId, folderId }: { spaceId: string; folderId?: string }) {
+export function NewThreadComposer({ spaceId }: { spaceId: string }) {
   const spaces = useQuery(spacesQuery);
   const models = useQuery(modelsQuery);
   const orgModel = useQuery(defaultModelQuery);
@@ -67,7 +63,7 @@ export function NewThreadComposer({ spaceId, folderId }: { spaceId: string; fold
 
   async function send(text: string) {
     if (!text.trim()) return;
-    await create.mutateAsync({ text, folderId, model, effort });
+    await create.mutateAsync({ text, model, effort });
   }
 
   return (
@@ -98,19 +94,15 @@ export function NewThreadComposer({ spaceId, folderId }: { spaceId: string; fold
 
 export function DraftThread() {
   const { spaceId } = draftRoute.useParams();
-  const { folder: folderId } = draftRoute.useSearch();
   const spaces = useQuery(spacesQuery);
-  const folders = useQuery(spaceFoldersQuery(spaceId));
-  const navigate = useNavigate();
   const space = spaces.data?.find((s) => s.id === spaceId);
-  const folder = folders.data?.find((f) => f.id === folderId);
   const viewer = space?.role === "viewer";
 
   useEffect(() => rememberSpace(spaceId), [spaceId]);
   // Ready to write in, as each new draft opens.
   useEffect(() => {
     document.querySelector<HTMLTextAreaElement>("textarea[aria-label=Message]")?.focus();
-  }, [spaceId, folderId]);
+  }, [spaceId]);
 
   if (viewer) return <Navigate to="/s/$spaceId" params={{ spaceId }} replace />;
 
@@ -121,35 +113,19 @@ export function DraftThread() {
           ...(space
             ? [{ label: space.name, link: { to: "/s/$spaceId" as const, params: { spaceId } } }]
             : []),
-          ...[
-            folderCrumb({
-              spaceId,
-              folders: folders.data ?? [],
-              value: folder?.id ?? null,
-              canMove: !!space && space.role !== "viewer" && space.role !== null,
-              onChange: (id) =>
-                void navigate({
-                  to: "/s/$spaceId/new",
-                  params: { spaceId },
-                  search: id ? { folder: id } : {},
-                  replace: true,
-                }),
-            }),
-          ].filter((crumb) => crumb !== null),
           { label: "New thread" },
         ]}
       />
       <Conversation aria-label="Events" className="min-h-0">
         <ConversationContent className={cn(pageWidth, "gap-4")}>
           <ConversationEmptyState
-            title={folder ? `New thread in ${folder.name}` : "New thread"}
-            icon={folder && <FolderIcon className="size-5" />}
+            title="New thread"
             description="Write the first message below; the thread starts when you send it."
           />
         </ConversationContent>
       </Conversation>
       <div className={cn(pageWidth, "p-4 pt-0")}>
-        <NewThreadComposer spaceId={spaceId} folderId={folder?.id} />
+        <NewThreadComposer spaceId={spaceId} />
       </div>
     </div>
   );

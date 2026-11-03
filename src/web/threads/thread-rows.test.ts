@@ -31,7 +31,6 @@ function detail(rows: ShownRow[], before: number | null, lastEventSeq = 0): Thre
     thread: {
       id: "t1",
       spaceId: "s1",
-      folderId: null,
       title: "Notes",
       untitled: false,
       model: null,

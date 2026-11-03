@@ -10,8 +10,6 @@ export type Effort = z.infer<typeof effortSchema>;
 export const threadSchema = z.object({
   id: z.string(),
   spaceId: z.string(),
-  // The folder it is in, or null at the top of the space.
-  folderId: z.string().nullable(),
   title: z.string(),
   // Nobody and nothing has named it yet; its title is then "Untitled".
   untitled: z.boolean(),

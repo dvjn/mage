@@ -32,8 +32,6 @@ import {
 } from "@/web/components/ai-elements/conversation";
 import { FieldError } from "@/web/components/ui/field";
 import { Spinner } from "@/web/components/ui/spinner";
-import { folderCrumb } from "@/web/folders/folder-choice";
-import { spaceFoldersQuery } from "@/web/folders/queries";
 import { ShareDialog } from "@/web/guests/share-dialog";
 import { ArchivedThreadActions } from "@/web/threads/archived-thread-actions";
 import { useOnline } from "@/web/lib/online";
@@ -47,7 +45,6 @@ import { spacesQuery } from "@/web/spaces/queries";
 import { useThreadEvents } from "@/web/threads/event-stream";
 import { useMarkRead } from "@/web/threads/inbox";
 import {
-  useMoveThread,
   usePostMessage,
   useRetryRun,
   useStopRun,
@@ -100,10 +97,6 @@ export function ThreadPage() {
   // Its space is archived: it can be read, moved out and deleted, nothing more.
   const archived = !!detail.data?.archived;
   const space = spaces.data?.find((s) => s.id === thread?.spaceId);
-  const folders = useQuery({
-    ...spaceFoldersQuery(thread?.spaceId ?? ""),
-    enabled: !!thread && !guest,
-  });
   const commands = useQuery({ ...threadCommandsQuery(threadId), enabled: !!can?.post });
 
   // A guest's thread is not in one of their own spaces.
@@ -200,7 +193,6 @@ export function ThreadPage() {
   const decision = useToolDecision(threadId);
   const answering = useToolAnswer(threadId);
   const modelChange = useThreadModel(threadId);
-  const moving = useMoveThread();
 
   // Reads the page of rows before the first here.
   const before = detail.data?.before ?? null;
@@ -281,12 +273,6 @@ export function ThreadPage() {
     modelChange.mutate(json);
   }
 
-  // Moves the thread to a folder, or out of one, as the sidebar's "Move to" does.
-  function move(folderId: string | null) {
-    if (!thread || thread.folderId === folderId) return;
-    moving.mutate({ thread, folderId });
-  }
-
   if (notFound) return <NotFound what="thread" id={threadId} />;
 
   if (ended) {
@@ -318,17 +304,6 @@ export function ThreadPage() {
                   },
                 ]
               : []),
-          ...(thread && !guest
-            ? [
-                folderCrumb({
-                  spaceId: thread.spaceId,
-                  folders: folders.data ?? [],
-                  value: thread.folderId,
-                  canMove: !!can?.arrange,
-                  onChange: (folderId) => move(folderId),
-                }),
-              ].filter((crumb) => crumb !== null)
-            : []),
           { label: thread?.title ?? "" },
         ]}
       >

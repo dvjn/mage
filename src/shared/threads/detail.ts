@@ -39,8 +39,8 @@ export const threadDefaultsSchema = z.object({
 
 export type ThreadDefaults = z.infer<typeof threadDefaultsSchema>;
 
-// What the reader may do in the thread: post in it, and so stop and retry its runs; rename it, move
-// it between folders and change its model; and share it with guests.
+// What the reader may do in the thread: post in it, and so stop and retry its runs; rename it and
+// change its model; and share it with guests.
 export const threadCanSchema = z.object({
   post: z.boolean(),
   arrange: z.boolean(),

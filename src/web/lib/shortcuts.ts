@@ -28,7 +28,6 @@ export const SHORTCUTS = {
   help: { hotkey: "Shift+?", name: "Keyboard shortcuts", group: "General", hint: "?" },
   // Mod+O also keeps the browser from opening a file.
   newThread: { hotkey: "Mod+O", name: "New thread", group: "Threads" },
-  newFolder: { hotkey: "Mod+Shift+O", name: "New folder", group: "Threads" },
   send: { hotkey: "Enter", name: "Send, or steer the reply", group: "Composer", displayOnly: true },
   queue: {
     hotkey: "Alt+Enter",

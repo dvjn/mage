@@ -1,6 +1,6 @@
 // The query cache kept in IndexedDB between visits, under the signed-in user's id and the tab's org,
 // so a reload or a thread switch paints from it while the server is asked for what changed, and so
-// the threads read before can be read again offline. It keeps who is signed in, spaces, folders,
+// the threads read before can be read again offline. It keeps who is signed in, spaces,
 // thread lists and threads with their events; not the session, their connections, the models or
 // the settings. Beside it is who signed in last, and in which org: while the server cannot be
 // reached, the app opens as them, from their cache. A new build or seven days discard it; signing

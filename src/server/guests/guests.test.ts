@@ -146,18 +146,16 @@ describe("thread access", () => {
       api("PATCH", `/threads/${thread.id}`, hedy.cookie, { title: "Mine" }),
       api("PATCH", `/threads/${thread.id}`, hedy.cookie, { model: "codex/gpt-big" }),
       api("PATCH", `/threads/${thread.id}`, hedy.cookie, { effort: "high" }),
-      api("PATCH", `/threads/${thread.id}`, hedy.cookie, { folderId: null }),
       api("DELETE", `/threads/${thread.id}`, hedy.cookie),
       api("POST", `/threads/${thread.id}/invites`, hedy.cookie, { accessFor: "1h" }),
       api("GET", `/threads/${thread.id}/people`, hedy.cookie),
     ];
-    expect((await Promise.all(refused)).map((res) => res.status)).toEqual(Array(7).fill(403));
+    expect((await Promise.all(refused)).map((res) => res.status)).toEqual(Array(6).fill(403));
     const space404 = [
       api("GET", `/spaces/${space.id}/threads`, hedy.cookie),
-      api("GET", `/spaces/${space.id}/folders`, hedy.cookie),
       api("POST", `/spaces/${space.id}/threads`, hedy.cookie, {}),
     ];
-    expect((await Promise.all(space404)).map((res) => res.status)).toEqual([404, 404, 404]);
+    expect((await Promise.all(space404)).map((res) => res.status)).toEqual([404, 404]);
   });
 
   it("answers 410 to a guest whose access ended and 404 to a stranger on every thread route", async () => {

@@ -13,6 +13,6 @@ export function NavThreads() {
   // An archived space's threads are only on its page.
   if (place.space.archived) return null;
   // A space its org's owner manages without being in it shows them only its settings.
-  if (place.space.role === null) return <SpaceSection space={place.space} onNewFolder={() => {}} />;
+  if (place.space.role === null) return <SpaceSection space={place.space} />;
   return <SpaceThreads key={place.space.id} space={place.space} />;
 }

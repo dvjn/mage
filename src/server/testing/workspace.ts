@@ -1,5 +1,5 @@
-// A signed-up app with real spaces, folders, threads, guests and runs over an in-memory database,
-// for the tests of spaces, folders, threads, their guests, their events and the agent's runs. The
+// A signed-up app with real spaces, threads, guests and runs over an in-memory database, for the
+// tests of spaces, threads, their guests, their events and the agent's runs. The
 // agent replies through a model the test drives, once the test starts the worker; threads are
 // named, when asked for, through another. A stand-in directory provisions people and groups over
 // SCIM, a stand-in MCP server answers at its address, unless the test takes it down, and a
@@ -22,8 +22,6 @@ import { createToolSettingStore } from "@/server/agent/tool-setting-store.ts";
 import { createToolDecisions, createTools } from "@/server/agent/tools.ts";
 import { createApp } from "@/server/app.ts";
 import { createTransact, openDatabase } from "@/server/db/db.ts";
-import { createFolders } from "@/server/folders/service.ts";
-import { createFolderStore } from "@/server/folders/store.ts";
 import { createGuests } from "@/server/guests/service.ts";
 import { createGuestStore } from "@/server/guests/store.ts";
 import { createInstructions } from "@/server/instructions/service.ts";
@@ -108,16 +106,9 @@ export type SpaceBody = {
   kind: string;
   everyoneRole: string | null;
 };
-export type FolderBody = {
-  id: string;
-  spaceId: string;
-  parentFolderId: string | null;
-  name: string;
-};
 export type ThreadBody = {
   id: string;
   spaceId: string;
-  folderId: string | null;
   title: string;
   model: string | null;
 };
@@ -204,8 +195,6 @@ export function setup(
     settings: settingStore,
     hooks,
   });
-  const folderStore = createFolderStore(db);
-  const folders = createFolders({ spaces, folders: folderStore });
   const guestStore = createGuestStore(db);
   const access = createThreadAccess({
     spaces,
@@ -263,7 +252,6 @@ export function setup(
       createSystemTools({
         threads: threadStore,
         spaceStore,
-        folders: folderStore,
         guests: guestStore,
         models: { replyModel, requireModel: models.requireModel },
         open: () => model.open(),
@@ -320,7 +308,6 @@ export function setup(
     spaceStore,
     access,
     guests: guestStore,
-    folders,
     threads: threadStore,
     reads: createThreadReadStore(db),
     runs: runStore,
@@ -397,7 +384,6 @@ export function setup(
     connections: unusedConnections,
     models: { ...unusedModels, ...models },
     spaces,
-    folders,
     threads,
     guests: createGuests({
       access,
@@ -521,18 +507,6 @@ export function setup(
     return (await res.json()) as ThreadBody;
   }
 
-  async function createFolder(cookie: string, spaceId: string, name: string) {
-    const res = await api("POST", `/spaces/${spaceId}/folders`, cookie, { name });
-    expect(res.status).toBe(200);
-    return (await res.json()) as FolderBody;
-  }
-
-  async function listFolders(cookie: string, spaceId: string) {
-    const res = await api("GET", `/spaces/${spaceId}/folders`, cookie);
-    expect(res.status).toBe(200);
-    return (await res.json()) as FolderBody[];
-  }
-
   const scim = scimClient({
     baseUrl,
     token: SCIM_TOKEN,
@@ -582,7 +556,5 @@ export function setup(
     createSpace,
     yourSpace,
     createThread,
-    createFolder,
-    listFolders,
   };
 }

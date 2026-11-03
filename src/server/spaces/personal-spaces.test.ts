@@ -198,7 +198,7 @@ describe("personal spaces in team orgs", () => {
     expect((await move(generalId, ada)).status).toBe(404);
     const moved = await move(generalId);
     expect(moved.status).toBe(200);
-    expect(await moved.json()).toMatchObject({ spaceId: generalId, folderId: null });
+    expect(await moved.json()).toMatchObject({ spaceId: generalId });
     expect(
       (await api("GET", `/threads/${thread.id}`, ada.cookie, undefined, ada.orgId)).status,
     ).toBe(200);

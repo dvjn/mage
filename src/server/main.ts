@@ -14,8 +14,6 @@ import { createMcpTools, createToolSearch } from "@/server/agent/tool-search.ts"
 import { createToolSettingStore } from "@/server/agent/tool-setting-store.ts";
 import { createToolDecisions, createTools } from "@/server/agent/tools.ts";
 import { createTransact, openDatabase, pingDatabase } from "@/server/db/db.ts";
-import { createFolders } from "@/server/folders/service.ts";
-import { createFolderStore } from "@/server/folders/store.ts";
 import { createGuests } from "@/server/guests/service.ts";
 import { createGuestStore } from "@/server/guests/store.ts";
 import { createInstructions } from "@/server/instructions/service.ts";
@@ -129,8 +127,6 @@ const spaces = createSpaces({
   settings: settingStore,
   hooks,
 });
-const folderStore = createFolderStore(db);
-const folders = createFolders({ spaces, folders: folderStore });
 const guestStore = createGuestStore(db);
 const access = createThreadAccess({ spaces, threads: threadStore, guests: guestStore });
 const toolSettings = createToolSettingStore(db);
@@ -163,7 +159,6 @@ const tools = createTools({
     createSystemTools({
       threads: threadStore,
       spaceStore,
-      folders: folderStore,
       guests: guestStore,
       models,
       // The model that replies, opened as the worker opens it.
@@ -262,13 +257,11 @@ const app = createApp({
   connections,
   models,
   spaces,
-  folders,
   threads: createThreads({
     spaces,
     spaceStore,
     access,
     guests: guestStore,
-    folders,
     threads: threadStore,
     reads: createThreadReadStore(db),
     runs: runStore,

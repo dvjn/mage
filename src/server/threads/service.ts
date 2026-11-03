@@ -1,5 +1,5 @@
 // Threads in the spaces a person can see: starting them, naming them after their first message,
-// finding them by title, moving them between the space's folders, deleting them, posting messages
+// finding them by title, moving them between spaces, deleting them, posting messages
 // to their event logs, and reading them back as each reader sees them: their transcript's rows, a
 // page at a time from the newest, with what the reader may do from each, and as the log grows the
 // rows each new event changed, with the pieces of replies in progress. A message posted while the agent is idle wakes it at once; one
@@ -20,7 +20,6 @@
 import { anythingToCompact } from "@/server/agent/compaction.ts";
 import { type Run, type RunStore, startRun } from "@/server/agent/runs.ts";
 import type { Tools } from "@/server/agent/tools.ts";
-import type { Folders } from "@/server/folders/service.ts";
 import type { GuestStore, GuestThread } from "@/server/guests/service.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { EventBus } from "@/server/kernel/event-bus.ts";
@@ -79,8 +78,6 @@ export type Actor = { kind: "user"; userId: string } | { kind: "agent" };
 export interface Thread {
   id: string;
   spaceId: string;
-  // Null when the thread is at the space's top level.
-  folderId: string | null;
   // Null until the first message names it or someone sets it.
   title: string | null;
   // Who named it: its first message, the agent after it, or a person.
@@ -153,21 +150,19 @@ export interface Listed<T> {
   total: number;
 }
 
-// The threads a space's sidebar lists for a reader: the newest few of each folder and of the top of
-// the space, and beside them the newest of each status the reader would see in each folder, every
-// thread whose run waits on a decision and the newest few that failed since they looked; with how
-// many threads each folder holds, the top of the space under null, and how many failed since they
-// looked in all.
+// The threads a space's sidebar lists for a reader: the newest few, and beside them the newest of
+// each status the reader would see, every thread whose run waits on a decision and the newest few
+// that failed since they looked; with how many threads the space holds and how many failed since
+// they looked in all.
 export interface SidebarThreads {
   rows: ListedThread[];
-  counts: Map<string | null, number>;
+  total: number;
   failed: number;
 }
 
 export interface ThreadStore {
   create(thread: {
     spaceId: string;
-    folderId: string | null;
     model: string | null;
     effort?: Effort | null;
     createdBy: string;
@@ -176,12 +171,12 @@ export interface ThreadStore {
   // Most recently active first.
   listInSpace(spaceId: string): Thread[];
   anyInSpace(spaceId: string): boolean;
-  // The space's threads for the reader, narrowed to one folder and by the filter, matching text in
-  // their title or newest message; those the window takes, every match without one.
+  // The space's threads for the reader, narrowed by the filter, matching text in their title or
+  // newest message; those the window takes, every match without one.
   listed(
     reader: string,
     spaceId: string,
-    filter: ThreadListFilter & { folderId?: string },
+    filter: ThreadListFilter,
     window?: ListWindow,
   ): Listed<ListedThread>;
   // The space's threads for the reader's sidebar, the newest `limit` of each kind.
@@ -190,16 +185,9 @@ export interface ThreadStore {
   facts(threadIds: string[]): Map<string, ThreadFacts>;
   // Who has written in each of the threads named that anyone has.
   writers(threadIds: string[]): Map<string, ThreadWriters>;
-  // Threads in the spaces, and in the folder when one is given, whose titles contain the text,
-  // ignoring case, most recently active first, at most `limit` of them.
-  // Untitled threads match as `untitled`.
-  search(
-    spaceIds: string[],
-    text: string,
-    limit: number,
-    untitled: string,
-    folderId?: string,
-  ): Thread[];
+  // Threads in the spaces whose titles contain the text, ignoring case, most recently active first,
+  // at most `limit` of them. Untitled threads match as `untitled`.
+  search(spaceIds: string[], text: string, limit: number, untitled: string): Thread[];
   update(
     id: string,
     changes: {
@@ -208,7 +196,6 @@ export interface ThreadStore {
       // Null follows the space's default.
       model?: string | null;
       effort?: Effort | null;
-      folderId?: string | null;
       // Moves it to another space.
       spaceId?: string;
     },
@@ -245,7 +232,6 @@ export interface ThreadsOptions {
   spaceStore: Pick<SpaceStore, "find">;
   access: Pick<ThreadAccess, "can" | "of" | "require">;
   guests: Pick<GuestStore, "threadsOf" | "sharedListed" | "activeIn">;
-  folders: Pick<Folders, "requireIn">;
   threads: ThreadStore;
   // How far each person has seen each thread.
   reads: ThreadReadStore;
@@ -393,7 +379,6 @@ export function threadSummary(thread: Thread): ThreadSummary {
   return {
     id: thread.id,
     spaceId: thread.spaceId,
-    folderId: thread.folderId,
     title: thread.title ?? UNTITLED,
     untitled: thread.title === null,
     model: thread.model,
@@ -410,7 +395,6 @@ export function createThreads(options: ThreadsOptions) {
     spaceStore,
     access,
     guests,
-    folders,
     threads,
     runs,
     deltas,
@@ -759,21 +743,16 @@ export function createThreads(options: ThreadsOptions) {
 
     list: listIn,
 
-    // A page of the space's threads, by when they were last active, narrowed to one folder, to
-    // those whose title or newest message contains the text, and to those the reader's status shows.
+    // A page of the space's threads, by when they were last active, narrowed to those whose title
+    // or newest message contains the text, and to those the reader's status shows.
     listPage(
       principal: Principal,
       spaceId: string,
-      params: PageParams & { folder?: string; show?: ThreadShow },
+      params: PageParams & { show?: ThreadShow },
     ): Page<ThreadListItem> {
       spaces.require(principal, spaceId);
       const { rows, total } = pageOfListed(principal.userId, params, (filter, window) =>
-        threads.listed(
-          principal.userId,
-          spaceId,
-          { ...filter, ...(params.folder && { folderId: params.folder }) },
-          window,
-        ),
+        threads.listed(principal.userId, spaceId, filter, window),
       );
       const list = rows.map((row) => row.thread);
       return {
@@ -783,24 +762,22 @@ export function createThreads(options: ThreadsOptions) {
       };
     },
 
-    // The space's threads for the reader's sidebar: the newest few of each folder and of the top of
-    // the space, with those that say what each folder holds and those that need the reader; how
-    // many each folder holds and the top of the space; and how many need the reader in all.
+    // The space's threads for the reader's sidebar: the newest few, with those that need the
+    // reader; how many the space holds; and how many need the reader in all.
     sidebar(principal: Principal, spaceId: string): ThreadSidebar {
       spaces.require(principal, spaceId);
-      const { rows, counts, failed } = threads.sidebar(principal.userId, spaceId, SIDEBAR_LIMIT);
+      const { rows, total, failed } = threads.sidebar(principal.userId, spaceId, SIDEBAR_LIMIT);
       const list = rows.map((row) => row.thread);
       const items = itemsOf(principal.userId, list, runs.activeIn(list.map((thread) => thread.id)));
       const waitingOnYou = items.filter((item) => item.status === "waiting").length;
-      const { null: loose = 0, ...folders } = Object.fromEntries(counts);
-      return { threads: items, loose, folders, needsYou: failed + waitingOnYou };
+      return { threads: items, total, needsYou: failed + waitingOnYou };
     },
 
     // Threads whose titles contain the text, ignoring case, untitled ones as "Untitled", every one
-    // without text, in every space the principal can see and among those they are a guest in, or
-    // only in the folder given: the most recently active first, at most 200, each with the model it
-    // shows and what it holds for them.
-    search(principal: Principal, text: string, folderId?: string): ThreadSearchResult[] {
+    // without text, in every space the principal can see and among those they are a guest in: the
+    // most recently active first, at most 200, each with the model it shows and what it holds for
+    // them.
+    search(principal: Principal, text: string): ThreadSearchResult[] {
       const names = new Map(
         spaces
           .list(principal)
@@ -808,17 +785,15 @@ export function createThreads(options: ThreadsOptions) {
           .map((space) => [space.id, space.name]),
       );
       const needle = text.toLowerCase();
-      const shared = folderId
-        ? []
-        : guests
-            .threadsOf(principal.userId, now())
-            .filter(({ thread }) => !names.has(thread.spaceId))
-            .filter(({ thread }) => !spaces.isArchived(thread.spaceId))
-            .filter(({ thread }) => (thread.title ?? UNTITLED).toLowerCase().includes(needle))
-            .map(({ thread, spaceName }) => ({ thread, spaceName, shared: true }));
+      const shared = guests
+        .threadsOf(principal.userId, now())
+        .filter(({ thread }) => !names.has(thread.spaceId))
+        .filter(({ thread }) => !spaces.isArchived(thread.spaceId))
+        .filter(({ thread }) => (thread.title ?? UNTITLED).toLowerCase().includes(needle))
+        .map(({ thread, spaceName }) => ({ thread, spaceName, shared: true }));
       const found = [
         ...threads
-          .search([...names.keys()], text, SEARCH_LIMIT, UNTITLED, folderId)
+          .search([...names.keys()], text, SEARCH_LIMIT, UNTITLED)
           .map((thread) => ({ thread, spaceName: names.get(thread.spaceId) ?? "", shared: false })),
         ...shared,
       ]
@@ -858,24 +833,21 @@ export function createThreads(options: ThreadsOptions) {
     },
 
     // Starts a thread on the model and effort chosen for it, or those its space's defaults, then
-    // its org's, give at this moment, so later changes to them leave it be; in a folder or at the
-    // top of the space, with its first message when there is one. A chosen model must be one the
-    // org can use.
+    // its org's, give at this moment, so later changes to them leave it be; with its first message
+    // when there is one. A chosen model must be one the org can use.
     async create(
       principal: Principal,
       spaceId: string,
-      input: { text?: string; folderId?: string | null; model?: string; effort?: Effort } = {},
+      input: { text?: string; model?: string; effort?: Effort } = {},
     ) {
-      const { text, folderId = null } = input;
+      const { text } = input;
       spaces.require(principal, spaceId, "message");
       if (input.model) await models.requireModel(principal.orgId, input.model);
       // Seen again after the model check, which waits on providers.
       const space = spaces.require(principal, spaceId, "message");
-      folders.requireIn(spaceId, folderId);
       const defaults = models.defaults(space);
       const thread = threads.create({
         spaceId,
-        folderId,
         model: input.model ?? defaults.model,
         effort: input.effort ?? defaults.effort,
         createdBy: principal.userId,
@@ -929,7 +901,6 @@ export function createThreads(options: ThreadsOptions) {
 
     readable,
 
-    // A folder it moves to must be in its space; null moves it to the top of the space.
     async update(
       principal: Principal,
       id: string,
@@ -937,14 +908,12 @@ export function createThreads(options: ThreadsOptions) {
         title?: string;
         model?: string | null;
         effort?: Effort | null;
-        folderId?: string | null;
       },
     ) {
       visible(principal, id, "arrange");
       if (changes.model) await models.requireModel(principal.orgId, changes.model);
       // Seen again after the model check, which waits on providers.
-      const thread = visible(principal, id, "arrange");
-      if (changes.folderId !== undefined) folders.requireIn(thread.spaceId, changes.folderId);
+      visible(principal, id, "arrange");
       const updated = threads.update(id, {
         ...changes,
         ...(changes.title !== undefined && { titleSource: "person" as const }),
@@ -953,14 +922,14 @@ export function createThreads(options: ThreadsOptions) {
       return threadSummary(updated);
     },
 
-    // Moves the thread to the top of another space of the org where the principal can post; its
-    // events and guests go with it.
+    // Moves the thread to another space of the org where the principal can post; its events and
+    // guests go with it.
     move(principal: Principal, id: string, spaceId: string) {
       const thread = visible(principal, id, "move");
       if (thread.spaceId === spaceId) throw new ServiceError(409, "The thread is already there");
       spaces.require(principal, spaceId, "message");
       if (runs.active(id)) throw new ServiceError(409, "Stop the agent before moving this thread");
-      const moved = threads.update(id, { spaceId, folderId: null });
+      const moved = threads.update(id, { spaceId });
       bus.activity({ threadId: id });
       return threadSummary(moved);
     },
@@ -1221,13 +1190,7 @@ export function createThreads(options: ThreadsOptions) {
       }
       // What the thread was named, set to and where it was, as last delivered.
       const placeOf = (thread: Thread) =>
-        JSON.stringify([
-          thread.title,
-          thread.model,
-          thread.effort,
-          thread.folderId,
-          thread.spaceId,
-        ]);
+        JSON.stringify([thread.title, thread.model, thread.effort, thread.spaceId]);
       let place = placeOf(first);
       const unsubscribe = bus.subscribe(id, (item) => {
         if (replaying) held.push(item);

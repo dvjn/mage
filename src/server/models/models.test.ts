@@ -5,7 +5,6 @@ import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
 import { createApp } from "@/server/app.ts";
 import { openDatabase } from "@/server/db/db.ts";
-import type { Folders } from "@/server/folders/service.ts";
 import type { Guests } from "@/server/guests/service.ts";
 import type { Instructions } from "@/server/instructions/service.ts";
 import { createCipher } from "@/server/kernel/cipher.ts";
@@ -39,7 +38,6 @@ import { createModels, pickReplyModel } from "./service.ts";
 
 // Never called by these tests.
 const unusedSpaces = {} as Spaces;
-const unusedFolders = {} as Folders;
 const unusedThreads = {} as Threads;
 const unusedGuests = {} as Guests;
 
@@ -221,7 +219,6 @@ function setup() {
     connections,
     models,
     spaces: unusedSpaces,
-    folders: unusedFolders,
     threads: unusedThreads,
     guests: unusedGuests,
     orgs: {} as Orgs,

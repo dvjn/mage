@@ -1,7 +1,7 @@
 // A space: a new thread's composer for those who can write in it, and its threads a page at a time
 // by when they were last active, each with its status for the reader and who has written in it,
-// narrowed by title or newest message, to one folder, once there are any, and to those that need
-// the reader or have something new for them. A person's own archived space only lists its threads,
+// narrowed by title or newest message and to those that need the reader or have something new for
+// them. A person's own archived space only lists its threads,
 // and may be deleted with them.
 
 import { cn } from "cn";
@@ -9,7 +9,6 @@ import { useQuery } from "@tanstack/react-query";
 import { getRouteApi, Link } from "@tanstack/react-router";
 import { ArchiveIcon, LockIcon, MessagesSquareIcon, Trash2Icon } from "lucide-react";
 import { useEffect } from "react";
-import * as z from "zod";
 
 import { threadShowSchema } from "@/shared/thread-status.ts";
 import { NewThreadComposer } from "@/web/threads/draft-thread";
@@ -20,7 +19,6 @@ import { Button } from "@/web/components/ui/button";
 import { lenient, tableSearchSchema } from "@/web/lib/data-table";
 import { rememberSpace } from "@/web/spaces/last-space";
 import { spaceThreadsPage } from "@/web/api/list-queries";
-import { spaceFoldersQuery } from "@/web/folders/queries";
 import { DeleteOwnSpace } from "@/web/spaces/delete-own-space";
 import { spacesQuery } from "@/web/spaces/queries";
 import { PageHeader, pageWidth } from "@/web/shell/page-header";
@@ -28,11 +26,8 @@ import { NotFound } from "@/web/shell/not-found";
 
 const spaceRoute = getRouteApi("/_app/s/$spaceId");
 
-// The folder, search, which threads show, and the page in the address.
-export const spaceSearchSchema = tableSearchSchema.extend({
-  folder: lenient(z.string().min(1).max(100)),
-  show: lenient(threadShowSchema),
-});
+// The search, which threads show, and the page in the address.
+export const spaceSearchSchema = tableSearchSchema.extend({ show: lenient(threadShowSchema) });
 
 export function SpacePage() {
   const { spaceId } = spaceRoute.useParams();
@@ -45,11 +40,8 @@ export function SpacePage() {
   const archived = !!space?.archived;
   const writes = !archived && (space?.role === "owner" || space?.role === "messager");
   const page = useQuery({ ...spaceThreadsPage(spaceId)(search), enabled: reads });
-  const folders = useQuery({ ...spaceFoldersQuery(spaceId), enabled: reads });
 
   useEffect(() => rememberSpace(spaceId), [spaceId]);
-
-  const folderNames = new Map((folders.data ?? []).map((f) => [f.id, f.name]));
 
   if (spaces.isSuccess && !space) return <NotFound what="space" id={spaceId} />;
   if (space && space.role === null) {
@@ -105,11 +97,7 @@ export function SpacePage() {
           page={page}
           search={search}
           onSearch={(next) => void navigate({ search: next, replace: true })}
-          row={(thread) => ({
-            badge: folderNames.get(thread.folderId ?? ""),
-            time: <Time iso={thread.updatedAt} />,
-          })}
-          folders={(folders.data ?? []).map((f) => ({ value: f.id, label: f.name }))}
+          row={(thread) => ({ time: <Time iso={thread.updatedAt} /> })}
           empty={{
             icon: <MessagesSquareIcon />,
             title: "No threads yet",

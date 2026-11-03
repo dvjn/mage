@@ -165,8 +165,8 @@ const homeRoute = createRoute({
   component: () => <PageHeader crumbs={[{ label: "No spaces" }]} />,
 });
 
-// The threads narrowed to the folder in `?folder=`, to those that need the reader or have something
-// new for them in `?show=`, and by `?q=`, on the page in `?page=` of `?perPage=`.
+// The threads narrowed to those that need the reader or have something new for them in `?show=`,
+// and by `?q=`, on the page in `?page=` of `?perPage=`.
 const spaceRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/s/$spaceId",
@@ -214,12 +214,10 @@ const spaceMcpServerRoute = createRoute({
   component: SpaceMcpServer,
 });
 
-// A thread not made yet, at the top of the space or in `?folder=`.
+// A thread not made yet.
 const draftRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/s/$spaceId/new",
-  validateSearch: (search: Record<string, unknown>): { folder?: string } =>
-    typeof search.folder === "string" ? { folder: search.folder } : {},
   component: DraftThread,
 });
 

@@ -21,6 +21,5 @@ describe("the shortcut registry", () => {
   it("writes a shortcut's keys as the system in use does", () => {
     expect(shortcutKeys("search", "mac")).toEqual(["⌘", "K"]);
     expect(shortcutKeys("newThread", "linux")).toEqual(["Ctrl", "O"]);
-    expect(shortcutKeys("newFolder", "linux")).toEqual(["Ctrl", "Shift", "O"]);
   });
 });

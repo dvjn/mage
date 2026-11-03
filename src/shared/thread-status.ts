@@ -38,8 +38,3 @@ export function shows(show: ThreadShow | undefined, status: ThreadStatus) {
 
 // A table of threads' page: its text and which threads it shows.
 export const threadPageQuerySchema = tableQuerySchema.extend({ show: threadShowSchema.optional() });
-
-// A space's, which can also show one folder.
-export const spaceThreadPageQuerySchema = threadPageQuerySchema.extend({
-  folder: z.string().max(100).optional(),
-});

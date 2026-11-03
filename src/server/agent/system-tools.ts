@@ -1,13 +1,12 @@
 // Mage's built-in Thread toolset, whose tools act on the thread the agent replies in: reading its
-// details, renaming it, moving it to one of its space's folders, changing the model and effort it
-// replies with, compacting what it reads of it, and asking its people questions. Each is cheap and
+// details, renaming it, changing the model and effort it replies with, compacting what it reads of
+// it, and asking its people questions. Each is cheap and
 // shows in the thread. Asking is always on; the rest are actions orgs and spaces set. Changing the
 // model asks first when the new one comes through another connection than the one replying now,
 // since the whole thread then goes to another provider.
 
 import * as z from "zod";
 
-import type { FolderStore } from "@/server/folders/service.ts";
 import type { GuestStore } from "@/server/guests/service.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Models, OpenModel } from "@/server/models/service.ts";
@@ -24,7 +23,6 @@ import type { Toolset, ToolSpec } from "./tools.ts";
 export interface SystemToolsOptions {
   threads: Pick<ThreadStore, "find" | "update" | "eventsAfter">;
   spaceStore: Pick<SpaceStore, "find">;
-  folders: Pick<FolderStore, "find" | "listInSpace">;
   guests: Pick<GuestStore, "activeIn">;
   models: Pick<Models, "replyModel" | "requireModel">;
   // Opens the model a thread replies with, to write the summary that compacts it.
@@ -41,7 +39,7 @@ function connectionOf(ref: string) {
 }
 
 export function createSystemTools(options: SystemToolsOptions): Toolset {
-  const { threads, spaceStore, folders, guests, models, open } = options;
+  const { threads, spaceStore, guests, models, open } = options;
   const now = options.now ?? (() => new Date());
 
   function threadOf(id: string) {
@@ -55,7 +53,7 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
     title: "Details",
     annotations: { readOnlyHint: true },
     description:
-      "Read this thread's title, folder, the model and effort it is set to and the one replying, and the people in it. Check it before changing any of them.",
+      "Read this thread's title, the model and effort it is set to and the one replying, and the people in it. Check it before changing any of them.",
     input: z.object({}).strict() as z.ZodType<Record<string, never>>,
     risk: () => "normal",
     async run(_input, ctx) {
@@ -72,7 +70,6 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
         ok: true,
         value: {
           title: thread.title,
-          folder: thread.folderId ? (folders.find(thread.folderId)?.name ?? null) : null,
           model: {
             chosen: { ref: thread.model ?? model?.chosen.ref ?? null, effort: thread.effort },
             replying: model?.used
@@ -105,42 +102,6 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
         append({ type: "thread.renamed", actor: ctx.actor, data: { title } });
       });
       return Promise.resolve({ ok: true, value: { title } });
-    },
-  };
-
-  const move: ToolSpec<{ folder: string | null }> = {
-    name: "thread.move",
-    title: "Move",
-    annotations: { readOnlyHint: false },
-    description:
-      "Move this thread to one of its space's folders, by name, or to the top of the space with null. It does not make folders.",
-    input: z.object({
-      folder: z
-        .string()
-        .trim()
-        .min(1)
-        .nullable()
-        .meta({ title: "Folder", description: "Its name; null for the top of the space" }),
-    }),
-    risk: () => "normal",
-    run({ folder }, ctx) {
-      const found =
-        folder === null
-          ? null
-          : folders
-              .listInSpace(ctx.spaceId)
-              .find((candidate) => candidate.name.toLowerCase() === folder.toLowerCase());
-      if (found === undefined) {
-        const names = folders.listInSpace(ctx.spaceId).map((candidate) => candidate.name);
-        return Promise.resolve({
-          ok: false,
-          error: names.length
-            ? `No folder is named ${folder}. The folders here: ${names.join(", ")}.`
-            : `No folder is named ${folder}. This space has no folders.`,
-        });
-      }
-      ctx.write(() => threads.update(ctx.threadId, { folderId: found?.id ?? null }));
-      return Promise.resolve({ ok: true, value: { folder: found?.name ?? null } });
     },
   };
 
@@ -205,6 +166,6 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
     id: "thread",
     title: "Thread",
     source: "builtin",
-    tools: [info, rename, move, setModel, compact, askTool],
+    tools: [info, rename, setModel, compact, askTool],
   };
 }

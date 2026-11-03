@@ -74,14 +74,6 @@ async function startThread(page: Page, text: string) {
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
 }
 
-// Makes a folder in the space whose page or thread is open.
-async function makeFolder(page: Page, spaceId: string, name: string) {
-  const res = await page.request.post(`/api/v1/spaces/${spaceId}/folders`, {
-    data: { name },
-  });
-  expect(res.ok()).toBe(true);
-}
-
 function spaceIdOf(page: Page) {
   return new URL(page.url()).pathname.split("/")[2]!;
 }
@@ -203,10 +195,8 @@ test("a tool that needs approval asks every time, and a guest may decide it", as
 }, testInfo) => {
   await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
-  await makeFolder(page, spaceId, "Research");
-  await makeFolder(page, spaceId, "Archive");
   await makePolicy(page);
-  await setInSpace(page, spaceId, "Move", "Sign-off");
+  await setInSpace(page, spaceId, "Rename", "Sign-off");
   await startThread(page, "How do engines compute?");
   await expect(replies(page)).toHaveText(/I have read 1 message/);
   const url = await inviteLink(page);
@@ -217,8 +207,8 @@ test("a tool that needs approval asks every time, and a guest may decide it", as
   await fillSignUp(guest, "Hedy Lamarr");
   await expect(guest).toHaveURL(/\/t\/[^/]+$/);
 
-  await write(page, '/tool thread.move {"folder":"Research"}');
-  await expect(card(page)).toContainText("Move");
+  await write(page, '/tool thread.rename {"title":"Research"}');
+  await expect(card(page)).toContainText("Rename");
   await expect(card(page)).not.toContainText("The agent wants to use");
   await expect(card(page)).toContainText("Asks each time");
   await expect(card(page)).toContainText("Research");
@@ -229,15 +219,15 @@ test("a tool that needs approval asks every time, and a guest may decide it", as
   );
   await expect(card(guest)).not.toContainText("Paused");
   await card(guest).getByRole("button", { name: "Allow", exact: true }).click();
-  await expect(line(page, /^Thread › Move · Ran · allowed by Hedy Lamarr/)).toBeVisible();
+  await expect(line(page, /^Thread › Rename · Ran · allowed by Hedy Lamarr/)).toBeVisible();
   await expect(page.locator("[data-slot=breadcrumb]")).toContainText("Research");
-  await expect(replies(page).last()).toHaveText(/Tool thread.move said: ok/);
+  await expect(replies(page).last()).toHaveText(/Tool thread.rename said: ok/);
 
-  await write(page, '/tool thread.move {"folder":"Archive"}');
+  await write(page, '/tool thread.rename {"title":"Archive"}');
   await expect(card(page)).toContainText("Archive");
   await card(page).getByRole("button", { name: "Deny" }).click();
-  await expect(line(page, /^Thread › Move · Denied · by Ada Lovelace/)).toBeVisible();
-  await expect(replies(page).last()).toHaveText(/Tool thread.move said: error This action/);
+  await expect(line(page, /^Thread › Rename · Denied · by Ada Lovelace/)).toBeVisible();
+  await expect(replies(page).last()).toHaveText(/Tool thread.rename said: error This action/);
 });
 
 test("a viewer sees the card paused while a messager decides it", async ({
@@ -317,10 +307,10 @@ test("a tool the space turned off is not offered, and the agent says it cannot u
 }) => {
   await signUp(page, "Ada Lovelace");
   const spaceId = spaceIdOf(page);
-  await setInSpace(page, spaceId, "Move", "Off");
+  await setInSpace(page, spaceId, "Rename", "Off");
 
-  await startThread(page, '/tool thread.move {"folder":"Research"}');
-  await expect(replies(page)).toHaveText(/I cannot use thread.move here\./);
+  await startThread(page, '/tool thread.rename {"title":"Research"}');
+  await expect(replies(page)).toHaveText(/I cannot use thread.rename here\./);
   await expect(card(page)).toHaveCount(0);
 });
 
@@ -369,17 +359,17 @@ test("a policy made from a template is used for a group and a tool, and a space 
   await dialog.getByRole("button", { name: "Create policy" }).click();
   await expect(dialog).toBeHidden();
 
-  const move = page.getByRole("listitem", { name: "Move" });
-  await expect(picker(move, "Move")).toContainText("Sign-off");
+  const model = page.getByRole("listitem", { name: "Change model" });
+  await expect(picker(model, "Change model")).toContainText("Sign-off");
   await expect(picker(interactive, "Interactive tools")).toContainText("Sign-off");
   const policies = page.getByRole("listitem", { name: "Sign-off" });
   await expect(policies).toContainText("Thread editors approve");
-  await expect(policies).toContainText("4 tools");
+  await expect(policies).toContainText("3 tools");
 
   // A policy in use can be copied but not deleted.
   await policies.getByRole("button").click();
   const edit = page.getByRole("dialog", { name: "Edit policy" });
-  await expect(edit).toContainText("Used by 4 tools. Changes apply to all of them.");
+  await expect(edit).toContainText("Used by 3 tools. Changes apply to all of them.");
   await expect(edit.getByRole("button", { name: "Delete" })).toBeDisabled();
   await edit.getByRole("button", { name: "Duplicate" }).click();
   const copy = page.getByRole("dialog", { name: "New policy" });
@@ -388,16 +378,16 @@ test("a policy made from a template is used for a group and a tool, and a space 
   await expect(copy).toBeHidden();
 
   // One tool back to open; the group is mixed.
-  await picker(move, "Move").click();
+  await picker(model, "Change model").click();
   await choose(page, "Open");
   await expect(picker(interactive, "Interactive tools")).toContainText("Mixed");
-  await expect(policies).toContainText("3 tools");
+  await expect(policies).toContainText("2 tools");
 
   // In the space, the org's tools follow the org's policy by default.
   await openTools(page, `/s/${spaceId}/settings/tools`);
   const thread = page.getByRole("region", { name: "Thread" });
-  await expect(thread).toContainText("6 tools");
-  await expect(thread.getByRole("button", { name: /^Thread 6 tools/ })).toContainText("3 Sign-off");
+  await expect(thread).toContainText("5 tools");
+  await expect(thread.getByRole("button", { name: /^Thread 5 tools/ })).toContainText("2 Sign-off");
   const rename = page.getByRole("listitem", { name: "Rename" });
   await expect(picker(rename, "Rename")).toContainText("Default · Sign-off");
   await expect(page.getByRole("listitem", { name: "Sign-off" })).toContainText("Organization");
@@ -408,7 +398,7 @@ test("a policy made from a template is used for a group and a tool, and a space 
   await picker(spaceGroup, "Interactive tools").click();
   await choose(page, "Off");
   await expect(picker(rename, "Rename")).toContainText("Off");
-  await expect(thread.getByRole("button", { name: /^Thread 6 tools/ })).toContainText("4 Off");
+  await expect(thread.getByRole("button", { name: /^Thread 5 tools/ })).toContainText("3 Off");
 
   // The org still has its own; the space's rules stay in the space.
   await openTools(page, "/org/tools");
@@ -417,10 +407,10 @@ test("a policy made from a template is used for a group and a tool, and a space 
   );
 
   await openTools(page, `/s/${spaceId}/settings/tools`);
-  await thread.getByRole("button", { name: /^Thread 6 tools/ }).click();
+  await thread.getByRole("button", { name: /^Thread 5 tools/ }).click();
   await expect(rename).toBeHidden();
   await page.reload();
-  await expect(page.getByRole("region", { name: "Thread" })).toContainText("6 tools");
+  await expect(page.getByRole("region", { name: "Thread" })).toContainText("5 tools");
   await expect(page.getByRole("listitem", { name: "Rename" })).toBeHidden();
 });
 
@@ -588,7 +578,7 @@ test("tools have their own settings page in the org and in a space", async ({ pa
   // The page's title is the only "Tools and MCPs" heading; the toolsets are in a card for their source.
   await expect(page.getByRole("heading", { name: "Tools and MCPs", exact: true })).toHaveCount(1);
   await expect(builtIn(page)).toHaveCount(1);
-  await expect(builtIn(page).getByRole("region", { name: "Thread" })).toContainText("6 tools");
+  await expect(builtIn(page).getByRole("region", { name: "Thread" })).toContainText("5 tools");
   // What is always on shows with its switch on and disabled.
   const rich = builtIn(page).getByRole("region", { name: "Rich replies" });
   await expect(rich).toContainText("Cards, tables and buttons in the agent's replies");
@@ -604,7 +594,7 @@ test("tools have their own settings page in the org and in a space", async ({ pa
   await expect(page.getByRole("region", { name: "Thread" })).toHaveCount(0);
   await nav.getByRole("link", { name: "Tools and MCPs" }).click();
   await expect(page).toHaveURL(/\/settings\/tools$/);
-  await expect(page.getByRole("region", { name: "Thread" })).toContainText("6 tools");
+  await expect(page.getByRole("region", { name: "Thread" })).toContainText("5 tools");
   await expect(page.getByRole("heading", { name: "Tools and MCPs", exact: true })).toHaveCount(1);
   await expect(builtIn(page).getByRole("region", { name: "Thread" })).toHaveCount(1);
   await page.goto(`/s/${spaceId}/settings/members`);

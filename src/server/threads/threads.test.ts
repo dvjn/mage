@@ -349,17 +349,13 @@ describe("a space's thread list", () => {
 });
 
 describe("a space's thread table", () => {
-  it("pages the threads by number, narrowed by text and folder", async () => {
-    const { api, signUp, yourSpace, createThread, createFolder } = setup();
+  it("pages the threads by number, narrowed by text", async () => {
+    const { api, signUp, yourSpace, createThread } = setup();
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(cookie);
-    const folder = await createFolder(cookie, space.id, "Looms");
     for (const title of ["Alpha one", "Beta", "Alpha two"]) {
       const thread = await createThread(cookie, space.id);
-      await api("PATCH", `/threads/${thread.id}`, cookie, {
-        title,
-        ...(title === "Beta" && { folderId: folder.id }),
-      });
+      await api("PATCH", `/threads/${thread.id}`, cookie, { title });
       await new Promise((resolve) => setTimeout(resolve, 5));
     }
     async function page(query: string) {
@@ -372,7 +368,6 @@ describe("a space's thread table", () => {
     expect(await page("perPage=2")).toEqual({ titles: ["Alpha two", "Beta"], total: 3 });
     expect(await page("perPage=2&page=2")).toEqual({ titles: ["Alpha one"], total: 3 });
     expect(await page("q=alpha")).toEqual({ titles: ["Alpha two", "Alpha one"], total: 2 });
-    expect(await page(`folder=${folder.id}`)).toEqual({ titles: ["Beta"], total: 1 });
     expect(await page("show=unread")).toEqual({ titles: [], total: 0 });
   });
 

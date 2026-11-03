@@ -12,7 +12,6 @@ function item(
   return {
     id,
     spaceId: "s1",
-    folderId: null,
     title: id,
     untitled: false,
     model: null,

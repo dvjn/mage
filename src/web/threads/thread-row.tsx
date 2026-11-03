@@ -2,7 +2,7 @@
 // whatever its status, so rows never move as threads start and stop working. A page's row is two
 // lines: a tile of its model leads, as its maker's mark with its host's badge on one corner, named
 // with the model and its connection on hover, with the status's glyph on another corner; the first
-// line is its title, bold while something new waits there, with a badge (its folder) and something
+// line is its title, bold while something new waits there, with something
 // about time (when it was last active, or when access ends) at its end; the second is who has
 // written in it, as the first names of the one or two who wrote last and how many more, all named
 // in full on hover with a guest marked, then where the thread is when the list mixes places. A
@@ -20,7 +20,6 @@ import type { ThreadStatus } from "@/shared/thread-status.ts";
 import type { ShownModel, ThreadActivity, ThreadParticipants } from "@/shared/threads/list.ts";
 import { meQuery } from "@/web/auth/queries";
 import { ShortTime } from "@/web/components/time";
-import { Badge } from "@/web/components/ui/badge";
 import { SidebarMenuButton, SidebarMenuItem } from "@/web/components/ui/sidebar";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { MakerMark, ModelTile, modelLabel } from "@/web/models/marks";
@@ -49,7 +48,7 @@ interface RowProps {
   place?: string;
 }
 
-type PageRowProps = RowProps & { badge?: string; time: React.ReactNode };
+type PageRowProps = RowProps & { time: React.ReactNode };
 
 type SidebarRowProps = RowProps & {
   // What the row says in full, on hover.
@@ -120,7 +119,7 @@ function Writers({ thread, place }: RowProps) {
 const pageRowColour =
   "[--row:var(--background)] hover:[--row:color-mix(in_oklab,var(--muted)_75%,var(--background))]";
 
-function PageRow({ thread, place, badge, time }: PageRowProps) {
+function PageRow({ thread, place, time }: PageRowProps) {
   const { status } = thread;
   return (
     <Link
@@ -135,14 +134,6 @@ function PageRow({ thread, place, badge, time }: PageRowProps) {
           className={cn("h-5 truncate", status === "unread" ? "font-semibold" : "font-medium")}
         />
         <span className="flex items-center gap-2 text-xs text-muted-foreground tabular-nums">
-          {badge && (
-            <Badge
-              variant="outline"
-              className="hidden font-normal text-muted-foreground sm:inline-flex"
-            >
-              {badge}
-            </Badge>
-          )}
           {time}
         </span>
         <span className="col-span-2 flex h-4.5 min-w-0 items-center gap-1 text-xs text-muted-foreground">

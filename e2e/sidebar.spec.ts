@@ -49,47 +49,8 @@ test("Ctrl+O opens a draft that becomes a thread only when its first message is 
   await page.getByLabel("Message", { exact: true }).fill("How do engines compute?");
   await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
-  // Ctrl+Shift+O asks for a new folder's name.
-  await page.keyboard.press("Control+Shift+O");
-  const folderDialog = page.getByRole("dialog", { name: "New folder" });
-  await folderDialog.getByRole("textbox", { name: "Name" }).fill("Engines");
-  await folderDialog.getByRole("button", { name: "Create" }).click();
-  await sidebar(page).getByRole("button", { name: "All threads" }).click();
-  await expect(page.getByRole("option", { name: "Engines" })).toBeVisible();
-  await page.keyboard.press("Escape");
   const today = sidebar(page).getByRole("list", { name: "Today" });
   await expect(today.getByRole("link", { name: "How do engines compute?" })).toBeVisible();
-});
-
-test("a draft's folder is picked in its breadcrumb, and a thread moves from it", async ({
-  page,
-}) => {
-  await signUp(page, "Ada Lovelace");
-  // Without a folder the breadcrumb offers to add one, and makes it on the way.
-  await sidebar(page).getByRole("button", { name: "New thread" }).click();
-  await expect(page).toHaveURL(/\/s\/[^/]+\/new$/);
-  await page.getByRole("button", { name: "Add to folder" }).click();
-  await page.getByPlaceholder("Find a folder").fill("Engines");
-  await page.getByRole("option", { name: "New folder" }).click();
-  const dialog = page.getByRole("dialog", { name: "New folder" });
-  await expect(dialog.getByRole("textbox", { name: "Name" })).toHaveValue("Engines");
-  await dialog.getByRole("button", { name: "Create" }).click();
-  await expect(page).toHaveURL(/\/new\?folder=/);
-  await expect(page.getByRole("button", { name: "Folder: Engines" })).toBeVisible();
-
-  await page.getByLabel("Message", { exact: true }).fill("Pistons");
-  await page.getByLabel("Message", { exact: true }).press("Enter");
-  await expect(page).toHaveURL(/\/t\/[^/]+$/);
-  // Listed with all the space's threads, the row names its folder.
-  const row = sidebar(page).getByRole("link", { name: /^Pistons/ });
-  await expect(row).toContainText("Engines");
-
-  // The thread keeps the same breadcrumb, and moves out of the folder from it.
-  await page.getByRole("button", { name: "Folder: Engines" }).click();
-  await page.getByRole("option", { name: "No folder" }).click();
-  await expect(page.getByRole("button", { name: "Add to folder" })).toBeVisible();
-  await expect(row).toBeVisible();
-  await expect(row).not.toContainText("Engines");
 });
 
 test("a viewer sees no write actions, and a failed delete says why in its dialog", async ({
@@ -117,7 +78,6 @@ test("a viewer sees no write actions, and a failed delete says why in its dialog
   await expect(alan.getByRole("group", { name: "Joined spaces" })).toContainText("Viewer");
   await alan.keyboard.press("Escape");
   await expect(sidebar(alan).getByRole("button", { name: "New thread" })).toHaveCount(0);
-  await expect(sidebar(alan).getByRole("button", { name: "New folder" })).toHaveCount(0);
   await expect(
     sidebar(alan).getByRole("button", { name: "Actions for How do engines compute?" }),
   ).toHaveCount(0);

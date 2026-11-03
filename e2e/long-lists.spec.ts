@@ -61,26 +61,18 @@ test("the space switcher finds a space as you type, without jumping to a row", a
   await expect(page.getByRole("button", { name: "Switch space" })).toContainText("Looms");
 });
 
-test("a folder lists its newest few threads, the search lists them all, and the space page pages them", async ({
+test("the sidebar lists the newest few threads, the search lists them all, and the space page pages them", async ({
   page,
 }) => {
   const email = await signUp(page, "Ada Lovelace");
-  addThreads(email, 31, { prefix: "Loom", folder: "Looms" });
-  addThreads(email, 2, { prefix: "Loose" });
+  addThreads(email, 31, { prefix: "Loom" });
   await page.reload();
-  const space = page.url();
-  await sidebar(page).getByRole("button", { name: "All threads" }).click();
-  await page.getByRole("option", { name: "Looms" }).click();
   await expect(sidebar(page).getByRole("link", { name: /^Loom \d+ / })).toHaveCount(4);
-  await sidebar(page).getByRole("button", { name: "All 31 in Looms" }).click();
+  await sidebar(page).getByRole("button", { name: "27 more threads" }).click();
   const dialog = page.getByRole("dialog", { name: "Search threads" });
   await expect(dialog.getByRole("option")).toHaveCount(31);
   await page.keyboard.press("Escape");
 
-  await page.goto(space);
-  await page.getByRole("button", { name: "Folder", exact: true }).click();
-  await page.getByRole("option", { name: "Looms" }).click();
-  await expect(page).toHaveURL(/\/s\/[^/]+\?folder=/);
   const threads = page.getByRole("table", { name: "Threads" });
   // A page holds 10; the footer leads to the rest.
   await expect(threads.getByRole("link", { name: /^Loom \d+/ })).toHaveCount(10);
@@ -89,11 +81,6 @@ test("a folder lists its newest few threads, the search lists them all, and the 
   await expect(page).toHaveURL(/page=2/);
   await expect(threads.getByRole("link", { name: /^Loom \d+/ })).toHaveCount(10);
   await expect(page.getByText("Page 2 of 4")).toBeVisible();
-  await expect(threads.getByRole("link", { name: /^Loose/ })).toHaveCount(0);
-  // Choosing the folder again clears it.
-  await page.getByRole("button", { name: "Folder: Looms" }).click();
-  await page.getByRole("option", { name: "Looms" }).click();
-  await expect(threads.getByRole("link", { name: /^Loose/ })).toHaveCount(2);
 });
 
 test("shared threads: the sidebar lists the newest few, and the page filters by title and place", async ({

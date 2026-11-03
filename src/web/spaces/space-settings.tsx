@@ -126,9 +126,7 @@ function DeleteSpace({ space, own }: { space: SpaceSummary; own: boolean }) {
   const navigate = useNavigate();
   const threads = useQuery({ ...spaceThreadsQuery(space.id), enabled: space.role !== null });
   const remove = useDeleteSpace(() => navigate({ to: "/" }));
-  const count = threads.data
-    ? threads.data.loose + Object.values(threads.data.folders).reduce((sum, n) => sum + n, 0)
-    : 0;
+  const count = threads.data?.total ?? 0;
 
   return (
     <DeleteCard

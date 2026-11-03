@@ -1,6 +1,6 @@
 // The app's sidebar, inset beside the page: whether the app is offline, where the person is (a
 // space, with a switcher, or the threads shared with them), the thread search, the space's actions,
-// its folders and threads or the shared threads, and the user, with each action's shortcut shown on
+// its threads or the shared threads, and the user, with each action's shortcut shown on
 // hover or while ⌘ or Ctrl is held. On a phone it closes as soon as a page opens; its shortcut opens
 // a new thread in the active space.
 

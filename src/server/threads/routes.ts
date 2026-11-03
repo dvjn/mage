@@ -6,7 +6,7 @@ import { validator } from "hono/validator";
 
 import { type ApiEnv, signedIn, jsonBody, queryOf } from "@/server/http.ts";
 import { pageParams } from "@/shared/paging.ts";
-import { spaceThreadPageQuerySchema, threadPageQuerySchema } from "@/shared/thread-status.ts";
+import { threadPageQuerySchema } from "@/shared/thread-status.ts";
 import {
   messageInputSchema,
   newThreadSchema,
@@ -23,10 +23,10 @@ import type { Threads } from "./service.ts";
 
 const newThread = jsonBody(
   newThreadSchema,
-  "text must be a non-empty string, folderId an id, model a ref, effort low, medium or high",
+  "text must be a non-empty string, model a ref, effort low, medium or high",
 );
 
-const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or a folder");
+const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or an effort");
 
 const threadMove = jsonBody(threadMoveSchema, "Give a space");
 
@@ -43,8 +43,6 @@ const threadRead = jsonBody(threadReadSchema, "seq is required");
 
 const threadPageQuery = queryOf(threadPageQuerySchema);
 
-const spaceThreadPageQuery = queryOf(spaceThreadPageQuerySchema);
-
 // `?before=` with the place of the first row the page has, and `?limit=` with how many to read.
 const rowsQuery = validator("query", (value: { before?: string; limit?: string }, c) => {
   const parsed = rowsQuerySchema.safeParse(value);
@@ -52,8 +50,8 @@ const rowsQuery = validator("query", (value: { before?: string; limit?: string }
   return parsed.data;
 });
 
-// `?q=` with the text to find in thread titles, and `?folder=` with the folder to look in.
-const threadSearch = validator("query", (value: { q?: string; folder?: string }, c) => {
+// `?q=` with the text to find in thread titles.
+const threadSearch = validator("query", (value: { q?: string }, c) => {
   const parsed = threadSearchSchema.safeParse(value);
   if (!parsed.success) return c.json({ error: "q must be at most 200 characters" }, 400);
   return parsed.data;
@@ -97,9 +95,9 @@ export function threadRoutes(options: {
     .get("/v1/spaces/:id/threads/sidebar", (c) => {
       return c.json(threads.sidebar(signedIn(c.var.principal), c.req.param("id")), 200);
     })
-    .get("/v1/spaces/:id/threads/page", spaceThreadPageQuery, (c) => {
-      const { folder, show, ...query } = c.req.valid("query");
-      const params = { ...pageParams(query), ...(folder && { folder }), ...(show && { show }) };
+    .get("/v1/spaces/:id/threads/page", threadPageQuery, (c) => {
+      const { show, ...query } = c.req.valid("query");
+      const params = { ...pageParams(query), ...(show && { show }) };
       return c.json(threads.listPage(signedIn(c.var.principal), c.req.param("id"), params), 200);
     })
     .post("/v1/spaces/:id/threads", newThread, async (c) => {
@@ -116,8 +114,8 @@ export function threadRoutes(options: {
       return c.json(threads.sharedPage(signedIn(c.var.principal), params), 200);
     })
     .get("/v1/threads/search", threadSearch, (c) => {
-      const { q, folder } = c.req.valid("query");
-      return c.json(threads.search(signedIn(c.var.principal), q, folder), 200);
+      const { q } = c.req.valid("query");
+      return c.json(threads.search(signedIn(c.var.principal), q), 200);
     })
     .get("/v1/threads/:id", async (c) => {
       return c.json(await threads.get(signedIn(c.var.principal), c.req.param("id")), 200);

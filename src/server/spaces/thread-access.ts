@@ -21,7 +21,7 @@ export interface ThreadAccessOptions {
 export type ThreadAccess = ReturnType<typeof createThreadAccess>;
 
 // Reading the thread; posting, changing one's waiting messages, stopping and retrying the agent;
-// renaming it, moving it between folders and changing its model; inviting and revoking guests;
+// renaming it and changing its model; inviting and revoking guests;
 // deleting it or moving it to another space.
 export type ThreadAction = "read" | "post" | "arrange" | "share" | "delete" | "move";
 

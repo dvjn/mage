@@ -2,7 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
-import type { Folders } from "@/server/folders/service.ts";
 import type { Guests } from "@/server/guests/service.ts";
 import type { Instructions } from "@/server/instructions/service.ts";
 import { createLogger } from "@/server/kernel/logger.ts";
@@ -22,7 +21,6 @@ import { createApp } from "./app.ts";
 const unusedConnections = {} as Connections;
 const unusedModels = {} as Models;
 const unusedSpaces = {} as Spaces;
-const unusedFolders = {} as Folders;
 const unusedThreads = {} as Threads;
 const unusedGuests = {} as Guests;
 
@@ -42,7 +40,6 @@ describe("request logging", () => {
       connections: unusedConnections,
       models: unusedModels,
       spaces: unusedSpaces,
-      folders: unusedFolders,
       threads: unusedThreads,
       guests: unusedGuests,
       orgs: {} as Orgs,

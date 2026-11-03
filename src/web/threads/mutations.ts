@@ -1,6 +1,6 @@
 // Changes to threads: starting one, posting to it and changing or withdrawing a waiting message,
 // stopping and retrying its runs, deciding on and answering its tool calls, its model and effort,
-// and renaming, moving to a folder or another space, and deleting it. What they change in the
+// and renaming, moving to another space, and deleting it. What they change in the
 // thread's rows arrives with its live stream; a failure that only an action of the moment can show
 // goes to a toast.
 
@@ -16,19 +16,17 @@ import { errorOf } from "@/web/api/api-errors";
 import { useToast } from "@/web/shell/toaster";
 import { spaceThreadsQuery, threadQuery } from "@/web/threads/queries";
 
-// Makes a thread in the space with its first message, in a folder or at its top, and opens it.
+// Makes a thread in the space with its first message, and opens it.
 export function useCreateThread(spaceId: string) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   return useMutation({
     mutationFn: async ({
       text,
-      folderId,
       model,
       effort,
     }: {
       text: string;
-      folderId?: string;
       model?: string | null;
       effort?: Effort | null;
     }) => {
@@ -36,7 +34,6 @@ export function useCreateThread(spaceId: string) {
         param: { id: spaceId },
         json: {
           text,
-          ...(folderId && { folderId }),
           ...(model && { model }),
           ...(effort && { effort }),
         },
@@ -172,34 +169,7 @@ export function useThreadModel(threadId: string) {
   });
 }
 
-// Moves a thread to a folder, or out of one.
-export function useMoveThread() {
-  const queryClient = useQueryClient();
-  const toast = useToast();
-  return useMutation({
-    mutationFn: async ({
-      thread,
-      folderId,
-    }: {
-      thread: { id: string; spaceId: string };
-      folderId: string | null;
-    }) => {
-      const res = await apiClient.v1.threads[":id"].$patch({
-        param: { id: thread.id },
-        json: { folderId },
-      });
-      if (!res.ok) throw new Error(await errorOf(res));
-    },
-    onSuccess: (_, { thread }) =>
-      Promise.all([
-        queryClient.invalidateQueries({ queryKey: threadQuery(thread.id).queryKey }),
-        queryClient.invalidateQueries({ queryKey: ["spaces", thread.spaceId] }),
-      ]),
-    onError: (failed) => toast(failed.message),
-  });
-}
-
-// Moves a thread to the top of another space.
+// Moves a thread to another space.
 export function useMoveThreadToSpace(thread: { id: string; spaceId: string }) {
   const queryClient = useQueryClient();
   return useMutation({
