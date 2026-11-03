@@ -177,4 +177,21 @@ describe("transcriptEntries", () => {
     const grown = [...first, thought("t1"), call("c3")];
     expect(transcriptEntries(first)[0]?.key).toBe(transcriptEntries(grown)[0]?.key);
   });
+
+  it("shows a subagent's waiting call as its card after the entry that started the subagent", () => {
+    const subagent = { threadId: "subagent1", name: "Researcher", state: "working" as const };
+    const waiting = call("w1", { state: "pending", waits: true });
+    const rows = [
+      call("c1", { turn: turn(false), toolId: "subagents.start", subagent, subagentCall: waiting }),
+      call("c2"),
+      reply("r1"),
+    ];
+    const entries = transcriptEntries(rows);
+    expect(shape(rows)).toEqual([
+      ["calls:c1", ["c1", "c2"], "apart"],
+      ["subagent:w1", "apart"],
+      ["r1", "near"],
+    ]);
+    expect(entries[1]).toMatchObject({ row: { id: "w1" }, subagent: { threadId: "subagent1" } });
+  });
 });

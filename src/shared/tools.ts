@@ -193,7 +193,18 @@ export const FORMER_TOOL_IDS: Readonly<Record<string, string>> = {
   "tools.search": "mcp._.search_tools",
   "resource.list": "mcp._.list_resources",
   "resource.read": "mcp._.read_resource",
+  "helpers.start": "subagents.start",
+  "helpers.message": "subagents.send",
+  "helpers.status": "subagents.list",
+  "helpers.wait": "subagents.wait",
+  "helpers.stop": "subagents.stop",
+  "helpers.archive": "subagents.archive",
 };
+
+// The id the tool a call was made under has now.
+export function toolIdNow(toolId: string) {
+  return FORMER_TOOL_IDS[toolId] ?? toolId;
+}
 
 // The most characters providers take in a tool's name.
 export const WIRE_NAME_MAX = 64;

@@ -262,3 +262,103 @@ describe("clearing out members' spaces made for them", () => {
     ).toEqual({ archived_at: null, trashed_at: null, trashed_by: null });
   });
 });
+
+describe("adding helpers", () => {
+  it("keeps the threads there were and lists their helpers", () => {
+    const { db, statements } = before("0043_helpers");
+    for (const statement of [
+      "insert into organization (id, name, slug, created_at, kind) values ('o1', 'Ada', 'ada', 0, 'personal')",
+      "insert into space (id, organization_id, kind, name) values ('s1', 'o1', 'team', 'Lab')",
+      "insert into thread (id, space_id) values ('t1', 's1'), ('t2', 's1')",
+      "insert into thread_event (id, thread_id, seq, type, actor_kind, data) values ('e1', 't1', 1, 'message', 'user', '{}')",
+    ]) {
+      db.run(sql.raw(statement));
+    }
+
+    for (const statement of statements) db.run(sql.raw(statement));
+
+    db.run(
+      sql.raw(
+        "insert into helper (thread_id, parent_thread_id, name) values ('t2', 't1', 'Researcher')",
+      ),
+    );
+    expect(db.all(sql.raw("select id from thread_event"))).toEqual([{ id: "e1" }]);
+    expect(db.all(sql.raw("select thread_id, name, archived_at from helper"))).toEqual([
+      { thread_id: "t2", name: "Researcher", archived_at: null },
+    ]);
+  });
+});
+
+describe("renaming helpers to subagents", () => {
+  it("keeps the helpers as subagents, with their events and tool settings under the new names", () => {
+    const { db, statements } = before("0045_rename_helpers_to_subagents");
+    const event = (id: string, seq: number, type: string, data: object) =>
+      `insert into thread_event (id, thread_id, seq, type, actor_kind, data) values ('${id}', 't1', ${seq}, '${type}', 'agent', '${JSON.stringify(data)}')`;
+    for (const statement of [
+      "insert into organization (id, name, slug, created_at, kind) values ('o1', 'Ada', 'ada', 0, 'personal')",
+      "insert into space (id, organization_id, kind, name) values ('s1', 'o1', 'team', 'Lab')",
+      "insert into thread (id, space_id) values ('t1', 's1'), ('t2', 's1')",
+      "insert into helper (thread_id, parent_thread_id, name, archived_at) values ('t2', 't1', 'Researcher', 5)",
+      event("e1", 1, "helper.ended", {
+        threadId: "t2",
+        name: "Researcher",
+        state: "idle",
+        last: "",
+      }),
+      event("e2", 2, "helper.limited", { limit: 30 }),
+      event("e3", 3, "agent.message", { parts: [], to: "main" }),
+      event("e4", 4, "agent.message", { parts: [], to: "Writer" }),
+      event("e5", 5, "tool.requested", { callId: "c1", toolId: "helpers.message" }),
+      event("e6", 6, "tool.ran", { callId: "c1", ok: true, value: { sent: ["main", "Writer"] } }),
+      event("e7", 7, "tool.requested", { callId: "c2", toolId: "other.tool" }),
+      event("e8", 8, "tool.ran", { callId: "c2", ok: true, value: { sent: ["main"] } }),
+      "insert into tool_policy (id, organization_id, name, color, use, users, approvers) values ('p1', 'o1', 'Sign-off', 'orange', 'none', '[]', '[]')",
+      "insert into org_tool_setting (organization_id, tool_id, policy_id) values ('o1', 'helpers.start', 'p1'), ('o1', 'helpers.message', null), ('o1', 'thread.rename', 'p1')",
+      "insert into space_tool_setting (space_id, tool_id, policy_id) values ('s1', 'helpers.status', 'p1')",
+      "insert into org_toolset_setting (organization_id, toolset_id, enabled) values ('o1', 'helpers', 0)",
+      "insert into space_toolset_setting (space_id, toolset_id, enabled) values ('s1', 'helpers', 1)",
+    ]) {
+      db.run(sql.raw(statement));
+    }
+
+    for (const statement of statements) db.run(sql.raw(statement));
+
+    expect(
+      db.all(sql.raw("select thread_id, parent_thread_id, name, archived_at from subagent")),
+    ).toEqual([{ thread_id: "t2", parent_thread_id: "t1", name: "Researcher", archived_at: 5 }]);
+    const events = db.all<{ type: string; data: string }>(
+      sql.raw("select type, data from thread_event order by seq"),
+    );
+    expect(events.map(({ type, data }) => [type, JSON.parse(data)])).toEqual([
+      ["subagent.ended", { threadId: "t2", name: "Researcher", state: "idle", last: "" }],
+      ["subagent.limited", { limit: 30 }],
+      ["agent.message", { parts: [], to: "agent" }],
+      ["agent.message", { parts: [], to: "Writer" }],
+      // Calls keep the ids they were made under.
+      ["tool.requested", { callId: "c1", toolId: "helpers.message" }],
+      ["tool.ran", { callId: "c1", ok: true, value: { sent: ["agent", "Writer"] } }],
+      ["tool.requested", { callId: "c2", toolId: "other.tool" }],
+      ["tool.ran", { callId: "c2", ok: true, value: { sent: ["main"] } }],
+    ]);
+    expect(
+      db.all(sql.raw("select tool_id, policy_id from org_tool_setting order by tool_id")),
+    ).toEqual([
+      { tool_id: "subagents.send", policy_id: null },
+      { tool_id: "subagents.start", policy_id: "p1" },
+      { tool_id: "thread.rename", policy_id: "p1" },
+    ]);
+    expect(db.all(sql.raw("select tool_id from space_tool_setting"))).toEqual([
+      { tool_id: "subagents.list" },
+    ]);
+    expect(db.all(sql.raw("select toolset_id from org_toolset_setting"))).toEqual([
+      { toolset_id: "subagents" },
+    ]);
+    expect(db.all(sql.raw("select toolset_id from space_toolset_setting"))).toEqual([
+      { toolset_id: "subagents" },
+    ]);
+    // Deleting the thread that started it still deletes it.
+    db.run(sql.raw("pragma foreign_keys = on"));
+    db.run(sql.raw("delete from thread where id = 't1'"));
+    expect(db.all(sql.raw("select thread_id from subagent"))).toEqual([]);
+  });
+});

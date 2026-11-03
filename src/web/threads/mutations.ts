@@ -96,6 +96,25 @@ export function useStopRun(threadId: string) {
   });
 }
 
+// Brings a retired subagent back; its thread and its space's list are read again.
+export function useUnarchiveSubagent(threadId: string, spaceId: string | undefined) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.v1.threads[":id"].unarchive.$post({ param: { id: threadId } });
+      if (!res.ok) throw new Error(await errorOf(res));
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey });
+      if (spaceId) {
+        void queryClient.invalidateQueries({ queryKey: spaceThreadsQuery(spaceId).queryKey });
+      }
+    },
+    onError: (failed) => toast(failed.message),
+  });
+}
+
 export function useRetryRun(threadId: string) {
   const toast = useToast();
   return useMutation({
@@ -118,13 +137,16 @@ export function useToolDecision(threadId: string) {
       callId,
       allow,
       scope,
+      subagentThreadId,
     }: {
       callId: string;
       allow: boolean;
       scope: ToolScope;
+      // For a subagent's call decided from the thread that started it, the subagent's thread.
+      subagentThreadId?: string;
     }) => {
       const res = await apiClient.v1.threads[":id"].tools[":callId"].decision.$post({
-        param: { id: threadId, callId },
+        param: { id: subagentThreadId ?? threadId, callId },
         json: { allow, scope },
       });
       if (!res.ok) throw new Error(await errorOf(res));
@@ -137,9 +159,18 @@ export function useToolDecision(threadId: string) {
 export function useToolAnswer(threadId: string) {
   const toast = useToast();
   return useMutation({
-    mutationFn: async ({ callId, answers }: { callId: string; answers: AskAnswers | null }) => {
+    mutationFn: async ({
+      callId,
+      answers,
+      subagentThreadId,
+    }: {
+      callId: string;
+      answers: AskAnswers | null;
+      // For a subagent's questions answered from the thread that started it, the subagent's thread.
+      subagentThreadId?: string;
+    }) => {
       const res = await apiClient.v1.threads[":id"].tools[":callId"].answer.$post({
-        param: { id: threadId, callId },
+        param: { id: subagentThreadId ?? threadId, callId },
         json: { answers },
       });
       if (!res.ok) throw new Error(await errorOf(res));

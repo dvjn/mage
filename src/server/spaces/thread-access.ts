@@ -2,7 +2,8 @@
 // allows; anyone else may act only as a guest of that one thread while their access lasts, reading
 // it, posting in it, changing their own waiting messages, and stopping or retrying the agent.
 // Everything else about the thread and its space stays with the space's members. In an archived
-// space a guest only reads, and in one in trash not even that.
+// space a guest only reads, and in one in trash not even that. A subagent's thread is reached as
+// the thread that started its subagents is.
 
 import type { GuestStore } from "@/server/guests/service.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
@@ -48,7 +49,7 @@ export function createThreadAccess(options: ThreadAccessOptions) {
 
   // Whether the person was a guest of the thread, and whether that access still holds.
   function guestOf(who: Who, thread: Thread) {
-    const guest = guests.find(thread.id, who.userId);
+    const guest = guests.find(thread.rootThreadId ?? thread.id, who.userId);
     if (!guest || spaces.isGone(thread.spaceId)) return null;
     const ended = !!guest.revokedAt || (!!guest.accessUntil && guest.accessUntil <= now());
     return { ended };
@@ -61,7 +62,10 @@ export function createThreadAccess(options: ThreadAccessOptions) {
     if (space) return { via: "space", role: space.role };
     const guest = guestOf(who, thread);
     if (!guest || guest.ended) return null;
-    return { via: "guest", spaceName: guests.hostSpaceName(thread.id) ?? "" };
+    return {
+      via: "guest",
+      spaceName: guests.hostSpaceName(thread.rootThreadId ?? thread.id) ?? "",
+    };
   }
 
   function guestMay(thread: Thread, action: ThreadAction) {

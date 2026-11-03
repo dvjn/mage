@@ -9,17 +9,20 @@
 // while the agent waits the composer says on what; a call allowed while signing in with its server
 // is applied on coming back here. A guest of the thread sees its space's name alone, and cannot
 // change its model; once their access ends, they are told so. When the server cannot be reached,
-// the thread as last read stays in view while it reconnects. Reading it marks it seen.
+// the thread as last read stays in view while it reconnects. Reading it marks it seen. A subagent's
+// thread sits under the thread that started it, says where the subagent stands, and once retired is
+// read-only with a way to bring it back for those the server lets. A subagent's call that waits on
+// someone shows in the thread that started it too, to be decided or answered from there.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi } from "@tanstack/react-router";
+import { getRouteApi, Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AskAnswers } from "@/shared/ask.ts";
 import type { CommandInput } from "@/shared/threads/commands.ts";
 import type { Delivery, ToolScope } from "@/shared/threads/events.ts";
-import type { ShownRow } from "@/shared/threads/rows.ts";
+import type { ShownRow, ToolRow } from "@/shared/threads/rows.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
 import { AuthCard, AuthFrame } from "@/web/auth/auth-frame";
 import { meQuery } from "@/web/auth/queries";
@@ -30,6 +33,7 @@ import {
   ConversationEmptyState,
   ConversationScrollButton,
 } from "@/web/components/ai-elements/conversation";
+import { Button } from "@/web/components/ui/button";
 import { FieldError } from "@/web/components/ui/field";
 import { Spinner } from "@/web/components/ui/spinner";
 import { ShareDialog } from "@/web/guests/share-dialog";
@@ -51,6 +55,7 @@ import {
   useThreadModel,
   useToolAnswer,
   useToolDecision,
+  useUnarchiveSubagent,
 } from "@/web/threads/mutations";
 import {
   earlierRows,
@@ -64,7 +69,10 @@ import { Composer, PendingTray, RunStatus } from "@/web/threads/thread-composer"
 import { withEarlier } from "@/web/threads/thread-rows";
 import { AgentStarting } from "@/web/threads/transcript/agent-starting";
 import { type EntryGap, transcriptEntries } from "@/web/threads/transcript/entries";
+import { ToolCall } from "@/web/threads/transcript/tool-call";
 import { ToolGroup } from "@/web/threads/transcript/tool-group";
+import { SUBAGENT_NEEDS, SUBAGENT_STATES } from "@/web/threads/transcript/tool-line";
+import { AGENT_NAME, type ThreadAgent, ThreadAgentContext } from "@/web/threads/transcript/agent";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { TranscriptItem } from "@/web/threads/transcript/transcript-item";
 
@@ -180,6 +188,7 @@ export function ThreadPage() {
     newFromOrder === undefined
       ? undefined
       : entries.find((entry) => {
+          if (entry.kind === "subagent") return false;
           const last = entry.kind === "calls" ? entry.rows.at(-1)! : entry.row;
           return last.order >= newFromOrder;
         })?.key;
@@ -193,6 +202,17 @@ export function ThreadPage() {
   const decision = useToolDecision(threadId);
   const answering = useToolAnswer(threadId);
   const modelChange = useThreadModel(threadId);
+  const subagent = detail.data?.subagent ?? null;
+  const unarchiving = useUnarchiveSubagent(threadId, thread?.spaceId);
+  // Who writes the thread's agent rows: a subagent by its label in its own thread.
+  const label = subagent?.name;
+  const agent = useMemo<ThreadAgent>(
+    () => ({
+      self: label ? { name: label, subagent: true } : { name: AGENT_NAME, subagent: false },
+      agentName: AGENT_NAME,
+    }),
+    [label],
+  );
 
   // Reads the page of rows before the first here.
   const before = detail.data?.before ?? null;
@@ -224,14 +244,30 @@ export function ThreadPage() {
     retrying.mutate(runId);
   }
 
-  // Approves or denies a tool call; the decision arrives with the thread's rows.
-  function decide(callId: string, allow: boolean, scope: ToolScope) {
-    return decision.mutateAsync({ callId, allow, scope }).catch(() => {});
+  // The subagent's thread a waiting call shown here is in, for one of a subagent's.
+  function subagentThreadOf(callId: string) {
+    const started = rows.find(
+      (row): row is ToolRow => row.kind === "tool" && row.subagentCall?.id === callId,
+    );
+    return started?.subagent?.threadId;
   }
 
-  // Answers the questions a call asks, or skips them; the answer arrives with the thread's rows.
+  // Approves or denies a tool call, here or in a subagent's thread; the decision arrives with the
+  // thread's rows.
+  function decide(callId: string, allow: boolean, scope: ToolScope) {
+    const subagentThreadId = subagentThreadOf(callId);
+    return decision
+      .mutateAsync({ callId, allow, scope, ...(subagentThreadId && { subagentThreadId }) })
+      .catch(() => {});
+  }
+
+  // Answers the questions a call asks, or skips them, here or in a subagent's thread; the answer
+  // arrives with the thread's rows.
   function answer(callId: string, answers: AskAnswers | null) {
-    return answering.mutateAsync({ callId, answers }).catch(() => {});
+    const subagentThreadId = subagentThreadOf(callId);
+    return answering
+      .mutateAsync({ callId, answers, ...(subagentThreadId && { subagentThreadId }) })
+      .catch(() => {});
   }
 
   // A call the reader allowed as they signed in with its server, which the page applies once the
@@ -304,84 +340,131 @@ export function ThreadPage() {
                   },
                 ]
               : []),
-          { label: thread?.title ?? "" },
+          ...(subagent
+            ? [
+                {
+                  label: subagent.parent.title,
+                  link: { to: "/t/$threadId" as const, params: { threadId: subagent.parent.id } },
+                },
+              ]
+            : []),
+          { label: subagent?.name ?? thread?.title ?? "" },
         ]}
       >
-        {can?.share && <ShareDialog threadId={threadId} />}
+        {subagent && (
+          <span role="status" aria-label="Subagent" className="text-xs text-muted-foreground">
+            Subagent of{" "}
+            <Link
+              to="/t/$threadId"
+              params={{ threadId: subagent.parent.id }}
+              className="underline-offset-2 hover:underline"
+            >
+              {subagent.parent.title}
+            </Link>
+            {[SUBAGENT_STATES[subagent.state], subagent.needs && SUBAGENT_NEEDS[subagent.needs]]
+              .filter(Boolean)
+              .map((part) => ` · ${part}`)
+              .join("")}
+          </span>
+        )}
+        {subagent?.canUnarchive && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={unarchiving.isPending}
+            onClick={() => unarchiving.mutate()}
+          >
+            Unarchive
+          </Button>
+        )}
+        {can?.share && !subagent && <ShareDialog threadId={threadId} />}
         {archived && !guest && thread && <ArchivedThreadActions thread={thread} />}
       </PageHeader>
-      <ReplyActions.Provider value={replyActions}>
-        {detail.data ? (
-          // The cached thread shows at once; it opens again where the reader stopped once read.
-          <Conversation
-            key={`${threadId}:${opened?.openedAt ?? ""}`}
-            openAt={stoppedAt}
-            holdOpenAt={opened?.hold}
-            aria-label="Events"
-            className="min-h-0"
-            resize={arriving ? "smooth" : "instant"}
-          >
-            <ConversationContent className={cn(pageWidth, "gap-4")}>
-              {rows.length === 0 ? (
-                <ConversationEmptyState description="Write the first message below." />
-              ) : (
-                <>
-                  <ConversationEarlier
-                    more={before !== null}
-                    first={rows[0]?.id}
-                    onLoad={loadEarlier}
-                  />
-                  {entries.map((entry) => (
-                    <Fragment key={entry.key}>
-                      {entry.key === newEntry && (
-                        // Where the reader stopped; takes no room in the rows' gap.
-                        <div ref={stoppedAt} aria-hidden className="-my-2 h-0 shrink-0" />
-                      )}
-                      <div className={ENTRY_GAPS[entry.gap]}>
-                        {entry.kind === "calls" ? (
-                          <ToolGroup
-                            rows={entry.rows}
-                            calls={entry.calls}
-                            turn={entry.turn}
-                            tools={detail.data?.tools ?? []}
-                            open={entry.calls.some((call) => openCalls.has(call.id))}
-                            onOpenChange={(open) =>
-                              toggleCalls(
-                                entry.calls.map((call) => call.id),
-                                open,
-                              )
-                            }
-                          />
-                        ) : (
-                          <TranscriptItem
-                            row={entry.row}
-                            tools={detail.data?.tools}
-                            actions={actionsFor(entry.row)}
-                          />
-                        )}
-                      </div>
-                    </Fragment>
-                  ))}
-                </>
-              )}
-              {run &&
-                !run.waiting &&
-                !rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
-                  <div className={rows.at(-1)?.turn ? ENTRY_GAPS.near : undefined}>
-                    <AgentStarting
-                      at={run.createdAt}
-                      continued={!!rows.at(-1)?.turn}
-                      compacting={run.compacting}
+      <ThreadAgentContext.Provider value={agent}>
+        <ReplyActions.Provider value={replyActions}>
+          {detail.data ? (
+            // The cached thread shows at once; it opens again where the reader stopped once read.
+            <Conversation
+              key={`${threadId}:${opened?.openedAt ?? ""}`}
+              openAt={stoppedAt}
+              holdOpenAt={opened?.hold}
+              aria-label="Events"
+              className="min-h-0"
+              resize={arriving ? "smooth" : "instant"}
+            >
+              <ConversationContent className={cn(pageWidth, "gap-4")}>
+                {rows.length === 0 ? (
+                  <ConversationEmptyState description="Write the first message below." />
+                ) : (
+                  <>
+                    <ConversationEarlier
+                      more={before !== null}
+                      first={rows[0]?.id}
+                      onLoad={loadEarlier}
                     />
-                  </div>
+                    {entries.map((entry) => (
+                      <Fragment key={entry.key}>
+                        {entry.key === newEntry && (
+                          // Where the reader stopped; takes no room in the rows' gap.
+                          <div ref={stoppedAt} aria-hidden className="-my-2 h-0 shrink-0" />
+                        )}
+                        <div className={ENTRY_GAPS[entry.gap]}>
+                          {entry.kind === "calls" ? (
+                            <ToolGroup
+                              rows={entry.rows}
+                              calls={entry.calls}
+                              turn={entry.turn}
+                              tools={detail.data?.tools ?? []}
+                              open={entry.calls.some((call) => openCalls.has(call.id))}
+                              onOpenChange={(open) =>
+                                toggleCalls(
+                                  entry.calls.map((call) => call.id),
+                                  open,
+                                )
+                              }
+                            />
+                          ) : entry.kind === "subagent" ? (
+                            <ToolCall
+                              row={entry.row}
+                              definition={detail.data?.tools.find(
+                                (tool) => tool.name === entry.row.toolId,
+                              )}
+                              turn={{ continued: false, model: null }}
+                              subagent={entry.subagent.name}
+                              decide={actionsFor(entry.row).decide}
+                              answer={actionsFor(entry.row).answer}
+                            />
+                          ) : (
+                            <TranscriptItem
+                              row={entry.row}
+                              tools={detail.data?.tools}
+                              actions={actionsFor(entry.row)}
+                            />
+                          )}
+                        </div>
+                      </Fragment>
+                    ))}
+                  </>
                 )}
-            </ConversationContent>
-            <ConversationScrollButton />
-          </Conversation>
-        ) : (
-          <div className="min-h-0 flex-1" />
-        )}
-      </ReplyActions.Provider>
+                {run &&
+                  !run.waiting &&
+                  !rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
+                    <div className={rows.at(-1)?.turn ? ENTRY_GAPS.near : undefined}>
+                      <AgentStarting
+                        at={run.createdAt}
+                        continued={!!rows.at(-1)?.turn}
+                        compacting={run.compacting}
+                      />
+                    </div>
+                  )}
+              </ConversationContent>
+              <ConversationScrollButton />
+            </Conversation>
+          ) : (
+            <div className="min-h-0 flex-1" />
+          )}
+        </ReplyActions.Provider>
+      </ThreadAgentContext.Provider>
       <div className={cn(pageWidth, "p-4 pt-0")}>
         <div className="flex flex-col gap-2">
           {offline && (
@@ -405,7 +488,13 @@ export function ThreadPage() {
             running={!!run}
             waiting={run?.waiting ?? null}
             readOnly={!!detail.data && !can?.post}
-            notice={archived ? "This space is archived" : undefined}
+            notice={
+              archived
+                ? "This space is archived"
+                : subagent?.state === "archived"
+                  ? "This subagent is archived"
+                  : undefined
+            }
             sending={posting.isPending}
             stopping={!!run && run.id === stopped}
             onSend={send}

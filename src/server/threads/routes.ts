@@ -251,6 +251,10 @@ export function threadRoutes(options: {
       threads.stop(signedIn(c.var.principal), c.req.param("id"));
       return c.json({ ok: true }, 202);
     })
+    .post("/v1/threads/:id/unarchive", (c) => {
+      threads.unarchive(signedIn(c.var.principal), c.req.param("id"));
+      return c.json({ ok: true }, 200);
+    })
     .post("/v1/threads/:id/retry", retry, (c) => {
       const { runId } = c.req.valid("json");
       return c.json(threads.retry(signedIn(c.var.principal), c.req.param("id"), runId), 202);

@@ -1,6 +1,6 @@
 // A run of the agent's tool calls folded into one line: how many calls, the toolsets they came
-// from and what did not run, or while one runs, that call; it opens on the calls' own lines and the
-// thinking between them.
+// from and what did not run, and how many messages the subagents they started sent each other; or
+// while one runs, that call. It opens on the calls' own lines and the thinking between them.
 
 import { cn } from "cn";
 import { CheckIcon, ChevronRightIcon, SkipForwardIcon, XIcon } from "lucide-react";
@@ -13,7 +13,7 @@ import {
   CollapsibleTrigger,
 } from "@/web/components/ui/collapsible";
 import { Spinner } from "@/web/components/ui/spinner";
-import { agentAvatar, useModelName } from "@/web/threads/transcript/agent";
+import { AgentAvatar, useThreadAgent, useModelName } from "@/web/threads/transcript/agent";
 import { ReplyReasoning } from "@/web/threads/transcript/agent-reply";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
@@ -28,6 +28,22 @@ const MISSES: [string, ToolRow["state"][]][] = [
 ];
 
 const running = (call: ToolRow) => call.state === "pending" || call.state === "allowed";
+
+// The subagents the calls started that messaged each other, a pair at a time in the order they were
+// started, with how many messages went between them.
+export function subagentTalks(calls: ToolRow[]) {
+  const pairs = new Map<string, string>();
+  for (const call of calls) {
+    const subagent = call.subagent;
+    for (const talk of subagent?.talks ?? []) {
+      const key = JSON.stringify([subagent!.name, talk.with].toSorted());
+      if (pairs.has(key)) continue;
+      const count = talk.messages === 1 ? "1 message" : `${talk.messages} messages`;
+      pairs.set(key, `${subagent!.name} ⇄ ${talk.with} · ${count}`);
+    }
+  }
+  return [...pairs.values()];
+}
 
 // The run in words: how many calls, their toolsets in order, and how many of each that did not run.
 export function callsSummary(calls: ToolRow[]) {
@@ -56,15 +72,17 @@ export function ToolGroup({
   onOpenChange: (open: boolean) => void;
 }) {
   const model = useModelName(turn.model);
+  const { self } = useThreadAgent();
   const current = calls.findLast(running);
   const { count, toolsets, misses } = callsSummary(calls);
+  const talks = subagentTalks(calls);
   const failed = calls.some((call) =>
     ["failed", "denied", "stale", "stopped"].includes(call.state),
   );
   const skipped = calls.some((call) => call.state === "skipped");
   const label = current
     ? `${toolPath(current)} · Running`
-    : [count, toolsets, ...misses].filter(Boolean).join(" · ");
+    : [count, toolsets, ...misses, ...talks].filter(Boolean).join(" · ");
   const group = (
     <Collapsible
       open={open}
@@ -96,6 +114,7 @@ export function ToolGroup({
               <span className="shrink-0 font-medium">{count}</span>
               {toolsets && <span className={GIVES_WAY}>· {toolsets}</span>}
               {misses.length > 0 && <span className="shrink-0">· {misses.join(" · ")}</span>}
+              {talks.length > 0 && <span className={GIVES_WAY}>· {talks.join(" · ")}</span>}
             </>
           )}
         </span>
@@ -122,10 +141,10 @@ export function ToolGroup({
   if (turn.continued) return group;
   return (
     <TranscriptRowFrame
-      avatar={agentAvatar}
-      author="Agent"
+      avatar={<AgentAvatar {...self} />}
+      author={self.name}
       at={calls[0]!.requestedAt}
-      label="Message from Agent"
+      label={`Message from ${self.name}`}
       note={model && <span>{model}</span>}
     >
       {group}

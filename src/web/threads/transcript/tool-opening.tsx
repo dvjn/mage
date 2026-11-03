@@ -2,7 +2,7 @@
 
 import type { ToolDefinition } from "@/shared/tools.ts";
 import type { AgentTurn, ToolRow } from "@/shared/threads/rows.ts";
-import { agentAvatar, useModelName } from "@/web/threads/transcript/agent";
+import { AgentAvatar, useThreadAgent, useModelName } from "@/web/threads/transcript/agent";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
 import { ToolLine } from "@/web/threads/transcript/tool-line";
 
@@ -18,12 +18,13 @@ export function ToolOpening({
   turn: AgentTurn;
 }) {
   const model = useModelName(turn.model);
+  const { self } = useThreadAgent();
   return (
     <TranscriptRowFrame
-      avatar={agentAvatar}
-      author="Agent"
+      avatar={<AgentAvatar {...self} />}
+      author={self.name}
       at={row.requestedAt}
-      label="Message from Agent"
+      label={`Message from ${self.name}`}
       note={model && <span>{model}</span>}
     >
       <ToolLine row={row} definition={definition} framed />

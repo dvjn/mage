@@ -2,6 +2,7 @@
 
 import * as z from "zod";
 
+import { subagentSummarySchema } from "@/shared/subagents.ts";
 import { hostIdSchema } from "@/shared/hosts.ts";
 import { MAKER_IDS } from "@/shared/makers.ts";
 import { threadSchema } from "@/shared/threads/thread.ts";
@@ -61,13 +62,30 @@ export const threadStatusSchema = z.enum([
   "read",
 ]);
 
+// A subagent under the thread whose agent started it: where it stands, and as its thread's row
+// shows it, its label as title, model, who has written in it, what it holds for the reader and the
+// status that shows them.
+export const listedSubagentSchema = subagentSummarySchema.extend({
+  title: z.string(),
+  untitled: z.boolean(),
+  updatedAt: z.iso.datetime(),
+  shownModel: shownModelSchema.nullable(),
+  participants: threadParticipantsSchema,
+  activity: threadActivitySchema,
+  status: threadStatusSchema,
+});
+
+export type ListedSubagent = z.infer<typeof listedSubagentSchema>;
+
 // A thread in its space's list, with the model it shows (null with none at all), who has written
-// in it, what it holds for the reader and the status that shows them.
+// in it, what it holds for the reader and the status that shows them, which takes in the most
+// pressing of its subagents', and its subagents, retired ones among them.
 export const threadListItemSchema = threadSchema.extend({
   shownModel: shownModelSchema.nullable(),
   participants: threadParticipantsSchema,
   activity: threadActivitySchema,
   status: threadStatusSchema,
+  subagents: z.array(listedSubagentSchema).optional(),
 });
 
 export type ThreadListItem = z.infer<typeof threadListItemSchema>;

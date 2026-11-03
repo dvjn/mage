@@ -20,6 +20,7 @@ import {
   stillPosts,
   type ToolRule,
   usesTool,
+  wordsIn,
 } from "./tool-authority.ts";
 
 // The model, case by case. Ada and Grace may use the tool; Alan can post but may not use it;
@@ -273,5 +274,24 @@ describe("questions and answers count as words", () => {
     expect(mayAnswer(personOf("grace", true, []), limited, "normal", null)).toBe(true);
     expect(mayAnswer(personOf("alan", true, []), limited, "normal", null)).toBe(false);
     expect(mayAnswer(personOf("ada", false, []), limited, "normal", null)).toBe(false);
+  });
+});
+
+describe("other agents' messages count as the words of the people who steered them", () => {
+  it("each person once, where the message was taken in", () => {
+    const rows = [
+      { kind: "human", seq: 1, author: { userId: "ada" } },
+      {
+        kind: "relay",
+        seq: 3,
+        steeredBy: [{ userId: "grace" }, { userId: "priya" }, { userId: "grace" }],
+      },
+      { kind: "relay", seq: 4, steeredBy: [] },
+    ];
+    expect(wordsIn(rows)).toEqual([
+      { seq: 1, userId: "ada" },
+      { seq: 3, userId: "grace" },
+      { seq: 3, userId: "priya" },
+    ]);
   });
 });

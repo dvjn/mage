@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, inArray, type SQL, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, or, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { ulid } from "ulid";
 
@@ -92,7 +92,7 @@ export function createThreadStore(db: Db): ThreadStore {
       return db
         .select(columns)
         .from(thread)
-        .where(eq(thread.spaceId, spaceId))
+        .where(and(eq(thread.spaceId, spaceId), isNull(thread.parentThreadId)))
         .orderBy(desc(thread.updatedAt), desc(thread.id))
         .all();
     },
@@ -193,7 +193,7 @@ export function createThreadStore(db: Db): ThreadStore {
     },
 
     listed(reader, spaceId, filter, window) {
-      const where = sql`t.space_id = ${spaceId}`;
+      const where = sql`t.space_id = ${spaceId} and t.parent_thread_id is null`;
       const listed = statused(reader, { from: sql`from thread t`, where });
       const keep = kept(filter, sql`coalesce(title, ${UNTITLED})`, sql`last_message_text`);
       const rows = db.all<StatusedRow>(
@@ -209,7 +209,7 @@ export function createThreadStore(db: Db): ThreadStore {
     sidebar(reader, spaceId, limit) {
       const listed = statused(reader, {
         from: sql`from thread t`,
-        where: sql`t.space_id = ${spaceId}`,
+        where: sql`t.space_id = ${spaceId} and t.parent_thread_id is null`,
       });
       const rows = db.all<StatusedRow>(sql`${listed},
         placed as (
@@ -222,10 +222,11 @@ export function createThreadStore(db: Db): ThreadStore {
          where in_space <= ${limit}
             or (status <> 'read' and in_status = 1)
             or run_status = 'waiting'
+            or subagent_waiting
             or (status = 'failed' and in_status <= ${limit})
          ${newestFirst}`);
       const total = db.get<{ n: number }>(
-        sql`select count(*) as n from thread where space_id = ${spaceId}`,
+        sql`select count(*) as n from thread where space_id = ${spaceId} and parent_thread_id is null`,
       );
       const failed = db.get<{ n: number }>(
         sql`${listed} select count(*) as n from statused where status = 'failed'`,
@@ -251,6 +252,7 @@ export function createThreadStore(db: Db): ThreadStore {
         .where(
           and(
             inArray(thread.spaceId, spaceIds),
+            isNull(thread.parentThreadId),
             sql`lower(coalesce(${thread.title}, ${untitled})) like lower(${pattern}) escape '\\'`,
           ),
         )
@@ -269,7 +271,18 @@ export function createThreadStore(db: Db): ThreadStore {
     },
 
     delete(id) {
-      db.delete(thread).where(eq(thread.id, id)).run();
+      db.delete(thread)
+        .where(or(eq(thread.id, id), eq(thread.rootThreadId, id)))
+        .run();
+    },
+
+    children(id) {
+      return db
+        .select(columns)
+        .from(thread)
+        .where(eq(thread.rootThreadId, id))
+        .orderBy(asc(thread.createdAt), asc(thread.id))
+        .all();
     },
 
     append(threadId, event, title) {

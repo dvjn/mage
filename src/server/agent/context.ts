@@ -7,14 +7,26 @@
 // asides are included; replies still being written, and replies cut short that were tried again,
 // are not. A call that did not run gives back only that it was not approved, or that its questions
 // were skipped. Once the thread is compacted, the summary closes the system prompt and the messages
-// start where the compaction cut it.
+// start where the compaction cut it. Other agents' messages read like people's, named for the
+// agent that sent them, and subagents that ended runs as one line each. A subagent is told what it
+// is, who started it and what it was told beside its task, and may read before its own thread the
+// conversation of the thread that started it, as it was when it started.
 
 import type { ModelMessage, ModelToolResult } from "@/server/models/gateway.ts";
 import { QUIET_PREFIX } from "@/shared/threads/events.ts";
-import type { HumanRow, ToolRow, TranscriptRow } from "@/shared/transcript.ts";
+import type {
+  HumanRow,
+  LimitRow,
+  NoticeRow,
+  RelayRow,
+  ToolRow,
+  TranscriptRow,
+} from "@/shared/transcript.ts";
 
 import { readOf } from "./compaction.ts";
 import { TOOL_SEARCH } from "./tool-search.ts";
+
+type UserMessage = Extract<ModelMessage, { role: "user" }>;
 
 export interface Context {
   instructions: string;
@@ -25,6 +37,47 @@ export interface Context {
 // wrote.
 export function humanMessage(row: Pick<HumanRow, "author" | "text" | "command">): ModelMessage {
   return { role: "user", text: `[${row.author.name}] ${row.command?.text ?? row.text}` };
+}
+
+// Another agent's message as the agent reads it, named for its sender: the agent that started
+// this subagent, or a subagent.
+export function relayMessage(row: Pick<RelayRow, "from" | "text">): UserMessage {
+  const sender = row.from.main ? `Agent of ${row.from.name}` : `Subagent ${row.from.name}`;
+  return { role: "user", text: `[${sender}] ${row.text}` };
+}
+
+// The longest a subagent's last words run in a notice.
+const NOTICE_CHARS = 120;
+
+// One line of what the subagent said last, cut short.
+export function lastLine(text: string) {
+  const line = text.replace(/\s+/g, " ").trim();
+  return line.length > NOTICE_CHARS ? `${line.slice(0, NOTICE_CHARS - 1)}…` : line;
+}
+
+// That the thread's subagents may send each other no more messages, as the agent reads it.
+export function limitMessage(row: Pick<LimitRow, "limit">): UserMessage {
+  return {
+    role: "user",
+    text: `[Subagents] Your subagents have sent each other ${row.limit} messages, the most they may. Further messages between them are refused.`,
+  };
+}
+
+// Subagents that ended runs as the agent reads them: one line each, where it stands and what it
+// said last.
+export function noticeMessage(row: Pick<NoticeRow, "subagents">): UserMessage {
+  const lines = row.subagents.map(
+    (subagent) => `${subagent.name} · ${subagent.state} · last: "${lastLine(subagent.last)}"`,
+  );
+  return { role: "user", text: `[Subagents] ${lines.join("\n")}` };
+}
+
+// What a subagent is told of itself: its label, the thread whose agent started it, and the
+// instructions it was given.
+export interface SubagentGuidance {
+  name: string;
+  parent: string;
+  instructions?: string;
 }
 
 // What an MCP server says about using its tools: written by the server, not by anyone in the org,
@@ -57,6 +110,8 @@ export interface Guidance {
   skills?: { name: string; description: string }[];
   // What Mage's own toolsets on in the space tell it.
   toolsets?: string[];
+  // For a subagent, what it is.
+  subagent?: SubagentGuidance;
 }
 
 export const NO_GUIDANCE: Guidance = { org: "", space: "" };
@@ -78,6 +133,16 @@ export function instructionsFor(
       "Reply in Markdown.",
     ].join("\n"),
   ];
+  if (guidance.subagent) {
+    const { name, parent, instructions } = guidance.subagent;
+    sections.push(
+      [
+        `You are a subagent labelled ${name}, started by the agent of the thread ${parent} to work on a task in a thread of your own. Its messages to you start with [Agent of ${parent}], and other subagents' with [Subagent <label>].`,
+        "Your replies stay in your own thread: nobody else reads them. Send your results to the agent that started you with the subagents send tool, to agent, result first. Message another subagent only when it needs what you have.",
+        ...(instructions?.trim() ? [`Instructions for you:\n${instructions.trim()}`] : []),
+      ].join("\n"),
+    );
+  }
   if (guidance.org.trim()) {
     sections.push(`Instructions from the organization:\n${guidance.org.trim()}`);
   }
@@ -145,14 +210,17 @@ function resultOf(row: ToolRow): ModelToolResult | null {
   }
 }
 
+// `before` is what the agent reads ahead of the thread's own messages: for a subagent started from
+// a copy of its starter's conversation, that conversation.
 export function contextOf(
   thread: readonly TranscriptRow[],
   guidance: Guidance = NO_GUIDANCE,
+  before: readonly ModelMessage[] = [],
 ): Context {
   const people = new Set<string>();
   for (const row of thread) if (row.kind === "human") people.add(row.author.name);
   const { summary, rows } = readOf(thread);
-  const messages: ModelMessage[] = [];
+  const messages: ModelMessage[] = [...before];
   const calls = new Map<string, ToolRow[]>();
   for (const row of rows) {
     if (row.kind !== "tool") continue;
@@ -161,6 +229,12 @@ export function contextOf(
   for (const row of rows) {
     if (row.kind === "human") {
       messages.push(humanMessage(row));
+    } else if (row.kind === "relay") {
+      messages.push(relayMessage(row));
+    } else if (row.kind === "notice") {
+      messages.push(noticeMessage(row));
+    } else if (row.kind === "limit") {
+      messages.push(limitMessage(row));
     } else if (row.kind === "agent" && row.status !== "streaming" && !row.retried) {
       const settled = (calls.get(row.id) ?? [])
         .map((call) => ({ call, result: resultOf(call) }))

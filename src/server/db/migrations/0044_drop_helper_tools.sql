@@ -1,0 +1,1 @@
+ALTER TABLE `helper` DROP COLUMN `tools`;

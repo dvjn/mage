@@ -142,3 +142,24 @@ export const run = sqliteTable(
       .where(sql`${table.status} in ('queued', 'running', 'waiting')`),
   ],
 );
+
+// A subagent a thread's agent started: the thread it works in, the thread whose agent started it,
+// the name it was given, its instructions, and once it is retired, when.
+export const subagent = sqliteTable(
+  "subagent",
+  {
+    threadId: text("thread_id")
+      .primaryKey()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    parentThreadId: text("parent_thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    instructions: text("instructions"),
+    archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [index("subagent_parent_idx").on(table.parentThreadId, table.createdAt)],
+);

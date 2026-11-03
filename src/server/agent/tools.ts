@@ -21,10 +21,11 @@ import { eventSummary, type ThreadLog } from "@/server/threads/log.ts";
 import type { Thread, ThreadStore, NewEvent } from "@/server/threads/service.ts";
 import { type AskAnswers, askInputSchema, answersProblem } from "@/shared/ask.ts";
 import { mcpSlugSchema, mcpToolOf } from "@/shared/mcp.ts";
+import { START_SUBAGENT } from "@/shared/subagents.ts";
 import { LOAD_SKILL } from "@/shared/skills.ts";
 import type { ToolRisk, ToolScope } from "@/shared/threads/events.ts";
 import {
-  FORMER_TOOL_IDS,
+  toolIdNow,
   TOOL_OFF,
   WIRE_NAME_MAX,
   wireToolName,
@@ -102,6 +103,8 @@ export interface ToolContext {
   // The MCP tools the run leaves out of the model's requests, those turned on among them, and a
   // way to turn some on for the rest of the run, for the tool that searches them.
   deferred?: { tools: DeferredTool[]; on: ReadonlySet<string>; turnOn(ids: string[]): void };
+  // Aborted once the run is to stop, for a tool that waits.
+  signal?: AbortSignal;
   write<T>(work: (append: (event: NewEvent, title?: string) => void) => T): T;
 }
 
@@ -519,13 +522,13 @@ export function createTools(options: ToolsOptions) {
         names.set(spec.name, { title: spec.title ?? spec.name, toolset: toolset.title });
       }
     }
-    return (toolId) => names.get(FORMER_TOOL_IDS[toolId] ?? toolId) ?? null;
+    return (toolId) => names.get(toolIdNow(toolId)) ?? null;
   }
 
   // What each call is called where it shows: as its tool is called now; else as it was when the
   // call was asked for; else by what the model knows it by, where what added it is still there;
   // else by its id, or for an MCP server's tool, its own name there. Loading a skill names the
-  // skill.
+  // skill, and starting a subagent the subagent.
   function namesIn(space: Pick<Space, "id" | "orgId"> | null) {
     let now: ((toolId: string) => ToolNames | null) | undefined;
     return (row: Pick<ToolRow, "toolId" | "input" | "state" | "title" | "toolset">): ToolNames => {
@@ -539,6 +542,10 @@ export function createTools(options: ToolsOptions) {
       const skill = (row.input as { name?: unknown } | null)?.name;
       if (row.toolId === LOAD_SKILL && typeof skill === "string") {
         return { ...names, title: row.state === "ran" ? `Loaded ${skill}` : `Load ${skill}` };
+      }
+      // Starting a subagent names the subagent.
+      if (toolIdNow(row.toolId) === START_SUBAGENT && typeof skill === "string") {
+        return { ...names, title: `${names.title} · ${skill}` };
       }
       return names;
     };

@@ -54,6 +54,8 @@ type SidebarRowProps = RowProps & {
   // What the row says in full, on hover.
   title?: string;
   isActive: boolean;
+  // Room the row's end keeps for controls beside its menu.
+  room?: string;
   // The row's menu and what it opens.
   children?: React.ReactNode;
 };
@@ -189,12 +191,12 @@ const leadOnSidebar =
 // The title of a one-line row, sized for the sidebar.
 export const rowTitle = "min-w-0 flex-1 truncate text-[13px]";
 
-function SidebarRow({ thread, place, title, isActive, children }: SidebarRowProps) {
+function SidebarRow({ thread, place, title, isActive, room, children }: SidebarRowProps) {
   const { status } = thread;
   const button = (
     <SidebarMenuButton
       isActive={isActive}
-      className={cn(menuRoom, leadOnSidebar)}
+      className={cn(menuRoom, leadOnSidebar, room)}
       render={<Link to="/t/$threadId" params={{ threadId: thread.id }} />}
     >
       <ThreadTitle thread={thread} className={cn(rowTitle, status === "unread" && "font-medium")} />

@@ -9,7 +9,8 @@
 // person's own login asks one more question, whose: a call runs on its own only when one
 // connected person wrote everything, and then as them; an approved call runs as its approver; and
 // a vouch for now ends when anyone else writes or the giver's login breaks. A question to the
-// thread always waits for an answer, and the answer counts as its writer's words.
+// thread always waits for an answer, and the answer counts as its writer's words. Agents never
+// count themselves: a message from another agent counts as the words of everyone who steered it.
 
 import type { Access } from "@/server/spaces/thread-access.ts";
 import type { ToolRisk } from "@/shared/threads/events.ts";
@@ -94,22 +95,28 @@ export function riskOf(declared: ToolRisk, rule: ToolRule): ToolRisk {
   return "normal";
 }
 
-// A row of the thread as the rule reads it: a person's message, or a call someone answered.
+// A row of the thread as the rule reads it: a person's message, a call someone answered, or
+// another agent's message and the people who steered it.
 export interface WordsRow {
   kind: string;
   seq: number;
   author?: { userId: string };
   answers?: unknown;
   decision?: { by: { userId: string }; seq: number } | null;
+  steeredBy?: readonly { userId: string }[];
 }
 
 // The people's words the model read, where each sits in the thread and who wrote it: their
-// messages, and their answers to the agent's questions.
+// messages, their answers to the agent's questions, and the other agents' messages they steered.
 export function wordsIn(rows: readonly WordsRow[]) {
   const words: { seq: number; userId: string }[] = [];
   for (const row of rows) {
     if (row.kind === "human" && row.author) words.push({ seq: row.seq, userId: row.author.userId });
-    else if (row.kind === "tool" && row.answers && row.decision) {
+    else if (row.kind === "relay") {
+      for (const userId of new Set(row.steeredBy?.map((steering) => steering.userId))) {
+        words.push({ seq: row.seq, userId });
+      }
+    } else if (row.kind === "tool" && row.answers && row.decision) {
       words.push({ seq: row.decision.seq, userId: row.decision.by.userId });
     }
   }

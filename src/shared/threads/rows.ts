@@ -5,10 +5,14 @@
 import * as z from "zod";
 
 import { askAnswersSchema } from "@/shared/ask.ts";
+import { subagentSummarySchema } from "@/shared/subagents.ts";
 import {
   deliverySchema,
   failureKindSchema,
+  subagentEndSchema,
+  subagentTaskSchema,
   replyStatusSchema,
+  senderSchema,
   toolRiskSchema,
   toolScopeSchema,
   usageSchema,
@@ -76,7 +80,7 @@ export const toolActionSchema = z.enum(["allow", "allow_for_now", "deny"]);
 
 export type ToolAction = z.infer<typeof toolActionSchema>;
 
-const toolRowSchema = z.object({
+const callRowSchema = z.object({
   ...rowFields,
   kind: z.literal("tool"),
   runId: z.string(),
@@ -115,7 +119,16 @@ const toolRowSchema = z.object({
   canAnswer: z.boolean().optional(),
   // For a waiting call that would run with the reader's own credentials, their connection.
   connection: toolConnectionSchema.optional(),
+  // For a waiting call that other agents' messages steered, everyone whose words steered it, in
+  // one line.
+  steering: z.string().optional(),
+  // For a call that started a subagent, the subagent as it is now.
+  subagent: subagentSummarySchema.optional(),
 });
+
+// A call that started a subagent also carries the subagent's call that waits for a decision or for
+// answers, as the reader sees it in the subagent's thread, so they can decide on it from here.
+const toolRowSchema = callRowSchema.extend({ subagentCall: callRowSchema.optional() });
 
 // Whether the reader may try the run again, on the last row of one that failed or was stopped
 // while nothing has run since.
@@ -155,6 +168,39 @@ const compactionRowSchema = z.object({
   tokensAfter: z.number().int().nonnegative().nullable(),
 });
 
+// A message from another agent: a subagent's, or one from the agent that started this thread's
+// subagent, the first of them its task, with what the subagent was set to do beside it.
+const relayRowSchema = z.object({
+  ...rowFields,
+  kind: z.literal("relay"),
+  postedAt: z.string(),
+  from: senderSchema,
+  to: z.string(),
+  text: z.string(),
+  task: subagentTaskSchema.optional(),
+});
+
+// Subagents that ended runs, told together: each with where it stands and the last thing it said.
+const noticeRowSchema = z.object({
+  ...rowFields,
+  kind: z.literal("notice"),
+  subagents: z.array(
+    z.object({
+      threadId: z.string(),
+      name: z.string(),
+      state: subagentEndSchema,
+      last: z.string(),
+    }),
+  ),
+});
+
+// The thread's subagents sent each other as many messages as they may.
+const limitRowSchema = z.object({
+  ...rowFields,
+  kind: z.literal("limit"),
+  limit: z.number().int().positive(),
+});
+
 // An event this client does not know how to show.
 const unknownRowSchema = z.object({ ...rowFields, kind: z.literal("unknown"), type: z.string() });
 
@@ -165,6 +211,9 @@ export const shownRowSchema = z.discriminatedUnion("kind", [
   failureRowSchema,
   stopRowSchema,
   compactionRowSchema,
+  relayRowSchema,
+  noticeRowSchema,
+  limitRowSchema,
   unknownRowSchema,
 ]);
 
@@ -174,6 +223,9 @@ export type AgentRow = z.infer<typeof agentRowSchema>;
 export type ToolRow = z.infer<typeof toolRowSchema>;
 export type FailureRow = z.infer<typeof failureRowSchema>;
 export type CompactionRow = z.infer<typeof compactionRowSchema>;
+export type RelayRow = z.infer<typeof relayRowSchema>;
+export type NoticeRow = z.infer<typeof noticeRowSchema>;
+export type LimitRow = z.infer<typeof limitRowSchema>;
 export type AgentTurn = z.infer<typeof agentTurnSchema>;
 
 // A message posted while the agent was busy, waiting to be taken in.

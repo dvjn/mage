@@ -3,7 +3,9 @@
 // row: Allow, Allow for now unless every call asks or needs review, and Deny. Someone who may not
 // decide sees Allow and Deny disabled and the card marked paused. A call that runs with its
 // approver's own login asks an approver with no working connection to connect first, then applies
-// their choice; a sign-in that leaves the page applies it on the way back.
+// their choice; a sign-in that leaves the page applies it on the way back. Where other agents'
+// messages steered the call, the card says whose words they carried. A subagent's call shown in the
+// thread that started it is headed by the subagent's name.
 
 import { cn } from "cn";
 import { HandIcon } from "lucide-react";
@@ -23,7 +25,7 @@ import {
 import { Badge } from "@/web/components/ui/badge";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { useConnectFlow } from "@/web/mcp/connect";
-import { agentAvatar } from "@/web/threads/transcript/agent";
+import { AgentAvatar, useThreadAgent } from "@/web/threads/transcript/agent";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
 import { ToolCrumb } from "@/web/threads/transcript/tool-crumb";
@@ -48,12 +50,16 @@ export function ToolCard({
   definition,
   decide,
   continued,
+  subagent,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
   decide?: RowActions["decide"];
   continued: boolean;
+  // The subagent whose call it is, when shown outside its thread.
+  subagent?: string;
 }) {
+  const { self } = useThreadAgent();
   const [deciding, setDeciding] = useState(false);
   const actions = row.actions ?? [];
   // The reader's own connection, for a call that would run with it.
@@ -102,12 +108,13 @@ export function ToolCard({
     );
   }
   const tag = RISK_TAGS[row.risk];
+  const who = subagent ? { name: subagent, subagent: true } : self;
   return (
     <TranscriptRowFrame
-      avatar={agentAvatar}
-      author="Agent"
+      avatar={<AgentAvatar {...who} />}
+      author={who.name}
       at={row.requestedAt}
-      label="Approval request"
+      label={subagent ? `Approval request from ${subagent}` : "Approval request"}
       note={!decide && <span>Paused</span>}
       continued={continued}
     >
@@ -122,6 +129,7 @@ export function ToolCard({
             className={cn("size-4 shrink-0", decide ? "text-status-waiting" : "text-status-paused")}
           />
           <ConfirmationTitle className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
+            {subagent && <span className="shrink-0">{subagent} wants to run</span>}
             <ToolCrumb row={row} className="font-semibold" />
           </ConfirmationTitle>
           {tag && (
@@ -130,6 +138,7 @@ export function ToolCard({
             </Badge>
           )}
         </div>
+        {row.steering && <p className="text-xs text-muted-foreground">{row.steering}</p>}
         <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
           <ToolInput value={row.input} schema={definition?.inputSchema} />
         </div>

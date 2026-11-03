@@ -16,7 +16,10 @@
 // goes on; a restart takes the same path. MCP tools stay out of the model's requests until it
 // searches for them, and those it turns on are kept with the run. A message asking to compact the
 // thread waits for the run before it to end, and gets a run of its own that writes the summary and
-// replies with nothing; other runs leave it waiting.
+// replies with nothing; other runs leave it waiting. Other agents' messages wait like a steer: each
+// boundary takes them in, and those left when a run ends start the next. What a thread offers and
+// tells the agent, and what it reads ahead of the thread, can depend on the thread, as a subagent's
+// do; and whoever needs to hears of each run that ends.
 
 import { ulid } from "ulid";
 import * as z from "zod";
@@ -53,7 +56,7 @@ import {
 } from "@/shared/transcript.ts";
 
 import { compact } from "./compaction.ts";
-import { contextOf, type Guidance, humanMessage, NO_GUIDANCE } from "./context.ts";
+import { contextOf, type Guidance, humanMessage, NO_GUIDANCE, relayMessage } from "./context.ts";
 import { deferredByServer, TOOL_SEARCH } from "./tool-search.ts";
 import type { ToolOutput, AnyToolSpec, Tools } from "./tools.ts";
 
@@ -184,8 +187,15 @@ export interface RunWorkerOptions {
     | "fromServers"
     | "namesNow"
   >;
-  // What the org and the space tell the agent beyond Mage's own prompt, given the tools offered.
-  guidance?: (space: Space, offered: readonly AnyToolSpec[]) => Guidance;
+  // What the org and the space tell the agent beyond Mage's own prompt, given the tools offered,
+  // and what the thread does about it.
+  guidance?: (space: Space, offered: readonly AnyToolSpec[], thread: Thread) => Guidance;
+  // The tools the thread's agent may call of those its space offers; all of them when not given.
+  narrow?: (thread: Thread, offered: AnyToolSpec[]) => AnyToolSpec[];
+  // What the thread's agent reads ahead of the thread itself; nothing when not given.
+  before?: (thread: Thread) => ModelMessage[];
+  // Hears of each run that ended, after its end is stored.
+  ended?: (run: Run) => void;
   logger: Logger;
   // Whether the agent may run in the space; a run claimed where it may not is stopped unstarted.
   runsIn?: (space: Space) => boolean;
@@ -423,6 +433,9 @@ export function createRunWorker(options: RunWorkerOptions) {
   const now = options.now ?? (() => new Date());
   const guidance = options.guidance ?? (() => NO_GUIDANCE);
   const runsIn = options.runsIn ?? (() => true);
+  const narrow = options.narrow ?? ((_thread: Thread, offered: AnyToolSpec[]) => offered);
+  const before = options.before ?? (() => []);
+  const ended = options.ended ?? (() => {});
   // When people may have lost a role in an org's spaces, their waiting messages there are dropped,
   // and the agent stops in spaces archived or put in trash.
   function accessChanged(orgId: string) {
@@ -517,9 +530,11 @@ export function createRunWorker(options: RunWorkerOptions) {
     } else {
       append({ type: "run.completed", actor: AGENT, data: { runId: run.id } });
     }
-    const waiting = admissible(run.threadId, transcript(run.threadId).pending, append);
-    // An interrupting message starts the next run, with everything queued.
+    const { pending, inbox } = transcript(run.threadId);
+    const waiting = admissible(run.threadId, pending, append);
+    // An interrupting message starts the next run, with everything queued; else another agent's.
     const first = waiting.find((message) => message.mode === "interrupt") ?? waiting[0];
+    const relayed = inbox[0];
     const next: NewRun | null = retry
       ? {
           threadId: run.threadId,
@@ -537,7 +552,15 @@ export function createRunWorker(options: RunWorkerOptions) {
             continuesRunId: run.id,
             reason: first.mode === "interrupt" ? "interrupt" : "queued_input",
           }
-        : null;
+        : relayed
+          ? {
+              threadId: run.threadId,
+              triggerSeq: relayed.seq,
+              createdBy: null,
+              continuesRunId: run.id,
+              reason: "queued_input",
+            }
+          : null;
     // A message asking to compact the thread is taken in by the run that does it, at once.
     const admit = !retry && first && asksToCompact(first) ? [first.id] : [];
     if (next) startRun(runs, append, next, admit);
@@ -669,17 +692,26 @@ export function createRunWorker(options: RunWorkerOptions) {
   }
 
   // At a step boundary: stops the run when asked to, otherwise takes in the waiting messages
-  // (all of them before the first model call, afterwards only those sent to steer) and returns
-  // them. Those asking to compact the thread wait for runs of their own.
+  // (all of them before the first model call, afterwards only those sent to steer, and other
+  // agents') and returns them, in the order they were sent. Those asking to compact the thread
+  // wait for runs of their own.
   function boundary(execution: Execution, all: boolean): ModelMessage[] {
     const { run, lease, controller } = execution;
     const admitted = write(lease, run.threadId, (append) => {
       const current = runs.hold(lease);
       stopIfAsked(execution, current);
       if (controller.signal.aborted) return [];
-      const waiting = admissible(run.threadId, transcript(run.threadId).pending, append).filter(
-        (message) => !asksToCompact(message) && (all || message.mode === "steer"),
-      );
+      const { pending, inbox } = transcript(run.threadId);
+      const waiting = [
+        ...admissible(run.threadId, pending, append)
+          .filter((message) => !asksToCompact(message) && (all || message.mode === "steer"))
+          .map((message) => ({ seq: message.seq, id: message.id, said: humanMessage(message) })),
+        ...inbox.map((message) => ({
+          seq: message.seq,
+          id: message.id,
+          said: relayMessage(message),
+        })),
+      ].toSorted((a, b) => a.seq - b.seq);
       if (waiting.length > 0) {
         append({
           type: "message.admitted",
@@ -690,7 +722,12 @@ export function createRunWorker(options: RunWorkerOptions) {
       return waiting;
     });
     if (controller.signal.aborted) throw controller.signal.reason;
-    return admitted.map(humanMessage);
+    return admitted.map((message) => message.said);
+  }
+
+  // The tools the thread's agent may call now.
+  function offeredIn(space: Space, thread: Thread) {
+    return narrow(thread, tools.offered(space));
   }
 
   // The model the thread replies with now, opened.
@@ -729,7 +766,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       const thread = threads.find(run.threadId);
       if (!thread) throw new LeaseLost(run.id);
       const { rows } = transcript(run.threadId);
-      const offered = tools.offered(space);
+      const offered = offeredIn(space, thread);
       const { left } = deferralOf(execution, space);
       const named = tools.namesNow(space);
       for (const call of calls) {
@@ -802,7 +839,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       const calls = rows.filter(
         (row): row is ToolRow => row.kind === "tool" && row.runId === run.id && open(row),
       );
-      const offered = tools.offered(space);
+      const offered = offeredIn(space, thread);
       let waiting = false;
       for (const call of calls) {
         const spec = offered.find((candidate) => candidate.name === call.toolId);
@@ -874,6 +911,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           actor: AGENT,
           model: execution.ref,
           runAs,
+          signal: execution.controller.signal,
           ...(call.answers && { answers: call.answers }),
           ...(deferral && {
             deferred: {
@@ -986,17 +1024,21 @@ export function createRunWorker(options: RunWorkerOptions) {
       }
       // MCP tools stay out of the request until the model turns them on with the tool search,
       // which is offered whenever the run has any.
-      const offered = tools.offered(space);
+      const offered = offeredIn(space, current);
       const deferral = deferralOf(execution, space);
       const left = new Set(deferral.left.map((tool) => tool.id));
       const available = offered.filter(
         (spec) => spec.name !== TOOL_SEARCH || deferral.all.length > 0,
       );
       const requested = available.filter((spec) => !left.has(spec.name));
-      const { instructions, messages } = contextOf(transcript(thread.id).rows, {
-        ...guidance(space, available),
-        ...(deferral.left.length && { deferredTools: deferredByServer(deferral.left) }),
-      });
+      const { instructions, messages } = contextOf(
+        transcript(thread.id).rows,
+        {
+          ...guidance(space, available, current),
+          ...(deferral.left.length && { deferredTools: deferredByServer(deferral.left) }),
+        },
+        before(current),
+      );
       // The model knows tools by their model names; calls and results go to it by those.
       const names = tools.modelNames(space);
       const calls: (ModelToolCall & { messageId: string })[] = [];
@@ -1069,6 +1111,7 @@ export function createRunWorker(options: RunWorkerOptions) {
         reply.close(append, "completed");
         end(lease, run, append, { status: "completed", usage });
       });
+      tellEnded(run);
     } catch (err) {
       if (err instanceof Waiting) {
         logger.info({ runId: run.id }, "run waits for a decision");
@@ -1081,6 +1124,7 @@ export function createRunWorker(options: RunWorkerOptions) {
             reply.close(append, "interrupted");
             end(lease, run, append, { status: "cancelled", usage });
           });
+          tellEnded(run);
         } catch (writeErr) {
           if (!(writeErr instanceof LeaseLost))
             logger.error({ err: writeErr }, "run end not saved");
@@ -1098,6 +1142,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           reply.close(append, "failed");
           end(lease, run, append, { status: "failed", failure, usage });
         });
+        tellEnded(run);
       } catch (writeErr) {
         if (!(writeErr instanceof LeaseLost)) logger.error({ err: writeErr }, "run end not saved");
       }
@@ -1142,10 +1187,20 @@ export function createRunWorker(options: RunWorkerOptions) {
           }
           end(lease, run, append, { status: "failed", failure }, retry);
         });
+        tellEnded(run);
         if (!retry) logger.warn({ runId: run.id, attempt: run.attempt }, "run input given up on");
       } catch (err) {
         logger.error({ err, runId: run.id }, "run recovery failed");
       }
+    }
+  }
+
+  // Tells whoever needs to of the run that ended; what they do with it is theirs to get right.
+  function tellEnded(run: Run) {
+    try {
+      ended(runs.find(run.id) ?? run);
+    } catch (err) {
+      logger.error({ err, runId: run.id }, "run end not told");
     }
   }
 

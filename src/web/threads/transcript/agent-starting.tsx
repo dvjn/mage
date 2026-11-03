@@ -2,7 +2,7 @@
 // thread.
 
 import { Spinner } from "@/web/components/ui/spinner";
-import { agentAvatar, caret } from "@/web/threads/transcript/agent";
+import { AgentAvatar, caret, useThreadAgent } from "@/web/threads/transcript/agent";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
 
 // The agent's row while a run has started but no words have arrived yet, or while it writes the
@@ -16,12 +16,13 @@ export function AgentStarting({
   continued?: boolean;
   compacting?: boolean;
 }) {
+  const { self } = useThreadAgent();
   return (
     <TranscriptRowFrame
-      avatar={agentAvatar}
-      author="Agent"
+      avatar={<AgentAvatar {...self} />}
+      author={self.name}
       at={at}
-      label="Message from Agent"
+      label={`Message from ${self.name}`}
       continued={continued}
     >
       {compacting ? (

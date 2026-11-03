@@ -1,5 +1,6 @@
 // A tool call as its state shows it: a card while it waits for a decision or for answers, the
-// answers under its line once given, and otherwise its line.
+// answers under its line once given, and otherwise its line. A subagent's waiting call shows as its
+// card in the thread that started it too, headed by the subagent's name.
 
 import { ASK_TOOL, askInputSchema } from "@/shared/ask.ts";
 import type { AgentTurn, ToolRow } from "@/shared/threads/rows.ts";
@@ -18,6 +19,7 @@ export function ToolCall({
   answer,
   turn,
   framed,
+  subagent,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
@@ -26,10 +28,20 @@ export function ToolCall({
   turn: AgentTurn;
   // Inside a run of calls, which carries the turn's header and the indent.
   framed?: boolean;
+  // The subagent whose call it is, when shown outside its thread.
+  subagent?: string;
 }) {
   const asked = row.toolId === ASK_TOOL ? askInputSchema.safeParse(row.input) : null;
   if (asked?.success && row.state === "pending" && row.waits) {
-    return <QuestionCard row={row} input={asked.data} answer={answer} continued={turn.continued} />;
+    return (
+      <QuestionCard
+        row={row}
+        input={asked.data}
+        answer={answer}
+        continued={turn.continued}
+        subagent={subagent}
+      />
+    );
   }
   if (asked?.success && row.answers) {
     const line = framed ? (
@@ -50,7 +62,13 @@ export function ToolCall({
   }
   if (row.state === "pending" && row.waits) {
     return (
-      <ToolCard row={row} definition={definition} decide={decide} continued={turn.continued} />
+      <ToolCard
+        row={row}
+        definition={definition}
+        decide={decide}
+        continued={turn.continued}
+        subagent={subagent}
+      />
     );
   }
   if (framed) return <ToolLine row={row} definition={definition} framed />;

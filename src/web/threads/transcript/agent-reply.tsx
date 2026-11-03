@@ -11,7 +11,7 @@ import {
 } from "@/web/components/ai-elements/reasoning";
 import { CopyButton } from "@/web/components/copy-button";
 import { RichReply } from "@/web/replies/rich-reply";
-import { agentAvatar, caret, useModelName } from "@/web/threads/transcript/agent";
+import { AgentAvatar, useThreadAgent, caret, useModelName } from "@/web/threads/transcript/agent";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
 
 const ENDINGS: Partial<Record<AgentRow["status"], string>> = {
@@ -37,12 +37,13 @@ export function AgentReply({ row, continued }: { row: AgentRow; continued: boole
   const ending = ENDINGS[row.status];
   const streaming = row.status === "streaming";
   const model = useModelName(row.model);
+  const { self } = useThreadAgent();
   return (
     <TranscriptRowFrame
-      avatar={agentAvatar}
-      author="Agent"
+      avatar={<AgentAvatar {...self} />}
+      author={self.name}
       at={row.startedAt}
-      label="Message from Agent"
+      label={`Message from ${self.name}`}
       continued={continued}
       // The turn's header names the model.
       note={

@@ -39,6 +39,16 @@ const decide = ({
 }: Omit<Parameters<typeof decideUnder>[0], "rule"> & { rules: Rule[] }) =>
   decideUnder({ ...input, rule: ruleFor(rules) });
 
+// The tools the agent of a thread that can start subagents has for them.
+const SUBAGENT_TOOLS = [
+  "subagents.start",
+  "subagents.send",
+  "subagents.list",
+  "subagents.wait",
+  "subagents.stop",
+  "subagents.archive",
+];
+
 const run = true;
 const approve = false;
 
@@ -317,7 +327,7 @@ describe("deciding a call that runs with a person's own login", () => {
   });
 });
 
-// The agent thread with a guest, Hedy, let into it, and helpers for tool calls.
+// The agent thread with a guest, Hedy, let into it, and subagents for tool calls.
 async function toolThread() {
   const workspace = await agentThread();
   const { signUp, guestStore, thread, api, ada, events, model } = workspace;
@@ -418,6 +428,7 @@ describe("tool calls", () => {
       "thread.set_model",
       "thread.compact",
       "thread.ask",
+      ...SUBAGENT_TOOLS,
     ]);
     expect(threadStore.find(thread.id)?.title).toBe("Engines");
     expect(transcript()).toEqual([
@@ -665,14 +676,19 @@ describe("tool calls", () => {
     await post(ada, "Hello");
     const call = await answered(model.next());
     await worker.idle();
-    expect(call.tools).toEqual(["thread.compact", "thread.ask"]);
+    expect(call.tools).toEqual(["thread.compact", "thread.ask", ...SUBAGENT_TOOLS]);
 
     const other = await workspace.createSpace(ada.cookie, "Other");
     const thread = await workspace.createThread(ada.cookie, other.id, "Hello there");
     const elsewhere = await answered(model.next());
     await worker.idle();
     expect(thread.id).toBeDefined();
-    expect(elsewhere.tools).toEqual(["thread.set_model", "thread.compact", "thread.ask"]);
+    expect(elsewhere.tools).toEqual([
+      "thread.set_model",
+      "thread.compact",
+      "thread.ask",
+      ...SUBAGENT_TOOLS,
+    ]);
   });
 });
 
@@ -1063,14 +1079,17 @@ describe("built-in toolset switches", () => {
     // What is always on stays.
     const fixed = ["thread.ask"];
     const offered = (spaceId: string) =>
-      toolRegistry.offered({ id: spaceId, orgId: ada.orgId }).map((spec) => spec.name);
+      toolRegistry
+        .offered({ id: spaceId, orgId: ada.orgId })
+        .map((spec) => spec.name)
+        .filter((id) => id.startsWith("thread."));
     expect(offered(space.id)).toEqual(fixed);
     expect(offered(elsewhere.id).length).toBeGreaterThan(fixed.length);
     expect((await setOrg(false)).status).toBe(200);
     expect((await setSpace(true)).status).toBe(409);
     expect(
       toolRegistry.definitions({ id: elsewhere.id, orgId: ada.orgId }).map((tool) => tool.name),
-    ).toEqual(fixed);
+    ).toEqual([...fixed, ...SUBAGENT_TOOLS]);
     const changeWhileOff = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
       toolIds: ["thread.rename"],
       policy: review.id,

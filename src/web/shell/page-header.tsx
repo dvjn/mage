@@ -27,7 +27,9 @@ export interface Crumb {
   label: string;
   // Where the crumb leads; the last crumb is the current page, and one before it without a link is
   // only a name.
-  link?: { to: "/s/$spaceId"; params: { spaceId: string } };
+  link?:
+    | { to: "/s/$spaceId"; params: { spaceId: string } }
+    | { to: "/t/$threadId"; params: { threadId: string } };
   // Shown in place of the label, on a phone too, as a menu to change what the crumb names.
   control?: React.ReactNode;
 }

@@ -4,6 +4,7 @@
 
 import * as z from "zod";
 
+import { subagentSummarySchema } from "@/shared/subagents.ts";
 import { pendingMessageSchema, shownRowSchema, shownRunSchema } from "@/shared/threads/rows.ts";
 import { effortSchema, threadSchema } from "@/shared/threads/thread.ts";
 import { toolDefinitionSchema } from "@/shared/tools.ts";
@@ -49,8 +50,16 @@ export const threadCanSchema = z.object({
 
 export type ThreadCan = z.infer<typeof threadCanSchema>;
 
-// The thread itself as the reader sees it, without its rows, which the live stream sends again
-// when it is renamed, moved or set to another model.
+// The thread itself as the reader sees it, without its rows, which the live stream sends again when
+// it is renamed, moved or set to another model. For a subagent's thread, the subagent as it is now,
+// the thread whose agent started it, and whether the reader may bring it back once retired.
+export const threadSubagentSchema = subagentSummarySchema.extend({
+  parent: z.object({ id: z.string(), title: z.string() }),
+  canUnarchive: z.boolean(),
+});
+
+export type ThreadSubagent = z.infer<typeof threadSubagentSchema>;
+
 export const threadHeadSchema = z.object({
   thread: threadSchema,
   access: threadAccessSchema,
@@ -62,6 +71,8 @@ export const threadHeadSchema = z.object({
   // Every tool's definition, by which its calls show.
   tools: z.array(toolDefinitionSchema),
   defaults: threadDefaultsSchema,
+  // For a subagent's thread, the subagent.
+  subagent: threadSubagentSchema.nullable().optional(),
   // The model it names, its own or the default, and the one that replies: the same, or while that
   // one is turned off or gone, the space's default, then the org's; null when none can. Null with
   // no model at all.

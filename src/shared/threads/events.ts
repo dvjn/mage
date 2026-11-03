@@ -1,6 +1,6 @@
-// A thread's events as the API shows them: its messages, when the agent took each one in, the
-// agent's runs and the replies each run wrote, its tool calls, its compactions, and the pieces of a
-// reply in progress.
+// A thread's events as the API shows them: its messages, people's and other agents', when the agent
+// took each one in, the agent's runs and the replies each run wrote, its tool calls, its
+// compactions, its subagents' runs that ended, and the pieces of a reply in progress.
 
 import * as z from "zod";
 
@@ -85,6 +85,41 @@ export const toolScopeSchema = z.enum(["once", "for_now"]);
 
 export type ToolScope = z.infer<typeof toolScopeSchema>;
 
+// A person whose words steered an agent's message, and the agents those words came through on the
+// way, nearest the person first; none when they wrote in the sending agent's own thread.
+export const steeringSchema = z.object({
+  userId: z.string(),
+  name: z.string(),
+  via: z.array(z.string()),
+});
+
+export type Steering = z.infer<typeof steeringSchema>;
+
+// The agent that sent a message: a subagent, by the name it was given, or the agent of the thread
+// that started the subagents, named as that thread was.
+export const senderSchema = z.object({
+  threadId: z.string(),
+  name: z.string(),
+  main: z.boolean(),
+});
+
+export type Sender = z.infer<typeof senderSchema>;
+
+// What a subagent was set to do when it was started, beside its task: its instructions, and for one
+// started from a copy of its starter's conversation, the call that started it and the newest event
+// of that conversation it was copied up to.
+export const subagentTaskSchema = z.object({
+  instructions: z.string().optional(),
+  fork: z.object({ callId: z.string(), seq: z.number().int().nonnegative() }).optional(),
+});
+
+export type SubagentTask = z.infer<typeof subagentTaskSchema>;
+
+// Where a subagent stands once its run ended: waiting for more, stopped, or failed.
+export const subagentEndSchema = z.enum(["idle", "stopped", "failed"]);
+
+export type SubagentEnd = z.infer<typeof subagentEndSchema>;
+
 // Each event type's data.
 export const eventDataSchemas = {
   // A person's message.
@@ -99,6 +134,26 @@ export const eventDataSchemas = {
   "message.withdrawn": z.object({ messageId: z.string() }),
   // A message the agent had not taken in yet was dropped: its author can no longer post.
   "message.dropped": z.object({ messageId: z.string() }),
+  // Another agent's message to this thread's agent, with the people whose words steered it; it
+  // waits like a person's until the agent takes it in. The first one in a subagent's thread is its
+  // task.
+  "agent.message": z.object({
+    parts: z.array(textPartSchema),
+    from: senderSchema,
+    // Whom it was sent to, as the sender named them.
+    to: z.string(),
+    steeredBy: z.array(steeringSchema),
+    task: subagentTaskSchema.optional(),
+  }),
+  // One of the thread's subagents ended a run with nothing more to do, and the last thing it said.
+  "subagent.ended": z.object({
+    threadId: z.string(),
+    name: z.string(),
+    state: subagentEndSchema,
+    last: z.string(),
+  }),
+  // The thread's subagents sent each other as many messages as they may; more are refused.
+  "subagent.limited": z.object({ limit: z.number().int().positive() }),
   // The agent took these messages in, in this order, during the run.
   "message.admitted": z.object({ runId: z.string(), messageIds: z.array(z.string()).min(1) }),
   // The agent began a reply with the model ref; its place in the thread is this event's seq.
@@ -225,6 +280,9 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("message.changed"),
   eventSchema("message.withdrawn"),
   eventSchema("message.dropped"),
+  eventSchema("agent.message"),
+  eventSchema("subagent.ended"),
+  eventSchema("subagent.limited"),
   eventSchema("message.admitted"),
   eventSchema("message.started"),
   eventSchema("message.completed"),

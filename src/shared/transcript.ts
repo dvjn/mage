@@ -1,12 +1,14 @@
-// A thread's events folded into what people see: the transcript in the order the agent saw it,
-// the messages it has not taken in yet, and the run under way. A person's message takes its place
-// when the agent takes it in, or where it was posted when it is a quiet aside; an agent reply takes
-// the place its run reserved when the reply began. A reply cut short and then tried again stays in
-// view but is left out of what the agent reads. A tool call the agent asked for sits where it asked,
-// and carries how it was decided, what was answered to the questions it asked, and what it gave
-// back. A compaction sits where it was made, with the summary the agent reads from then on in place
-// of what came before. Folded one event at a time, it also keeps for each row the last event that
-// changed it and where it sits in the agent's turn.
+// A thread's events folded into what people see: the transcript in the order the agent saw it, the
+// messages it has not taken in yet, and the run under way. A person's message takes its place when
+// the agent takes it in, or where it was posted when it is a quiet aside; an agent reply takes the
+// place its run reserved when the reply began. A reply cut short and then tried again stays in view
+// but is left out of what the agent reads. A tool call the agent asked for sits where it asked, and
+// carries how it was decided, what was answered to the questions it asked, and what it gave back. A
+// compaction sits where it was made, with the summary the agent reads from then on in place of what
+// came before. Another agent's message waits in the inbox and takes its place when the agent takes
+// it in, as a person's does; subagents that end runs one after another are told in one row where
+// the first was. Folded one event at a time, it also keeps for each row the last event that changed
+// it and where it sits in the agent's turn.
 
 import type { AskAnswers } from "@/shared/ask.ts";
 import { COMPACT } from "@/shared/threads/commands.ts";
@@ -15,9 +17,13 @@ import {
   type AnyThreadEvent,
   type Delivery,
   type FailureKind,
+  type SubagentEnd,
+  type SubagentTask,
   type ReplyPart,
   type ReplyStatus,
   type RunReason,
+  type Sender,
+  type Steering,
   threadEventSchema,
   type ToolRisk,
   type ToolScope,
@@ -152,6 +158,47 @@ export interface CompactionRow {
   tokensAfter: number | null;
 }
 
+// A message from another agent, once the agent here took it in: from a subagent, or from the agent
+// that started this thread's subagent, the first of them its task. With whom it went to, and the
+// people whose words steered it, who count as steering what the agent here does with it.
+export interface RelayRow {
+  kind: "relay";
+  // The message's id.
+  id: string;
+  seq: number;
+  postedAt: string;
+  from: Sender;
+  to: string;
+  text: string;
+  steeredBy: Steering[];
+  task?: SubagentTask;
+}
+
+// A subagent that ended a run, as the thread that started it is told.
+export interface SubagentEnded {
+  threadId: string;
+  name: string;
+  state: SubagentEnd;
+  last: string;
+}
+
+// Subagents that ended runs one after another, told together where the first was told, each
+// subagent once with its latest.
+export interface NoticeRow {
+  kind: "notice";
+  id: string;
+  seq: number;
+  subagents: SubagentEnded[];
+}
+
+// The thread's subagents sent each other as many messages as they may.
+export interface LimitRow {
+  kind: "limit";
+  id: string;
+  seq: number;
+  limit: number;
+}
+
 // An event this client does not know how to show.
 export interface UnknownRow {
   kind: "unknown";
@@ -167,6 +214,9 @@ export type TranscriptRow =
   | FailureRow
   | StopRow
   | CompactionRow
+  | RelayRow
+  | NoticeRow
+  | LimitRow
   | UnknownRow;
 
 // Whether the message asks for the thread to be compacted.
@@ -199,9 +249,14 @@ export interface ActiveRun {
   compacting: boolean;
 }
 
+// Another agent's message, waiting to be taken in.
+export type RelayMessage = Omit<RelayRow, "kind">;
+
 export interface Transcript {
   rows: TranscriptRow[];
   pending: PendingMessage[];
+  // Other agents' messages, waiting to be taken in.
+  inbox: RelayMessage[];
   run: ActiveRun | null;
   // The tokens every model call in the thread used.
   usage: Usage;
@@ -294,6 +349,7 @@ export function createFold(): TranscriptFold {
   const changed: number[] = [];
   const turns: (AgentTurn | null)[] = [];
   const pending = new Map<string, PendingMessage>();
+  const inbox = new Map<string, RelayMessage>();
   const replies = new Map<string, AgentRow>();
   const calls = new Map<string, ToolRow>();
   let run: ActiveRun | null = null;
@@ -349,8 +405,45 @@ export function createFold(): TranscriptFold {
       case "message.dropped":
         pending.delete(event.data.messageId);
         break;
+      case "agent.message": {
+        const { parts, from, to, steeredBy, task } = event.data;
+        inbox.set(event.id, {
+          id: event.id,
+          seq: event.seq,
+          postedAt: event.createdAt,
+          from,
+          to,
+          text: textOf(parts),
+          steeredBy,
+          ...(task && { task }),
+        });
+        break;
+      }
+      case "subagent.ended": {
+        const ended = { ...event.data };
+        const last = rows.at(-1);
+        if (last?.kind === "notice") {
+          last.subagents = [
+            ...last.subagents.filter((subagent) => subagent.threadId !== ended.threadId),
+            ended,
+          ];
+          touch(last.id);
+        } else {
+          push({ kind: "notice", id: event.id, seq: event.seq, subagents: [ended] });
+        }
+        break;
+      }
+      case "subagent.limited":
+        push({ kind: "limit", id: event.id, seq: event.seq, limit: event.data.limit });
+        break;
       case "message.admitted":
         for (const id of event.data.messageIds) {
+          const relayed = inbox.get(id);
+          if (relayed) {
+            inbox.delete(id);
+            push({ kind: "relay", ...relayed, seq: event.seq });
+            continue;
+          }
           const message = pending.get(id);
           if (!message) continue;
           pending.delete(id);
@@ -603,7 +696,7 @@ export function createFold(): TranscriptFold {
             (call) => call.runId === runId && call.waits && call.state === "pending",
           )?.id ?? null;
       }
-      return { rows, pending: [...pending.values()], run, usage };
+      return { rows, pending: [...pending.values()], inbox: [...inbox.values()], run, usage };
     },
 
     changedAt(index) {

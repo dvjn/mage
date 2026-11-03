@@ -189,4 +189,53 @@ describe("createFold", () => {
       ["failure", 3],
     ]);
   });
+
+  it("holds other agents' messages until taken in, and tells subagents that ended together", () => {
+    seq = 0;
+    const relayed = (text: string) =>
+      event("agent.message", {
+        parts: [{ type: "text", text }],
+        from: { threadId: "h1", name: "Writer", main: false },
+        to: "agent",
+        steeredBy: [{ userId: "ada", name: "Ada Lovelace", via: ["Writer"] }],
+      });
+    const ended = (threadId: string, name: string, state: string) =>
+      event("subagent.ended", { threadId, name, state, last: `${name} done` });
+    const fold = createFold();
+    for (const each of [
+      relayed("Draft one"),
+      relayed("Draft two"),
+      ended("h1", "Writer", "idle"),
+      ended("h2", "Critic", "idle"),
+      ended("h1", "Writer", "stopped"),
+    ]) {
+      fold.add(each);
+    }
+    expect(fold.transcript().inbox.map((message) => message.text)).toEqual([
+      "Draft one",
+      "Draft two",
+    ]);
+    // Subagents that ended one after another are one notice, each with its latest.
+    expect(fold.transcript().rows).toEqual([
+      expect.objectContaining({
+        kind: "notice",
+        seq: 3,
+        subagents: [
+          { threadId: "h2", name: "Critic", state: "idle", last: "Critic done" },
+          { threadId: "h1", name: "Writer", state: "stopped", last: "Writer done" },
+        ],
+      }),
+    ]);
+    fold.add(event("message.admitted", { ...run, messageIds: ["e1", "e2"] }));
+    fold.add(ended("h2", "Critic", "failed"));
+    const { rows, inbox } = fold.transcript();
+    expect(inbox).toEqual([]);
+    expect(rows.map((one) => [one.kind, one.seq])).toEqual([
+      ["notice", 3],
+      ["relay", 6],
+      ["relay", 6],
+      ["notice", 7],
+    ]);
+    expect(rows[1]).toMatchObject({ from: { name: "Writer" }, to: "agent", text: "Draft one" });
+  });
 });

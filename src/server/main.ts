@@ -4,6 +4,8 @@ import type { Server } from "node:http";
 
 import { serve } from "@hono/node-server";
 
+import { createSubagentStore } from "@/server/agent/subagent-store.ts";
+import { createSubagents } from "@/server/agent/subagents.ts";
 import { createRichReplies } from "@/server/agent/rich-replies.ts";
 import { createRunStore } from "@/server/agent/run-store.ts";
 import { createRunWorker, type RunWorker } from "@/server/agent/runs.ts";
@@ -153,6 +155,13 @@ const skills = createSkills({
   settings: settingStore,
   logger,
 });
+const subagents = createSubagents({
+  subagents: createSubagentStore(db),
+  threads: threadStore,
+  runs: runStore,
+  log,
+  bus,
+});
 const tools = createTools({
   toolsets: [
     createRichReplies(),
@@ -176,6 +185,7 @@ const tools = createTools({
       ],
       mcp.hasServers,
     ),
+    subagents.toolset(),
   ],
   scoped: {
     inSpace: (space) => mcp.toolsetsInSpace(space),
@@ -223,12 +233,15 @@ const worker = createRunWorker({
   transact,
   models: runModels,
   tools,
-  guidance: (space, offered) => ({
+  guidance: (space, offered, thread) => ({
     ...instructions.textsFor(space),
     mcpServers: mcp.instructionsIn(space, offered),
     skills: skills.listFor(space, offered),
-    toolsets: tools.guidanceIn(space),
+    ...subagents.guidance(thread, tools.guidanceIn(space)),
   }),
+  narrow: (thread, offered) => subagents.toolsOf(thread, offered),
+  before: (thread) => subagents.before(thread),
+  ended: (run) => subagents.ended(run),
   logger,
   runsIn: (space) => spaces.runsIn(space),
   hooks,
@@ -270,6 +283,7 @@ const app = createApp({
     log,
     bus,
     tools,
+    subagents,
     commands: createCommands({ skills, prompts: mcp }),
     // The stand-in model answers every request alike, so it names no threads.
     ...(!config.fakeModels && {

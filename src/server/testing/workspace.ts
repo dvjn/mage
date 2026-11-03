@@ -11,6 +11,8 @@ import { eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import { expect } from "vite-plus/test";
 
+import { createSubagentStore } from "@/server/agent/subagent-store.ts";
+import { createSubagents } from "@/server/agent/subagents.ts";
 import { createRichReplies } from "@/server/agent/rich-replies.ts";
 import { createRunStore } from "@/server/agent/run-store.ts";
 import { createRunWorker, type RunWorkerOptions } from "@/server/agent/runs.ts";
@@ -203,6 +205,25 @@ export function setup(
   });
   const toolSettings = createToolSettingStore(db);
   const toolPolicyStore = createToolPolicyStore(db);
+  const bus = createEventBus();
+  // Subscriptions still open.
+  const listening = { count: 0 };
+  const countingBus: typeof bus = {
+    ...bus,
+    publish: (threadId, event) => bus.publish(threadId, event),
+    subscribe(threadId, listener) {
+      listening.count += 1;
+      const unsubscribe = bus.subscribe(threadId, listener);
+      return () => {
+        listening.count -= 1;
+        unsubscribe();
+      };
+    },
+  };
+  const runStore = createRunStore(db);
+  const deltaStore = createDeltaStore(db);
+  const transact = createTransact(db);
+  const log = createThreadLog({ threads: threadStore, bus: countingBus, transact });
   // The stand-in MCP server, reached while it is up; anything else cannot be reached.
   const mcpNetwork = {
     up: true,
@@ -246,6 +267,14 @@ export function setup(
     settings: settingStore,
     logger,
   });
+  const subagentStore = createSubagentStore(db);
+  const subagents = createSubagents({
+    subagents: subagentStore,
+    threads: threadStore,
+    runs: runStore,
+    log,
+    bus: countingBus,
+  });
   const tools = createTools({
     toolsets: [
       createRichReplies(),
@@ -268,6 +297,7 @@ export function setup(
         ],
         mcp.hasServers,
       ),
+      subagents.toolset(),
     ],
     scoped: {
       inSpace: (space) => mcp.toolsetsInSpace(space),
@@ -280,25 +310,7 @@ export function setup(
     directory,
     access,
   });
-  const bus = createEventBus();
-  // Subscriptions still open.
-  const listening = { count: 0 };
-  const countingBus: typeof bus = {
-    ...bus,
-    publish: (threadId, event) => bus.publish(threadId, event),
-    subscribe(threadId, listener) {
-      listening.count += 1;
-      const unsubscribe = bus.subscribe(threadId, listener);
-      return () => {
-        listening.count -= 1;
-        unsubscribe();
-      };
-    },
-  };
-  const runStore = createRunStore(db);
-  const deltaStore = createDeltaStore(db);
-  const transact = createTransact(db);
-  const log = createThreadLog({ threads: threadStore, bus: countingBus, transact });
+
   const model = scriptedModel();
   const titleModel = scriptedModel();
   // The model refs threads were named with.
@@ -316,6 +328,7 @@ export function setup(
     log,
     bus: countingBus,
     tools,
+    subagents,
     commands: createCommands({ skills, prompts: mcp }),
     ...(titles && {
       titles: createTitles({
@@ -349,12 +362,15 @@ export function setup(
       flushMs: 1,
       models: { open: () => model.open(), replyModel },
       tools,
-      guidance: (space, offered) => ({
+      guidance: (space, offered, thread) => ({
         ...instructions.textsFor(space),
         mcpServers: mcp.instructionsIn(space, offered),
         skills: skills.listFor(space, offered),
-        toolsets: tools.guidanceIn(space),
+        ...subagents.guidance(thread, tools.guidanceIn(space)),
       }),
+      narrow: (thread, offered) => subagents.toolsOf(thread, offered),
+      before: (thread) => subagents.before(thread),
+      ended: (run) => subagents.ended(run),
       logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
       runsIn: (space) => spaces.runsIn(space),
       hooks,
@@ -543,6 +559,8 @@ export function setup(
     toolSettings,
     toolPolicyStore,
     tools,
+    subagents,
+    subagentStore,
     mcp,
     mcpNetwork,
     mcpServerStore,

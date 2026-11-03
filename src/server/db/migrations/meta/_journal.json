@@ -302,6 +302,27 @@
       "when": 1793648692320,
       "tag": "0042_remove_folders",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1793653896754,
+      "tag": "0043_helpers",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1793685256984,
+      "tag": "0044_drop_helper_tools",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1793689409907,
+      "tag": "0045_rename_helpers_to_subagents",
+      "breakpoints": true
     }
   ]
 }

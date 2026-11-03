@@ -1,23 +1,30 @@
 // Threads in the spaces a person can see: starting them, naming them after their first message,
-// finding them by title, moving them between spaces, deleting them, posting messages
-// to their event logs, and reading them back as each reader sees them: their transcript's rows, a
-// page at a time from the newest, with what the reader may do from each, and as the log grows the
-// rows each new event changed, with the pieces of replies in progress. A message posted while the agent is idle wakes it at once; one
-// posted while it is busy steers the run, waits for the next one, or interrupts the run, and its
-// author can change it until the agent takes it in. Anyone who can post can stop the run, or try
-// the last one again when it failed or was stopped; a run waiting for a decision on a tool call is
-// queued again to be stopped. Lists say each thread's model and its provider, who has written in
-// it and what it holds for the reader: what the agent is doing in it, whether they may decide on
-// the call it waits for, its newest notable event, its last run's failure, and how far they have
-// seen it, which reading it and posting in it move on, and the one status all that shows them.
-// Each reader's inbox follows those changes for every thread they can read. Who may do each is the
-// thread access rule's; a thread's guests find it, and post in it, beside the threads of their own
-// spaces. Threads of an archived space stay out of search and inboxes; its person opens them from
-// the space itself, and may move them to a space where they can post. People who can post may send
-// a message as one of the thread's commands, kept with what the agent reads for it, or ask for the
-// thread to be compacted, once the run under way ends.
+// finding them by title, moving them between spaces, deleting them, posting messages to their event
+// logs, and reading them back as each reader sees them: their transcript's rows, a page at a time
+// from the newest, with what the reader may do from each, and as the log grows the rows each new
+// event changed, with the pieces of replies in progress. A message posted while the agent is idle
+// wakes it at once; one posted while it is busy steers the run, waits for the next one, or
+// interrupts the run, and its author can change it until the agent takes it in. Anyone who can post
+// can stop the run, or try the last one again when it failed or was stopped; a run waiting for a
+// decision on a tool call is queued again to be stopped. Lists say each thread's model and its
+// provider, who has written in it and what it holds for the reader: what the agent is doing in it,
+// whether they may decide on the call it waits for, its newest notable event, its last run's
+// failure, and how far they have seen it, which reading it and posting in it move on, and the one
+// status all that shows them. Each reader's inbox follows those changes for every thread they can
+// read. Who may do each is the thread access rule's; a thread's guests find it, and post in it,
+// beside the threads of their own spaces. Threads of an archived space stay out of search and
+// inboxes; its person opens them from the space itself, and may move them to a space where they can
+// post. People who can post may send a message as one of the thread's commands, kept with what the
+// agent reads for it, or ask for the thread to be compacted, once the run under way ends. A
+// subagent's thread is read like any other, though nothing in it is ever new to anyone, and listed
+// under the thread whose agent started it, which takes in the most pressing of its subagents'
+// statuses; that thread's lines for starting each subagent show where it stands now, with the call
+// it waits on as the reader would see it in the subagent's thread. Stopping a thread's agent stops
+// its subagents too, and a retired subagent's thread is read-only until someone who can post there
+// brings it back.
 
 import { anythingToCompact } from "@/server/agent/compaction.ts";
+import { AGENT_NAME, type Subagents, steeringLine } from "@/server/agent/subagents.ts";
 import { type Run, type RunStore, startRun } from "@/server/agent/runs.ts";
 import type { Tools } from "@/server/agent/tools.ts";
 import type { GuestStore, GuestThread } from "@/server/guests/service.ts";
@@ -29,9 +36,10 @@ import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
 import type { Access, ThreadAccess, ThreadAction } from "@/server/spaces/thread-access.ts";
 import { ASK_TOOL } from "@/shared/ask.ts";
 import type { SharedThread } from "@/shared/guests.ts";
+import { START_SUBAGENT } from "@/shared/subagents.ts";
 import type { Page, PageParams } from "@/shared/paging.ts";
 import { plainText } from "@/shared/plain-text.ts";
-import { statusOf, type ThreadShow } from "@/shared/thread-status.ts";
+import { statusOf, type ThreadShow, type ThreadStatus } from "@/shared/thread-status.ts";
 import { COMPACT, type CommandInput, type ThreadCommand } from "@/shared/threads/commands.ts";
 import type { ThreadCan, ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
 import {
@@ -43,6 +51,7 @@ import {
 } from "@/shared/threads/events.ts";
 import type { InboxItem } from "@/shared/threads/inbox.ts";
 import {
+  type ListedSubagent,
   type ThreadActivity,
   type ThreadListItem,
   type ThreadParticipants,
@@ -59,6 +68,7 @@ import {
 } from "@/shared/threads/rows.ts";
 import type { ThreadSearchResult } from "@/shared/threads/search.ts";
 import { type Effort, UNTITLED, type ThreadSummary } from "@/shared/threads/thread.ts";
+import { toolIdNow } from "@/shared/tools.ts";
 import type {
   PendingMessage,
   SentCommand,
@@ -161,11 +171,17 @@ export interface SidebarThreads {
 }
 
 export interface ThreadStore {
+  // A subagent's thread names the thread whose agent started it, and the thread that started them
+  // all.
   create(thread: {
     spaceId: string;
     model: string | null;
     effort?: Effort | null;
-    createdBy: string;
+    createdBy: string | null;
+    parentThreadId?: string;
+    rootThreadId?: string;
+    title?: string;
+    titleSource?: TitleSource;
   }): Thread;
   find(id: string): Thread | null;
   // Most recently active first.
@@ -200,8 +216,10 @@ export interface ThreadStore {
       spaceId?: string;
     },
   ): Thread;
-  // Deletes the thread with its events.
+  // Deletes the thread with its events, and its subagents' threads.
   delete(id: string): void;
+  // The threads of the subagents started under the thread, oldest first.
+  children(id: string): Thread[];
   // Adds the event with the thread's next seq in one transaction. `title` names the thread, as
   // from its first message, when it has no title yet.
   append(threadId: string, event: NewEvent, title?: string): StoredEvent;
@@ -252,6 +270,8 @@ export interface ThreadsOptions {
     Tools,
     "levelsFor" | "canDecide" | "asks" | "riskForCall" | "definitions" | "connectionFor" | "namesIn"
   >;
+  // The subagents threads' agents start, when given.
+  subagents?: Pick<Subagents, "find" | "summaryOf" | "ofParents" | "stopAll" | "unarchive">;
   now?: () => Date;
 }
 
@@ -267,6 +287,7 @@ export type ThreadFollowItem =
 
 // Who reads a thread and what they may do in it, for the parts of its rows that are theirs.
 interface Reader {
+  principal: Principal;
   userId: string;
   thread: Thread;
   space: Space | null;
@@ -280,7 +301,15 @@ interface Reader {
 // The parts of a row that are the reader's, which can change while the row itself does not.
 function readerPartsOf(row: ShownRow) {
   if (row.kind === "tool") {
-    return JSON.stringify([row.risk, row.actions, row.canAnswer, row.connection]);
+    return JSON.stringify([
+      row.risk,
+      row.actions,
+      row.canAnswer,
+      row.connection,
+      row.steering,
+      row.subagent,
+      row.subagentCall,
+    ]);
   }
   if (row.kind === "failure" || row.kind === "stop") return JSON.stringify([row.canRetry]);
   return "";
@@ -296,12 +325,22 @@ function shownPending(pending: readonly PendingMessage[]) {
   return pending.map(({ command, ...message }) => ({ ...message, ...shownCommand(command) }));
 }
 
+// The id of the subagent the call started, for one that started a subagent.
+function startedSubagent(row: Transcript["rows"][number]) {
+  if (row.kind !== "tool" || toolIdNow(row.toolId) !== START_SUBAGENT || !row.output?.ok)
+    return null;
+  const id = (row.output.value as { id?: unknown } | null)?.id;
+  return typeof id === "string" ? id : null;
+}
+
 // The rows whose reader's parts can change while they do not: the calls waiting for a decision or
-// for answers, and a last row from which a failed or stopped run is tried again.
+// for answers, those that started a subagent, which show where it stands, and a last row from which
+// a failed or stopped run is tried again.
 function liveIndexes({ rows }: Transcript) {
   const live = new Set<number>();
   rows.forEach((row, index) => {
     if (row.kind === "tool" && row.state === "pending" && row.waits) live.add(index);
+    if (startedSubagent(row)) live.add(index);
   });
   const last = rows.at(-1);
   if (last?.kind === "failure" || last?.kind === "stop") live.add(rows.length - 1);
@@ -360,6 +399,18 @@ export function titleFrom(text: string) {
   return `${(space > TITLE_LENGTH / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
 }
 
+// How pressing each status is that a thread takes in from its subagents.
+const PRESSING: ThreadStatus[] = ["waiting", "working", "paused"];
+
+// The thread's own status, or the most pressing of its subagents' where that presses more.
+function withSubagents(own: ThreadStatus, subagents: readonly ListedSubagent[]): ThreadStatus {
+  if (own === "waiting" || own === "failed") return own;
+  const shown = subagents.filter((subagent) => subagent.state !== "archived");
+  const pressing = PRESSING.find((status) => shown.some((subagent) => subagent.status === status));
+  if (!pressing) return own;
+  return own === "working" && pressing === "paused" ? own : pressing;
+}
+
 // The most people a list names of those who have written in a thread.
 const PARTICIPANT_LIMIT = 3;
 const FORMER_MEMBER = "(former member)";
@@ -405,6 +456,7 @@ export function createThreads(options: ThreadsOptions) {
     tools,
     reads,
     commands,
+    subagents,
   } = options;
   const now = options.now ?? (() => new Date());
   const transcripts = createTranscripts(threads);
@@ -469,17 +521,55 @@ export function createThreads(options: ThreadsOptions) {
     };
   }
 
-  // The threads as the reader's lists show them: each with its model, who has written in it, and
-  // what it holds for them.
-  function itemsOf(userId: string, list: Thread[], active: Run[]): ThreadListItem[] {
+  // The subagents the threads' agents started, as the reader's lists show them under each.
+  function subagentsUnder(userId: string, list: Thread[]): Map<string, ListedSubagent[]> {
+    const under = new Map<string, ListedSubagent[]>();
+    const found = subagents?.ofParents(list.map((thread) => thread.id)) ?? [];
+    if (found.length === 0) return under;
+    const childThreads = found.flatMap(({ record }) => threads.find(record.threadId) ?? []);
+    const items = new Map(
+      itemsOf(
+        userId,
+        childThreads,
+        runs.activeIn(childThreads.map((thread) => thread.id)),
+        false,
+      ).map((item) => [item.id, item]),
+    );
+    for (const { record, summary } of found) {
+      const item = items.get(record.threadId);
+      if (!item) continue;
+      const listed = under.get(record.parentThreadId) ?? [];
+      listed.push({
+        ...summary,
+        // A subagent goes by its label, whatever its thread is called.
+        title: record.name,
+        untitled: false,
+        updatedAt: item.updatedAt,
+        shownModel: item.shownModel,
+        participants: item.participants,
+        activity: item.activity,
+        status: item.status,
+      });
+      under.set(record.parentThreadId, listed);
+    }
+    return under;
+  }
+
+  // The threads as the reader's lists show them: each with its model, who has written in it, what
+  // it holds for them, and its subagents.
+  function itemsOf(userId: string, list: Thread[], active: Run[], nested = true): ThreadListItem[] {
     const ids = list.map((thread) => thread.id);
     const shownModel = shownModelOf();
     const facts = threads.facts(ids);
     const writers = threads.writers(ids);
     const seen = reads.seen(userId, ids);
     const runOf = new Map(active.map((run) => [run.threadId, run]));
+    const under = nested ? subagentsUnder(userId, list) : new Map<string, ListedSubagent[]>();
     return list.map((thread) => {
-      const fact = facts.get(thread.id);
+      // Nobody is expected to read a subagent's thread, so nothing in it is ever new to them.
+      const fact = thread.parentThreadId
+        ? { ...facts.get(thread.id), notable: null }
+        : facts.get(thread.id);
       const activity: ThreadActivity = {
         ...runActivity(userId, thread, runOf.get(thread.id)),
         lastNotableSeq: fact?.notable?.seq ?? 0,
@@ -487,12 +577,15 @@ export function createThreads(options: ThreadsOptions) {
         failed: fact?.failed ?? null,
         lastSeenSeq: seen.get(thread.id) ?? 0,
       };
+      const subagentsOf = under.get(thread.id);
+      const status = statusOf(activity, userId);
       return {
         ...threadSummary(thread),
         shownModel: shownModel(thread),
         participants: participantsOf(writers.get(thread.id)),
         activity,
-        status: statusOf(activity, userId),
+        status: subagentsOf ? withSubagents(status, subagentsOf) : status,
+        ...(subagentsOf && { subagents: subagentsOf }),
       };
     });
   }
@@ -503,9 +596,12 @@ export function createThreads(options: ThreadsOptions) {
     return via && !spaces.isArchived(thread.spaceId) ? via : null;
   }
 
-  // The thread as the reader's inbox tells it, or null when it is not in their inbox.
+  // The thread as the reader's inbox tells it, or null when it is not in their inbox. A subagent's
+  // thread is told as the thread its subagents are listed under.
   function inboxItem(principal: Principal, id: string): InboxItem | null {
-    const thread = threads.find(id);
+    const found = threads.find(id);
+    const thread = found?.rootThreadId ? threads.find(found.rootThreadId) : found;
+    id = thread?.id ?? id;
     const via = thread && listedAccess(principal, thread);
     if (!thread || !via) return null;
     const [item] = itemsOf(principal.userId, [thread], runs.activeIn([id]));
@@ -523,9 +619,14 @@ export function createThreads(options: ThreadsOptions) {
     return access.require(principal, id, action).thread;
   }
 
+  // Whether the thread is a retired subagent's, which nobody posts in.
+  function retired(thread: Thread) {
+    return !!thread.parentThreadId && !!subagents?.find(thread.id)?.archivedAt;
+  }
+
   function canIn(principal: Principal, thread: Thread): ThreadCan {
     return {
-      post: access.can(principal, thread, "post"),
+      post: access.can(principal, thread, "post") && !retired(thread),
       arrange: access.can(principal, thread, "arrange"),
       share: access.can(principal, thread, "share"),
     };
@@ -534,6 +635,7 @@ export function createThreads(options: ThreadsOptions) {
   function readerOf(principal: Principal, thread: Thread): Reader {
     const space = spaceStore.find(thread.spaceId);
     return {
+      principal,
       userId: principal.userId,
       thread,
       space,
@@ -559,15 +661,29 @@ export function createThreads(options: ThreadsOptions) {
     const place = { order: index, seq: fold.changedAt(index), turn: fold.turnAt(index) };
     const { space, userId, thread, model } = reader;
     if (row.kind === "tool") {
-      const call = { ...row, ...place, ...reader.names(row) };
+      const started = startedSubagent(row);
+      const subagent = started ? subagents?.summaryOf(started) : null;
+      const subagentCall = subagent?.needs && waitingIn(subagent.threadId, reader.principal);
+      const call = {
+        ...row,
+        ...place,
+        ...reader.names(row),
+        ...(subagent && { subagent }),
+        ...(subagentCall && { subagentCall }),
+      };
       if (row.state !== "pending" || !row.waits || !space) return call;
       const may = tools.canDecide(userId, row, transcript.rows, thread, space, model);
-      if (tools.asks(row, space)) return { ...call, canAnswer: may };
+      // Where other agents' messages steered the call, whose words they carried.
+      const steering =
+        transcript.rows.some((other) => other.kind === "relay") &&
+        steeringLine(transcript.rows, subagents?.find(thread.id)?.name ?? AGENT_NAME);
+      const waiting = { ...call, ...(steering && { steering }) };
+      if (tools.asks(row, space)) return { ...waiting, canAnswer: may };
       const risk = tools.riskForCall(row, space, model);
       const connection = tools.connectionFor(space, row.toolId, userId, row.input);
       const forNow = risk === "normal" ? (["allow_for_now"] as const) : [];
       return {
-        ...call,
+        ...waiting,
         risk,
         actions: may ? ["allow", ...forNow, "deny"] : [],
         ...(connection && { connection }),
@@ -582,7 +698,23 @@ export function createThreads(options: ThreadsOptions) {
       const { command, ...message } = row;
       return { ...message, ...place, ...shownCommand(command) };
     }
+    if (row.kind === "relay") {
+      const { steeredBy: _steeredBy, ...message } = row;
+      return { ...message, ...place };
+    }
     return { ...row, ...place };
+  }
+
+  // The call the subagent's run waits on, as the reader sees it in the subagent's thread.
+  function waitingIn(threadId: string, principal: Principal) {
+    const thread = threads.find(threadId);
+    if (!thread) return null;
+    const fold = transcripts.of(threadId);
+    const transcript = fold.transcript();
+    const index = transcript.rows.findIndex((row) => row.id === transcript.run?.waitingOn);
+    if (index === -1) return null;
+    const shown = shownRow(fold, transcript, index, readerOf(principal, thread));
+    return shown.kind === "tool" && shown.state === "pending" && shown.waits ? shown : null;
   }
 
   // The thread as the reader sees it, without its rows: what they may do in it, the defaults it
@@ -594,7 +726,9 @@ export function createThreads(options: ThreadsOptions) {
     // The default that replies, with its effort.
     const following = space && (await models.replyModel(space, { model: null, effort: null }));
     const used = following?.used ? { used: following.used, effort: following.effort } : null;
+    const subagent = subagentOf(principal, thread);
     return {
+      ...(subagent && { subagent }),
       thread: threadSummary(thread),
       access: via,
       archived: spaces.isArchived(thread.spaceId),
@@ -609,6 +743,18 @@ export function createThreads(options: ThreadsOptions) {
     };
   }
 
+  // For a subagent's thread, the subagent as it is now and the thread that started it.
+  function subagentOf(principal: Principal, thread: Thread) {
+    const summary = thread.parentThreadId ? subagents?.summaryOf(thread.id) : null;
+    if (!summary) return null;
+    const parent = threads.find(thread.parentThreadId!);
+    return {
+      ...summary,
+      parent: { id: thread.parentThreadId!, title: parent?.title ?? UNTITLED },
+      canUnarchive: summary.state === "archived" && access.can(principal, thread, "post"),
+    };
+  }
+
   // Stores the message, with the command it was sent as. When it is not quiet and the agent is
   // idle, a run starts that takes it in; while a run is under way it waits to steer that run or to
   // start the next one, and an interrupt also asks the run under way to stop.
@@ -620,6 +766,7 @@ export function createThreads(options: ThreadsOptions) {
     guest = false,
     command?: SentCommand,
   ) {
+    if (retired(thread)) throw new ServiceError(409, "This subagent is archived");
     const quiet = !command && text.startsWith(QUIET_PREFIX);
     let first = false;
     const { events } = log.write(thread.id, (append) => {
@@ -866,7 +1013,8 @@ export function createThreads(options: ThreadsOptions) {
       const transcript = fold.transcript();
       const reader = readerOf(principal, threads.find(id) ?? thread);
       const seen = reads.seen(principal.userId, [id]).get(id) ?? 0;
-      const from = newFromOf(transcript, seen, principal.userId);
+      // A subagent's thread has nothing new in it, and opens at its newest.
+      const from = thread.parentThreadId ? -1 : newFromOf(transcript, seen, principal.userId);
       const total = transcript.rows.length;
       const start = Math.min(Math.max(0, total - ROWS_PAGE), from === -1 ? total : from);
       const rows = [];
@@ -928,8 +1076,14 @@ export function createThreads(options: ThreadsOptions) {
       const thread = visible(principal, id, "move");
       if (thread.spaceId === spaceId) throw new ServiceError(409, "The thread is already there");
       spaces.require(principal, spaceId, "message");
-      if (runs.active(id)) throw new ServiceError(409, "Stop the agent before moving this thread");
+      if (thread.parentThreadId)
+        throw new ServiceError(409, "A subagent's thread moves with its own");
+      const children = threads.children(id);
+      if ([id, ...children.map((child) => child.id)].some((one) => runs.active(one))) {
+        throw new ServiceError(409, "Stop the agent before moving this thread");
+      }
       const moved = threads.update(id, { spaceId });
+      for (const child of children) threads.update(child.id, { spaceId });
       bus.activity({ threadId: id });
       return threadSummary(moved);
     },
@@ -1096,14 +1250,24 @@ export function createThreads(options: ThreadsOptions) {
       );
     },
 
-    // Asks the run under way to stop; the agent keeps what it has written.
+    // Asks the run under way to stop, and those of the subagents the agent started; the agent keeps
+    // what it has written.
     stop(principal: Principal, id: string) {
       const thread = visible(principal, id, "post");
-      if (!stopRun(thread.id, principal.userId)) {
+      const own = !!stopRun(thread.id, principal.userId);
+      const theirs = subagents?.stopAll(thread.id, principal.userId) ?? false;
+      if (!own && !theirs) {
         throw new ServiceError(409, "The agent is not replying");
       }
       bus.wake(thread.id);
       bus.activity({ threadId: thread.id });
+    },
+
+    // Brings a retired subagent back, for someone who can post in its thread.
+    unarchive(principal: Principal, id: string) {
+      const thread = visible(principal, id, "post");
+      if (!thread.parentThreadId || !subagents) throw new ServiceError(404, "Subagent not found");
+      subagents.unarchive(thread.id);
     },
 
     // Starts a run that tries the thread's last run again, when it failed or was stopped and
@@ -1190,14 +1354,29 @@ export function createThreads(options: ThreadsOptions) {
       }
       // What the thread was named, set to and where it was, as last delivered.
       const placeOf = (thread: Thread) =>
-        JSON.stringify([thread.title, thread.model, thread.effort, thread.spaceId]);
+        JSON.stringify([
+          thread.title,
+          thread.model,
+          thread.effort,
+          thread.spaceId,
+          thread.parentThreadId && subagents?.summaryOf(thread.id),
+        ]);
       let place = placeOf(first);
       const unsubscribe = bus.subscribe(id, (item) => {
         if (replaying) held.push(item);
         else send(item);
       });
+      // The subagents started here, each of which shows where it stands on the line that started
+      // it; a start writes here, so they are read again when this thread changes.
+      const subagentsOf = () => new Set(threads.children(id).map((child) => child.id));
+      let started = subagentsOf();
       const stopActivity = bus.onActivity((change) => {
-        if (change.threadId !== id || change.read || change.gone) return;
+        if (change.read || change.gone) return;
+        if (change.threadId !== id) {
+          if (started.has(change.threadId)) sendRows();
+          return;
+        }
+        started = subagentsOf();
         const thread = threads.find(id);
         if (!thread || placeOf(thread) === place) return;
         place = placeOf(thread);
