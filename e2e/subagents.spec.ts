@@ -250,6 +250,16 @@ test("a send links to the message it delivered, which links back to the send", a
     "true",
   );
   await expect(lit.getByRole("link", { name: "Message to Writer" })).toBeVisible();
+
+  // Followed again after leaving the thread another way, the link lights the message again.
+  await lit.getByRole("link", { name: "Message to Writer" }).click();
+  await expect(message).toHaveAttribute("data-lit", "true");
+  await expect(message).not.toHaveAttribute("data-lit");
+  await page.locator("[data-slot=breadcrumb]").getByRole("link", { name: "Queue library" }).click();
+  await expect(page).toHaveURL(parentUrl);
+  // The send stays open as the reader left it.
+  await transcript(page).getByRole("link", { name: "Message to Writer" }).click();
+  await expect(message).toHaveAttribute("data-lit", "true");
 });
 
 test("subagents message each other, counted on the line that started them, and steer each other's calls", async ({

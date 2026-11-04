@@ -16,7 +16,7 @@
 // one of its rows opens the thread there, reading back to it, with the row opened and lit.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { getRouteApi } from "@tanstack/react-router";
+import { getRouteApi, useLocation } from "@tanstack/react-router";
 import { cn } from "cn";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -298,12 +298,19 @@ export function ThreadPage() {
   });
 
   // The row a link led to: once the thread is open it is read back to, when it is in an earlier
-  // page, and once here it opens, with the run it is in, is scrolled to and lit for a moment.
+  // page, and once here it opens, with the run it is in, is scrolled to and lit for a moment. Each
+  // time a link is followed it leads there again, even to where the page already is.
   const [focused, setFocused] = useState<string>();
   const [lit, setLit] = useState<string>();
+  const [followed, setFollowed] = useState(0);
+  const entry = useLocation({ select: (location) => location.state.__TSR_key });
   const reaching = useRef<string>(undefined);
+  const follow = useCallback(() => {
+    setLit(undefined);
+    setFollowed((count) => count + 1);
+  }, []);
   useEffect(() => {
-    const key = target && `${threadId}:${target}`;
+    const key = target && `${threadId}:${target}:${entry}:${followed}`;
     if (!key || !target || !opened || focused === key) return;
     if (!rows.some((row) => row.id === target)) {
       if (before === null || reaching.current === key) return;
@@ -328,8 +335,8 @@ export function ThreadPage() {
     return () => clearTimeout(timer);
   }, [lit]);
   const focus = useMemo(
-    () => ({ opened: openRows, onOpenChange: toggleRows, ...(lit && { lit }) }),
-    [openRows, toggleRows, lit],
+    () => ({ opened: openRows, onOpenChange: toggleRows, follow, ...(lit && { lit }) }),
+    [openRows, toggleRows, follow, lit],
   );
 
   // What the reader may do from a row.
