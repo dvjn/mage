@@ -23,8 +23,12 @@ export function SpaceThreads({ space }: { space: SpaceSummary }) {
   const [action, setAction] = useState<NavAction | null>(null);
 
   const nav = useMemo<Nav>(
-    () => ({ activeThreadId: threadId, act: setAction, role: space.role }),
-    [threadId, space.role],
+    () => ({
+      activeThreadId: threadId,
+      act: setAction,
+      can: { post: space.post, remove: space.remove },
+    }),
+    [threadId, space.post, space.remove],
   );
 
   const listed = threads.data?.threads ?? [];
@@ -44,9 +48,7 @@ export function SpaceThreads({ space }: { space: SpaceSummary }) {
           >
             {threads.isPending && <MenuSkeleton />}
             {threads.isSuccess && listed.length === 0 && (
-              <Empty>
-                {space.role === "viewer" ? "No threads yet." : "No threads yet. Start one above."}
-              </Empty>
+              <Empty>{space.post ? "No threads yet. Start one above." : "No threads yet."}</Empty>
             )}
           </GroupedThreads>
         </NavContext>

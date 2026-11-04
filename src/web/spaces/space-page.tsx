@@ -38,7 +38,7 @@ export function SpacePage() {
   // A team org's owner who manages the space without being in it does not see its threads.
   const reads = space?.role !== null;
   const archived = !!space?.archived;
-  const writes = !archived && (space?.role === "owner" || space?.role === "messager");
+  const writes = !!space?.post;
   const page = useQuery({ ...spaceThreadsPage(spaceId)(search), enabled: reads });
 
   useEffect(() => rememberSpace(spaceId), [spaceId]);

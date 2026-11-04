@@ -82,6 +82,30 @@ describe("space roles", () => {
     }
   });
 
+  it("tells each role what it may do with the space and its threads", async () => {
+    const { api, ada, grace, alan, space, thread, listSpaces } = await sharedSpace();
+
+    const told = async (cookie: string) => {
+      const [listed] = await listSpaces(cookie);
+      const detail = (await (await api("GET", `/threads/${thread.id}`, cookie)).json()) as {
+        can: unknown;
+      };
+      return { space: listed, can: detail.can };
+    };
+    expect(await told(grace.cookie)).toMatchObject({
+      space: { id: space.id, post: false, manage: false, remove: false },
+      can: { post: false, arrange: false, move: false, delete: false },
+    });
+    expect(await told(alan.cookie)).toMatchObject({
+      space: { post: true, manage: false, remove: false },
+      can: { post: true, arrange: true, move: false, delete: false },
+    });
+    expect(await told(ada.cookie)).toMatchObject({
+      space: { post: true, manage: true, remove: true },
+      can: { post: true, arrange: true, move: true, delete: true },
+    });
+  });
+
   it("lets the owner manage the space", async () => {
     const { api, ada, space, thread } = await sharedSpace();
 

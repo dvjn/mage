@@ -11,7 +11,8 @@ export type NavAction = ThreadAction;
 export interface Nav {
   activeThreadId: string | undefined;
   act: (action: NavAction) => void;
-  role: SpaceSummary["role"];
+  // What the reader may do with the space's threads.
+  can: Pick<SpaceSummary, "post" | "remove">;
 }
 
 export const NavContext = createContext<Nav | null>(null);

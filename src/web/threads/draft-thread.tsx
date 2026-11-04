@@ -1,7 +1,7 @@
 // A new thread before its first message: the composer, ready to write in, with the model and
 // effort pickers on the space's defaults, then its org's, which can be changed before sending;
 // sending makes the thread with them and opens it. Nothing is made until then.
-// Someone who can only view the space is sent to it instead, as they cannot start threads.
+// Someone the server does not let start threads there is sent to the space instead.
 
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi, Navigate } from "@tanstack/react-router";
@@ -96,7 +96,7 @@ export function DraftThread() {
   const { spaceId } = draftRoute.useParams();
   const spaces = useQuery(spacesQuery);
   const space = spaces.data?.find((s) => s.id === spaceId);
-  const viewer = space?.role === "viewer";
+  const barred = !!space && !space.post;
 
   useEffect(() => rememberSpace(spaceId), [spaceId]);
   // Ready to write in, as each new draft opens.
@@ -104,7 +104,7 @@ export function DraftThread() {
     document.querySelector<HTMLTextAreaElement>("textarea[aria-label=Message]")?.focus();
   }, [spaceId]);
 
-  if (viewer) return <Navigate to="/s/$spaceId" params={{ spaceId }} replace />;
+  if (barred) return <Navigate to="/s/$spaceId" params={{ spaceId }} replace />;
 
   return (
     <div className="flex h-full min-h-0 flex-col">

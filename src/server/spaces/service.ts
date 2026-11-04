@@ -213,7 +213,13 @@ const REFUSED: Record<SpaceAction, string> = {
 // Who acts: their org role is known for signed-in people, not for the authors of waiting messages.
 type Who = Pick<Principal, "userId" | "orgId"> & { role?: OrgRole };
 
-export type SpaceView = Space & { role: SpaceRole | null; manage: boolean; archived: boolean };
+export type SpaceView = Space & {
+  role: SpaceRole | null;
+  post: boolean;
+  manage: boolean;
+  remove: boolean;
+  archived: boolean;
+};
 
 export function createSpaces(options: SpacesOptions) {
   const { spaces, threads, models, directory, settings } = options;
@@ -323,7 +329,15 @@ export function createSpaces(options: SpacesOptions) {
   function view(who: Who, space: Space, role = roleIn(who, space)): SpaceView {
     const owner = space.createdBy ? directory.user(space.createdBy)?.name : null;
     const name = spaceNameFor(space, owner ?? "A former member", space.createdBy === who.userId);
-    return { ...space, name, role, manage: can(who, space, "manage"), archived: archived(space) };
+    return {
+      ...space,
+      name,
+      role,
+      post: can(who, space, "message"),
+      manage: can(who, space, "manage"),
+      remove: can(who, space, "remove"),
+      archived: archived(space),
+    };
   }
 
   // The space when the principal may take the action there. A space they cannot see is not found,

@@ -21,8 +21,12 @@ export const spaceSchema = z.object({
   primary: z.boolean(),
   // The reader's role in it; null for a team org's owner who manages it without one.
   role: spaceRoleSchema.nullable(),
+  // The reader may start threads and post in them.
+  post: z.boolean(),
   // The reader may change its settings and who is in it.
   manage: z.boolean(),
+  // The reader may delete its threads and move them out.
+  remove: z.boolean(),
   // A member's own space while their org does not allow them: its person may read it, move its
   // threads out and delete them or it, nothing more.
   archived: z.boolean(),

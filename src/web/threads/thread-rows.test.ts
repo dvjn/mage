@@ -42,7 +42,7 @@ function detail(rows: ShownRow[], before: number | null, lastEventSeq = 0): Thre
     access: { via: "space", role: "owner" },
     archived: false,
     agentName: "Agent",
-    can: { post: true, arrange: true, share: true },
+    can: { post: true, arrange: true, share: true, move: true, delete: true },
     levels: {},
     tools: [],
     defaults: { model: null, effort: null },

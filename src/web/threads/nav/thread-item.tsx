@@ -1,5 +1,5 @@
-// A thread's row in the sidebar, with a menu to rename or delete it for those whose role allows
-// it. A thread whose agent started subagents has a caret on its row that shows them beneath it as
+// A thread's row in the sidebar, with a menu to rename or delete it for those the server lets. A
+// thread whose agent started subagents has a caret on its row that shows them beneath it as
 // rows of their own: open once one of them works, waits or is open, and folded otherwise, until the
 // person chooses; retired subagents stay out of the list, reached from the thread.
 
@@ -111,15 +111,17 @@ export function ThreadItem({ thread }: { thread: ThreadListItem }) {
             />
           </button>
         )}
-        {nav.role !== "viewer" && (
+        {(nav.can.post || nav.can.remove) && (
           <ItemMenu name={thread.title} besideCaret={subagents.length > 0}>
-            <DropdownMenuItem onClick={() => nav.act({ kind: "rename-thread", thread })}>
-              <PencilIcon />
-              Rename
-            </DropdownMenuItem>
-            {nav.role === "owner" && (
+            {nav.can.post && (
+              <DropdownMenuItem onClick={() => nav.act({ kind: "rename-thread", thread })}>
+                <PencilIcon />
+                Rename
+              </DropdownMenuItem>
+            )}
+            {nav.can.remove && (
               <>
-                <DropdownMenuSeparator />
+                {nav.can.post && <DropdownMenuSeparator />}
                 <DropdownMenuItem
                   variant="destructive"
                   onClick={() => nav.act({ kind: "delete-thread", thread })}

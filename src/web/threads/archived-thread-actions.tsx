@@ -6,6 +6,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { ArrowRightLeftIcon, Trash2Icon } from "lucide-react";
 import { useId, useState } from "react";
 
+import type { ThreadCan } from "@/shared/threads/detail.ts";
 import type { ThreadSummary } from "@/shared/threads/thread.ts";
 import { ConfirmDialog } from "@/web/components/confirm-dialog";
 import { Button } from "@/web/components/ui/button";
@@ -35,12 +36,7 @@ function MoveThread({ thread }: { thread: ThreadSummary }) {
   const move = useMoveThreadToSpace(thread);
   const [open, setOpen] = useState(false);
   const [target, setTarget] = useState<string | null>(null);
-  const targets = (spaces.data ?? []).filter(
-    (space) =>
-      !space.archived &&
-      space.id !== thread.spaceId &&
-      (space.role === "owner" || space.role === "messager"),
-  );
+  const targets = (spaces.data ?? []).filter((space) => space.post && space.id !== thread.spaceId);
 
   return (
     <Dialog
@@ -117,11 +113,17 @@ function DeleteThread({ thread }: { thread: ThreadSummary }) {
   );
 }
 
-export function ArchivedThreadActions({ thread }: { thread: ThreadSummary }) {
+export function ArchivedThreadActions({
+  thread,
+  can,
+}: {
+  thread: ThreadSummary;
+  can: Pick<ThreadCan, "move" | "delete">;
+}) {
   return (
     <div className="flex items-center gap-2 px-4">
-      <MoveThread thread={thread} />
-      <DeleteThread thread={thread} />
+      {can.move && <MoveThread thread={thread} />}
+      {can.delete && <DeleteThread thread={thread} />}
     </div>
   );
 }

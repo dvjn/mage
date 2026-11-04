@@ -415,7 +415,9 @@ export function ThreadPage() {
           </Button>
         )}
         {can?.share && !subagent && <ShareDialog threadId={threadId} />}
-        {archived && !guest && thread && <ArchivedThreadActions thread={thread} />}
+        {archived && thread && can && (can.move || can.delete) && (
+          <ArchivedThreadActions thread={thread} can={can} />
+        )}
       </PageHeader>
       <ThreadAgentContext.Provider value={agent}>
         <RowFocusContext.Provider value={focus}>

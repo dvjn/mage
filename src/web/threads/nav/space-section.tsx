@@ -1,5 +1,5 @@
-// The sidebar's space section: starts a thread and opens the space's settings, as the person's
-// role allows.
+// The sidebar's space section: starts a thread and opens the space's settings, as the server lets
+// the person.
 
 import { Link, useMatchRoute } from "@tanstack/react-router";
 import { PlusIcon, Settings2Icon } from "lucide-react";
@@ -18,14 +18,12 @@ import { useNewThread } from "@/web/threads/nav/use-new-thread";
 export function SpaceSection({ space }: { space: SpaceSummary }) {
   const matchRoute = useMatchRoute();
   const newThread = useNewThread();
-  const writer = space.role === "owner" || space.role === "messager";
-  // A viewer has nothing to do here.
-  if (!writer && !space.manage) return null;
+  if (!space.post && !space.manage) return null;
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Space</SidebarGroupLabel>
       <SidebarMenu>
-        {writer && (
+        {space.post && (
           <SidebarMenuItem>
             <SidebarMenuButton
               isActive={!!matchRoute({ to: "/s/$spaceId/new", params: { spaceId: space.id } })}

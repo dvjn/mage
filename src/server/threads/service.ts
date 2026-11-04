@@ -654,6 +654,8 @@ export function createThreads(options: ThreadsOptions) {
       post: access.can(principal, thread, "post") && !retired(thread),
       arrange: access.can(principal, thread, "arrange"),
       share: access.can(principal, thread, "share"),
+      move: access.can(principal, thread, "move"),
+      delete: access.can(principal, thread, "delete"),
     };
   }
 

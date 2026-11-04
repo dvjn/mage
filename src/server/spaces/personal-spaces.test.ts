@@ -123,9 +123,18 @@ describe("personal spaces in team orgs", () => {
 
     await allow(workspace, ada, false);
     const listed = (await spacesOf(workspace, grace)).find((space) => space.id === mine.id);
-    expect(listed).toMatchObject({ archived: true, role: "owner", manage: false });
+    expect(listed).toMatchObject({
+      archived: true,
+      role: "owner",
+      post: false,
+      manage: false,
+      remove: true,
+    });
     const detail = await api("GET", `/threads/${thread.id}`, grace.cookie, undefined, grace.orgId);
-    expect(await detail.json()).toMatchObject({ archived: true });
+    expect(await detail.json()).toMatchObject({
+      archived: true,
+      can: { post: false, move: true, delete: true },
+    });
     const refused = await post(workspace, grace, thread.id, "more");
     expect(refused.status).toBe(403);
     expect(await refused.json()).toEqual({ error: "This space is archived" });
