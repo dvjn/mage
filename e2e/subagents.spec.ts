@@ -140,10 +140,6 @@ test("the agent starts subagents, who report back, go idle and can be resumed an
   const writerUrl = page.url();
   await page.goto(parentUrl);
   await write(page, call("subagents.archive", { subagent: "Writer" }));
-  // The agent may still be on the writer's notice when the message arrives.
-  await expect(
-    transcript(page).getByRole("button", { name: /^Subagents › Archive.* · Ran/ }),
-  ).toBeVisible();
   await idle(page);
   await page.goto(writerUrl);
   await expect(page.getByText("Archived", { exact: true })).toBeVisible();

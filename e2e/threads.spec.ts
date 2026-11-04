@@ -50,6 +50,30 @@ test("a message posted in a new thread is there after a reload", async ({ page }
   ).toBeVisible();
 });
 
+test("a message stays in the composer until it is posted, so leaving once it empties loses nothing", async ({
+  page,
+}) => {
+  await signUp(page);
+  await send(page, "First");
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  await expect(messages(page).getByText("First")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/api/v1/threads/*/messages", async (route) => {
+    await held;
+    await route.continue();
+  });
+  const box = page.getByLabel("Message", { exact: true });
+  await send(page, "Second");
+  await expect(box).toHaveValue("Second");
+  release();
+  await expect(box).toHaveValue("");
+  await page.reload();
+  await expect(messages(page).getByText("Second")).toBeVisible();
+});
+
 test("a second space can be made, renamed and switched from the sidebar header", async ({
   page,
 }) => {

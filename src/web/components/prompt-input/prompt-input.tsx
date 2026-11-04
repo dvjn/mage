@@ -382,11 +382,13 @@ export const PromptInput = ({
             return (formData.get("message") as string) || "";
           })();
 
-      // Reset form immediately after capturing text to avoid race condition
-      // where user input during async blob conversion would be lost
-      if (!usingProvider) {
-        form.reset();
-      }
+      // The text stays until it is sent, so leaving before then does not lose it unseen; what the
+      // person wrote meanwhile is kept.
+      const sent = () => {
+        if (usingProvider) return;
+        const field = form.elements.namedItem("message");
+        if (field instanceof HTMLTextAreaElement && field.value === text) form.reset();
+      };
 
       try {
         const convertedFiles: FileUIPart[] = await Promise.all(
@@ -408,6 +410,7 @@ export const PromptInput = ({
         if (result instanceof Promise) {
           try {
             await result;
+            sent();
             clear();
             if (usingProvider) {
               controller.textInput.clear();
@@ -416,6 +419,7 @@ export const PromptInput = ({
             // Don't clear on error - user may want to retry
           }
         } else {
+          sent();
           clear();
           if (usingProvider) {
             controller.textInput.clear();

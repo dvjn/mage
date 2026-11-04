@@ -177,17 +177,10 @@ export function Composer({
           mode.current = "steer";
           const command = commandOf(message.text);
           const known = command && commands.some((found) => found.name === command.name);
-          show("");
-          // A message that is not posted goes back in the composer.
-          return onSend(message.text, delivery, known ? command : undefined).catch(
-            (err: unknown) => {
-              if (textarea.current && !textarea.current.value) {
-                textarea.current.value = message.text;
-                show(message.text);
-              }
-              throw err;
-            },
-          );
+          // The text leaves the composer once it is posted, unless the reader changed it meanwhile.
+          return onSend(message.text, delivery, known ? command : undefined).then(() => {
+            if (textarea.current?.value === message.text) show("");
+          });
         }}
       >
         <PromptInputBody>
