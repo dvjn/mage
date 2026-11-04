@@ -42,6 +42,8 @@ import type { Principal } from "@/server/orgs/identity.ts";
 import type { OrgSettingStore } from "@/server/orgs/service.ts";
 import type { Space, Spaces } from "@/server/spaces/service.ts";
 import {
+  contentText,
+  type McpContentPart,
   type McpAuthInput,
   type McpAuthSummary,
   type McpConnectHeaders,
@@ -266,31 +268,17 @@ export function riskOfAnnotations(annotations: Record<string, unknown> | undefin
     : "normal";
 }
 
-function textOf(value: unknown) {
-  return typeof value === "string" ? value : "";
-}
-
-// A tool's result as the thread keeps it: its structured content, else its text, or why it failed.
+// A tool's result as the thread keeps it: its structured content, else its text, or its content
+// parts where they hold more than text, such as images and links; or why it failed.
 export function outputOf(result: McpCallResult): ToolOutput {
-  const text = result.content
-    .map((part) => {
-      switch (part.type) {
-        case "text":
-          return textOf(part.text);
-        case "resource_link":
-          return `${textOf(part.name)} ${textOf(part.uri)}`.trim();
-        case "resource": {
-          const resource = (part.resource ?? {}) as { text?: string; uri?: string };
-          return resource.text ?? resource.uri ?? "";
-        }
-        default:
-          return `[${[part.type, part.mimeType].map(textOf).filter(Boolean).join(" ")}]`;
-      }
-    })
-    .filter(Boolean)
-    .join("\n");
+  const parts = result.content.filter(
+    (part): part is McpContentPart => typeof part.type === "string",
+  );
+  const text = contentText(parts);
   if (result.isError) return { ok: false, error: text || "The tool failed." };
-  return { ok: true, value: result.structuredContent ?? text };
+  if (result.structuredContent) return { ok: true, value: result.structuredContent };
+  const plain = parts.every((part) => part.type === "text");
+  return { ok: true, value: plain ? text : { content: parts } };
 }
 
 // Headers as the server keeps them: a value left out keeps the one stored under its name.

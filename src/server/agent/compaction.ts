@@ -10,6 +10,7 @@
 import type { ModelUsage } from "@/server/models/gateway.ts";
 import type { OpenModel } from "@/server/models/service.ts";
 import type { Actor, NewEvent } from "@/server/threads/service.ts";
+import { valueForAgent } from "@/shared/mcp.ts";
 import {
   asksToCompact,
   type CompactionRow,
@@ -36,7 +37,9 @@ function json(value: unknown) {
 
 // What a tool call gave back, as the agent reads it.
 function resultOf(row: ToolRow) {
-  if (row.output) return row.output.ok ? json(row.output.value) : `Error: ${row.output.error}`;
+  if (row.output) {
+    return row.output.ok ? json(valueForAgent(row.output.value)) : `Error: ${row.output.error}`;
+  }
   if (row.state === "skipped") return "Skipped.";
   if (row.state === "pending" || row.state === "allowed") return null;
   return "Not run.";

@@ -5,8 +5,9 @@
 // in the order the agent saw them, each person's prefixed with their name, a command they sent read
 // as what it stands for, each reply with the tool calls it asked for and what they gave back. Quiet
 // asides are included; replies still being written, and replies cut short that were tried again,
-// are not. A call that did not run gives back only that it was not approved, or that its questions
-// were skipped. Once the thread is compacted, the summary closes the system prompt and the messages
+// are not. Content parts a call gave back read as their text, an image named by its type. A call
+// that did not run gives back only that it was not approved, or that its questions were skipped.
+// Once the thread is compacted, the summary closes the system prompt and the messages
 // start where the compaction cut it. The notifications the agent took in together read as one
 // message saying they are not a person's instructions, other agents' messages among them named for
 // the agent that sent them; subagents that ended runs, as older threads were told, read as one
@@ -15,6 +16,7 @@
 // when it started.
 
 import type { ModelMessage, ModelToolResult } from "@/server/models/gateway.ts";
+import { valueForAgent } from "@/shared/mcp.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import { QUIET_PREFIX } from "@/shared/threads/events.ts";
 import type {
@@ -227,7 +229,12 @@ function resultOf(row: ToolRow): ModelToolResult | null {
       return null;
     case "ran":
     case "failed":
-      return row.output && { callId, toolId, output: row.output };
+      if (!row.output) return null;
+      return {
+        callId,
+        toolId,
+        output: row.output.ok ? { ok: true, value: valueForAgent(row.output.value) } : row.output,
+      };
     case "skipped":
       return { callId, toolId, output: { ok: true, value: { skipped: true } } };
     default:

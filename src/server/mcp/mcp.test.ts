@@ -11,6 +11,7 @@ import {
   mcpHeadersInputSchema,
   type McpServerSummary,
   mcpSlugOf,
+  valueForAgent,
 } from "@/shared/mcp.ts";
 import type { ThreadDetail } from "@/shared/threads/detail.ts";
 import type { ActorSummary } from "@/shared/threads/events.ts";
@@ -112,7 +113,7 @@ describe("headers", () => {
 });
 
 describe("a tool's result", () => {
-  it("keeps structured content, else the text, and an error as its text", () => {
+  it("keeps structured content, else the text or the parts beyond it, and an error as its text", () => {
     expect(
       outputOf({ content: [{ type: "text", text: "{}" }], structuredContent: { id: "n" } }),
     ).toEqual({ ok: true, value: { id: "n" } });
@@ -120,11 +121,19 @@ describe("a tool's result", () => {
       outputOf({
         content: [
           { type: "text", text: "Here" },
-          { type: "image", mimeType: "image/png", data: "…" },
-          { type: "resource_link", name: "Spec", uri: "file:///spec.md" },
+          { type: "text", text: "and there" },
         ],
       }),
-    ).toEqual({ ok: true, value: "Here\n[image image/png]\nSpec file:///spec.md" });
+    ).toEqual({ ok: true, value: "Here\nand there" });
+    const parts = [
+      { type: "text", text: "Here" },
+      { type: "image", mimeType: "image/png", data: "iVBO" },
+      { type: "resource_link", name: "Spec", uri: "https://example.com/spec.md" },
+    ];
+    expect(outputOf({ content: parts })).toEqual({ ok: true, value: { content: parts } });
+    expect(valueForAgent({ content: parts })).toBe(
+      "Here\n[image image/png]\nSpec https://example.com/spec.md",
+    );
     expect(outputOf({ content: [{ type: "text", text: "No note" }], isError: true })).toEqual({
       ok: false,
       error: "No note",

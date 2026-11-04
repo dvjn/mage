@@ -5,6 +5,7 @@
 // when it shows. A call's output is laid out by what it returned: why it failed, text as Markdown
 // (or its value, when the text is JSON), MCP's content parts one by one, or its value.
 
+import { contentPartsOf } from "@/shared/mcp.ts";
 import type { JsonSchema } from "@/shared/tools.ts";
 
 export type Scalar = string | number | boolean | null;
@@ -152,17 +153,6 @@ function textLayout(text: string, schema?: JsonSchema): OutputLayout {
     : { kind: "markdown", text };
 }
 
-// MCP's content parts, where a value is a result's content.
-function partsOf(value: unknown): Record<string, unknown>[] | undefined {
-  if (!isObject(value) || !Array.isArray(value.content) || value.content.length === 0) {
-    return undefined;
-  }
-  const { content } = value;
-  return content.every((part) => isObject(part) && typeof part.type === "string")
-    ? (content as Record<string, unknown>[])
-    : undefined;
-}
-
 function textOf(value: unknown) {
   return typeof value === "string" ? value : undefined;
 }
@@ -207,7 +197,7 @@ export function outputLayoutOf(
   if (!output.ok) return { kind: "error", text: output.error };
   const { value } = output;
   if (typeof value === "string") return textLayout(value, schema);
-  const parts = partsOf(value);
+  const parts = contentPartsOf(value);
   if (parts) return { kind: "parts", parts: parts.map(partOf) };
   return { kind: "value", layout: layoutOf(value, schema) };
 }

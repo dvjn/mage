@@ -311,3 +311,55 @@ export function mcpToolOf(toolId: string): { serverId: string; name: string } | 
   const match = /^mcp:([^/]+)\/(.+)$/s.exec(toolId);
   return match ? { serverId: match[1]!, name: match[2]! } : null;
 }
+
+// One of MCP's content parts, as a tool's result keeps them when they hold more than text, such as
+// an image or a link.
+export type McpContentPart = Record<string, unknown> & { type: string };
+
+function textOf(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+// The content parts a tool's result value holds, when it is kept as parts.
+export function contentPartsOf(value: unknown): McpContentPart[] | undefined {
+  if (typeof value !== "object" || value === null || !("content" in value)) return undefined;
+  const { content } = value;
+  return Array.isArray(content) &&
+    content.length > 0 &&
+    content.every(
+      (part) =>
+        typeof part === "object" &&
+        part !== null &&
+        typeof (part as { type?: unknown }).type === "string",
+    )
+    ? (content as McpContentPart[])
+    : undefined;
+}
+
+// The parts as the agent reads them: text as it is, a link or a resource by its name and address,
+// and anything else, such as an image, named by its type.
+export function contentText(parts: readonly McpContentPart[]) {
+  return parts
+    .map((part) => {
+      switch (part.type) {
+        case "text":
+          return textOf(part.text);
+        case "resource_link":
+          return `${textOf(part.name)} ${textOf(part.uri)}`.trim();
+        case "resource": {
+          const resource = (part.resource ?? {}) as { text?: string; uri?: string };
+          return resource.text ?? resource.uri ?? "";
+        }
+        default:
+          return `[${[part.type, part.mimeType].map(textOf).filter(Boolean).join(" ")}]`;
+      }
+    })
+    .filter(Boolean)
+    .join("\n");
+}
+
+// A tool's result value as the agent reads it: content parts as their text, anything else as it is.
+export function valueForAgent(value: unknown) {
+  const parts = contentPartsOf(value);
+  return parts ? contentText(parts) : value;
+}
