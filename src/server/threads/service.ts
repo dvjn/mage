@@ -74,6 +74,7 @@ import type { ThreadSearchResult } from "@/shared/threads/search.ts";
 import { type Effort, UNTITLED, type ThreadSummary } from "@/shared/threads/thread.ts";
 import { toolIdNow } from "@/shared/tools.ts";
 import type {
+  LimitRow,
   PendingMessage,
   RelayRow,
   SentCommand,
@@ -741,6 +742,11 @@ export function createThreads(options: ThreadsOptions) {
           : null;
       return { ...message, ...place, ...(sentBy && { sentBy }), ...(source && { source }) };
     }
+    if (row.kind === "limit") {
+      const { call: _call, ...limit } = row;
+      const sentBy = sentByOf(row, reader);
+      return { ...limit, ...place, ...(sentBy && { sentBy }) };
+    }
     return { ...row, ...place };
   }
 
@@ -794,9 +800,9 @@ export function createThreads(options: ThreadsOptions) {
     return effects.filter((effect) => readable(reader.principal, effect.threadId));
   }
 
-  // The call that sent another agent's message, as the reader may follow it back: in a thread they
-  // may read, named as its line there is.
-  function sentByOf(row: RelayRow, reader: Reader) {
+  // The call that sent another agent's message, or that was refused past the limit, as the reader
+  // may follow it back: in a thread they may read, named as its line there is.
+  function sentByOf(row: RelayRow | LimitRow, reader: Reader) {
     const call = row.call;
     const thread = call && threads.find(call.threadId);
     if (!call || !thread || !access.can(reader.principal, thread, "read")) return null;

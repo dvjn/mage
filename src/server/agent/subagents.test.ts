@@ -855,8 +855,18 @@ describe("subagents", () => {
 
   it(`send each other at most ${MESSAGE_LIMIT} messages, telling their starter once`, async () => {
     const workspace = await subagentThread();
-    const { ada, post, thread, start, calls, answer, subagentNamed, rowsOf, keepAnswering } =
-      workspace;
+    const {
+      ada,
+      post,
+      thread,
+      start,
+      calls,
+      answer,
+      subagentNamed,
+      rowsOf,
+      rowsShown,
+      keepAnswering,
+    } = workspace;
     start();
     await post(ada, "Go");
     await calls(
@@ -884,6 +894,21 @@ describe("subagents", () => {
       error: `Your subagents have sent each other ${MESSAGE_LIMIT} messages, the most they may. Send what you have to agent instead.`,
     });
     expect(rowsOf(thread.id).filter((row) => row.kind === "limit")).toHaveLength(1);
+
+    // The limit links to the call first refused, named as its line is.
+    const chatty = subagentNamed("Chatty");
+    const refused = rowsOf(chatty).find((row) => row.kind === "tool" && row.output?.ok === false);
+    const limit = (await rowsShown(thread.id, ada.cookie)).rows.find((row) => row.kind === "limit");
+    expect(limit).toMatchObject({
+      sentBy: {
+        threadId: chatty,
+        rowId: refused!.id,
+        title: "Send",
+        toolset: "Subagents",
+        thread: "Chatty",
+      },
+    });
+    expect(limit).not.toHaveProperty("call");
   });
 
   it("carry whose words steered a message, and say so on the call it steered", async () => {

@@ -183,6 +183,16 @@ const compactionRowSchema = z.object({
   tokensAfter: z.number().int().nonnegative().nullable(),
 });
 
+// The call another agent's message or a refusal came of, as the reader may follow it back: in a
+// thread they may read, with what the call's tool is called and what the thread goes by.
+const sentBySchema = z.object({
+  threadId: z.string(),
+  rowId: z.string(),
+  title: z.string(),
+  toolset: z.string().nullable(),
+  thread: z.string(),
+});
+
 // A notification: what it tells and the agent whose thread it came from. A message from another
 // agent, a subagent's or one from the agent that started this thread's subagent, says whom it went
 // to, and the first of them is its task, with what the subagent was set to do beside it. Where the
@@ -198,15 +208,7 @@ const relayRowSchema = z.object({
   text: z.string(),
   task: subagentTaskSchema.optional(),
   source: z.object({ threadId: z.string(), rowId: z.string() }).optional(),
-  sentBy: z
-    .object({
-      threadId: z.string(),
-      rowId: z.string(),
-      title: z.string(),
-      toolset: z.string().nullable(),
-      thread: z.string(),
-    })
-    .optional(),
+  sentBy: sentBySchema.optional(),
 });
 
 // Subagents that ended runs, told together: each with where it stands and the last thing it said.
@@ -223,11 +225,13 @@ const noticeRowSchema = z.object({
   ),
 });
 
-// The thread's subagents sent each other as many messages as they may.
+// The thread's subagents sent each other as many messages as they may, linking to the call first
+// refused where the reader may read its thread.
 const limitRowSchema = z.object({
   ...rowFields,
   kind: z.literal("limit"),
   limit: z.number().int().positive(),
+  sentBy: sentBySchema.optional(),
 });
 
 // An event this client does not know how to show.

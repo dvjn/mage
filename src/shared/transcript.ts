@@ -198,12 +198,14 @@ export interface NoticeRow {
   subagents: SubagentEnded[];
 }
 
-// The thread's subagents sent each other as many messages as they may.
+// The thread's subagents sent each other as many messages as they may, with the call first
+// refused, where known.
 export interface LimitRow {
   kind: "limit";
   id: string;
   seq: number;
   limit: number;
+  call?: Cause;
 }
 
 // An event this client does not know how to show.
@@ -463,7 +465,13 @@ export function createFold(): TranscriptFold {
         break;
       }
       case "subagent.limited":
-        push({ kind: "limit", id: event.id, seq: event.seq, limit: event.data.limit });
+        push({
+          kind: "limit",
+          id: event.id,
+          seq: event.seq,
+          limit: event.data.limit,
+          ...(event.data.call && { call: event.data.call }),
+        });
         break;
       case "message.admitted":
         for (const id of event.data.messageIds) {

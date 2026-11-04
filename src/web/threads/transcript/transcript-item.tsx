@@ -10,6 +10,7 @@ import { FailureNotice } from "@/web/threads/transcript/failure-notice";
 import { HumanMessage } from "@/web/threads/transcript/human-message";
 import { RetryButton } from "@/web/threads/transcript/retry-button";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
+import { RowLink } from "@/web/threads/transcript/row-focus";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
 
 export function TranscriptItem({
@@ -59,6 +60,19 @@ export function TranscriptItem({
       return (
         <p role="status" className="text-center text-xs text-muted-foreground">
           Subagents sent each other {row.limit} messages; more are refused
+          {row.sentBy && (
+            <>
+              {" · "}
+              <RowLink
+                threadId={row.sentBy.threadId}
+                rowId={row.sentBy.rowId}
+                className="font-medium text-foreground underline-offset-2 hover:underline"
+              >
+                {[row.sentBy.toolset, row.sentBy.title].filter(Boolean).join(" › ")}
+              </RowLink>{" "}
+              in {row.sentBy.thread}
+            </>
+          )}
         </p>
       );
     case "unknown":
