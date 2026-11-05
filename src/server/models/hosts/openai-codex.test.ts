@@ -135,7 +135,7 @@ function recordingFetch(responses: Response[]) {
 
 const request: Omit<ModelRequest, "beforeStep"> = {
   model: "gpt-5.5",
-  instructions: "You are the agent in Mage.",
+  instructions: "You are the agent.",
   messages: [
     { role: "user", text: "[Ada Lovelace] How do engines compute?" },
     { role: "assistant", text: "With gears." },
@@ -171,7 +171,7 @@ describe("Codex gateway", () => {
       model: "gpt-5.5",
       stream: true,
       store: false,
-      instructions: "You are the agent in Mage.",
+      instructions: "You are the agent.",
       include: ["reasoning.encrypted_content"],
       prompt_cache_key: "thread-1",
       input: [

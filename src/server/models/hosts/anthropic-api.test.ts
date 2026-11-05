@@ -93,7 +93,7 @@ function recordingFetch(responses: Response[]) {
 
 const request: Omit<ModelRequest, "beforeStep"> = {
   model: "claude-sonnet-4-5",
-  instructions: "You are the agent in Mage.",
+  instructions: "You are the agent.",
   messages: [
     { role: "user", text: "[Ada Lovelace] How do engines compute?" },
     { role: "assistant", text: "With gears." },
@@ -213,7 +213,7 @@ describe("Anthropic API key gateway", () => {
     expect(sent?.body).toMatchObject({
       model: "claude-sonnet-4-5",
       stream: true,
-      system: [{ type: "text", text: "You are the agent in Mage." }],
+      system: [{ type: "text", text: "You are the agent." }],
       messages: [
         {
           role: "user",

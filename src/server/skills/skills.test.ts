@@ -232,7 +232,7 @@ describe("the skills on in a space", () => {
 
 describe("the system prompt", () => {
   it("lists the skills after the instructions", () => {
-    const prompt = instructionsFor(["Ada"], {
+    const prompt = instructionsFor({
       org: "Be brief.",
       space: "Use British spelling.",
       skills: [{ name: "release-notes", description: "Write release notes" }],

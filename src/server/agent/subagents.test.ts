@@ -981,7 +981,7 @@ describe("subagents", () => {
       "subagents.start",
       { name: "Namer", task: "Rename your thread" },
     ]);
-    expect(first.request.instructions).toContain("You are Mira, the agent in Mage");
+    expect(first.request.instructions).toContain("You are Mira, the agent in a workspace");
     await answer(thread.id);
     const namer = subagentNamed("Namer");
     const told = await calls(namer, ["thread.rename", { title: "Named" }]);

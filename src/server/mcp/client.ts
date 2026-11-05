@@ -268,7 +268,7 @@ function providerOf(oauth: McpOAuthStore, client: McpOAuthClient, flow: Flow): O
       flow.verifier.value = verifier;
     },
     codeVerifier() {
-      if (!flow.verifier.value) throw new McpError("needs_auth", "Authorize Mage again.");
+      if (!flow.verifier.value) throw new McpError("needs_auth", "Authorize again.");
       return flow.verifier.value;
     },
     // A client people entered is kept; any other is chosen again.
@@ -311,13 +311,13 @@ export function mcpFailure(err: unknown, target: Pick<McpTarget, "url" | "auth">
   if (err instanceof UnauthorizedError || err instanceof OAuthError) {
     return new McpError(
       oauth ? "needs_auth" : "error",
-      "The server needs Mage authorized again.",
+      "The server needs authorizing again.",
       true,
     );
   }
   if (status === 401 || status === 403) {
     return oauth
-      ? new McpError("needs_auth", "The server needs Mage authorized again.")
+      ? new McpError("needs_auth", "The server needs authorizing again.")
       : new McpError(
           "error",
           target.auth.kind === "headers"

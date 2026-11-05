@@ -1,19 +1,18 @@
-// What the agent is given to reply from: a short system prompt naming Mage and the people in the
-// thread, followed by the org's instructions, the space's, what the MCP servers whose tools it is
-// offered say about them, the servers' tools left out until it searches for them, what Mage's own
-// toolsets on there tell it and the skills on there, when there are any, and the thread's messages
-// in the order the agent saw them, each person's prefixed with their name, a command they sent read
-// as what it stands for, each reply with the tool calls it asked for and what they gave back. Quiet
-// asides are included; replies still being written, and replies cut short that were tried again,
-// are not. Content parts a call gave back read as their text, an image named by its type. A call
-// that did not run gives back only that it was not approved, or that its questions were skipped.
-// Once the thread is compacted, the summary closes the system prompt and the messages
-// start where the compaction cut it. The notifications the agent took in together read as one
-// message saying they are not a person's instructions, other agents' messages among them named for
-// the agent that sent them; subagents that ended runs, as older threads were told, read as one
-// line each. A subagent is told what it is, who started it and what it was told beside its task,
-// and may read before its own thread the conversation of the thread that started it, as it was
-// when it started.
+// What the agent is given to reply from: a short system prompt about the shared thread, followed by the org's
+// instructions, the space's, what the MCP servers whose tools it is offered say about them, the
+// servers' tools left out until it searches for them, what Mage's own toolsets on there tell it and
+// the skills on there, when there are any, and the thread's messages in the order the agent saw
+// them, each person's prefixed with their name, a command they sent read as what it stands for,
+// each reply with the tool calls it asked for and what they gave back. Quiet asides are included;
+// replies still being written, and replies cut short that were tried again, are not. Content parts
+// a call gave back read as their text, an image named by its type. A call that did not run gives
+// back only that it was not approved, or that its questions were skipped. Once the thread is
+// compacted, the summary closes the system prompt and the messages start where the compaction cut
+// it. The notifications the agent took in together read as one message saying they are not a
+// person's instructions, other agents' messages among them named for the agent that sent them;
+// subagents that ended runs, as older threads were told, read as one line each. A subagent is told
+// what it is, who started it and what it was told beside its task, and may read before its own
+// thread the conversation of the thread that started it, as it was when it started.
 
 import type { ModelMessage, ModelToolResult } from "@/server/models/gateway.ts";
 import { valueForAgent } from "@/shared/mcp.ts";
@@ -146,16 +145,11 @@ function named({ agentName, subagent }: Guidance) {
 // What heads the summary of a compacted thread's earlier conversation.
 export const COMPACTED_HEADING = "Summary of the earlier conversation in this thread, compacted.";
 
-export function instructionsFor(
-  people: string[],
-  guidance: Guidance = NO_GUIDANCE,
-  summary: string | null = null,
-) {
+export function instructionsFor(guidance: Guidance = NO_GUIDANCE, summary: string | null = null) {
   const sections = [
     [
-      `You are ${named(guidance)}the agent in Mage, a workspace where people talk with you and with each other in shared threads.`,
-      `The people in this thread: ${people.join(", ")}.`,
-      "Each of their messages starts with the writer's name in brackets, like [Ada Lovelace]. Your replies do not start with a name.",
+      `You are ${named(guidance)}the agent in a workspace where people talk with you and with each other in shared threads.`,
+      "Each person's message starts with the writer's name in brackets, like [Ada Lovelace]. Your replies do not start with a name.",
       `A message starting with ${QUIET_PREFIX} is an aside between people: take it in as context, but do not answer it.`,
       "Reply in Markdown.",
     ].join("\n"),
@@ -249,8 +243,6 @@ export function contextOf(
   guidance: Guidance = NO_GUIDANCE,
   before: readonly ModelMessage[] = [],
 ): Context {
-  const people = new Set<string>();
-  for (const row of thread) if (row.kind === "human") people.add(row.author.name);
   const { summary, rows } = readOf(thread);
   const messages: ModelMessage[] = [...before];
   const calls = new Map<string, ToolRow[]>();
@@ -294,5 +286,5 @@ export function contextOf(
       }
     }
   }
-  return { instructions: instructionsFor([...people], guidance, summary), messages };
+  return { instructions: instructionsFor(guidance, summary), messages };
 }

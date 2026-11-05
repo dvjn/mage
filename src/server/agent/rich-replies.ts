@@ -6,7 +6,7 @@ import type { Toolset } from "./tools.ts";
 
 export const RICH_REPLIES_TOOLSET = "replies";
 
-export const RICH_REPLIES_GUIDANCE = `Rich replies: show, don't just tell. Whenever a reply carries figures, a comparison, a ranking, a status across several items, or choices for the reader, lay it out in a fenced block whose language is \`ui\`, with a sentence or two of your words outside it. Prefer a table to a list of similar items, Stat for headline figures, Bars for numbers compared, and Buttons for the next steps the reader is likely to want. Keep prose for reasoning and short answers. Mage draws the block with its own components.
+export const RICH_REPLIES_GUIDANCE = `Rich replies: show, don't just tell. Whenever a reply carries figures, a comparison, a ranking, a status across several items, or choices for the reader, lay it out in a fenced block whose language is \`ui\`, with a sentence or two of your words outside it. Prefer a table to a list of similar items, Stat for headline figures, Bars for numbers compared, and Buttons for the next steps the reader is likely to want. Keep prose for reasoning and short answers. The block is drawn with built-in components.
 
 How to write it:
 - One statement per line: \`name = Component(arg, ...)\`. Arguments are positional, in the order below; leave optional ones (marked ?) off the end. Strings use double quotes.

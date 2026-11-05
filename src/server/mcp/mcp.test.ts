@@ -423,7 +423,7 @@ describe("OAuth", () => {
     const refreshed = await api("POST", `/mcp-servers/${body.id}/refresh`, ada.cookie);
     expect(await refreshed.json()).toMatchObject({
       status: "needs_auth",
-      error: "The server needs Mage authorized again.",
+      error: "The server needs authorizing again.",
       toolCount: 3,
     });
     const again = await authorizeInBrowser(workspace, body.id);

@@ -11,10 +11,10 @@ async function json<T>(res: Response, status = 200) {
 }
 
 describe("the system prompt", () => {
-  it("is Mage's prompt, then the org's instructions, then the space's", () => {
-    const prompt = instructionsFor(["Ada"], { org: "Be brief.", space: "Use British spelling." });
+  it("is the agent's own prompt, then the org's instructions, then the space's", () => {
+    const prompt = instructionsFor({ org: "Be brief.", space: "Use British spelling." });
     const at = (text: string) => prompt.indexOf(text);
-    expect(at("You are the agent in Mage")).toBe(0);
+    expect(at("You are the agent in a workspace")).toBe(0);
     expect(at("Instructions from the organization:\nBe brief.")).toBeGreaterThan(0);
     expect(at("Instructions from this space:\nUse British spelling.")).toBeGreaterThan(
       at("Be brief."),
@@ -22,7 +22,7 @@ describe("the system prompt", () => {
   });
 
   it("follows the space's with each MCP server's own, framed as the server's", () => {
-    const prompt = instructionsFor(["Ada"], {
+    const prompt = instructionsFor({
       org: "Be brief.",
       space: "Cite ids.",
       mcpServers: [
@@ -44,21 +44,21 @@ describe("the system prompt", () => {
   });
 
   it("says the name the agent goes by, when it has its own and is not a subagent", () => {
-    expect(instructionsFor(["Ada"], { org: "", space: "", agentName: "Mira" })).toMatch(
-      /^You are Mira, the agent in Mage/,
+    expect(instructionsFor({ org: "", space: "", agentName: "Mira" })).toMatch(
+      /^You are Mira, the agent in a workspace/,
     );
-    expect(instructionsFor(["Ada"], { org: "", space: "", agentName: "Agent" })).toMatch(
-      /^You are the agent in Mage/,
+    expect(instructionsFor({ org: "", space: "", agentName: "Agent" })).toMatch(
+      /^You are the agent in a workspace/,
     );
     const subagent = { name: "Scout", parent: "Notes" };
-    expect(instructionsFor(["Ada"], { org: "", space: "", agentName: "Mira", subagent })).toMatch(
-      /^You are the agent in Mage/,
+    expect(instructionsFor({ org: "", space: "", agentName: "Mira", subagent })).toMatch(
+      /^You are the agent in a workspace/,
     );
   });
 
   it("leaves out what is empty", () => {
-    const prompt = instructionsFor(["Ada"], { org: " ", space: "", mcpServers: [] });
-    expect(prompt).toBe(instructionsFor(["Ada"]));
+    const prompt = instructionsFor({ org: " ", space: "", mcpServers: [] });
+    expect(prompt).toBe(instructionsFor());
     expect(prompt).not.toContain("Instructions");
     expect(prompt).not.toContain("MCP server");
   });
@@ -104,5 +104,17 @@ describe("instructions", () => {
     expect(call.request.instructions).toContain(
       "Instructions from the organization:\nBe brief.\n\nInstructions from this space:\nCite ids.",
     );
+  });
+
+  it("name neither the product nor anyone in the thread", async () => {
+    const { grace, post, model, worker, start } = await agentThread();
+    start();
+    await post(grace, "Hello");
+    const call = await model.next();
+    call.reply("Hi.");
+    await worker.idle();
+    expect(call.request.instructions).not.toContain("Grace");
+    expect(call.request.instructions).not.toMatch(/\bmage\b/i);
+    expect(call.request.instructions).toContain("starts with the writer's name in brackets");
   });
 });
