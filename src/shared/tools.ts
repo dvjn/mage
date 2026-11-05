@@ -202,9 +202,12 @@ export const toolsetEnabledChangeSchema = z.object({ enabled: z.boolean() });
 
 // Built-in tools by the ids they had before, so calls made under those still show as theirs.
 export const FORMER_TOOL_IDS: Readonly<Record<string, string>> = {
-  "tools.search": "mcp._.search_tools",
-  "resource.list": "mcp._.list_resources",
-  "resource.read": "mcp._.read_resource",
+  "tools.search": "mcp_servers.search_tools",
+  "resource.list": "mcp_servers.list_resources",
+  "resource.read": "mcp_servers.read_resource",
+  "mcp._.search_tools": "mcp_servers.search_tools",
+  "mcp._.list_resources": "mcp_servers.list_resources",
+  "mcp._.read_resource": "mcp_servers.read_resource",
   "helpers.start": "subagents.start",
   "helpers.message": "subagents.send",
   "helpers.status": "subagents.list",

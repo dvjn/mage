@@ -11,7 +11,7 @@ test.beforeEach(async ({ context }, testInfo) => {
 });
 
 // What heads the summary the agent reads first.
-const HEADING = "Summary of the earlier conversation in this thread, compacted.";
+const HEADING = "Summary of this thread's earlier messages, in their place";
 
 // The stand-in model says its system prompt a line at a time, then the summary; on a busy machine
 // that takes more than the usual 5 seconds.

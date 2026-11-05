@@ -20,7 +20,7 @@ import type { ThreadAccess } from "@/server/spaces/thread-access.ts";
 import { eventSummary, type ThreadLog } from "@/server/threads/log.ts";
 import type { Thread, ThreadStore, NewEvent } from "@/server/threads/service.ts";
 import { type AskAnswers, askInputSchema, answersProblem } from "@/shared/ask.ts";
-import { mcpSlugSchema, mcpToolOf } from "@/shared/mcp.ts";
+import { mcpToolOf } from "@/shared/mcp.ts";
 import { START_SUBAGENT } from "@/shared/subagents.ts";
 import { LOAD_SKILL } from "@/shared/skills.ts";
 import type { ToolRisk, ToolScope } from "@/shared/threads/events.ts";
@@ -41,6 +41,7 @@ import {
 } from "@/shared/tools.ts";
 import { type ToolRow, type TranscriptRow, transcriptOf } from "@/shared/transcript.ts";
 
+import type { ToolsetGuidance } from "./context.ts";
 import type { RunStore } from "./runs.ts";
 import {
   type Approval,
@@ -173,6 +174,15 @@ export interface Toolset {
   listedIn?(scope: { orgId: string; spaceId: string | null }): boolean;
 }
 
+// What the model's names for the tools all start with, as a dotted namespace, when they share one.
+function namespaceOf(tools: readonly AnyToolSpec[]) {
+  const spaces = new Set(
+    tools.map((spec) => (spec.modelName ?? spec.name).split(".").slice(0, -1).join(".")),
+  );
+  const [only] = spaces;
+  return spaces.size === 1 && only ? only : undefined;
+}
+
 // Whether the tool of the toolset is always on where it is of use.
 function fixedIn(toolset: Toolset, spec: AnyToolSpec) {
   return !!(toolset.fixed || spec.fixed);
@@ -264,6 +274,52 @@ export function definitionOf(spec: AnyToolSpec): ToolDefinition {
   };
 }
 
+// The schema keywords that label things for people, which the model has no use for.
+const LABELS = new Set(["$schema", "title"]);
+
+// Keywords whose value is one schema, and those whose value is a list or a map of them.
+const SUBSCHEMA = new Set([
+  "items",
+  "not",
+  "additionalProperties",
+  "contains",
+  "if",
+  "then",
+  "else",
+]);
+const SUBSCHEMA_LISTS = new Set(["anyOf", "oneOf", "allOf", "prefixItems"]);
+const SUBSCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions"]);
+
+// The schema without its labels, at every level.
+function unlabelled(schema: unknown): unknown {
+  if (typeof schema !== "object" || schema === null || Array.isArray(schema)) return schema;
+  return Object.fromEntries(
+    Object.entries(schema)
+      .filter(([key]) => !LABELS.has(key))
+      .map(([key, value]): [string, unknown] => {
+        if (SUBSCHEMA.has(key)) return [key, unlabelled(value)];
+        if (SUBSCHEMA_LISTS.has(key) && Array.isArray(value)) {
+          return [key, value.map(unlabelled)];
+        }
+        if (SUBSCHEMA_MAPS.has(key) && typeof value === "object" && value !== null) {
+          const entries = Object.entries(value).map(([name, sub]) => [name, unlabelled(sub)]);
+          return [key, Object.fromEntries(entries)];
+        }
+        return [key, value];
+      }),
+  );
+}
+
+// The tool as the model is told about it: its id, what it does, and what it takes, without the
+// labels its schema carries for people.
+export function modelToolOf(spec: AnyToolSpec): ModelTool {
+  return {
+    id: spec.name,
+    description: spec.description,
+    inputSchema: unlabelled(definitionOf(spec).inputSchema) as Record<string, unknown>,
+  };
+}
+
 // The name the model knows each tool by: its own model name or its id, unique among the tools once
 // providers' characters are applied, and short enough for them; one too long, or that would clash,
 // ends in a short hash of its id.
@@ -325,17 +381,14 @@ function ruleOf(policy: ToolPolicyRecord): Rule {
 export function createTools(options: ToolsOptions) {
   const { toolsets, settings, policies, directory, access } = options;
   // Each of Mage's own toolsets has an id of its own, and its tools' names start with it, so no
-  // two of them can offer a tool by the same name. Under mcp.* one takes only a name no server's
-  // short name can be, so no MCP server's tool can clash with its tools either.
+  // two of them can offer a tool by the same name. None is under mcp.*, which is MCP servers' own,
+  // so no server's tool can clash with its tools either.
   for (const [index, toolset] of toolsets.entries()) {
     if (toolsets.findIndex((other) => other.id === toolset.id) !== index) {
       throw new Error(`Two of Mage's own toolsets are named ${toolset.id}`);
     }
     const stray = toolset.tools.find((spec) => !spec.name.startsWith(`${toolset.id}.`));
-    const [root, server] = toolset.id.split(".");
-    const serverNames =
-      root === "mcp" && (server === undefined || mcpSlugSchema.safeParse(server).success);
-    if (serverNames || stray) {
+    if (toolset.id.split(".")[0] === "mcp" || stray) {
       throw new Error(`${stray?.name ?? toolset.id} is outside its toolset's names`);
     }
   }
@@ -631,8 +684,12 @@ export function createTools(options: ToolsOptions) {
     },
 
     // What the toolsets on in the space tell the agent.
-    guidanceIn(space: Pick<Space, "id" | "orgId">) {
-      return inSpace(space).flatMap((toolset) => (toolset.guidance ? [toolset.guidance] : []));
+    guidanceIn(space: Pick<Space, "id" | "orgId">): ToolsetGuidance[] {
+      return inSpace(space).flatMap((toolset) => {
+        if (!toolset.guidance) return [];
+        const prefix = toolset.prefix ?? namespaceOf(toolset.tools);
+        return [{ name: toolset.title, ...(prefix && { prefix }), text: toolset.guidance }];
+      });
     },
 
     // The names the model knows the space's tools by, those it does not offer now among them, for
@@ -737,11 +794,7 @@ export function createTools(options: ToolsOptions) {
 
     // The tools as the model is told about them.
     forModel(tools: AnyToolSpec[]): ModelTool[] {
-      return tools.map((spec) => ({
-        id: spec.name,
-        description: spec.description,
-        inputSchema: definitionOf(spec).inputSchema,
-      }));
+      return tools.map(modelToolOf);
     },
 
     // Whether a call of the tool, with the risk the tool itself declares for it, runs now, on a

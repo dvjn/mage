@@ -164,7 +164,7 @@ test("an MCP server's instructions show on its page, and reach the agent's promp
   await page.goto(`/s/${spaceId}`);
   await write(page, "/prompt");
   const reply = transcript(page).getByRole("article", { name: "Message from Agent" });
-  await expect(reply).toContainText("From the MCP server Notes, about its tools mcp.notes.*:");
+  await expect(reply).toContainText("From Notes (mcp__notes__*):");
   await expect(reply).toContainText(NOTES_INSTRUCTIONS);
 });
 
@@ -342,14 +342,14 @@ test("the agent lists a server's resources and reads one", async ({ page }) => {
   await expect(page.getByText("Connected").first()).toBeVisible();
 
   await page.goto(`/s/${spaceId}`);
-  await write(page, "/tool mcp._.list_resources {}");
+  await write(page, "/tool mcp_servers.list_resources {}");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await expect(
     transcript(page).getByRole("button", { name: /^MCP › List resources · Ran/ }),
   ).toBeVisible();
   await expect(transcript(page)).toContainText("notes://guide");
 
-  await write(page, '/tool mcp._.read_resource {"server":"notes","uri":"notes://guide"}');
+  await write(page, '/tool mcp_servers.read_resource {"server":"notes","uri":"notes://guide"}');
   await expect(
     transcript(page).getByRole("button", { name: /^MCP › Read resource · Ran/ }),
   ).toBeVisible();
@@ -371,7 +371,7 @@ test("the agent searches for a server's tool, turns it on and runs it", async ({
   await page.goto(`/s/${spaceId}`);
   await write(
     page,
-    '/tool mcp._.search_tools {"query":"echo"}\n/tool mcp.notes.echo {"text":"found"}',
+    '/tool mcp_servers.search_tools {"query":"echo"}\n/tool mcp.notes.echo {"text":"found"}',
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   // Left out at first, the tool is searched for, turned on, then called.
@@ -397,7 +397,7 @@ test("a call to a server's tool keeps its name once the server is removed", asyn
   await page.goto(`/s/${spaceId}`);
   await write(
     page,
-    '/tool mcp._.search_tools {"query":"echo"}\n/tool mcp.notes.echo {"text":"found"}',
+    '/tool mcp_servers.search_tools {"query":"echo"}\n/tool mcp.notes.echo {"text":"found"}',
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const line = transcript(page).getByRole("button", { name: /^Notes › Echo · Ran/ });

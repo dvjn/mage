@@ -158,7 +158,11 @@ describe("subagents", () => {
     const { ada, post, thread, start, calls, answer, callIn, rowsOf, subagentNamed } = workspace;
     start();
     await post(ada, "Research queues");
-    await calls(thread.id, ["subagents.start", { name: "Researcher", task: "Compare queues" }]);
+    const starter = await calls(thread.id, [
+      "subagents.start",
+      { name: "Researcher", task: "Compare queues" },
+    ]);
+    expect(starter.request.instructions).toContain("Subagents (`subagents__*`):\nStart them");
     // The start returns at once.
     await answer(thread.id, "Started.");
     const subagentId = subagentNamed("Researcher");
@@ -172,8 +176,9 @@ describe("subagents", () => {
       notified("[Agent of Research queues] Compare queues"),
     ]);
     expect(first.request.instructions).toContain("You are a subagent");
-    expect(first.request.instructions).toContain("even when you found nothing");
-    expect(first.request.instructions).not.toContain("You can start subagents");
+    expect(first.request.instructions).toContain("even if you found nothing");
+    expect(first.request.instructions).toContain("with subagents__send");
+    expect(first.request.instructions).not.toContain("Subagents (`subagents__*`):");
     first.reply("BullMQ wins.");
 
     // Its reply stays in its own thread; having sent nothing, its starter is told, with its last

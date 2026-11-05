@@ -21,6 +21,7 @@
 // thread offers and tells the agent, and what it reads ahead of the thread, can depend on the
 // thread, as a subagent's do; and whoever needs to hears of each run that ends.
 
+import { wireToolName } from "@/shared/tools.ts";
 import { ulid } from "ulid";
 import * as z from "zod";
 
@@ -768,6 +769,11 @@ export function createRunWorker(options: RunWorkerOptions) {
     return { all, on, turnedOn, left: all.filter((tool) => !on.has(tool.id)) };
   }
 
+  // A tool as the model knows it, which is how errors it reads name tools.
+  function modelName(space: Space, toolId: string) {
+    return wireToolName(tools.modelNames(space).toModel(toolId));
+  }
+
   // Records the calls a model step asked for, each with whether it waits for a decision. A call of
   // a tool not offered, or left out of the request and not turned on, or with input the tool does
   // not take, fails at once.
@@ -830,7 +836,7 @@ export function createRunWorker(options: RunWorkerOptions) {
             callId,
             ok: false,
             error: unsearched
-              ? `${unsearched.name} is not on yet. Search for it or select it with ${TOOL_SEARCH} first.`
+              ? `${modelName(space, unsearched.name)} is not on yet. Search for it or select it with ${modelName(space, TOOL_SEARCH)} first.`
               : spec
                 ? `The input is not valid: ${z.prettifyError(parsed!.error!)}`
                 : `No tool is named ${toolId} here.`,
@@ -1046,18 +1052,19 @@ export function createRunWorker(options: RunWorkerOptions) {
       const available = offered.filter(
         (spec) => spec.name !== TOOL_SEARCH || deferral.all.length > 0,
       );
+      // The model knows tools by their model names; calls, results and the prompt name them so.
+      const names = tools.modelNames(space);
       const { instructions, messages, firstEffort } = contextOf(
         transcript(thread.id).rows,
         {
           ...guidance(space, available, current),
+          toolName: names.toModel,
           ...(deferral.all.length && { deferredTools: deferredByServer(deferral.all) }),
         },
         before(current),
         deferral.turnedOn,
         model.effort,
       );
-      // The model knows tools by their model names; calls and results go to it by those.
-      const names = tools.modelNames(space);
       const forModel = (specs: AnyToolSpec[]) =>
         tools.forModel(specs).map((tool) => ({ ...tool, id: names.toModel(tool.id) }));
       const calls: (ModelToolCall & { messageId: string })[] = [];

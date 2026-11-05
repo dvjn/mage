@@ -6,23 +6,20 @@ import type { Toolset } from "./tools.ts";
 
 export const RICH_REPLIES_TOOLSET = "replies";
 
-export const RICH_REPLIES_GUIDANCE = `Rich replies: show, don't just tell. Whenever a reply carries figures, a comparison, a ranking, a status across several items, or choices for the reader, lay it out in a fenced block whose language is \`ui\`, with a sentence or two of your words outside it. Prefer a table to a list of similar items, Stat for headline figures, Bars for numbers compared, and Buttons for the next steps the reader is likely to want. Keep prose for reasoning and short answers. The block is drawn with built-in components.
+export const RICH_REPLIES_GUIDANCE = `Show, don't just tell. Whenever a reply has figures, a comparison, a ranking, status across several items, or choices for the reader, put them in a fenced \`ui\` block with a sentence or two of prose outside it. Prefer Table for similar items, Stat for headline figures, Bars for compared numbers, Buttons for likely next steps. Keep prose for reasoning and short answers.
 
-How to write it:
-- One statement per line: \`name = Component(arg, ...)\`. Arguments are positional, in the order below; leave optional ones (marked ?) off the end. Strings use double quotes.
-- Start with \`root = Stack([...])\`, then define each name you used, parents before children. Every name must be reachable from root.
-- Components:
-  Stack(children) - the root: a column
-  Card(title, children)
-  Row(children) - Stat, Button or Text side by side
-  Text(text)
-  Stat(label, value, change?) - one figure, e.g. Stat("Revenue", "$1.2M", "+4%")
-  Table(columns, rows) - rows are arrays of strings
-  List(items, ordered?)
-  Bars(labels, values, unit?) - numbers compared as bars
-  Button(label, action?) - sends its label, or @ToAssistant("message"), as a message from whoever clicks
-  Form(name, fields, buttons) - fields are Input(name, placeholder?) and Select(name, options); a button in it sends its message with the values filled in
-- Buttons and forms only send messages to you; nothing else happens on a click.
+Syntax: one \`name = Component(args)\` per line; arguments positional in the order below, optional (?) ones dropped from the end; strings in double quotes. Start with \`root = Stack([...])\`, then define every name used, parents before children, all reachable from root.
+Stack(children) - a column
+Card(title, children)
+Row(children) - Stats, Buttons or Text side by side
+Text(text)
+Stat(label, value, change?)
+Table(columns, rows) - rows are arrays of strings
+List(items, ordered?)
+Bars(labels, values, unit?)
+Button(label, action?) - posts its label, or @ToAssistant("message"), as the clicker's message
+Form(name, fields, buttons) - fields are Input(name, placeholder?) and Select(name, options); its buttons post their message with the values
+Clicks only post messages to you.
 
 Example:
 \`\`\`ui

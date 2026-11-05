@@ -687,7 +687,7 @@ export function createMcpServers(options: McpServersOptions) {
       title: "List resources",
       annotations: { readOnlyHint: true },
       description:
-        "List the resources MCP servers here offer: each one's server, uri, name, description and type. Name a server to list only its own.",
+        "List MCP servers' resources (server, uri, name, description, type); name a server for its own.",
       input: z.object({ server: serverInput.optional() }),
       risk: () => "normal",
       usefulIn,
@@ -748,7 +748,7 @@ export function createMcpServers(options: McpServersOptions) {
       title: "Read resource",
       annotations: { readOnlyHint: true },
       description:
-        "Read a resource from an MCP server here, by the server and the resource's uri. Text comes back as text; binary content only as its type and size.",
+        "Read an MCP resource by server and uri. Binary content comes back as type and size only.",
       input: z.object({
         server: serverInput,
         uri: z.string().trim().min(1).meta({ title: "Resource", description: "Its uri" }),

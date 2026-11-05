@@ -10,7 +10,14 @@ import { agentThread } from "@/server/testing/agent-thread.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
 import type { ThreadFollowItem } from "@/server/threads/service.ts";
 
-import { createTools, modelToolNames, type ToolPolicyFields, type Toolset } from "./tools.ts";
+import {
+  createTools,
+  definitionOf,
+  modelToolNames,
+  modelToolOf,
+  type ToolPolicyFields,
+  type Toolset,
+} from "./tools.ts";
 import {
   canPostIn,
   canUse as canUseUnder,
@@ -52,6 +59,34 @@ const SUBAGENT_TOOLS = [
 
 const run = true;
 const approve = false;
+
+describe("a tool as the model is told about it", () => {
+  it("leaves out the labels its schema carries for people, at every level", () => {
+    const spec = {
+      name: "notes.add",
+      title: "Add note",
+      description: "Add a note.",
+      input: z.object({
+        title: z.string().meta({ title: "Title", description: "What it is called" }),
+        tags: z.array(z.object({ name: z.string().meta({ title: "Tag" }) })).optional(),
+      }),
+      risk: () => "normal" as const,
+      run: () => Promise.resolve({ ok: true as const, value: null }),
+    };
+    const { inputSchema } = modelToolOf(spec);
+    const sent = JSON.stringify(inputSchema);
+    expect(sent).not.toContain("$schema");
+    expect(sent).not.toMatch(/"title":"/);
+    expect(inputSchema).toMatchObject({
+      properties: {
+        title: { type: "string", description: "What it is called" },
+        tags: { items: { properties: { name: { type: "string" } } } },
+      },
+      required: ["title"],
+    });
+    expect(definitionOf(spec).inputSchema).toHaveProperty("$schema");
+  });
+});
 
 describe("levels", () => {
   it("let anyone who can message in the thread run tools, and nobody else", () => {
@@ -1415,21 +1450,31 @@ describe("Mage's own toolsets", () => {
     expect(() => createTools({ ...unused, toolsets: [toolset("mcp", [])] })).toThrow();
   });
 
-  it("take a name under mcp.* only where no server's short name can be", () => {
+  it("leave mcp.* to MCP servers", () => {
     expect(() =>
-      createTools({ ...unused, toolsets: [toolset("mcp._", ["mcp._.search_tools"])] }),
+      createTools({ ...unused, toolsets: [toolset("mcp_servers", ["mcp_servers.search_tools"])] }),
     ).not.toThrow();
     expect(() =>
       createTools({ ...unused, toolsets: [toolset("mcp.notes", ["mcp.notes.search"])] }),
     ).toThrow("mcp.notes is outside its toolset's names");
-    expect(() => createTools({ ...unused, toolsets: [toolset("mcp.0", [])] })).toThrow();
+    expect(() =>
+      createTools({ ...unused, toolsets: [toolset("mcp._", ["mcp._.search"])] }),
+    ).toThrow();
   });
 
   it("keep their MCP tools' names on the wire, apart from every server's, and map them back", () => {
-    const own = ["mcp._.search_tools", "mcp._.list_resources", "mcp._.read_resource"];
-    // Servers whose tools come closest: one with a short name of `_`s after its first character,
-    // and tools named as Mage's own.
-    const servers = ["mcp.a_.search_tools", "mcp.a.list_resources", "mcp.a__.read_resource"];
+    const own = [
+      "mcp_servers.search_tools",
+      "mcp_servers.list_resources",
+      "mcp_servers.read_resource",
+    ];
+    // Servers whose tools come closest: one with the short name `servers`, and tools named as
+    // Mage's own.
+    const servers = [
+      "mcp.servers.search_tools",
+      "mcp.servers.list_resources",
+      "mcp.servers_.read_resource",
+    ];
     const tools = [...own, ...servers, "thread.info"].map((id) => ({ id, name: id }));
     const names = modelToolNames(tools);
     for (const id of own) expect(names.get(id)).toBe(id);
@@ -1437,9 +1482,9 @@ describe("Mage's own toolsets", () => {
     expect(new Set(wire).size).toBe(tools.length);
     expect(wire.every((name) => name.length <= WIRE_NAME_MAX)).toBe(true);
     expect(own.map((id) => wireToolName(id))).toEqual([
-      "mcp_____search_tools",
-      "mcp_____list_resources",
-      "mcp_____read_resource",
+      "mcp_servers__search_tools",
+      "mcp_servers__list_resources",
+      "mcp_servers__read_resource",
     ]);
     // Back from the wire to each id, as a run reads the model's calls.
     const fromWire = new Map([...names].map(([id, name]) => [wireToolName(name), id]));

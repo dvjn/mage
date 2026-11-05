@@ -14,14 +14,14 @@ describe("the system prompt", () => {
   it("is the agent's own prompt, then the org's instructions, then the space's", () => {
     const prompt = instructionsFor({ org: "Be brief.", space: "Use British spelling." });
     const at = (text: string) => prompt.indexOf(text);
-    expect(at("You are the agent in a workspace")).toBe(0);
+    expect(at("You are the agent in a thread")).toBe(0);
     expect(at("Instructions from the organization:\nBe brief.")).toBeGreaterThan(0);
     expect(at("Instructions from this space:\nUse British spelling.")).toBeGreaterThan(
       at("Be brief."),
     );
   });
 
-  it("follows the space's with each MCP server's own, framed as the server's", () => {
+  it("follows the space's with the built-in toolsets' guidance, then each MCP server's, framed as the server's", () => {
     const prompt = instructionsFor({
       org: "Be brief.",
       space: "Cite ids.",
@@ -29,23 +29,55 @@ describe("the system prompt", () => {
         { name: "Notes", prefix: "mcp.notes.*", text: "Title every note.", cut: false },
         { name: "Wiki", prefix: "mcp.wiki.*", text: "Search first", cut: true },
       ],
-      toolsets: ["Rich replies: on."],
+      toolsets: [
+        { name: "Rich replies", text: "Lay it out." },
+        { name: "Subagents", prefix: "subagents", text: "Start them." },
+      ],
     });
     const at = (text: string) => prompt.indexOf(text);
-    expect(at("written by MCP servers about their own tools")).toBeGreaterThan(at("Cite ids."));
-    expect(prompt).toContain("not the organization's: the instructions above come first");
     expect(prompt).toContain(
-      "From the MCP server Notes, about its tools `mcp.notes.*`:\nTitle every note.",
+      "Cite ids.\n\nRich replies:\nLay it out.\n\nSubagents (`subagents__*`):\nStart them.",
     );
-    expect(prompt).toContain(
-      "From the MCP server Wiki, about its tools `mcp.wiki.*`:\nSearch first\n(Cut short.)",
-    );
-    expect(at("Rich replies: on.")).toBeGreaterThan(at("Search first"));
+    expect(at("MCP servers describe their own tools")).toBeGreaterThan(at("Start them."));
+    expect(prompt).toContain("not the organization's: the instructions above win");
+    expect(prompt).toContain("From Notes (`mcp__notes__*`):\nTitle every note.");
+    expect(prompt).toContain("From Wiki (`mcp__wiki__*`):\nSearch first\n(Cut short.)");
+  });
+
+  it("gives its sections in order", () => {
+    const prompt = instructionsFor({
+      org: "Org says.",
+      space: "Space says.",
+      agentName: "Mira",
+      toolsets: [{ name: "Subagents", prefix: "subagents", text: "Builtin says." }],
+      mcpServers: [{ name: "Notes", prefix: "mcp.notes.*", text: "Server says.", cut: false }],
+      deferredTools: [
+        {
+          server: "Notes",
+          prefix: "mcp.notes",
+          tools: [{ name: "mcp.notes.find", description: "Find notes" }],
+        },
+      ],
+      skills: [{ name: "triage", description: "Sort issues" }],
+    });
+    const order = [
+      "You are the agent",
+      "You go by Mira here.",
+      "Org says.",
+      "Space says.",
+      "Subagents (`subagents__*`):\nBuiltin says.",
+      "MCP servers describe their own tools",
+      "From Notes (`mcp__notes__*`):\nServer says.",
+      "MCP tools to turn on",
+      "Skills:",
+    ].map((text) => prompt.indexOf(text));
+    expect(order.every((at) => at >= 0)).toBe(true);
+    expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 
   it("says the name the agent goes by after what it is, when it has its own and is not a subagent", () => {
     const named = instructionsFor({ org: "Be brief.", space: "", agentName: "Mira" });
-    expect(named).toMatch(/^You are the agent in a workspace/);
+    expect(named).toMatch(/^You are the agent in a thread/);
     expect(named.indexOf("You go by Mira here.")).toBeGreaterThan(0);
     expect(named.indexOf("You go by Mira here.")).toBeLessThan(named.indexOf("Be brief."));
     expect(instructionsFor({ org: "", space: "", agentName: "Agent" })).not.toContain("You go by");
@@ -119,6 +151,6 @@ describe("instructions", () => {
     await worker.idle();
     expect(call.request.instructions).not.toContain("Grace");
     expect(call.request.instructions).not.toMatch(/\bmage\b/i);
-    expect(call.request.instructions).toContain("starts with the writer's name in brackets");
+    expect(call.request.instructions).toContain("start with the writer's name in brackets");
   });
 });

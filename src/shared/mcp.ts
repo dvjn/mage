@@ -190,8 +190,8 @@ export const mcpSlugSchema = z
   .regex(/^[a-z0-9][a-z0-9_-]{0,31}$/, "Use up to 32 lower-case letters, digits, - and _");
 
 // What the names of Mage's own MCP tools start with, such as searching servers' tools and reading
-// their resources: under mcp.* like servers' tools, but where no server's short name can be.
-export const MCP_OWN_TOOLSET = "mcp._";
+// their resources: a toolset of its own, apart from servers' tools under mcp.*.
+export const MCP_OWN_TOOLSET = "mcp_servers";
 
 // A name as a server's short name; "server" when nothing of it is left.
 export function mcpSlugOf(name: string) {

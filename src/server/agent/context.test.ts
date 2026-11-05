@@ -2,7 +2,13 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { TranscriptRow } from "@/shared/transcript.ts";
 
-import { contextOf, framingMessage, type Guidance, summaryMessage } from "./context.ts";
+import {
+  contextOf,
+  framingMessage,
+  type Guidance,
+  instructionsFor,
+  summaryMessage,
+} from "./context.ts";
 
 const ada = { kind: "user", userId: "u1", name: "Ada Lovelace" } as const;
 const bob = { kind: "user", userId: "u2", name: "Bob Hope" } as const;
@@ -80,7 +86,7 @@ const guidance: Guidance = {
   org: "Be brief.",
   space: "Launch work.",
   agentName: "Mira",
-  toolsets: ["Rich replies: on."],
+  toolsets: [{ name: "Rich replies", text: "On." }],
 };
 
 // Whether the later request starts as the earlier one did: the same system prompt, and the earlier
@@ -89,6 +95,31 @@ function keepsPrefix(earlier: ReturnType<typeof contextOf>, later: ReturnType<ty
   expect(later.instructions).toBe(earlier.instructions);
   expect(later.messages.slice(0, earlier.messages.length)).toEqual(earlier.messages);
 }
+
+describe("the system prompt", () => {
+  it("names tools as the model knows them", () => {
+    const prompt = instructionsFor({
+      org: "",
+      space: "",
+      subagent: true,
+      skills: [{ name: "notes", description: "Taking notes" }],
+      mcpServers: [{ name: "Notes", prefix: "mcp.notes.*", text: "Title notes.", cut: false }],
+      deferredTools: [
+        {
+          server: "Notes",
+          prefix: "mcp.notes",
+          tools: [{ name: "mcp.notes.echo", description: "Say it back" }],
+        },
+      ],
+      toolName: (id) => (id === "skills.load" ? "skills.load_1a2b3c" : id),
+    });
+    expect(prompt).toContain("with subagents__send,");
+    expect(prompt).toContain("load it with skills__load_1a2b3c");
+    expect(prompt).toContain("turn on with mcp_servers__search_tools");
+    expect(prompt).toContain("From Notes (`mcp__notes__*`):\nTitle notes.");
+    expect(prompt).toContain("Notes (`mcp__notes__*`):\n- mcp__notes__echo: Say it back");
+  });
+});
 
 describe("the agent's request", () => {
   it("keeps its start across the next turn, a new person's first message, an aside and a notification", () => {
@@ -113,7 +144,7 @@ describe("the agent's request", () => {
     const thread = rowsOf();
     thread.human(ada, "Echo hello");
     const asking = thread.agent("");
-    const search = thread.tool(asking.id, "mcp._.search_tools");
+    const search = thread.tool(asking.id, "mcp_servers.search_tools");
     const before = contextOf(thread.rows, guidance);
     const on = [{ id: "mcp.notes.echo", callId: search.id }];
     const turned = contextOf(thread.rows, guidance, [], on);

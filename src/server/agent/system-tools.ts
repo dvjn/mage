@@ -53,7 +53,7 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
     title: "Details",
     annotations: { readOnlyHint: true },
     description:
-      "Read this thread's title, the model and effort it is set to and the one replying, and the people in it. Check it before changing any of them.",
+      "This thread's title, its set and replying model and effort, and its people. Check before changing any of them.",
     input: z.object({}).strict() as z.ZodType<Record<string, never>>,
     risk: () => "normal",
     async run(_input, ctx) {
@@ -110,7 +110,7 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
     title: "Change model",
     annotations: { readOnlyHint: false },
     description:
-      "Set the model this thread replies with and its reasoning effort, together; null effort uses the model's usual one. Takes effect from your next step.",
+      "Set this thread's model and effort together; null effort is the model's default. Applies from your next step.",
     input: z.object({
       model: z.string().min(1).meta({ title: "Model", description: "A model ref" }),
       effort: effortSchema.nullable().meta({ title: "Effort" }),
@@ -134,7 +134,7 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
     title: "Compact",
     annotations: { readOnlyHint: false },
     description:
-      "Summarise the earlier part of this thread, so that from your next step you read the summary in its place and the most recent part in full. People still see the whole thread. Use it when the thread has grown long; give a focus to say what the summary must keep.",
+      "Summarise the earlier part of this thread: from your next step you read the summary in its place, then the recent part in full. People still see everything. Use when the thread is long; focus says what to keep.",
     input: z.object({
       focus: z
         .string()

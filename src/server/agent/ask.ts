@@ -16,7 +16,7 @@ export const askTool: ToolSpec<AskInput> = {
   fixed: true,
   annotations: { readOnlyHint: true },
   description:
-    'Ask the people in this thread one to four questions, each with two to four options, when you need a choice made before you go on. Your turn pauses until someone answers; anyone may write their own answer instead of an option, so do not add an "Other" option. Put the option you recommend first. Do not ask what you can find out or decide yourself.',
+    'Ask the people here one to four questions, two to four options each, when you need a choice before going on. Your turn pauses until someone answers. People can always write their own answer, so add no "Other" option. Put your recommended option first. Do not ask what you can find out or decide yourself.',
   input: askInputSchema as z.ZodType<AskInput>,
   risk: () => "normal",
   run(_input, ctx) {

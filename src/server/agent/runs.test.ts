@@ -32,7 +32,7 @@ describe("agent runs", () => {
     ]);
     expect(runs()).toEqual([expect.objectContaining({ status: "completed", reason: null })]);
     expect(call.texts).toEqual(["user: [Ada Lovelace] How do engines compute?"]);
-    expect(call.request.instructions).toContain("You are the agent in a workspace");
+    expect(call.request.instructions).toContain("You are the agent in a thread");
     expect(call.request.sessionId).toBe(thread.id);
   });
 

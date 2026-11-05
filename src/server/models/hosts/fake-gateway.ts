@@ -28,7 +28,7 @@ import { HOST_IDS, type HostId, hostOf } from "@/shared/hosts.ts";
 
 export const FAKE_MODEL_REF = "fake/echo";
 
-const TOOL_SEARCH = "mcp._.search_tools";
+const TOOL_SEARCH = "mcp_servers.search_tools";
 
 const WORD_MS = 40;
 const FILLER = "and so the engine turns its wheels".split(" ");

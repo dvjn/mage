@@ -279,7 +279,7 @@ export function createToolSearch(
     title: "Search tools",
     annotations: { readOnlyHint: true },
     description:
-      "Find and turn on MCP tools left out of your tools: with query, the best matches by name, server and description; with select, the tools named exactly; with server, a list of that server's tools. Matches and selected tools can be called from your next step.",
+      "Turn on MCP tools left out of your tools: query matches name, server and description; select takes exact names; server lists one server's tools. Tools turned on are callable from your next step, for the rest of this thread.",
     input: searchInput,
     risk: () => "normal",
     usefulIn: hasServers,

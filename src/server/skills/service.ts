@@ -728,8 +728,7 @@ export function createSkills(options: SkillsOptions) {
         name: LOAD_SKILL,
         title: "Load",
         annotations: { readOnlyHint: true },
-        description:
-          "Load a skill by name: its instructions, and the files that come with it. Load one when the task matches its description, before you start.",
+        description: "Load a skill by name: its instructions and its file list.",
         input: z.object({ name: nameInput }),
         risk: () => "normal",
         run({ name }, ctx) {
@@ -752,8 +751,7 @@ export function createSkills(options: SkillsOptions) {
         name: READ_SKILL_FILE,
         title: "Read file",
         annotations: { readOnlyHint: true },
-        description:
-          "Read one of the files that come with a skill, by the skill's name and the file's path.",
+        description: "Read a skill's file by skill name and path.",
         input: z.object({
           name: nameInput,
           path: z

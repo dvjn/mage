@@ -44,7 +44,7 @@ import {
   transcriptOf,
 } from "@/shared/transcript.ts";
 
-import { contextOf, framingMessage } from "./context.ts";
+import { contextOf, framingMessage, type ToolsetGuidance } from "./context.ts";
 import { createNotifier, type Notification } from "./notifications.ts";
 import type { Run, RunStore } from "./runs.ts";
 import type { AnyToolSpec, ToolContext, Toolset, ToolSpec } from "./tools.ts";
@@ -82,12 +82,8 @@ export const MESSAGE_LIMIT = 30;
 export const AGENT_NAME = "Agent";
 
 // What the agent of a thread that can start subagents is told about them.
-export const SUBAGENTS_GUIDANCE = [
-  "You can start subagents: agents that work in the background, each in a thread of its own, on a task you give them. Use them for work that splits into independent parts, or that would take long.",
-  "Each subagent goes by the label you start it with, unique among those not archived; address it by that. It sees only its task and instructions, unless you start it with fork from a copy of this conversation. It sends you its results as messages, which come among your notifications starting with [Subagent <label>]. You are also notified when a subagent ends a run without reporting, fails or is stopped; list them for more.",
-  "Send a subagent a message to give it more to do; one that is idle wakes up. To go on once your subagents are idle, watch them and end your turn: you are notified when they are.",
-  "Archive a subagent as soon as you have used its report and expect no follow-up, and archive them all when the job is done. To follow up with an archived one, unarchive it and send to it. Reuse a subagent that has the context, live or archived, rather than starting another.",
-].join("\n");
+export const SUBAGENTS_GUIDANCE =
+  "Start them for work that splits into independent parts or takes long; each works in the background in its own thread. Their results, and runs that end without a report, fail or are stopped, arrive as notifications from [Subagent <label>]. To wait for them, watch them and end your turn. Reuse a subagent that has the context, archived or not, rather than starting another. Archive each once you have used its report, and all of them when the job is done.";
 
 export interface SubagentsOptions {
   subagents: SubagentStore;
@@ -502,8 +498,7 @@ export function createSubagents(options: SubagentsOptions) {
   const startInput = z.object({
     name: nameSchema.meta({
       title: "Name",
-      description:
-        "A short label it goes by, unique among your subagents, such as Researcher · Graphile",
+      description: "A short label, unique among your subagents, such as Researcher",
     }),
     task: z.string().trim().min(1).meta({ title: "Task" }),
     instructions: z.string().trim().min(1).optional().meta({ title: "Instructions" }),
@@ -605,7 +600,7 @@ export function createSubagents(options: SubagentsOptions) {
     title: "Start",
     annotations: { readOnlyHint: false },
     description:
-      "Start a subagent in the background on a task, in a thread of its own; returns at once. It sees only its task and instructions, or with fork a copy of this conversation too. Send to a subagent that already has the context instead, unarchiving it if need be. It replies with your model and effort unless you choose others where the organization lets you.",
+      "Start a subagent on a task in its own thread; returns at once. It sees only its task and instructions, plus this conversation with fork. Model and effort default to yours; others only where allowed.",
     input: startInput,
     risk: () => "normal",
     async run(input, ctx) {
@@ -624,7 +619,7 @@ export function createSubagents(options: SubagentsOptions) {
     title: "Send",
     annotations: { readOnlyHint: false },
     description:
-      "Send a message to subagents by label, several, or all, or to agent, the thread's agent; an idle subagent wakes up. A subagent reaches agent and the other subagents started with it.",
+      "Message subagents by label, several or all, or the thread's agent as agent; an idle one wakes. A subagent reaches agent and the others started with it.",
     input: z.object({
       to: z
         .union([z.string().min(1), z.array(z.string().min(1)).min(1)])
@@ -668,7 +663,7 @@ export function createSubagents(options: SubagentsOptions) {
     title: "List",
     annotations: { readOnlyHint: true },
     description:
-      "List your subagents, or the others started with you: where each stands, what it said last and its latest steps. One by label, or all that are not archived.",
+      "Your subagents, or a subagent's siblings: state, last message, latest steps. One by label, or all not archived.",
     input: z.object({
       subagent: z.string().min(1).optional().meta({ title: "Subagent", description: "A label" }),
     }),
@@ -696,7 +691,7 @@ export function createSubagents(options: SubagentsOptions) {
     title: "Watch",
     annotations: { readOnlyHint: true },
     description:
-      "Be notified once when all, or any, of your subagents are idle, or of the others started with you; those labelled, or all. Returns at once.",
+      "Be notified once when all or any of your subagents (for a subagent, its siblings) are idle; those labelled, or all. Returns at once.",
     input: z.object({
       when: z.enum(["all_idle", "any_idle"]).meta({ title: "When" }),
       subagents: z
@@ -729,7 +724,7 @@ export function createSubagents(options: SubagentsOptions) {
     name: "subagents.stop",
     title: "Stop",
     annotations: { readOnlyHint: false },
-    description: "Stop a subagent's run. It keeps what it knows, and a message wakes it again.",
+    description: "Stop a subagent's run. It keeps what it knows; a message wakes it.",
     input: z.object({ subagent: z.string().min(1).meta({ title: "Subagent" }) }),
     risk: () => "normal",
     run({ subagent }, ctx) {
@@ -747,7 +742,7 @@ export function createSubagents(options: SubagentsOptions) {
     title: "Archive",
     annotations: { readOnlyHint: false },
     description:
-      "Retire a subagent once you have used its report and expect no follow-up: its thread stays readable, and it takes no messages until unarchived.",
+      "Retire a subagent: its thread stays readable, and it takes no messages until unarchived.",
     input: z.object({ subagent: z.string().min(1).meta({ title: "Subagent" }) }),
     risk: () => "normal",
     run({ subagent }, ctx) {
@@ -767,7 +762,7 @@ export function createSubagents(options: SubagentsOptions) {
     title: "Unarchive",
     annotations: { readOnlyHint: false },
     description:
-      "Bring back an archived subagent, with what it knows, to send it more. A label used again picks the newest that had it.",
+      "Bring back an archived subagent with what it knows. A reused label picks the newest.",
     input: z.object({ subagent: z.string().min(1).meta({ title: "Subagent" }) }),
     risk: () => "normal",
     run({ subagent: label }, ctx) {
@@ -846,10 +841,13 @@ export function createSubagents(options: SubagentsOptions) {
 
     // What the thread's agent is told: for a subagent, that it is one, in place of what the
     // subagents' toolset tells the agent that starts them.
-    guidance(thread: Thread, toolsets: string[]): { toolsets: string[]; subagent?: boolean } {
+    guidance(
+      thread: Thread,
+      toolsets: ToolsetGuidance[],
+    ): { toolsets: ToolsetGuidance[]; subagent?: boolean } {
       if (!subagents.find(thread.id)) return { toolsets };
       return {
-        toolsets: toolsets.filter((text) => text !== SUBAGENTS_GUIDANCE),
+        toolsets: toolsets.filter((toolset) => toolset.text !== SUBAGENTS_GUIDANCE),
         subagent: true,
       };
     },
