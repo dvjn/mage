@@ -1,20 +1,22 @@
 // A stand-in model for the browser journeys, chosen by configuration and refused in production. It
-// says how many messages from people it has read, then a few more words, one every few tens of
-// milliseconds; it keeps going much longer when the newest message asks it to reply slowly, longer
-// still very slowly, and reasons for a few words first when it asks it to think. Each `/tool <id>
-// <json>` line in the newest message makes it call that tool after its words, when it is offered,
-// or say it cannot. Where tools it is not offered can be searched for and no line searches itself,
-// it first selects them with the tool search instead. Shown what the calls gave back, it says so,
-// and calls those of the lines it has not called yet that are offered by then, as after a tool that
-// turned others on. A `/fail <text>` line makes it fail with that text after its words. A `/prompt`
-// line makes it say its system prompt, a line at a time, in place of its words, and a `/say` line makes it reply with
-// the rest of the message, a few characters at a time.
+// says how many messages from people and agents it has read, then a few more words, one every few
+// tens of milliseconds; it keeps going much longer when the newest message asks it to reply slowly,
+// longer still very slowly, and reasons for a few words first when it asks it to think. Each
+// `/tool <id> <json>` line in the newest message makes it call that tool after its words, when it
+// is offered, or say it cannot. Where tools it is not offered can be searched for and no line
+// searches itself, it first selects them with the tool search instead. Shown what the calls gave
+// back, it says so, and calls those of the lines it has not called yet that are offered by then, as
+// after a tool that turned others on. A `/fail <text>` line makes it fail with that text after its
+// words. A `/prompt` line makes it say its system prompt and what it was given ahead of the
+// conversation, a line at a time, in place of its words, and a `/say` line makes it reply with the
+// rest of the message, a few characters at a time.
 // Its lists stand in for hosts' lists: they take any key starting with `sk-`.
 
 import { setTimeout as delay } from "node:timers/promises";
 
 import { ulid } from "ulid";
 
+import { leads } from "@/server/agent/context.ts";
 import type { Catalog } from "@/server/models/catalog.ts";
 import type {
   ModelMessage,
@@ -39,8 +41,12 @@ const PROMPT_LINE = /^(?:\[[^\]\n]*\][ \t]*)?\/prompt[ \t]*$/m;
 const SAY_LINE = /^(?:\[[^\]\n]*\][ \t]*)?\/say[ \t]*\n([\s\S]*)$/m;
 const SAY_CHARS = 6;
 
+// It counts what it read beside what it was given ahead of the conversation.
 function wordsFor(messages: ModelMessage[]) {
-  const read = messages.filter((message) => message.role === "user");
+  const read = messages.filter(
+    (message): message is Extract<ModelMessage, { role: "user" }> =>
+      message.role === "user" && !leads(message),
+  );
   const last = read.at(-1)?.text ?? "";
   const count = /very slowly/i.test(last) ? 300 : /slowly/i.test(last) ? 60 : 8;
   return [
@@ -79,13 +85,19 @@ function saidBy(result: ModelToolResult) {
 export function createFakeGateway(): ModelGateway {
   return {
     async *stream(_token, request, signal) {
-      const messages = [...request.messages];
-      const offered = new Set((request.tools ?? []).map((tool) => tool.id));
+      // What changed in the thread it reads from its tools.
+      const messages: ModelMessage[] = request.messages.filter(
+        (message) => message.role !== "change",
+      );
+      const offered = new Set([
+        ...(request.tools ?? []).map((tool) => tool.id),
+        ...(request.toolsOn ?? []),
+      ]);
       for (let step = 0; step < request.maxSteps; step += 1) {
         if (step > 0) {
           const added = request.beforeStep?.() ?? [];
           if (added.length === 0) return;
-          messages.push(...added);
+          messages.push(...added.filter((message) => message.role !== "change"));
         }
         yield { type: "step-start" };
         const last = messages.at(-1);
@@ -136,7 +148,14 @@ export function createFakeGateway(): ModelGateway {
           last?.role === "tool"
             ? spaced(last.results.map(saidBy).join(" ").split(" "))
             : PROMPT_LINE.test(said)
-              ? request.instructions.split(/(?<=\n)/)
+              ? [
+                  request.instructions,
+                  ...messages
+                    .filter(leads)
+                    .map((message) => `\n\n${(message as { text: string }).text}`),
+                ]
+                  .join("")
+                  .split(/(?<=\n)/)
               : spaced([
                   ...wordsFor(messages),
                   ...(selects ? [] : unoffered).flatMap((toolId) =>

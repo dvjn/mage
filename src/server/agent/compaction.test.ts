@@ -11,7 +11,7 @@ import {
 } from "@/shared/transcript.ts";
 
 import { conversationText, cutOf, RESULT_CHARS, summaryRequest } from "./compaction.ts";
-import { COMPACTED_HEADING } from "./context.ts";
+import { summaryMessage } from "./context.ts";
 
 const ada = { kind: "user", userId: "ada", name: "Ada" } as const;
 
@@ -191,10 +191,9 @@ describe("compacting a thread", () => {
 
     await post(ada, "Three");
     const after = await model.next();
-    expect(after.request.instructions).toContain(`${COMPACTED_HEADING}`);
-    expect(after.request.instructions).toContain("Ada counted to one.");
-    expect(after.request.instructions).toContain("Ada Lovelace");
+    expect(after.request.instructions).not.toContain("Ada counted to one.");
     expect(after.texts).toEqual([
+      `user: ${summaryMessage("Ada counted to one.").text}`,
       "user: [Ada Lovelace] Two",
       "assistant: Second.",
       "user: [Ada Lovelace] Three",
@@ -212,9 +211,8 @@ describe("compacting a thread", () => {
 
     await post(ada, "Four");
     const last = await model.next();
-    expect(last.request.instructions).toContain("Ada counted to two.");
-    expect(last.request.instructions).not.toContain("Ada counted to one.");
     expect(last.texts).toEqual([
+      `user: ${summaryMessage("Ada counted to two.").text}`,
       "user: [Ada Lovelace] Three",
       "assistant: Third.",
       "user: [Ada Lovelace] Four",
@@ -262,8 +260,8 @@ describe("compacting a thread", () => {
     ]);
     summarising.reply("Ada said one.");
     const after = await model.next();
-    expect(after.request.instructions).toContain("Ada said one.");
     expect(after.texts).toEqual([
+      `user: ${summaryMessage("Ada said one.").text}`,
       "user: [Ada Lovelace] Two",
       "assistant: Compacting.",
       'tool thread.compact: {"focus":"numbers"}',

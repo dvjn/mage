@@ -44,8 +44,7 @@ import {
   transcriptOf,
 } from "@/shared/transcript.ts";
 
-import { readOf } from "./compaction.ts";
-import { contextOf, type SubagentGuidance } from "./context.ts";
+import { contextOf, framingMessage } from "./context.ts";
 import { createNotifier, type Notification } from "./notifications.ts";
 import type { Run, RunStore } from "./runs.ts";
 import type { AnyToolSpec, ToolContext, Toolset, ToolSpec } from "./tools.ts";
@@ -845,42 +844,38 @@ export function createSubagents(options: SubagentsOptions) {
       return tools.filter((spec) => !STARTER_ONLY.has(spec.name));
     },
 
-    // What the thread's agent is told: for a subagent, what it is, in place of what the subagents'
-    // toolset tells the agent that starts them.
-    guidance(
-      thread: Thread,
-      toolsets: string[],
-    ): { toolsets: string[]; subagent?: SubagentGuidance } {
-      const subagent = subagents.find(thread.id);
-      if (!subagent) return { toolsets };
-      const parent = threads.find(subagent.parentThreadId);
+    // What the thread's agent is told: for a subagent, that it is one, in place of what the
+    // subagents' toolset tells the agent that starts them.
+    guidance(thread: Thread, toolsets: string[]): { toolsets: string[]; subagent?: boolean } {
+      if (!subagents.find(thread.id)) return { toolsets };
       return {
         toolsets: toolsets.filter((text) => text !== SUBAGENTS_GUIDANCE),
-        subagent: {
-          name: subagent.name,
-          parent: parent?.title ?? UNTITLED,
-          ...(subagent.instructions && { instructions: subagent.instructions }),
-        },
+        subagent: true,
       };
     },
 
-    // For a subagent started from a copy of its starter's conversation, that conversation as it was
-    // when it started, without the call that started it.
+    // What a subagent reads ahead of its own thread: who it is, who started it, as that thread was
+    // titled when its task was sent, and its instructions; then, for one started from a copy of
+    // its starter's conversation, that conversation as it was when it started, without the call
+    // that started it.
     before(thread: Thread): ModelMessage[] {
-      if (!thread.parentThreadId) return [];
-      const task = transcript(thread.id).rows.find((row) => row.kind === "relay")?.task;
-      const fork = task?.fork;
-      if (!fork) return [];
-      const rows = transcript(thread.parentThreadId).rows.filter(
+      const subagent = subagents.find(thread.id);
+      if (!subagent) return [];
+      const relays = transcript(thread.id).rows.filter((row) => row.kind === "relay");
+      const task = relays.find((row) => row.task) ?? relays[0];
+      const framing = framingMessage({
+        name: subagent.name,
+        parent: task?.from.name ?? threads.find(subagent.parentThreadId)?.title ?? UNTITLED,
+        ...(subagent.instructions && { instructions: subagent.instructions }),
+      });
+      const fork = task?.task?.fork;
+      if (!fork) return [framing];
+      const rows = transcript(subagent.parentThreadId).rows.filter(
         (row) => row.seq <= fork.seq && row.id !== fork.callId,
       );
-      const { summary } = readOf(rows);
-      return [
-        ...(summary
-          ? [{ role: "user" as const, text: `[Summary of the earlier conversation] ${summary}` }]
-          : []),
-        ...contextOf(rows).messages,
-      ];
+      // What changed there was its starter's, not its own.
+      const copy = contextOf(rows).messages.filter((message) => message.role !== "change");
+      return [framing, ...copy];
     },
 
     // Once a subagent's run ends with nothing more to do, tells its starter's agent if it failed,

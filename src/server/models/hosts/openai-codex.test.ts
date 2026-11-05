@@ -257,6 +257,30 @@ describe("Codex gateway", () => {
     ]);
   });
 
+  it("keeps the thread's first effort and tells a change in the conversation, where the model takes that", async () => {
+    const { fetchFn, requests } = recordingFetch([sse(reply(["Hi"])), sse(reply(["Hi"]))]);
+    const gateway = createCodexGateway(fetchFn);
+    const changed: Omit<ModelRequest, "beforeStep"> = {
+      ...request,
+      effort: "high",
+      firstEffort: "low",
+      messages: [...request.messages, { role: "change", effort: "high" }],
+    };
+    const signal = new AbortController().signal;
+
+    await collect(gateway.stream(token, { ...changed, model: "gpt-6" }, signal));
+    await collect(gateway.stream(token, { ...changed, model: "gpt-5.2-codex" }, signal));
+
+    const [updating, plain] = requests.map((sent) => sent.body) as Record<string, unknown>[];
+    expect(updating?.reasoning).toMatchObject({ effort: "low" });
+    expect((updating!.input as unknown[]).at(-1)).toEqual({
+      type: "configuration_update",
+      reasoning: { effort: "high" },
+    });
+    expect(plain?.reasoning).toMatchObject({ effort: "high" });
+    expect(JSON.stringify(plain?.input)).not.toContain("configuration_update");
+  });
+
   it("asks a model without an effort for no reasoning", async () => {
     const { fetchFn, requests } = recordingFetch([sse(reply(["Hi"]))]);
 

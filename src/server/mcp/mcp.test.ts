@@ -759,9 +759,9 @@ describe("MCP tools in a thread", () => {
     // The tool searched for is offered; the others are still listed for searching.
     expect(first.tools).toContain(named("add_note"));
     expect(first.request.instructions).toContain(`- ${named("echo")}: Say the text back.`);
-    expect(first.request.tools?.find((tool) => tool.id === named("add_note"))?.inputSchema).toEqual(
-      expect.objectContaining({ required: ["title"] }),
-    );
+    expect(
+      first.request.searchable?.find((tool) => tool.id === named("add_note"))?.inputSchema,
+    ).toEqual(expect.objectContaining({ required: ["title"] }));
     expect(toolRows().map((row) => [row.state, row.risk])).toEqual([["ran", "normal"]]);
     expect(next.texts.at(-1)).toBe(
       `result ${named("add_note")}: {"ok":true,"value":{"id":"note-1","title":"Engines","words":2}}`,
@@ -1898,7 +1898,8 @@ describe("searching for MCP tools", () => {
     expect(second.texts.at(-1)).toContain('"parameters":"text: string"');
     expect(second.tools).toContain(named("echo"));
     expect(second.tools).not.toContain(named("add_note"));
-    expect(second.request.instructions).not.toContain(`- ${named("echo")}:`);
+    // The prompt still lists it, as it did.
+    expect(second.request.instructions).toBe(first.request.instructions);
     step(second, [named("echo"), { text: "hello" }]);
     const third = await model.next();
     third.reply("Said.");
@@ -1939,7 +1940,7 @@ describe("searching for MCP tools", () => {
     expect(next.tools).not.toContain(named("echo"));
   });
 
-  it("keeps the tools turned on when the run resumes after a decision", async () => {
+  it("keeps the tools turned on for the thread, through a decision and into later runs", async () => {
     const { ada, api, thread, post, model, worker, start, named, toolRows, db } = await mcpThread();
     start();
 
@@ -1949,8 +1950,8 @@ describe("searching for MCP tools", () => {
     await worker.idle();
     const waiting = toolRows().at(-1)!;
     expect(waiting).toMatchObject({ state: "pending", waits: true });
-    const stored = db.select({ toolsOn: schema.run.toolsOn }).from(schema.run).get();
-    expect(stored?.toolsOn).toEqual([waiting.toolId]);
+    const stored = db.select().from(schema.threadTool).all();
+    expect(stored).toMatchObject([{ threadId: thread.id, toolId: waiting.toolId }]);
 
     const decided = await api(
       "POST",
@@ -1965,10 +1966,10 @@ describe("searching for MCP tools", () => {
     resumed.reply("Gone already.");
     await worker.idle();
 
-    // The next run starts with them left out again.
+    // The next run keeps them.
     await post(ada, "Again");
     const next = await model.next();
-    expect(next.tools).not.toContain(named("delete_note"));
+    expect(next.tools).toContain(named("delete_note"));
     next.reply("Hi.");
     await worker.idle();
   });

@@ -7,7 +7,7 @@ import { thread } from "@/server/threads/schema.ts";
 import type { Db } from "@/server/db/db.ts";
 
 import { type Lease, LeaseLost, type Run, type RunStore } from "./runs.ts";
-import { run } from "./schema.ts";
+import { run, threadTool } from "./schema.ts";
 
 const columns = {
   id: run.id,
@@ -27,7 +27,6 @@ const columns = {
   error: run.error,
   errorKind: run.errorKind,
   errorDetail: run.errorDetail,
-  toolsOn: run.toolsOn,
   inputTokens: run.inputTokens,
   outputTokens: run.outputTokens,
   createdAt: run.createdAt,
@@ -200,17 +199,30 @@ export function createRunStore(db: Db): RunStore {
       if (!row) throw new LeaseLost(lease.runId);
     },
 
-    turnOn(lease, toolIds) {
-      const current = db.select({ toolsOn: run.toolsOn }).from(run).where(held(lease)).get();
+    turnOn(lease, callId, toolIds) {
+      const current = db.select({ threadId: run.threadId }).from(run).where(held(lease)).get();
       if (!current) throw new LeaseLost(lease.runId);
-      const toolsOn = [...new Set([...current.toolsOn, ...toolIds])];
-      const row = db
-        .update(run)
-        .set({ toolsOn, updatedAt: new Date() })
-        .where(held(lease))
-        .returning({ id: run.id })
+      const on = db
+        .select({ count: sql<number>`count(*)` })
+        .from(threadTool)
+        .where(eq(threadTool.threadId, current.threadId))
         .get();
-      if (!row) throw new LeaseLost(lease.runId);
+      const values = [...new Set(toolIds)].map((toolId, index) => ({
+        threadId: current.threadId,
+        toolId,
+        callId,
+        position: (on?.count ?? 0) + index,
+      }));
+      if (values.length > 0) db.insert(threadTool).values(values).onConflictDoNothing().run();
+    },
+
+    toolsOn(threadId) {
+      return db
+        .select({ id: threadTool.toolId, callId: threadTool.callId })
+        .from(threadTool)
+        .where(eq(threadTool.threadId, threadId))
+        .orderBy(asc(threadTool.position))
+        .all();
     },
 
     wait(lease) {

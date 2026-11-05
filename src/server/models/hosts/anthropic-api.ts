@@ -6,9 +6,9 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import * as z from "zod";
 
 import type { Catalog } from "@/server/models/catalog.ts";
-import type { ModelGateway } from "@/server/models/gateway.ts";
+import type { ModelGateway, ModelRequest } from "@/server/models/gateway.ts";
 
-import { type ProviderErrors, streamReply } from "./ai-sdk-stream.ts";
+import { type InlineChanges, type ProviderErrors, streamReply } from "./ai-sdk-stream.ts";
 
 const API_URL = "https://api.anthropic.com/v1";
 const API_VERSION = "2023-06-01";
@@ -83,8 +83,47 @@ export const anthropicErrors: ProviderErrors = {
   },
 };
 
+// The models that take system messages mid-conversation, and with them tools turned on there.
+const MID_CONVERSATION_SYSTEM =
+  /^claude-(?:(?:fable|mythos)-5(?:-1)?|opus-(?:4-8|5|5-5)|sonnet-5-5|haiku-5-5)(?:-\d{8})?$/;
+
+// The models that take an effort change in a system message mid-conversation.
+const MESSAGE_EFFORT =
+  /^claude-(?:(?:fable|mythos)-5-1|opus-5(?:-5)?|sonnet-5-5|haiku-5-5)(?:-\d{8})?$/;
+
+// What a request is sent with so that what changes in the thread leaves its start as it was, for
+// the models that take changes mid-conversation: each searchable tool declared from the first
+// request but not loaded, and loaded where a system message adds it; and, while the thread's
+// first effort and the one asked for now are known, the first as the request's own, each change
+// since told where it happened. Otherwise the effort asked for now is the request's own.
+function changesFor(request: ModelRequest) {
+  const tools = MID_CONVERSATION_SYSTEM.test(request.model);
+  const pinned = MESSAGE_EFFORT.test(request.model) && request.effort && request.firstEffort;
+  const changes: InlineChanges | undefined =
+    tools || pinned
+      ? {
+          ...(tools && { deferred: { anthropic: { deferLoading: true } } }),
+          message({ tools: added, effort }) {
+            const toolChanges = tools
+              ? (added ?? []).map((name) => ({ type: "tool_addition", toolName: name }))
+              : [];
+            const told = pinned ? effort : undefined;
+            if (toolChanges.length === 0 && !told) return null;
+            return {
+              anthropic: {
+                ...(toolChanges.length > 0 && { toolChanges }),
+                ...(told && { effort: told }),
+              },
+            };
+          },
+        }
+      : undefined;
+  return { effort: pinned ? request.firstEffort : request.effort, changes };
+}
+
 // Replies through the Anthropic Messages API with an API key, the instructions as the system
-// prompt. A model that can think does so at the effort asked for, and streams its thinking.
+// prompt. A model that can think does so at the effort asked for, and streams its thinking; one that
+// takes them is told tools turned on and effort changes mid-conversation.
 export function createAnthropicKeyGateway(fetchFn: typeof fetch = fetch): ModelGateway {
   return {
     async *stream(token, request, signal) {
@@ -96,11 +135,13 @@ export function createAnthropicKeyGateway(fetchFn: typeof fetch = fetch): ModelG
         headers: { "user-agent": "mage", ...token.proxy?.headers },
         fetch: fetchFn,
       });
+      const { effort, changes } = changesFor(request);
       yield* streamReply(provider.messages(request.model), request, signal, {
         system: request.instructions,
         // Adaptive thinking at that effort, or a thinking budget for models without it.
-        ...(request.effort && { reasoning: request.effort }),
+        ...(effort && { reasoning: effort }),
         errors: anthropicErrors,
+        ...(changes && { changes }),
       });
     },
   };

@@ -6,9 +6,9 @@ import { createOpenAI } from "@ai-sdk/openai";
 import * as z from "zod";
 
 import type { Catalog } from "@/server/models/catalog.ts";
-import type { ModelGateway } from "@/server/models/gateway.ts";
+import type { Effort, ModelGateway, ModelRequest } from "@/server/models/gateway.ts";
 
-import { type ProviderErrors, streamReply } from "./ai-sdk-stream.ts";
+import { type InlineChanges, type ProviderErrors, streamReply } from "./ai-sdk-stream.ts";
 
 const API_URL = "https://api.openai.com/v1";
 
@@ -50,8 +50,34 @@ export const openaiErrors: ProviderErrors = {
   explains: (name) => name.startsWith("x-ratelimit-") || name === "x-request-id",
 };
 
+// The models that take an effort change in the conversation, as a configuration update.
+function takesEffortChanges(model: string) {
+  const major = /^gpt-(\d+)/.exec(model)?.[1];
+  return major !== undefined && Number(major) >= 6;
+}
+
+// The effort a Responses request is sent with, and how it tells a change: for a model that takes
+// changes in the conversation, while the thread's first effort and the one asked for now are
+// known, the first, each change since told where it happened, so the request's start stays as it
+// was; otherwise the effort asked for now.
+export function responsesEffort(request: ModelRequest): {
+  effort?: Effort;
+  changes?: InlineChanges;
+} {
+  if (!request.effort || !request.firstEffort || !takesEffortChanges(request.model)) {
+    return { ...(request.effort && { effort: request.effort }) };
+  }
+  return {
+    effort: request.firstEffort,
+    changes: {
+      message: ({ effort }) => (effort ? { openai: { reasoningEffortUpdate: effort } } : null),
+    },
+  };
+}
+
 // Replies through the Responses endpoint with the instructions as the system prompt. A model that
-// can think is given the effort and streams a summary of its reasoning.
+// can think is given the effort and streams a summary of its reasoning; one that takes them is told
+// effort changes in the conversation.
 export function createOpenAIKeyGateway(fetchFn: typeof fetch = fetch): ModelGateway {
   return {
     async *stream(token, request, signal) {
@@ -63,14 +89,14 @@ export function createOpenAIKeyGateway(fetchFn: typeof fetch = fetch): ModelGate
         ...(token.proxy && { headers: token.proxy.headers }),
         fetch: fetchFn,
       });
+      const { effort, changes } = responsesEffort(request);
       yield* streamReply(provider.responses(request.model), request, signal, {
         system: request.instructions,
-        ...(request.effort && {
-          providerOptions: {
-            openai: { reasoningEffort: request.effort, reasoningSummary: "auto" },
-          },
+        ...(effort && {
+          providerOptions: { openai: { reasoningEffort: effort, reasoningSummary: "auto" } },
         }),
         errors: openaiErrors,
+        ...(changes && { changes }),
       });
     },
   };

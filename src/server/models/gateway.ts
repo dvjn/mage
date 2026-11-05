@@ -41,11 +41,21 @@ export interface ModelToolResult {
   output: { ok: true; value: unknown } | { ok: false; error: string };
 }
 
-// A person's words, the model's answer with the calls it asked for, or what those calls gave back.
+// What changed in the thread at a point in its conversation, for a provider that takes it there
+// rather than in the request's start: the searchable tools turned on, and the effort replies are
+// asked for from there.
+export interface ModelChange {
+  tools?: string[];
+  effort?: Effort;
+}
+
+// A person's words, the model's answer with the calls it asked for, what those calls gave back, or
+// what changed at that point.
 export type ModelMessage =
   | { role: "user"; text: string }
   | { role: "assistant"; text: string; toolCalls?: ModelToolCall[] }
-  | { role: "tool"; results: ModelToolResult[] };
+  | { role: "tool"; results: ModelToolResult[] }
+  | ({ role: "change" } & ModelChange);
 
 export interface ModelUsage {
   inputTokens: number;
@@ -66,12 +76,21 @@ export interface ModelRequest {
   sessionId: string;
   // Set only for a model that can think; it then streams its reasoning too.
   effort?: Effort;
+  // The effort the thread's first reply was asked for. A provider that takes effort changes in the
+  // conversation keeps it as the request's own, and the changes since say what holds now.
+  firstEffort?: Effort;
   // Called at each step boundary after the first; the messages it returns join the conversation
   // before the next step.
   beforeStep?: () => ModelMessage[];
   // The tools the model may call. A step that calls any ends the request; whoever asked runs them
   // and asks again with what they gave back.
   tools?: ModelTool[];
+  // The tools the model may turn on by searching for them, in a fixed order, and those it turned
+  // on in the thread, in the order it did. A provider that can declare tools left out until turned
+  // on declares them all and turns them on where the conversation's changes say; any other is sent
+  // those turned on after `tools`.
+  searchable?: ModelTool[];
+  toolsOn?: string[];
 }
 
 export type ModelEvent =

@@ -148,8 +148,6 @@ export const run = sqliteTable(
     // Why it failed, as a failure kind, and what the provider said.
     errorKind: text("error_kind", { enum: ["auth", "limit", "model", "network"] }),
     errorDetail: text("error_detail"),
-    // The MCP tools the model turned on by searching for them, by id, offered from then on.
-    toolsOn: text("tools_on", { mode: "json" }).$type<string[]>().default([]).notNull(),
     inputTokens: integer("input_tokens").default(0).notNull(),
     outputTokens: integer("output_tokens").default(0).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -169,6 +167,21 @@ export const run = sqliteTable(
       .on(table.threadId)
       .where(sql`${table.status} in ('queued', 'running', 'waiting')`),
   ],
+);
+
+// An MCP tool a thread's agent turned on by searching for it, offered in the thread from then on:
+// the call that turned it on, and its place among the thread's tools turned on.
+export const threadTool = sqliteTable(
+  "thread_tool",
+  {
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    toolId: text("tool_id").notNull(),
+    callId: text("call_id").notNull(),
+    position: integer("position").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.threadId, table.toolId] })],
 );
 
 // A subagent a thread's agent started: the thread it works in, the thread whose agent started it,

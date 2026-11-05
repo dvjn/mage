@@ -195,6 +195,71 @@ describe("Anthropic API key gateway", () => {
     expect(events.at(-1)).toMatchObject({ type: "step-end" });
   });
 
+  it("declares searchable tools left out from the start and turns them on mid-conversation, where the model takes that", async () => {
+    const { fetchFn, requests } = recordingFetch([sse(reply(["Hi"])), sse(reply(["Hi"]))]);
+    const gateway = createAnthropicKeyGateway(fetchFn);
+    const tool = (id: string) => ({ id, description: id, inputSchema: { type: "object" } });
+    const searching: Omit<ModelRequest, "beforeStep"> = {
+      ...request,
+      tools: [tool("thread.rename")],
+      searchable: [tool("mcp.notes.echo"), tool("mcp.notes.add")],
+      toolsOn: ["mcp.notes.add"],
+      messages: [...request.messages, { role: "change", tools: ["mcp.notes.add"] }],
+    };
+    const signal = new AbortController().signal;
+
+    await collect(gateway.stream(token, { ...searching, model: "claude-opus-5-5" }, signal));
+    await collect(gateway.stream(token, searching, signal));
+
+    const [deferring, appending] = requests.map((sent) => sent.body) as [
+      Record<string, unknown>,
+      Record<string, unknown>,
+    ];
+    expect(deferring.tools).toEqual([
+      expect.not.objectContaining({ defer_loading: true }),
+      expect.objectContaining({ name: "mcp__notes__echo", defer_loading: true }),
+      expect.objectContaining({ name: "mcp__notes__add", defer_loading: true }),
+    ]);
+    expect((deferring.messages as unknown[]).at(-1)).toEqual({
+      role: "system",
+      content: [
+        { type: "tool_addition", tool: { type: "tool_reference", name: "mcp__notes__add" } },
+      ],
+    });
+    // A model without mid-conversation changes is sent those turned on after the rest.
+    expect((appending.tools as { name: string }[]).map((sent) => sent.name)).toEqual([
+      "thread__rename",
+      "mcp__notes__add",
+    ]);
+    expect(JSON.stringify(appending.messages)).not.toContain("tool_addition");
+  });
+
+  it("keeps the thread's first effort and tells a change in the conversation, where the model takes that", async () => {
+    const { fetchFn, requests } = recordingFetch([sse(reply(["Hi"])), sse(reply(["Hi"]))]);
+    const gateway = createAnthropicKeyGateway(fetchFn);
+    const changed: Omit<ModelRequest, "beforeStep"> = {
+      ...request,
+      effort: "high",
+      firstEffort: "low",
+      messages: [...request.messages, { role: "change", effort: "high" }],
+    };
+    const signal = new AbortController().signal;
+
+    await collect(gateway.stream(token, { ...changed, model: "claude-opus-5-5" }, signal));
+    await collect(gateway.stream(token, { ...changed, model: "claude-sonnet-5" }, signal));
+
+    const [pinned, plain] = requests;
+    expect(pinned?.body.output_config).toEqual({ effort: "low" });
+    expect((pinned!.body.messages as unknown[]).at(-1)).toEqual({
+      role: "system",
+      content: [],
+      output_config: { effort: "high" },
+    });
+    expect(pinned?.headers.get("anthropic-beta")).toContain("mid-conversation-output-config");
+    expect(plain?.body.output_config).toEqual({ effort: "high" });
+    expect(JSON.stringify(plain?.body.messages)).not.toContain('"system"');
+  });
+
   it("asks the Messages API with the key", async () => {
     const { fetchFn, requests } = recordingFetch([sse(reply(["Punched", " cards."]))]);
 

@@ -101,7 +101,7 @@ export interface ToolContext {
   // What was answered, for a tool that waits for answers.
   answers?: AskAnswers;
   // The MCP tools the run leaves out of the model's requests, those turned on among them, and a
-  // way to turn some on for the rest of the run, for the tool that searches them.
+  // way to turn some on for the rest of the thread, for the tool that searches them.
   deferred?: { tools: DeferredTool[]; on: ReadonlySet<string>; turnOn(ids: string[]): void };
   // Aborted once the run is to stop, for a tool that waits.
   signal?: AbortSignal;

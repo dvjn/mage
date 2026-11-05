@@ -1,9 +1,9 @@
-// Searching for MCP tools. A run never sends the MCP tools it offers up front: the prompt names
+// Searching for MCP tools. A thread's requests never offer the MCP tools up front: the prompt names
 // each by server with a line of what it does, and Mage's own search_tools turns them on by a ranked
-// keyword query, by exact name, or after listing a server's tools. A tool turned on joins the
-// requests from the model's next step for the rest of the run, and is called directly, so its
-// policies, approvals and login are its own. Mage's own tools are always sent. The search is always
-// on where there are MCP tools, and no policy applies to it: it only shows tools the space offers.
+// keyword query, by exact name, or after listing a server's tools. A tool turned on is offered from
+// the model's next step for the rest of the thread, and is called directly, so its policies,
+// approvals and login are its own. Mage's own tools are always sent. The search is always on where
+// there are MCP tools, and no policy applies to it: it only shows tools the space offers.
 
 import * as z from "zod";
 

@@ -5,6 +5,7 @@
 import * as z from "zod";
 
 import { askAnswersSchema } from "@/shared/ask.ts";
+import { effortSchema } from "@/shared/threads/thread.ts";
 
 export const textPartSchema = z.object({ type: z.literal("text"), text: z.string() });
 
@@ -200,11 +201,13 @@ export const eventDataSchemas = {
   }),
   // The agent took these messages in, in this order, during the run.
   "message.admitted": z.object({ runId: z.string(), messageIds: z.array(z.string()).min(1) }),
-  // The agent began a reply with the model ref; its place in the thread is this event's seq.
+  // The agent began a reply with the model ref, asked to think at the effort; its place in the
+  // thread is this event's seq.
   "message.started": z.object({
     messageId: z.string(),
     runId: z.string(),
     model: z.string().optional(),
+    effort: effortSchema.optional(),
   }),
   // The reply begun as messageId ended with this content, and the tokens the model step that
   // wrote it used when it finished.

@@ -167,8 +167,11 @@ describe("subagents", () => {
     expect(child.title).toBe("Researcher");
 
     const first = await callIn(subagentId);
-    expect(first.texts).toEqual([notified("[Agent of Research queues] Compare queues")]);
-    expect(first.request.instructions).toContain("You are a subagent labelled Researcher");
+    expect(first.texts).toEqual([
+      "user: You are the subagent Researcher, started by the agent of the thread Research queues.",
+      notified("[Agent of Research queues] Compare queues"),
+    ]);
+    expect(first.request.instructions).toContain("You are a subagent");
     expect(first.request.instructions).toContain("even when you found nothing");
     expect(first.request.instructions).not.toContain("You can start subagents");
     first.reply("BullMQ wins.");
@@ -365,6 +368,7 @@ describe("subagents", () => {
     workspace.keepAnswering(thread.id);
     const forked = await callIn(subagentNamed("Forked"));
     expect(forked.texts).toEqual([
+      "user: You are the subagent Forked, started by the agent of the thread We chose Postgres.",
       "user: [Ada Lovelace] We chose Postgres",
       "assistant: Noted.",
       "user: [Ada Lovelace] Now research queues",
@@ -981,7 +985,7 @@ describe("subagents", () => {
       "subagents.start",
       { name: "Namer", task: "Rename your thread" },
     ]);
-    expect(first.request.instructions).toContain("You are Mira, the agent in a workspace");
+    expect(first.request.instructions).toContain("You go by Mira here.");
     await answer(thread.id);
     const namer = subagentNamed("Namer");
     const told = await calls(namer, ["thread.rename", { title: "Named" }]);

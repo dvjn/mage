@@ -13,6 +13,7 @@
 
 import type { AskAnswers } from "@/shared/ask.ts";
 import { COMPACT } from "@/shared/threads/commands.ts";
+import type { Effort } from "@/shared/threads/thread.ts";
 import {
   type ActorSummary,
   type AnyThreadEvent,
@@ -64,8 +65,9 @@ export interface AgentRow {
   id: string;
   seq: number;
   runId: string;
-  // The model ref it was written with, when known.
+  // The model ref it was written with, and the effort it was asked for, when known.
   model: string | null;
+  effort?: Effort;
   startedAt: string;
   text: string;
   // What the model thought before it answered, and for how long, when it says.
@@ -496,6 +498,7 @@ export function createFold(): TranscriptFold {
           seq: event.seq,
           runId: event.data.runId,
           model: event.data.model ?? null,
+          ...(event.data.effort && { effort: event.data.effort }),
           startedAt: event.createdAt,
           text: "",
           reasoning: "",

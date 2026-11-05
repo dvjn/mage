@@ -56,9 +56,10 @@ export class Call {
   }
 
   // The texts of the messages the call was given; a reply's tool calls, and what they gave back,
-  // as `tool <id> <input>` and `result <id> <output>`.
+  // as `tool <id> <input>` and `result <id> <output>`. Changes are left out.
   get texts() {
     return this.request.messages.flatMap((message: ModelMessage) => {
+      if (message.role === "change") return [];
       if (message.role === "tool") {
         return message.results.map(
           (result) => `result ${result.toolId}: ${JSON.stringify(result.output)}`,
@@ -74,9 +75,9 @@ export class Call {
     });
   }
 
-  // The ids of the tools the call offered the model.
+  // The ids of the tools the call offered the model, those turned on by searching last.
   get tools() {
-    return (this.request.tools ?? []).map((tool) => tool.id);
+    return [...(this.request.tools ?? []).map((tool) => tool.id), ...(this.request.toolsOn ?? [])];
   }
 
   startStep() {

@@ -10,10 +10,10 @@ test.beforeEach(async ({ context }, testInfo) => {
   });
 });
 
-// What heads the summary in the agent's system prompt.
+// What heads the summary the agent reads first.
 const HEADING = "Summary of the earlier conversation in this thread, compacted.";
 
-// The stand-in model says its system prompt a line at a time, the summary last; on a busy machine
+// The stand-in model says its system prompt a line at a time, then the summary; on a busy machine
 // that takes more than the usual 5 seconds.
 const PROMPT_SAID = { timeout: 15_000 };
 

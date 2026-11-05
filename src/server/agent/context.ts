@@ -7,14 +7,17 @@
 // replies still being written, and replies cut short that were tried again, are not. Content parts
 // a call gave back read as their text, an image named by its type. A call that did not run gives
 // back only that it was not approved, or that its questions were skipped. Once the thread is
-// compacted, the summary closes the system prompt and the messages start where the compaction cut
-// it. The notifications the agent took in together read as one message saying they are not a
-// person's instructions, other agents' messages among them named for the agent that sent them;
-// subagents that ended runs, as older threads were told, read as one line each. A subagent is told
-// what it is, who started it and what it was told beside its task, and may read before its own
-// thread the conversation of the thread that started it, as it was when it started.
+// compacted, the summary is the first message and the rest start where the compaction cut it. The
+// notifications the agent took in together read as one message saying they are not a person's
+// instructions, other agents' messages among them named for the agent that sent them; subagents
+// that ended runs, as older threads were told, read as one line each. The system prompt depends
+// only on settings and on whether the agent is a subagent; a subagent's first message says who it
+// is, who started it and what it was told beside its task, and it may read next the conversation
+// of the thread that started it, as it was when it started. Tools turned on by searching for them,
+// and changes to the effort replies are asked for, are told in the conversation where they
+// happened, so the request's start stays the same for providers that take them so.
 
-import type { ModelMessage, ModelToolResult } from "@/server/models/gateway.ts";
+import type { Effort, ModelMessage, ModelToolResult } from "@/server/models/gateway.ts";
 import { valueForAgent } from "@/shared/mcp.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import { QUIET_PREFIX } from "@/shared/threads/events.ts";
@@ -35,6 +38,8 @@ type UserMessage = Extract<ModelMessage, { role: "user" }>;
 export interface Context {
   instructions: string;
   messages: ModelMessage[];
+  // The effort the thread's first reply was asked for, when it was asked one.
+  firstEffort?: Effort;
 }
 
 // A person's message as the agent reads it: what a command they sent stands for, or what they
@@ -91,12 +96,35 @@ export function noticeMessage(row: Pick<NoticeRow, "subagents">): UserMessage {
   return { role: "user", text: `[Subagents] ${lines.join("\n")}` };
 }
 
-// What a subagent is told of itself: its label, the thread whose agent started it, and the
-// instructions it was given.
-export interface SubagentGuidance {
+// What a subagent is told of itself when it starts: its label, the thread whose agent started it,
+// titled as it was then, and the instructions it was given.
+export interface SubagentFraming {
   name: string;
   parent: string;
   instructions?: string;
+}
+
+// What a subagent's framing starts with.
+const FRAMING = "You are the subagent";
+
+// A subagent's framing, as the first message of its conversation.
+export function framingMessage({ name, parent, instructions }: SubagentFraming): UserMessage {
+  return {
+    role: "user",
+    text: [
+      `${FRAMING} ${name}, started by the agent of the thread ${parent}.`,
+      ...(instructions?.trim() ? [`Instructions for you:\n${instructions.trim()}`] : []),
+    ].join("\n"),
+  };
+}
+
+// Whether the message is one the conversation is given ahead of it: a subagent's framing, or the
+// summary of what came before a compaction's cut.
+export function leads(message: ModelMessage) {
+  return (
+    message.role === "user" &&
+    (message.text.startsWith(`${FRAMING} `) || message.text.startsWith(COMPACTED_HEADING))
+  );
 }
 
 // What an MCP server says about using its tools: written by the server, not by anyone in the org,
@@ -129,40 +157,45 @@ export interface Guidance {
   skills?: { name: string; description: string }[];
   // What Mage's own toolsets on in the space tell it.
   toolsets?: string[];
-  // For a subagent, what it is.
-  subagent?: SubagentGuidance;
+  // Whether the agent is a subagent.
+  subagent?: boolean;
   // What the agent goes by where people see it, when the org or the space named it.
   agentName?: string;
 }
 
 export const NO_GUIDANCE: Guidance = { org: "", space: "" };
 
-// The name the agent is told it goes by, for one that is not a subagent and has a name of its own.
-function named({ agentName, subagent }: Guidance) {
-  return agentName && agentName !== DEFAULT_AGENT_NAME && !subagent ? `${agentName}, ` : "";
-}
-
 // What heads the summary of a compacted thread's earlier conversation.
 export const COMPACTED_HEADING = "Summary of the earlier conversation in this thread, compacted.";
 
-export function instructionsFor(guidance: Guidance = NO_GUIDANCE, summary: string | null = null) {
+// The summary of what came before a compaction's cut, as the message in its place.
+export function summaryMessage(summary: string): UserMessage {
+  return {
+    role: "user",
+    text: `${COMPACTED_HEADING} It stands in place of the messages it covers; those since follow in full.\n${summary}`,
+  };
+}
+
+// The system prompt: what the agent is, then what the org and the space set. Nothing in it changes
+// within a thread, so every request of a thread starts the same.
+export function instructionsFor(guidance: Guidance = NO_GUIDANCE) {
   const sections = [
     [
-      `You are ${named(guidance)}the agent in a workspace where people talk with you and with each other in shared threads.`,
+      "You are the agent in a workspace where people talk with you and with each other in shared threads.",
       "Each person's message starts with the writer's name in brackets, like [Ada Lovelace]. Your replies do not start with a name.",
       `A message starting with ${QUIET_PREFIX} is an aside between people: take it in as context, but do not answer it.`,
       "Reply in Markdown.",
     ].join("\n"),
   ];
   if (guidance.subagent) {
-    const { name, parent, instructions } = guidance.subagent;
     sections.push(
       [
-        `You are a subagent labelled ${name}, started by the agent of the thread ${parent} to work on a task in a thread of your own. Its messages to you start with [Agent of ${parent}], and other subagents' with [Subagent <label>].`,
+        "You are a subagent, started by the agent of another thread to work on a task in a thread of your own; your first message says which. Its messages to you start with [Agent of <its thread>], and other subagents' with [Subagent <label>].",
         "Your replies stay in your own thread: nobody else reads them. When you are done, send your result to the agent that started you with the subagents send tool, to agent, result first, even when you found nothing. When you are blocked, tell it what you need. Message another subagent only when it needs what you have.",
-        ...(instructions?.trim() ? [`Instructions for you:\n${instructions.trim()}`] : []),
       ].join("\n"),
     );
+  } else if (guidance.agentName && guidance.agentName !== DEFAULT_AGENT_NAME) {
+    sections.push(`You go by ${guidance.agentName} here.`);
   }
   if (guidance.org.trim()) {
     sections.push(`Instructions from the organization:\n${guidance.org.trim()}`);
@@ -187,7 +220,7 @@ export function instructionsFor(guidance: Guidance = NO_GUIDANCE, summary: strin
   if (guidance.deferredTools?.length) {
     sections.push(
       [
-        `These MCP tools are not in your tools yet. To use one, turn it on with the ${TOOL_SEARCH} tool: by a query, by its exact name with select, or by listing a server's tools. Tools turned on can be called from your next step.`,
+        `These MCP tools are not in your tools until you turn them on with the ${TOOL_SEARCH} tool: by a query, by its exact name with select, or by listing a server's tools. Tools turned on stay on in this thread, and can be called from your next step.`,
         ...guidance.deferredTools.flatMap((group) => [
           `${group.server} (${group.prefix}.*):`,
           ...group.tools.map((tool) => `- ${tool.name}: ${tool.description}`),
@@ -202,11 +235,6 @@ export function instructionsFor(guidance: Guidance = NO_GUIDANCE, summary: strin
         "Skills you can load: instructions for particular kinds of tasks. When a task matches a skill's description, load it with the load skill tool before you start, and read its files only as you need them.",
         ...guidance.skills.map((skill) => `- ${skill.name}: ${skill.description}`),
       ].join("\n"),
-    );
-  }
-  if (summary) {
-    sections.push(
-      `${COMPACTED_HEADING} It stands in place of the messages it covers; those since follow in full.\n${summary}`,
     );
   }
   return sections.join("\n\n");
@@ -236,15 +264,24 @@ function resultOf(row: ToolRow): ModelToolResult | null {
   }
 }
 
-// `before` is what the agent reads ahead of the thread's own messages: for a subagent started from
-// a copy of its starter's conversation, that conversation.
+// `before` is what the agent reads ahead of the thread's own messages, as a subagent reads who it
+// is; `toolsOn` the tools turned on in the thread, in the order they were; `effort` the one the
+// reply is asked for now. Where the effort changed from one reply to the next, the change is told
+// before the later one, and a change since the last is told at the end.
 export function contextOf(
   thread: readonly TranscriptRow[],
   guidance: Guidance = NO_GUIDANCE,
   before: readonly ModelMessage[] = [],
+  toolsOn: readonly ToolOn[] = [],
+  effort: Effort | null = null,
 ): Context {
   const { summary, rows } = readOf(thread);
-  const messages: ModelMessage[] = [...before];
+  const efforts = thread.flatMap((row) => (row.kind === "agent" && row.effort ? [row] : []));
+  const firstEffort = efforts[0]?.effort;
+  // The effort that held where the messages start.
+  let lastEffort = efforts.findLast((row) => row.seq < (rows[0]?.seq ?? Infinity))?.effort;
+  lastEffort ??= firstEffort;
+  const messages: ModelMessage[] = [...before, ...(summary ? [summaryMessage(summary)] : [])];
   const calls = new Map<string, ToolRow[]>();
   for (const row of rows) {
     if (row.kind !== "tool") continue;
@@ -270,6 +307,10 @@ export function contextOf(
         .map((call) => ({ call, result: resultOf(call) }))
         .filter((settled) => settled.result !== null);
       if (!row.text && settled.length === 0) continue;
+      if (row.effort && lastEffort && row.effort !== lastEffort) {
+        messages.push({ role: "change", effort: row.effort });
+      }
+      lastEffort = row.effort ?? lastEffort;
       messages.push({
         role: "assistant",
         text: row.text,
@@ -286,5 +327,44 @@ export function contextOf(
       }
     }
   }
-  return { instructions: instructionsFor(guidance, summary), messages };
+  if (effort && lastEffort && effort !== lastEffort) messages.push({ role: "change", effort });
+  return {
+    instructions: instructionsFor(guidance),
+    messages: withChanges(messages, toolsOn),
+    ...(firstEffort && { firstEffort }),
+  };
+}
+
+// A tool the thread's agent turned on, and the call that did.
+export interface ToolOn {
+  id: string;
+  callId: string;
+}
+
+// The messages with what changed in the thread told where it did: the tools a call turned on,
+// before the reply after its result, or at the end. Tools turned on by a call the messages no
+// longer hold are told before the first reply. Each change keeps its place in later requests, so
+// the messages before it stay as they were.
+function withChanges(messages: readonly ModelMessage[], toolsOn: readonly ToolOn[]) {
+  if (toolsOn.length === 0) return [...messages];
+  const results = new Set(
+    messages.flatMap((message) =>
+      message.role === "tool" ? message.results.map((result) => result.callId) : [],
+    ),
+  );
+  let pending = toolsOn.filter((tool) => !results.has(tool.callId)).map((tool) => tool.id);
+  const out: ModelMessage[] = [];
+  const tell = () => {
+    if (pending.length > 0) out.push({ role: "change", tools: pending });
+    pending = [];
+  };
+  for (const message of messages) {
+    if (message.role === "assistant") tell();
+    out.push(message);
+    if (message.role !== "tool") continue;
+    const calls = new Set(message.results.map((result) => result.callId));
+    pending.push(...toolsOn.filter((tool) => calls.has(tool.callId)).map((tool) => tool.id));
+  }
+  tell();
+  return out;
 }

@@ -2,7 +2,9 @@
 // into our model events, and sorts the provider's failures into our error kinds, with what the
 // provider said and the response headers that explain a limit. Tools go to the model without a way
 // to run them, so a step that calls any ends the request with its calls; their ids become names
-// providers accept, and back.
+// providers accept, and back. Tools go in the order given. What changed in the thread at a point in
+// its conversation goes there as a system message to a provider that takes it so, and otherwise
+// into the request's own settings.
 
 import {
   APICallError,
@@ -18,6 +20,7 @@ import {
 
 import { wireToolName } from "@/shared/tools.ts";
 import {
+  type ModelChange,
   type ModelErrorKind,
   type ModelEvent,
   ModelError,
@@ -25,7 +28,18 @@ import {
   type ModelRequest,
 } from "@/server/models/gateway.ts";
 
-type ProviderOptions = Parameters<typeof streamText>[0]["providerOptions"];
+type ProviderOptions = NonNullable<Parameters<typeof streamText>[0]["providerOptions"]>;
+
+// How a provider takes what changed in a thread inside its conversation, so that the request's
+// start stays as it was: each change as an empty system message, and, for one that turns tools on
+// so, the searchable tools all declared from the first request, each left out until turned on.
+export interface InlineChanges {
+  // What declares a tool left out until a change turns it on.
+  deferred?: ProviderOptions;
+  // The options of the system message that tells the change, its tools by their names for the
+  // provider; null for a change it does not take so.
+  message(change: ModelChange): ProviderOptions | null;
+}
 
 // What one provider's error responses carry beyond the status and body.
 export interface ProviderErrors {
@@ -40,38 +54,78 @@ export function toolName(id: string) {
   return wireToolName(id);
 }
 
-function sdkMessages(messages: ModelMessage[]): SdkMessage[] {
-  return messages.map((message): SdkMessage => {
+// Changes next to each other, told as one.
+function joined(messages: ModelMessage[]) {
+  const out: ModelMessage[] = [];
+  for (const message of messages) {
+    const last = out.at(-1);
+    if (message.role === "change" && last?.role === "change") {
+      const tools = [...(last.tools ?? []), ...(message.tools ?? [])];
+      const effort = message.effort ?? last.effort;
+      out[out.length - 1] = {
+        role: "change",
+        ...(tools.length > 0 && { tools }),
+        ...(effort && { effort }),
+      };
+    } else {
+      out.push(message);
+    }
+  }
+  return out;
+}
+
+// The messages as the AI SDK takes them; changes only for a provider that takes them inline.
+function sdkMessages(messages: ModelMessage[], changes?: InlineChanges): SdkMessage[] {
+  return joined(messages).flatMap((message): SdkMessage[] => {
     switch (message.role) {
+      case "change": {
+        if (!changes) return [];
+        const { role: _role, tools, ...change } = message;
+        const providerOptions = changes.message({
+          ...change,
+          ...(tools && { tools: tools.map(toolName) }),
+        });
+        return providerOptions ? [{ role: "system", content: "", providerOptions }] : [];
+      }
       case "user":
-        return { role: "user", content: message.text };
-      case "assistant":
-        return {
-          role: "assistant",
-          content: [
-            ...(message.text ? [{ type: "text" as const, text: message.text }] : []),
-            ...(message.toolCalls ?? []).map((call) => ({
-              type: "tool-call" as const,
-              toolCallId: call.callId,
-              toolName: toolName(call.toolId),
-              input: call.input,
-            })),
-          ],
-        };
-      case "tool":
-        return {
-          role: "tool",
-          content: message.results.map((result) => ({
-            type: "tool-result" as const,
-            toolCallId: result.callId,
-            toolName: toolName(result.toolId),
-            output: result.output.ok
-              ? { type: "json" as const, value: (result.output.value ?? null) as never }
-              : { type: "error-text" as const, value: result.output.error },
-          })),
-        };
+        return [{ role: "user", content: message.text }];
+      case "assistant": {
+        const calls = (message.toolCalls ?? []).map((call) => ({
+          type: "tool-call" as const,
+          toolCallId: call.callId,
+          toolName: toolName(call.toolId),
+          input: call.input,
+        }));
+        const text = message.text ? [{ type: "text" as const, text: message.text }] : [];
+        return [{ role: "assistant", content: [...text, ...calls] }];
+      }
+      case "tool": {
+        const results = message.results.map((result) => ({
+          type: "tool-result" as const,
+          toolCallId: result.callId,
+          toolName: toolName(result.toolId),
+          output: result.output.ok
+            ? { type: "json" as const, value: (result.output.value ?? null) as never }
+            : { type: "error-text" as const, value: result.output.error },
+        }));
+        return [{ role: "tool", content: results }];
+      }
     }
   });
+}
+
+// The tools sent, in order: `tools`, then, for a provider that turns tools on in the conversation,
+// every searchable tool, left out until turned on, and for any other those turned on.
+function toolsSent(request: ModelRequest, changes?: InlineChanges) {
+  const searchable = request.searchable ?? [];
+  const tools = (request.tools ?? []).map((tool) => ({ tool, providerOptions: undefined }));
+  const deferred = changes?.deferred;
+  if (deferred) {
+    return [...tools, ...searchable.map((tool) => ({ tool, providerOptions: deferred }))];
+  }
+  const byId = new Map(searchable.map((tool) => [tool.id, tool]));
+  const on = (request.toolsOn ?? []).flatMap((id) => byId.get(id) ?? []);
+  return [...tools, ...on.map((tool) => ({ tool, providerOptions: undefined }))];
 }
 
 function parseJson(body: string | undefined): unknown {
@@ -191,23 +245,33 @@ export async function* streamReply(
     reasoning?: ModelRequest["effort"];
     providerOptions?: ProviderOptions;
     errors: ProviderErrors;
+    // For a provider that takes what changed in the thread inside its conversation, how.
+    changes?: InlineChanges;
   },
 ): AsyncIterable<ModelEvent> {
+  const { changes } = options;
+  const sent = toolsSent(request, changes);
   // The tools by the names the model knows them by.
-  const ids = new Map((request.tools ?? []).map((tool) => [toolName(tool.id), tool.id]));
+  const ids = new Map(sent.map(({ tool }) => [toolName(tool.id), tool.id]));
   const tools: ToolSet = Object.fromEntries(
-    (request.tools ?? []).map((tool) => [
+    sent.map(({ tool, providerOptions }) => [
       toolName(tool.id),
-      { description: tool.description, inputSchema: jsonSchema(tool.inputSchema as JSONSchema7) },
+      {
+        description: tool.description,
+        inputSchema: jsonSchema(tool.inputSchema as JSONSchema7),
+        ...(providerOptions && { providerOptions }),
+      },
     ]),
   );
   const result = streamText({
     model,
     ...(options.system !== undefined && { system: options.system }),
     ...(options.reasoning && { reasoning: options.reasoning }),
-    messages: sdkMessages(request.messages),
+    messages: sdkMessages(request.messages, changes),
+    ...(changes && { allowSystemInMessages: true }),
     ...(options.providerOptions && { providerOptions: options.providerOptions }),
-    ...(ids.size > 0 && { tools }),
+    // Sent in the order given.
+    ...(ids.size > 0 && { tools, toolOrder: [...ids.keys()] }),
     // A step with tool calls ends the request: the calls run elsewhere.
     stopWhen: [
       isStepCount(request.maxSteps),
@@ -217,7 +281,9 @@ export async function* streamReply(
     prepareStep: ({ stepNumber, messages }) => {
       if (stepNumber === 0 || !request.beforeStep) return undefined;
       const added = request.beforeStep();
-      return added.length > 0 ? { messages: [...messages, ...sdkMessages(added)] } : undefined;
+      return added.length > 0
+        ? { messages: [...messages, ...sdkMessages(added, changes)] }
+        : undefined;
     },
     abortSignal: signal,
     // Failures arrive as stream parts and are thrown below.

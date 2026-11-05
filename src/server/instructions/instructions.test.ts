@@ -43,17 +43,21 @@ describe("the system prompt", () => {
     expect(at("Rich replies: on.")).toBeGreaterThan(at("Search first"));
   });
 
-  it("says the name the agent goes by, when it has its own and is not a subagent", () => {
-    expect(instructionsFor({ org: "", space: "", agentName: "Mira" })).toMatch(
-      /^You are Mira, the agent in a workspace/,
-    );
-    expect(instructionsFor({ org: "", space: "", agentName: "Agent" })).toMatch(
-      /^You are the agent in a workspace/,
-    );
-    const subagent = { name: "Scout", parent: "Notes" };
-    expect(instructionsFor({ org: "", space: "", agentName: "Mira", subagent })).toMatch(
-      /^You are the agent in a workspace/,
-    );
+  it("says the name the agent goes by after what it is, when it has its own and is not a subagent", () => {
+    const named = instructionsFor({ org: "Be brief.", space: "", agentName: "Mira" });
+    expect(named).toMatch(/^You are the agent in a workspace/);
+    expect(named.indexOf("You go by Mira here.")).toBeGreaterThan(0);
+    expect(named.indexOf("You go by Mira here.")).toBeLessThan(named.indexOf("Be brief."));
+    expect(instructionsFor({ org: "", space: "", agentName: "Agent" })).not.toContain("You go by");
+    expect(
+      instructionsFor({ org: "", space: "", agentName: "Mira", subagent: true }),
+    ).not.toContain("Mira");
+  });
+
+  it("is the same for every subagent, whatever its label, starter or instructions", () => {
+    const prompt = instructionsFor({ org: "", space: "", subagent: true });
+    expect(prompt).toContain("You are a subagent");
+    expect(prompt).not.toContain("Instructions for you");
   });
 
   it("leaves out what is empty", () => {

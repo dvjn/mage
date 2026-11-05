@@ -14,7 +14,7 @@
 // decision or an answer queues the run again, and the worker that claims it reads the thread's log
 // to see where its calls stand, checks each approval and answer still holds, runs what it may and
 // goes on; a restart takes the same path. MCP tools stay out of the model's requests until it
-// searches for them, and those it turns on are kept with the run. A message asking to compact the
+// searches for them, and those it turns on stay on in the thread. A message asking to compact the
 // thread waits for the run before it to end, and gets a run of its own that writes the summary and
 // replies with nothing; other runs leave it waiting. Notifications wait like a steer: each
 // boundary takes all of them in together, and those left when a run ends start the next. What a
@@ -59,6 +59,7 @@ import { compact } from "./compaction.ts";
 import {
   contextOf,
   type Guidance,
+  type ToolOn,
   humanMessage,
   NO_GUIDANCE,
   notificationsMessage,
@@ -93,8 +94,6 @@ export interface Run {
   error: string | null;
   errorKind: FailureKind | null;
   errorDetail: string | null;
-  // The MCP tools the model turned on by searching for them, offered for the rest of the run.
-  toolsOn: string[];
   inputTokens: number;
   outputTokens: number;
   createdAt: Date;
@@ -152,8 +151,10 @@ export interface RunStore {
   renew(lease: Lease, expiresAt: Date): Run;
   // Records the model the run replies with.
   setModel(lease: Lease, model: string): void;
-  // Adds the tools to those the run offers from now on.
-  turnOn(lease: Lease, toolIds: readonly string[]): void;
+  // Adds the tools, turned on by the call, to those the run's thread offers from now on.
+  turnOn(lease: Lease, callId: string, toolIds: readonly string[]): void;
+  // The tools turned on in the thread, in the order they were.
+  toolsOn(threadId: string): ToolOn[];
   // Lets the lease go while the run waits for a person's decision; nothing holds it meanwhile.
   wait(lease: Lease): Run;
   // Queues a waiting run again, to be claimed like any other; false when it was not waiting.
@@ -294,6 +295,8 @@ function namedFor(message: ModelMessage, toModel: (id: string) => string): Model
         ...message,
         results: message.results.map((result) => ({ ...result, toolId: toModel(result.toolId) })),
       };
+    case "change":
+      return message.tools ? { ...message, tools: message.tools.map(toModel) } : message;
     default:
       return message;
   }
@@ -314,8 +317,9 @@ function open(row: ToolRow) {
 interface Execution {
   run: Run;
   lease: Lease;
-  // The model ref the run replies with, once chosen.
+  // The model ref the run replies with, once chosen, and the effort it is asked for.
   ref: string | null;
+  effort: Thread["effort"];
   controller: AbortController;
   done: Promise<void>;
 }
@@ -647,7 +651,12 @@ export function createRunWorker(options: RunWorkerOptions) {
         append({
           type: "message.started",
           actor: AGENT,
-          data: { messageId: id, runId: run.id, ...(execution.ref && { model: execution.ref }) },
+          data: {
+            messageId: id,
+            runId: run.id,
+            ...(execution.ref && { model: execution.ref }),
+            ...(execution.effort && { effort: execution.effort }),
+          },
         });
       });
       open = {
@@ -743,17 +752,20 @@ export function createRunWorker(options: RunWorkerOptions) {
     if (!picked) throw new RunFailure("Pick a model for this thread.");
     const ref = picked.used?.ref ?? picked.chosen.ref;
     execution.ref = ref;
+    execution.effort = picked.effort;
     const model = await models.open(space.orgId, ref);
     runs.setModel(execution.lease, ref);
     return { model, effort: picked.effort, own };
   }
 
-  // The MCP tools the run leaves out of the model's requests until it turns them on: all it could
-  // offer, those turned on, and those still left out.
+  // The MCP tools the thread leaves out of the model's requests until it turns them on: all it
+  // could offer, those turned on, in the order they were, and those still left out.
   function deferralOf(execution: Execution, space: Space) {
     const all = tools.fromServers(space, tools.modelNames(space));
-    const on = new Set(runs.find(execution.run.id)?.toolsOn ?? []);
-    return { all, on, left: all.filter((tool) => !on.has(tool.id)) };
+    const ids = new Set(all.map((tool) => tool.id));
+    const turnedOn = runs.toolsOn(execution.run.threadId).filter((tool) => ids.has(tool.id));
+    const on = new Set(turnedOn.map((tool) => tool.id));
+    return { all, on, turnedOn, left: all.filter((tool) => !on.has(tool.id)) };
   }
 
   // Records the calls a model step asked for, each with whether it waits for a decision. A call of
@@ -901,7 +913,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     for (let next = nextCall(execution, space); next; next = nextCall(execution, space)) {
       const { call, spec, input, runAs, standingOn } = next;
       const started = now().getTime();
-      // The search for left-out tools is given them, and turns them on for the rest of the run.
+      // The search for left-out tools is given them, and turns them on for the rest of the thread.
       const deferral = spec.name === TOOL_SEARCH ? deferralOf(execution, space) : null;
       let output: ToolOutput;
       try {
@@ -920,7 +932,8 @@ export function createRunWorker(options: RunWorkerOptions) {
             deferred: {
               tools: deferral.all,
               on: deferral.on,
-              turnOn: (ids: string[]) => write(lease, run.threadId, () => runs.turnOn(lease, ids)),
+              turnOn: (ids: string[]) =>
+                write(lease, run.threadId, () => runs.turnOn(lease, call.id, ids)),
             },
           }),
           write: (work) => write(lease, run.threadId, (append) => work(append)),
@@ -1026,24 +1039,27 @@ export function createRunWorker(options: RunWorkerOptions) {
         model = await replying(execution, space, current);
       }
       // MCP tools stay out of the request until the model turns them on with the tool search,
-      // which is offered whenever the run has any.
+      // which is offered whenever the thread has any; the prompt lists them all, on or not.
       const offered = offeredIn(space, current);
       const deferral = deferralOf(execution, space);
-      const left = new Set(deferral.left.map((tool) => tool.id));
+      const searchable = new Set(deferral.all.map((tool) => tool.id));
       const available = offered.filter(
         (spec) => spec.name !== TOOL_SEARCH || deferral.all.length > 0,
       );
-      const requested = available.filter((spec) => !left.has(spec.name));
-      const { instructions, messages } = contextOf(
+      const { instructions, messages, firstEffort } = contextOf(
         transcript(thread.id).rows,
         {
           ...guidance(space, available, current),
-          ...(deferral.left.length && { deferredTools: deferredByServer(deferral.left) }),
+          ...(deferral.all.length && { deferredTools: deferredByServer(deferral.all) }),
         },
         before(current),
+        deferral.turnedOn,
+        model.effort,
       );
       // The model knows tools by their model names; calls and results go to it by those.
       const names = tools.modelNames(space);
+      const forModel = (specs: AnyToolSpec[]) =>
+        tools.forModel(specs).map((tool) => ({ ...tool, id: names.toModel(tool.id) }));
       const calls: (ModelToolCall & { messageId: string })[] = [];
       let messageId = "";
       const stream = model.model.stream(
@@ -1053,8 +1069,11 @@ export function createRunWorker(options: RunWorkerOptions) {
           maxSteps: maxSteps - steps,
           sessionId: thread.id,
           ...(model.effort && { effort: model.effort }),
+          ...(firstEffort && { firstEffort }),
           beforeStep: () => boundary(execution, false),
-          tools: tools.forModel(requested).map((tool) => ({ ...tool, id: names.toModel(tool.id) })),
+          tools: forModel(available.filter((spec) => !searchable.has(spec.name))),
+          searchable: forModel(available.filter((spec) => searchable.has(spec.name))),
+          toolsOn: deferral.turnedOn.map((tool) => names.toModel(tool.id)),
         },
         controller.signal,
       );
@@ -1212,6 +1231,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       run,
       lease: { runId: run.id, owner, epoch: run.leaseEpoch },
       ref: null,
+      effort: null,
       controller: new AbortController(),
       done: Promise.resolve(),
     };
