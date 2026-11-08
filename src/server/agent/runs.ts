@@ -1228,7 +1228,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       span.end();
       options.traces?.ended(run.id);
       // The run that follows this one, if any, is linked to it.
-      options.traces?.caused(run.threadId);
+      options.traces?.caused(run.threadId, true);
       tick();
     }
   }

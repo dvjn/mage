@@ -110,7 +110,7 @@ const CAUSES_PER_THREAD = 16;
 // notification, or the run before) is linked from the run it starts, and from the run under way,
 // which it may steer. Each run's own span is known by its id while it runs, for its readers.
 export function createRunTraces(now: () => number = Date.now) {
-  const causes = new Map<string, { link: Link; at: number }[]>();
+  const causes = new Map<string, { link: Link; at: number; after: boolean }[]>();
   const runs = new Map<string, string>();
 
   function fresh(threadId: string) {
@@ -122,23 +122,29 @@ export function createRunTraces(now: () => number = Date.now) {
 
   return {
     // Notes the active span as a cause of the thread's next run; the link, or null with none.
-    caused(threadId: string): Link | null {
+    // `after` marks a run that merely came before, which yields to any other cause.
+    caused(threadId: string, after = false): Link | null {
       const spanContext = activeSpanContext();
       if (!spanContext) return null;
       const link = { context: spanContext };
-      causes.set(threadId, [...fresh(threadId), { link, at: now() }].slice(-CAUSES_PER_THREAD));
+      const kept = [...fresh(threadId), { link, at: now(), after }];
+      causes.set(threadId, kept.slice(-CAUSES_PER_THREAD));
       return link;
     },
 
-    // Takes the causes waiting for the thread's next run.
+    // Takes the causes waiting for the thread's next run, the one that woke it first: the earliest
+    // that is not just the run before, or that run when nothing else woke it.
     take(threadId: string): Link[] {
-      const links = fresh(threadId).map(({ link }) => link);
+      const waiting = fresh(threadId);
       causes.delete(threadId);
-      return links;
+      const woke = waiting.find(({ after }) => !after) ?? waiting[0];
+      return woke
+        ? [woke, ...waiting.filter((cause) => cause !== woke)].map(({ link }) => link)
+        : [];
     },
 
-    // Starts a run's span in the trace of the first cause, the one that woke the thread, so a turn
-    // reads as one trace; later causes are linked. A run without causes is a root of its own.
+    // Starts a run's span in the trace of the cause that woke the thread, so a turn reads as one
+    // trace; other causes are linked. A run without causes is a root of its own.
     start(run: { id: string; threadId: string }, attributes: Attributes): Span {
       const [first, ...rest] = this.take(run.threadId);
       const span = tracer.startSpan(
