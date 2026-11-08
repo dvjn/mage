@@ -1,10 +1,14 @@
 // Changes to the org's models and provider connections: the default model, effort and title model,
 // reading the models again, adding, changing and removing a connection, its proxy and which of its
-// models are on, and starting or cancelling a ChatGPT sign-in.
+// models are on, starting or cancelling a ChatGPT sign-in, and starting or finishing a Claude one.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { connectionSchema, deviceStartSchema } from "@/shared/connections.ts";
+import {
+  authorizationStartSchema,
+  connectionSchema,
+  deviceStartSchema,
+} from "@/shared/connections.ts";
 import { connectionModelsSchema } from "@/shared/models.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
 import { apiClient } from "@/web/api/api-client";
@@ -165,6 +169,36 @@ export function useCancelCodexSignIn() {
       await apiClient.v1.connections.codex.attempts[":id"].cancel.$post({
         param: { id: attemptId },
       });
+    },
+  });
+}
+
+// Starts a Claude sign-in, answering the authorization to open.
+export function useStartClaudeSignIn() {
+  return useMutation({
+    mutationFn: async () => {
+      const res = await apiClient.v1.connections.claude.authorization.$post();
+      if (!res.ok) throw new Error(await errorOf(res));
+      return authorizationStartSchema.parse(await res.json());
+    },
+  });
+}
+
+// Finishes a Claude sign-in with the code Claude showed, answering the connection it made.
+export function useFinishClaudeSignIn() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ attemptId, code }: { attemptId: string; code: string }) => {
+      const res = await apiClient.v1.connections.claude.attempts[":id"].code.$post({
+        param: { id: attemptId },
+        json: { code },
+      });
+      if (!res.ok) throw new Error(await errorOf(res));
+      return connectionSchema.parse(await res.json());
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: connectionsQuery.queryKey });
+      await queryClient.invalidateQueries({ queryKey: modelsQuery.queryKey });
     },
   });
 }

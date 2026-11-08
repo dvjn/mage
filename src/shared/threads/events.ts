@@ -241,7 +241,7 @@ export const eventDataSchemas = {
   }),
   // `error` says what happened; when the failure has a kind, `connection` is the kind of connection
   // the model is reached through, `detail` what the provider said and `resetsAt` when a limit
-  // resets. Older events can name the Claude sign-in, since removed.
+  // resets.
   "run.failed": z.object({
     runId: z.string(),
     error: z.string(),

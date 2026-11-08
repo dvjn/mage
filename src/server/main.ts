@@ -39,6 +39,7 @@ import {
   createFakeGateway,
   FAKE_MODEL_REF,
 } from "@/server/models/hosts/fake-gateway.ts";
+import { createClaudeOAuth } from "@/server/models/hosts/anthropic-claude.ts";
 import { createCodexOAuth } from "@/server/models/hosts/openai-codex.ts";
 import { createModels, type Models } from "@/server/models/service.ts";
 import { createAuth, createIdentity } from "@/server/orgs/auth.ts";
@@ -96,6 +97,7 @@ const connections = createConnections({
   credentials: createCredentialStore(db, cipher),
   providers: {
     codex: { label: "ChatGPT", oauth: createCodexOAuth(fetch) },
+    claude: { label: "Claude", oauth: createClaudeOAuth(fetch) },
   },
   logger,
 });

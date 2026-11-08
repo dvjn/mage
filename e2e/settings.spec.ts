@@ -106,6 +106,31 @@ test("ChatGPT connects with a device code, and says when its models cannot be re
   await expect(row.getByText("Couldn't load")).toBeVisible();
 });
 
+test("Claude connects with the code its sign-in shows", async ({ page, context }) => {
+  // The authorize page is never loaded from Claude.
+  await context.route("https://claude.ai/**", (route) =>
+    route.fulfill({ contentType: "text/html", body: "<title>Claude</title>" }),
+  );
+
+  await signUpToSettings(page);
+  const dialog = await addProvider(page, "Claude");
+  await expect(dialog.getByRole("heading", { name: "Sign in with Claude" })).toBeVisible();
+
+  const [popup] = await Promise.all([
+    page.waitForEvent("popup"),
+    dialog.getByRole("button", { name: "Open Claude sign-in" }).click(),
+  ]);
+  await popup.waitForURL(/^https:\/\/claude\.ai\/oauth\/authorize\?/);
+  const authorize = new URL(popup.url());
+  expect(authorize.searchParams.get("redirect_uri")).toBe(
+    "https://platform.claude.com/oauth/code/callback",
+  );
+
+  await dialog.getByLabel("Code").fill("abc#another-sign-in");
+  await dialog.getByRole("button", { name: "Connect" }).click();
+  await expect(dialog.getByText("This is from a different sign-in. Start again.")).toBeVisible();
+});
+
 test("Anthropic connects with an API key, with no sign-in to choose", async ({ page }) => {
   await signUpToSettings(page);
   const dialog = await addProvider(page, "Anthropic");

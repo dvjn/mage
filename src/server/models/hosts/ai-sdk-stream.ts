@@ -10,6 +10,7 @@ import {
   APICallError,
   isStepCount,
   jsonSchema,
+  type Instructions,
   type JSONSchema7,
   type LanguageModel,
   RetryError,
@@ -240,7 +241,8 @@ export async function* streamReply(
   request: ModelRequest,
   signal: AbortSignal,
   options: {
-    system?: string;
+    // The system prompt, or its blocks in order.
+    system?: Instructions;
     // The AI SDK's own reasoning setting, which the provider turns into its own.
     reasoning?: ModelRequest["effort"];
     providerOptions?: ProviderOptions;

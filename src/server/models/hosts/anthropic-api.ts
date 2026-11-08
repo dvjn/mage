@@ -1,8 +1,9 @@
 // Lists the models an Anthropic API key can use, from the Anthropic API, and streams replies from
 // its Messages endpoint with the AI SDK's Anthropic provider. A connection's proxy takes the place
-// of the API for both, with its headers added.
+// of the API for both, with its headers added. The Claude sign-in lists and replies the same way.
 
-import { createAnthropic } from "@ai-sdk/anthropic";
+import { type AnthropicProvider, createAnthropic } from "@ai-sdk/anthropic";
+import type { Instructions } from "ai";
 import * as z from "zod";
 
 import type { Catalog } from "@/server/models/catalog.ts";
@@ -10,7 +11,7 @@ import type { ModelGateway, ModelRequest } from "@/server/models/gateway.ts";
 
 import { type InlineChanges, type ProviderErrors, streamReply } from "./ai-sdk-stream.ts";
 
-const API_URL = "https://api.anthropic.com/v1";
+export const API_URL = "https://api.anthropic.com/v1";
 const API_VERSION = "2023-06-01";
 
 const modelsSchema = z.object({
@@ -29,6 +30,14 @@ const modelsSchema = z.object({
 });
 
 export function createAnthropicKeyCatalog(fetchFn: typeof fetch = fetch): Catalog {
+  return anthropicCatalog(fetchFn, (access) => ({ "x-api-key": access }));
+}
+
+// The model list, read with the headers that carry the connection's key or token.
+export function anthropicCatalog(
+  fetchFn: typeof fetch,
+  authHeaders: (access: string) => Record<string, string>,
+): Catalog {
   return {
     async list(token, signal) {
       const models: z.infer<typeof modelsSchema>["data"] = [];
@@ -38,8 +47,8 @@ export function createAnthropicKeyCatalog(fetchFn: typeof fetch = fetch): Catalo
         const res = await fetchFn(`${token.proxy?.baseUrl ?? API_URL}/models?${query.toString()}`, {
           headers: {
             Accept: "application/json",
-            "x-api-key": token.access,
             "anthropic-version": API_VERSION,
+            ...authHeaders(token.access),
             ...token.proxy?.headers,
           },
           signal,
@@ -61,7 +70,7 @@ export function createAnthropicKeyCatalog(fetchFn: typeof fetch = fetch): Catalo
 }
 
 // A rate limit reset as epoch seconds or an RFC 3339 time.
-function instant(value: string | undefined) {
+export function instant(value: string | undefined) {
   if (!value) return null;
   const seconds = Number(value);
   if (Number.isFinite(seconds)) return seconds > 0 ? new Date(seconds * 1000) : null;
@@ -121,9 +130,27 @@ function changesFor(request: ModelRequest) {
   return { effort: pinned ? request.firstEffort : request.effort, changes };
 }
 
+// Replies through the provider's Messages API with the system prompt given. A model that can think
+// does so at the effort asked for, and streams its thinking; one that takes them is told tools
+// turned on and effort changes mid-conversation.
+export function anthropicReply(
+  provider: AnthropicProvider,
+  request: ModelRequest,
+  signal: AbortSignal,
+  options: { system: Instructions; errors: ProviderErrors },
+) {
+  const { effort, changes } = changesFor(request);
+  return streamReply(provider.messages(request.model), request, signal, {
+    system: options.system,
+    // Adaptive thinking at that effort, or a thinking budget for models without it.
+    ...(effort && { reasoning: effort }),
+    errors: options.errors,
+    ...(changes && { changes }),
+  });
+}
+
 // Replies through the Anthropic Messages API with an API key, the instructions as the system
-// prompt. A model that can think does so at the effort asked for, and streams its thinking; one that
-// takes them is told tools turned on and effort changes mid-conversation.
+// prompt.
 export function createAnthropicKeyGateway(fetchFn: typeof fetch = fetch): ModelGateway {
   return {
     async *stream(token, request, signal) {
@@ -135,13 +162,9 @@ export function createAnthropicKeyGateway(fetchFn: typeof fetch = fetch): ModelG
         headers: { "user-agent": "mage", ...token.proxy?.headers },
         fetch: fetchFn,
       });
-      const { effort, changes } = changesFor(request);
-      yield* streamReply(provider.messages(request.model), request, signal, {
+      yield* anthropicReply(provider, request, signal, {
         system: request.instructions,
-        // Adaptive thinking at that effort, or a thinking budget for models without it.
-        ...(effort && { reasoning: effort }),
         errors: anthropicErrors,
-        ...(changes && { changes }),
       });
     },
   };

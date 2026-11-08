@@ -21,11 +21,11 @@ describe("the host registry", () => {
     }
   });
 
-  it("signs in only to ChatGPT", () => {
+  it("signs in only to Claude and ChatGPT", () => {
     const signIns = HOST_IDS.filter((host) =>
       hostOf(host).methods.some((method) => method.authKind === "oauth"),
     );
-    expect(signIns).toEqual(["codex"]);
+    expect(signIns).toEqual(["claude", "codex"]);
   });
 
   it("has an address for every host whose address is not a field", () => {
@@ -34,7 +34,9 @@ describe("the host registry", () => {
       const given = methods.every((method) =>
         method.fields.some((field) => field.name === "baseUrl" || field.name === "endpoint"),
       );
-      if (["openai-compatible", "anthropic", "openai", "google", "codex"].includes(shape)) {
+      if (
+        ["openai-compatible", "anthropic", "claude", "openai", "google", "codex"].includes(shape)
+      ) {
         expect(baseUrl || given, host).toBeTruthy();
       }
     }

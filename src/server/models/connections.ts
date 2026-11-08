@@ -1,8 +1,8 @@
 // An org's connections: made by signing in to a provider account the way the provider's own
-// coding app does, with a device code, kept usable by renewing their tokens, or by adding a key,
-// cloud credentials or a server's address for a host, and optionally sending their requests
-// through a proxy, kept sealed with the tokens or the secrets. Those not signed in to can be changed
-// later, a secret left blank keeping the stored one.
+// coding app does, with a device code or a code the provider shows to paste back, kept usable by
+// renewing their tokens, or by adding a key, cloud credentials or a server's address for a host,
+// and optionally sending their requests through a proxy, kept sealed with the tokens or the
+// secrets. Those not signed in to can be changed later, a secret left blank keeping the stored one.
 
 import { randomBytes } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
@@ -14,7 +14,7 @@ import type { ProxyInput, ProxySummary } from "@/shared/connections.ts";
 import type { AuthKind, HostId } from "@/shared/hosts.ts";
 
 import type { ProviderProxy } from "./gateway.ts";
-import type { DeviceCode, DeviceOAuth, OAuthTokens } from "./oauth.ts";
+import type { CodeOAuth, DeviceCode, DeviceOAuth, OAuthTokens } from "./oauth.ts";
 
 export interface Connection {
   id: string;
@@ -69,8 +69,10 @@ export interface CredentialStore {
   delete(connectionId: string): void;
 }
 
-// The hosts signed in to with a subscription.
-export type AccountKind = "codex";
+// The hosts signed in to with a subscription: by a device code, or by pasting back a code.
+export type DeviceKind = "codex";
+export type CodeKind = "claude";
+export type AccountKind = DeviceKind | CodeKind;
 
 export class ConnectionError extends Error {
   readonly status: 400 | 404 | 409 | 502;
@@ -87,16 +89,19 @@ export interface Owner {
   userId: string;
 }
 
-export interface AccountProvider {
+export interface AccountProvider<OAuth extends DeviceOAuth | CodeOAuth> {
   // How people know the sign-in, as in "Sign in with Codex".
   label: string;
-  oauth: DeviceOAuth;
+  oauth: OAuth;
 }
+
+export type AccountProviders = Record<DeviceKind, AccountProvider<DeviceOAuth>> &
+  Record<CodeKind, AccountProvider<CodeOAuth>>;
 
 export interface ConnectionsOptions {
   connections: ConnectionStore;
   credentials: CredentialStore;
-  providers: Record<AccountKind, AccountProvider>;
+  providers: AccountProviders;
   logger: Logger;
   now?: () => Date;
   // Waits between device code polls; rejects when the signal aborts.
@@ -132,6 +137,7 @@ export interface FreshToken {
 }
 
 const DEVICE_TTL_MS = 15 * 60 * 1000;
+const CODE_TTL_MS = 15 * 60 * 1000;
 // How long a finished device sign-in stays readable.
 const DEVICE_KEEP_MS = 5 * 60 * 1000;
 const MIN_POLL_MS = 1000;
@@ -168,7 +174,7 @@ type AccountCredential = z.infer<typeof credentialSchema>;
 
 interface DeviceAttempt {
   id: string;
-  kind: AccountKind;
+  kind: DeviceKind;
   orgId: string;
   userId: string;
   expiresAt: Date;
@@ -176,8 +182,36 @@ interface DeviceAttempt {
   result: AttemptStatus;
 }
 
+// A sign-in waiting for the code its authorization shows; its state is its id.
+interface CodeAttempt {
+  kind: CodeKind;
+  orgId: string;
+  userId: string;
+  codeVerifier: string;
+  expiresAt: Date;
+}
+
 function randomValue() {
   return randomBytes(32).toString("base64url");
+}
+
+// The code and state in what the person pasted: `code#state`, the address the browser ended on,
+// its query, or the bare code.
+function parsePasted(input: string) {
+  const value = input.trim();
+  const url = URL.parse(value);
+  let params: URLSearchParams | null = null;
+  if (url && (url.protocol === "http:" || url.protocol === "https:")) params = url.searchParams;
+  else if (value.includes("code=")) params = new URLSearchParams(value);
+  if (params) {
+    return {
+      code: params.get("code") || null,
+      state: params.get("state") || null,
+      error: params.get("error") || null,
+    };
+  }
+  const [code, state] = value.split("#", 2);
+  return { code: code || null, state: state || null, error: null };
 }
 
 // A key as people may see it again: its prefix and last four characters, as `sk-ant-…abcd`.
@@ -224,6 +258,7 @@ export function createConnections(options: ConnectionsOptions) {
   const sleep =
     options.sleep ?? ((ms: number, signal: AbortSignal) => delay(ms, undefined, { signal }));
   const deviceAttempts = new Map<string, DeviceAttempt>();
+  const codeAttempts = new Map<string, CodeAttempt>();
   const refreshing = new Map<string, Promise<AccountCredential>>();
 
   function rejectIfConnected(kind: AccountKind, orgId: string) {
@@ -279,6 +314,12 @@ export function createConnections(options: ConnectionsOptions) {
     );
   }
 
+  function deleteExpiredCodes() {
+    for (const [state, attempt] of codeAttempts) {
+      if (attempt.expiresAt <= now()) codeAttempts.delete(state);
+    }
+  }
+
   async function pollUntilApproved(attempt: DeviceAttempt, oauth: DeviceOAuth, code: DeviceCode) {
     const { signal } = attempt.controller;
     let intervalMs = Math.max(MIN_POLL_MS, code.intervalSeconds * 1000);
@@ -312,7 +353,7 @@ export function createConnections(options: ConnectionsOptions) {
     attempt.controller.abort();
   }
 
-  function findDevice(kind: AccountKind, owner: Owner, id: string) {
+  function findDevice(kind: DeviceKind, owner: Owner, id: string) {
     const attempt = deviceAttempts.get(id);
     if (!attempt) return null;
     const ours = attempt.kind === kind && attempt.orgId === owner.orgId;
@@ -433,7 +474,7 @@ export function createConnections(options: ConnectionsOptions) {
     },
 
     // Starts a device code sign-in that the server waits on until it is approved or expires.
-    async startDevice(kind: AccountKind, owner: Owner) {
+    async startDevice(kind: DeviceKind, owner: Owner) {
       const { oauth } = providers[kind];
       rejectIfConnected(kind, owner.orgId);
       for (const attempt of deviceAttempts.values()) {
@@ -473,17 +514,71 @@ export function createConnections(options: ConnectionsOptions) {
       };
     },
 
-    attempt(kind: AccountKind, owner: Owner, id: string): AttemptStatus {
+    attempt(kind: DeviceKind, owner: Owner, id: string): AttemptStatus {
       const attempt = findDevice(kind, owner, id);
       if (!attempt) throw new ConnectionError(404, "Sign-in not found");
       return attempt.result;
     },
 
     // Stops a device code sign-in.
-    cancel(kind: AccountKind, owner: Owner, id: string) {
+    cancel(kind: DeviceKind, owner: Owner, id: string) {
       const attempt = findDevice(kind, owner, id);
       if (!attempt) throw new ConnectionError(404, "Sign-in not found");
       cancelDevice(attempt);
+    },
+
+    // Starts a sign-in whose authorization ends on a page showing a code to paste back. The
+    // user's earlier one is dropped.
+    startAuthorization(kind: CodeKind, owner: Owner) {
+      rejectIfConnected(kind, owner.orgId);
+      deleteExpiredCodes();
+      for (const [state, attempt] of codeAttempts) {
+        const ours = attempt.kind === kind && attempt.orgId === owner.orgId;
+        if (ours && attempt.userId === owner.userId) codeAttempts.delete(state);
+      }
+      const { state, codeVerifier, authorizeUrl } = providers[kind].oauth.authorize();
+      codeAttempts.set(state, {
+        kind,
+        ...owner,
+        codeVerifier,
+        expiresAt: new Date(now().getTime() + CODE_TTL_MS),
+      });
+      return { attemptId: state, authorizeUrl };
+    },
+
+    // Finishes the sign-in with what the person pasted; each authorization is tried once.
+    async finishAuthorization(
+      kind: CodeKind,
+      owner: Owner,
+      id: string,
+      pastedInput: string,
+    ): Promise<Connection> {
+      const pasted = parsePasted(pastedInput);
+      if (pasted.state && pasted.state !== id) {
+        throw new ConnectionError(400, "This is from a different sign-in. Start again.");
+      }
+      const attempt = codeAttempts.get(id);
+      const ours = attempt?.kind === kind && attempt.orgId === owner.orgId;
+      if (!attempt || !ours || attempt.userId !== owner.userId) {
+        throw new ConnectionError(404, "Sign-in not found. Start again.");
+      }
+      if (!pasted.error && !pasted.code) throw new ConnectionError(400, "Paste the code");
+      codeAttempts.delete(id);
+      if (attempt.expiresAt <= now()) {
+        throw new ConnectionError(400, "The sign-in expired. Start again.");
+      }
+      if (pasted.error) throw new ConnectionError(400, "The sign-in was declined. Start again.");
+      let tokens: OAuthTokens;
+      try {
+        tokens = await providers[kind].oauth.exchange({
+          code: pasted.code ?? "",
+          codeVerifier: attempt.codeVerifier,
+          state: id,
+        });
+      } catch (err) {
+        throw rejected(kind, err);
+      }
+      return save(kind, owner, tokens);
     },
 
     // Runs `use` with the connection's access token, renewing it first when it is about to

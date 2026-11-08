@@ -52,6 +52,14 @@ export const deviceStartSchema = z.object({
   userCode: z.string(),
 });
 
+export const authorizationStartSchema = z.object({
+  attemptId: z.string(),
+  authorizeUrl: z.url(),
+});
+
+// What the person pasted back after approving at the provider.
+export const pastedCodeSchema = z.object({ code: z.string().trim().min(1).max(4000) });
+
 export const attemptSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("pending") }),
   z.object({ status: z.literal("connected"), connection: connectionSchema }),

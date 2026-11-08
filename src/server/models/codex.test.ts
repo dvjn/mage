@@ -11,6 +11,7 @@ import type { Instructions } from "@/server/instructions/service.ts";
 import { createCipher } from "@/server/kernel/cipher.ts";
 import { createLogger } from "@/server/kernel/logger.ts";
 import type { McpServers } from "@/server/mcp/service.ts";
+import { createClaudeOAuth } from "@/server/models/hosts/anthropic-claude.ts";
 import { createCodexOAuth } from "@/server/models/hosts/openai-codex.ts";
 import { createAuth, createIdentity } from "@/server/orgs/auth.ts";
 import type { Groups } from "@/server/orgs/groups.ts";
@@ -119,6 +120,7 @@ function setup() {
     credentials,
     providers: {
       codex: { label: "Codex", oauth: codex },
+      claude: { label: "Claude", oauth: createClaudeOAuth(fakeFetch as typeof fetch) },
     },
     logger,
     now: () => clock.now,

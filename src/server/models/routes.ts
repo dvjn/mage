@@ -7,6 +7,7 @@ import { ServiceError } from "@/server/kernel/errors.ts";
 import {
   type AttemptSummary,
   type ConnectionSummary,
+  pastedCodeSchema,
   proxyInputSchema,
   type ProxySummary,
 } from "@/shared/connections.ts";
@@ -111,6 +112,8 @@ const connectionModelsChange = jsonBody(
   "Give autoEnable, or set with model ids and enabled",
 );
 
+const pastedCode = jsonBody(pastedCodeSchema, "Paste the code");
+
 const connectionChange = jsonBody(
   connectionChangeSchema,
   "Give a way to connect, a label of at most 80 characters, and its fields",
@@ -211,7 +214,7 @@ export function modelRoutes(options: {
             403,
           );
         }
-        if (org.kind === "team" && c.req.path.startsWith("/api/v1/connections/codex/")) {
+        if (org.kind === "team" && /^\/api\/v1\/connections\/(codex|claude)\//.test(c.req.path)) {
           return c.json(
             {
               error: "Subscription sign-ins are for personal organizations; add an API key instead",
@@ -297,6 +300,18 @@ export function modelRoutes(options: {
       .post("/v1/connections/codex/attempts/:id/cancel", (c) => {
         connections.cancel("codex", signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
+      })
+      .post("/v1/connections/claude/authorization", (c) => {
+        return c.json(connections.startAuthorization("claude", signedIn(c.var.principal)), 200);
+      })
+      .post("/v1/connections/claude/attempts/:id/code", pastedCode, async (c) => {
+        const connection = await connections.finishAuthorization(
+          "claude",
+          signedIn(c.var.principal),
+          c.req.param("id"),
+          c.req.valid("json").code,
+        );
+        return c.json(summary(connection), 200);
       })
       .delete("/v1/connections/:id", (c) => {
         connections.remove(signedIn(c.var.principal), c.req.param("id"));

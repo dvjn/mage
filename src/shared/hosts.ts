@@ -13,10 +13,12 @@ export const AUTH_KINDS = ["api_key", "oauth", "cloud", "endpoint"] as const;
 
 export type AuthKind = (typeof AUTH_KINDS)[number];
 
-// The API a host is reached through: Anthropic's Messages, OpenAI's Responses, the ChatGPT
-// sign-in's backend, OpenAI-style Chat Completions, or a cloud's own.
+// The API a host is reached through: Anthropic's Messages with a key or with the Claude sign-in,
+// OpenAI's Responses, the ChatGPT sign-in's backend, OpenAI-style Chat Completions, or a cloud's
+// own.
 export type Shape =
   | "anthropic"
+  | "claude"
   | "openai"
   | "codex"
   | "openai-compatible"
@@ -234,6 +236,26 @@ export const HOSTS = {
     litellm: ["anthropic"],
     titleModel: "claude-haiku-5-5",
     methods: [keyMethod("sk-ant-", "Billed per token by Anthropic.")],
+  },
+  claude: {
+    label: "Claude",
+    group: "popular",
+    mark: "claude",
+    hint: "Sign in",
+    shape: "claude",
+    maker: "anthropic",
+    baseUrl: "https://api.anthropic.com/v1",
+    models: "/models",
+    titleModel: "claude-haiku-5-5",
+    methods: [
+      {
+        id: "sign_in",
+        authKind: "oauth",
+        title: "Sign in with Claude",
+        description: "Billed to your Claude plan's extra usage.",
+        fields: [],
+      },
+    ],
   },
   openai: {
     label: "OpenAI",

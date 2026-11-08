@@ -10,6 +10,10 @@ import {
   createAnthropicKeyGateway,
 } from "@/server/models/hosts/anthropic-api.ts";
 import {
+  createClaudeCatalog,
+  createClaudeGateway,
+} from "@/server/models/hosts/anthropic-claude.ts";
+import {
   createAzureCatalog,
   createAzureGateway,
   createEntraTokens,
@@ -38,6 +42,10 @@ export function createHostAdapters(fetchFn: typeof fetch = fetch) {
       case "anthropic":
         catalogs[host] = createAnthropicKeyCatalog(fetchFn);
         gateways[host] = createAnthropicKeyGateway(fetchFn);
+        break;
+      case "claude":
+        catalogs[host] = createClaudeCatalog(fetchFn);
+        gateways[host] = createClaudeGateway(fetchFn);
         break;
       case "openai":
         catalogs[host] = createOpenAIKeyCatalog(fetchFn);

@@ -22,6 +22,7 @@ import { type AuthKind, HOST_IDS, type HostId, hostOf } from "@/shared/hosts.ts"
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { HostMark } from "@/web/models/marks";
 import { ModelPicker } from "@/web/models/model-picker";
+import { ClaudeSignIn } from "@/web/models/claude-sign-in";
 import { CodexSignIn } from "@/web/models/codex-sign-in";
 import { Button } from "@/web/components/ui/button";
 import {
@@ -247,9 +248,13 @@ export function AddProviderDialog({
             ))}
           </div>
         )}
-        {step.name === "credentials" && method?.authKind === "oauth" && (
-          <CodexSignIn onConnected={(connection) => setStep({ name: "done", connection })} />
-        )}
+        {step.name === "credentials" &&
+          method?.authKind === "oauth" &&
+          (step.host === "claude" ? (
+            <ClaudeSignIn onConnected={(connection) => setStep({ name: "done", connection })} />
+          ) : (
+            <CodexSignIn onConnected={(connection) => setStep({ name: "done", connection })} />
+          ))}
         {step.name === "credentials" && method && method.authKind !== "oauth" && (
           <CredentialsStep
             key={`${step.host}/${method.id}`}

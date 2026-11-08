@@ -190,6 +190,16 @@ function setup() {
     credentials,
     providers: {
       codex: { label: "Codex", oauth: refresher("codex") },
+      claude: {
+        label: "Claude",
+        oauth: {
+          authorize: () => {
+            throw new Error("not used");
+          },
+          exchange: () => Promise.reject(new Error("not used")),
+          refresh: (token) => refresher("claude").refresh(token),
+        },
+      },
     },
     logger,
     now: () => clock.now,

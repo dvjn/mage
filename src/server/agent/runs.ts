@@ -238,7 +238,7 @@ export class RunFailure extends Error {
   }
 }
 
-const CONNECTION_LABELS = { codex: "Codex" } as const;
+const CONNECTION_LABELS = { codex: "Codex", claude: "Claude" } as const;
 
 type ConnectionKind = keyof typeof CONNECTION_LABELS;
 

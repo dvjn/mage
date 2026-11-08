@@ -1,5 +1,6 @@
 // What signing in to a provider account needs from the provider's OAuth server: a device code the
-// person enters at the provider, and token refresh.
+// person enters at the provider, or an authorization whose code the provider shows the person to
+// paste back; and token refresh.
 
 export interface OAuthTokens {
   access: string;
@@ -28,6 +29,23 @@ export interface DeviceOAuth {
   pollDevice(device: DeviceCode, signal?: AbortSignal): Promise<DevicePoll>;
   exchangeDevice(
     approval: { code: string; codeVerifier: string },
+    signal?: AbortSignal,
+  ): Promise<OAuthTokens>;
+  refresh(refreshToken: string): Promise<OAuthTokens>;
+}
+
+// An authorization to open at the provider, with the state and PKCE verifier it was made with.
+export interface Authorization {
+  state: string;
+  codeVerifier: string;
+  authorizeUrl: string;
+}
+
+export interface CodeOAuth {
+  // A fresh authorization with its own state and verifier.
+  authorize(): Authorization;
+  exchange(
+    grant: { code: string; codeVerifier: string; state: string },
     signal?: AbortSignal,
   ): Promise<OAuthTokens>;
   refresh(refreshToken: string): Promise<OAuthTokens>;
