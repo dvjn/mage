@@ -10,3 +10,4 @@ overrides:
 allowBuilds:
   esbuild: false
   "@openuidev/lang-core": false
+  protobufjs: false
