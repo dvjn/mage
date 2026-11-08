@@ -130,9 +130,13 @@ function changesFor(request: ModelRequest) {
   return { effort: pinned ? request.firstEffort : request.effort, changes };
 }
 
-// Replies through the provider's Messages API with the system prompt given. A model that can think
-// does so at the effort asked for, and streams its thinking; one that takes them is told tools
-// turned on and effort changes mid-conversation.
+// A cache breakpoint on Anthropic's Messages API, under any host that serves it. The API caches
+// only up to these, for five minutes from each use.
+export const ANTHROPIC_CACHE = { anthropic: { cacheControl: { type: "ephemeral" } } };
+
+// Replies through the provider's Messages API with the system prompt given, cached up to its
+// breakpoints. A model that can think does so at the effort asked for, and streams its thinking;
+// one that takes them is told tools turned on and effort changes mid-conversation.
 export function anthropicReply(
   provider: AnthropicProvider,
   request: ModelRequest,
@@ -146,6 +150,7 @@ export function anthropicReply(
     ...(effort && { reasoning: effort }),
     errors: options.errors,
     ...(changes && { changes }),
+    cache: ANTHROPIC_CACHE,
   });
 }
 

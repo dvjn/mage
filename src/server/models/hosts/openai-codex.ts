@@ -27,6 +27,10 @@ const CODEX_URL = "https://chatgpt.com/backend-api/codex";
 const CLIENT_VERSION = "0.163.0";
 const AUTH_CLAIM = "https://api.openai.com/auth";
 const PROFILE_CLAIM = "https://api.openai.com/profile";
+// What the backend routes a turn's requests by, given with the turn's first response.
+const TURN_STATE = "x-codex-turn-state";
+// How many runs' turn states are kept; a run's requests follow each other closely.
+const KEPT_TURNS = 256;
 
 const tokenResponseSchema = z.object({
   access_token: z.string().min(1),
@@ -250,11 +254,31 @@ export const codexErrors: ProviderErrors = {
 // field rather than a system message, and the encrypted reasoning back; it takes no output token
 // limit or sampling settings. A model that can think is given the effort, told changes to it in the
 // conversation where it takes them, and streams a summary of its reasoning. The thread id keys its
-// prompt cache and names the session.
+// prompt cache and names the session and thread, as the Codex CLI's do, and the model hints where
+// to route, so the backend sends the thread's requests where its cache is. A run is one turn: its later requests hand back the turn
+// state its first was given, which keeps them on the server that holds the run's cache.
 export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway {
+  // The turn state of the runs asked for lately, by run.
+  const turns = new Map<string, string>();
   return {
     async *stream(token, request, signal) {
       if (!token.accountId) throw new Error("the connection has no ChatGPT account id");
+      const { runId } = request;
+      const turnFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const state = runId && turns.get(runId);
+        const headers = new Headers(init?.headers);
+        if (state) headers.set(TURN_STATE, state);
+        const res = await fetchFn(input, { ...init, headers });
+        const given = res.headers.get(TURN_STATE);
+        if (runId && given && !state) {
+          turns.set(runId, given);
+          for (const old of turns.keys()) {
+            if (turns.size <= KEPT_TURNS) break;
+            turns.delete(old);
+          }
+        }
+        return res;
+      }) as typeof fetch;
       const provider = createOpenAI({
         baseURL: token.proxy?.baseUrl ?? CODEX_URL,
         apiKey: token.access,
@@ -263,10 +287,12 @@ export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway 
           originator: ORIGINATOR,
           "OpenAI-Beta": "responses=experimental",
           "session-id": request.sessionId,
+          "thread-id": request.sessionId,
           "x-client-request-id": request.sessionId,
+          "x-codex-routing-hint": `model=${request.model}`,
           ...token.proxy?.headers,
         },
-        fetch: fetchFn,
+        fetch: turnFetch,
       });
       const { effort, changes } = responsesEffort(request);
       yield* streamReply(provider.responses(request.model), request, signal, {

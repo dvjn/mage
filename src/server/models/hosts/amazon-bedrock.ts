@@ -200,6 +200,16 @@ export const bedrockErrors: ProviderErrors = {
   explains: (name) => name === "x-amzn-requestid" || name === "x-amzn-errortype",
 };
 
+// A cache breakpoint in a Converse request. Claude on Bedrock caches a prompt only up to these, for
+// five minutes from each use; the other models Mage reaches there cache by themselves, if at all,
+// and some refuse the breakpoints.
+const CACHE_POINT = { bedrock: { cachePoint: { type: "default" } } };
+
+// Bedrock's ids for Claude name its maker, as do inference profiles of it.
+function isClaude(model: string) {
+  return model.includes("anthropic.");
+}
+
 // Replies through Bedrock's Converse API, the instructions as the system prompt. A model that can
 // think does so at the effort asked for.
 export function createBedrockGateway(fetchFn: typeof fetch = fetch, assume?: Assume): ModelGateway {
@@ -221,6 +231,7 @@ export function createBedrockGateway(fetchFn: typeof fetch = fetch, assume?: Ass
         system: request.instructions,
         ...(request.effort && { reasoning: request.effort }),
         errors: bedrockErrors,
+        ...(isClaude(request.model) && { cache: CACHE_POINT }),
       });
     },
   };

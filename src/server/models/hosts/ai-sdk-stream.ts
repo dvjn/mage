@@ -4,7 +4,9 @@
 // to run them, so a step that calls any ends the request with its calls; their ids become names
 // providers accept, and back. Tools go in the order given. What changed in the thread at a point in
 // its conversation goes there as a system message to a provider that takes it so, and otherwise
-// into the request's own settings.
+// into the request's own settings. For a provider that caches a prompt only up to where it is
+// marked, the request is marked after its tools and system prompt, at the agent's last reply and at
+// its last message.
 
 import {
   APICallError,
@@ -128,6 +130,33 @@ function toolsSent(request: ModelRequest, changes?: InlineChanges) {
   const byId = new Map(searchable.map((tool) => [tool.id, tool]));
   const on = (request.toolsOn ?? []).flatMap((id) => byId.get(id) ?? []);
   return [...tools, ...on.map((tool) => ({ tool, providerOptions: undefined }))];
+}
+
+// The messages with a cache breakpoint at the agent's last reply, where the conversation's previous
+// request ended, so that its cache is found however many messages came since, and at the last
+// message, so that the next request finds this one's. A change is no place a provider caches, so
+// the message before it takes the mark.
+function marked(messages: SdkMessage[], cache: ProviderOptions): SdkMessage[] {
+  const last = messages.findLastIndex((message) => message.role !== "system");
+  const reply = messages.findLastIndex(
+    (message, index) => message.role === "assistant" && index < last,
+  );
+  return messages.map((message, index) =>
+    index === last || index === reply
+      ? ({ ...message, providerOptions: { ...message.providerOptions, ...cache } } as SdkMessage)
+      : message,
+  );
+}
+
+// The system prompt with a cache breakpoint after it, which caches the tools before it too.
+function markedSystem(system: Instructions, cache: ProviderOptions): Instructions {
+  const blocks =
+    typeof system === "string" ? [{ role: "system" as const, content: system }] : [system].flat();
+  return blocks.map((block, index) =>
+    index === blocks.length - 1
+      ? { ...block, providerOptions: { ...block.providerOptions, ...cache } }
+      : block,
+  );
 }
 
 function parseJson(body: string | undefined): unknown {
@@ -254,9 +283,11 @@ export async function* streamReply(
     errors: ProviderErrors;
     // For a provider that takes what changed in the thread inside its conversation, how.
     changes?: InlineChanges;
+    // For a provider that caches a prompt only up to where it is marked, what marks a breakpoint.
+    cache?: ProviderOptions;
   },
 ): AsyncIterable<ModelEvent> {
-  const { changes } = options;
+  const { changes, cache } = options;
   const sent = toolsSent(request, changes);
   // The tools by the names the model knows them by.
   const ids = new Map(sent.map(({ tool }) => [toolName(tool.id), tool.id]));
@@ -272,9 +303,13 @@ export async function* streamReply(
   );
   const result = streamText({
     model,
-    ...(options.system !== undefined && { system: options.system }),
+    ...(options.system !== undefined && {
+      system: cache ? markedSystem(options.system, cache) : options.system,
+    }),
     ...(options.reasoning && { reasoning: options.reasoning }),
-    messages: sdkMessages(request.messages, changes),
+    messages: cache
+      ? marked(sdkMessages(request.messages, changes), cache)
+      : sdkMessages(request.messages, changes),
     ...(changes && { allowSystemInMessages: true }),
     ...(options.providerOptions && { providerOptions: options.providerOptions }),
     // Sent in the order given.

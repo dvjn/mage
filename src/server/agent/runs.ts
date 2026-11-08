@@ -1108,6 +1108,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           messages: messages.map((message) => namedFor(message, names.toModel)),
           maxSteps: maxSteps - steps,
           sessionId: thread.id,
+          runId: run.id,
           ...(model.effort && { effort: model.effort }),
           ...(firstEffort && { firstEffort }),
           beforeStep: () => boundary(execution, false),

@@ -89,7 +89,7 @@ describe("Claude sign-in gateway", () => {
     expect(sent?.headers.get("x-app")).toBe("cli");
     expect(sent?.body?.system).toEqual([
       { type: "text", text: "You are Claude Code, Anthropic's official CLI for Claude." },
-      { type: "text", text: "You are the agent." },
+      { type: "text", text: "You are the agent.", cache_control: { type: "ephemeral" } },
     ]);
   });
 

@@ -17,7 +17,7 @@ import type { ModelGateway, ModelToken } from "@/server/models/gateway.ts";
 import { hostOf, listOf } from "@/shared/hosts.ts";
 import { makerOf } from "@/shared/makers.ts";
 
-import { anthropicErrors } from "./anthropic-api.ts";
+import { ANTHROPIC_CACHE, anthropicErrors } from "./anthropic-api.ts";
 import { streamReply } from "./ai-sdk-stream.ts";
 import { openaiErrors } from "./openai-api.ts";
 
@@ -101,7 +101,8 @@ export function createAzureCatalog(fetchFn: typeof fetch = fetch, entra?: Tokens
 }
 
 // Replies through the resource, the instructions as the system prompt. A model that can think does
-// so at the effort asked for.
+// so at the effort asked for. Claude caches a prompt only up to the breakpoints it is marked with;
+// OpenAI's models cache by themselves, keyed by the thread.
 export function createAzureGateway(fetchFn: typeof fetch = fetch, entra?: Tokens): ModelGateway {
   const tokens = entra ?? createEntraTokens(fetchFn);
   return {
@@ -121,6 +122,7 @@ export function createAzureGateway(fetchFn: typeof fetch = fetch, entra?: Tokens
           system: request.instructions,
           ...reasoning,
           errors: anthropicErrors,
+          cache: ANTHROPIC_CACHE,
         });
         return;
       }
@@ -132,12 +134,21 @@ export function createAzureGateway(fetchFn: typeof fetch = fetch, entra?: Tokens
         headers,
         fetch: fetchFn,
       });
-      yield* streamReply(
-        maker === "openai" ? provider.responses(request.model) : provider.chat(request.model),
-        request,
-        signal,
-        { system: request.instructions, ...reasoning, errors: openaiErrors },
-      );
+      if (maker === "openai") {
+        yield* streamReply(provider.responses(request.model), request, signal, {
+          system: request.instructions,
+          ...reasoning,
+          // The thread keys the resource's prompt cache.
+          providerOptions: { azure: { promptCacheKey: request.sessionId } },
+          errors: openaiErrors,
+        });
+        return;
+      }
+      yield* streamReply(provider.chat(request.model), request, signal, {
+        system: request.instructions,
+        ...reasoning,
+        errors: openaiErrors,
+      });
     },
   };
 }

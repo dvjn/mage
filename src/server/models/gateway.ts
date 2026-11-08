@@ -74,6 +74,8 @@ export interface ModelRequest {
   maxSteps: number;
   // Keeps one thread's requests together on the provider's side.
   sessionId: string;
+  // The run the request is one of, whose requests a provider may keep on one server.
+  runId?: string;
   // Set only for a model that can think; it then streams its reasoning too.
   effort?: Effort;
   // The effort the thread's first reply was asked for. A provider that takes effort changes in the

@@ -77,7 +77,7 @@ export function responsesEffort(request: ModelRequest): {
 
 // Replies through the Responses endpoint with the instructions as the system prompt. A model that
 // can think is given the effort and streams a summary of its reasoning; one that takes them is told
-// effort changes in the conversation.
+// effort changes in the conversation. The API caches prompts by itself; the thread keys its cache.
 export function createOpenAIKeyGateway(fetchFn: typeof fetch = fetch): ModelGateway {
   return {
     async *stream(token, request, signal) {
@@ -92,9 +92,12 @@ export function createOpenAIKeyGateway(fetchFn: typeof fetch = fetch): ModelGate
       const { effort, changes } = responsesEffort(request);
       yield* streamReply(provider.responses(request.model), request, signal, {
         system: request.instructions,
-        ...(effort && {
-          providerOptions: { openai: { reasoningEffort: effort, reasoningSummary: "auto" } },
-        }),
+        providerOptions: {
+          openai: {
+            promptCacheKey: request.sessionId,
+            ...(effort && { reasoningEffort: effort, reasoningSummary: "auto" }),
+          },
+        },
         errors: openaiErrors,
         ...(changes && { changes }),
       });

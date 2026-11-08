@@ -177,7 +177,9 @@ describe("Anthropic API key gateway", () => {
     expect((requests[0]!.body.messages as unknown[]).slice(-2)).toEqual([
       {
         role: "assistant",
-        content: [{ type: "tool_use", id: "toolu_0", name: "thread__info", input: {} }],
+        content: [
+          expect.objectContaining({ type: "tool_use", id: "toolu_0", name: "thread__info" }),
+        ],
       },
       {
         role: "user",
@@ -232,6 +234,67 @@ describe("Anthropic API key gateway", () => {
       "mcp__notes__add",
     ]);
     expect(JSON.stringify(appending.messages)).not.toContain("tool_addition");
+  });
+
+  it("caches the prompt after its tools and system prompt, at the agent's last reply and at the last message", async () => {
+    const { fetchFn, requests } = recordingFetch([sse(reply(["Hi"])), sse(reply(["Hi"]))]);
+    const gateway = createAnthropicKeyGateway(fetchFn);
+    const tool = (id: string) => ({ id, description: id, inputSchema: { type: "object" } });
+    const first: Omit<ModelRequest, "beforeStep"> = {
+      ...request,
+      model: "claude-opus-5-5",
+      tools: [tool("thread.rename")],
+      searchable: [tool("mcp.notes.add")],
+      toolsOn: ["mcp.notes.add"],
+      messages: [
+        { role: "user", text: "[Ada Lovelace] Take a note." },
+        {
+          role: "assistant",
+          text: "",
+          toolCalls: [{ callId: "toolu_0", toolId: "mcp.tools.search", input: {} }],
+        },
+        {
+          role: "tool",
+          results: [
+            { callId: "toolu_0", toolId: "mcp.tools.search", output: { ok: true, value: 1 } },
+          ],
+        },
+        { role: "change", tools: ["mcp.notes.add"] },
+      ],
+    };
+    // People talk, and someone asks again.
+    const second: Omit<ModelRequest, "beforeStep"> = {
+      ...first,
+      messages: [
+        ...first.messages,
+        { role: "assistant", text: "Which note?" },
+        { role: "user", text: "[Grace Hopper] // lunch?" },
+        { role: "user", text: "[Ada Lovelace] The engine one." },
+      ],
+    };
+    const signal = new AbortController().signal;
+
+    await collect(gateway.stream(token, first, signal));
+    await collect(gateway.stream(token, second, signal));
+
+    const marks = (value: unknown) => JSON.stringify(value).split('"cache_control"').length - 1;
+    const unmarked = (value: unknown[]): unknown[] =>
+      JSON.parse(
+        JSON.stringify(value).replaceAll(',"cache_control":{"type":"ephemeral"}', ""),
+      ) as unknown[];
+    type Body = { tools: unknown[]; system: unknown[]; messages: unknown[] };
+    const [before, after] = requests.map((sent) => sent.body as unknown as Body) as [Body, Body];
+    for (const body of [before, after]) {
+      expect(marks(body.tools)).toBe(0);
+      expect(body.system).toEqual([
+        { type: "text", text: "You are the agent.", cache_control: { type: "ephemeral" } },
+      ]);
+    }
+    // The tool search's call is the last reply; its result, not the change after it, the last.
+    expect(before.messages.map(marks)).toEqual([0, 1, 1, 0]);
+    expect(after.messages.map(marks)).toEqual([0, 0, 0, 0, 1, 1]);
+    expect(unmarked(after.tools)).toEqual(unmarked(before.tools));
+    expect(unmarked(after.messages).slice(0, 4)).toEqual(unmarked(before.messages));
   });
 
   it("keeps the thread's first effort and tells a change in the conversation, where the model takes that", async () => {

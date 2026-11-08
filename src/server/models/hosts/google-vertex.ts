@@ -17,7 +17,7 @@ import type { Catalog } from "@/server/models/catalog.ts";
 import type { ModelGateway, ModelToken } from "@/server/models/gateway.ts";
 import { listOf } from "@/shared/hosts.ts";
 
-import { anthropicErrors } from "./anthropic-api.ts";
+import { ANTHROPIC_CACHE, anthropicErrors } from "./anthropic-api.ts";
 import { streamReply } from "./ai-sdk-stream.ts";
 import { googleErrors } from "./google-gemini.ts";
 
@@ -81,7 +81,8 @@ export function createVertexCatalog(fetchFn: typeof fetch = fetch): Catalog {
 }
 
 // The model through the Vertex provider for its maker: Claude through Anthropic's, Grok through
-// xAI's, Gemini through Google's, and the rest as open models served as a service.
+// xAI's, Gemini through Google's, and the rest as open models served as a service. Claude caches a
+// prompt only up to the breakpoints it is marked with; Gemini caches by itself.
 function modelOf(token: ModelToken, modelId: string, fetchFn: typeof fetch) {
   const vertex = vertexAccount(token);
   const common = {
@@ -104,7 +105,11 @@ function modelOf(token: ModelToken, modelId: string, fetchFn: typeof fetch) {
     ...common,
   };
   if (modelId.startsWith("claude")) {
-    return { model: createVertexAnthropic(options)(modelId), errors: anthropicErrors };
+    return {
+      model: createVertexAnthropic(options)(modelId),
+      errors: anthropicErrors,
+      cache: ANTHROPIC_CACHE,
+    };
   }
   if (modelId.startsWith("xai/")) {
     return { model: createGoogleVertexXai(options)(modelId), errors: googleErrors };
@@ -118,11 +123,12 @@ function modelOf(token: ModelToken, modelId: string, fetchFn: typeof fetch) {
 export function createVertexGateway(fetchFn: typeof fetch = fetch): ModelGateway {
   return {
     async *stream(token, request, signal) {
-      const { model, errors } = modelOf(token, request.model, fetchFn);
+      const { model, errors, cache } = modelOf(token, request.model, fetchFn);
       yield* streamReply(model, request, signal, {
         system: request.instructions,
         ...(request.effort && { reasoning: request.effort }),
         errors,
+        ...(cache && { cache }),
       });
     },
   };

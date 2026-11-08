@@ -165,7 +165,9 @@ describe("Codex gateway", () => {
       originator: "mage",
       "openai-beta": "responses=experimental",
       "session-id": "thread-1",
+      "thread-id": "thread-1",
       "x-client-request-id": "thread-1",
+      "x-codex-routing-hint": "model=gpt-5.5",
     });
     expect(sent?.body).toMatchObject({
       model: "gpt-5.5",
@@ -187,6 +189,35 @@ describe("Codex gateway", () => {
     expect(sent?.body).not.toHaveProperty("max_output_tokens");
     expect(sent?.body).not.toHaveProperty("temperature");
     expect(JSON.stringify(sent?.body.input)).not.toContain('"system"');
+  });
+
+  it("hands back the turn state a run's first request was given in its later ones, and only there", async () => {
+    const turn = (state: string) => {
+      const response = sse(reply(["Hi"]));
+      response.headers.set("x-codex-turn-state", state);
+      return response;
+    };
+    const { fetchFn, requests } = recordingFetch([
+      turn("state-a"),
+      turn("state-a2"),
+      turn("state-b"),
+      turn("state-a3"),
+      turn("state-none"),
+    ]);
+    const gateway = createCodexGateway(fetchFn);
+    const signal = new AbortController().signal;
+
+    for (const runId of ["run-a", "run-a", "run-b", "run-a", undefined]) {
+      await collect(gateway.stream(token, { ...request, ...(runId && { runId }) }, signal));
+    }
+
+    expect(requests.map((sent) => sent.headers.get("x-codex-turn-state"))).toEqual([
+      null,
+      "state-a",
+      null,
+      "state-a",
+      null,
+    ]);
   });
 
   it("asks a connection's proxy instead, with its headers added", async () => {
