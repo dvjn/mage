@@ -86,6 +86,29 @@ describe("a tool as the model is told about it", () => {
     });
     expect(definitionOf(spec).inputSchema).toHaveProperty("$schema");
   });
+
+  it("moves choices between whole inputs, which providers refuse, into the description", () => {
+    const choice = { oneOf: [{ required: ["a"] }, { required: ["b"] }] };
+    const { inputSchema, description } = modelToolOf({
+      name: "workouts.replace",
+      description: "Replace a workout.",
+      input: z.object({}),
+      inputSchema: {
+        type: "object",
+        ...choice,
+        properties: { a: { type: "string" }, b: { type: "object", ...choice } },
+      },
+      risk: () => "normal" as const,
+      run: () => Promise.resolve({ ok: true as const, value: null }),
+    });
+    expect(inputSchema).toEqual({
+      type: "object",
+      properties: { a: { type: "string" }, b: { type: "object", ...choice } },
+    });
+    expect(description).toBe(
+      "Input constraint: Provide parameters for exactly one of: (a) or (b).\n\nReplace a workout.",
+    );
+  });
 });
 
 describe("levels", () => {

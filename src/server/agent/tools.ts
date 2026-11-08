@@ -310,13 +310,37 @@ function unlabelled(schema: unknown): unknown {
   );
 }
 
+// Choices between whole inputs, which providers refuse at the top of a tool's schema, and how many
+// of their branches an input must match. The tool still checks its input against them.
+const TOP_LEVEL_CHOICES = { oneOf: "exactly one", anyOf: "at least one", allOf: "all" } as const;
+
+// A top-level choice told in words, when each branch only names the parameters it requires.
+function choiceInWords(schema: Record<string, unknown>) {
+  const lines = Object.entries(TOP_LEVEL_CHOICES).flatMap(([key, count]) => {
+    const branches = schema[key];
+    if (!Array.isArray(branches)) return [];
+    const sets = branches.map((branch: unknown) => {
+      const { required, ...rest } = (branch ?? {}) as { required?: unknown };
+      return Array.isArray(required) && Object.keys(rest).length === 0 ? required : null;
+    });
+    if (sets.some((set) => set === null)) return [];
+    const options = sets.map((set) => `(${(set as string[]).join(", ")})`).join(" or ");
+    return [`Input constraint: Provide parameters for ${count} of: ${options}.`];
+  });
+  return lines.join("\n");
+}
+
 // The tool as the model is told about it: its id, what it does, and what it takes, without the
-// labels its schema carries for people.
+// labels its schema carries for people; choices between whole inputs move into the description.
 export function modelToolOf(spec: AnyToolSpec): ModelTool {
+  const schema = unlabelled(definitionOf(spec).inputSchema) as Record<string, unknown>;
+  const choice = choiceInWords(schema);
   return {
     id: spec.name,
-    description: spec.description,
-    inputSchema: unlabelled(definitionOf(spec).inputSchema) as Record<string, unknown>,
+    description: choice ? `${choice}\n\n${spec.description}` : spec.description,
+    inputSchema: Object.fromEntries(
+      Object.entries(schema).filter(([key]) => !(key in TOP_LEVEL_CHOICES)),
+    ),
   };
 }
 
