@@ -19,7 +19,7 @@ entries:
       client_secret: !Env MAGE_CLIENT_SECRET
       redirect_uris:
         - matching_mode: strict
-          url: http://localhost:4783/api/auth/callback/oidc
+          url: !Format ["%s/api/auth/callback/oidc", !Env MAGE_BASE_URL]
         - matching_mode: strict
           url: http://localhost:4795/api/auth/callback/oidc
       signing_key:
@@ -79,7 +79,7 @@ entries:
       provider: !KeyOf mage-oidc
       backchannel_providers:
         - !KeyOf mage-scim
-      meta_launch_url: http://localhost:4783/
+      meta_launch_url: !Env MAGE_BASE_URL
 
   - model: authentik_core.user
     identifiers:

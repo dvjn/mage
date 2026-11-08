@@ -11,6 +11,8 @@ LOG_FORMAT = "pretty"
 [vars]
 # Extra arguments for the dev server.
 dev_args = ""
+# Where the browser and the dev server reach the dev identity provider.
+sso_url = "http://localhost:9000"
 
 [tasks.setup]
 description = "Install dependencies and the browser for the journeys"
@@ -19,7 +21,7 @@ run = ["pnpm install", "pnpm exec playwright install chromium"]
 [tasks.dev]
 description = "Run API and web client with hot reload on :4783, signing in through the dev identity provider"
 depends = ["deps:up"]
-env = { _.file = "configs/.dev.env" }
+env = { _.file = "configs/.dev.env", OIDC_ISSUER = "{{vars.sso_url}}/application/o/mage/" }
 run = "pnpm dev {{vars.dev_args}}"
 
 [tasks."deps:up"]
