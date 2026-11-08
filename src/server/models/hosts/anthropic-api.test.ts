@@ -437,6 +437,21 @@ describe("Anthropic API key gateway", () => {
     );
   });
 
+  it("does not take a refusal on policy grounds for a broken sign-in", async () => {
+    const error = {
+      type: "permission_error",
+      message: "Request rejected in accordance with our terms of use and policies.",
+    };
+    const { fetchFn } = recordingFetch([Response.json({ type: "error", error }, { status: 403 })]);
+
+    const failed = await collect(
+      createAnthropicKeyGateway(fetchFn).stream(token, request, new AbortController().signal),
+    ).catch((failure: unknown) => failure);
+    expect(failed).toBeInstanceOf(Error);
+    expect(failed).not.toHaveProperty("kind");
+    expect((failed as Error).message).toBe(`403 ${error.message}`);
+  });
+
   it("stops when the signal aborts", async () => {
     const controller = new AbortController();
     const { fetchFn } = recordingFetch([sse(reply(["Punched", " cards."]))]);

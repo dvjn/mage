@@ -174,6 +174,9 @@ function retryAfter(headers: Record<string, string>, now: Date) {
   return Number.isNaN(at) ? null : new Date(at);
 }
 
+// A refusal on policy grounds, which a provider may send as a 403 though the sign-in works.
+const POLICY_REFUSAL = /polic(y|ies)|terms of (use|service)|safety/i;
+
 function kindOfStatus(status: number, message: string, code: string): ModelErrorKind | null {
   if (status === 401 || status === 403) return "auth";
   if (status === 429) return "limit";
@@ -215,7 +218,8 @@ export function modelErrorOf(error: unknown, provider: ProviderErrors, now = new
     const message = providerMessage(error.responseBody, parsed) ?? "(empty body)";
     const code = errorCode(parsed);
     const detail = [`${status} ${message}`, ...headerLines(headers, provider)].join("\n");
-    const kind = kindOfStatus(status, message, code) ?? kindOfCode(code);
+    const refused = status === 403 && POLICY_REFUSAL.test(message);
+    const kind = refused ? null : (kindOfStatus(status, message, code) ?? kindOfCode(code));
     if (!kind) return new Error(`${status} ${message}`, { cause: error });
     const resetsAt =
       kind === "limit"

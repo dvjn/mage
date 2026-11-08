@@ -20,7 +20,7 @@ export function FailureNotice({ row, actions }: { row: FailureRow; actions: RowA
   let step: ReactNode = null;
   switch (row.failure) {
     case "auth":
-      summary = `The ${label} sign-in no longer works.`;
+      summary = `${label === "the provider" ? "The provider" : `The ${label}`} sign-in no longer works.`;
       step = (
         <Button
           size="xs"
