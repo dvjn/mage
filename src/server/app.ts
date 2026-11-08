@@ -1,7 +1,10 @@
-// API routes under /api and, in production, the built web client.
+// API routes under /api and, in production, the built web client. With tracing on, each request
+// is traced, continuing the trace the browser sent, and the web client's own spans are passed on.
 
 import { serveStatic } from "@hono/node-server/serve-static";
+import { httpInstrumentationMiddleware } from "@hono/otel";
 import { Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { requestId, type RequestIdVariables } from "hono/request-id";
 
@@ -14,6 +17,7 @@ import { instructionRoutes } from "@/server/instructions/routes.ts";
 import type { Instructions } from "@/server/instructions/service.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
+import type { TraceRelay } from "@/server/kernel/trace-relay.ts";
 import { mcpRoutes } from "@/server/mcp/routes.ts";
 import type { McpServers } from "@/server/mcp/service.ts";
 import { ConnectionError, type Connections } from "@/server/models/connections.ts";
@@ -75,9 +79,15 @@ export interface AppOptions {
   pingDatabase: () => Promise<boolean>;
   // Directory holding the built web client. Unset in dev, where Vite serves it.
   webRoot?: string;
+  // Where the web client's spans go; unset while tracing is off.
+  traceRelay?: TraceRelay;
 }
 
 export type App = Hono<{ Variables: RequestIdVariables }>;
+
+// Where the web client sends its spans, and the most one batch of them may weigh.
+const WEB_TRACES = "/api/web/traces";
+const WEB_TRACES_LIMIT = 2 * 1024 * 1024;
 
 // The header that names the org a request acts in; `?org=` names it where headers cannot be sent.
 export const ORG_HEADER = "X-Mage-Org";
@@ -116,7 +126,7 @@ function createApi(options: AppOptions) {
       const database = await options.pingDatabase();
       return c.json({ ok: database, database }, database ? 200 : 503);
     })
-    .route("/", orgRoutes(options))
+    .route("/", orgRoutes({ ...options, tracing: !!options.traceRelay }))
     .route("/", modelRoutes(options))
     .route("/", spaceRoutes(options))
     .route("/", threadRoutes(options))
@@ -133,6 +143,11 @@ export function createApp(options: AppOptions): App {
   const { logger } = options;
   const app: App = new Hono();
 
+  if (options.traceRelay) {
+    const traced = httpInstrumentationMiddleware();
+    // The web client's spans arrive as requests too, and are not traced themselves.
+    app.use((c, next) => (c.req.path === WEB_TRACES ? next() : traced(c, next)));
+  }
   app.use(requestId());
   app.use(async (c, next) => {
     const start = performance.now();
@@ -159,6 +174,23 @@ export function createApp(options: AppOptions): App {
   });
 
   app.route("/api", createApi(options));
+  const relay = options.traceRelay;
+  if (relay) {
+    // Only from someone signed in.
+    app.post(
+      WEB_TRACES,
+      async (c, next) => {
+        const account = await options.identity.resolve(c.req.raw.headers, null);
+        if (!account) return c.json({ error: "unauthorized" }, 401);
+        await next();
+      },
+      bodyLimit({
+        maxSize: WEB_TRACES_LIMIT,
+        onError: (c) => c.json({ error: "Too many spans at once" }, 413),
+      }),
+      (c) => relay(c.req.raw),
+    );
+  }
   app.on(["GET", "POST"], "/api/auth/*", (c) => options.handleAuth(c.req.raw));
   // A SCIM directory also replaces, patches and deletes what it provisioned.
   app.on(["PUT", "PATCH", "DELETE"], "/api/auth/scim/v2/*", (c) => options.handleAuth(c.req.raw));

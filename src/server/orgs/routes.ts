@@ -55,7 +55,13 @@ const memberQuery = queryOf(memberFilterSchema);
 
 const peopleQuery = queryOf(peopleFilterSchema);
 
-export function orgRoutes(options: { identity: Identity; orgs: Orgs; groups: Groups }) {
+export function orgRoutes(options: {
+  identity: Identity;
+  orgs: Orgs;
+  groups: Groups;
+  // Whether the web client traces what people do, and sends its spans to the server.
+  tracing?: boolean;
+}) {
   const { identity, orgs, groups } = options;
   return (
     new Hono<ApiEnv>()
@@ -65,7 +71,8 @@ export function orgRoutes(options: { identity: Identity; orgs: Orgs; groups: Gro
         return c.json(orgs.preview(c.req.param("token"), account && accountOf(account)), 200);
       })
       .get("/v1/me", async (c) => {
-        return c.json((await identity.profile(signedIn(c.var.principal))) satisfies Me, 200);
+        const profile = await identity.profile(signedIn(c.var.principal));
+        return c.json({ ...profile, ...(options.tracing && { tracing: true }) } satisfies Me, 200);
       })
       .get("/v1/orgs", (c) => {
         return c.json(orgs.list(accountOf(c.var.account)), 200);

@@ -19,13 +19,20 @@ description = "Install dependencies and the browser for the journeys"
 run = ["pnpm install", "pnpm exec playwright install chromium"]
 
 [tasks.dev]
-description = "Run API and web client with hot reload on :4783, signing in through the dev identity provider"
+description = "Run API and web client with hot reload on :4783, signing in through the dev identity provider and tracing to Jaeger"
 depends = ["deps:up"]
-env = { _.file = "configs/.dev.env", OIDC_ISSUER = "{{vars.sso_url}}/application/o/mage/" }
 run = "pnpm dev {{vars.dev_args}}"
 
+[tasks.dev.env]
+_.file = "configs/.dev.env"
+OIDC_ISSUER = "{{vars.sso_url}}/application/o/mage/"
+# Jaeger takes traces only.
+OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4318"
+OTEL_METRICS_EXPORTER = "none"
+OTEL_LOGS_EXPORTER = "none"
+
 [tasks."deps:up"]
-description = "Start the dev identity provider on :9000 (Authentik: akadmin, ada, grace, alice, bob)"
+description = "Start the dev identity provider on :9000 (Authentik: akadmin, ada, grace, alice, bob) and Jaeger on :16686"
 run = """
 set -eu
 compose="$(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml"
@@ -36,15 +43,15 @@ done
 """
 
 [tasks."deps:down"]
-description = "Stop the dev identity provider, keeping its database"
+description = "Stop the dev identity provider and Jaeger, keeping the provider's database"
 run = "$(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml down"
 
 [tasks."deps:reset"]
-description = "Stop the dev identity provider and remove its database"
+description = "Stop the dev identity provider and Jaeger, and remove the provider's database"
 run = "$(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml down --volumes"
 
 [tasks."deps:logs"]
-description = "Follow the dev identity provider's logs"
+description = "Follow the dev identity provider's and Jaeger's logs"
 run = "$(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml logs -f"
 
 [tasks.build]

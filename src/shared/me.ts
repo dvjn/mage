@@ -13,6 +13,8 @@ export const meSchema = z.object({
     ownerName: z.string().nullable(),
   }),
   role: z.string(),
+  // Set while the server traces requests, so the web client traces what people do too.
+  tracing: z.literal(true).optional(),
 });
 
 // How the switcher names the org: "Personal" for the signed-in person's own personal org, "Ada's

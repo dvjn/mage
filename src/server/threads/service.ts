@@ -270,6 +270,9 @@ export interface ThreadsOptions {
   bus: EventBus;
   // Names threads after their first message, when given.
   titles?: Pick<Titles, "name">;
+  // The traceparent of a run's span while it runs, which its readers' traces link to; none while
+  // tracing is off.
+  runTrace?: (runId: string) => string | undefined;
   // The commands people send in threads, when given.
   commands?: Pick<Commands, "list" | "expand">;
   // The agent's tools, for each reader's level for them.
@@ -372,8 +375,12 @@ function liveIndexes({ rows }: Transcript) {
   return live;
 }
 
-// The run under way, and whether it waits for answers to the agent's questions or for a decision.
-function shownRun({ run, rows }: Transcript): ShownRun | null {
+// The run under way, whether it waits for answers to the agent's questions or for a decision, and
+// its trace while it is traced.
+function shownRun(
+  { run, rows }: Transcript,
+  traceOf: (runId: string) => string | undefined,
+): ShownRun | null {
   if (!run) return null;
   const call = run.waitingOn ? rows.find((row) => row.id === run.waitingOn) : undefined;
   const waiting = !call
@@ -381,11 +388,13 @@ function shownRun({ run, rows }: Transcript): ShownRun | null {
     : call.kind === "tool" && call.toolId === ASK_TOOL
       ? "answer"
       : "decision";
+  const trace = traceOf(run.id);
   return {
     id: run.id,
     createdAt: run.createdAt,
     waiting,
     ...(run.compacting && { compacting: true as const }),
+    ...(trace && { trace }),
   };
 }
 
@@ -485,6 +494,7 @@ export function createThreads(options: ThreadsOptions) {
   } = options;
   const now = options.now ?? (() => new Date());
   const agentNameOf = options.agentNameIn ?? (() => DEFAULT_AGENT_NAME);
+  const runTrace = options.runTrace ?? (() => undefined);
   const transcripts = createTranscripts(threads);
 
   // Asks the thread's active run to stop, queueing it again when it waits for a decision so that a
@@ -1144,7 +1154,7 @@ export function createThreads(options: ThreadsOptions) {
         before: start > 0 ? start : null,
         newFrom: from === -1 ? null : transcript.rows[from]!.id,
         pending: shownPending(transcript.pending),
-        run: shownRun(transcript),
+        run: shownRun(transcript, runTrace),
       };
     },
 
@@ -1458,7 +1468,7 @@ export function createThreads(options: ThreadsOptions) {
         });
         if (fold.last <= last && rows.length === 0) return;
         last = Math.max(last, fold.last);
-        const run = shownRun(transcript);
+        const run = shownRun(transcript, runTrace);
         const pending = shownPending(transcript.pending);
         deliver({ kind: "rows", update: { seq: last, rows, pending, run } });
       }

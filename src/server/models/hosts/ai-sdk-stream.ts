@@ -19,6 +19,7 @@ import {
   type ToolSet,
 } from "ai";
 
+import { modelTelemetry } from "@/server/kernel/tracing.ts";
 import { wireToolName } from "@/shared/tools.ts";
 import {
   type ModelChange,
@@ -288,6 +289,8 @@ export async function* streamReply(
         : undefined;
     },
     abortSignal: signal,
+    // Traced when tracing is on, with the whole prompt and reply only when content is recorded.
+    telemetry: modelTelemetry(),
     // Failures arrive as stream parts and are thrown below.
     onError: () => {},
   });

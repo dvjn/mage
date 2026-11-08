@@ -36,9 +36,14 @@ export function adoptOrg(orgId: string) {
   if (!current) write(orgId);
 }
 
-// Fetches as the API client does, leaving the tab's org when the person is no longer in it.
+// Fetches as the API client does, naming the tab's org unless the request names one, and leaving
+// the tab's org when the person is no longer in it.
 export async function orgFetch(input: RequestInfo | URL, init?: RequestInit) {
-  const res = await fetch(input, init);
+  const headers = new Headers(init?.headers);
+  for (const [name, value] of Object.entries(orgHeaders())) {
+    if (!headers.has(name)) headers.set(name, value);
+  }
+  const res = await fetch(input, { ...init, headers });
   if (res.status === 404 && current) {
     const body = (await res
       .clone()

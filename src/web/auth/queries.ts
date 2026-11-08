@@ -5,6 +5,7 @@ import { signInOptionsSchema } from "@/shared/sign-in.ts";
 import { apiClient } from "@/web/api/api-client";
 import { authClient } from "@/web/api/auth-client";
 import { adoptOrg } from "@/web/lib/org-tab";
+import { startTracing } from "@/web/lib/tracing";
 
 // They change only when the server restarts.
 export const signInOptionsQuery = queryOptions({
@@ -37,6 +38,7 @@ export const meQuery = queryOptions({
     const me = meSchema.parse(await res.json());
     // A tab that named no org acts from now on in the one the server chose.
     adoptOrg(me.org.id);
+    startTracing(me.tracing);
     return me;
   },
 });

@@ -2,7 +2,8 @@
 // stopping and retrying its runs, deciding on and answering its tool calls, its model and effort,
 // and renaming, moving to another space, and deleting it. What they change in the
 // thread's rows arrives with its live stream; a failure that only an action of the moment can show
-// goes to a toast.
+// goes to a toast. Starting a thread, posting, retrying, deciding and answering are traced while
+// tracing is on.
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
@@ -13,6 +14,7 @@ import type { Delivery, ToolScope } from "@/shared/threads/events.ts";
 import { type Effort, threadSchema } from "@/shared/threads/thread.ts";
 import { apiClient } from "@/web/api/api-client";
 import { errorOf } from "@/web/api/api-errors";
+import { traced } from "@/web/lib/tracing";
 import { useToast } from "@/web/shell/toaster";
 import { spaceThreadsQuery, threadQuery } from "@/web/threads/queries";
 
@@ -21,7 +23,7 @@ export function useCreateThread(spaceId: string) {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   return useMutation({
-    mutationFn: async ({
+    mutationFn: ({
       text,
       model,
       effort,
@@ -29,18 +31,24 @@ export function useCreateThread(spaceId: string) {
       text: string;
       model?: string | null;
       effort?: Effort | null;
-    }) => {
-      const res = await apiClient.v1.spaces[":id"].threads.$post({
-        param: { id: spaceId },
-        json: {
-          text,
-          ...(model && { model }),
-          ...(effort && { effort }),
+    }) =>
+      traced(
+        "start thread",
+        null,
+        async () => {
+          const res = await apiClient.v1.spaces[":id"].threads.$post({
+            param: { id: spaceId },
+            json: {
+              text,
+              ...(model && { model }),
+              ...(effort && { effort }),
+            },
+          });
+          if (!res.ok) throw new Error(await errorOf(res));
+          return threadSchema.parse(await res.json());
         },
-      });
-      if (!res.ok) throw new Error(await errorOf(res));
-      return threadSchema.parse(await res.json());
-    },
+        (thread) => thread.id,
+      ),
     onSuccess: async (thread) => {
       await queryClient.invalidateQueries({ queryKey: spaceThreadsQuery(spaceId).queryKey });
       await navigate({ to: "/t/$threadId", params: { threadId: thread.id }, replace: true });
@@ -51,7 +59,7 @@ export function useCreateThread(spaceId: string) {
 export function usePostMessage(threadId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async ({
+    mutationFn: ({
       text,
       mode,
       command,
@@ -59,13 +67,14 @@ export function usePostMessage(threadId: string) {
       text: string;
       mode: Delivery;
       command?: CommandInput;
-    }) => {
-      const res = await apiClient.v1.threads[":id"].messages.$post({
-        param: { id: threadId },
-        json: { text, mode, ...(command && { command }) },
-      });
-      if (!res.ok) throw new Error(await errorOf(res));
-    },
+    }) =>
+      traced("send message", threadId, async () => {
+        const res = await apiClient.v1.threads[":id"].messages.$post({
+          param: { id: threadId },
+          json: { text, mode, ...(command && { command }) },
+        });
+        if (!res.ok) throw new Error(await errorOf(res));
+      }),
     // Read again too, for when the live stream is reconnecting.
     onSuccess: () => queryClient.invalidateQueries({ queryKey: threadQuery(threadId).queryKey }),
   });
@@ -118,13 +127,14 @@ export function useUnarchiveSubagent(threadId: string, spaceId: string | undefin
 export function useRetryRun(threadId: string) {
   const toast = useToast();
   return useMutation({
-    mutationFn: async (runId: string) => {
-      const res = await apiClient.v1.threads[":id"].retry.$post({
-        param: { id: threadId },
-        json: { runId },
-      });
-      if (!res.ok) throw new Error(await errorOf(res));
-    },
+    mutationFn: (runId: string) =>
+      traced("retry", threadId, async () => {
+        const res = await apiClient.v1.threads[":id"].retry.$post({
+          param: { id: threadId },
+          json: { runId },
+        });
+        if (!res.ok) throw new Error(await errorOf(res));
+      }),
     onError: (failed) => toast(failed.message),
   });
 }
@@ -133,7 +143,7 @@ export function useRetryRun(threadId: string) {
 export function useToolDecision(threadId: string) {
   const toast = useToast();
   return useMutation({
-    mutationFn: async ({
+    mutationFn: ({
       callId,
       allow,
       scope,
@@ -145,11 +155,14 @@ export function useToolDecision(threadId: string) {
       // For a subagent's call decided from the thread that started it, the subagent's thread.
       subagentThreadId?: string;
     }) => {
-      const res = await apiClient.v1.threads[":id"].tools[":callId"].decision.$post({
-        param: { id: subagentThreadId ?? threadId, callId },
-        json: { allow, scope },
+      const id = subagentThreadId ?? threadId;
+      return traced(allow ? "approve" : "deny", id, async () => {
+        const res = await apiClient.v1.threads[":id"].tools[":callId"].decision.$post({
+          param: { id, callId },
+          json: { allow, scope },
+        });
+        if (!res.ok) throw new Error(await errorOf(res));
       });
-      if (!res.ok) throw new Error(await errorOf(res));
     },
     onError: (failed) => toast(failed.message),
   });
@@ -159,7 +172,7 @@ export function useToolDecision(threadId: string) {
 export function useToolAnswer(threadId: string) {
   const toast = useToast();
   return useMutation({
-    mutationFn: async ({
+    mutationFn: ({
       callId,
       answers,
       subagentThreadId,
@@ -169,11 +182,14 @@ export function useToolAnswer(threadId: string) {
       // For a subagent's questions answered from the thread that started it, the subagent's thread.
       subagentThreadId?: string;
     }) => {
-      const res = await apiClient.v1.threads[":id"].tools[":callId"].answer.$post({
-        param: { id: subagentThreadId ?? threadId, callId },
-        json: { answers },
+      const id = subagentThreadId ?? threadId;
+      return traced("answer question", id, async () => {
+        const res = await apiClient.v1.threads[":id"].tools[":callId"].answer.$post({
+          param: { id, callId },
+          json: { answers },
+        });
+        if (!res.ok) throw new Error(await errorOf(res));
       });
-      if (!res.ok) throw new Error(await errorOf(res));
     },
     onError: (failed) => toast(failed.message),
   });

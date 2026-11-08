@@ -6,7 +6,8 @@
 // saw; the server sends each reply's pieces again from the start, and the ones already here are
 // skipped. A lost stream asks whether the server answers at all; when it does not, the app is
 // offline. When the server says the reader's guest access has ended, following stops and the
-// thread is read again, which tells them so.
+// thread is read again, which tells them so. While tracing, each run and its reply's first piece
+// are told to it.
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -17,6 +18,7 @@ import { rowsUpdateSchema } from "@/shared/threads/rows.ts";
 import { sharedThreadsQuery } from "@/web/guests/queries";
 import { checkServer, useOnline } from "@/web/lib/online";
 import { tabOrg } from "@/web/lib/org-tab";
+import { pieceShown, runShown } from "@/web/lib/tracing";
 import { threadQuery } from "@/web/threads/queries";
 import { withHead, withUpdate } from "@/web/threads/thread-rows";
 
@@ -59,7 +61,10 @@ export function useThreadEvents(threadId: string, ready: boolean) {
     setReconnecting(false);
     if (!ready || !online) return;
     const { queryKey } = threadQuery(threadId);
-    const after = queryClient.getQueryData(queryKey)?.thread.lastEventSeq;
+    const cached = queryClient.getQueryData(queryKey);
+    const after = cached?.thread.lastEventSeq;
+    // A run already under way is followed from now.
+    runShown(threadId, cached?.run ?? null);
     // A stream cannot send headers, so it names the tab's org in its address.
     const org = tabOrg();
     const source = new EventSource(
@@ -84,6 +89,7 @@ export function useThreadEvents(threadId: string, ready: boolean) {
       const update = rowsUpdateSchema.safeParse(JSON.parse(message.data as string));
       if (!update.success) return;
       queryClient.setQueryData(queryKey, (detail) => detail && withUpdate(detail, update.data));
+      runShown(threadId, update.data.run);
     });
     source.addEventListener("thread", (message) => {
       const head = threadHeadSchema.safeParse(JSON.parse(message.data as string));
@@ -98,7 +104,9 @@ export function useThreadEvents(threadId: string, ready: boolean) {
     });
     source.addEventListener("message-delta", (message) => {
       const batch = deltaBatchSchema.safeParse(JSON.parse(message.data as string));
-      if (batch.success) setStreaming((current) => withPieces(current, batch.data));
+      if (!batch.success) return;
+      setStreaming((current) => withPieces(current, batch.data));
+      pieceShown(threadId, batch.data.part ?? "text");
     });
     return () => {
       closed = true;

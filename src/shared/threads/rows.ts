@@ -276,12 +276,14 @@ export const pendingMessageSchema = z.object({
 export type PendingMessage = z.infer<typeof pendingMessageSchema>;
 
 // The run under way: since when, whether it waits for answers to the agent's questions or for a
-// decision on a call, and whether it compacts the thread.
+// decision on a call, whether it compacts the thread, and, while the server traces it, its span as
+// a W3C traceparent.
 export const shownRunSchema = z.object({
   id: z.string(),
   createdAt: z.string(),
   waiting: z.enum(["answer", "decision"]).nullable(),
   compacting: z.literal(true).optional(),
+  trace: z.string().optional(),
 });
 
 export type ShownRun = z.infer<typeof shownRunSchema>;

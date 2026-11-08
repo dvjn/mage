@@ -21,6 +21,18 @@ export interface Config {
   oidc: Oidc | null;
   // The bearer token a SCIM directory provisions people and groups with; none turns SCIM off.
   scimToken: string | null;
+  // Where traces go, from the standard OpenTelemetry variables; null turns tracing off.
+  tracing: Tracing | null;
+}
+
+export interface Tracing {
+  serviceName: string;
+  // Where the browser's spans are passed on to, and the headers that go with them.
+  tracesUrl: string;
+  headers: Record<string, string>;
+  // Whether model calls record their whole prompts and replies, and tool calls their input and
+  // output.
+  content: boolean;
 }
 
 export interface Oidc {
@@ -113,6 +125,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   return {
     baseUrl,
+    tracing: tracingOf(env),
     authSecret,
     authTrustedOrigins,
     credentialKey,
@@ -125,5 +138,37 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     operatorEmails,
     oidc,
     scimToken,
+  };
+}
+
+// The OTLP headers variable: comma-separated `name=value` pairs, each part URL-encoded.
+function otlpHeaders(value: string | undefined) {
+  const headers: Record<string, string> = {};
+  for (const pair of (value ?? "").split(",")) {
+    const at = pair.indexOf("=");
+    if (at <= 0) continue;
+    headers[decodeURIComponent(pair.slice(0, at).trim())] = decodeURIComponent(
+      pair.slice(at + 1).trim(),
+    );
+  }
+  return headers;
+}
+
+function tracingOf(env: NodeJS.ProcessEnv): Tracing | null {
+  const content = env.TRACE_CONTENT ?? "false";
+  if (content !== "true" && content !== "false") {
+    throw new Error("TRACE_CONTENT must be true or false");
+  }
+  const endpoint = env.OTEL_EXPORTER_OTLP_ENDPOINT;
+  if (!endpoint || env.OTEL_SDK_DISABLED === "true") return null;
+  if (!["http:", "https:"].includes(URL.parse(endpoint)?.protocol ?? "")) {
+    throw new Error("OTEL_EXPORTER_OTLP_ENDPOINT must be an http(s) URL");
+  }
+  return {
+    serviceName: env.OTEL_SERVICE_NAME || "mage",
+    tracesUrl:
+      env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT || `${endpoint.replace(/\/+$/, "")}/v1/traces`,
+    headers: otlpHeaders(env.OTEL_EXPORTER_OTLP_HEADERS),
+    content: content === "true",
   };
 }

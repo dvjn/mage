@@ -19,8 +19,17 @@
 // replies with nothing; other runs leave it waiting. Notifications wait like a steer: each
 // boundary takes all of them in together, and those left when a run ends start the next. What a
 // thread offers and tells the agent, and what it reads ahead of the thread, can depend on the
-// thread, as a subagent's do; and whoever needs to hears of each run that ends.
+// thread, as a subagent's do; and whoever needs to hears of each run that ends. Each run is traced
+// as a root span of its own, linked to whatever woke its thread, with a span for each tool call.
 
+import {
+  context,
+  INVALID_SPAN_CONTEXT,
+  ROOT_CONTEXT,
+  type Span,
+  SpanStatusCode,
+  trace,
+} from "@opentelemetry/api";
 import { wireToolName } from "@/shared/tools.ts";
 import { ulid } from "ulid";
 import * as z from "zod";
@@ -29,6 +38,7 @@ import type { Transact } from "@/server/db/db.ts";
 import type { EventBus } from "@/server/kernel/event-bus.ts";
 import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
+import { contentRecorded, type RunTraces, tracer } from "@/server/kernel/tracing.ts";
 import { ConnectionError } from "@/server/models/connections.ts";
 import {
   ModelError,
@@ -205,6 +215,8 @@ export interface RunWorkerOptions {
   // Hears of each run that ended, after its end is stored.
   ended?: (run: Run) => void;
   logger: Logger;
+  // What ties each run's span to the work that woke its thread; runs are not traced without it.
+  traces?: RunTraces;
   // Whether the agent may run in the space; a run claimed where it may not is stopped unstarted.
   runsIn?: (space: Space) => boolean;
   // Where the worker hears that people may have lost a role in an org's spaces, or that spaces
@@ -323,6 +335,7 @@ interface Execution {
   effort: Thread["effort"];
   controller: AbortController;
   done: Promise<void>;
+  span: Span;
 }
 
 const AGENT = { kind: "agent" } as const;
@@ -921,34 +934,54 @@ export function createRunWorker(options: RunWorkerOptions) {
       const started = now().getTime();
       // The search for left-out tools is given them, and turns them on for the rest of the thread.
       const deferral = spec.name === TOOL_SEARCH ? deferralOf(execution, space) : null;
+      const span = tracer.startSpan(`execute_tool ${call.toolId}`, {
+        attributes: {
+          "gen_ai.operation.name": "execute_tool",
+          "gen_ai.tool.name": call.toolId,
+          "gen_ai.tool.call.id": call.id,
+          ...(contentRecorded() && { "gen_ai.tool.call.arguments": JSON.stringify(input) }),
+        },
+      });
       let output: ToolOutput;
       try {
-        output = await (spec as AnyToolSpec).run(input, {
-          threadId: run.threadId,
-          spaceId: space.id,
-          orgId: space.orgId,
-          runId: run.id,
-          callId: call.id,
-          actor: AGENT,
-          model: execution.ref,
-          runAs,
-          signal: execution.controller.signal,
-          ...(call.answers && { answers: call.answers }),
-          ...(deferral && {
-            deferred: {
-              tools: deferral.all,
-              on: deferral.on,
-              turnOn: (ids: string[]) =>
-                write(lease, run.threadId, () => runs.turnOn(lease, call.id, ids)),
-            },
+        output = await context.with(trace.setSpan(context.active(), span), () =>
+          (spec as AnyToolSpec).run(input, {
+            threadId: run.threadId,
+            spaceId: space.id,
+            orgId: space.orgId,
+            runId: run.id,
+            callId: call.id,
+            actor: AGENT,
+            model: execution.ref,
+            runAs,
+            signal: execution.controller.signal,
+            ...(call.answers && { answers: call.answers }),
+            ...(deferral && {
+              deferred: {
+                tools: deferral.all,
+                on: deferral.on,
+                turnOn: (ids: string[]) =>
+                  write(lease, run.threadId, () => runs.turnOn(lease, call.id, ids)),
+              },
+            }),
+            write: (work) => write(lease, run.threadId, (append) => work(append)),
           }),
-          write: (work) => write(lease, run.threadId, (append) => work(append)),
-        });
+        );
       } catch (err) {
-        if (err instanceof LeaseLost) throw err;
+        if (err instanceof LeaseLost) {
+          span.end();
+          throw err;
+        }
         logger.warn({ err, runId: run.id, toolId: call.toolId }, "tool failed");
         output = { ok: false, error: messageOf(err) };
       }
+      span.setAttribute("tool.outcome", output.ok ? "ok" : "error");
+      if (!output.ok) span.setStatus({ code: SpanStatusCode.ERROR });
+      if (contentRecorded()) {
+        const result = JSON.stringify(output.ok ? output.value : output.error);
+        if (result) span.setAttribute("gen_ai.tool.call.result", result);
+      }
+      span.end();
       const ms = Math.max(0, now().getTime() - started);
       write(lease, run.threadId, (append) =>
         append({
@@ -1122,7 +1155,7 @@ export function createRunWorker(options: RunWorkerOptions) {
   }
 
   async function execute(execution: Execution) {
-    const { run, lease, controller } = execution;
+    const { run, lease, controller, span } = execution;
     const reply = replies(execution);
     const renewal = setInterval(() => {
       try {
@@ -1134,6 +1167,8 @@ export function createRunWorker(options: RunWorkerOptions) {
       }
     }, leaseMs / 3);
     const usage: ModelUsage = { inputTokens: 0, outputTokens: 0 };
+    // How the run's span ends: completed, failed, cancelled, waiting, or left to recovery.
+    let outcome = "completed";
     try {
       await drive(execution, reply, usage);
       write(lease, run.threadId, (append) => {
@@ -1143,11 +1178,13 @@ export function createRunWorker(options: RunWorkerOptions) {
       tellEnded(run);
     } catch (err) {
       if (err instanceof Waiting) {
+        outcome = "waiting";
         logger.info({ runId: run.id }, "run waits for a decision");
         return;
       }
       const abort = controller.signal.aborted ? (controller.signal.reason as Abort) : null;
       if (abort?.kind === "cancel") {
+        outcome = "cancelled";
         try {
           write(lease, run.threadId, (append) => {
             reply.close(append, "interrupted");
@@ -1161,11 +1198,15 @@ export function createRunWorker(options: RunWorkerOptions) {
         return;
       }
       if (err instanceof LeaseLost || abort) {
+        outcome = "left";
         logger.info({ runId: run.id, reason: abort?.kind ?? "lease" }, "run left to recovery");
         return;
       }
       if (!(err instanceof RunFailure)) logger.warn({ err, runId: run.id }, "run failed");
       const { failure } = failureOf(err, execution.ref);
+      outcome = "failed";
+      span.setStatus({ code: SpanStatusCode.ERROR, message: failure.error });
+      if (failure.kind) span.setAttribute("run.error_kind", failure.kind);
       try {
         write(lease, run.threadId, (append) => {
           reply.close(append, "failed");
@@ -1178,6 +1219,16 @@ export function createRunWorker(options: RunWorkerOptions) {
     } finally {
       clearInterval(renewal);
       executions.delete(run.id);
+      span.setAttributes({
+        "run.outcome": outcome,
+        ...(execution.ref && { "run.model": execution.ref }),
+        "gen_ai.usage.input_tokens": usage.inputTokens,
+        "gen_ai.usage.output_tokens": usage.outputTokens,
+      });
+      span.end();
+      options.traces?.ended(run.id);
+      // The run that follows this one, if any, is linked to it.
+      options.traces?.caused(run.threadId);
       tick();
     }
   }
@@ -1233,7 +1284,22 @@ export function createRunWorker(options: RunWorkerOptions) {
     }
   }
 
+  // The run's span: in the trace of what woke its thread, or none when not traced.
+  function spanOf(run: Run) {
+    if (!options.traces) return trace.wrapSpanContext(INVALID_SPAN_CONTEXT);
+    const thread = threads.find(run.threadId);
+    const space = thread && spaceStore.find(thread.spaceId);
+    return options.traces.start(run, {
+      "thread.id": run.threadId,
+      "run.id": run.id,
+      "run.attempt": run.attempt,
+      ...(run.reason && { "run.reason": run.reason }),
+      ...(space && { "space.id": space.id, "org.id": space.orgId }),
+    });
+  }
+
   function begin(run: Run) {
+    const span = spanOf(run);
     const execution: Execution = {
       run,
       lease: { runId: run.id, owner, epoch: run.leaseEpoch },
@@ -1241,11 +1307,13 @@ export function createRunWorker(options: RunWorkerOptions) {
       effort: null,
       controller: new AbortController(),
       done: Promise.resolve(),
+      span,
     };
     executions.set(run.id, execution);
     // Claimed: the run's thread now shows the agent replying.
     bus.activity({ threadId: run.threadId });
-    execution.done = execute(execution);
+    // A claim can happen while a request is handled; the run is traced apart from it.
+    execution.done = context.with(trace.setSpan(ROOT_CONTEXT, span), () => execute(execution));
   }
 
   function tick() {
@@ -1280,8 +1348,13 @@ export function createRunWorker(options: RunWorkerOptions) {
       if (!stopped) return;
       stopped = false;
       unsubscribe = bus.onWake((threadId) => {
+        // Whatever woke the thread is linked from its next run, and from the one under way.
+        const cause = options.traces?.caused(threadId);
         for (const execution of executions.values()) {
           if (execution.run.threadId !== threadId) continue;
+          // Not the run's own work, as when one of its tools wakes its thread.
+          const own = cause?.context.traceId === execution.span.spanContext().traceId;
+          if (cause && !own) execution.span.addLink(cause);
           try {
             stopIfAsked(execution, runs.hold(execution.lease));
           } catch (err) {

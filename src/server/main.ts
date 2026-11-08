@@ -26,6 +26,8 @@ import { loadConfig } from "@/server/kernel/config.ts";
 import { createEventBus } from "@/server/kernel/event-bus.ts";
 import { createHooks } from "@/server/kernel/hooks.ts";
 import { createLogger, createPrettyDestination } from "@/server/kernel/logger.ts";
+import { createTraceRelay } from "@/server/kernel/trace-relay.ts";
+import { createRunTraces } from "@/server/kernel/tracing.ts";
 import { createMcpClient, mcpOAuthClientAt } from "@/server/mcp/client.ts";
 import { createMcpServers } from "@/server/mcp/service.ts";
 import { createMcpCredentialStore, createMcpServerStore } from "@/server/mcp/store.ts";
@@ -69,6 +71,12 @@ const config = loadConfig();
 const logger = createLogger(
   config.logFormat === "pretty" ? await createPrettyDestination() : undefined,
 );
+
+// Tracing starts before anything is traced, and its SDK is loaded only when it is on.
+const tracing = config.tracing
+  ? (await import("@/server/kernel/tracing-sdk.ts")).startTracing(config.tracing)
+  : null;
+const runTraces = config.tracing ? createRunTraces() : undefined;
 
 const db = openDatabase(config.databasePath);
 const hooks = createHooks();
@@ -252,6 +260,7 @@ const worker = createRunWorker({
   before: (thread) => subagents.before(thread),
   ended: (run) => subagents.ended(run),
   logger,
+  traces: runTraces,
   runsIn: (space) => spaces.runsIn(space),
   hooks,
 });
@@ -295,6 +304,7 @@ const app = createApp({
     tools,
     subagents,
     commands: createCommands({ skills, prompts: mcp }),
+    ...(runTraces && { runTrace: (runId: string) => runTraces.traceparent(runId) }),
     // The stand-in model answers every request alike, so it names no threads.
     ...(!config.fakeModels && {
       titles: createTitles({ models, threads: threadStore, log, logger }),
@@ -338,6 +348,12 @@ const app = createApp({
   pingDatabase: () => pingDatabase(db),
   webRoot: import.meta.main ? config.webRoot : undefined,
   shutdown: shutdown.signal,
+  ...(config.tracing && {
+    traceRelay: createTraceRelay({
+      url: config.tracing.tracesUrl,
+      headers: config.tracing.headers,
+    }),
+  }),
 });
 
 export default app;
@@ -383,7 +399,10 @@ if (import.meta.main) {
       // Ended streams leave their connections idle.
       setImmediate(() => server.closeIdleConnections());
       setTimeout(() => server.closeAllConnections(), 3000).unref();
-      void Promise.all([worker.stop(), closed]).then(() => process.exit(0));
+      // Spans not yet sent go out before the process ends.
+      void Promise.all([worker.stop(), closed])
+        .then(() => tracing?.shutdown().catch(() => {}))
+        .then(() => process.exit(0));
     });
   }
 }

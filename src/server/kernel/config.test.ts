@@ -134,4 +134,25 @@ describe("loadConfig", () => {
       loadConfig({ ...valid, BETTER_AUTH_TRUSTED_ORIGINS: "https://evil.example" }),
     ).toThrow(/BETTER_AUTH_TRUSTED_ORIGINS/);
   });
+
+  it("traces only with an OTLP endpoint, recording content only when asked", () => {
+    expect(loadConfig(valid).tracing).toBeNull();
+    expect(
+      loadConfig({ ...valid, OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318/" }).tracing,
+    ).toEqual({
+      serviceName: "mage",
+      tracesUrl: "http://jaeger:4318/v1/traces",
+      headers: {},
+      content: false,
+    });
+    expect(
+      loadConfig({
+        ...valid,
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318",
+        OTEL_EXPORTER_OTLP_HEADERS: "x-key=a%3Db,other=c",
+        TRACE_CONTENT: "true",
+      }).tracing,
+    ).toMatchObject({ headers: { "x-key": "a=b", other: "c" }, content: true });
+    expect(() => loadConfig({ ...valid, TRACE_CONTENT: "yes" })).toThrow(/TRACE_CONTENT/);
+  });
 });

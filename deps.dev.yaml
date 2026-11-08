@@ -1,4 +1,5 @@
-# Authentik as the dev server's OpenID Connect provider and SCIM directory, with Postgres.
+# Authentik as the dev server's OpenID Connect provider and SCIM directory, with Postgres, and
+# Jaeger keeping the dev server's traces in memory.
 # deps/authentik/mage.yaml sets up the Mage application, two groups and four people.
 name: mage-sso
 
@@ -46,6 +47,13 @@ services:
   worker:
     <<: *authentik
     command: worker
+
+  # Its UI on 16686, and OTLP over HTTP on 4318.
+  jaeger:
+    image: docker.io/jaegertracing/jaeger:2.22.0
+    ports:
+      - "16686:16686"
+      - "4318:4318"
 
 volumes:
   authentik-db:
