@@ -66,7 +66,7 @@ import {
   transcriptOf,
 } from "@/shared/transcript.ts";
 
-import { compact } from "./compaction.ts";
+import { compact, type ThreadRequest } from "./compaction.ts";
 import {
   contextOf,
   type Guidance,
@@ -926,8 +926,9 @@ export function createRunWorker(options: RunWorkerOptions) {
   }
 
   // Runs the run's open calls that may run, one at a time in order, until none is left; throws
-  // Waiting when some wait for a decision.
-  async function settle(execution: Execution, space: Space) {
+  // Waiting when some wait for a decision. `request` gives a tool what the thread's next model call
+  // would send.
+  async function settle(execution: Execution, space: Space, request: () => ThreadRequest) {
     const { run, lease } = execution;
     for (let next = nextCall(execution, space); next; next = nextCall(execution, space)) {
       const { call, spec, input, runAs, standingOn } = next;
@@ -956,6 +957,7 @@ export function createRunWorker(options: RunWorkerOptions) {
             runAs,
             signal: execution.controller.signal,
             ...(call.answers && { answers: call.answers }),
+            threadRequest: request,
             ...(deferral && {
               deferred: {
                 tools: deferral.all,
@@ -1000,6 +1002,50 @@ export function createRunWorker(options: RunWorkerOptions) {
     }
   }
 
+  // What the thread's next model call sends, as the thread is now. MCP tools stay out of the
+  // request until the model turns them on with the tool search, which is offered whenever the
+  // thread has any; the prompt lists them all, on or not. The model knows tools by their model
+  // names; calls, results and the prompt name them so.
+  function threadRequest(
+    execution: Execution,
+    space: Space,
+    thread: Thread,
+    model: Replying,
+  ): ThreadRequest {
+    const offered = offeredIn(space, thread);
+    const deferral = deferralOf(execution, space);
+    const searchable = new Set(deferral.all.map((tool) => tool.id));
+    const available = offered.filter(
+      (spec) => spec.name !== TOOL_SEARCH || deferral.all.length > 0,
+    );
+    const names = tools.modelNames(space);
+    const { instructions, messages, firstEffort } = contextOf(
+      transcript(thread.id).rows,
+      {
+        ...guidance(space, available, thread),
+        toolName: names.toModel,
+        ...(deferral.all.length && { deferredTools: deferredByServer(deferral.all) }),
+      },
+      before(thread),
+      deferral.turnedOn,
+      model.effort,
+    );
+    const forModel = (specs: AnyToolSpec[]) =>
+      tools.forModel(specs).map((tool) => ({ ...tool, id: names.toModel(tool.id) }));
+    return {
+      instructions,
+      messages: messages.map((message) => namedFor(message, names.toModel)),
+      sessionId: thread.id,
+      runId: execution.run.id,
+      ...(model.effort && { effort: model.effort }),
+      ...(firstEffort && { firstEffort }),
+      tools: forModel(available.filter((spec) => !searchable.has(spec.name))),
+      searchable: forModel(available.filter((spec) => searchable.has(spec.name))),
+      toolsOn: deferral.turnedOn.map((tool) => names.toModel(tool.id)),
+      search: names.toModel(TOOL_SEARCH),
+    };
+  }
+
   // The message that woke the run when it asks to compact the thread, and so the run is one that
   // compacts it; null otherwise.
   function compactionAsked(run: Run) {
@@ -1015,6 +1061,8 @@ export function createRunWorker(options: RunWorkerOptions) {
   // waits. With nothing to summarise, it leaves the thread as it is.
   async function compactFor(
     execution: Execution,
+    space: Space,
+    thread: Thread,
     model: Replying,
     asked: NonNullable<ReturnType<typeof compactionAsked>>,
   ) {
@@ -1034,6 +1082,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       threadId: run.threadId,
       rows: transcript(run.threadId).rows,
       model: model.model,
+      request: threadRequest(execution, space, thread, model),
       ...(asked.focus && { focus: asked.focus }),
       actor: asked.by,
       write: (work) => write(lease, run.threadId, work),
@@ -1054,7 +1103,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     let model = await replying(execution, space, thread);
     const asked = compactionAsked(run);
     if (asked) {
-      await compactFor(execution, model, asked);
+      await compactFor(execution, space, thread, model, asked);
       return;
     }
     // A run queued again after a decision takes in only the messages sent to steer it.
@@ -1062,6 +1111,8 @@ export function createRunWorker(options: RunWorkerOptions) {
       (row) => row.kind === "tool" && row.runId === run.id,
     );
 
+    const nextRequest = () =>
+      threadRequest(execution, space, threads.find(thread.id) ?? thread, model);
     let steps = 0;
     // What the calls gave back goes to the model before the run ends.
     let answer = resumed;
@@ -1069,7 +1120,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     // tool calls have results to give back.
     for (let call = 0; steps < maxSteps; call += 1) {
       const admitted = boundary(execution, call === 0 && !resumed);
-      await settle(execution, space);
+      await settle(execution, space, nextRequest);
       if (call > 0 && admitted.length === 0 && !answer) break;
       answer = false;
       // A tool that changed the thread's model or effort changes what replies from here.
@@ -1077,45 +1128,14 @@ export function createRunWorker(options: RunWorkerOptions) {
       if (current.model !== model.own.model || current.effort !== model.own.effort) {
         model = await replying(execution, space, current);
       }
-      // MCP tools stay out of the request until the model turns them on with the tool search,
-      // which is offered whenever the thread has any; the prompt lists them all, on or not.
-      const offered = offeredIn(space, current);
-      const deferral = deferralOf(execution, space);
-      const searchable = new Set(deferral.all.map((tool) => tool.id));
-      const available = offered.filter(
-        (spec) => spec.name !== TOOL_SEARCH || deferral.all.length > 0,
-      );
-      // The model knows tools by their model names; calls, results and the prompt name them so.
       const names = tools.modelNames(space);
-      const { instructions, messages, firstEffort } = contextOf(
-        transcript(thread.id).rows,
-        {
-          ...guidance(space, available, current),
-          toolName: names.toModel,
-          ...(deferral.all.length && { deferredTools: deferredByServer(deferral.all) }),
-        },
-        before(current),
-        deferral.turnedOn,
-        model.effort,
-      );
-      const forModel = (specs: AnyToolSpec[]) =>
-        tools.forModel(specs).map((tool) => ({ ...tool, id: names.toModel(tool.id) }));
       const calls: (ModelToolCall & { messageId: string })[] = [];
       let messageId = "";
       const stream = model.model.stream(
         {
-          instructions,
-          messages: messages.map((message) => namedFor(message, names.toModel)),
+          ...threadRequest(execution, space, current, model),
           maxSteps: maxSteps - steps,
-          sessionId: thread.id,
-          runId: run.id,
-          ...(model.effort && { effort: model.effort }),
-          ...(firstEffort && { firstEffort }),
           beforeStep: () => boundary(execution, false),
-          tools: forModel(available.filter((spec) => !searchable.has(spec.name))),
-          searchable: forModel(available.filter((spec) => searchable.has(spec.name))),
-          toolsOn: deferral.turnedOn.map((tool) => names.toModel(tool.id)),
-          search: names.toModel(TOOL_SEARCH),
         },
         controller.signal,
       );
@@ -1150,7 +1170,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       if (controller.signal.aborted) throw controller.signal.reason;
       if (calls.length > 0) {
         request(execution, space, calls);
-        await settle(execution, space);
+        await settle(execution, space, nextRequest);
         answer = true;
       }
     }

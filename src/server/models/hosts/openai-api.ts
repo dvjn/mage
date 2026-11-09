@@ -157,6 +157,7 @@ export function createOpenAIKeyGateway(fetchFn: typeof fetch = fetch): ModelGate
         errors: openaiErrors,
         ...(changes && { changes }),
         ...responsesSearch(request),
+        toolChoiceCached: true,
       });
     },
   };

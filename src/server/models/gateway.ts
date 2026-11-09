@@ -96,6 +96,10 @@ export interface ModelRequest {
   // The tool among `tools` that turns searchable tools on. A provider with a tool search of its own
   // offers that in its place, still run by whoever asked, and gives back the tools it turned on.
   search?: string;
+  // Asks for an answer with no tool calls. The tools are still sent, so that the request starts as
+  // the conversation's others do; a provider whose prompt cache a tool choice leaves as it was is
+  // told that no tool may be chosen, any other only by the messages.
+  answerOnly?: boolean;
 }
 
 export type ModelEvent =

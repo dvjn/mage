@@ -8,7 +8,8 @@
 // back, by each search, the tools it turned on, so the tools sent stay the same; one with a tool
 // search of its own is offered it in place of the request's search tool. For a provider that caches
 // a prompt only up to where it is marked, the request is marked after its tools and system prompt,
-// at the agent's last reply and at its last message.
+// at the agent's last reply and at its last message. A request for an answer only keeps its tools,
+// and is sent with no tool to be chosen only where that keeps the provider's prompt cache.
 
 import {
   APICallError,
@@ -397,6 +398,9 @@ export async function* streamReply(
     cache?: ProviderOptions;
     // For a provider that turns tools on from the request's search tool's results, how.
     search?: ToolSearch;
+    // For a provider whose prompt cache a tool choice leaves as it was: an answer-only request is
+    // sent with no tool to be chosen.
+    toolChoiceCached?: boolean;
   },
 ): AsyncIterable<ModelEvent> {
   const { changes, cache } = options;
@@ -432,6 +436,7 @@ export async function* streamReply(
     ...(options.providerOptions && { providerOptions: options.providerOptions }),
     // Sent in the order given.
     ...(ids.size > 0 && { tools, toolOrder: [...ids.keys()] }),
+    ...(request.answerOnly && options.toolChoiceCached && { toolChoice: "none" as const }),
     // A step with tool calls ends the request: the calls run elsewhere.
     stopWhen: [
       isStepCount(request.maxSteps),

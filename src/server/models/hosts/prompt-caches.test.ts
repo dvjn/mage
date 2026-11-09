@@ -29,8 +29,17 @@ const request: Omit<ModelRequest, "beforeStep" | "model"> = {
   tools: [{ id: "thread.rename", description: "Rename.", inputSchema: { type: "object" } }],
 };
 
-async function ask(gateway: ModelGateway, token: ModelToken, model: string) {
-  const events = gateway.stream(token, { ...request, model }, new AbortController().signal);
+async function ask(
+  gateway: ModelGateway,
+  token: ModelToken,
+  model: string,
+  extra: Partial<ModelRequest> = {},
+) {
+  const events = gateway.stream(
+    token,
+    { ...request, model, ...extra },
+    new AbortController().signal,
+  );
   await expect(
     (async () => {
       for await (const _ of events);
@@ -96,5 +105,31 @@ describe("OpenAI prompt cache", () => {
     expect(claude.system).toEqual([
       { type: "text", text: "You are the agent.", cache_control: { type: "ephemeral" } },
     ]);
+  });
+});
+
+describe("An answer-only request", () => {
+  it("keeps its tools, and lets none be chosen only where the cache holds through that", async () => {
+    const openai = refusingFetch();
+    const bedrock = refusingFetch();
+    const answerOnly = { answerOnly: true };
+
+    await ask(
+      createOpenAIKeyGateway(openai.fetchFn),
+      { access: "sk-key", accountId: null },
+      "gpt-5.5",
+      answerOnly,
+    );
+    await ask(
+      createBedrockGateway(bedrock.fetchFn),
+      { access: "bedrock-key", accountId: null, settings: { region: "us-east-1" } },
+      "global.anthropic.claude-haiku-5-5",
+      answerOnly,
+    );
+
+    const tools = [expect.objectContaining({ name: "thread__rename" })];
+    expect(openai.bodies[0]).toMatchObject({ tool_choice: "none", tools });
+    // Claude keeps the tool choice of every other request: its cached messages would not hold.
+    expect(bedrock.bodies[0]).toMatchObject({ tools, tool_choice: { type: "auto" } });
   });
 });

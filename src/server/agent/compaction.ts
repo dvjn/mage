@@ -2,18 +2,23 @@
 // the thread's model writes, and the most recent part, about 20k tokens of it, is kept word for
 // word; people still see the whole thread. The cut falls at a person's message with nothing before
 // it still open: no run with rows on both sides of it and no call before it unsettled. The summary
-// is written from the conversation as plain labelled lines, reasoning left out and what tools gave
-// back cut short, and a later compaction writes its summary from the one before and what that one
-// kept. Who wrote what is still read from the thread's rows, so a compaction changes nothing about
-// whose words steered a call.
+// is asked for as the thread's own next request with the ask appended, so that the provider reads
+// what its prompt cache holds of the thread's last turn: the same system prompt, tools, effort and
+// messages, the kept part among them and named in the ask, which asks for no tool calls. When that
+// request would not fit the model's context window, or the provider refuses it, or the model calls
+// a tool or writes nothing, the summary is written from a prompt of its own: the conversation as
+// plain labelled lines, reasoning left out and what tools gave back cut short. A later compaction
+// builds on the summary before. Who wrote what is still read from the thread's rows, so a
+// compaction changes nothing about whose words steered a call.
 
-import type { ModelUsage } from "@/server/models/gateway.ts";
+import { ModelError, type ModelRequest, type ModelUsage } from "@/server/models/gateway.ts";
 import type { OpenModel } from "@/server/models/service.ts";
 import type { Actor, NewEvent } from "@/server/threads/service.ts";
 import { valueForAgent } from "@/shared/mcp.ts";
 import {
   asksToCompact,
   type CompactionRow,
+  type HumanRow,
   type ToolRow,
   type TranscriptRow,
 } from "@/shared/transcript.ts";
@@ -25,6 +30,10 @@ export const KEEP_TOKENS = 20_000;
 
 // The most characters of what a tool gave back the summary is written from.
 export const RESULT_CHARS = 2_000;
+
+// The most of the model's context window the thread's own request may take to ask for the summary
+// with; the rest allows for the estimate's error and the summary.
+export const FITS_SHARE = 0.8;
 
 // About how many tokens the text is, at four characters to a token.
 export function tokensOf(text: string) {
@@ -191,6 +200,97 @@ export function summaryRequest(
   ].join("\n\n");
 }
 
+// What the thread's next model call would send: its system prompt, messages, effort and tools.
+export type ThreadRequest = Omit<ModelRequest, "model" | "maxSteps" | "beforeStep">;
+
+// The ask appended to the thread's own request: what to summarise, up to the person's message the
+// kept part starts with, if any, and how.
+export function summaryAsk(input: {
+  previous: boolean;
+  kept: Pick<HumanRow, "author" | "text" | "command"> | null;
+  focus?: string;
+}) {
+  const { previous, kept, focus = "" } = input;
+  const words = kept ? (kept.command?.text ?? kept.text) : "";
+  const excerpt = words.length > 200 ? `${words.slice(0, 200)}…` : words;
+  return [
+    "Write the summary this conversation continues from once its earlier part is set aside: from your next turn you read it in place of the part it covers, then the rest word for word.",
+    kept
+      ? `Summarise the conversation before the message of ${kept.author.name} that starts "${excerpt}". That message and all after it are kept word for word: leave them out.`
+      : "Summarise the whole conversation.",
+    ...(previous
+      ? [
+          "The conversation starts with the summary of an earlier part. Yours takes its place: carry over what still matters from it.",
+        ]
+      : []),
+    "Write it in Markdown under these headings: Goal, Who asked for what, Decisions, Progress, Open questions, Key details.",
+    "Name people as the conversation does. Keep exact names, numbers, paths and identifiers. Leave out your reasoning, and keep only what matters of what tools gave back. Leave out what no longer matters.",
+    ...(focus ? [`Keep in particular: ${focus}`] : []),
+    "Call no tools. Reply with the summary alone, with nothing before or after it.",
+  ].join("\n");
+}
+
+// The thread's own request with the ask for the summary appended, for one model step. The ask
+// names the person's message the kept part starts with, the first one the model reads.
+export function compactionRequest(
+  thread: ThreadRequest,
+  rows: readonly TranscriptRow[],
+  at: number,
+  focus = "",
+): Omit<ModelRequest, "model"> {
+  const kept = rows
+    .slice(at)
+    .find((row): row is HumanRow => row.kind === "human" && !asksToCompact(row));
+  const ask = summaryAsk({
+    previous: latestCompaction(rows) !== null,
+    kept: kept ?? null,
+    focus,
+  });
+  return {
+    ...thread,
+    messages: [...thread.messages, { role: "user", text: ask }],
+    maxSteps: 1,
+    answerOnly: true,
+  };
+}
+
+// Whether the request takes no more than its share of the model's context window, by its size;
+// one to a model whose window is not known is sent, and the provider says if it does not fit.
+export function fits(request: Omit<ModelRequest, "model">, contextWindow?: number) {
+  if (!contextWindow) return true;
+  const { instructions, messages, tools, searchable } = request;
+  const size = tokensOf(instructions) + tokensOf(JSON.stringify([messages, tools, searchable]));
+  return size <= contextWindow * FITS_SHARE;
+}
+
+// A failure the provider refused the request for, as one too long is, rather than the sign-in, a
+// limit or the network.
+function refused(err: unknown) {
+  return !(err instanceof ModelError) || err.kind === "model";
+}
+
+// The summary the model writes for the request, adding the tokens it used to `usage`; null when it
+// called a tool or wrote nothing.
+async function summaryFrom(
+  model: OpenModel,
+  request: Omit<ModelRequest, "model">,
+  usage: ModelUsage,
+  signal: AbortSignal,
+) {
+  let text = "";
+  let called = false;
+  for await (const event of model.stream(request, signal)) {
+    if (event.type === "delta") text += event.text;
+    if (event.type === "tool-call") called = true;
+    if (event.type === "step-end") {
+      usage.inputTokens += event.usage.inputTokens;
+      usage.outputTokens += event.usage.outputTokens;
+    }
+  }
+  const summary = text.trim();
+  return called || !summary ? null : summary;
+}
+
 export interface Compacted {
   summary: string;
   firstKeptSeq: number;
@@ -201,42 +301,46 @@ export interface Compacted {
 }
 
 // Compacts the thread with the model: writes the summary and appends the compaction. Null, with
-// nothing written, when there is nothing to summarise.
+// nothing written, when there is nothing to summarise. Given the thread's own request, it asks with
+// that first.
 export async function compact(input: {
   threadId: string;
   rows: readonly TranscriptRow[];
   model: OpenModel;
+  request?: ThreadRequest;
   focus?: string;
   actor: Actor;
   write: <T>(work: (append: (event: NewEvent) => void) => T) => T;
   signal: AbortSignal;
 }): Promise<Compacted | null> {
-  const { threadId, rows, model, focus, actor, write, signal } = input;
+  const { threadId, rows, model, focus = "", actor, write, signal } = input;
   const at = cutOf(rows);
   if (at === null) return null;
   const from = keptFrom(rows);
   const previous = latestCompaction(rows)?.summary ?? null;
   const tokens = (start: number, end = rows.length) =>
     rows.slice(start, end).reduce((sum, row) => sum + rowTokens(row), 0);
-  let text = "";
   const usage: ModelUsage = { inputTokens: 0, outputTokens: 0 };
-  const stream = model.stream(
+  let summary: string | null = null;
+  const own = input.request && compactionRequest(input.request, rows, at, focus);
+  if (own && fits(own, model.contextWindow)) {
+    try {
+      summary = await summaryFrom(model, own, usage, signal);
+    } catch (err) {
+      if (signal.aborted || !refused(err)) throw err;
+    }
+  }
+  summary ??= await summaryFrom(
+    model,
     {
       instructions: SUMMARY_INSTRUCTIONS,
       messages: [{ role: "user", text: summaryRequest(previous, rows.slice(from, at), focus) }],
       maxSteps: 1,
       sessionId: `${threadId}:compact`,
     },
+    usage,
     signal,
   );
-  for await (const event of stream) {
-    if (event.type === "delta") text += event.text;
-    if (event.type === "step-end") {
-      usage.inputTokens += event.usage.inputTokens;
-      usage.outputTokens += event.usage.outputTokens;
-    }
-  }
-  const summary = text.trim();
   if (!summary) throw new Error("The model wrote no summary.");
   const done: Compacted = {
     summary,

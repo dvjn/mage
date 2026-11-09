@@ -144,6 +144,7 @@ export function createAzureGateway(fetchFn: typeof fetch = fetch, entra?: Tokens
           providerOptions: { azure: { store: false, promptCacheKey: request.sessionId } },
           errors: openaiErrors,
           ...responsesSearch(request),
+          toolChoiceCached: true,
         });
         return;
       }

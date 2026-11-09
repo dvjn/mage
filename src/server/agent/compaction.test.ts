@@ -10,7 +10,17 @@ import {
   transcriptOf,
 } from "@/shared/transcript.ts";
 
-import { conversationText, cutOf, RESULT_CHARS, summaryRequest } from "./compaction.ts";
+import { ModelError } from "@/server/models/gateway.ts";
+
+import {
+  conversationText,
+  cutOf,
+  fits,
+  FITS_SHARE,
+  RESULT_CHARS,
+  summaryAsk,
+  summaryRequest,
+} from "./compaction.ts";
 import { summaryMessage } from "./context.ts";
 
 const ada = { kind: "user", userId: "ada", name: "Ada" } as const;
@@ -169,14 +179,29 @@ describe("compacting a thread", () => {
     await post(ada, "One");
     (await model.next()).reply("First.");
     await post(ada, "Two");
-    (await model.next()).reply("Second.");
+    const second = await model.next();
+    second.reply("Second.");
     await worker.idle();
 
     expect((await compactCommand(api, thread.id, ada, "the numbers")).status).toBe(202);
+    // Asked as the thread's next request would be, so that it starts as the last one did, with the
+    // ask at the end naming where the kept part starts.
     const summarising = await model.next();
-    expect(summarising.request.tools ?? []).toEqual([]);
+    const { instructions, sessionId, tools, searchable, search } = second.request;
+    expect(sessionId).toBe(thread.id);
+    expect(summarising.request).toMatchObject({
+      instructions,
+      sessionId,
+      tools,
+      searchable,
+      search,
+      maxSteps: 1,
+      answerOnly: true,
+    });
     expect(summarising.texts).toEqual([
-      "user: The conversation:\n[Ada Lovelace]: One\n[Agent]: First.\n\nKeep in particular: the numbers",
+      ...second.texts,
+      "assistant: Second.",
+      `user: ${summaryAsk({ previous: false, kept: { author: { kind: "user", userId: ada.userId, name: "Ada Lovelace" }, text: "Two" }, focus: "the numbers" })}`,
     ]);
     summarising.reply("Ada counted to one.");
     await worker.idle();
@@ -204,7 +229,9 @@ describe("compacting a thread", () => {
     expect((await compactCommand(api, thread.id, ada)).status).toBe(202);
     const again = await model.next();
     expect(again.texts).toEqual([
-      "user: The summary so far:\nAda counted to one.\n\nThe conversation since:\n[Ada Lovelace]: Two\n[Agent]: Second.",
+      ...after.texts,
+      "assistant: Third.",
+      `user: ${summaryAsk({ previous: true, kept: { author: { kind: "user", userId: ada.userId, name: "Ada Lovelace" }, text: "Three" } })}`,
     ]);
     again.reply("Ada counted to two.");
     await worker.idle();
@@ -235,7 +262,9 @@ describe("compacting a thread", () => {
     };
     expect(shown.run).toMatchObject({ compacting: true });
     expect(summarising.texts).toEqual([
-      "user: The conversation:\n[Ada Lovelace]: One\n[Agent]: First.",
+      "user: [Ada Lovelace] One",
+      "assistant: First.",
+      `user: ${summaryAsk({ previous: false, kept: null })}`,
     ]);
     summarising.reply("Ada said one.");
     await worker.idle();
@@ -255,8 +284,11 @@ describe("compacting a thread", () => {
     asking.endStep();
     asking.end();
     const summarising = await model.next();
+    expect(summarising.request.instructions).toBe(asking.request.instructions);
     expect(summarising.texts).toEqual([
-      "user: The conversation:\n[Ada Lovelace]: One\n[Agent]: First.\n\nKeep in particular: numbers",
+      ...asking.texts,
+      "assistant: Compacting.",
+      `user: ${summaryAsk({ previous: false, kept: { author: { kind: "user", userId: ada.userId, name: "Ada Lovelace" }, text: "Two" }, focus: "numbers" })}`,
     ]);
     summarising.reply("Ada said one.");
     const after = await model.next();
@@ -278,6 +310,45 @@ describe("compacting a thread", () => {
       "compaction",
       "Agent (completed): Done.",
     ]);
+  });
+
+  it("falls back to a prompt of its own when the model calls a tool or the request is refused", async () => {
+    const { ada, api, thread, post, model, worker, start } = await agentThread();
+    start();
+    await post(ada, "One");
+    (await model.next()).reply("First.");
+    await worker.idle();
+
+    expect((await compactCommand(api, thread.id, ada)).status).toBe(202);
+    const calling = await model.next();
+    calling.startStep();
+    calling.toolCall("call-1", "thread.rename", { title: "Engines" });
+    calling.endStep();
+    calling.end();
+    const own = await model.next();
+    expect(own.request.sessionId).toBe(`${thread.id}:compact`);
+    expect(own.request.tools).toBeUndefined();
+    expect(own.texts).toEqual(["user: The conversation:\n[Ada Lovelace]: One\n[Agent]: First."]);
+    own.reply("Ada said one.");
+    await worker.idle();
+
+    await post(ada, "Two");
+    (await model.next()).reply("Second.");
+    await worker.idle();
+    expect((await compactCommand(api, thread.id, ada)).status).toBe(202);
+    (await model.next()).fail(new ModelError("model", "400 prompt is too long"));
+    const fallback = await model.next();
+    expect(fallback.texts[0]).toMatch(/^user: The summary so far:\nAda said one\./);
+    fallback.reply("Ada said two.");
+    await worker.idle();
+  });
+
+  it("asks with the thread's own request only while it fits the model's context window", () => {
+    const request = { instructions: "", messages: [], maxSteps: 1, sessionId: "t" };
+    const big = { ...request, messages: [{ role: "user" as const, text: "x".repeat(4_000) }] };
+    expect(fits(big)).toBe(true);
+    expect(fits(big, 1_000)).toBe(false);
+    expect(fits(big, Math.ceil(1_100 / FITS_SHARE))).toBe(true);
   });
 
   it("by the agent's tool says when there is nothing to summarise", async () => {

@@ -41,6 +41,7 @@ import {
 } from "@/shared/tools.ts";
 import { type ToolRow, type TranscriptRow, transcriptOf } from "@/shared/transcript.ts";
 
+import type { ThreadRequest } from "./compaction.ts";
 import type { ToolsetGuidance } from "./context.ts";
 import type { RunStore } from "./runs.ts";
 import {
@@ -104,6 +105,8 @@ export interface ToolContext {
   // The MCP tools the run leaves out of the model's requests, those turned on among them, and a
   // way to turn some on for the rest of the thread, for the tool that searches them.
   deferred?: { tools: DeferredTool[]; on: ReadonlySet<string>; turnOn(ids: string[]): void };
+  // What the thread's next model call would send, for a tool that asks the thread's model.
+  threadRequest?: () => ThreadRequest;
   // Aborted once the run is to stop, for a tool that waits.
   signal?: AbortSignal;
   write<T>(work: (append: (event: NewEvent, title?: string) => void) => T): T;

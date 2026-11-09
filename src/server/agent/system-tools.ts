@@ -151,6 +151,7 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
         threadId: ctx.threadId,
         rows: transcriptOf(threads.eventsAfter(ctx.threadId, 0).map(eventSummary)).rows,
         model: await open(ctx.orgId, ctx.model),
+        ...(ctx.threadRequest && { request: ctx.threadRequest() }),
         ...(focus && { focus }),
         actor: ctx.actor,
         write: (work) => ctx.write(work),

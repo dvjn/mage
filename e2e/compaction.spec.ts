@@ -69,8 +69,8 @@ test("/compact shows where it compacted with its summary, and the agent goes on 
   await write(page, "/compact");
   const divider = page.getByRole("group", { name: "Compaction" });
   await divider.getByRole("button", { name: "Compacted by Ada Lovelace" }).click();
-  // The stand-in model's summary of the one message it was given.
-  await expect(divider).toContainText("I have read 1 message,");
+  // The stand-in model's summary, asked for after the thread's two messages.
+  await expect(divider).toContainText("I have read 3 messages,");
 
   await idle(page);
   await write(page, "/prompt");

@@ -118,8 +118,9 @@ export interface ModelsOptions {
   now?: () => Date;
 }
 
-// A model ready to stream a reply from.
+// A model ready to stream a reply from, with its context window in tokens when known.
 export interface OpenModel {
+  contextWindow?: number;
   stream(request: Omit<ModelRequest, "model">, signal: AbortSignal): AsyncIterable<ModelEvent>;
 }
 
@@ -411,6 +412,7 @@ export function createModels(options: ModelsOptions) {
       if (listed && !listed.enabled) throw new ModelTurnedOff(listed.name);
       const gateway = gateways[connection.host];
       return {
+        ...(listed?.contextWindow && { contextWindow: listed.contextWindow }),
         stream: ({ effort, ...request }, signal) =>
           streamFrom(
             gateway,

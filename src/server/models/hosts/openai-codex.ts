@@ -310,6 +310,7 @@ export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway 
         errors: codexErrors,
         ...(changes && { changes }),
         ...responsesSearch(request),
+        toolChoiceCached: true,
       });
     },
   };
