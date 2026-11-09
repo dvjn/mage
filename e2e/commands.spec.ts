@@ -63,8 +63,11 @@ test("the menu opens on a slash, filters as one types, and sends the skill picke
   const menu = page.getByRole("listbox", { name: "Commands" });
   await expect(menu.getByRole("option")).toHaveText([
     /^\/btw/,
+    /^\/charts/,
     /^\/compact/,
+    /^\/diagrams/,
     /^\/haiku/,
+    /^\/page-design/,
     /^\/pirate/,
   ]);
   await expect(menu.getByRole("option", { name: /^\/pirate/ })).toContainText("Skill");
@@ -72,7 +75,7 @@ test("the menu opens on a slash, filters as one types, and sends the skill picke
   await expect(menu.getByRole("option")).toHaveText([/^\/pirate.*Talk like a pirate/]);
   await box(page).press("Escape");
   await expect(menu).toBeHidden();
-  await box(page).fill("/p");
+  await box(page).fill("/pir");
   await box(page).press("Enter");
   await expect(menu).toBeHidden();
   await expect(box(page)).toHaveValue("/pirate ");

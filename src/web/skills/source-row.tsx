@@ -1,6 +1,6 @@
 // A skills repository as a collapsible row like a toolset's, with its branch and commit, how many
 // of its skills are on, a switch, and a menu to refresh it (applied at once), change its token or
-// remove it; inside, its skills with their switches, each opening a read-only preview of its
+// remove it (a built-in one only has the switches); inside, its skills with their switches, each opening a read-only preview of its
 // files.
 
 import { MoreHorizontalIcon } from "lucide-react";
@@ -151,9 +151,11 @@ export function SourceRow({
         }
         meta={
           <>
-            <span className="hidden font-mono sm:inline">
-              {refOf(source)} @ {shortCommit(source.commit)}
-            </span>
+            {!source.builtin && (
+              <span className="hidden font-mono sm:inline">
+                {refOf(source)} @ {shortCommit(source.commit)}
+              </span>
+            )}
             <span>
               {onCount} of {source.skills.length} on
             </span>
@@ -184,7 +186,7 @@ export function SourceRow({
               disabled={!canManage || (locked && !source.enabled) || pending}
               onCheckedChange={switchSource}
             />
-            {!locked && canManage && (
+            {!locked && canManage && !source.builtin && (
               <DropdownMenu>
                 <DropdownMenuTrigger
                   render={
@@ -214,9 +216,11 @@ export function SourceRow({
           </span>
         }
       >
-        <p className="pt-1 text-xs text-muted-foreground">
-          Read <Time iso={source.fetchedAt} />
-        </p>
+        {!source.builtin && (
+          <p className="pt-1 text-xs text-muted-foreground">
+            Read <Time iso={source.fetchedAt} />
+          </p>
+        )}
         <ul className="flex flex-col">
           {source.skills.map((skill) => (
             <SkillLine

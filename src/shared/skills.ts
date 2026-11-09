@@ -83,6 +83,8 @@ export const skillSourceSchema = z.object({
   fetchedAt: z.iso.datetime(),
   enabled: z.boolean(),
   hasToken: z.boolean(),
+  // The skills that ship with the product: only their switches change.
+  builtin: z.boolean(),
   skills: z.array(skillSummarySchema),
 });
 

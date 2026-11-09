@@ -42,6 +42,7 @@ import {
   type SkillFile,
 } from "@/shared/skills.ts";
 
+import { BUILTIN_SOURCE_ID, builtinSkills, builtinSource, isBuiltinId } from "./builtin.ts";
 import { discoverSkills, type FoundSkill, readSkillFile } from "./discovery.ts";
 import { GitError, type GitReader, type GitSnapshot } from "./git.ts";
 import { ArchiveError, type ArchiveReader } from "./zip.ts";
@@ -127,6 +128,12 @@ export interface SkillStore {
   setSpaceSource(spaceId: string, sourceId: string, enabled: boolean): void;
   spaceSkillSettings(spaceId: string): Map<string, boolean>;
   setSpaceSkill(spaceId: string, skillId: string, enabled: boolean): void;
+
+  // The switches on the built-in skills, by the ids they are listed under: the org's and a space's.
+  orgBuiltinSwitches(orgId: string): Map<string, boolean>;
+  setOrgBuiltin(orgId: string, key: string, enabled: boolean): void;
+  spaceBuiltinSwitches(spaceId: string): Map<string, boolean>;
+  setSpaceBuiltin(spaceId: string, key: string, enabled: boolean): void;
 }
 
 export interface SkillsOptions {
@@ -146,6 +153,7 @@ const SPACES_OFF = "The organization does not let spaces add skills";
 const ORG_OFF = "The organization turned this off";
 const NOT_FOUND = "Skill not found";
 const SOURCE_NOT_FOUND = "Skill source not found";
+const BUILT_IN = "Built-in skills can only be turned on or off";
 const WRITTEN_ONLY = "Only skills written here can be changed; update the source instead";
 
 export function alreadyOn(name: string) {
@@ -257,6 +265,7 @@ export function createSkills(options: SkillsOptions) {
   }
 
   function manageableSource(principal: Principal, id: string) {
+    if (isBuiltinId(id)) throw new ServiceError(400, BUILT_IN);
     const source = skills.findSource(id);
     if (!source || source.orgId !== principal.orgId) throw new ServiceError(404, SOURCE_NOT_FOUND);
     managed(principal, source.spaceId);
@@ -264,6 +273,7 @@ export function createSkills(options: SkillsOptions) {
   }
 
   function manageableSkill(principal: Principal, id: string) {
+    if (isBuiltinId(id)) throw new ServiceError(400, BUILT_IN);
     const skill = skills.find(id);
     if (!skill || skill.orgId !== principal.orgId) throw new ServiceError(404, NOT_FOUND);
     managed(principal, skill.spaceId);
@@ -314,6 +324,7 @@ export function createSkills(options: SkillsOptions) {
       fetchedAt: source.fetchedAt.toISOString(),
       enabled: source.enabled,
       hasToken: source.hasToken,
+      builtin: source.id === BUILTIN_SOURCE_ID,
       skills: all.filter((skill) => skill.sourceId === source.id).map(skillSummary),
     };
   }
@@ -327,16 +338,27 @@ export function createSkills(options: SkillsOptions) {
     };
   }
 
+  // The org's built-in source and skills, as its switches leave them.
+  function builtinOf(orgId: string) {
+    const switches = skills.orgBuiltinSwitches(orgId);
+    return {
+      source: builtinSource(orgId, switches.get(BUILTIN_SOURCE_ID) !== false),
+      skills: builtinSkills(orgId, switches),
+    };
+  }
+
   function spaceSkills(space: Pick<Space, "id" | "orgId">): SpaceSkills {
     const org = { orgId: space.orgId, spaceId: null };
     const own = { orgId: space.orgId, spaceId: space.id };
+    const builtin = builtinOf(space.orgId);
+    const builtinSwitches = skills.spaceBuiltinSwitches(space.id);
     return {
-      orgSources: skills.sources(org),
-      orgSkills: skills.inScope(org),
+      orgSources: [builtin.source, ...skills.sources(org)],
+      orgSkills: [...builtin.skills, ...skills.inScope(org)],
       ownSources: skills.sources(own),
       ownSkills: skills.inScope(own),
-      sourceSwitches: skills.spaceSourceSettings(space.id),
-      skillSwitches: skills.spaceSkillSettings(space.id),
+      sourceSwitches: new Map([...skills.spaceSourceSettings(space.id), ...builtinSwitches]),
+      skillSwitches: new Map([...skills.spaceSkillSettings(space.id), ...builtinSwitches]),
       allowed: spacesMayAdd(space.orgId),
     };
   }
@@ -498,7 +520,13 @@ export function createSkills(options: SkillsOptions) {
     // The org's skills, which its members may read.
     orgSkills(principal: Principal): OrgSkillList {
       const scope = { orgId: principal.orgId, spaceId: null };
-      return { ...listed(scope), spaceSkills: spacesMayAdd(principal.orgId) };
+      const { sources, written } = listed(scope);
+      const builtin = builtinOf(principal.orgId);
+      return {
+        sources: [sourceSummary(builtin.source, builtin.skills), ...sources],
+        written,
+        spaceSkills: spacesMayAdd(principal.orgId),
+      };
     },
 
     setSpaceSkills(principal: Principal, allowed: boolean) {
@@ -511,8 +539,10 @@ export function createSkills(options: SkillsOptions) {
       const space = spaces.require(principal, spaceId);
       const org = { orgId: space.orgId, spaceId: null };
       const own = { orgId: space.orgId, spaceId: space.id };
-      const sourceSwitches = skills.spaceSourceSettings(space.id);
-      const skillSwitches = skills.spaceSkillSettings(space.id);
+      const builtinSwitches = skills.spaceBuiltinSwitches(space.id);
+      const sourceSwitches = new Map([...skills.spaceSourceSettings(space.id), ...builtinSwitches]);
+      const skillSwitches = new Map([...skills.spaceSkillSettings(space.id), ...builtinSwitches]);
+      const builtin = builtinOf(space.orgId);
       const inSpace = (skill: SkillSummary) => ({
         ...skill,
         inSpace: skillSwitches.get(skill.id) !== false,
@@ -520,11 +550,13 @@ export function createSkills(options: SkillsOptions) {
       const orgListed = listed(org);
       return {
         org: {
-          sources: orgListed.sources.map((source) => ({
-            ...source,
-            inSpace: sourceSwitches.get(source.id) !== false,
-            skills: source.skills.map(inSpace),
-          })),
+          sources: [sourceSummary(builtin.source, builtin.skills), ...orgListed.sources].map(
+            (source) => ({
+              ...source,
+              inSpace: sourceSwitches.get(source.id) !== false,
+              skills: source.skills.map(inSpace),
+            }),
+          ),
           written: orgListed.written.map(inSpace),
         },
         own: listed(own),
@@ -536,6 +568,9 @@ export function createSkills(options: SkillsOptions) {
 
     // Turns the whole source on or off; on, none of its skills may clash with one on.
     setSourceEnabled(principal: Principal, id: string, enabled: boolean) {
+      if (id === BUILTIN_SOURCE_ID) {
+        return skills.setOrgBuiltin(managed(principal, null).orgId, id, enabled);
+      }
       const source = manageableSource(principal, id);
       if (enabled && !source.enabled) {
         const scope = scopeOf(source);
@@ -549,6 +584,13 @@ export function createSkills(options: SkillsOptions) {
     },
 
     setSkillEnabled(principal: Principal, id: string, enabled: boolean) {
+      if (isBuiltinId(id)) {
+        const orgId = managed(principal, null).orgId;
+        if (!builtinOf(orgId).skills.some((skill) => skill.id === id)) {
+          throw new ServiceError(404, NOT_FOUND);
+        }
+        return skills.setOrgBuiltin(orgId, id, enabled);
+      }
       const skill = manageableSkill(principal, id);
       if (enabled) refuseClashes(scopeOf(skill), [skill.name], (other) => other.id === id);
       skills.update(id, { enabled });
@@ -556,6 +598,11 @@ export function createSkills(options: SkillsOptions) {
 
     // The skill with its instructions and files, for anyone who may read its scope.
     get(principal: Principal, id: string): SkillDetail {
+      if (isBuiltinId(id)) {
+        const skill = builtinOf(principal.orgId).skills.find((candidate) => candidate.id === id);
+        if (!skill) throw new ServiceError(404, NOT_FOUND);
+        return { ...skillSummary(skill), body: skill.body, files: skill.files };
+      }
       const skill = skills.find(id);
       if (!skill || skill.orgId !== principal.orgId) throw new ServiceError(404, NOT_FOUND);
       if (skill.spaceId) spaces.require(principal, skill.spaceId);
@@ -685,6 +732,10 @@ export function createSkills(options: SkillsOptions) {
     // it off.
     setSpaceSource(principal: Principal, spaceId: string, sourceId: string, enabled: boolean) {
       const space = spaces.require(principal, spaceId, "manage");
+      if (sourceId === BUILTIN_SOURCE_ID) {
+        if (enabled && !builtinOf(space.orgId).source.enabled) throw new ServiceError(409, ORG_OFF);
+        return skills.setSpaceBuiltin(space.id, sourceId, enabled);
+      }
       const source = skills.findSource(sourceId);
       if (!source || source.orgId !== space.orgId || source.spaceId) {
         throw new ServiceError(404, SOURCE_NOT_FOUND);
@@ -697,6 +748,15 @@ export function createSkills(options: SkillsOptions) {
     // off.
     setSpaceSkill(principal: Principal, spaceId: string, skillId: string, enabled: boolean) {
       const space = spaces.require(principal, spaceId, "manage");
+      if (isBuiltinId(skillId)) {
+        const builtin = builtinOf(space.orgId);
+        const found = builtin.skills.find((candidate) => candidate.id === skillId);
+        if (!found) throw new ServiceError(404, NOT_FOUND);
+        if (enabled && (!found.enabled || !builtin.source.enabled)) {
+          throw new ServiceError(409, ORG_OFF);
+        }
+        return skills.setSpaceBuiltin(space.id, skillId, enabled);
+      }
       const skill = skills.find(skillId);
       if (!skill || skill.orgId !== space.orgId || skill.spaceId) {
         throw new ServiceError(404, NOT_FOUND);
@@ -786,10 +846,8 @@ export function createSkills(options: SkillsOptions) {
         // Offered only where some skill is on.
         usefulIn: (space) => effectiveIn(space).length > 0,
         fixed: true,
-        // Settings show it where the org or the space has skills.
-        listedIn: ({ orgId, spaceId }) =>
-          skills.inScope({ orgId, spaceId: null }).length > 0 ||
-          (spaceId !== null && skills.inScope({ orgId, spaceId }).length > 0),
+        // Every org has the built-in skills, so settings always show it.
+        listedIn: () => true,
       };
     },
   };

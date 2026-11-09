@@ -148,3 +148,18 @@ test("skills uploaded as a SKILL.md, a zip, and a file to finish by hand", async
   await draft.getByRole("button", { name: "Create skill" }).click();
   await expect(group).toContainText("2 of 4 on");
 });
+
+test("the built-in skills are listed as a source with only switches", async ({ page }) => {
+  await signUp(page);
+  await page.goto("/org/skills");
+  const source = page.getByRole("region", { name: "Built in" });
+  await expect(source).toContainText("3 of 3 on");
+  await expect(source.getByRole("switch", { name: "Built in: on" })).toBeVisible();
+  await source
+    .getByRole("button", { name: /Built in/ })
+    .first()
+    .click();
+  await expect(page.getByRole("button", { name: "More for Built in" })).toHaveCount(0);
+  await source.getByRole("switch", { name: "charts: on" }).click();
+  await expect(source).toContainText("2 of 3 on");
+});

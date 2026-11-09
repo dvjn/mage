@@ -22,6 +22,8 @@ import { type Skill, type SkillSource, effectiveSkills, type SpaceSkills } from 
 import { discoverSkills, readSkillFile } from "./discovery.ts";
 import { commitTo, createRepo, GIT_TOKEN } from "../../../e2e/git-server.ts";
 
+const BUILTIN = ["charts", "diagrams", "page-design"];
+
 const AGENT_SKILLS = `${GIT_ORIGIN}/acme/agent-skills.git`;
 
 describe("what people paste to add skills", () => {
@@ -436,18 +438,15 @@ describe("skills by scope", () => {
     await json(
       await api("PUT", `/spaces/${space.id}/skills/${haiku!.id}`, ada.cookie, { enabled: false }),
     );
-    expect((await read()).org.sources[0]!.skills.map((skill) => skill.inSpace)).toEqual([
-      true,
-      false,
-      true,
-    ]);
+    const ours = async () => (await read()).org.sources.find((one) => one.id === source.id)!;
+    expect((await ours()).skills.map((skill) => skill.inSpace)).toEqual([true, false, true]);
     // Off for the whole source here, none of its skills are on.
     await json(
       await api("PUT", `/spaces/${space.id}/skill-sources/${source.id}`, ada.cookie, {
         enabled: false,
       }),
     );
-    expect((await read()).org.sources[0]!.inSpace).toBe(false);
+    expect((await ours()).inSpace).toBe(false);
   });
 
   it("keep a space's own skills while the org lets spaces add them", async () => {
@@ -460,9 +459,14 @@ describe("skills by scope", () => {
       }),
     );
     const here = spaceStore.find(space.id)!;
-    expect(skills.effectiveIn(here).map((skill) => skill.name)).toEqual(["local"]);
+    expect(skills.effectiveIn(here).map((skill) => skill.name)).toEqual([
+      "charts",
+      "diagrams",
+      "local",
+      "page-design",
+    ]);
     await json(await api("PUT", "/org/skills/space-skills", ada.cookie, { allowed: false }));
-    expect(skills.effectiveIn(here)).toEqual([]);
+    expect(skills.effectiveIn(here).map((skill) => skill.name)).toEqual(BUILTIN);
     expect((await add(`/spaces/${space.id}`, AGENT_SKILLS)).status).toBe(403);
   });
 });
@@ -498,7 +502,7 @@ describe("the agent", () => {
     expect(results[0]).toContain('"files":["templates/notes.md"]');
     expect(results[1]).toContain("What's new");
     expect(results[2]).toContain(
-      "No skill named haiku is on here. The skills here: release-notes.",
+      "No skill named haiku is on here. The skills here: charts, diagrams, page-design, release-notes.",
     );
     expect(events().filter((event) => event.type === "tool.ran")).toHaveLength(3);
   });
@@ -643,5 +647,110 @@ describe("uploaded skills", () => {
         )
       ).reason,
     ).toBe("invalid");
+  });
+});
+
+describe("built-in skills", () => {
+  const names = (skills: { name: string }[]) => skills.map((skill) => skill.name);
+
+  it("are one source of three skills, on by default, in the org and in every space", async () => {
+    const { api, ada, space } = await team();
+    const org = await json<OrgSkillList>(await api("GET", "/org/skills", ada.cookie));
+    const [builtin] = org.sources;
+    expect(builtin).toMatchObject({
+      id: "builtin",
+      label: "Built in",
+      builtin: true,
+      enabled: true,
+    });
+    expect(names(builtin!.skills)).toEqual(BUILTIN);
+    expect(builtin!.skills.every((skill) => skill.enabled)).toBe(true);
+    const inSpace = await json<SpaceSkillList>(
+      await api("GET", `/spaces/${space.id}/skills`, ada.cookie),
+    );
+    expect(inSpace.org.sources[0]!.inSpace).toBe(true);
+    expect(inSpace.org.sources[0]!.skills.every((skill) => skill.inSpace)).toBe(true);
+  });
+
+  it("are turned off for one space by its switches, and for every space by the org's", async () => {
+    const { api, ada, space, spaceStore, skills, createSpace } = await team();
+    const other = await createSpace(ada.cookie, "Other");
+    const here = spaceStore.find(space.id)!;
+    const elsewhere = spaceStore.find(other.id)!;
+    await json(
+      await api("PUT", `/spaces/${space.id}/skills/builtin:charts`, ada.cookie, { enabled: false }),
+    );
+    expect(names(skills.effectiveIn(here))).toEqual(["diagrams", "page-design"]);
+    expect(names(skills.effectiveIn(elsewhere))).toEqual(BUILTIN);
+    await json(
+      await api("PUT", `/spaces/${space.id}/skill-sources/builtin`, ada.cookie, { enabled: false }),
+    );
+    expect(skills.effectiveIn(here)).toEqual([]);
+    await json(
+      await api("PUT", `/spaces/${space.id}/skill-sources/builtin`, ada.cookie, { enabled: true }),
+    );
+    // The org's switch wins: a space can't turn on what the org has off.
+    await json(
+      await api("PUT", "/skills/builtin:diagrams/enabled", ada.cookie, { enabled: false }),
+    );
+    expect(names(skills.effectiveIn(here))).toEqual(["page-design"]);
+    const refused = await api("PUT", `/spaces/${space.id}/skills/builtin:diagrams`, ada.cookie, {
+      enabled: true,
+    });
+    expect(refused.status).toBe(409);
+    await json(await api("PUT", "/skill-sources/builtin/enabled", ada.cookie, { enabled: false }));
+    expect(skills.effectiveIn(here)).toEqual([]);
+    expect(skills.effectiveIn(elsewhere)).toEqual([]);
+  });
+
+  it("are replaced by a skill of the same name written in the space", async () => {
+    const { api, ada, space, spaceStore, skills } = await team();
+    await json(
+      await api("POST", `/spaces/${space.id}/skills`, ada.cookie, {
+        name: "charts",
+        description: "Our charts",
+        body: "Use ours.",
+      }),
+    );
+    const charts = skills
+      .effectiveIn(spaceStore.find(space.id)!)
+      .find((skill) => skill.name === "charts")!;
+    expect(charts).toMatchObject({ description: "Our charts", sourceId: null });
+  });
+
+  it("take no refresh, token, removal, edit or delete", async () => {
+    const { api, ada } = await team();
+    const body = { token: null, name: "x", description: "d", body: "b" };
+    for (const [method, path] of [
+      ["POST", "/skill-sources/builtin/refresh"],
+      ["PUT", "/skill-sources/builtin/token"],
+      ["DELETE", "/skill-sources/builtin"],
+      ["PATCH", "/skills/builtin:charts"],
+      ["DELETE", "/skills/builtin:charts"],
+    ] as const) {
+      const res = await api(method, path, ada.cookie, body);
+      expect(res.status, `${method} ${path}`).toBe(400);
+    }
+    const detail = await json<SkillDetail>(await api("GET", "/skills/builtin:charts", ada.cookie));
+    expect(detail.files.map((file) => file.path)).toEqual(["palette.md"]);
+  });
+
+  it("are listed to the agent, which loads their text", async () => {
+    const { ada, post, model, worker, start } = await agentThread();
+    start();
+    await post(ada, "Make a page");
+    const first = await model.next();
+    expect(first.request.instructions).toContain("- page-design:");
+    first.startStep();
+    first.toolCall("c1", LOAD_SKILL, { name: "page-design" });
+    first.toolCall("c2", READ_SKILL_FILE, { name: "charts", path: "palette.md" });
+    first.endStep();
+    first.end();
+    const next = await model.next();
+    next.reply("Done.");
+    await worker.idle();
+    const results = next.texts.filter((text) => text.startsWith("result"));
+    expect(results[0]).toContain("Designing a page");
+    expect(results[1]).toContain("Categorical");
   });
 });

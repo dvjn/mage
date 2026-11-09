@@ -5,7 +5,14 @@ import type { Cipher } from "@/server/kernel/cipher.ts";
 import type { Db } from "@/server/db/db.ts";
 
 import type { Scope, Skill, SkillSource, SkillStore } from "./service.ts";
-import { skill, skillSource, spaceSkillSetting, spaceSkillSourceSetting } from "./schema.ts";
+import {
+  orgBuiltinSkillSetting,
+  skill,
+  skillSource,
+  spaceBuiltinSkillSetting,
+  spaceSkillSetting,
+  spaceSkillSourceSetting,
+} from "./schema.ts";
 
 const sourceColumns = {
   id: skillSource.id,
@@ -169,6 +176,44 @@ export function createSkillStore(db: Db, cipher: Cipher): SkillStore {
         .where(eq(spaceSkillSetting.spaceId, spaceId))
         .all();
       return new Map(rows.map((row) => [row.id, row.enabled]));
+    },
+
+    orgBuiltinSwitches(orgId) {
+      const rows = db
+        .select({ key: orgBuiltinSkillSetting.key, enabled: orgBuiltinSkillSetting.enabled })
+        .from(orgBuiltinSkillSetting)
+        .where(eq(orgBuiltinSkillSetting.organizationId, orgId))
+        .all();
+      return new Map(rows.map((row) => [row.key, row.enabled]));
+    },
+
+    setOrgBuiltin(orgId, key, enabled) {
+      db.insert(orgBuiltinSkillSetting)
+        .values({ organizationId: orgId, key, enabled })
+        .onConflictDoUpdate({
+          target: [orgBuiltinSkillSetting.organizationId, orgBuiltinSkillSetting.key],
+          set: { enabled },
+        })
+        .run();
+    },
+
+    spaceBuiltinSwitches(spaceId) {
+      const rows = db
+        .select({ key: spaceBuiltinSkillSetting.key, enabled: spaceBuiltinSkillSetting.enabled })
+        .from(spaceBuiltinSkillSetting)
+        .where(eq(spaceBuiltinSkillSetting.spaceId, spaceId))
+        .all();
+      return new Map(rows.map((row) => [row.key, row.enabled]));
+    },
+
+    setSpaceBuiltin(spaceId, key, enabled) {
+      db.insert(spaceBuiltinSkillSetting)
+        .values({ spaceId, key, enabled })
+        .onConflictDoUpdate({
+          target: [spaceBuiltinSkillSetting.spaceId, spaceBuiltinSkillSetting.key],
+          set: { enabled },
+        })
+        .run();
     },
 
     setSpaceSkill(spaceId, skillId, enabled) {

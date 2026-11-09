@@ -46,6 +46,9 @@ const decide = ({
 }: Omit<Parameters<typeof decideUnder>[0], "rule"> & { rules: Rule[] }) =>
   decideUnder({ ...input, rule: ruleFor(rules) });
 
+// The skills tools, offered everywhere since the built-in skills are on by default.
+const SKILL_TOOLS = ["skills.load", "skills.read_file"];
+
 // The tools the agent of a thread that can start subagents has for them.
 const SUBAGENT_TOOLS = [
   "subagents.start",
@@ -497,6 +500,7 @@ describe("tool calls", () => {
       "thread.set_model",
       "thread.compact",
       "thread.ask",
+      ...SKILL_TOOLS,
       ...SUBAGENT_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
@@ -749,6 +753,7 @@ describe("tool calls", () => {
     expect(call.tools).toEqual([
       "thread.compact",
       "thread.ask",
+      ...SKILL_TOOLS,
       ...SUBAGENT_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
@@ -762,6 +767,7 @@ describe("tool calls", () => {
       "thread.set_model",
       "thread.compact",
       "thread.ask",
+      ...SKILL_TOOLS,
       ...SUBAGENT_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
@@ -1165,7 +1171,7 @@ describe("built-in toolset switches", () => {
     expect((await setSpace(true)).status).toBe(409);
     expect(
       toolRegistry.definitions({ id: elsewhere.id, orgId: ada.orgId }).map((tool) => tool.name),
-    ).toEqual([...fixed, ...SUBAGENT_TOOLS, ...ARTIFACT_TOOL_LIST]);
+    ).toEqual([...fixed, ...SKILL_TOOLS, ...SUBAGENT_TOOLS, ...ARTIFACT_TOOL_LIST]);
     const changeWhileOff = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
       toolIds: ["thread.rename"],
       policy: review.id,

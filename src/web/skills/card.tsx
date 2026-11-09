@@ -49,6 +49,7 @@ import { type Draft, WrittenDialog } from "@/web/skills/written-dialog";
 const WRITTEN = "skills:written";
 
 function sourceLine(source: SkillSourceSummary) {
+  if (source.builtin) return source.label;
   const path = source.subpath ? `/${source.subpath}` : "";
   return `${source.label}${path} · ${refOf(source)} @ ${shortCommit(source.commit)}`;
 }

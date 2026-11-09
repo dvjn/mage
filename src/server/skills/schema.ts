@@ -106,3 +106,30 @@ export const spaceSkillSetting = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.spaceId, table.skillId] })],
 );
+
+// Whether the org uses a built-in skill, or the whole built-in source, once it set so. The key is
+// the id the built-in source or skill is listed under; the skills themselves are never stored.
+export const orgBuiltinSkillSetting = sqliteTable(
+  "org_builtin_skill_setting",
+  {
+    organizationId: text("organization_id")
+      .notNull()
+      .references(() => organization.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.organizationId, table.key] })],
+);
+
+// The same for a space, which can only turn off what the org has on.
+export const spaceBuiltinSkillSetting = sqliteTable(
+  "space_builtin_skill_setting",
+  {
+    spaceId: text("space_id")
+      .notNull()
+      .references(() => space.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.spaceId, table.key] })],
+);

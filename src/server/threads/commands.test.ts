@@ -140,6 +140,13 @@ describe("thread commands", () => {
         kind: "builtin",
         tag: null,
       },
+      ...["charts", "diagrams", "page-design"].map((name) => ({
+        name,
+        description: expect.any(String),
+        argumentHint: null,
+        kind: "skill",
+        tag: "Skill",
+      })),
       {
         name: "pirate",
         description: "Talk like a pirate",

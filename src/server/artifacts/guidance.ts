@@ -11,4 +11,5 @@ Page contract:
 - Theme: define colours as custom properties on :root, give body an explicit background, and redefine them for dark under @media (prefers-color-scheme: dark) guarded by :root:not([data-theme="light"]), and again under :root[data-theme="dark"]. The viewer sets data-theme.
 - Work at phone width with a 16px side gutter and no horizontal scroll.
 - The page runs in a sandboxed frame: no alert, confirm or prompt; no print; no embedded sites or frames; no plain-link downloads; no forms posting elsewhere; clipboard writes only inside a click handler.
+- Load the page-design skill before publishing a page, and diagrams or charts too when the page has them.
 - Preview after publishing when the tool is offered, and fix what it reports.`;
