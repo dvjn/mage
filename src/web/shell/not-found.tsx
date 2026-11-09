@@ -10,7 +10,7 @@ import { PageHeader } from "@/web/shell/page-header";
 
 // A page that does not exist or is not the reader's. Given the space or thread, it first looks for
 // it in the reader's other orgs.
-export function NotFound({ what, id }: { what: "space" | "thread"; id?: string }) {
+export function NotFound({ what, id }: { what: "space" | "thread" | "artifact"; id?: string }) {
   const [looking, setLooking] = useState(!!id);
   useEffect(() => {
     if (!id) return;

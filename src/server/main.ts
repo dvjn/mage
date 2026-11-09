@@ -4,6 +4,9 @@ import type { Server } from "node:http";
 
 import { serve } from "@hono/node-server";
 
+import { loadChromiumPreviewer } from "@/server/artifacts/preview.ts";
+import { CONTENT_PREFIX, createArtifacts } from "@/server/artifacts/service.ts";
+import { createArtifactStore } from "@/server/artifacts/store.ts";
 import { createSubagentStore } from "@/server/agent/subagent-store.ts";
 import { createSubagents } from "@/server/agent/subagents.ts";
 import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
@@ -179,6 +182,19 @@ const subagents = createSubagents({
   },
   modelsIn: async (orgId) => (await models.resolveModels(orgId)).models,
 });
+// Previews need a browser, which servers without one go without.
+const artifacts = createArtifacts({
+  store: createArtifactStore(db),
+  threads: threadStore,
+  spaceStore,
+  spaces,
+  access,
+  directory,
+  appOrigin: new URL(config.baseUrl).origin,
+  artifactOrigin: config.artifactOrigin,
+  secret: config.authSecret,
+  previewer: await loadChromiumPreviewer(),
+});
 const tools = createTools({
   toolsets: [
     createRichReplies(),
@@ -203,6 +219,7 @@ const tools = createTools({
       mcp.hasServers,
     ),
     subagents.toolset(),
+    artifacts.toolset(),
   ],
   scoped: {
     inSpace: (space) => mcp.toolsetsInSpace(space),
@@ -338,6 +355,7 @@ const app = createApp({
   mcp,
   instructions,
   skills,
+  artifacts,
   guests: createGuests({
     access,
     guests: guestStore,
@@ -359,7 +377,20 @@ const app = createApp({
   }),
 });
 
-export default app;
+// One listener answers both: a request for an artifact's origin goes to the content app alone, and
+// the app never answers on that origin nor serves content paths on its own.
+const routed = {
+  fetch: (request: Request, ...rest: unknown[]) => {
+    if (config.artifactOrigin === null) return app.fetch(request, ...(rest as []));
+    if (artifacts.servesHost(request)) return artifacts.content(request);
+    if (new URL(request.url).pathname.startsWith(CONTENT_PREFIX)) {
+      return new Response("Not found", { status: 404 });
+    }
+    return app.fetch(request, ...(rest as []));
+  },
+};
+
+export default routed;
 
 // The development server imports this module rather than running it, and evaluates it again after
 // each change; the agent worker runs there too, one at a time.
@@ -388,8 +419,23 @@ if (import.meta.main || developing) {
   shared.spaceSweep = setInterval(sweep, 60 * 60 * 1000).unref();
 }
 
+// Where each port has its own hostname and no wildcard exists, a second listener answers only the
+// artifacts' content app, so pages live on an origin of their own whatever runs the app. The development server evaluates this module again after each change,
+// so one listener stays and hands requests to the newest content app.
+if ((import.meta.main || developing) && config.artifactPort !== null) {
+  const shared = globalThis as {
+    artifactServer?: Server;
+    artifactContent?: (request: Request) => Promise<Response> | Response;
+  };
+  shared.artifactContent = (request) => artifacts.content(request);
+  shared.artifactServer ??= serve(
+    { fetch: (request) => shared.artifactContent!(request), port: config.artifactPort },
+    (info) => logger.info({ port: info.port, origin: config.artifactOrigin }, "serving artifacts"),
+  ) as Server;
+}
+
 if (import.meta.main) {
-  const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
+  const server = serve({ fetch: routed.fetch, port: config.port }, (info) => {
     logger.info({ port: info.port, baseUrl: config.baseUrl }, "listening");
   }) as Server;
   // On a stop signal the server takes no new connections, ends the live event streams and stops

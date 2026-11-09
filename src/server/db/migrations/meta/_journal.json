@@ -351,6 +351,13 @@
       "when": 1794229879378,
       "tag": "0049_thread_history",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1794244044102,
+      "tag": "0050_artifacts",
+      "breakpoints": true
     }
   ]
 }

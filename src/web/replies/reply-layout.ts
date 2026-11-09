@@ -11,6 +11,8 @@ import {
 } from "@openuidev/lang-core";
 import * as z from "zod";
 
+import { splitReply } from "@/web/replies/reply-blocks";
+
 const Text = defineComponent({
   name: "Text",
   description: "A paragraph of plain text.",
@@ -94,7 +96,14 @@ const Row = defineComponent({
   component: null,
 });
 
-const INSIDE = [Text, Stat, Row, Table, List, Bars, Button, Form];
+const Artifact = defineComponent({
+  name: "Artifact",
+  description: "The card of an artifact the agent published, with a way to open it.",
+  props: z.object({ id: z.string() }),
+  component: null,
+});
+
+const INSIDE = [Text, Stat, Row, Table, List, Bars, Button, Form, Artifact];
 
 const Card = defineComponent({
   name: "Card",
@@ -126,6 +135,7 @@ export const LAYOUT_COMPONENTS = [
   Bars,
   Button,
   Form,
+  Artifact,
   Input,
   Select,
 ];
@@ -168,4 +178,14 @@ export function messageOf(
   });
   const text = [said, ...values].filter(Boolean).join("\n");
   return text || null;
+}
+
+// The ids of the artifacts a reply's layouts place with Artifact(id).
+export function artifactIdsIn(text: string): string[] {
+  if (!text.includes("Artifact(")) return [];
+  return splitReply(text).flatMap((piece) =>
+    piece.kind === "ui"
+      ? [...piece.source.matchAll(/\bArtifact\(\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]!)
+      : [],
+  );
 }

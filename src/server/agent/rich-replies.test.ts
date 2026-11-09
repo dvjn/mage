@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { LAYOUT_COMPONENTS, messageOf, outcomeOf } from "@/web/replies/reply-layout";
+import { artifactIdsIn, LAYOUT_COMPONENTS, messageOf, outcomeOf } from "@/web/replies/reply-layout";
 import { splitReply } from "@/web/replies/reply-blocks";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 
@@ -35,6 +35,13 @@ describe("reply blocks", () => {
 describe("reply layouts", () => {
   it("draw a layout written as the guidance says", () => {
     expect(outcomeOf(LAYOUT)).toEqual({ drawn: true, problems: [] });
+  });
+
+  it("accept an Artifact(id) and find the ids a reply places", () => {
+    const layout = 'root = Stack([card])\ncard = Artifact("a1")';
+    expect(outcomeOf(layout)).toEqual({ drawn: true, problems: [] });
+    expect(artifactIdsIn(`Done.\n\n\`\`\`ui\n${layout}\n\`\`\``)).toEqual(["a1"]);
+    expect(artifactIdsIn('Artifact("a2") in prose')).toEqual([]);
   });
 
   it("draw the parts that work and name the rest", () => {

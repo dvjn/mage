@@ -8,6 +8,8 @@ import { bodyLimit } from "hono/body-limit";
 import { HTTPException } from "hono/http-exception";
 import { requestId, type RequestIdVariables } from "hono/request-id";
 
+import { artifactRoutes } from "@/server/artifacts/routes.ts";
+import type { Artifacts } from "@/server/artifacts/service.ts";
 import { toolRoutes } from "@/server/agent/routes.ts";
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
@@ -63,6 +65,8 @@ export interface AppOptions {
   instructions: Instructions;
   // The skills orgs and spaces give the agent.
   skills: Skills;
+  // The pages the agent publishes, who views them, and their sharing.
+  artifacts: Artifacts;
   // The orgs people are in, their members and invites, and creating team orgs.
   orgs: Orgs;
   // A team org's groups, as a directory brings them.
@@ -134,7 +138,8 @@ function createApi(options: AppOptions) {
     .route("/", toolRoutes(options))
     .route("/", mcpRoutes(options))
     .route("/", instructionRoutes(options))
-    .route("/", skillRoutes(options));
+    .route("/", skillRoutes(options))
+    .route("/", artifactRoutes(options));
 }
 
 export type Api = ReturnType<typeof createApi>;

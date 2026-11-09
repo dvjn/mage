@@ -8,3 +8,6 @@ export const issuer = "http://localhost:4794";
 export const modelServer = "http://localhost:4792";
 export const mcpServer = "http://localhost:4791";
 export const gitServer = "http://localhost:4790";
+// Where the password server serves artifact pages from: an origin each, on its own port.
+export const artifactOrigin = "http://*.localhost:4793";
+export const artifactHost = (id: string) => artifactOrigin.replace("*", id.toLowerCase());

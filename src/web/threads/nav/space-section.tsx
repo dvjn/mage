@@ -1,8 +1,8 @@
-// The sidebar's space section: starts a thread and opens the space's settings, as the server lets
-// the person.
+// The sidebar's space section: starts a thread, opens the artifacts gallery and the space's
+// settings, as the server lets the person.
 
 import { Link, useMatchRoute } from "@tanstack/react-router";
-import { PlusIcon, Settings2Icon } from "lucide-react";
+import { FileTextIcon, PlusIcon, Settings2Icon } from "lucide-react";
 
 import type { SpaceSummary } from "@/shared/spaces.ts";
 import { ShortcutHint } from "@/web/components/shortcut-keys";
@@ -18,7 +18,6 @@ import { useNewThread } from "@/web/threads/nav/use-new-thread";
 export function SpaceSection({ space }: { space: SpaceSummary }) {
   const matchRoute = useMatchRoute();
   const newThread = useNewThread();
-  if (!space.post && !space.manage) return null;
   return (
     <SidebarGroup>
       <SidebarGroupLabel>Space</SidebarGroupLabel>
@@ -35,6 +34,15 @@ export function SpaceSection({ space }: { space: SpaceSummary }) {
             </SidebarMenuButton>
           </SidebarMenuItem>
         )}
+        <SidebarMenuItem>
+          <SidebarMenuButton
+            isActive={!!matchRoute({ to: "/artifacts", fuzzy: true })}
+            render={<Link to="/artifacts" />}
+          >
+            <FileTextIcon />
+            <span>Artifacts</span>
+          </SidebarMenuButton>
+        </SidebarMenuItem>
         {space.manage && (
           <SidebarMenuItem>
             <SidebarMenuButton

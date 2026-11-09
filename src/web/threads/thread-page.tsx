@@ -42,6 +42,8 @@ import { Button } from "@/web/components/ui/button";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { FieldError } from "@/web/components/ui/field";
 import { Spinner } from "@/web/components/ui/spinner";
+import { ArtifactCard } from "@/web/artifacts/artifact-card";
+import { ThreadArtifacts } from "@/web/artifacts/thread-artifacts";
 import { ShareDialog } from "@/web/guests/share-dialog";
 import { ArchivedThreadActions } from "@/web/threads/archived-thread-actions";
 import { useOnline } from "@/web/lib/online";
@@ -225,7 +227,7 @@ export function ThreadPage() {
     newFromOrder === undefined
       ? undefined
       : entries.find((entry) => {
-          if (entry.kind === "subagent") return false;
+          if (entry.kind === "subagent" || entry.kind === "artifacts") return false;
           const last =
             entry.kind === "calls" || entry.kind === "relays" ? entry.rows.at(-1)! : entry.row;
           return last.order >= newFromOrder;
@@ -539,6 +541,7 @@ export function ThreadPage() {
             Unarchive
           </Button>
         )}
+        {!subagent && <ThreadArtifacts threadId={threadId} rows={rows} />}
         {can?.share && !subagent && <ShareDialog threadId={threadId} />}
         {!viewing && lastMessage?.can?.includes("fork") && (
           <WithTooltip label="New thread from summary">
@@ -612,6 +615,12 @@ export function ThreadPage() {
                                   />
                                 ) : entry.kind === "notice" ? (
                                   <SubagentNotice row={entry.row} />
+                                ) : entry.kind === "artifacts" ? (
+                                  <div className="ml-9 flex flex-col gap-1.5">
+                                    {entry.items.map((item) => (
+                                      <ArtifactCard key={item.id} {...item} latest />
+                                    ))}
+                                  </div>
                                 ) : entry.kind === "subagent" ? (
                                   <ToolCall
                                     row={entry.row}

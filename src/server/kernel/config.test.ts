@@ -24,6 +24,37 @@ describe("loadConfig", () => {
     );
   });
 
+  it("serves artifacts from an origin and port of their own, or not at all", () => {
+    expect(loadConfig(valid)).toMatchObject({ artifactOrigin: null, artifactPort: null });
+    expect(
+      loadConfig({ ...valid, ARTIFACT_ORIGIN: "http://localhost:4784/", ARTIFACT_PORT: "4784" }),
+    ).toMatchObject({ artifactOrigin: "http://localhost:4784", artifactPort: 4784 });
+    expect(() => loadConfig({ ...valid, ARTIFACT_ORIGIN: valid.BASE_URL })).toThrow(
+      /ARTIFACT_ORIGIN/,
+    );
+    expect(() => loadConfig({ ...valid, ARTIFACT_ORIGIN: "ftp://x" })).toThrow(/ARTIFACT_ORIGIN/);
+    expect(() => loadConfig({ ...valid, ARTIFACT_PORT: "4783" })).toThrow(/ARTIFACT_PORT/);
+    expect(loadConfig({ ...valid, ARTIFACT_PORT: "" }).artifactPort).toBeNull();
+  });
+
+  it("takes an artifact origin per artifact as a wildcard leftmost label", () => {
+    const wild = (origin: string) => loadConfig({ ...valid, ARTIFACT_ORIGIN: origin });
+    expect(wild("https://*.Artifacts.example").artifactOrigin).toBe("https://*.artifacts.example");
+    for (const bad of ["http://a*.example.com", "http://x.*.example.com", "http://*.*.example"]) {
+      expect(() => wild(bad), bad).toThrow(/ARTIFACT_ORIGIN/);
+    }
+    const base = new URL(valid.BASE_URL!).host;
+    expect(() => wild(`http://*.${base}`)).not.toThrow();
+    const apex = new URL(valid.BASE_URL!).hostname.split(".").slice(-2).join(".");
+    expect(() =>
+      loadConfig({
+        ...valid,
+        BASE_URL: `https://app.${apex}`,
+        ARTIFACT_ORIGIN: `https://*.${apex}`,
+      }),
+    ).toThrow(/ARTIFACT_ORIGIN/);
+  });
+
   it("lets everyone create team orgs unless only the operators may", () => {
     expect(loadConfig(valid)).toMatchObject({ teamOrgs: "everyone", operatorEmails: [] });
     expect(

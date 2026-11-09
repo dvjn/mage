@@ -20,6 +20,7 @@ import type { Orgs } from "@/server/orgs/service.ts";
 import { createOrgSettingStore } from "@/server/orgs/setting-store.ts";
 import * as schema from "@/server/schema.ts";
 import type { Skills } from "@/server/skills/service.ts";
+import type { Artifacts } from "@/server/artifacts/service.ts";
 import type { Spaces } from "@/server/spaces/service.ts";
 import { createSpaceStore } from "@/server/spaces/store.ts";
 import type { Threads } from "@/server/threads/service.ts";
@@ -238,6 +239,7 @@ function setup() {
     mcp: {} as McpServers,
     instructions: {} as Instructions,
     skills: {} as Skills,
+    artifacts: {} as Artifacts,
     logger,
     signInOptions: { oidc: null },
     pingDatabase: () => Promise.resolve(true),

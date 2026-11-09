@@ -92,8 +92,8 @@ export default defineConfig({
     },
     devServer({
       entry: path.join(here, "src/server/main.ts"),
-      // Hono answers /api; everything else falls through to Vite.
-      exclude: [/^(?!\/api(\/|$|\?))/, ...defaultOptions.exclude],
+      // Hono answers /api and artifact pages; everything else falls through to Vite.
+      exclude: [/^(?!\/(api|_a)(\/|$|\?))/, ...defaultOptions.exclude],
       injectClientScript: false,
     }),
   ],

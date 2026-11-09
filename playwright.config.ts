@@ -13,6 +13,7 @@ import { defineConfig, devices } from "@playwright/test";
 import { databasePath, dataDir } from "./e2e/database.ts";
 import { JOURNEY_SCIM_TOKEN } from "./e2e/scim-client.ts";
 import {
+  artifactOrigin,
   gitServer,
   issuer,
   mcpServer,
@@ -88,7 +89,12 @@ export default defineConfig({
       command: "pnpm build && node --enable-source-maps dist/server/main.js",
       url: `${passwordServer}/api/health`,
       reuseExistingServer: false,
-      env: { ...serverEnv, PORT: new URL(passwordServer).port, BASE_URL: passwordServer },
+      env: {
+        ...serverEnv,
+        PORT: new URL(passwordServer).port,
+        BASE_URL: passwordServer,
+        ARTIFACT_ORIGIN: artifactOrigin,
+      },
     },
     // Starts once the build above is done, on the database the server above made.
     {

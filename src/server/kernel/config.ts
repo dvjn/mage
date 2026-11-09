@@ -9,6 +9,11 @@ export interface Config {
   databasePath: string;
   logFormat: "json" | "pretty";
   port: number;
+  // Where artifact pages are served from, apart from the app's origin, with `*` as its leftmost
+  // label for an origin per artifact, and the port an optional second listener answers them on;
+  // null origin means pages cannot be viewed.
+  artifactOrigin: string | null;
+  artifactPort: number | null;
   webRoot: string;
   // Replies come from a stand-in model instead of providers; only for the browser journeys.
   fakeModels: boolean;
@@ -59,6 +64,33 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const port = Number(env.PORT ?? "4783");
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error("PORT must be a positive integer");
+  }
+  const artifactOrigin = env.ARTIFACT_ORIGIN
+    ? (URL.parse(env.ARTIFACT_ORIGIN)?.origin ?? "")
+    : null;
+  if (
+    artifactOrigin !== null &&
+    !["http:", "https:"].includes(URL.parse(artifactOrigin)?.protocol ?? "")
+  ) {
+    throw new Error("ARTIFACT_ORIGIN must be an http(s) URL");
+  }
+  if (artifactOrigin !== null && artifactOrigin.includes("*")) {
+    if (!/^https?:\/\/\*\.[^*]+$/.test(artifactOrigin)) {
+      throw new Error("ARTIFACT_ORIGIN may have * only as its whole leftmost label");
+    }
+  }
+  const appHost = URL.parse(env.BASE_URL ?? "")?.host ?? "";
+  const artifactHost = artifactOrigin === null ? "" : artifactOrigin.replace(/^https?:\/\//, "");
+  const coversApp = artifactHost.startsWith("*.") && appHost.endsWith(artifactHost.slice(1));
+  if (artifactOrigin !== null && (artifactHost === appHost || coversApp)) {
+    throw new Error("ARTIFACT_ORIGIN must differ from BASE_URL");
+  }
+  const artifactPort = env.ARTIFACT_PORT ? Number(env.ARTIFACT_PORT) : null;
+  if (artifactPort !== null && (!Number.isInteger(artifactPort) || artifactPort <= 0)) {
+    throw new Error("ARTIFACT_PORT must be a positive integer");
+  }
+  if (artifactPort !== null && artifactPort === port) {
+    throw new Error("ARTIFACT_PORT must differ from PORT");
   }
   const logFormat = env.LOG_FORMAT ?? "json";
   if (logFormat !== "json" && logFormat !== "pretty") {
@@ -132,6 +164,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     databasePath: env.DATABASE_PATH ?? "data/mage.db",
     logFormat,
     port,
+    artifactOrigin,
+    artifactPort,
     webRoot: env.WEB_ROOT ?? "dist/web",
     fakeModels: gateway === "fake",
     teamOrgs,

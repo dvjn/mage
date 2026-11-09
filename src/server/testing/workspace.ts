@@ -22,6 +22,8 @@ import { createToolPolicies } from "@/server/agent/tool-policies.ts";
 import { createToolPolicyStore } from "@/server/agent/tool-policy-store.ts";
 import { createMcpTools, createToolSearch } from "@/server/agent/tool-search.ts";
 import { createToolSettingStore } from "@/server/agent/tool-setting-store.ts";
+import { createArtifacts } from "@/server/artifacts/service.ts";
+import { createArtifactStore } from "@/server/artifacts/store.ts";
 import { createToolDecisions, createTools } from "@/server/agent/tools.ts";
 import { createApp } from "@/server/app.ts";
 import { createTransact, openDatabase } from "@/server/db/db.ts";
@@ -75,6 +77,7 @@ const unusedConnections = {} as Connections;
 const unusedModels = {} as Models;
 
 const baseUrl = "http://localhost:4783";
+export const ARTIFACT_ORIGIN = "http://localhost:4784";
 
 export const SCIM_TOKEN = "test-scim-token-that-is-long-enough-0123456789";
 
@@ -285,6 +288,17 @@ export function setup(
     modelsIn: () =>
       Promise.resolve(org.models.map((ref) => ({ ref, reasoning: !org.plain.includes(ref) }))),
   });
+  const artifacts = createArtifacts({
+    store: createArtifactStore(db),
+    threads: threadStore,
+    spaceStore,
+    spaces,
+    access,
+    directory,
+    appOrigin: baseUrl,
+    artifactOrigin: ARTIFACT_ORIGIN,
+    secret: "test-secret-that-is-long-enough-0123456789",
+  });
   const tools = createTools({
     toolsets: [
       createRichReplies(),
@@ -308,6 +322,7 @@ export function setup(
         mcp.hasServers,
       ),
       subagents.toolset(),
+      artifacts.toolset(),
     ],
     scoped: {
       inSpace: (space) => mcp.toolsetsInSpace(space),
@@ -448,6 +463,7 @@ export function setup(
     mcp,
     instructions,
     skills,
+    artifacts,
     logger,
     signInOptions: { oidc: null },
     pingDatabase: () => Promise.resolve(true),
@@ -581,6 +597,7 @@ export function setup(
     instructions,
     skills,
     skillStore,
+    artifacts,
     signUp,
     join,
     api,

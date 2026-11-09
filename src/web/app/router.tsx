@@ -14,9 +14,12 @@ import {
   redirect,
 } from "@tanstack/react-router";
 
+import { type ArtifactSharing, artifactSharingSchema } from "@/shared/artifacts.ts";
 import type { ToolScope } from "@/shared/threads/events.ts";
 import { AppShell } from "@/web/app/app-shell";
 import { AuthFrame } from "@/web/auth/auth-frame";
+import { ArtifactGalleryPage } from "@/web/artifacts/artifact-gallery";
+import { ArtifactPage } from "@/web/artifacts/artifact-page";
 import { InvitePage } from "@/web/guests/invite-page";
 import { JoinPage } from "@/web/orgs/join-page";
 import { LoginForm } from "@/web/auth/login-form";
@@ -237,6 +240,32 @@ const threadRoute = createRoute({
   component: ThreadPage,
 });
 
+// The artifacts the person can open, narrowed in `?space=` and `?sharing=`.
+const artifactsRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/artifacts",
+  validateSearch: (
+    search: Record<string, unknown>,
+  ): { space?: string; sharing?: ArtifactSharing } => ({
+    ...(typeof search.space === "string" && search.space && { space: search.space }),
+    ...(artifactSharingSchema.safeParse(search.sharing).success && {
+      sharing: search.sharing as ArtifactSharing,
+    }),
+  }),
+  component: ArtifactGalleryPage,
+});
+
+// An artifact, in `?version=` an older version than its newest.
+const artifactRoute = createRoute({
+  getParentRoute: () => appRoute,
+  path: "/artifacts/$artifactId",
+  validateSearch: (search: Record<string, unknown>): { version?: number } => ({
+    ...(Number.isInteger(Number(search.version)) &&
+      Number(search.version) > 0 && { version: Number(search.version) }),
+  }),
+  component: ArtifactPage,
+});
+
 // The threads narrowed as on a space's page, in `?show=` and `?q=`, and their page.
 const sharedRoute = createRoute({
   getParentRoute: () => appRoute,
@@ -356,6 +385,8 @@ export function createAppRouter(queryClient: QueryClient) {
         ]),
         draftRoute,
         threadRoute,
+        artifactsRoute,
+        artifactRoute,
         sharedRoute,
         accountRoute,
         orgRoute.addChildren([

@@ -7,6 +7,7 @@
 // subagents that ended runs, as older threads were told, show as lines of the turn they follow,
 // or open one.
 
+import { artifactOf, type CalledArtifact, cardsAfterReply } from "@/web/artifacts/call-artifacts";
 import type {
   AgentRow,
   AgentTurn,
@@ -51,7 +52,15 @@ export type TranscriptEntry =
       turn: AgentTurn;
       gap: EntryGap;
     }
-  | { kind: "notice"; key: string; row: NoticeRow; turn: AgentTurn; gap: EntryGap };
+  | { kind: "notice"; key: string; row: NoticeRow; turn: AgentTurn; gap: EntryGap }
+  | {
+      // The artifacts a turn published or updated, as cards after its last row.
+      kind: "artifacts";
+      key: string;
+      items: CalledArtifact[];
+      turn: AgentTurn;
+      gap: EntryGap;
+    };
 
 // A call that waits for a decision or for answers shows as a card of its own.
 export function waitsAsCard(row: ToolRow) {
@@ -70,6 +79,7 @@ function foldable(row: ShownRow): row is ToolRow {
 // Whether the entry starts and ends with a line, a tool call's or the agent's thinking, rather than
 // text or a card.
 function edges(entry: TranscriptEntry): { top: boolean; bottom: boolean } {
+  if (entry.kind === "artifacts") return { top: false, bottom: false };
   if (entry.kind === "calls" || entry.kind === "relays" || entry.kind === "notice")
     return { top: true, bottom: true };
   if (entry.kind === "subagent") return { top: false, bottom: false };
@@ -106,6 +116,47 @@ function subagentCards(entry: TranscriptEntry): TranscriptEntry[] {
         ]
       : [],
   );
+}
+
+// After the last entry of each of the agent's turns, a card for each artifact the turn made in a
+// folded group of calls, where its card is out of sight.
+function withArtifactCards(entries: TranscriptEntry[]): TranscriptEntry[] {
+  const result: TranscriptEntry[] = [];
+  let members: (ToolRow | AgentRow)[] = [];
+  let last: TranscriptEntry | undefined;
+  const close = () => {
+    const items = cardsAfterReply(members);
+    members = [];
+    if (!last || items.length === 0) return;
+    result.push({
+      kind: "artifacts",
+      key: `artifacts:${last.key}`,
+      items,
+      turn: { continued: true, model: null },
+      gap: "near",
+    });
+  };
+  for (const entry of entries) {
+    if (entry.kind === "subagent") {
+      result.push(entry);
+      continue;
+    }
+    if (!turnOf(entry)?.continued) {
+      close();
+      last = undefined;
+    }
+    const rows = entry.kind === "calls" ? entry.rows : entry.kind === "row" ? [entry.row] : [];
+    for (const row of rows) {
+      if (row.kind !== "tool" && row.kind !== "agent") continue;
+      // A call that shows on its own line already shows its card there.
+      if (entry.kind === "row" && row.kind === "tool" && artifactOf(row)) continue;
+      members.push(row);
+    }
+    if (turnOf(entry)) last = entry;
+    result.push(entry);
+  }
+  close();
+  return result;
 }
 
 // The entries the rows show as. Two or more of the agent's tool calls in a row, in one turn, with
@@ -180,7 +231,9 @@ export function transcriptEntries(rows: readonly ShownRow[]): TranscriptEntry[] 
     });
     i = next;
   }
-  const shownEntries = entries.flatMap((entry) => [entry, ...subagentCards(entry)]);
+  const shownEntries = withArtifactCards(
+    entries.flatMap((entry) => [entry, ...subagentCards(entry)]),
+  );
   shownEntries.forEach((entry, index) => {
     const before = shownEntries[index - 1];
     if ((entry.kind === "relays" || entry.kind === "notice") && before) {

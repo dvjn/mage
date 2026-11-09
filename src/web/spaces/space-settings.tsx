@@ -8,6 +8,7 @@
 // there only for those who manage it (its owners, and a team org's owners). A team org's owner who manages a space without being in it reads its threads once
 // they give themselves a role in it.
 
+import { AllowPublicArtifacts } from "@/web/artifacts/public-setting";
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi, Link, Navigate, Outlet, useNavigate } from "@tanstack/react-router";
 import { Settings2Icon, FileTextIcon, UsersIcon, WrenchIcon } from "lucide-react";
@@ -277,6 +278,7 @@ export function SpaceGeneral() {
       <SpaceModel space={space} />
       <SpaceAgentName key={space.agentName} space={space} />
       <SpaceInstructions spaceId={space.id} spaceName={space.name} />
+      <AllowPublicArtifacts spaceId={space.id} />
       {(own || !space.primary) && <DeleteSpace space={space} own={own} />}
     </>
   );

@@ -7,6 +7,7 @@ import { Link } from "@tanstack/react-router";
 import { BlocksIcon, UsersIcon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 
+import { AllowPublicArtifacts } from "@/web/artifacts/public-setting";
 import { OrgInstructions } from "@/web/instructions/instructions";
 import { SettingsCard, SettingsTitle } from "@/web/shell/settings-page";
 import { ModelsCard } from "@/web/models/models-card";
@@ -209,6 +210,7 @@ export function OrgGeneral() {
       </SettingsCard>
       <ModelsCard canManage={role === "owner"} />
       <OrgInstructions />
+      <AllowPublicArtifacts />
       {owner && me.data && <DeleteOrg name={me.data.org.name} />}
     </>
   );

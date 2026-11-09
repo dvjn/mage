@@ -6,6 +6,8 @@ import { ASK_TOOL, askInputSchema } from "@/shared/ask.ts";
 import type { AgentTurn, ToolRow } from "@/shared/threads/rows.ts";
 import type { ToolDefinition } from "@/shared/tools.ts";
 import { GivenAnswers } from "@/web/agent/question-form";
+import { artifactOf } from "@/web/artifacts/call-artifacts";
+import { ArtifactCard } from "@/web/artifacts/artifact-card";
 import { QuestionCard } from "@/web/threads/transcript/question-card";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { ToolCard } from "@/web/threads/transcript/tool-card";
@@ -71,7 +73,19 @@ export function ToolCall({
       />
     );
   }
-  if (framed) return <ToolLine row={row} definition={definition} framed />;
-  if (!turn.continued) return <ToolOpening row={row} definition={definition} turn={turn} />;
-  return <ToolLine row={row} definition={definition} />;
+  const artifact = artifactOf(row);
+  const line = framed ? (
+    <ToolLine row={row} definition={definition} framed />
+  ) : !turn.continued ? (
+    <ToolOpening row={row} definition={definition} turn={turn} />
+  ) : (
+    <ToolLine row={row} definition={definition} />
+  );
+  if (!artifact) return line;
+  return (
+    <div className="flex flex-col gap-1.5">
+      {line}
+      <ArtifactCard {...artifact} className={framed ? undefined : "ml-9"} />
+    </div>
+  );
 }

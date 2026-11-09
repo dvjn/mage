@@ -57,6 +57,16 @@ const SUBAGENT_TOOLS = [
   "subagents.unarchive",
 ];
 
+// The tools the agent has for artifacts, whose toolset is on unless turned off; previews need a
+// browser, which these tests go without.
+const ARTIFACT_TOOL_LIST = [
+  "artifact.publish",
+  "artifact.update",
+  "artifact.read",
+  "artifact.list",
+  "artifact.delete",
+];
+
 const run = true;
 const approve = false;
 
@@ -488,6 +498,7 @@ describe("tool calls", () => {
       "thread.compact",
       "thread.ask",
       ...SUBAGENT_TOOLS,
+      ...ARTIFACT_TOOL_LIST,
     ]);
     expect(threadStore.find(thread.id)?.title).toBe("Engines");
     expect(transcript()).toEqual([
@@ -735,7 +746,12 @@ describe("tool calls", () => {
     await post(ada, "Hello");
     const call = await answered(model.next());
     await worker.idle();
-    expect(call.tools).toEqual(["thread.compact", "thread.ask", ...SUBAGENT_TOOLS]);
+    expect(call.tools).toEqual([
+      "thread.compact",
+      "thread.ask",
+      ...SUBAGENT_TOOLS,
+      ...ARTIFACT_TOOL_LIST,
+    ]);
 
     const other = await workspace.createSpace(ada.cookie, "Other");
     const thread = await workspace.createThread(ada.cookie, other.id, "Hello there");
@@ -747,6 +763,7 @@ describe("tool calls", () => {
       "thread.compact",
       "thread.ask",
       ...SUBAGENT_TOOLS,
+      ...ARTIFACT_TOOL_LIST,
     ]);
   });
 });
@@ -1148,7 +1165,7 @@ describe("built-in toolset switches", () => {
     expect((await setSpace(true)).status).toBe(409);
     expect(
       toolRegistry.definitions({ id: elsewhere.id, orgId: ada.orgId }).map((tool) => tool.name),
-    ).toEqual([...fixed, ...SUBAGENT_TOOLS]);
+    ).toEqual([...fixed, ...SUBAGENT_TOOLS, ...ARTIFACT_TOOL_LIST]);
     const changeWhileOff = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
       toolIds: ["thread.rename"],
       policy: review.id,

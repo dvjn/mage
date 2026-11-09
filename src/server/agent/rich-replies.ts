@@ -19,6 +19,7 @@ List(items, ordered?)
 Bars(labels, values, unit?)
 Button(label, action?) - posts its label, or @ToAssistant("message"), as the clicker's message
 Form(name, fields, buttons) - fields are Input(name, placeholder?) and Select(name, options); its buttons post their message with the values
+Artifact(id) - the card of an artifact you published, to open it
 Clicks only post messages to you.
 
 Example:

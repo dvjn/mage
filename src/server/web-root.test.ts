@@ -15,6 +15,7 @@ import type { Models } from "@/server/models/service.ts";
 import type { Groups } from "@/server/orgs/groups.ts";
 import type { Orgs } from "@/server/orgs/service.ts";
 import type { Skills } from "@/server/skills/service.ts";
+import type { Artifacts } from "@/server/artifacts/service.ts";
 import type { Spaces } from "@/server/spaces/service.ts";
 import type { Threads } from "@/server/threads/service.ts";
 
@@ -44,6 +45,7 @@ const app = createApp({
   mcp: {} as McpServers,
   instructions: {} as Instructions,
   skills: {} as Skills,
+  artifacts: {} as Artifacts,
   logger: createLogger({ write() {} }),
   signInOptions: { oidc: null },
   pingDatabase: () => Promise.resolve(true),

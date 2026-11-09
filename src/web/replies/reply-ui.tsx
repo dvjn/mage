@@ -18,9 +18,12 @@ import {
   useTriggerAction,
 } from "@openuidev/react-lang";
 import { cn } from "cn";
+import { useQuery } from "@tanstack/react-query";
 import { useContext, useMemo } from "react";
 import type * as z from "zod";
 
+import { ArtifactCard } from "@/web/artifacts/artifact-card";
+import { artifactQuery } from "@/web/artifacts/queries";
 import { Button } from "@/web/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/web/components/ui/card";
 import { Input } from "@/web/components/ui/input";
@@ -75,6 +78,16 @@ function ActionButton({
       {label}
     </Button>
   );
+}
+
+// An artifact's card at its latest version; one the reader cannot see, or that was deleted, is a
+// quiet line.
+function ArtifactInReply({ id }: { id: string }) {
+  const artifact = useQuery(artifactQuery(id));
+  if (artifact.isError)
+    return <p className="text-xs text-muted-foreground">Artifact unavailable</p>;
+  if (!artifact.data) return null;
+  return <ArtifactCard id={id} version={artifact.data.version} title={artifact.data.title} />;
 }
 
 function FieldInput({ name, placeholder }: { name: string; placeholder?: string }) {
@@ -230,6 +243,7 @@ const RENDERERS: Record<string, ComponentRenderer<any>> = {
       </form>
     </FormNameContext.Provider>
   ),
+  Artifact: ({ props }: Props<{ id: string }>) => <ArtifactInReply id={props.id ?? ""} />,
   Input: ({ props }: Props<{ name: string; placeholder: string }>) => (
     <FieldInput name={props.name ?? ""} placeholder={props.placeholder} />
   ),

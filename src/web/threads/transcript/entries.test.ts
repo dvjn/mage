@@ -271,3 +271,43 @@ describe("transcriptEntries", () => {
     expect(transcriptEntries(first)[1]?.key).toBe(transcriptEntries(grown)[1]?.key);
   });
 });
+
+describe("cards after a reply", () => {
+  const made = (id: string, version: number, toolId = "artifact.publish") =>
+    call(`c-${id}-${version}`, {
+      toolId,
+      output: { ok: true, value: { id, version, title: id } },
+    } as Partial<ToolRow>);
+
+  it("show one card per artifact at its latest version, after the turn's last entry", () => {
+    const entries = transcriptEntries([
+      made("a", 1),
+      made("b", 1),
+      made("a", 2, "artifact.update"),
+      step("reply", { text: "Done" }),
+    ]);
+    const last = entries.at(-1)!;
+    expect(last.kind).toBe("artifacts");
+    expect(last.kind === "artifacts" && last.items.map((i) => `${i.id}${i.version}`)).toEqual([
+      "a2",
+      "b1",
+    ]);
+  });
+
+  it("skip an artifact the reply shows and one deleted", () => {
+    const entries = transcriptEntries([
+      made("a", 1),
+      made("b", 1),
+      made("c", 1),
+      call("del", { toolId: "artifact.delete", output: { ok: true, value: { id: "c" } } }),
+      step("reply", { text: '```ui\nroot = Stack([x])\nx = Artifact("a")\n```' }),
+    ]);
+    const last = entries.at(-1)!;
+    expect(last.kind === "artifacts" && last.items.map((i) => i.id)).toEqual(["b"]);
+    expect(
+      transcriptEntries([made("a", 1), step("reply", { text: '```ui\nx = Artifact("a")\n```' })])
+        .map((entry) => entry.kind)
+        .includes("artifacts"),
+    ).toBe(false);
+  });
+});

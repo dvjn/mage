@@ -13,6 +13,11 @@ LOG_FORMAT = "pretty"
 dev_args = ""
 # Where the browser and the dev server reach the dev identity provider.
 sso_url = "http://localhost:9000"
+# Where the browser loads artifacts from: an origin per artifact, a subdomain of localhost the dev
+# server answers on its own port.
+artifact_url = "http://*.localhost:4783"
+# A second port to serve artifacts on, for hosts without wildcard names; empty for none.
+artifact_port = ""
 
 [tasks.setup]
 description = "Install dependencies and the browser for the journeys"
@@ -25,6 +30,8 @@ run = "pnpm dev {{vars.dev_args}}"
 
 [tasks.dev.env]
 _.file = "configs/.dev.env"
+ARTIFACT_PORT = "{{vars.artifact_port}}"
+ARTIFACT_ORIGIN = "{{vars.artifact_url}}"
 OIDC_ISSUER = "{{vars.sso_url}}/application/o/mage/"
 # Jaeger takes traces only.
 OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4318"
