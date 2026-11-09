@@ -1,6 +1,7 @@
 // An agent's reply under its turn's Agent header, which names the model that wrote it: what the
 // model thought first, folded away once it answers, then its Markdown with any layouts it wrote
-// drawn in place; a reply that was cut short says so.
+// drawn in place; a reply that was cut short says so. Once written, what can be done from it shows
+// below, with the reader's side question about it.
 
 import type { AgentRow } from "@/shared/threads/rows.ts";
 import { MessageResponse } from "@/web/components/ai-elements/message";
@@ -9,10 +10,10 @@ import {
   ReasoningContent,
   ReasoningTrigger,
 } from "@/web/components/ai-elements/reasoning";
-import { CopyButton } from "@/web/components/copy-button";
 import { RichReply } from "@/web/replies/rich-reply";
 import { AgentAvatar, useThreadAgent, caret, useModelName } from "@/web/threads/transcript/agent";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
+import { RowToolbar } from "@/web/threads/transcript/row-history";
 
 const ENDINGS: Partial<Record<AgentRow["status"], string>> = {
   interrupted: "Interrupted",
@@ -54,7 +55,11 @@ export function AgentReply({ row, continued }: { row: AgentRow; continued: boole
           </>
         )
       }
-      actions={!streaming && <CopyButton label="Copy message" value={row.text} />}
+      footer={
+        !streaming && (
+          <RowToolbar rowId={row.id} text={row.text} can={row.can} versions={row.versions} />
+        )
+      }
     >
       <div className="flex flex-col gap-2 text-sm" aria-busy={streaming}>
         {row.reasoning && <ReplyReasoning row={row} />}

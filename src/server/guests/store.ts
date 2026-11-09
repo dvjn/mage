@@ -52,6 +52,7 @@ const threadColumns = {
   createdBy: thread.createdBy,
   parentThreadId: thread.parentThreadId,
   rootThreadId: thread.rootThreadId,
+  currentBranchId: sql<string>`coalesce(${thread.currentBranchId}, ${thread.id})`,
   lastEventSeq: thread.lastEventSeq,
   createdAt: thread.createdAt,
   updatedAt: thread.updatedAt,

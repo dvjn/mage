@@ -1,7 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
 
-import { Hono } from "hono";
-import { streamSSE } from "hono/streaming";
+import { type Context, Hono } from "hono";
+import { stream, streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 
 import { type ApiEnv, signedIn, jsonBody, queryOf } from "@/server/http.ts";
@@ -16,10 +16,17 @@ import {
   threadReadSchema,
   threadUpdateSchema,
 } from "@/shared/threads/requests.ts";
+import {
+  asideFollowUpSchema,
+  type AsideStreamItem,
+  branchActionSchema,
+  forkSchema,
+  newAsideSchema,
+} from "@/shared/threads/history.ts";
 import { rowsQuerySchema } from "@/shared/threads/rows.ts";
 import { threadSearchSchema } from "@/shared/threads/search.ts";
 
-import type { Threads } from "./service.ts";
+import type { Asking, Threads } from "./service.ts";
 
 const newThread = jsonBody(
   newThreadSchema,
@@ -39,6 +46,22 @@ const pendingChange = jsonBody(pendingChangeSchema, "Give a text, or a mode of s
 
 const retry = jsonBody(retrySchema, "runId is required");
 
+const branchAction = jsonBody(
+  branchActionSchema,
+  "action is retry, edit or restore, with a rowId; edit takes a text, retry a model",
+);
+
+const fork = jsonBody(forkSchema, "rowId is required");
+
+const newAside = jsonBody(newAsideSchema, "rowId and text are required");
+
+const asideFollowUp = jsonBody(asideFollowUpSchema, "text is required");
+
+// `?branch=` with the id of the thread's branch to read, its current one when not given.
+const branchQuery = validator("query", (value: { branch?: string }) => ({
+  branch: value.branch || undefined,
+}));
+
 const threadRead = jsonBody(threadReadSchema, "seq is required");
 
 const threadPageQuery = queryOf(threadPageQuerySchema);
@@ -47,7 +70,7 @@ const threadPageQuery = queryOf(threadPageQuerySchema);
 // `?at=` with the id of a row the page reaches back to.
 const rowsQuery = validator(
   "query",
-  (value: { before?: string; limit?: string; at?: string }, c) => {
+  (value: { before?: string; limit?: string; at?: string; branch?: string }, c) => {
     const parsed = rowsQuerySchema.safeParse(value);
     if (!parsed.success) return c.json({ error: "before must be a place, limit at most 100" }, 400);
     return parsed.data;
@@ -73,6 +96,31 @@ function heartbeat({
   shutdown?: AbortSignal;
 }) {
   return sleep(heartbeatMs, undefined, { signal: shutdown }).catch(() => {});
+}
+
+// The side question as asked, then each piece of its answer as it is written, then the side
+// question answered, as JSON lines. The answer stops once the asker goes or the server stops.
+function answering(c: Context, asking: Asking, shutdown?: AbortSignal) {
+  c.header("Content-Type", "application/x-ndjson");
+  return stream(c, async (out) => {
+    const gone = new AbortController();
+    out.onAbort(() => gone.abort());
+    const signal = shutdown ? AbortSignal.any([gone.signal, shutdown]) : gone.signal;
+    // One write at a time, in order.
+    let writing = Promise.resolve();
+    const send = (item: AsideStreamItem) => {
+      writing = writing
+        .then(() => out.write(`${JSON.stringify(item)}\n`))
+        .then(
+          () => {},
+          () => {},
+        );
+      return writing;
+    };
+    void send({ type: "aside", aside: asking.aside });
+    const answered = await asking.answer((text) => void send({ type: "delta", text }), signal);
+    await send({ type: "aside", aside: answered });
+  });
 }
 
 // Where a live event stream resumes: after the Last-Event-ID a reconnecting browser sends, or
@@ -121,13 +169,52 @@ export function threadRoutes(options: {
       const { q } = c.req.valid("query");
       return c.json(threads.search(signedIn(c.var.principal), q), 200);
     })
-    .get("/v1/threads/:id", async (c) => {
-      return c.json(await threads.get(signedIn(c.var.principal), c.req.param("id")), 200);
+    .get("/v1/threads/:id", branchQuery, async (c) => {
+      const { branch } = c.req.valid("query");
+      return c.json(await threads.get(signedIn(c.var.principal), c.req.param("id"), branch), 200);
     })
     .get("/v1/threads/:id/rows", rowsQuery, (c) => {
-      const { before, limit, at } = c.req.valid("query");
+      const { before, limit, at, branch } = c.req.valid("query");
       const principal = signedIn(c.var.principal);
-      return c.json(threads.rows(principal, c.req.param("id"), before, limit, at), 200);
+      return c.json(threads.rows(principal, c.req.param("id"), before, limit, at, branch), 200);
+    })
+    .get("/v1/threads/:id/rows/:rowId/branch", (c) => {
+      const { id, rowId } = c.req.param();
+      return c.json(threads.branchOf(signedIn(c.var.principal), id, rowId), 200);
+    })
+    .post("/v1/threads/:id/history", branchAction, async (c) => {
+      const action = c.req.valid("json");
+      const principal = signedIn(c.var.principal);
+      return c.json(await threads.act(principal, c.req.param("id"), action), 200);
+    })
+    .post("/v1/threads/:id/fork", fork, (c) => {
+      const input = c.req.valid("json");
+      return c.json(threads.fork(signedIn(c.var.principal), c.req.param("id"), input), 200);
+    })
+    .get("/v1/threads/:id/asides", (c) => {
+      return c.json(threads.asides(signedIn(c.var.principal), c.req.param("id")), 200);
+    })
+    .post("/v1/threads/:id/asides", newAside, (c) => {
+      const input = c.req.valid("json");
+      const principal = signedIn(c.var.principal);
+      const asking = threads.askAside(principal, c.req.param("id"), input);
+      return answering(c, asking, options.shutdown);
+    })
+    .post("/v1/threads/:id/asides/:asideId/messages", asideFollowUp, (c) => {
+      const { id, asideId } = c.req.param();
+      const { text } = c.req.valid("json");
+      const principal = signedIn(c.var.principal);
+      const asking = threads.followUpAside(principal, id, asideId, text);
+      return answering(c, asking, options.shutdown);
+    })
+    .post("/v1/threads/:id/asides/:asideId/stop", (c) => {
+      const { id, asideId } = c.req.param();
+      threads.stopAside(signedIn(c.var.principal), id, asideId);
+      return c.json({ ok: true }, 200);
+    })
+    .post("/v1/threads/:id/summary-thread", async (c) => {
+      const principal = signedIn(c.var.principal);
+      return c.json(await threads.fromSummary(principal, c.req.param("id")), 200);
     })
     .patch("/v1/threads/:id", threadUpdate, async (c) => {
       const changes = c.req.valid("json");

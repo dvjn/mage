@@ -1,5 +1,6 @@
 // A row of a thread's transcript: an avatar beside a header with the author and the time, and the
-// body flush with the header; a row that continues its author's turn is its body alone.
+// body flush with the header, with what can be done from it below; a row that continues its
+// author's turn is its body alone.
 
 import { type ReactNode } from "react";
 
@@ -14,6 +15,7 @@ export function TranscriptRowFrame({
   label,
   note,
   actions,
+  footer,
   continued,
   children,
 }: {
@@ -24,6 +26,8 @@ export function TranscriptRowFrame({
   note?: ReactNode;
   // Shown beside the author while the row is hovered or focused.
   actions?: ReactNode;
+  // Under the body.
+  footer?: ReactNode;
   // Follows another row of the same author's turn: its body alone, under that row's header, with
   // any note of its own above.
   continued?: boolean;
@@ -36,6 +40,7 @@ export function TranscriptRowFrame({
           <div className="flex items-baseline gap-2 text-xs text-muted-foreground">{note}</div>
         )}
         {children}
+        {footer}
         {actions && (
           <div className="absolute top-0 right-0 flex items-center gap-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100">
             {actions}
@@ -64,6 +69,7 @@ export function TranscriptRowFrame({
           )}
         </div>
         {children}
+        {footer}
       </div>
     </article>
   );

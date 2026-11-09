@@ -1580,7 +1580,9 @@ describe("waiting calls as each reader sees them", () => {
     threads.postMessage(asGrace, thread.id, "// Go ahead");
     stop();
     const last = sent.at(-1);
+    // The reply before may now be restored from, as a message follows it.
     expect(last?.kind === "rows" && last.update.rows).toEqual([
+      expect.objectContaining({ kind: "agent", can: expect.arrayContaining(["restore"]) }),
       expect.objectContaining({ kind: "tool", actions: ["allow", "deny"] }),
       expect.objectContaining({ kind: "human", text: "// Go ahead" }),
     ]);

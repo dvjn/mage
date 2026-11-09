@@ -1,6 +1,6 @@
 // The commands a reader can give the agent in a thread by starting a message with a slash: Mage's
-// own, which compacts the thread, the skills on in its space and the prompts of its MCP servers,
-// each with what it takes; and how a message's text names one.
+// own, which compact the thread or ask a side question, the skills on in its space and the prompts
+// of its MCP servers, each with what it takes; and how a message's text names one.
 
 import * as z from "zod";
 
@@ -11,6 +11,10 @@ export const commandKindSchema = z.enum(["builtin", "skill", "prompt"]);
 
 // Mage's own command that compacts the thread, with what the summary should keep after it.
 export const COMPACT = "compact";
+
+// Mage's own command that asks a side question about the thread's last message, which is never
+// posted in it.
+export const BTW = "btw";
 
 export const threadCommandSchema = z.object({
   // What follows the slash: a skill's name, or <server>:<prompt> for an MCP server's prompt.

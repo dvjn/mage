@@ -160,7 +160,8 @@ function needsOf({ run, rows }: Transcript): SubagentNeeds | undefined {
 // How many messages the subagents took in, or have waiting, from one another.
 function receivedFromSubagents({ rows, inbox }: Transcript) {
   return [...rows, ...inbox].filter(
-    (message) => "from" in message && message.type === "message" && !message.from.main,
+    (message) =>
+      "from" in message && "type" in message && message.type === "message" && !message.from.main,
   ).length;
 }
 
@@ -359,7 +360,9 @@ export function createSubagents(options: SubagentsOptions) {
     const { rows, inbox } = transcript(threadId);
     const fired = new Set(
       [...rows, ...inbox].flatMap((row) =>
-        "from" in row && row.type === "agent.idle" && row.call ? [row.call.callId] : [],
+        "from" in row && "type" in row && row.type === "agent.idle" && row.call
+          ? [row.call.callId]
+          : [],
       ),
     );
     return rows.flatMap((row) =>

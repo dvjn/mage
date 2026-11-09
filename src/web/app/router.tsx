@@ -221,14 +221,15 @@ const draftRoute = createRoute({
   component: DraftThread,
 });
 
-// A thread, in `?row=` the row a link leads to, and in `?allow=` and `?scope=` a call to allow on
-// coming back from signing in.
+// A thread, in `?branch=` a branch other than its current one, in `?row=` the row a link leads
+// to, and in `?allow=` and `?scope=` a call to allow on coming back from signing in.
 const threadRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/t/$threadId",
   validateSearch: (
     search: Record<string, unknown>,
-  ): { row?: string; allow?: string; scope?: ToolScope } => ({
+  ): { branch?: string; row?: string; allow?: string; scope?: ToolScope } => ({
+    ...(typeof search.branch === "string" && { branch: search.branch }),
     ...(typeof search.row === "string" && { row: search.row }),
     ...(typeof search.allow === "string" && { allow: search.allow }),
     ...((search.scope === "once" || search.scope === "for_now") && { scope: search.scope }),

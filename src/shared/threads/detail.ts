@@ -5,6 +5,7 @@
 import * as z from "zod";
 
 import { subagentSummarySchema } from "@/shared/subagents.ts";
+import { shownBranchSchema } from "@/shared/threads/history.ts";
 import { pendingMessageSchema, shownRowSchema, shownRunSchema } from "@/shared/threads/rows.ts";
 import { effortSchema, threadSchema } from "@/shared/threads/thread.ts";
 import { toolDefinitionSchema } from "@/shared/tools.ts";
@@ -93,6 +94,8 @@ export const threadHeadSchema = z.object({
 export type ThreadHead = z.infer<typeof threadHeadSchema>;
 
 export const threadDetailSchema = threadHeadSchema.extend({
+  // The branch its rows are of.
+  branch: shownBranchSchema,
   // The newest rows, in order, reaching back to `newFrom`.
   rows: z.array(shownRowSchema),
   // The place of the first row given, to read the rows before it; null when they start the thread.

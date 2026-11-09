@@ -9,11 +9,44 @@ import { spokenText } from "@/shared/plain-text.ts";
 import { UNTITLED } from "@/shared/threads/thread.ts";
 
 import { kept, listedThread, newestFirst, statused, type StatusedRow, windowOf } from "./lists.ts";
-import { thread, threadEvent } from "./schema.ts";
-import type { StoredEvent, Thread, ThreadFacts, ThreadStore, ThreadWriters } from "./service.ts";
+import { thread, threadBranch, threadBranchSource, threadEvent } from "./schema.ts";
+import type {
+  Branch,
+  StoredEvent,
+  Thread,
+  ThreadFacts,
+  ThreadStore,
+  ThreadWriters,
+} from "./service.ts";
 
 // The events a reader is told about: a person's message, a finished reply and a failed run.
 const NOTABLE = ["message", "message.completed", "run.failed"];
+
+// Whether the event `threadEvent` is one of the branch's.
+function ofBranch(branchId: SQL | string) {
+  return sql`exists (select 1 from ${threadBranchSource} s
+                      where s.branch_id = ${branchId}
+                        and s.source_branch_id = ${threadEvent.branchId}
+                        and (s.until_seq is null or ${threadEvent.seq} <= s.until_seq))`;
+}
+
+// Whether the event `threadEvent` is one of its thread's current branch.
+const ofCurrent = ofBranch(
+  sql`(select t.current_branch_id from ${thread} t where t.id = ${threadEvent.threadId})`,
+);
+
+const branchColumns = {
+  id: threadBranch.id,
+  threadId: threadBranch.threadId,
+  parentBranchId: threadBranch.parentBranchId,
+  forkSeq: threadBranch.forkSeq,
+  kind: threadBranch.kind,
+  rowId: threadBranch.rowId,
+  groupRowId: threadBranch.groupRowId,
+  createdBy: threadBranch.createdBy,
+  createdByName: user.name,
+  createdAt: threadBranch.createdAt,
+};
 
 const columns = {
   id: thread.id,
@@ -25,17 +58,34 @@ const columns = {
   createdBy: thread.createdBy,
   parentThreadId: thread.parentThreadId,
   rootThreadId: thread.rootThreadId,
+  currentBranchId: sql<string>`coalesce(${thread.currentBranchId}, ${thread.id})`,
   lastEventSeq: thread.lastEventSeq,
   createdAt: thread.createdAt,
   updatedAt: thread.updatedAt,
 };
 
 export function createThreadStore(db: Db): ThreadStore {
-  function eventsWhere(where: SQL | undefined): StoredEvent[] {
+  function branchOf(id: string) {
+    return (
+      (db
+        .select(branchColumns)
+        .from(threadBranch)
+        .leftJoin(user, eq(user.id, threadBranch.createdBy))
+        .where(eq(threadBranch.id, id))
+        .get() as Branch | undefined) ?? null
+    );
+  }
+
+  function eventsWhere(
+    where: SQL | undefined,
+    order: "asc" | "desc" = "asc",
+    limit?: number,
+  ): StoredEvent[] {
     return db
       .select({
         id: threadEvent.id,
         threadId: threadEvent.threadId,
+        branchId: sql<string>`coalesce(${threadEvent.branchId}, ${threadEvent.threadId})`,
         seq: threadEvent.seq,
         type: threadEvent.type,
         actorKind: threadEvent.actorKind,
@@ -57,7 +107,8 @@ export function createThreadStore(db: Db): ThreadStore {
         ),
       )
       .where(where)
-      .orderBy(asc(threadEvent.seq))
+      .orderBy(order === "asc" ? asc(threadEvent.seq) : desc(threadEvent.seq))
+      .limit(limit ?? -1)
       .all()
       .map(
         ({ actorKind, actorUserId, actorName, actorRemovedAt, type, data, ...rest }) =>
@@ -76,12 +127,102 @@ export function createThreadStore(db: Db): ThreadStore {
   }
 
   return {
+    // Its root branch takes its id.
     create(input) {
+      const id = ulid();
+      return db.transaction(() => {
+        const created = db
+          .insert(thread)
+          .values({ id, ...input, currentBranchId: id })
+          .returning(columns)
+          .get();
+        db.insert(threadBranch)
+          .values({ id, threadId: id, kind: "root", createdBy: input.createdBy })
+          .run();
+        db.insert(threadBranchSource).values({ branchId: id, sourceBranchId: id }).run();
+        return created;
+      }, writeLock);
+    },
+
+    branches(threadId) {
       return db
-        .insert(thread)
-        .values({ id: ulid(), ...input })
+        .select(branchColumns)
+        .from(threadBranch)
+        .leftJoin(user, eq(user.id, threadBranch.createdBy))
+        .where(eq(threadBranch.threadId, threadId))
+        .orderBy(asc(threadBranch.createdAt), asc(threadBranch.id))
+        .all() as Branch[];
+    },
+
+    branch: branchOf,
+
+    eventAt(threadId, seq) {
+      const [event] = eventsWhere(
+        and(eq(threadEvent.threadId, threadId), eq(threadEvent.seq, seq)),
+      );
+      return event ?? null;
+    },
+
+    sources(branchId) {
+      return db
+        .select({
+          branchId: threadBranchSource.sourceBranchId,
+          untilSeq: threadBranchSource.untilSeq,
+        })
+        .from(threadBranchSource)
+        .where(eq(threadBranchSource.branchId, branchId))
+        .all();
+    },
+
+    // Takes its parent's sources, each up to the fork at most, then its own events.
+    addBranch(input) {
+      const id = ulid();
+      db.transaction(() => {
+        db.insert(threadBranch)
+          .values({ id, ...input })
+          .run();
+        const inherited = db
+          .select()
+          .from(threadBranchSource)
+          .where(eq(threadBranchSource.branchId, input.parentBranchId))
+          .all();
+        db.insert(threadBranchSource)
+          .values([
+            ...inherited.map((source) => ({
+              branchId: id,
+              sourceBranchId: source.sourceBranchId,
+              untilSeq:
+                source.untilSeq === null ? input.forkSeq : Math.min(source.untilSeq, input.forkSeq),
+            })),
+            { branchId: id, sourceBranchId: id },
+          ])
+          .run();
+      }, writeLock);
+      return branchOf(id)!;
+    },
+
+    // What lists say of its newest message follows the branch.
+    setCurrent(threadId, branchId) {
+      const [last] = eventsWhere(
+        and(
+          eq(threadEvent.threadId, threadId),
+          inArray(threadEvent.type, ["message", "message.completed"]),
+          ofBranch(branchId),
+        ),
+        "desc",
+        1,
+      );
+      const parts = (last?.data as { parts?: Parameters<typeof spokenText>[0] } | undefined)?.parts;
+      return db
+        .update(thread)
+        .set({
+          currentBranchId: branchId,
+          lastMessageText: parts ? spokenText(parts) : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(thread.id, threadId))
         .returning(columns)
-        .get();
+        .get() as Thread;
     },
 
     find(id): Thread | null {
@@ -124,7 +265,7 @@ export function createThreadStore(db: Db): ThreadStore {
           ),
         })
         .from(threadEvent)
-        .where(inArray(threadEvent.threadId, threadIds))
+        .where(and(inArray(threadEvent.threadId, threadIds), ofCurrent))
         .groupBy(threadEvent.threadId)
         .as("latest");
       const notableEvent = alias(threadEvent, "notable_event");
@@ -180,6 +321,7 @@ export function createThreadStore(db: Db): ThreadStore {
             inArray(threadEvent.threadId, threadIds),
             eq(threadEvent.type, "message"),
             eq(threadEvent.actorKind, "user"),
+            ofCurrent,
           ),
         )
         .groupBy(threadEvent.threadId, threadEvent.actorUserId)
@@ -285,9 +427,13 @@ export function createThreadStore(db: Db): ThreadStore {
         .all();
     },
 
-    append(threadId, event, title) {
+    // Into the branch, the current one when none is named; what lists say of the thread's newest
+    // message follows its current branch alone.
+    append(threadId, event, title, branchId) {
       const id = ulid();
       db.transaction((tx) => {
+        const current = sql`coalesce(${thread.currentBranchId}, ${thread.id})`;
+        const branch = branchId ?? current;
         const next = tx
           .update(thread)
           .set({
@@ -298,22 +444,26 @@ export function createThreadStore(db: Db): ThreadStore {
               titleSource: sql`coalesce(${thread.titleSource}, 'message')`,
             }),
             ...((event.type === "message" || event.type === "message.completed") && {
-              lastMessageText: spokenText(event.data.parts),
+              lastMessageText: sql`case when ${branch} = ${current}
+                                        then ${spokenText(event.data.parts)}
+                                        else ${thread.lastMessageText} end`,
             }),
           })
           .where(eq(thread.id, threadId))
-          .returning({ seq: thread.lastEventSeq })
+          .returning({ seq: thread.lastEventSeq, branchId: sql<string>`${branch}` })
           .get();
         if (!next) throw new Error(`thread ${threadId} not found`);
         tx.insert(threadEvent)
           .values({
             id,
             threadId,
+            branchId: next.branchId,
             seq: next.seq,
             type: event.type,
             actorKind: event.actor.kind,
             actorUserId: event.actor.kind === "user" ? event.actor.userId : null,
             data: event.data,
+            ...(event.createdAt && { createdAt: event.createdAt }),
           })
           .run();
       }, writeLock);
@@ -322,8 +472,15 @@ export function createThreadStore(db: Db): ThreadStore {
       return stored;
     },
 
-    eventsAfter(threadId, after) {
-      return eventsWhere(and(eq(threadEvent.threadId, threadId), gt(threadEvent.seq, after)));
+    // The branch's, the current one's when none is named.
+    eventsAfter(threadId, after, branchId) {
+      return eventsWhere(
+        and(
+          eq(threadEvent.threadId, threadId),
+          gt(threadEvent.seq, after),
+          branchId ? ofBranch(branchId) : ofCurrent,
+        ),
+      );
     },
   };
 }

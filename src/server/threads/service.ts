@@ -22,16 +22,29 @@
 // it waits on as the reader would see it in the subagent's thread. Each subagent call links to
 // where it had its effect, and each message another agent sent links back to the call that sent
 // it, in the threads the reader may read. Stopping a thread's agent stops its subagents too, and a
-// retired subagent's thread is read-only until someone who can post there brings it back.
+// retired subagent's thread is read-only until someone who can post there brings it back. A
+// thread's history is kept in branches, of which people see and post in the current one, reading
+// older ones as they were: from a row someone may write a reply again, send their own message again
+// changed, or restore the conversation up to it, each making a new current branch and stopping the
+// run under way in the one before; leaving out another person's messages is for the space's owners,
+// and going past tool calls that changed something is confirmed first. Each row written again shows
+// its versions. Threads can be forked from a row or started from a summary, and side questions
+// asked about a row, seen by their asker alone.
 
-import { anythingToCompact } from "@/server/agent/compaction.ts";
+import {
+  anythingToCompact,
+  summarise,
+  type ThreadRequest,
+  tokensOf,
+} from "@/server/agent/compaction.ts";
 import { type Subagents, steeringLine } from "@/server/agent/subagents.ts";
 import { type Run, type RunStore, startRun } from "@/server/agent/runs.ts";
 import type { Tools } from "@/server/agent/tools.ts";
 import type { GuestStore, GuestThread } from "@/server/guests/service.ts";
+
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { EventBus } from "@/server/kernel/event-bus.ts";
-import type { Models } from "@/server/models/service.ts";
+import type { Models, OpenModel } from "@/server/models/service.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
 import type { Access, ThreadAccess, ThreadAction } from "@/server/spaces/thread-access.ts";
@@ -42,9 +55,16 @@ import { SEND_SUBAGENT_MESSAGE, START_SUBAGENT } from "@/shared/subagents.ts";
 import type { Page, PageParams } from "@/shared/paging.ts";
 import { plainText } from "@/shared/plain-text.ts";
 import { statusOf, type ThreadShow, type ThreadStatus } from "@/shared/thread-status.ts";
-import { COMPACT, type CommandInput, type ThreadCommand } from "@/shared/threads/commands.ts";
+import { BTW, COMPACT, type CommandInput, type ThreadCommand } from "@/shared/threads/commands.ts";
 import type { ThreadCan, ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
+import type {
+  Aside,
+  BranchAction,
+  BranchActionResult,
+  ShownBranch,
+} from "@/shared/threads/history.ts";
 import {
+  type BranchKind,
   type Cause,
   type Delivery,
   QUIET_PREFIX,
@@ -67,6 +87,7 @@ import {
   ROWS_PAGE,
   type RowsPage,
   type RowsUpdate,
+  type RowVersions,
   type ShownRow,
   type ShownRun,
 } from "@/shared/threads/rows.ts";
@@ -81,9 +102,22 @@ import type {
   ToolRow as TranscriptToolRow,
   Transcript,
   TranscriptFold,
+  TranscriptRow,
 } from "@/shared/transcript.ts";
 
+import { type AsideStore, asideRequest } from "./asides.ts";
 import type { Commands } from "./commands.ts";
+import {
+  type Abilities,
+  changedSomething,
+  cutBefore,
+  cutThrough,
+  dropped,
+  othersPast,
+  rowActions,
+  type Source,
+  versionsOf,
+} from "./history.ts";
 import type { Append, ThreadLog } from "./log.ts";
 import type { Titles } from "./titles.ts";
 import { createTranscripts } from "./transcripts.ts";
@@ -106,18 +140,50 @@ export interface Thread {
   createdBy: string | null;
   parentThreadId: string | null;
   rootThreadId: string | null;
+  // The branch people see and the agent reads.
+  currentBranchId: string;
   lastEventSeq: number;
   createdAt: Date;
   updatedAt: Date;
 }
 
+// A side question asked, its answer still to write: the side question so far, and what writes the
+// answer, each piece as it comes, until it is done, stopped or `signal` ends it.
+export interface Asking {
+  aside: Aside;
+  answer(write: (text: string) => void, signal: AbortSignal): Promise<Aside>;
+}
+
+// A line of a thread's conversation: the root, or one that starts from its parent as it was up to
+// the event `forkSeq`. One that writes a row again names it and the first row of the versions it
+// joins; one restored from a row names that row.
+export interface Branch {
+  id: string;
+  threadId: string;
+  parentBranchId: string | null;
+  forkSeq: number | null;
+  kind: "root" | BranchKind;
+  rowId: string | null;
+  groupRowId: string | null;
+  createdBy: string | null;
+  createdByName: string | null;
+  createdAt: Date;
+}
+
 export type NewEvent = {
-  [Type in keyof EventDataMap]: { type: Type; actor: Actor; data: EventDataMap[Type] };
+  [Type in keyof EventDataMap]: {
+    type: Type;
+    actor: Actor;
+    data: EventDataMap[Type];
+    // When it happened, for one copied from another thread.
+    createdAt?: Date;
+  };
 }[keyof EventDataMap];
 
 export type StoredEvent = NewEvent & {
   id: string;
   threadId: string;
+  branchId: string;
   seq: number;
   // The acting user's name, or null once they are gone.
   actorName: string | null;
@@ -227,11 +293,31 @@ export interface ThreadStore {
   delete(id: string): void;
   // The threads of the subagents started under the thread, oldest first.
   children(id: string): Thread[];
-  // Adds the event with the thread's next seq in one transaction. `title` names the thread, as
-  // from its first message, when it has no title yet.
-  append(threadId: string, event: NewEvent, title?: string): StoredEvent;
-  // The thread's events with seq above `after`, in order.
-  eventsAfter(threadId: string, after: number): StoredEvent[];
+  // Adds the event with the thread's next seq in one transaction, to the branch, the current one
+  // when none is named. `title` names the thread, as from its first message, when it has no title
+  // yet.
+  append(threadId: string, event: NewEvent, title?: string, branchId?: string): StoredEvent;
+  // The events of the branch, the thread's current one when none is named, with seq above
+  // `after`, in order.
+  eventsAfter(threadId: string, after: number, branchId?: string): StoredEvent[];
+  // The thread's event with the seq, in whichever branch.
+  eventAt(threadId: string, seq: number): StoredEvent | null;
+  // The thread's branches, oldest first.
+  branches(threadId: string): Branch[];
+  branch(id: string): Branch | null;
+  // The branches whose events the branch takes, itself among them, each up to the seq given.
+  sources(branchId: string): { branchId: string; untilSeq: number | null }[];
+  addBranch(branch: {
+    threadId: string;
+    parentBranchId: string;
+    forkSeq: number;
+    kind: BranchKind;
+    rowId: string;
+    groupRowId: string | null;
+    createdBy: string;
+  }): Branch;
+  // Makes the branch the one people see and the agent reads.
+  setCurrent(threadId: string, branchId: string): Thread;
 }
 
 export interface ThreadReadStore {
@@ -262,7 +348,15 @@ export interface ThreadsOptions {
   reads: ThreadReadStore;
   runs: Pick<
     RunStore,
-    "active" | "activeIn" | "activeInSpace" | "create" | "latest" | "requestCancel" | "resume"
+    | "active"
+    | "activeOn"
+    | "activeIn"
+    | "activeInSpace"
+    | "create"
+    | "latest"
+    | "requestCancel"
+    | "requestCancelOn"
+    | "resume"
   >;
   deltas: Pick<DeltaStore, "inThread">;
   models: Pick<Models, "defaults" | "requireModel" | "replyModel" | "shownModels">;
@@ -288,8 +382,25 @@ export interface ThreadsOptions {
     Subagents,
     "find" | "summaryOf" | "ofParents" | "reach" | "stopAll" | "unarchive"
   >;
+  // The thread's model, opened, and what its next call would send were the branch to end at the
+  // row, or at its last; for asking from outside its runs. Side questions are not answered, and
+  // threads are not started from summaries, without it.
+  ask?: ThreadAsk;
+  // People's side questions, when kept.
+  asides?: AsideStore;
   now?: () => Date;
 }
+
+export type ThreadAsk = (
+  threadId: string,
+  branchId: string,
+  rowId?: string,
+) => Promise<{
+  model: OpenModel;
+  ref: string;
+  rows: TranscriptRow[];
+  request: ThreadRequest;
+}>;
 
 export type Threads = ReturnType<typeof createThreads>;
 
@@ -314,6 +425,14 @@ interface Reader {
   names: ReturnType<Tools["namesIn"]>;
   // Other threads' transcripts read for this reader's rows, each read once.
   folds: Map<string, TranscriptFold>;
+  // The branch read, what they may do from its rows and which of them have versions.
+  history: ReaderHistory;
+}
+
+interface ReaderHistory {
+  branchId: string;
+  abilities: Abilities;
+  versions: Map<string, RowVersions>;
 }
 
 // The subagent tools whose calls act on one subagent.
@@ -398,7 +517,7 @@ function shownRun(
   };
 }
 
-// Mage's own command, which anyone who can post may send.
+// Mage's own commands, which anyone who can post may send.
 const COMPACT_COMMAND: ThreadCommand = {
   name: COMPACT,
   description: "Summarise earlier messages for the agent",
@@ -406,6 +525,51 @@ const COMPACT_COMMAND: ThreadCommand = {
   kind: "builtin",
   tag: null,
 };
+
+const BTW_COMMAND: ThreadCommand = {
+  name: BTW,
+  description: "Ask aside about the last message",
+  argumentHint: "<question>",
+  kind: "builtin",
+  tag: null,
+};
+
+// The event as copied into another thread: what it says of messages and rows there, and of where a
+// compaction cut, said of their copies.
+function copiedEvent(
+  event: StoredEvent,
+  ids: ReadonlyMap<string, string>,
+  seqs: ReadonlyMap<number, number>,
+): NewEvent {
+  const id = (old: string) => ids.get(old) ?? old;
+  switch (event.type) {
+    case "message.admitted":
+      return { ...event, data: { ...event.data, messageIds: event.data.messageIds.map(id) } };
+    case "message.changed":
+    case "message.withdrawn":
+    case "message.dropped":
+      return { ...event, data: { ...event.data, messageId: id(event.data.messageId) } } as NewEvent;
+    case "branch.started":
+      return {
+        ...event,
+        data: {
+          ...event.data,
+          rowId: id(event.data.rowId),
+          ...(event.data.keep && { keep: event.data.keep.map(id) }),
+        },
+      };
+    case "thread.compacted": {
+      const { firstKeptSeq } = event.data;
+      const after = [...seqs].filter(([old]) => old >= firstKeptSeq).map(([, copy]) => copy);
+      const kept =
+        seqs.get(firstKeptSeq) ??
+        (after.length > 0 ? Math.min(...after) : Math.max(0, ...seqs.values()) + 1);
+      return { ...event, data: { ...event.data, firstKeptSeq: kept } };
+    }
+    default:
+      return event;
+  }
+}
 
 // The index of the first row the reader had not seen up to `seen` that is not their own nor a
 // reply still being written; -1 when there is none.
@@ -660,6 +824,104 @@ export function createThreads(options: ThreadsOptions) {
     return !!thread.parentThreadId && !!subagents?.find(thread.id)?.archivedAt;
   }
 
+  // Asks the runs under way in the branches to stop, queueing again those that wait for a decision
+  // so that a worker ends them.
+  function stopBranches(branchIds: readonly string[], userId: string) {
+    for (const branchId of branchIds) {
+      const run = runs.requestCancelOn(branchId, userId, now());
+      if (run?.status === "waiting") runs.resume(run.id);
+    }
+  }
+
+  // The reader's own side question in the thread.
+  function asideOf(principal: Principal, threadId: string, asideId: string) {
+    visible(principal, threadId);
+    const found = options.asides?.find(asideId);
+    if (!found || found.threadId !== threadId || found.userId !== principal.userId) {
+      throw new ServiceError(404, "Side question not found");
+    }
+    return found;
+  }
+
+  // The side questions being answered, each with what stops its answer.
+  const answering = new Map<string, AbortController>();
+
+  // The side question as its asker sees it.
+  function shownAside(asideId: string): Aside {
+    const {
+      threadId: _thread,
+      userId: _user,
+      name: _name,
+      ...shown
+    } = options.asides!.find(asideId)!;
+    return shown;
+  }
+
+  // Answers the side question's last question with the thread's model, the thread as its branch
+  // was up to the row, each piece written as it comes. An answer stopped keeps what was written;
+  // what went wrong is kept as the answer when it fails.
+  function asking(asideId: string): Asking {
+    const stop = new AbortController();
+    answering.set(asideId, stop);
+    return {
+      aside: shownAside(asideId),
+      async answer(write, signal) {
+        const store = options.asides!;
+        const side = store.find(asideId)!;
+        const stopped = AbortSignal.any([signal, stop.signal]);
+        let model: string | null = null;
+        let text = "";
+        try {
+          const asked = await options.ask!(side.threadId, side.branchId, side.rowId);
+          model = asked.ref;
+          const request = asideRequest(asked.request, side.turns, side.name);
+          const ends = AbortSignal.any([stopped, AbortSignal.timeout(120_000)]);
+          for await (const event of asked.model.stream(request, ends)) {
+            if (event.type !== "delta") continue;
+            text += event.text;
+            write(event.text);
+          }
+          if (!text.trim()) throw new Error("The model wrote no answer.");
+          store.addTurn(asideId, { role: "answer", text: text.trim(), model });
+        } catch (err) {
+          if (stopped.aborted && text.trim()) {
+            store.addTurn(asideId, { role: "answer", text: text.trim(), model });
+          } else {
+            const reason = stopped.aborted
+              ? "Stopped"
+              : err instanceof Error && err.message
+                ? err.message
+                : "The model did not answer.";
+            store.addTurn(asideId, { role: "answer", text: reason, model, failed: true });
+          }
+        } finally {
+          if (answering.get(asideId) === stop) answering.delete(asideId);
+        }
+        return shownAside(asideId);
+      },
+    };
+  }
+
+  // The calls among the rows that changed something, as the reader sees them named.
+  function undoneIn(left: readonly TranscriptRow[], reader: Reader) {
+    const definitions = reader.space ? tools.definitions(reader.space) : [];
+    return left
+      .filter((row): row is TranscriptToolRow => changedSomething(row, definitions))
+      .map((row) => {
+        const { title, toolset } = reader.names(row);
+        return { title, toolset };
+      });
+  }
+
+  // The thread's branch with the id, or its current one when none is named.
+  function branchIn(thread: Thread, branchId?: string) {
+    if (!branchId || branchId === thread.currentBranchId) return thread.currentBranchId;
+    if (threads.branch(branchId)?.threadId !== thread.id) {
+      throw new ServiceError(404, "Branch not found");
+    }
+    return branchId;
+  }
+
   function canIn(principal: Principal, thread: Thread): ThreadCan {
     return {
       post: access.can(principal, thread, "post") && !retired(thread),
@@ -670,18 +932,92 @@ export function createThreads(options: ThreadsOptions) {
     };
   }
 
-  function readerOf(principal: Principal, thread: Thread): Reader {
+  // The reader of the branch, the thread's current one when none is named, whose rows are given.
+  function readerOf(
+    principal: Principal,
+    thread: Thread,
+    branchId = thread.currentBranchId,
+    rows?: readonly TranscriptRow[],
+  ): Reader {
     const space = spaceStore.find(thread.spaceId);
+    const can = canIn(principal, thread);
+    const viewed = rows ?? transcripts.of(thread.id, branchId).transcript().rows;
     return {
       principal,
       userId: principal.userId,
       thread,
       space,
       model: runs.active(thread.id)?.model ?? null,
-      can: canIn(principal, thread),
+      can,
       names: tools.namesIn(space),
       folds: new Map(),
+      history: historyOf(principal, thread, space, can, branchId, viewed),
     };
+  }
+
+  // What the reader may do from the rows of the branch, and the versions among them.
+  function historyOf(
+    principal: Principal,
+    thread: Thread,
+    space: Space | null,
+    can: ThreadCan,
+    branchId: string,
+    rows: readonly TranscriptRow[],
+  ): ReaderHistory {
+    const current = branchId === thread.currentBranchId;
+    const currentRows = current ? rows : transcripts.of(thread.id).transcript().rows;
+    const guest = access.of(principal, thread)?.via === "guest";
+    return {
+      branchId,
+      abilities: {
+        userId: principal.userId,
+        current,
+        post: can.post && !spaces.isArchived(thread.spaceId),
+        rewrite: access.can(principal, thread, "rewrite"),
+        fork:
+          !guest &&
+          !thread.parentThreadId &&
+          !!space &&
+          spaces.can(principal, space, "message") &&
+          !spaces.isArchived(thread.spaceId),
+        othersPast: othersPast(currentRows, rows, principal.userId),
+      },
+      versions: versionsIn(thread, branchId, rows).versions,
+    };
+  }
+
+  // The versions of the rows of the branch written again, and the first row of the versions each
+  // belongs to. Each branch's own first row is read from its log.
+  function versionsIn(thread: Thread, branchId: string, rows: readonly TranscriptRow[]) {
+    const branches = threads.branches(thread.id);
+    if (branches.length < 2)
+      return { versions: new Map<string, RowVersions>(), groupOf: new Map() };
+    const sources = new Map<string, readonly Source[]>();
+    return versionsOf({
+      viewed: branchId,
+      current: thread.currentBranchId,
+      branches,
+      rows,
+      sourcesOf: (id) => {
+        const known = sources.get(id) ?? threads.sources(id);
+        sources.set(id, known);
+        return known;
+      },
+      firstOf: (branch) => {
+        const after = branch.forkSeq ?? 0;
+        const own = transcripts
+          .of(thread.id, branch.id)
+          .transcript()
+          .rows.find((row) => row.seq > after);
+        return own ? { id: own.id, seq: own.seq } : null;
+      },
+      originOf: (branch, rowId) => {
+        const fold = transcripts.of(thread.id, branch);
+        const row = fold.transcript().rows[fold.indexOf(rowId)];
+        const owner = row && threads.eventAt(thread.id, row.seq)?.branchId;
+        return row && owner ? { owner, seq: row.seq } : null;
+      },
+    });
   }
 
   // The row at `index` as the reader sees it: with its place, the last event that changed it, its
@@ -697,8 +1033,20 @@ export function createThreads(options: ThreadsOptions) {
     reader: Reader,
   ): ShownRow {
     const row = transcript.rows[index]!;
-    const place = { order: index, seq: fold.changedAt(index), turn: fold.turnAt(index) };
+    const actions = rowActions(transcript.rows, index, reader.history.abilities);
+    const versions = reader.history.versions.get(row.id);
+    const place = {
+      order: index,
+      seq: fold.changedAt(index),
+      turn: fold.turnAt(index),
+      ...(actions.length > 0 && { can: actions }),
+      ...(versions && { versions }),
+    };
     const { space, userId, thread, model } = reader;
+    const current = reader.history.abilities.current;
+    if (row.kind === "fork") {
+      return { ...row, ...place, linked: readable(reader.principal, row.from.threadId) };
+    }
     if (row.kind === "tool") {
       const started = startedSubagent(row);
       const subagent = started ? subagents?.summaryOf(started) : null;
@@ -712,7 +1060,7 @@ export function createThreads(options: ThreadsOptions) {
         ...(subagentCall && { subagentCall }),
         ...(effects.length > 0 && { effects }),
       };
-      if (row.state !== "pending" || !row.waits || !space) return call;
+      if (row.state !== "pending" || !row.waits || !space || !current) return call;
       const may = tools.canDecide(userId, row, transcript.rows, thread, space, model);
       // Where other agents' messages steered the call, whose words they carried.
       const steering =
@@ -737,7 +1085,7 @@ export function createThreads(options: ThreadsOptions) {
     if (row.kind === "failure" || row.kind === "stop") {
       const last = index === transcript.rows.length - 1;
       const idle = !transcript.run && transcript.pending.length === 0;
-      return { ...row, ...place, canRetry: last && idle && reader.can.post };
+      return { ...row, ...place, canRetry: current && last && idle && reader.can.post };
     }
     if (row.kind === "human") {
       const { command, ...message } = row;
@@ -1131,16 +1479,21 @@ export function createThreads(options: ThreadsOptions) {
 
     // The thread as the reader sees it, with its newest rows, reaching back to the first they had
     // not seen, the messages waiting for the agent and the run under way.
-    async get(principal: Principal, id: string): Promise<ThreadDetail> {
+    // Another branch, named, reads the same way, with nothing new in it and nothing waiting.
+    async get(principal: Principal, id: string, branchId?: string): Promise<ThreadDetail> {
       const { thread, access: via } = access.require(principal, id);
       const head = await headOf(principal, thread, via);
       // Read after the models, which wait on providers, so the rows are the newest.
-      const fold = transcripts.of(id);
+      const latest = threads.find(id) ?? thread;
+      const branch = branchIn(latest, branchId);
+      const current = branch === latest.currentBranchId;
+      const fold = transcripts.of(id, branch);
       const transcript = fold.transcript();
-      const reader = readerOf(principal, threads.find(id) ?? thread);
+      const reader = readerOf(principal, latest, branch, transcript.rows);
       const seen = reads.seen(principal.userId, [id]).get(id) ?? 0;
       // A subagent's thread has nothing new in it, and opens at its newest.
-      const from = thread.parentThreadId ? -1 : newFromOf(transcript, seen, principal.userId);
+      const from =
+        thread.parentThreadId || !current ? -1 : newFromOf(transcript, seen, principal.userId);
       const total = transcript.rows.length;
       const start = Math.min(Math.max(0, total - ROWS_PAGE), from === -1 ? total : from);
       const rows = [];
@@ -1150,27 +1503,31 @@ export function createThreads(options: ThreadsOptions) {
       return {
         ...head,
         thread: { ...head.thread, lastEventSeq: Math.max(head.thread.lastEventSeq, fold.last) },
+        branch: { id: branch, current },
         rows,
         before: start > 0 ? start : null,
         newFrom: from === -1 ? null : transcript.rows[from]!.id,
-        pending: shownPending(transcript.pending),
+        pending: current ? shownPending(transcript.pending) : [],
         run: shownRun(transcript, runTrace),
       };
     },
 
     // The rows before the place `before`, at most `limit` of them, or with `at` as many as reach
-    // back to the row with that id when it is before them, as the reader sees them.
+    // back to the row with that id when it is before them, as the reader sees them; of the branch
+    // named, or else the current one.
     rows(
       principal: Principal,
       id: string,
       before: number,
       limit = ROWS_PAGE,
       at?: string,
+      branchId?: string,
     ): RowsPage {
       const thread = visible(principal, id);
-      const fold = transcripts.of(id);
+      const branch = branchIn(thread, branchId);
+      const fold = transcripts.of(id, branch);
       const transcript = fold.transcript();
-      const reader = readerOf(principal, thread);
+      const reader = readerOf(principal, thread, branch, transcript.rows);
       const end = Math.min(before, transcript.rows.length);
       const target = at === undefined ? -1 : fold.indexOf(at);
       const start = Math.max(0, Math.min(end - limit, target === -1 ? end : target));
@@ -1179,6 +1536,25 @@ export function createThreads(options: ThreadsOptions) {
         rows.push(shownRow(fold, transcript, index, reader));
       }
       return { rows, before: start > 0 ? start : null };
+    },
+
+    // The branch that holds the row: the current one when it does, else the newest that does.
+    branchOf(principal: Principal, id: string, rowId: string): ShownBranch {
+      const thread = visible(principal, id);
+      if (transcripts.of(id).indexOf(rowId) !== -1) {
+        return { id: thread.currentBranchId, current: true };
+      }
+      const newestFirst = threads
+        .branches(id)
+        .filter((branch) => branch.id !== thread.currentBranchId)
+        .toSorted(
+          (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
+        );
+      const holder = newestFirst.find(
+        (branch) => transcripts.of(id, branch.id).indexOf(rowId) !== -1,
+      );
+      if (!holder) throw new ServiceError(404, "Message not found");
+      return { id: holder.id, current: false };
     },
 
     readable,
@@ -1309,9 +1685,9 @@ export function createThreads(options: ThreadsOptions) {
       const space = spaceStore.find(thread.spaceId);
       if (!space || !access.can(principal, thread, "post")) return [];
       const others = (commands?.list(space, principal.userId) ?? []).filter(
-        (command) => command.name !== COMPACT,
+        (command) => command.name !== COMPACT && command.name !== BTW,
       );
-      return [COMPACT_COMMAND, ...others];
+      return [COMPACT_COMMAND, ...(options.asides && options.ask ? [BTW_COMMAND] : []), ...others];
     },
 
     postMessage(principal: Principal, id: string, text: string, mode: Delivery = "steer") {
@@ -1329,6 +1705,7 @@ export function createThreads(options: ThreadsOptions) {
       command: CommandInput,
     ) {
       const { thread, access: via } = access.require(principal, id, "post");
+      if (command.name === BTW) throw new ServiceError(400, "A side question is never posted");
       if (command.name === COMPACT) {
         // Compacting waits for the run under way; with nothing to summarise it is not asked for.
         const rows = transcripts.of(thread.id).transcript().rows;
@@ -1426,6 +1803,259 @@ export function createThreads(options: ThreadsOptions) {
       return events[0]!;
     },
 
+    // Writes a reply again, with the thread's model or another; sends the reader's own message
+    // again changed; or restores the conversation up to a row of any branch. Each makes a new
+    // current branch, and the run under way in the branch before is asked to stop. What the
+    // reader may do from the row is the rule; one that would leave out tool calls that changed
+    // something lists them instead, until confirmed.
+    async act(principal: Principal, id: string, action: BranchAction): Promise<BranchActionResult> {
+      const asked = action.action === "retry" ? action.with : undefined;
+      if (asked) await models.requireModel(principal.orgId, asked.model);
+      // Seen again after the model check, which waits on providers.
+      const thread = visible(principal, id, "post");
+      if (retired(thread)) throw new ServiceError(409, "This subagent is archived");
+      const from = branchIn(thread, action.action === "restore" ? action.branchId : undefined);
+      const fold = transcripts.of(id, from);
+      const { rows } = fold.transcript();
+      const index = fold.indexOf(action.rowId);
+      const row = rows[index];
+      if (!row) throw new ServiceError(404, "Message not found");
+      const reader = readerOf(principal, thread, from, rows);
+      if (!rowActions(rows, index, reader.history.abilities).includes(action.action)) {
+        const editor = { ...reader.history.abilities, rewrite: true };
+        throw rowActions(rows, index, editor).includes(action.action)
+          ? new ServiceError(403, "Only the space's owners can leave out other people's messages")
+          : new ServiceError(409, "This can't be done from this message");
+      }
+      const restore = action.action === "restore";
+      const forkSeq = restore ? cutThrough(fold, index) : cutBefore(rows, index);
+      const currentRows =
+        from === thread.currentBranchId ? rows : transcripts.of(id).transcript().rows;
+      const left = dropped(currentRows, restore ? rows.slice(0, index + 1) : rows.slice(0, index));
+      const undone = undoneIn(left, reader);
+      if (undone.length > 0 && !action.confirm) return { confirm: undone };
+      // The row the new branch goes on in place of: this one, or once restored, the message or
+      // restore line after it.
+      const replaced = restore
+        ? rows
+            .slice(index + 1)
+            .find((r) => r.kind === "human" || r.kind === "agent" || r.kind === "restore")
+        : row;
+      const group =
+        replaced && (versionsIn(thread, from, rows).groupOf.get(replaced.id) ?? replaced.id);
+      // Messages taken in with an edited one still wait for the run that takes in the new one.
+      const keep =
+        action.action === "edit"
+          ? rows.filter((r) => r.kind === "human" && r.seq === row.seq && r.id !== row.id)
+          : [];
+      const guest = access.of(principal, thread)?.via === "guest";
+      const actor = { kind: "user" as const, userId: principal.userId };
+      const branch = log.write(id, (append) => {
+        const before = threads.find(id)?.currentBranchId ?? thread.currentBranchId;
+        const made = threads.addBranch({
+          threadId: id,
+          parentBranchId: from,
+          forkSeq,
+          kind: action.action,
+          rowId: row.id,
+          groupRowId: group ?? null,
+          createdBy: principal.userId,
+        });
+        const into: Append = (event, title) => append(event, title, made.id);
+        into({
+          type: "branch.started",
+          actor,
+          data: {
+            kind: action.action,
+            rowId: row.id,
+            ...(keep.length > 0 && { keep: keep.map((message) => message.id) }),
+          },
+        });
+        threads.setCurrent(id, made.id);
+        stopBranches([before], principal.userId);
+        let trigger = forkSeq;
+        let admit = keep.map((message) => message.id);
+        if (action.action === "edit") {
+          const quiet = row.kind === "human" && row.quiet;
+          const message = into({
+            type: "message",
+            actor,
+            data: {
+              parts: [{ type: "text", text: action.text }],
+              quiet,
+              mode: "steer",
+              ...(guest && { guest }),
+            },
+          });
+          if (quiet) return made.id;
+          trigger = message.seq;
+          admit = [...admit, message.id];
+        }
+        if (restore) return made.id;
+        startRun(
+          runs,
+          into,
+          {
+            threadId: id,
+            branchId: made.id,
+            triggerSeq: trigger,
+            createdBy: principal.userId,
+            reason: "rewrite",
+            askedModel: asked?.model ?? null,
+            askedEffort: asked?.effort ?? null,
+          },
+          admit,
+        );
+        return made.id;
+      }).result;
+      bus.wake(id);
+      return { branchId: branch };
+    },
+
+    // Starts a thread in the same space from the conversation of a branch up to a row: its events
+    // copied with their writers and times, then where it came from.
+    fork(principal: Principal, id: string, input: { rowId: string; branchId?: string }) {
+      const thread = visible(principal, id);
+      const from = branchIn(thread, input.branchId);
+      const fold = transcripts.of(id, from);
+      const { rows } = fold.transcript();
+      const index = fold.indexOf(input.rowId);
+      if (index === -1) throw new ServiceError(404, "Message not found");
+      const reader = readerOf(principal, thread, from, rows);
+      if (!rowActions(rows, index, reader.history.abilities).includes("fork")) {
+        throw new ServiceError(403, "Only the space's members who can message can fork threads");
+      }
+      const cut = cutThrough(fold, index);
+      const events = threads.eventsAfter(id, 0, from).filter((event) => event.seq <= cut);
+      const forked = threads.create({
+        spaceId: thread.spaceId,
+        model: thread.model,
+        effort: thread.effort,
+        createdBy: principal.userId,
+        ...(thread.title && { title: thread.title, titleSource: thread.titleSource ?? "message" }),
+      });
+      log.write(forked.id, (append) => {
+        const ids = new Map<string, string>();
+        const seqs = new Map<number, number>();
+        for (const event of events) {
+          const copied = append({ ...copiedEvent(event, ids, seqs), createdAt: event.createdAt });
+          ids.set(event.id, copied.id);
+          seqs.set(event.seq, copied.seq);
+        }
+        const actor = { kind: "user" as const, userId: principal.userId };
+        append({
+          type: "thread.forked",
+          actor,
+          data: { threadId: id, rowId: input.rowId, title: thread.title ?? UNTITLED },
+        });
+      });
+      return threadSummary(threads.find(forked.id) ?? forked);
+    },
+
+    // The reader's side questions in the thread.
+    asides(principal: Principal, id: string): Aside[] {
+      visible(principal, id);
+      return options.asides?.of(id, principal.userId) ?? [];
+    },
+
+    // Asks a side question about a row of a branch, the current one when none is named, to be
+    // answered.
+    askAside(
+      principal: Principal,
+      id: string,
+      input: { rowId: string; branchId?: string; text: string },
+    ): Asking {
+      const thread = visible(principal, id);
+      const branchId = branchIn(thread, input.branchId);
+      const fold = transcripts.of(id, branchId);
+      const { rows } = fold.transcript();
+      const index = fold.indexOf(input.rowId);
+      if (index === -1) throw new ServiceError(404, "Message not found");
+      const reader = readerOf(principal, thread, branchId, rows);
+      if (!rowActions(rows, index, reader.history.abilities).includes("aside")) {
+        throw new ServiceError(403, "Only people who can post here can ask aside");
+      }
+      if (!options.asides || !options.ask) {
+        throw new ServiceError(409, "Side questions can't be asked here");
+      }
+      const asideId = options.asides.create({
+        threadId: id,
+        branchId,
+        rowId: input.rowId,
+        userId: principal.userId,
+      });
+      options.asides.addTurn(asideId, { role: "question", text: input.text });
+      return asking(asideId);
+    },
+
+    // Asks the reader's side question more, to be answered once the answer before is done.
+    followUpAside(principal: Principal, id: string, asideId: string, text: string): Asking {
+      asideOf(principal, id, asideId);
+      if (answering.has(asideId)) throw new ServiceError(409, "The answer is still being written");
+      options.asides!.addTurn(asideId, { role: "question", text });
+      return asking(asideId);
+    },
+
+    // Stops the answer being written to the reader's side question.
+    stopAside(principal: Principal, id: string, asideId: string) {
+      asideOf(principal, id, asideId);
+      answering.get(asideId)?.abort();
+    },
+
+    // Starts a thread in the same space from a summary of the current branch, which its agent
+    // reads in place of the conversation, with where it came from.
+    async fromSummary(principal: Principal, id: string) {
+      const thread = visible(principal, id);
+      const { rows } = transcripts.of(id).transcript();
+      const last = rows.findLastIndex(
+        (row) => row.kind === "human" || (row.kind === "agent" && row.status !== "streaming"),
+      );
+      const reader = readerOf(principal, thread, thread.currentBranchId, rows);
+      if (last === -1 || !rowActions(rows, last, reader.history.abilities).includes("fork")) {
+        throw new ServiceError(409, "There is nothing to summarise yet");
+      }
+      if (!options.ask) throw new ServiceError(409, "Summaries can't be written here");
+      const asked = await options.ask(id, thread.currentBranchId);
+      const written = await summarise({
+        threadId: id,
+        rows: asked.rows,
+        model: asked.model,
+        request: asked.request,
+        signal: AbortSignal.timeout(120_000),
+      });
+      // Seen again after the model, which may take a while.
+      visible(principal, id);
+      const forked = threads.create({
+        spaceId: thread.spaceId,
+        model: thread.model,
+        effort: thread.effort,
+        createdBy: principal.userId,
+        ...(thread.title && { title: thread.title, titleSource: thread.titleSource ?? "message" }),
+      });
+      const actor = { kind: "user" as const, userId: principal.userId };
+      log.write(forked.id, (append) => {
+        const at = append({
+          type: "thread.forked",
+          actor,
+          data: { threadId: id, title: thread.title ?? UNTITLED, summary: true },
+        });
+        const used = written.usage.inputTokens + written.usage.outputTokens > 0;
+        append({
+          type: "thread.compacted",
+          actor,
+          data: {
+            summary: written.summary,
+            // Everything after the summary is read word for word.
+            firstKeptSeq: at.seq + 2,
+            tokensBefore: written.tokensBefore,
+            tokensAfter: tokensOf(written.summary),
+            ...(used && { usage: written.usage }),
+          },
+        });
+      });
+      return threadSummary(threads.find(forked.id) ?? forked);
+    },
+
     // Delivers, as the reader sees them, the rows events with seq above `after` changed, then the
     // pieces stored so far of the replies in progress, then the rows each new event changes and
     // each piece as it is stored, each exactly once. With the rows go the waiting messages and the
@@ -1449,27 +2079,66 @@ export function createThreads(options: ThreadsOptions) {
       const pieces = new Map<string, number>();
       let replaying = true;
       const held: ThreadFeedItem[] = [];
+      // The branch followed, and what the reader could do from each row and its versions as last
+      // delivered.
+      let branch = first.currentBranchId;
+      const able = new Map<string, string>();
+      const ableOf = (shown: { can?: readonly string[]; versions?: RowVersions }) =>
+        JSON.stringify([shown.can ?? [], shown.versions ?? null]);
       function sendRows() {
         const thread = threads.find(id);
         if (!thread) return;
         const fold = transcripts.of(id);
         const transcript = fold.transcript();
-        const reader = readerOf(principal, thread);
+        const reader = readerOf(principal, thread, thread.currentBranchId, transcript.rows);
+        const run = shownRun(transcript, runTrace);
+        const pending = shownPending(transcript.pending);
+        // Another branch made current starts afresh from its newest rows.
+        if (thread.currentBranchId !== branch) {
+          branch = thread.currentBranchId;
+          told.clear();
+          able.clear();
+          const total = transcript.rows.length;
+          const start = Math.max(0, total - ROWS_PAGE);
+          const rows: ShownRow[] = [];
+          for (let index = start; index < total; index++) {
+            const shown = shownRow(fold, transcript, index, reader);
+            able.set(shown.id, ableOf(shown));
+            rows.push(shown);
+          }
+          last = fold.last;
+          deliver({
+            kind: "rows",
+            update: {
+              seq: last,
+              rows,
+              pending,
+              run,
+              reset: { branch: { id: branch, current: true }, before: start > 0 ? start : null },
+            },
+          });
+          return;
+        }
         const live = liveIndexes(transcript);
         const rows: ShownRow[] = [];
         transcript.rows.forEach((row, index) => {
           const changed = fold.changedAt(index) > last;
-          if (!changed && !live.has(index) && !told.has(row.id)) return;
+          // What the reader may do from a row, and its versions, change as rows come after it.
+          const actions = ableOf({
+            can: rowActions(transcript.rows, index, reader.history.abilities),
+            versions: reader.history.versions.get(row.id),
+          });
+          const unable = able.has(row.id) && able.get(row.id) !== actions;
+          able.set(row.id, actions);
+          if (!changed && !unable && !live.has(index) && !told.has(row.id)) return;
           const shown = shownRow(fold, transcript, index, reader);
           const parts = readerPartsOf(shown);
-          if (changed || told.get(row.id) !== parts) rows.push(shown);
+          if (changed || unable || told.get(row.id) !== parts) rows.push(shown);
           if (live.has(index)) told.set(row.id, parts);
           else told.delete(row.id);
         });
         if (fold.last <= last && rows.length === 0) return;
         last = Math.max(last, fold.last);
-        const run = shownRun(transcript, runTrace);
-        const pending = shownPending(transcript.pending);
         deliver({ kind: "rows", update: { seq: last, rows, pending, run } });
       }
       function send(item: ThreadFeedItem) {
@@ -1512,6 +2181,7 @@ export function createThreads(options: ThreadsOptions) {
         }
         started = subagentsOf();
         const thread = threads.find(id);
+        if (thread && thread.currentBranchId !== branch) sendRows();
         if (!thread || placeOf(thread) === place) return;
         place = placeOf(thread);
         const via = access.of(principal, thread);

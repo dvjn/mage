@@ -117,7 +117,8 @@ export const spaceToolsetOption = sqliteTable(
   (table) => [primaryKey({ columns: [table.spaceId, table.toolsetId, table.option] })],
 );
 
-// A wake-up of the agent in a thread. At most one run per thread is queued, running or waiting.
+// A wake-up of the agent in a branch of a thread. At most one run per branch is queued, running or
+// waiting.
 export const run = sqliteTable(
   "run",
   {
@@ -125,6 +126,8 @@ export const run = sqliteTable(
     threadId: text("thread_id")
       .notNull()
       .references(() => thread.id, { onDelete: "cascade" }),
+    // The branch it writes in; set for every run.
+    branchId: text("branch_id"),
     status: text("status", {
       enum: ["queued", "running", "waiting", "completed", "failed", "cancelled"],
     }).notNull(),
@@ -132,9 +135,12 @@ export const run = sqliteTable(
     triggerSeq: integer("trigger_seq").notNull(),
     // The model ref it replied with, once it started.
     model: text("model"),
+    // The model and effort it was asked to reply with in place of the thread's, if any.
+    askedModel: text("asked_model"),
+    askedEffort: text("asked_effort", { enum: ["low", "medium", "high"] }),
     // The run this one follows, and why.
     continuesRunId: text("continues_run_id"),
-    reason: text("reason", { enum: ["interrupt", "queued_input", "retry"] }),
+    reason: text("reason", { enum: ["interrupt", "queued_input", "retry", "rewrite"] }),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     // How many times this input has been tried, counting this run.
     attempt: integer("attempt").default(1).notNull(),
@@ -164,7 +170,7 @@ export const run = sqliteTable(
     index("run_thread_idx").on(table.threadId),
     index("run_status_idx").on(table.status),
     uniqueIndex("run_active_idx")
-      .on(table.threadId)
+      .on(table.branchId)
       .where(sql`${table.status} in ('queued', 'running', 'waiting')`),
   ],
 );

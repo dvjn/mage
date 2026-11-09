@@ -2,7 +2,7 @@
 // newer than the newest here is added in its place, and one before the rows here is left out until
 // its page is read; a page of earlier rows goes before the first here. A fresh read keeps the earlier
 // pages read so far and the live rows that arrived while it was on its way. Newer changes of a row
-// win, as its seq says.
+// win, as its seq says. Another branch made current replaces them all.
 
 import type { ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
 import type { RowsPage, RowsUpdate, ShownRow } from "@/shared/threads/rows.ts";
@@ -31,13 +31,15 @@ export function withChangedRows(rows: ShownRow[], changed: ShownRow[], ties = tr
 }
 
 // The detail with what the live stream sent: the changed rows, the waiting messages and the run,
-// and the newest event it reaches.
+// and the newest event it reaches; or, once another branch is current, its rows in place of all.
 export function withUpdate(detail: ThreadDetail, update: RowsUpdate): ThreadDetail {
   const lastEventSeq = Math.max(detail.thread.lastEventSeq, update.seq);
+  const { reset } = update;
   return {
     ...detail,
     thread: { ...detail.thread, lastEventSeq },
-    rows: withChangedRows(detail.rows, update.rows),
+    rows: reset ? update.rows : withChangedRows(detail.rows, update.rows),
+    ...(reset && { branch: reset.branch, before: reset.before, newFrom: null }),
     pending: update.pending,
     run: update.run,
   };
@@ -60,7 +62,8 @@ export function withEarlier(detail: ThreadDetail, page: RowsPage): ThreadDetail 
 // they meet its rows, and the live rows newer than its own. Everything else is the server's.
 export function withFreshRead(fetched: ThreadDetail, shown: ThreadDetail): ThreadDetail {
   const first = fetched.rows[0]?.order;
-  if (first === undefined) return fetched;
+  // Rows of another branch have nothing to do with these.
+  if (first === undefined || fetched.branch.id !== shown.branch.id) return fetched;
   const meets = (shown.rows.at(-1)?.order ?? -1) + 1 >= first;
   const earlier = meets ? shown.rows.filter((row) => row.order < first) : [];
   const rows = withChangedRows(

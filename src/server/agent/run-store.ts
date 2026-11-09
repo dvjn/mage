@@ -12,9 +12,12 @@ import { run, threadTool } from "./schema.ts";
 const columns = {
   id: run.id,
   threadId: run.threadId,
+  branchId: sql<string>`coalesce(${run.branchId}, ${run.threadId})`,
   status: run.status,
   triggerSeq: run.triggerSeq,
   model: run.model,
+  askedModel: run.askedModel,
+  askedEffort: run.askedEffort,
   continuesRunId: run.continuesRunId,
   reason: run.reason,
   createdBy: run.createdBy,
@@ -35,6 +38,9 @@ const columns = {
 };
 
 const ACTIVE = ["queued", "running", "waiting"] as const;
+
+// Whether the run is in its thread's current branch, with the thread joined.
+const inCurrent = sql`${run.branchId} = coalesce(${thread.currentBranchId}, ${thread.id})`;
 
 export function createRunStore(db: Db): RunStore {
   function held(lease: Lease) {
@@ -61,23 +67,51 @@ export function createRunStore(db: Db): RunStore {
     };
   }
 
-  function active(threadId: string) {
+  // The branch the thread's people see, as SQL.
+  const currentOf = (threadId: string) =>
+    sql`(select coalesce(${thread.currentBranchId}, ${thread.id}) from ${thread} where ${thread.id} = ${threadId})`;
+
+  function activeOn(branchId: string | ReturnType<typeof sql>) {
     return (
       db
         .select(columns)
         .from(run)
-        .where(and(eq(run.threadId, threadId), inArray(run.status, ACTIVE)))
+        .where(and(eq(run.branchId, branchId), inArray(run.status, ACTIVE)))
         .get() ?? null
     );
   }
 
+  function active(threadId: string) {
+    return activeOn(currentOf(threadId));
+  }
+
+  function requestCancelWhere(where: ReturnType<typeof and>, userId: string | null, at: Date) {
+    db.update(run)
+      .set({ cancelRequestedAt: at, cancelRequestedBy: userId, updatedAt: at })
+      .where(and(where, inArray(run.status, ACTIVE), isNull(run.cancelRequestedAt)))
+      .run();
+  }
+
   return {
-    create(input) {
+    // In the thread's current branch when none is named.
+    create({ branchId, ...input }) {
       return db
         .insert(run)
-        .values({ id: ulid(), status: "queued", ...input })
+        .values({
+          id: ulid(),
+          status: "queued",
+          ...input,
+          branchId: branchId ?? currentOf(input.threadId),
+        })
         .returning(columns)
         .get();
+    },
+
+    activeOn,
+
+    requestCancelOn(branchId, userId, at) {
+      requestCancelWhere(eq(run.branchId, branchId), userId, at);
+      return activeOn(branchId);
     },
 
     find(id) {
@@ -89,7 +123,7 @@ export function createRunStore(db: Db): RunStore {
         db
           .select(columns)
           .from(run)
-          .where(eq(run.threadId, threadId))
+          .where(and(eq(run.threadId, threadId), eq(run.branchId, currentOf(threadId))))
           // Ids made in the same millisecond do not sort by time; rows are numbered as inserted.
           .orderBy(desc(sql`rowid`))
           .limit(1)
@@ -108,12 +142,14 @@ export function createRunStore(db: Db): RunStore {
         .map((row) => row.threadId);
     },
 
+    // Each thread's run in its current branch comes after any in its others.
     activeInSpace(spaceId) {
       return db
         .select(columns)
         .from(run)
         .innerJoin(thread, eq(thread.id, run.threadId))
         .where(and(eq(thread.spaceId, spaceId), inArray(run.status, ACTIVE)))
+        .orderBy(inCurrent)
         .all();
     },
 
@@ -122,21 +158,14 @@ export function createRunStore(db: Db): RunStore {
       return db
         .select(columns)
         .from(run)
+        .innerJoin(thread, eq(thread.id, run.threadId))
         .where(and(inArray(run.threadId, threadIds), inArray(run.status, ACTIVE)))
+        .orderBy(inCurrent)
         .all();
     },
 
     requestCancel(threadId, userId, at) {
-      db.update(run)
-        .set({ cancelRequestedAt: at, cancelRequestedBy: userId, updatedAt: at })
-        .where(
-          and(
-            eq(run.threadId, threadId),
-            inArray(run.status, ACTIVE),
-            isNull(run.cancelRequestedAt),
-          ),
-        )
-        .run();
+      requestCancelWhere(eq(run.branchId, currentOf(threadId)), userId, at);
       return active(threadId);
     },
 

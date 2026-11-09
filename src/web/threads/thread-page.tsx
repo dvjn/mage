@@ -18,15 +18,18 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useLocation } from "@tanstack/react-router";
 import { cn } from "cn";
+import { FileTextIcon, HistoryIcon, SplitIcon, Undo2Icon } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AskAnswers } from "@/shared/ask.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
-import type { CommandInput } from "@/shared/threads/commands.ts";
+import { BTW, type CommandInput } from "@/shared/threads/commands.ts";
+import type { Aside, BranchAction } from "@/shared/threads/history.ts";
 import type { Delivery, ToolScope } from "@/shared/threads/events.ts";
 import type { ShownRow, ToolRow } from "@/shared/threads/rows.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
 import { AuthCard, AuthFrame } from "@/web/auth/auth-frame";
+import { ConfirmDialog } from "@/web/components/confirm-dialog";
 import { meQuery } from "@/web/auth/queries";
 import {
   Conversation,
@@ -36,6 +39,7 @@ import {
   ConversationScrollButton,
 } from "@/web/components/ai-elements/conversation";
 import { Button } from "@/web/components/ui/button";
+import { WithTooltip } from "@/web/components/with-tooltip";
 import { FieldError } from "@/web/components/ui/field";
 import { Spinner } from "@/web/components/ui/spinner";
 import { ShareDialog } from "@/web/guests/share-dialog";
@@ -60,13 +64,24 @@ import {
   useUnarchiveSubagent,
 } from "@/web/threads/mutations";
 import {
+  asidesQuery,
+  branchOfRow,
   earlierRows,
   spaceThreadsQuery,
   ThreadAccessEnded,
+  threadBranchQuery,
   threadCommandsQuery,
   ThreadNotFound,
   threadQuery,
 } from "@/web/threads/queries";
+import {
+  useAskAside,
+  useForkThread,
+  useHistoryAction,
+  useSummaryThread,
+} from "@/web/threads/history-mutations";
+import { type AsideOpen, type Asides, AsidesContext } from "@/web/threads/transcript/aside-thread";
+import { type RowHistory, RowHistoryContext } from "@/web/threads/transcript/row-history";
 import { Composer, PendingTray, RunStatus } from "@/web/threads/thread-composer";
 import { withEarlier } from "@/web/threads/thread-rows";
 import { AgentStarting } from "@/web/threads/transcript/agent-starting";
@@ -102,6 +117,14 @@ export function ThreadPage() {
   const { threadId } = threadRoute.useParams();
   const queryClient = useQueryClient();
   const detail = useQuery(threadQuery(threadId));
+  // A branch other than the current one, read-only, when the page is asked to show one.
+  const { branch: asked } = threadRoute.useSearch();
+  const currentBranch = detail.data?.branch.id;
+  const viewing = asked && currentBranch && asked !== currentBranch ? asked : undefined;
+  const older = useQuery({
+    ...threadBranchQuery(threadId, viewing ?? ""),
+    enabled: !!viewing,
+  });
   const spaces = useQuery(spacesQuery);
   const models = useQuery(modelsQuery);
   const me = useQuery(meQuery);
@@ -110,7 +133,9 @@ export function ThreadPage() {
   const [stopped, setStopped] = useState<string>();
   const [picking, setPicking] = useState(false);
   const thread = detail.data?.thread;
-  const saved = detail.data?.rows;
+  // The rows shown: the current branch's, kept live, or the older branch's as read.
+  const shown = viewing ? older.data : detail.data;
+  const saved = shown?.rows;
   const access = detail.data?.access;
   const guest = access?.via === "guest";
   const can = detail.data?.can;
@@ -230,20 +255,27 @@ export function ThreadPage() {
   );
 
   // Reads the page of rows before the first here.
-  const before = detail.data?.before ?? null;
+  const before = shown?.before ?? null;
   const loadEarlier = useCallback(async () => {
     if (before === null) return;
-    const page = await earlierRows(threadId, before).catch(() => null);
+    const page = await earlierRows(threadId, before, undefined, viewing).catch(() => null);
     if (!page) return;
     queryClient.setQueryData(
-      threadQuery(threadId).queryKey,
+      viewing ? threadBranchQuery(threadId, viewing).queryKey : threadQuery(threadId).queryKey,
       (current) => current && withEarlier(current, page),
     );
-  }, [queryClient, threadId, before]);
+  }, [queryClient, threadId, before, viewing]);
 
   // Throws when the message is not posted, so the composer keeps the text.
   async function send(text: string, mode: Delivery, command?: CommandInput) {
     if (!text.trim()) return;
+    // A side question about the last message is asked aside, never posted.
+    if (command?.name === BTW) {
+      if (!lastMessage || !command.args.trim()) return;
+      setOpenAside({ rowId: lastMessage.id, fresh: false });
+      await asides.ask(lastMessage.id, command.args.trim());
+      return;
+    }
     await posting.mutateAsync({ text, mode, ...(command && { command }) });
     setVisit((shown) => shown && { ...shown, newFrom: undefined });
     refreshList();
@@ -309,20 +341,33 @@ export function ThreadPage() {
     setLit(undefined);
     setFollowed((count) => count + 1);
   }, []);
+  // A row only on another branch opens that branch, the current one where it holds the row.
   useEffect(() => {
-    const key = target && `${threadId}:${target}:${entry}:${followed}`;
-    if (!key || !target || !opened || focused === key) return;
+    const key = target && `${threadId}:${target}:${viewing ?? ""}:${entry}:${followed}`;
+    if (!key || !target || !opened || !shown || focused === key) return;
     if (!rows.some((row) => row.id === target)) {
-      if (before === null || reaching.current === key) return;
+      if (reaching.current === key) return;
       reaching.current = key;
-      void earlierRows(threadId, before, target).then(
-        (page) =>
+      const from = shown.branch.id;
+      void branchOfRow(threadId, target)
+        .then(async (holder) => {
+          if (holder.id !== from) {
+            await navigate({
+              search: { ...(!holder.current && { branch: holder.id }), row: target },
+              replace: true,
+            });
+            return;
+          }
+          if (before === null) return;
+          const page = await earlierRows(threadId, before, target, viewing);
           queryClient.setQueryData(
-            threadQuery(threadId).queryKey,
+            viewing
+              ? threadBranchQuery(threadId, viewing).queryKey
+              : threadQuery(threadId).queryKey,
             (current) => current && withEarlier(current, page),
-          ),
-        () => {},
-      );
+          );
+        })
+        .catch(() => {});
       return;
     }
     setFocused(key);
@@ -353,8 +398,81 @@ export function ThreadPage() {
         row.canAnswer && {
           answer: (answers: AskAnswers | null) => answer(row.id, answers),
         }),
+      ...(row.kind === "human" &&
+        row.can?.includes("edit") && {
+          edit: (text: string) => act({ action: "edit", rowId: row.id, text }),
+        }),
     };
   }
+
+  // The thread's history: acting from a row asks first before going past tool calls that changed
+  // something, and a new current branch is shown once made; the reader's side questions sit at
+  // the end of the actions of the rows they are about.
+  const acting = useHistoryAction(threadId);
+  const forking = useForkThread(threadId);
+  const summarising = useSummaryThread(threadId);
+  const [confirming, setConfirming] = useState<{
+    calls: { title: string; toolset: string | null }[];
+    go: () => void;
+  }>();
+  const showBranch = useCallback(
+    (branchId?: string) =>
+      void navigate({ search: branchId && branchId !== currentBranch ? { branch: branchId } : {} }),
+    [navigate, currentBranch],
+  );
+  async function act(action: BranchAction): Promise<void> {
+    const result = await acting.mutateAsync(action).catch(() => null);
+    if (!result) return;
+    if ("confirm" in result) {
+      setConfirming({ calls: result.confirm, go: () => void act({ ...action, confirm: true }) });
+      return;
+    }
+    if ("branchId" in result) showBranch();
+  }
+  const history: RowHistory = {
+    retry: (rowId, asked) => void act({ action: "retry", rowId, ...(asked && { with: asked }) }),
+    restore: (rowId) =>
+      void act({ action: "restore", rowId, ...(viewing && { branchId: viewing }) }),
+    fork: (rowId) => forking.mutate({ rowId, ...(viewing && { branchId: viewing }) }),
+    version: (branchId) => showBranch(branchId),
+    pickers: {
+      models: models.data?.models ?? [],
+      loading: models.isPending,
+      model: thread?.model ?? null,
+      effort: thread?.effort ?? null,
+      defaults: detail.data?.defaults,
+      used: detail.data?.model?.used && {
+        ...detail.data.model.used,
+        effort: detail.data.model.effort,
+      },
+      replying: detail.data?.model?.used?.ref ?? detail.data?.model?.chosen.ref ?? null,
+    },
+  };
+
+  const asideList = useQuery({ ...asidesQuery(threadId), enabled: !!can?.post });
+  const asking = useAskAside(threadId);
+  const [openAside, setOpenAside] = useState<AsideOpen | null>(null);
+  const byRow = new Map<string, Aside[]>();
+  for (const aside of asideList.data ?? []) {
+    byRow.set(aside.rowId, [...(byRow.get(aside.rowId) ?? []), aside]);
+  }
+  const asides: Asides = {
+    byRow,
+    open: openAside,
+    setOpen: setOpenAside,
+    answering: asking.answering?.rowId ?? null,
+    stop: () => asking.stop(),
+    async ask(rowId, text, asideId) {
+      await asking.ask(
+        asideId ? { rowId, asideId, text } : { rowId, text, ...(viewing && { branchId: viewing }) },
+      );
+    },
+  };
+  // The last message of the rows shown, which `/btw` asks about and an older branch is restored
+  // or forked from as a whole.
+  const lastMessage = rows.findLast(
+    (row) => row.kind === "human" || (row.kind === "agent" && row.status !== "streaming"),
+  );
 
   // A click in a reply's layout posts as the person who clicked, for those who may post.
   const replyActions = can?.post
@@ -422,104 +540,122 @@ export function ThreadPage() {
           </Button>
         )}
         {can?.share && !subagent && <ShareDialog threadId={threadId} />}
+        {!viewing && lastMessage?.can?.includes("fork") && (
+          <WithTooltip label="New thread from summary">
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              aria-label="New thread from summary"
+              disabled={summarising.isPending}
+              onClick={() => summarising.mutate()}
+            >
+              {summarising.isPending ? <Spinner aria-hidden /> : <FileTextIcon />}
+            </Button>
+          </WithTooltip>
+        )}
         {archived && thread && can && (can.move || can.delete) && (
           <ArchivedThreadActions thread={thread} can={can} />
         )}
       </PageHeader>
       <ThreadAgentContext.Provider value={agent}>
         <RowFocusContext.Provider value={focus}>
-          <ReplyActions.Provider value={replyActions}>
-            {detail.data ? (
-              // The cached thread shows at once; it opens again where the reader stopped once read.
-              <Conversation
-                key={`${threadId}:${opened?.openedAt ?? ""}`}
-                openAt={stoppedAt}
-                holdOpenAt={opened?.hold}
-                scrollTo={lit && rowElementId(lit)}
-                aria-label="Events"
-                className="min-h-0"
-                resize={arriving ? "smooth" : "instant"}
-              >
-                <ConversationContent className={cn(pageWidth, "gap-4")}>
-                  {rows.length === 0 ? (
-                    <ConversationEmptyState description="Write the first message below." />
-                  ) : (
-                    <>
-                      <ConversationEarlier
-                        more={before !== null}
-                        first={rows[0]?.id}
-                        onLoad={loadEarlier}
-                      />
-                      {entries.map((entry) => (
-                        <Fragment key={entry.key}>
-                          {entry.key === newEntry && (
-                            // Where the reader stopped; takes no room in the rows' gap.
-                            <div ref={stoppedAt} aria-hidden className="-my-2 h-0 shrink-0" />
-                          )}
-                          <div className={ENTRY_GAPS[entry.gap]}>
-                            {entry.kind === "calls" ? (
-                              <ToolGroup
-                                rows={entry.rows}
-                                calls={entry.calls}
-                                turn={entry.turn}
-                                tools={detail.data?.tools ?? []}
-                                open={entry.calls.some((call) => openRows.has(call.id))}
-                                onOpenChange={(open) =>
-                                  toggleRows(
-                                    entry.calls.map((call) => call.id),
-                                    open,
-                                  )
-                                }
-                              />
-                            ) : entry.kind === "relays" ? (
-                              <RelayMessages
-                                rows={entry.rows}
-                                opened={openRows}
-                                onOpenChange={toggleRows}
-                              />
-                            ) : entry.kind === "notice" ? (
-                              <SubagentNotice row={entry.row} />
-                            ) : entry.kind === "subagent" ? (
-                              <ToolCall
-                                row={entry.row}
-                                definition={detail.data?.tools.find(
-                                  (tool) => tool.name === entry.row.toolId,
+          <RowHistoryContext.Provider value={history}>
+            <AsidesContext.Provider value={asides}>
+              <ReplyActions.Provider value={replyActions}>
+                {detail.data && (!viewing || older.data) ? (
+                  // The cached thread shows at once; it opens again where the reader stopped once read.
+                  <Conversation
+                    key={`${threadId}:${viewing ?? currentBranch}:${opened?.openedAt ?? ""}`}
+                    openAt={stoppedAt}
+                    holdOpenAt={opened?.hold}
+                    scrollTo={lit && rowElementId(lit)}
+                    aria-label="Events"
+                    className="min-h-0"
+                    resize={arriving ? "smooth" : "instant"}
+                  >
+                    <ConversationContent className={cn(pageWidth, "gap-4")}>
+                      {rows.length === 0 ? (
+                        <ConversationEmptyState description="Write the first message below." />
+                      ) : (
+                        <>
+                          <ConversationEarlier
+                            more={before !== null}
+                            first={rows[0]?.id}
+                            onLoad={loadEarlier}
+                          />
+                          {entries.map((entry) => (
+                            <Fragment key={entry.key}>
+                              {entry.key === newEntry && (
+                                // Where the reader stopped; takes no room in the rows' gap.
+                                <div ref={stoppedAt} aria-hidden className="-my-2 h-0 shrink-0" />
+                              )}
+                              <div className={ENTRY_GAPS[entry.gap]}>
+                                {entry.kind === "calls" ? (
+                                  <ToolGroup
+                                    rows={entry.rows}
+                                    calls={entry.calls}
+                                    turn={entry.turn}
+                                    tools={detail.data?.tools ?? []}
+                                    open={entry.calls.some((call) => openRows.has(call.id))}
+                                    onOpenChange={(open) =>
+                                      toggleRows(
+                                        entry.calls.map((call) => call.id),
+                                        open,
+                                      )
+                                    }
+                                  />
+                                ) : entry.kind === "relays" ? (
+                                  <RelayMessages
+                                    rows={entry.rows}
+                                    opened={openRows}
+                                    onOpenChange={toggleRows}
+                                  />
+                                ) : entry.kind === "notice" ? (
+                                  <SubagentNotice row={entry.row} />
+                                ) : entry.kind === "subagent" ? (
+                                  <ToolCall
+                                    row={entry.row}
+                                    definition={detail.data?.tools.find(
+                                      (tool) => tool.name === entry.row.toolId,
+                                    )}
+                                    turn={{ continued: false, model: null }}
+                                    subagent={entry.subagent.name}
+                                    decide={actionsFor(entry.row).decide}
+                                    answer={actionsFor(entry.row).answer}
+                                  />
+                                ) : (
+                                  <TranscriptItem
+                                    row={entry.row}
+                                    tools={detail.data?.tools}
+                                    actions={actionsFor(entry.row)}
+                                  />
                                 )}
-                                turn={{ continued: false, model: null }}
-                                subagent={entry.subagent.name}
-                                decide={actionsFor(entry.row).decide}
-                                answer={actionsFor(entry.row).answer}
-                              />
-                            ) : (
-                              <TranscriptItem
-                                row={entry.row}
-                                tools={detail.data?.tools}
-                                actions={actionsFor(entry.row)}
-                              />
-                            )}
+                              </div>
+                            </Fragment>
+                          ))}
+                        </>
+                      )}
+                      {run &&
+                        !viewing &&
+                        !run.waiting &&
+                        !rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
+                          <div className={rows.at(-1)?.turn ? ENTRY_GAPS.near : undefined}>
+                            <AgentStarting
+                              at={run.createdAt}
+                              continued={!!rows.at(-1)?.turn}
+                              compacting={run.compacting}
+                            />
                           </div>
-                        </Fragment>
-                      ))}
-                    </>
-                  )}
-                  {run &&
-                    !run.waiting &&
-                    !rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
-                      <div className={rows.at(-1)?.turn ? ENTRY_GAPS.near : undefined}>
-                        <AgentStarting
-                          at={run.createdAt}
-                          continued={!!rows.at(-1)?.turn}
-                          compacting={run.compacting}
-                        />
-                      </div>
-                    )}
-                </ConversationContent>
-                <ConversationScrollButton />
-              </Conversation>
-            ) : (
-              <div className="min-h-0 flex-1" />
-            )}
-          </ReplyActions.Provider>
+                        )}
+                    </ConversationContent>
+                    <ConversationScrollButton />
+                  </Conversation>
+                ) : (
+                  <div className="min-h-0 flex-1" />
+                )}
+              </ReplyActions.Provider>
+            </AsidesContext.Provider>
+          </RowHistoryContext.Provider>
         </RowFocusContext.Provider>
       </ThreadAgentContext.Provider>
       <div className={cn(pageWidth, "p-4 pt-0")}>
@@ -534,55 +670,104 @@ export function ThreadPage() {
               <span>Reconnecting…</span>
             </div>
           )}
-          <RunStatus stopping={!!run && run.id === stopped} />
-          <PendingTray
-            threadId={threadId}
-            pending={detail.data?.pending ?? []}
-            me={me.data?.user.id}
-          />
-          <FieldError>{posting.error?.message}</FieldError>
-          <Composer
-            running={!!run}
-            waiting={run?.waiting ?? null}
-            readOnly={!!detail.data && !can?.post}
-            notice={
-              archived
-                ? "This space is archived"
-                : subagent?.state === "archived"
-                  ? "This subagent is archived"
-                  : undefined
-            }
-            sending={posting.isPending}
-            stopping={!!run && run.id === stopped}
-            onSend={send}
-            onStop={stop}
-            commands={can?.post ? commands.data : undefined}
-            onConnected={() => commands.refetch()}
-            tools={
-              // A guest uses the model the thread's space chose.
-              !guest && (
-                <ThreadPickers
-                  models={models.data?.models ?? []}
-                  loading={models.isPending}
-                  model={thread?.model ?? null}
-                  effort={thread?.effort ?? null}
-                  defaults={detail.data?.defaults}
-                  used={
-                    detail.data?.model?.used && {
-                      ...detail.data.model.used,
-                      effort: detail.data.model.effort,
-                    }
-                  }
-                  onModel={(ref) => change({ model: ref })}
-                  onEffort={(effort) => change({ effort })}
-                  open={picking}
-                  onOpenChange={setPicking}
-                />
-              )
-            }
-          />
+          {viewing ? (
+            <div
+              role="region"
+              aria-label="Earlier version"
+              className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/40 px-3 py-2"
+            >
+              <HistoryIcon className="size-4 text-muted-foreground" aria-hidden />
+              <span className="flex-1 text-sm text-muted-foreground">
+                Earlier version · read-only
+              </span>
+              {lastMessage?.can?.includes("restore") && (
+                <Button size="sm" variant="ghost" onClick={() => history.restore(lastMessage.id)}>
+                  <Undo2Icon />
+                  Restore from here
+                </Button>
+              )}
+              {lastMessage?.can?.includes("fork") && (
+                <Button size="sm" variant="ghost" onClick={() => history.fork(lastMessage.id)}>
+                  <SplitIcon />
+                  Fork into new thread
+                </Button>
+              )}
+              <Button size="sm" variant="outline" onClick={() => showBranch()}>
+                Back to current
+              </Button>
+            </div>
+          ) : (
+            <>
+              <RunStatus stopping={!!run && run.id === stopped} />
+              <PendingTray
+                threadId={threadId}
+                pending={detail.data?.pending ?? []}
+                me={me.data?.user.id}
+              />
+              <FieldError>{posting.error?.message}</FieldError>
+              <Composer
+                running={!!run}
+                waiting={run?.waiting ?? null}
+                readOnly={!!detail.data && !can?.post}
+                notice={
+                  archived
+                    ? "This space is archived"
+                    : subagent?.state === "archived"
+                      ? "This subagent is archived"
+                      : undefined
+                }
+                sending={posting.isPending}
+                stopping={!!run && run.id === stopped}
+                onSend={send}
+                onStop={stop}
+                commands={can?.post ? commands.data : undefined}
+                onConnected={() => commands.refetch()}
+                tools={
+                  // A guest uses the model the thread's space chose.
+                  !guest && (
+                    <ThreadPickers
+                      models={models.data?.models ?? []}
+                      loading={models.isPending}
+                      model={thread?.model ?? null}
+                      effort={thread?.effort ?? null}
+                      defaults={detail.data?.defaults}
+                      used={
+                        detail.data?.model?.used && {
+                          ...detail.data.model.used,
+                          effort: detail.data.model.effort,
+                        }
+                      }
+                      onModel={(ref) => change({ model: ref })}
+                      onEffort={(effort) => change({ effort })}
+                      open={picking}
+                      onOpenChange={setPicking}
+                    />
+                  )
+                }
+              />
+            </>
+          )}
         </div>
       </div>
+      <ConfirmDialog
+        open={!!confirming}
+        onOpenChange={(open) => !open && setConfirming(undefined)}
+        title="Changes stay"
+        description="These tool calls changed something and won't be undone."
+        action="Continue"
+        onConfirm={() => {
+          confirming?.go();
+          setConfirming(undefined);
+        }}
+      >
+        <ul aria-label="Not undone" className="flex flex-col gap-1 text-sm">
+          {confirming?.calls.map((call, index) => (
+            <li key={index} className="truncate">
+              {[call.toolset, call.title].filter(Boolean).join(" › ")}
+            </li>
+          ))}
+        </ul>
+      </ConfirmDialog>
     </div>
   );
 }

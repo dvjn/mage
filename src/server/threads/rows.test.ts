@@ -115,8 +115,10 @@ describe("a thread's rows", () => {
     threads.postMessage(ada, thread.id, "Again");
     stop();
     const update = items.at(-1);
+    // The message before may now be restored from, as one follows it.
     expect(update?.kind === "rows" && update.update).toMatchObject({
       rows: [
+        { kind: "human", text: "Hello", can: ["edit", "restore", "fork", "aside"] },
         { kind: "failure", seq: 4, canRetry: false },
         { kind: "human", text: "Again" },
       ],

@@ -58,6 +58,7 @@ import { agentNameIn, createSpaces } from "@/server/spaces/service.ts";
 import { createSpaceStore } from "@/server/spaces/store.ts";
 import { createThreadAccess } from "@/server/spaces/thread-access.ts";
 import { createDeltaStore } from "@/server/threads/delta-store.ts";
+import { createAsideStore } from "@/server/threads/asides.ts";
 import { createThreadLog } from "@/server/threads/log.ts";
 import { createThreadReadStore } from "@/server/threads/read-store.ts";
 import { createThreads } from "@/server/threads/service.ts";
@@ -304,6 +305,8 @@ const app = createApp({
     tools,
     subagents,
     commands: createCommands({ skills, prompts: mcp }),
+    ask: (threadId, branchId, rowId) => worker.requestAt(threadId, branchId, rowId),
+    asides: createAsideStore(db),
     ...(runTraces && { runTrace: (runId: string) => runTraces.traceparent(runId) }),
     // The stand-in model answers every request alike, so it names no threads.
     ...(!config.fakeModels && {

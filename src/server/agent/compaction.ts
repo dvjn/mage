@@ -9,7 +9,8 @@
 // a tool or writes nothing, the summary is written from a prompt of its own: the conversation as
 // plain labelled lines, reasoning left out and what tools gave back cut short. A later compaction
 // builds on the summary before. Who wrote what is still read from the thread's rows, so a
-// compaction changes nothing about whose words steered a call.
+// compaction changes nothing about whose words steered a call. A thread can also start from a
+// summary of all of another's.
 
 import { ModelError, type ModelRequest, type ModelUsage } from "@/server/models/gateway.ts";
 import type { OpenModel } from "@/server/models/service.ts";
@@ -300,26 +301,19 @@ export interface Compacted {
   tokensAfter: number;
 }
 
-// Compacts the thread with the model: writes the summary and appends the compaction. Null, with
-// nothing written, when there is nothing to summarise. Given the thread's own request, it asks with
-// that first.
-export async function compact(input: {
+// The summary the model writes of the conversation before the row at `at`, all of it when that is
+// past the last, with the tokens it took. Given the thread's own request, it asks with that first.
+async function summaryUpTo(input: {
   threadId: string;
   rows: readonly TranscriptRow[];
+  at: number;
   model: OpenModel;
   request?: ThreadRequest;
   focus?: string;
-  actor: Actor;
-  write: <T>(work: (append: (event: NewEvent) => void) => T) => T;
   signal: AbortSignal;
-}): Promise<Compacted | null> {
-  const { threadId, rows, model, focus = "", actor, write, signal } = input;
-  const at = cutOf(rows);
-  if (at === null) return null;
-  const from = keptFrom(rows);
+}) {
+  const { threadId, rows, at, model, focus = "", signal } = input;
   const previous = latestCompaction(rows)?.summary ?? null;
-  const tokens = (start: number, end = rows.length) =>
-    rows.slice(start, end).reduce((sum, row) => sum + rowTokens(row), 0);
   const usage: ModelUsage = { inputTokens: 0, outputTokens: 0 };
   let summary: string | null = null;
   const own = input.request && compactionRequest(input.request, rows, at, focus);
@@ -334,7 +328,9 @@ export async function compact(input: {
     model,
     {
       instructions: SUMMARY_INSTRUCTIONS,
-      messages: [{ role: "user", text: summaryRequest(previous, rows.slice(from, at), focus) }],
+      messages: [
+        { role: "user", text: summaryRequest(previous, rows.slice(keptFrom(rows), at), focus) },
+      ],
       maxSteps: 1,
       sessionId: `${threadId}:compact`,
     },
@@ -342,6 +338,47 @@ export async function compact(input: {
     signal,
   );
   if (!summary) throw new Error("The model wrote no summary.");
+  return { summary, usage };
+}
+
+// A summary of the whole conversation the agent reads, for a thread to start from, with about
+// how many tokens it read before and the tokens the summary took.
+export async function summarise(input: {
+  threadId: string;
+  rows: readonly TranscriptRow[];
+  model: OpenModel;
+  request?: ThreadRequest;
+  signal: AbortSignal;
+}) {
+  const { rows } = input;
+  const previous = latestCompaction(rows)?.summary ?? null;
+  const tokensBefore =
+    (previous ? tokensOf(previous) : 0) +
+    rows.slice(keptFrom(rows)).reduce((sum, row) => sum + rowTokens(row), 0);
+  return { ...(await summaryUpTo({ ...input, at: rows.length })), tokensBefore };
+}
+
+// Compacts the thread with the model: writes the summary and appends the compaction. Null, with
+// nothing written, when there is nothing to summarise. Given the thread's own request, it asks with
+// that first.
+export async function compact(input: {
+  threadId: string;
+  rows: readonly TranscriptRow[];
+  model: OpenModel;
+  request?: ThreadRequest;
+  focus?: string;
+  actor: Actor;
+  write: <T>(work: (append: (event: NewEvent) => void) => T) => T;
+  signal: AbortSignal;
+}): Promise<Compacted | null> {
+  const { rows, focus = "", actor, write } = input;
+  const at = cutOf(rows);
+  if (at === null) return null;
+  const from = keptFrom(rows);
+  const previous = latestCompaction(rows)?.summary ?? null;
+  const tokens = (start: number, end = rows.length) =>
+    rows.slice(start, end).reduce((sum, row) => sum + rowTokens(row), 0);
+  const { summary, usage } = await summaryUpTo({ ...input, at });
   const done: Compacted = {
     summary,
     firstKeptSeq: rows[at]!.seq,

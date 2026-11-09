@@ -2,7 +2,8 @@
 // stream from the newest event already cached, merges in the rows each new event changed, as the
 // reader sees them, with the messages waiting and the run under way, takes the thread as the server
 // now has it once it is renamed, moved or set to another model, and gathers the pieces of each
-// reply still being written. The browser reconnects on its own and resumes after the last event it
+// reply still being written; another branch made current replaces the rows, and the older
+// branches read are read again. The browser reconnects on its own and resumes after the last event it
 // saw; the server sends each reply's pieces again from the start, and the ones already here are
 // skipped. A lost stream asks whether the server answers at all; when it does not, the app is
 // offline. When the server says the reader's guest access has ended, following stops and the
@@ -89,6 +90,10 @@ export function useThreadEvents(threadId: string, ready: boolean) {
       const update = rowsUpdateSchema.safeParse(JSON.parse(message.data as string));
       if (!update.success) return;
       queryClient.setQueryData(queryKey, (detail) => detail && withUpdate(detail, update.data));
+      // Another branch made current changes what the older ones offer.
+      if (update.data.reset) {
+        void queryClient.invalidateQueries({ queryKey: [...queryKey, "branch"] });
+      }
       runShown(threadId, update.data.run);
     });
     source.addEventListener("thread", (message) => {

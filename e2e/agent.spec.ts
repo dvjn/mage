@@ -73,7 +73,7 @@ test("a message gets a streamed reply from the agent", async ({ page }) => {
   await expect(replies(page)).toHaveText([/I have read 1 message, and so the engine/]);
   // The stand-in model's name.
   await expect(replies(page)).toContainText(["echo"]);
-  await expect(replies(page).getByRole("button", { name: "Copy message" })).toHaveCount(1);
+  await expect(replies(page).getByRole("button", { name: "Copy" })).toHaveCount(1);
 });
 
 test("the model's reasoning shows above its reply, folded once it answers", async ({ page }) => {
@@ -151,9 +151,10 @@ test("stop ends the reply where it is, and retry tries it again", async ({ page 
   await expect(agentWriting(page)).toBeHidden();
   await expect(replies(page)).toHaveCount(1);
 
-  await page.getByRole("button", { name: "Retry" }).click();
+  const stopped = transcript(page).getByRole("status").filter({ hasText: "stopped the agent" });
+  await stopped.getByRole("button", { name: "Retry" }).click();
   await expect(replies(page).nth(1)).toContainText("I have read 1 message");
-  await expect(page.getByRole("button", { name: "Retry" })).toBeHidden();
+  await expect(stopped.getByRole("button", { name: "Retry" })).toBeHidden();
 });
 
 test("two people in one thread see each other's messages, steers and stops live", async ({

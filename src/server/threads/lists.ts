@@ -1,5 +1,6 @@
 // Lists of threads for a reader in SQL: each thread with what it holds for them, worked out from
-// its log, its active run and how far they have seen it, narrowed by text and by status, most
+// its current branch, its active run, the current branch's first, and how far they have seen it,
+// narrowed by text and by status, most
 // recently active first with ties broken by id. A run waiting on a decision shows here as paused;
 // whether the reader may make the decision, which makes it waiting, is not the database's to say. A
 // thread whose subagents wait on a decision may need the reader too.
@@ -10,13 +11,16 @@ import { containing } from "@/server/db/paging.ts";
 
 import type { ListedThread, ListWindow, Thread, ThreadListFilter } from "./service.ts";
 
-// The newest of these events in thread `t`, as a correlated subquery.
+// The newest of these events in thread `t`'s current branch, as a correlated subquery.
 function newest(column: SQL, types: string[]) {
   const kinds = sql.join(
     types.map((type) => sql`${type}`),
     sql`, `,
   );
   return sql`(select ${column} from thread_event e
+                join thread_branch_source s
+                  on s.branch_id = t.current_branch_id and s.source_branch_id = e.branch_id
+                 and (s.until_seq is null or e.seq <= s.until_seq)
                where e.thread_id = t.id and e.type in (${kinds})
                order by e.seq desc limit 1)`;
 }
@@ -33,8 +37,11 @@ export function statused(
   return sql`
     with listed as (
       select t.id, t.space_id, t.title, t.title_source, t.model, t.effort,
-             t.created_by, t.parent_thread_id, t.root_thread_id, t.last_event_seq,
-             t.created_at, t.updated_at, t.last_message_text, r.status as run_status,
+             t.created_by, t.parent_thread_id, t.root_thread_id, t.current_branch_id,
+             t.last_event_seq, t.created_at, t.updated_at, t.last_message_text,
+             (select r.status from run r
+               where r.thread_id = t.id and r.status in ('queued', 'running', 'waiting')
+               order by r.branch_id = t.current_branch_id desc limit 1) as run_status,
              coalesce(tr.last_seen_seq, 0) as seen,
              ${newest(sql`e.seq`, ["run.failed"])} as failed_seq,
              ${newest(sql`e.seq`, ["run.created"])} as created_seq,
@@ -45,7 +52,6 @@ export function statused(
                       where c.parent_thread_id = t.id) as subagent_waiting
              ${columns}
         ${from}
-        left join run r on r.thread_id = t.id and r.status in ('queued', 'running', 'waiting')
         left join thread_read tr on tr.user_id = ${reader} and tr.thread_id = t.id
        where ${where}
     ),
@@ -91,6 +97,7 @@ export interface StatusedRow {
   created_by: string | null;
   parent_thread_id: string | null;
   root_thread_id: string | null;
+  current_branch_id: string | null;
   last_event_seq: number;
   created_at: number;
   updated_at: number;
@@ -111,6 +118,7 @@ export function listedThread(row: StatusedRow): ListedThread {
       createdBy: row.created_by,
       parentThreadId: row.parent_thread_id,
       rootThreadId: row.root_thread_id,
+      currentBranchId: row.current_branch_id ?? row.id,
       lastEventSeq: row.last_event_seq,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),

@@ -78,6 +78,18 @@ function primarySpaceOf(db: Database.Database, email: string) {
   );
 }
 
+// Gives the thread its root branch, which takes the thread's id, as the server does.
+function addRootBranch(db: Database.Database, threadId: string, userId: string, at: number) {
+  db.prepare(
+    "insert into thread_branch (id, thread_id, kind, created_by, created_at) values (?, ?, 'root', ?, ?)",
+  ).run(threadId, threadId, userId, at);
+  db.prepare("insert into thread_branch_source (branch_id, source_branch_id) values (?, ?)").run(
+    threadId,
+    threadId,
+  );
+  db.prepare("update thread set current_branch_id = id where id = ?").run(threadId);
+}
+
 // When the last thread added here was last active; each one added after it is newer, so lists
 // sorted by it come out the same every time.
 let lastAdded = 0;
@@ -93,14 +105,9 @@ export function addThreads(email: string, count: number, { prefix = "Thread" } =
       );
       for (let index = 1; index <= count; index += 1) {
         lastAdded = Math.max(Date.now(), lastAdded + 1);
-        insert.run(
-          randomUUID(),
-          space.id,
-          `${prefix} ${index}`,
-          space.userId,
-          lastAdded,
-          lastAdded,
-        );
+        const id = randomUUID();
+        insert.run(id, space.id, `${prefix} ${index}`, space.userId, lastAdded, lastAdded);
+        addRootBranch(db, id, space.userId, lastAdded);
       }
     }).immediate();
   } finally {
@@ -160,14 +167,16 @@ export function addNotesThread(
         start,
         lastAdded,
       );
+      addRootBranch(db, threadId, space.userId, start);
       const insert = db.prepare(
-        "insert into thread_event (id, thread_id, seq, type, actor_kind, actor_user_id, data, created_at) values (?, ?, ?, 'message', 'user', ?, ?, ?)",
+        "insert into thread_event (id, thread_id, branch_id, seq, type, actor_kind, actor_user_id, data, created_at) values (?, ?, ?, ?, 'message', 'user', ?, ?, ?)",
       );
       authors.forEach((author, index) => {
         const seq = index + 1;
         const text = `Note ${seq}\n\nA line to give it height.\n\nAnd one more.`;
         insert.run(
           randomUUID(),
+          threadId,
           threadId,
           seq,
           author,

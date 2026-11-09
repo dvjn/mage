@@ -35,8 +35,10 @@ describe("live thread events", () => {
       [1, 2],
       [2, 3],
     ]);
+    // The message before may now be restored from, as one follows it.
     expect(four).toMatchObject({
       rows: [
+        { kind: "human", text: "// three", can: ["edit", "restore", "fork", "aside"] },
         {
           kind: "human",
           order: 3,
@@ -141,18 +143,24 @@ describe("following a thread", () => {
         arrive();
         return stored;
       };
+      // Each message as delivered, with what the reader may do from it, which changes as messages
+      // follow it.
       const delivered: string[] = [];
 
       const stop = threads.follow(ada, thread.id, 0, (item) => {
         if (item.kind !== "rows") return;
-        for (const row of item.update.rows) if (row.kind === "human") delivered.push(row.text);
+        for (const row of item.update.rows) {
+          if (row.kind === "human") delivered.push(JSON.stringify([row.text, row.can]));
+        }
       });
       threadStore.eventsAfter = eventsAfter;
       threads.postMessage(ada, thread.id, "// four");
       stop();
       threads.postMessage(ada, thread.id, "// five");
 
-      expect(delivered).toEqual(["// one", "// two", "// three", "// four"]);
+      expect(new Set(delivered).size).toBe(delivered.length);
+      const texts = delivered.map((each) => (JSON.parse(each) as [string])[0]);
+      expect([...new Set(texts)]).toEqual(["// one", "// two", "// three", "// four"]);
     });
   }
 });

@@ -47,6 +47,7 @@ function detail(rows: ShownRow[], before: number | null, lastEventSeq = 0): Thre
     tools: [],
     defaults: { model: null, effort: null },
     model: null,
+    branch: { id: "t1", current: true },
     rows,
     before,
     newFrom: null,

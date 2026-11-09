@@ -1,6 +1,7 @@
 // A thread's events as the API shows them: people's messages and the notifications its agent is
 // sent, when the agent took each one in, the agent's runs and the replies each run wrote, its tool
-// calls, its compactions, and the pieces of a reply in progress.
+// calls, its compactions, where each of its branches starts, the conversation it was forked from,
+// and the pieces of a reply in progress.
 
 import * as z from "zod";
 
@@ -45,9 +46,14 @@ export const messageDataSchema = z.object({
 
 export type MessageData = z.infer<typeof messageDataSchema>;
 
-// Why a run follows an earlier one: someone interrupted it, input waited for it to end, or it is
-// tried again after the server stopped during it.
-export const runReasonSchema = z.enum(["interrupt", "queued_input", "retry"]);
+// Why a run follows an earlier one: someone interrupted it, input waited for it to end, it is tried
+// again after the server stopped during it, or it writes a reply again in a branch of its own.
+export const runReasonSchema = z.enum(["interrupt", "queued_input", "retry", "rewrite"]);
+
+// How a branch came to be: a reply written again, a message edited, or restored from a row.
+export const branchKindSchema = z.enum(["retry", "edit", "restore"]);
+
+export type BranchKind = z.infer<typeof branchKindSchema>;
 
 export type RunReason = z.infer<typeof runReasonSchema>;
 
@@ -252,6 +258,22 @@ export const eventDataSchemas = {
   }),
   // The actor stopped the run.
   "run.cancelled": z.object({ runId: z.string() }),
+  // The first event of a branch: what made it and the row it writes again or was restored from.
+  // Nothing runs in it from before, its open calls will not run, and of the messages waiting only
+  // those in `keep` still wait; one restored from a row ends at that row.
+  "branch.started": z.object({
+    kind: branchKindSchema,
+    rowId: z.string(),
+    keep: z.array(z.string()).optional(),
+  }),
+  // The thread was started from another's conversation, copied up to the row there, or from a
+  // summary of it; nothing runs or waits from before.
+  "thread.forked": z.object({
+    threadId: z.string(),
+    rowId: z.string().optional(),
+    title: z.string(),
+    summary: z.boolean().optional(),
+  }),
   // The agent asked to call a tool in the reply begun as messageId; `waits` when it needs a
   // person's approval first.
   "tool.requested": z.object({
@@ -338,6 +360,8 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("run.completed"),
   eventSchema("run.failed"),
   eventSchema("run.cancelled"),
+  eventSchema("branch.started"),
+  eventSchema("thread.forked"),
   eventSchema("thread.renamed"),
   eventSchema("thread.compacted"),
   eventSchema("tool.requested"),

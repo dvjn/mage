@@ -18,8 +18,9 @@ export type ThreadLog = ReturnType<typeof createThreadLog>;
 
 export const FORMER_MEMBER = "(former member)";
 
-// Appends one event inside a write; `title` names the thread when it has no title yet.
-export type Append = (event: NewEvent, title?: string) => StoredEvent;
+// Appends one event inside a write; `title` names the thread when it has no title yet, and
+// `branchId` names the branch it goes to in place of the write's.
+export type Append = (event: NewEvent, title?: string, branchId?: string) => StoredEvent;
 
 export function eventSummary(event: StoredEvent): ThreadEventSummary {
   const { id, threadId, seq, type, data, actor, actorName, actorFormer } = event;
@@ -46,13 +47,13 @@ export function createThreadLog(options: ThreadLogOptions) {
   const { threads, bus, transact } = options;
 
   return {
-    // Runs `work` in one transaction with the events it appends, then publishes them. Returns what
-    // `work` returns and the events.
-    write<T>(threadId: string, work: (append: Append) => T) {
+    // Runs `work` in one transaction with the events it appends, to the branch named or else the
+    // thread's current one, then publishes them. Returns what `work` returns and the events.
+    write<T>(threadId: string, work: (append: Append) => T, branchId?: string) {
       const appended: StoredEvent[] = [];
       const result = transact(() =>
-        work((event, title) => {
-          const stored = threads.append(threadId, event, title);
+        work((event, title, to) => {
+          const stored = threads.append(threadId, event, title, to ?? branchId);
           appended.push(stored);
           return stored;
         }),

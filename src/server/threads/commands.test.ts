@@ -134,6 +134,13 @@ describe("thread commands", () => {
         tag: null,
       },
       {
+        name: "btw",
+        description: "Ask aside about the last message",
+        argumentHint: "<question>",
+        kind: "builtin",
+        tag: null,
+      },
+      {
         name: "pirate",
         description: "Talk like a pirate",
         argumentHint: null,

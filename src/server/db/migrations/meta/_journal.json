@@ -344,6 +344,13 @@
       "when": 1793824293008,
       "tag": "0048_thread_tools_on",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1794229879378,
+      "tag": "0049_thread_history",
+      "breakpoints": true
     }
   ]
 }

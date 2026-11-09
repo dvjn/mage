@@ -41,6 +41,7 @@ import type { Logger } from "@/server/kernel/logger.ts";
 import { contentRecorded, type RunTraces, tracer } from "@/server/kernel/tracing.ts";
 import { ConnectionError } from "@/server/models/connections.ts";
 import {
+  type Effort,
   ModelError,
   type ModelErrorKind,
   type ModelMessage,
@@ -63,6 +64,7 @@ import {
   asksToCompact,
   type PendingMessage,
   type ToolRow,
+  type TranscriptRow,
   transcriptOf,
 } from "@/shared/transcript.ts";
 
@@ -85,11 +87,16 @@ export type EndStatus = Extract<RunStatus, "completed" | "failed" | "cancelled">
 export interface Run {
   id: string;
   threadId: string;
+  // The branch it writes in.
+  branchId: string;
   status: RunStatus;
   // The seq of the message that woke the agent.
   triggerSeq: number;
   // The model ref it replied with, once it started.
   model: string | null;
+  // The model and effort it was asked to reply with in place of the thread's, if any.
+  askedModel: string | null;
+  askedEffort: Effort | null;
   // The run this one follows, and why.
   continuesRunId: string | null;
   reason: RunReason | null;
@@ -114,6 +121,10 @@ export interface Run {
 
 export interface NewRun {
   threadId: string;
+  // The thread's current branch when not given.
+  branchId?: string;
+  askedModel?: string | null;
+  askedEffort?: Effort | null;
   triggerSeq: number;
   createdBy: string | null;
   continuesRunId?: string | null;
@@ -138,10 +149,12 @@ export class LeaseLost extends Error {
 export interface RunStore {
   create(run: NewRun): Run;
   find(id: string): Run | null;
-  // The thread's newest run.
+  // The newest run of the thread's current branch.
   latest(threadId: string): Run | null;
-  // The thread's queued, running or waiting run.
+  // The queued, running or waiting run of the thread's current branch.
   active(threadId: string): Run | null;
+  // The branch's queued, running or waiting run.
+  activeOn(branchId: string): Run | null;
   // The threads with a queued, running or waiting run.
   activeThreadIds(): string[];
   // The queued, running and waiting runs of the space's threads, or of the threads named.
@@ -150,6 +163,8 @@ export interface RunStore {
   // Asks the thread's active run to stop, unless someone already has; null when there is none. A
   // null user is the server itself, as when the agent may no longer run in the thread's space.
   requestCancel(threadId: string, userId: string | null, at: Date): Run | null;
+  // Asks the branch's active run to stop, as `requestCancel` does the current branch's.
+  requestCancelOn(branchId: string, userId: string | null, at: Date): Run | null;
   // Takes the oldest queued run for the owner until `expiresAt`.
   claim(owner: string, expiresAt: Date): Run | null;
   // Takes a running run whose lease expired before `before`, or any running run without `before`.
@@ -488,16 +503,30 @@ export function createRunWorker(options: RunWorkerOptions) {
     return new Date(now().getTime() + leaseMs);
   }
 
-  function transcript(threadId: string) {
-    return transcriptOf(threads.eventsAfter(threadId, 0).map(eventSummary));
+  // The transcript of the run's branch.
+  function transcript(run: Pick<Run, "threadId" | "branchId">) {
+    return transcriptOf(threads.eventsAfter(run.threadId, 0, run.branchId).map(eventSummary));
   }
 
-  // Appends the run's events only while its lease holds.
-  function write<T>(lease: Lease, threadId: string, work: (append: Append) => T) {
-    return log.write(threadId, (append) => {
-      runs.hold(lease);
-      return work(append);
-    }).result;
+  // Whether the run's branch still takes runs: only the thread's current one does.
+  function live(run: Pick<Run, "threadId" | "branchId">) {
+    return threads.find(run.threadId)?.currentBranchId === run.branchId;
+  }
+
+  // Appends the run's events to its branch only while its lease holds.
+  function write<T>(
+    lease: Lease,
+    run: Pick<Run, "threadId" | "branchId">,
+    work: (append: Append) => T,
+  ) {
+    return log.write(
+      run.threadId,
+      (append) => {
+        runs.hold(lease);
+        return work(append);
+      },
+      run.branchId,
+    ).result;
   }
 
   // Pending messages whose authors may still post in the thread, as members of its space or as
@@ -521,7 +550,7 @@ export function createRunWorker(options: RunWorkerOptions) {
   ) {
     const { status, failure, usage } = outcome;
     // Its calls still open will not run.
-    for (const row of transcript(run.threadId).rows) {
+    for (const row of transcript(run).rows) {
       if (row.kind !== "tool" || row.runId !== run.id || !open(row)) continue;
       append({
         type: "tool.denied",
@@ -554,7 +583,9 @@ export function createRunWorker(options: RunWorkerOptions) {
     } else {
       append({ type: "run.completed", actor: AGENT, data: { runId: run.id } });
     }
-    const { pending, inbox } = transcript(run.threadId);
+    // A branch no longer live takes nothing more.
+    if (!live(run)) return false;
+    const { pending, inbox } = transcript(run);
     const waiting = admissible(run.threadId, pending, append);
     // An interrupting message starts the next run, with everything queued; else another agent's.
     const first = waiting.find((message) => message.mode === "interrupt") ?? waiting[0];
@@ -562,6 +593,9 @@ export function createRunWorker(options: RunWorkerOptions) {
     const next: NewRun | null = retry
       ? {
           threadId: run.threadId,
+          branchId: run.branchId,
+          askedModel: run.askedModel,
+          askedEffort: run.askedEffort,
           triggerSeq: run.triggerSeq,
           createdBy: null,
           continuesRunId: run.id,
@@ -571,6 +605,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       : first
         ? {
             threadId: run.threadId,
+            branchId: run.branchId,
             triggerSeq: first.seq,
             createdBy: first.author.userId,
             continuesRunId: run.id,
@@ -579,6 +614,7 @@ export function createRunWorker(options: RunWorkerOptions) {
         : relayed
           ? {
               threadId: run.threadId,
+              branchId: run.branchId,
               triggerSeq: relayed.seq,
               createdBy: null,
               continuesRunId: run.id,
@@ -660,7 +696,7 @@ export function createRunWorker(options: RunWorkerOptions) {
 
     function start() {
       const id = ulid();
-      write(lease, run.threadId, (append) => {
+      write(lease, run, (append) => {
         close(append, "completed");
         append({
           type: "message.started",
@@ -707,7 +743,7 @@ export function createRunWorker(options: RunWorkerOptions) {
         timer ??= setTimeout(flush, flushMs);
       },
       complete(usage: ModelUsage) {
-        write(lease, run.threadId, (append) => close(append, "completed", usage));
+        write(lease, run, (append) => close(append, "completed", usage));
       },
       close,
     };
@@ -726,11 +762,11 @@ export function createRunWorker(options: RunWorkerOptions) {
   // Those asking to compact the thread wait for runs of their own.
   function boundary(execution: Execution, all: boolean): ModelMessage[] {
     const { run, lease, controller } = execution;
-    const admitted = write(lease, run.threadId, (append) => {
+    const admitted = write(lease, run, (append) => {
       const current = runs.hold(lease);
       stopIfAsked(execution, current);
       if (controller.signal.aborted) return [];
-      const { pending, inbox } = transcript(run.threadId);
+      const { pending, inbox } = transcript(run);
       const people = admissible(run.threadId, pending, append).filter(
         (message) => !asksToCompact(message) && (all || message.mode === "steer"),
       );
@@ -760,9 +796,13 @@ export function createRunWorker(options: RunWorkerOptions) {
   async function replying(execution: Execution, space: Space, thread: Thread): Promise<Replying> {
     // A model turned off, or gone with its provider, gives way to the space's default, then the
     // org's, each with its own effort; opening the one named fails the run saying why when none
-    // can reply.
+    // can reply. A run asked to reply with a model of its own does so in place of the thread's.
     const own = { model: thread.model, effort: thread.effort };
-    const picked = await models.replyModel(space, own);
+    const { askedModel, askedEffort } = execution.run;
+    const picked = await models.replyModel(
+      space,
+      askedModel ? { model: askedModel, effort: askedEffort } : own,
+    );
     if (!picked) throw new RunFailure("Pick a model for this thread.");
     const ref = picked.used?.ref ?? picked.chosen.ref;
     execution.ref = ref;
@@ -774,10 +814,10 @@ export function createRunWorker(options: RunWorkerOptions) {
 
   // The MCP tools the thread leaves out of the model's requests until it turns them on: all it
   // could offer, those turned on, in the order they were, and those still left out.
-  function deferralOf(execution: Execution, space: Space) {
+  function deferralOf(threadId: string, space: Space) {
     const all = tools.fromServers(space, tools.modelNames(space));
     const ids = new Set(all.map((tool) => tool.id));
-    const turnedOn = runs.toolsOn(execution.run.threadId).filter((tool) => ids.has(tool.id));
+    const turnedOn = runs.toolsOn(threadId).filter((tool) => ids.has(tool.id));
     const on = new Set(turnedOn.map((tool) => tool.id));
     return { all, on, turnedOn, left: all.filter((tool) => !on.has(tool.id)) };
   }
@@ -796,12 +836,12 @@ export function createRunWorker(options: RunWorkerOptions) {
     calls: (ModelToolCall & { messageId: string })[],
   ) {
     const { run, lease } = execution;
-    write(lease, run.threadId, (append) => {
+    write(lease, run, (append) => {
       const thread = threads.find(run.threadId);
       if (!thread) throw new LeaseLost(run.id);
-      const { rows } = transcript(run.threadId);
+      const { rows } = transcript(run);
       const offered = offeredIn(space, thread);
-      const { left } = deferralOf(execution, space);
+      const { left } = deferralOf(execution.run.threadId, space);
       const named = tools.namesNow(space);
       for (const call of calls) {
         const { callId, toolId, input, messageId } = call;
@@ -864,12 +904,12 @@ export function createRunWorker(options: RunWorkerOptions) {
   // holds or whose tool is gone; when none may and some wait for a decision, the run waits.
   function nextCall(execution: Execution, space: Space) {
     const { run, lease, controller } = execution;
-    const next = write(lease, run.threadId, (append) => {
+    const next = write(lease, run, (append) => {
       stopIfAsked(execution, runs.hold(lease));
       if (controller.signal.aborted) return null;
       const thread = threads.find(run.threadId);
       if (!thread) throw new LeaseLost(run.id);
-      const { rows } = transcript(run.threadId);
+      const { rows } = transcript(run);
       const calls = rows.filter(
         (row): row is ToolRow => row.kind === "tool" && row.runId === run.id && open(row),
       );
@@ -934,7 +974,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       const { call, spec, input, runAs, standingOn } = next;
       const started = now().getTime();
       // The search for left-out tools is given them, and turns them on for the rest of the thread.
-      const deferral = spec.name === TOOL_SEARCH ? deferralOf(execution, space) : null;
+      const deferral = spec.name === TOOL_SEARCH ? deferralOf(execution.run.threadId, space) : null;
       const span = tracer.startSpan(`execute_tool ${call.toolId}`, {
         attributes: {
           "gen_ai.operation.name": "execute_tool",
@@ -963,10 +1003,10 @@ export function createRunWorker(options: RunWorkerOptions) {
                 tools: deferral.all,
                 on: deferral.on,
                 turnOn: (ids: string[]) =>
-                  write(lease, run.threadId, () => runs.turnOn(lease, call.id, ids)),
+                  write(lease, run, () => runs.turnOn(lease, call.id, ids)),
               },
             }),
-            write: (work) => write(lease, run.threadId, (append) => work(append)),
+            write: (work) => write(lease, run, (append) => work(append)),
           }),
         );
       } catch (err) {
@@ -985,7 +1025,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       }
       span.end();
       const ms = Math.max(0, now().getTime() - started);
-      write(lease, run.threadId, (append) =>
+      write(lease, run, (append) =>
         append({
           type: "tool.ran",
           actor: AGENT,
@@ -1012,15 +1052,27 @@ export function createRunWorker(options: RunWorkerOptions) {
     thread: Thread,
     model: Replying,
   ): ThreadRequest {
+    return requestOf(space, thread, transcript(execution.run).rows, model.effort, execution.run.id);
+  }
+
+  // What a model call would send for the rows, with the effort, as the run named sends it.
+  function requestOf(
+    space: Space,
+    thread: Thread,
+    rows: readonly TranscriptRow[],
+    effort: Thread["effort"],
+    runId?: string,
+  ): ThreadRequest {
+    const model = { effort };
     const offered = offeredIn(space, thread);
-    const deferral = deferralOf(execution, space);
+    const deferral = deferralOf(thread.id, space);
     const searchable = new Set(deferral.all.map((tool) => tool.id));
     const available = offered.filter(
       (spec) => spec.name !== TOOL_SEARCH || deferral.all.length > 0,
     );
     const names = tools.modelNames(space);
     const { instructions, messages, firstEffort } = contextOf(
-      transcript(thread.id).rows,
+      rows,
       {
         ...guidance(space, available, thread),
         toolName: names.toModel,
@@ -1036,7 +1088,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       instructions,
       messages: messages.map((message) => namedFor(message, names.toModel)),
       sessionId: thread.id,
-      runId: execution.run.id,
+      ...(runId && { runId }),
       ...(model.effort && { effort: model.effort }),
       ...(firstEffort && { firstEffort }),
       tools: forModel(available.filter((spec) => !searchable.has(spec.name))),
@@ -1049,7 +1101,7 @@ export function createRunWorker(options: RunWorkerOptions) {
   // The message that woke the run when it asks to compact the thread, and so the run is one that
   // compacts it; null otherwise.
   function compactionAsked(run: Run) {
-    const [trigger] = threads.eventsAfter(run.threadId, run.triggerSeq - 1);
+    const [trigger] = threads.eventsAfter(run.threadId, run.triggerSeq - 1, run.branchId);
     if (trigger?.seq !== run.triggerSeq || trigger.type !== "message") return null;
     if (trigger.actor.kind !== "user" || !trigger.data.command) return null;
     return asksToCompact(trigger.data)
@@ -1067,10 +1119,10 @@ export function createRunWorker(options: RunWorkerOptions) {
     asked: NonNullable<ReturnType<typeof compactionAsked>>,
   ) {
     const { run, lease, controller } = execution;
-    write(lease, run.threadId, (append) => {
+    write(lease, run, (append) => {
       stopIfAsked(execution, runs.hold(lease));
       if (controller.signal.aborted) return;
-      if (!transcript(run.threadId).pending.some((message) => message.id === asked.id)) return;
+      if (!transcript(run).pending.some((message) => message.id === asked.id)) return;
       append({
         type: "message.admitted",
         actor: AGENT,
@@ -1080,12 +1132,12 @@ export function createRunWorker(options: RunWorkerOptions) {
     if (controller.signal.aborted) throw controller.signal.reason;
     await compact({
       threadId: run.threadId,
-      rows: transcript(run.threadId).rows,
+      rows: transcript(run).rows,
       model: model.model,
       request: threadRequest(execution, space, thread, model),
       ...(asked.focus && { focus: asked.focus }),
       actor: asked.by,
-      write: (work) => write(lease, run.threadId, work),
+      write: (work) => write(lease, run, work),
       signal: controller.signal,
     });
   }
@@ -1107,7 +1159,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       return;
     }
     // A run queued again after a decision takes in only the messages sent to steer it.
-    const resumed = transcript(thread.id).rows.some(
+    const resumed = transcript(execution.run).rows.some(
       (row) => row.kind === "tool" && row.runId === run.id,
     );
 
@@ -1193,7 +1245,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     let outcome = "completed";
     try {
       await drive(execution, reply, usage);
-      write(lease, run.threadId, (append) => {
+      write(lease, run, (append) => {
         reply.close(append, "completed");
         end(lease, run, append, { status: "completed", usage });
       });
@@ -1208,7 +1260,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       if (abort?.kind === "cancel") {
         outcome = "cancelled";
         try {
-          write(lease, run.threadId, (append) => {
+          write(lease, run, (append) => {
             reply.close(append, "interrupted");
             end(lease, run, append, { status: "cancelled", usage });
           });
@@ -1230,7 +1282,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       span.setStatus({ code: SpanStatusCode.ERROR, message: failure.error });
       if (failure.kind) span.setAttribute("run.error_kind", failure.kind);
       try {
-        write(lease, run.threadId, (append) => {
+        write(lease, run, (append) => {
           reply.close(append, "failed");
           end(lease, run, append, { status: "failed", failure, usage });
         });
@@ -1269,8 +1321,8 @@ export function createRunWorker(options: RunWorkerOptions) {
           : `The agent stopped ${run.attempt} times on this input and gave up.`,
       };
       try {
-        write(lease, run.threadId, (append) => {
-          for (const row of transcript(run.threadId).rows) {
+        write(lease, run, (append) => {
+          for (const row of transcript(run).rows) {
             if (row.kind !== "agent" || row.runId !== run.id || row.status !== "streaming") {
               continue;
             }
@@ -1364,6 +1416,24 @@ export function createRunWorker(options: RunWorkerOptions) {
     // Fails the runs a stopped server left running. Call before serving and starting.
     recover() {
       recover();
+    },
+
+    // The model the thread replies with, opened, and what its next call would send were the
+    // branch to end at the row, or at its last when none is named: the start of what is asked
+    // about that row from outside the thread's runs, so that it reads what the provider's prompt
+    // cache holds of the thread.
+    async requestAt(threadId: string, branchId: string, rowId?: string) {
+      const thread = threads.find(threadId);
+      const space = thread && spaceStore.find(thread.spaceId);
+      if (!thread || !space) throw new RunFailure("The thread is gone.");
+      const picked = await models.replyModel(space, { model: thread.model, effort: thread.effort });
+      if (!picked) throw new RunFailure("Pick a model for this thread.");
+      const ref = picked.used?.ref ?? picked.chosen.ref;
+      const model = await models.open(space.orgId, ref);
+      const { rows } = transcript({ threadId, branchId });
+      const index = rowId === undefined ? -1 : rows.findIndex((row) => row.id === rowId);
+      const read = index === -1 ? rows : rows.slice(0, index + 1);
+      return { model, ref, rows: read, request: requestOf(space, thread, read, picked.effort) };
     },
 
     start() {

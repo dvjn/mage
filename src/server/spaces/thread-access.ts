@@ -22,9 +22,9 @@ export interface ThreadAccessOptions {
 export type ThreadAccess = ReturnType<typeof createThreadAccess>;
 
 // Reading the thread; posting, changing one's waiting messages, stopping and retrying the agent;
-// renaming it and changing its model; inviting and revoking guests;
-// deleting it or moving it to another space.
-export type ThreadAction = "read" | "post" | "arrange" | "share" | "delete" | "move";
+// renaming it and changing its model; inviting and revoking guests; leaving other people's
+// messages out of its current branch; deleting it or moving it to another space.
+export type ThreadAction = "read" | "post" | "arrange" | "share" | "rewrite" | "delete" | "move";
 
 // What each action needs of a member's role in the space.
 const SPACE_ACTION: Record<ThreadAction, SpaceAction> = {
@@ -32,6 +32,7 @@ const SPACE_ACTION: Record<ThreadAction, SpaceAction> = {
   post: "message",
   arrange: "message",
   share: "message",
+  rewrite: "manage",
   delete: "remove",
   move: "remove",
 };

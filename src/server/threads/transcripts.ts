@@ -1,6 +1,7 @@
-// Threads' transcripts folded from their logs. While someone follows a thread its fold stays in
-// memory, so each new event is folded in once however many follow it; every read brings a fold up
-// to date from the log first, and a thread nobody follows is folded afresh each time.
+// Threads' transcripts folded from their logs, one branch at a time. While someone follows a
+// thread the folds of its branches read stay in memory, so each new event is folded in once
+// however many follow it; every read brings a fold up to date from the log first, and a thread
+// nobody follows is folded afresh each time.
 
 import { createFold, type TranscriptFold } from "@/shared/transcript.ts";
 
@@ -9,20 +10,26 @@ import type { ThreadStore } from "./service.ts";
 
 export type Transcripts = ReturnType<typeof createTranscripts>;
 
-export function createTranscripts(threads: Pick<ThreadStore, "eventsAfter">) {
-  const held = new Map<string, { fold: TranscriptFold; holders: number }>();
+export function createTranscripts(threads: Pick<ThreadStore, "eventsAfter" | "find">) {
+  const held = new Map<string, { folds: Map<string, TranscriptFold>; holders: number }>();
 
   return {
-    // The thread's transcript up to its newest event.
-    of(threadId: string): TranscriptFold {
-      const fold = held.get(threadId)?.fold ?? createFold();
-      for (const event of threads.eventsAfter(threadId, fold.last)) fold.add(eventSummary(event));
+    // The transcript of the branch, the thread's current one when none is named, up to its
+    // newest event.
+    of(threadId: string, branchId?: string): TranscriptFold {
+      const branch = branchId ?? threads.find(threadId)?.currentBranchId ?? threadId;
+      const folds = held.get(threadId)?.folds;
+      const fold = folds?.get(branch) ?? createFold();
+      folds?.set(branch, fold);
+      for (const event of threads.eventsAfter(threadId, fold.last, branch)) {
+        fold.add(eventSummary(event));
+      }
       return fold;
     },
 
-    // Keeps the thread's fold in memory until the function returned is called.
+    // Keeps the thread's folds in memory until the function returned is called.
     hold(threadId: string) {
-      const entry = held.get(threadId) ?? { fold: createFold(), holders: 0 };
+      const entry = held.get(threadId) ?? { folds: new Map(), holders: 0 };
       entry.holders += 1;
       held.set(threadId, entry);
       let released = false;

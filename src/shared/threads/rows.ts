@@ -37,13 +37,32 @@ export const agentTurnSchema = z.object({
   model: z.string().nullable(),
 });
 
+// What the reader may do from a row in the thread's history: write a reply again, send their own
+// message again changed, make a new current branch from it, fork a new thread from it, and ask a
+// side question about it.
+export const rowActionSchema = z.enum(["retry", "edit", "restore", "fork", "aside"]);
+
+export type RowAction = z.infer<typeof rowActionSchema>;
+
+// The versions of a row written again: which of them this is, and for each the branch that shows
+// it.
+export const rowVersionsSchema = z.object({
+  at: z.number().int().nonnegative(),
+  branches: z.array(z.string()).min(2),
+});
+
+export type RowVersions = z.infer<typeof rowVersionsSchema>;
+
 // What every row has: its id, its place in the transcript, which never changes, the seq of the
-// last event that changed it, and for the agent's rows that show, their turn.
+// last event that changed it, and for the agent's rows that show, their turn; what the reader may
+// do from it, and its versions where it was written again.
 const rowFields = {
   id: z.string(),
   order: z.number().int().nonnegative(),
   seq: z.number().int().nonnegative(),
   turn: agentTurnSchema.nullable(),
+  can: z.array(rowActionSchema).optional(),
+  versions: rowVersionsSchema.optional(),
 };
 
 // The command a message was sent as, as the person typed it: its name and what followed it.
@@ -234,6 +253,28 @@ const limitRowSchema = z.object({
   sentBy: sentBySchema.optional(),
 });
 
+// Where a thread forked from another's conversation ends its copy, or starts from a summary of
+// it: by whom, the thread and row it came from as that thread was titled, and whether the reader
+// may follow it there.
+const forkRowSchema = z.object({
+  ...rowFields,
+  kind: z.literal("fork"),
+  by: personSchema.nullable(),
+  postedAt: z.string(),
+  from: z.object({ threadId: z.string(), rowId: z.string().optional(), title: z.string() }),
+  summary: z.literal(true).optional(),
+  linked: z.boolean(),
+});
+
+// Where a branch restored from the row before goes on: by whom and when, with the versions of what
+// came after that row.
+const restoreRowSchema = z.object({
+  ...rowFields,
+  kind: z.literal("restore"),
+  by: personSchema.nullable(),
+  postedAt: z.string(),
+});
+
 // An event this client does not know how to show.
 const unknownRowSchema = z.object({ ...rowFields, kind: z.literal("unknown"), type: z.string() });
 
@@ -247,6 +288,8 @@ export const shownRowSchema = z.discriminatedUnion("kind", [
   relayRowSchema,
   noticeRowSchema,
   limitRowSchema,
+  forkRowSchema,
+  restoreRowSchema,
   unknownRowSchema,
 ]);
 
@@ -259,6 +302,8 @@ export type CompactionRow = z.infer<typeof compactionRowSchema>;
 export type RelayRow = z.infer<typeof relayRowSchema>;
 export type NoticeRow = z.infer<typeof noticeRowSchema>;
 export type LimitRow = z.infer<typeof limitRowSchema>;
+export type ForkRow = z.infer<typeof forkRowSchema>;
+export type RestoreRow = z.infer<typeof restoreRowSchema>;
 export type AgentTurn = z.infer<typeof agentTurnSchema>;
 
 // A message posted while the agent was busy, waiting to be taken in.
@@ -290,21 +335,30 @@ export type ShownRun = z.infer<typeof shownRunSchema>;
 
 // What the live stream sends as the thread's log grows, up to the event `seq`: the rows that
 // changed, whole, and the waiting messages and the run as they now are.
+// Once another branch is current, the update starts it afresh: its rows are the branch's newest,
+// in place of every row before, and `reset` says where earlier ones are read from.
 export const rowsUpdateSchema = z.object({
   seq: z.number().int().nonnegative(),
   rows: z.array(shownRowSchema),
   pending: z.array(pendingMessageSchema),
   run: shownRunSchema.nullable(),
+  reset: z
+    .object({
+      branch: z.object({ id: z.string(), current: z.boolean() }),
+      before: z.number().int().nonnegative().nullable(),
+    })
+    .optional(),
 });
 
 export type RowsUpdate = z.infer<typeof rowsUpdateSchema>;
 
 // What a page of earlier rows is asked for: the rows before a place, and at most how many, or as
-// many as reach back to the row with the id `at`.
+// many as reach back to the row with the id `at`; of a branch other than the current one, named.
 export const rowsQuerySchema = z.object({
   before: z.coerce.number().int().nonnegative(),
   limit: z.coerce.number().int().min(1).max(ROWS_PAGE).optional(),
   at: z.string().min(1).optional(),
+  branch: z.string().min(1).optional(),
 });
 
 // The rows before a place, and the place of the first of them, or null once they reach the start.

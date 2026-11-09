@@ -7,9 +7,12 @@
 // compaction sits where it was made, with the summary the agent reads from then on in place of what
 // came before. Another agent's message waits in the inbox and takes its place when the agent takes
 // it in, as a person's does, and so does any other notification; subagents that ended runs one
-// after another, as older threads were told, show in one row where the first was. Folded one
-// event at a time, it also keeps for each row the last event that changed it and where it sits in
-// the agent's turn.
+// after another, as older threads were told, show in one row where the first was. The events
+// folded are one branch's: where the branch starts nothing runs or waits from before but what it
+// keeps, and one restored from a row ends there, with a line saying so. A thread forked from
+// another's conversation says so where the copy ends. Folded one event at a time, it also keeps
+// for each row the last event that changed it, that event leaving aside where the row sits in the
+// agent's turn, and that place.
 
 import type { AskAnswers } from "@/shared/ask.ts";
 import { COMPACT } from "@/shared/threads/commands.ts";
@@ -148,6 +151,27 @@ export interface ToolRow {
   standingOn?: string;
 }
 
+// Where a thread forked from another's conversation ends its copy: the thread and row it came
+// from, as that thread was titled, and by whom; or the summary of that conversation it starts from.
+export interface ForkRow {
+  kind: "fork";
+  id: string;
+  seq: number;
+  by: Person | null;
+  postedAt: string;
+  from: { threadId: string; rowId?: string; title: string };
+  summary?: true;
+}
+
+// Where a branch restored from the row before goes on: by whom and when. Nothing the agent reads.
+export interface RestoreRow {
+  kind: "restore";
+  id: string;
+  seq: number;
+  by: Person | null;
+  postedAt: string;
+}
+
 // The thread compacted for the agent: by whom, null for the agent itself, the summary it reads in
 // place of the rows before the one at `firstKeptSeq`, the focus it was asked to keep, and about how
 // many tokens it read before and after.
@@ -228,6 +252,8 @@ export type TranscriptRow =
   | RelayRow
   | NoticeRow
   | LimitRow
+  | ForkRow
+  | RestoreRow
   | UnknownRow;
 
 // Whether the message asks for the thread to be compacted.
@@ -350,6 +376,8 @@ export interface TranscriptFold {
   // The transcript so far. Its rows are the fold's own, which later events change.
   transcript(): Transcript;
   changedAt(index: number): number;
+  // The seq of the last event that changed the row itself, leaving its turn aside.
+  touchedAt(index: number): number;
   turnAt(index: number): AgentTurn | null;
   // The index of the row with the id; -1 when there is none.
   indexOf(id: string): number;
@@ -360,6 +388,7 @@ export function createFold(): TranscriptFold {
   const indexOf = new Map<string, number>();
   // By row index.
   const changed: number[] = [];
+  const touchedAt: number[] = [];
   const turns: (AgentTurn | null)[] = [];
   const pending = new Map<string, PendingMessage>();
   const inbox = new Map<string, RelayMessage>();
@@ -376,6 +405,33 @@ export function createFold(): TranscriptFold {
   const compacting = new Set<string>();
   const personOf = (userId: string): Person =>
     people.get(userId) ?? { kind: "user", userId, name: "(former member)" };
+
+  // Where a branch or a fork starts afresh: nothing runs, a reply being written ends there, the
+  // open calls will not run, and of the messages waiting only those kept still wait.
+  function settle(touch: (id: string) => void, keep: readonly string[] = []) {
+    run = null;
+    for (const reply of replies.values()) {
+      if (reply.status !== "streaming") continue;
+      reply.status = "interrupted";
+      touch(reply.id);
+    }
+    for (const id of pending.keys()) if (!keep.includes(id)) pending.delete(id);
+    for (const call of calls.values()) {
+      if (call.state !== "pending" && call.state !== "allowed") continue;
+      call.state = "stopped";
+      touch(call.id);
+    }
+  }
+
+  // Leaves out every row after the one with the id.
+  function endAt(id: string) {
+    const index = indexOf.get(id);
+    if (index === undefined) return;
+    for (const row of rows.splice(index + 1)) indexOf.delete(row.id);
+    changed.length = Math.min(changed.length, rows.length);
+    touchedAt.length = Math.min(touchedAt.length, rows.length);
+    turns.length = rows.length;
+  }
 
   // Folds the event in, adding the rows it makes with `push` and naming the rows it changes with
   // `touch`.
@@ -675,6 +731,33 @@ export function createFold(): TranscriptFold {
       case "run.completed":
         if (run?.id === event.data.runId) run = null;
         break;
+      case "branch.started":
+        if (event.data.kind === "restore") endAt(event.data.rowId);
+        settle(touch, event.data.keep);
+        if (event.data.kind === "restore") {
+          push({
+            kind: "restore",
+            id: event.id,
+            seq: event.seq,
+            by: event.actor.kind === "user" ? event.actor : null,
+            postedAt: event.createdAt,
+          });
+        }
+        break;
+      case "thread.forked": {
+        settle(touch);
+        const { threadId, rowId, title, summary } = event.data;
+        push({
+          kind: "fork",
+          id: event.id,
+          seq: event.seq,
+          by: event.actor.kind === "user" ? event.actor : null,
+          postedAt: event.createdAt,
+          from: { threadId, ...(rowId && { rowId }), title },
+          ...(summary && { summary: true as const }),
+        });
+        break;
+      }
       case "run.cancelled":
         push({
           kind: "stop",
@@ -709,7 +792,12 @@ export function createFold(): TranscriptFold {
           if (index !== undefined) touched.add(index);
         },
       );
-      for (const index of touched) changed[index] = raw.seq;
+      // A branch that ends at a row leaves out those after it.
+      for (const index of touched) if (index >= rows.length) touched.delete(index);
+      for (const index of touched) {
+        changed[index] = raw.seq;
+        touchedAt[index] = raw.seq;
+      }
       // A row's turn follows from the agent's rows around it, so the turns of each run of them a
       // changed row is in are worked out again.
       const done = new Set<number>();
@@ -741,6 +829,10 @@ export function createFold(): TranscriptFold {
 
     changedAt(index) {
       return changed[index] ?? 0;
+    },
+
+    touchedAt(index) {
+      return touchedAt[index] ?? 0;
     },
 
     turnAt(index) {

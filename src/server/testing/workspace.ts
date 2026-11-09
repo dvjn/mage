@@ -55,6 +55,7 @@ import { agentNameIn, type Space, type SpaceRole, createSpaces } from "@/server/
 import { createSpaceStore } from "@/server/spaces/store.ts";
 import { createThreadAccess } from "@/server/spaces/thread-access.ts";
 import { createDeltaStore } from "@/server/threads/delta-store.ts";
+import { createAsideStore } from "@/server/threads/asides.ts";
 import { createThreadLog } from "@/server/threads/log.ts";
 import { createThreadReadStore } from "@/server/threads/read-store.ts";
 import { createThreads } from "@/server/threads/service.ts";
@@ -326,6 +327,8 @@ export function setup(
   const titledWith: string[] = [];
   const threads = createThreads({
     agentNameIn: (space) => agentNameIn(settingStore, space),
+    ask: (threadId, branchId, rowId) => worker.requestAt(threadId, branchId, rowId),
+    asides: createAsideStore(db),
     spaces,
     spaceStore,
     access,

@@ -11,7 +11,7 @@ import {
 import { user } from "@/server/orgs/schema.ts";
 import { space } from "@/server/spaces/schema.ts";
 
-// A conversation in a space; its content is its event log.
+// A conversation in a space; its content is its event log, in branches of which one is current.
 export const thread = sqliteTable(
   "thread",
   {
@@ -30,7 +30,9 @@ export const thread = sqliteTable(
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     parentThreadId: text("parent_thread_id"),
     rootThreadId: text("root_thread_id"),
-    // The seq of the thread's newest event; 0 before the first.
+    // The branch people see and the agent reads; set for every thread, its root's id being its own.
+    currentBranchId: text("current_branch_id"),
+    // The seq of the thread's newest event in any branch; 0 before the first.
     lastEventSeq: integer("last_event_seq").default(0).notNull(),
     // The text of its newest message or reply without markdown, on one line, which lists find it by;
     // null before the first.
@@ -46,7 +48,7 @@ export const thread = sqliteTable(
   (table) => [index("thread_space_idx").on(table.spaceId, table.updatedAt)],
 );
 
-// What happened in a thread, numbered 1, 2, 3… per thread with no gaps.
+// What happened in a thread, numbered 1, 2, 3… per thread with no gaps across its branches.
 export const threadEvent = sqliteTable(
   "thread_event",
   {
@@ -54,6 +56,8 @@ export const threadEvent = sqliteTable(
     threadId: text("thread_id")
       .notNull()
       .references(() => thread.id, { onDelete: "cascade" }),
+    // The branch it happened in; set for every event.
+    branchId: text("branch_id"),
     seq: integer("seq").notNull(),
     type: text("type").notNull(),
     actorKind: text("actor_kind", { enum: ["user", "agent"] }).notNull(),
@@ -67,7 +71,46 @@ export const threadEvent = sqliteTable(
   (table) => [
     uniqueIndex("thread_event_thread_seq_idx").on(table.threadId, table.seq),
     index("thread_event_thread_type_idx").on(table.threadId, table.type, table.seq),
+    index("thread_event_branch_idx").on(table.branchId, table.seq),
   ],
+);
+
+// A line of a thread's conversation. The root holds what came before any other; every other
+// branch starts from its parent as it was up to the event `forkSeq`, then goes on with events of
+// its own. One that writes a row again, a person's message or a reply, names that row and the
+// first row of the versions it joins; one restored from a row names that row.
+export const threadBranch = sqliteTable(
+  "thread_branch",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    parentBranchId: text("parent_branch_id"),
+    forkSeq: integer("fork_seq"),
+    kind: text("kind", { enum: ["root", "retry", "edit", "restore"] }).notNull(),
+    rowId: text("row_id"),
+    groupRowId: text("group_row_id"),
+    createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [index("thread_branch_thread_idx").on(table.threadId, table.createdAt)],
+);
+
+// Where a branch's events come from: each branch it descends from, itself included, with the
+// newest event it takes of that one, none for no limit. Written with the branch, never changed.
+export const threadBranchSource = sqliteTable(
+  "thread_branch_source",
+  {
+    branchId: text("branch_id")
+      .notNull()
+      .references(() => threadBranch.id, { onDelete: "cascade" }),
+    sourceBranchId: text("source_branch_id").notNull(),
+    untilSeq: integer("until_seq"),
+  },
+  (table) => [primaryKey({ columns: [table.branchId, table.sourceBranchId] })],
 );
 
 // How far into a thread a person has seen: the seq of the newest event they saw there, and when.
@@ -107,4 +150,45 @@ export const messageDelta = sqliteTable(
     primaryKey({ columns: [table.messageId, table.index] }),
     index("message_delta_thread_idx").on(table.threadId),
   ],
+);
+
+// A side question someone asked about a row of a thread's branch: seen by them alone, and never
+// read by the thread's agent.
+export const aside = sqliteTable(
+  "aside",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    branchId: text("branch_id").notNull(),
+    rowId: text("row_id").notNull(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [index("aside_thread_user_idx").on(table.threadId, table.userId)],
+);
+
+// What was asked and answered in a side question, in order: with the model each answer was
+// written with, and whether writing it failed, its text then saying why.
+export const asideTurn = sqliteTable(
+  "aside_turn",
+  {
+    id: text("id").primaryKey(),
+    asideId: text("aside_id")
+      .notNull()
+      .references(() => aside.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["question", "answer"] }).notNull(),
+    text: text("text").notNull(),
+    model: text("model"),
+    failed: integer("failed", { mode: "boolean" }).default(false).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [index("aside_turn_aside_idx").on(table.asideId, table.createdAt)],
 );
