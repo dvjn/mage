@@ -34,7 +34,6 @@ import type {
 } from "@/shared/transcript.ts";
 
 import { readOf } from "./compaction.ts";
-import { TOOL_SEARCH } from "./tool-search.ts";
 
 type UserMessage = Extract<ModelMessage, { role: "user" }>;
 
@@ -241,7 +240,7 @@ export function instructionsFor(guidance: Guidance = NO_GUIDANCE) {
   if (guidance.deferredTools?.length) {
     sections.push(
       [
-        `MCP tools to turn on with ${named(TOOL_SEARCH)} before calling them:`,
+        "MCP tools to turn on with the tool search before calling them:",
         ...guidance.deferredTools.flatMap((group) => [
           `${group.server} (\`${wirePrefix(group.prefix)}\`):`,
           ...group.tools.map((tool) => `- ${wireToolName(tool.name)}: ${tool.description}`),

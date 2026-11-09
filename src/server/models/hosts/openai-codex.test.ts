@@ -191,6 +191,53 @@ describe("Codex gateway", () => {
     expect(JSON.stringify(sent?.body.input)).not.toContain('"system"');
   });
 
+  it("ends the request with the model's tool search as a call of the search tool, with what it asked", async () => {
+    const empty = reply([]);
+    const [created, completed] = [empty[0], empty.at(-1)];
+    const search = {
+      type: "tool_search_call",
+      id: "tsc_9",
+      execution: "client",
+      call_id: "call_9",
+      arguments: { query: "notes" },
+    };
+    const { fetchFn } = recordingFetch([
+      sse([
+        created!,
+        {
+          type: "response.output_item.added",
+          sequence_number: 2,
+          output_index: 0,
+          item: { ...search, status: "in_progress" },
+        },
+        {
+          type: "response.output_item.done",
+          sequence_number: 3,
+          output_index: 0,
+          item: { ...search, status: "completed" },
+        },
+        completed!,
+      ]),
+    ]);
+    const searching = {
+      ...request,
+      model: "gpt-6-luna",
+      tools: [{ id: "mcp.search", description: "Search.", inputSchema: { type: "object" } }],
+      search: "mcp.search",
+    };
+
+    const events = await collect(
+      createCodexGateway(fetchFn).stream(token, searching, new AbortController().signal),
+    );
+
+    expect(events).toContainEqual({
+      type: "tool-call",
+      callId: "call_9",
+      toolId: "mcp.search",
+      input: { query: "notes" },
+    });
+  });
+
   it("hands back the turn state a run's first request was given in its later ones, and only there", async () => {
     const turn = (state: string) => {
       const response = sse(reply(["Hi"]));

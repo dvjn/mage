@@ -93,6 +93,9 @@ export interface ModelRequest {
   // those turned on after `tools`.
   searchable?: ModelTool[];
   toolsOn?: string[];
+  // The tool among `tools` that turns searchable tools on. A provider with a tool search of its own
+  // offers that in its place, still run by whoever asked, and gives back the tools it turned on.
+  search?: string;
 }
 
 export type ModelEvent =

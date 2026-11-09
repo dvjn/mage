@@ -1,11 +1,13 @@
 // Lists the models a Bedrock connection can chat with, from Bedrock's foundation models and its
-// inference profiles in the connection's region, and streams replies from Bedrock's Converse API
-// with the AI SDK's Bedrock provider. A connection reaches Bedrock with a Bedrock API key, AWS
-// access keys, or access keys that assume a role, whose credentials are kept until shortly before
-// they expire. A connection's proxy takes the place of the runtime API for replies, with its headers
-// added; lists always come from Bedrock in the region.
+// inference profiles in the connection's region, and streams replies with the AI SDK's Bedrock
+// providers: Claude's from InvokeModel, which takes Anthropic's Messages API, and the others' from
+// the Converse API. A connection reaches Bedrock with a Bedrock API key, AWS access keys, or access
+// keys that assume a role, whose credentials are kept until shortly before they expire. A
+// connection's proxy takes the place of the runtime API for replies, with its headers added; lists
+// always come from Bedrock in the region.
 
 import { createAmazonBedrock } from "@ai-sdk/amazon-bedrock";
+import { createAmazonBedrockAnthropic } from "@ai-sdk/amazon-bedrock/anthropic";
 import { AwsClient } from "aws4fetch";
 import * as z from "zod";
 
@@ -15,6 +17,7 @@ import type { ModelGateway, ModelToken } from "@/server/models/gateway.ts";
 import { makerNamed } from "@/shared/makers.ts";
 
 import { type ProviderErrors, streamReply } from "./ai-sdk-stream.ts";
+import { anthropicReply } from "./anthropic-api.ts";
 
 interface AwsCredentials {
   accessKeyId: string;
@@ -200,24 +203,21 @@ export const bedrockErrors: ProviderErrors = {
   explains: (name) => name === "x-amzn-requestid" || name === "x-amzn-errortype",
 };
 
-// A cache breakpoint in a Converse request. Claude on Bedrock caches a prompt only up to these, for
-// five minutes from each use; the other models Mage reaches there cache by themselves, if at all,
-// and some refuse the breakpoints.
-const CACHE_POINT = { bedrock: { cachePoint: { type: "default" } } };
-
 // Bedrock's ids for Claude name its maker, as do inference profiles of it.
 function isClaude(model: string) {
   return model.includes("anthropic.");
 }
 
-// Replies through Bedrock's Converse API, the instructions as the system prompt. A model that can
-// think does so at the effort asked for.
+// Replies through Bedrock, the instructions as the system prompt. A model that can think does so at
+// the effort asked for. Claude replies through InvokeModel, cached up to its breakpoints and told
+// the thread's changes mid-conversation where it takes them; the other models Mage reaches there
+// reply through Converse and cache by themselves, if at all.
 export function createBedrockGateway(fetchFn: typeof fetch = fetch, assume?: Assume): ModelGateway {
   const roles = assume ?? createRoleCredentials(fetchFn);
   return {
     async *stream(token, request, signal) {
       const signer = await signerOf(token, roles);
-      const provider = createAmazonBedrock({
+      const settings = {
         region: signer.region,
         ...(signer.apiKey
           ? { apiKey: signer.apiKey }
@@ -226,12 +226,20 @@ export function createBedrockGateway(fetchFn: typeof fetch = fetch, assume?: Ass
         ...(token.proxy?.baseUrl && { baseURL: token.proxy.baseUrl }),
         headers: { ...token.proxy?.headers },
         fetch: fetchFn,
-      });
-      yield* streamReply(provider(request.model), request, signal, {
+      };
+      if (isClaude(request.model)) {
+        const provider = createAmazonBedrockAnthropic(settings);
+        yield* anthropicReply(provider(request.model), request, signal, {
+          system: request.instructions,
+          errors: bedrockErrors,
+          platform: "bedrock",
+        });
+        return;
+      }
+      yield* streamReply(createAmazonBedrock(settings)(request.model), request, signal, {
         system: request.instructions,
         ...(request.effort && { reasoning: request.effort }),
         errors: bedrockErrors,
-        ...(isClaude(request.model) && { cache: CACHE_POINT }),
       });
     },
   };

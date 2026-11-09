@@ -2,13 +2,19 @@
 // its Responses endpoint with the AI SDK's OpenAI provider. A connection's proxy takes the place of
 // the API for both, with its headers added.
 
-import { createOpenAI } from "@ai-sdk/openai";
+import { createOpenAI, openai } from "@ai-sdk/openai";
 import * as z from "zod";
 
 import type { Catalog } from "@/server/models/catalog.ts";
 import type { Effort, ModelGateway, ModelRequest } from "@/server/models/gateway.ts";
 
-import { type InlineChanges, type ProviderErrors, streamReply } from "./ai-sdk-stream.ts";
+import {
+  type InlineChanges,
+  type ProviderErrors,
+  streamReply,
+  toolName,
+  type ToolSearch,
+} from "./ai-sdk-stream.ts";
 
 const API_URL = "https://api.openai.com/v1";
 
@@ -75,9 +81,57 @@ export function responsesEffort(request: ModelRequest): {
   };
 }
 
+// The models with a tool search of their own, from GPT-5.4 on.
+function takesToolSearch(model: string) {
+  const version = /^gpt-(\d+)(?:\.(\d+))?/.exec(model);
+  if (!version) return false;
+  const [major, minor] = [Number(version[1]), Number(version[2] ?? 0)];
+  return major > 5 || (major === 5 && minor >= 4);
+}
+
+// The Responses API's tool search, run by whoever asked: the search tool is offered as it, and each
+// search gives back the tools it turned on, which the API adds at the end of the context so the
+// cached prompt before them stays as it was.
+const RESPONSES_SEARCH: ToolSearch = {
+  tool: (search) =>
+    openai.tools.toolSearch({
+      execution: "client",
+      description: search.description,
+      parameters: search.inputSchema,
+    }),
+  input: (callId, input) => ({ arguments: input, call_id: callId }),
+  // A search call's item needs an id of its kind; nothing is kept between requests to look it up.
+  callOptions(callId) {
+    const itemId = `tsc_${callId.replace(/^call_/, "")}`;
+    return { openai: { itemId }, azure: { itemId } };
+  },
+  inputOf(input) {
+    const call = (typeof input === "string" ? JSON.parse(input) : input) as { arguments?: unknown };
+    return call.arguments ?? {};
+  },
+  output: (_result, tools) => ({
+    type: "json",
+    value: {
+      tools: tools.map((tool) => ({
+        type: "function",
+        name: toolName(tool.id),
+        description: tool.description,
+        parameters: tool.inputSchema as never,
+        defer_loading: true,
+      })),
+    },
+  }),
+};
+
+// The tool search a Responses request is sent with, for a model that has one.
+export function responsesSearch(request: ModelRequest) {
+  return takesToolSearch(request.model) ? { search: RESPONSES_SEARCH } : {};
+}
+
 // Replies through the Responses endpoint with the instructions as the system prompt. A model that
 // can think is given the effort and streams a summary of its reasoning; one that takes them is told
-// effort changes in the conversation. The API caches prompts by itself; the thread keys its cache.
+// effort changes in the conversation, and turns tools on with its own tool search. The API caches
+// prompts by itself; the thread keys its cache.
 export function createOpenAIKeyGateway(fetchFn: typeof fetch = fetch): ModelGateway {
   return {
     async *stream(token, request, signal) {
@@ -94,12 +148,15 @@ export function createOpenAIKeyGateway(fetchFn: typeof fetch = fetch): ModelGate
         system: request.instructions,
         providerOptions: {
           openai: {
+            // Each request carries the whole conversation, so the API keeps nothing.
+            store: false,
             promptCacheKey: request.sessionId,
             ...(effort && { reasoningEffort: effort, reasoningSummary: "auto" }),
           },
         },
         errors: openaiErrors,
         ...(changes && { changes }),
+        ...responsesSearch(request),
       });
     },
   };

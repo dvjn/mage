@@ -2,14 +2,21 @@
 // its Messages endpoint with the AI SDK's Anthropic provider. A connection's proxy takes the place
 // of the API for both, with its headers added. The Claude sign-in lists and replies the same way.
 
-import { type AnthropicProvider, createAnthropic } from "@ai-sdk/anthropic";
-import type { Instructions } from "ai";
+import { createAnthropic } from "@ai-sdk/anthropic";
+import type { Instructions, LanguageModel } from "ai";
 import * as z from "zod";
 
 import type { Catalog } from "@/server/models/catalog.ts";
 import type { ModelGateway, ModelRequest } from "@/server/models/gateway.ts";
 
-import { type InlineChanges, type ProviderErrors, streamReply } from "./ai-sdk-stream.ts";
+import {
+  type InlineChanges,
+  type ProviderErrors,
+  streamReply,
+  toolName,
+  toolOutput,
+  type ToolSearch,
+} from "./ai-sdk-stream.ts";
 
 export const API_URL = "https://api.anthropic.com/v1";
 const API_VERSION = "2023-06-01";
@@ -92,22 +99,66 @@ export const anthropicErrors: ProviderErrors = {
   },
 };
 
-// The models that take system messages mid-conversation, and with them tools turned on there.
-const MID_CONVERSATION_SYSTEM =
-  /^claude-(?:(?:fable|mythos)-5(?:-1)?|opus-(?:4-8|5|5-5)|sonnet-5-5|haiku-5-5)(?:-\d{8})?$/;
+// Where Claude is served: the Anthropic API, Vertex AI, Bedrock's InvokeModel or Microsoft Foundry.
+// What a model takes mid-conversation differs between them.
+export type ClaudePlatform = "anthropic" | "vertex" | "bedrock" | "foundry";
 
-// The models that take an effort change in a system message mid-conversation.
-const MESSAGE_EFFORT =
-  /^claude-(?:(?:fable|mythos)-5-1|opus-5(?:-5)?|sonnet-5-5|haiku-5-5)(?:-\d{8})?$/;
+// The Claude model an id names on any platform, without Bedrock's region and maker, Vertex's
+// version, Bedrock's version or a date.
+function claudeModel(id: string) {
+  return id
+    .replace(/^(?:[a-z]+\.)?anthropic\./, "")
+    .replace(/@.*$/, "")
+    .replace(/-v\d+(?::\d+)?$/, "")
+    .replace(/-\d{8}$/, "");
+}
+
+// The models that take system messages mid-conversation, and with them tools turned on there by
+// name, on every platform but Foundry.
+const MID_CONVERSATION_SYSTEM =
+  /^claude-(?:(?:fable|mythos)-5(?:-1)?|opus-(?:4-8|5|5-5)|sonnet-5-5|haiku-5-5)$/;
+
+// The models with tool search, which load a tool declared but left out where a tool's result refers
+// to it, on every platform.
+const TOOL_SEARCH =
+  /^claude-(?:(?:fable|mythos)-5(?:-1)?|opus-(?:4-[5-8]|5|5-5)|sonnet-(?:4-[56]|5|5-5)|haiku-(?:4-5|5-5))$/;
+
+// For a model with tool search that takes no tool changes mid-conversation where it is served: each
+// searchable tool declared from the first request but not loaded, and loaded where a search's
+// result refers to it. A result that refers to tools may hold nothing else, so a search that turned
+// tools on gives back only them, which the model then reads in full.
+const REFERRING_SEARCH: ToolSearch = {
+  deferred: { anthropic: { deferLoading: true } },
+  output(result, tools) {
+    if (tools.length === 0) return toolOutput(result);
+    return {
+      type: "content",
+      value: tools.map((tool) => ({
+        type: "custom" as const,
+        providerOptions: { anthropic: { type: "tool-reference", toolName: toolName(tool.id) } },
+      })),
+    };
+  },
+};
+
+// The models that take an effort change in a system message mid-conversation, by platform.
+const MESSAGE_EFFORT: Record<ClaudePlatform, RegExp | null> = {
+  anthropic: /^claude-(?:(?:fable|mythos)-5-1|opus-5(?:-5)?|sonnet-5-5|haiku-5-5)$/,
+  vertex: /^claude-(?:(?:fable|mythos)-5-1|opus-5(?:-5)?|sonnet-5-5|haiku-5-5)$/,
+  bedrock: /^claude-(?:fable-5-1|opus-5-5)$/,
+  foundry: null,
+};
 
 // What a request is sent with so that what changes in the thread leaves its start as it was, for
-// the models that take changes mid-conversation: each searchable tool declared from the first
-// request but not loaded, and loaded where a system message adds it; and, while the thread's
-// first effort and the one asked for now are known, the first as the request's own, each change
-// since told where it happened. Otherwise the effort asked for now is the request's own.
-function changesFor(request: ModelRequest) {
-  const tools = MID_CONVERSATION_SYSTEM.test(request.model);
-  const pinned = MESSAGE_EFFORT.test(request.model) && request.effort && request.firstEffort;
+// the models that take changes mid-conversation where they are served: each searchable tool
+// declared from the first request but not loaded, and loaded where a system message adds it, or,
+// for the other models with tool search, where a search's result refers to it; and, while the
+// thread's first effort and the one asked for now are known, the first as the request's own, each
+// change since told where it happened. Otherwise the effort asked for now is the request's own.
+function changesFor(request: ModelRequest, platform: ClaudePlatform) {
+  const model = claudeModel(request.model);
+  const tools = platform !== "foundry" && MID_CONVERSATION_SYSTEM.test(model);
+  const pinned = !!MESSAGE_EFFORT[platform]?.test(model) && request.effort && request.firstEffort;
   const changes: InlineChanges | undefined =
     tools || pinned
       ? {
@@ -127,7 +178,8 @@ function changesFor(request: ModelRequest) {
           },
         }
       : undefined;
-  return { effort: pinned ? request.firstEffort : request.effort, changes };
+  const search = !tools && TOOL_SEARCH.test(model) ? REFERRING_SEARCH : undefined;
+  return { effort: pinned ? request.firstEffort : request.effort, changes, search };
 }
 
 // A cache breakpoint on Anthropic's Messages API, under any host that serves it. The API caches
@@ -136,20 +188,23 @@ export const ANTHROPIC_CACHE = { anthropic: { cacheControl: { type: "ephemeral" 
 
 // Replies through the provider's Messages API with the system prompt given, cached up to its
 // breakpoints. A model that can think does so at the effort asked for, and streams its thinking;
-// one that takes them is told tools turned on and effort changes mid-conversation.
+// one that takes them where it is served is told tools turned on and effort changes
+// mid-conversation, and one with tool search otherwise loads tools a search turned on from its
+// result.
 export function anthropicReply(
-  provider: AnthropicProvider,
+  model: LanguageModel,
   request: ModelRequest,
   signal: AbortSignal,
-  options: { system: Instructions; errors: ProviderErrors },
+  options: { system: Instructions; errors: ProviderErrors; platform: ClaudePlatform },
 ) {
-  const { effort, changes } = changesFor(request);
-  return streamReply(provider.messages(request.model), request, signal, {
+  const { effort, changes, search } = changesFor(request, options.platform);
+  return streamReply(model, request, signal, {
     system: options.system,
     // Adaptive thinking at that effort, or a thinking budget for models without it.
     ...(effort && { reasoning: effort }),
     errors: options.errors,
     ...(changes && { changes }),
+    ...(search && { search }),
     cache: ANTHROPIC_CACHE,
   });
 }
@@ -167,9 +222,10 @@ export function createAnthropicKeyGateway(fetchFn: typeof fetch = fetch): ModelG
         headers: { "user-agent": "mage", ...token.proxy?.headers },
         fetch: fetchFn,
       });
-      yield* anthropicReply(provider, request, signal, {
+      yield* anthropicReply(provider.messages(request.model), request, signal, {
         system: request.instructions,
         errors: anthropicErrors,
+        platform: "anthropic",
       });
     },
   };

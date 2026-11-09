@@ -38,7 +38,7 @@ async function ask(gateway: ModelGateway, token: ModelToken, model: string) {
   ).rejects.toThrow();
 }
 
-const CACHE_POINT = { cachePoint: { type: "default" } };
+const MARK = { cache_control: { type: "ephemeral" } };
 
 describe("Bedrock prompt cache", () => {
   const token = { access: "bedrock-key", accountId: null, settings: { region: "us-east-1" } };
@@ -48,17 +48,17 @@ describe("Bedrock prompt cache", () => {
 
     await ask(createBedrockGateway(fetchFn), token, "global.anthropic.claude-haiku-5-5");
 
-    const [body] = bodies as [
-      { system: unknown[]; messages: { content: unknown[] }[]; toolConfig: unknown },
-    ];
-    expect(body.system).toEqual([{ text: "You are the agent." }, CACHE_POINT]);
+    const [body] = bodies as [{ system: unknown[]; messages: { content: unknown[] }[] }];
+    expect(body.system).toEqual([{ type: "text", text: "You are the agent.", ...MARK }]);
     // The people's two messages are one turn, marked once at its end.
     expect(body.messages.map((message) => message.content)).toEqual([
-      [{ text: "[Ada Lovelace] How do engines compute?" }],
-      [{ text: "With gears." }, CACHE_POINT],
-      [{ text: "[Grace Hopper] // lunch?" }, { text: "[Ada Lovelace] And looms?" }, CACHE_POINT],
+      [{ type: "text", text: "[Ada Lovelace] How do engines compute?" }],
+      [{ type: "text", text: "With gears.", ...MARK }],
+      [
+        { type: "text", text: "[Grace Hopper] // lunch?" },
+        { type: "text", text: "[Ada Lovelace] And looms?", ...MARK },
+      ],
     ]);
-    expect(JSON.stringify(body.toolConfig)).not.toContain("cachePoint");
   });
 
   it("leaves the other models' requests unmarked", async () => {
@@ -66,7 +66,7 @@ describe("Bedrock prompt cache", () => {
 
     await ask(createBedrockGateway(fetchFn), token, "global.openai.gpt-6.1-terra");
 
-    expect(JSON.stringify(bodies[0])).not.toContain("cachePoint");
+    expect(JSON.stringify(bodies[0])).not.toMatch(/cachePoint|cache_control/);
   });
 });
 

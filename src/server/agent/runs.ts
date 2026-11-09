@@ -849,7 +849,7 @@ export function createRunWorker(options: RunWorkerOptions) {
             callId,
             ok: false,
             error: unsearched
-              ? `${modelName(space, unsearched.name)} is not on yet. Search for it or select it with ${modelName(space, TOOL_SEARCH)} first.`
+              ? `${modelName(space, unsearched.name)} is not on yet. Search for it or select it with the tool search first.`
               : spec
                 ? `The input is not valid: ${z.prettifyError(parsed!.error!)}`
                 : `No tool is named ${toolId} here.`,
@@ -1115,6 +1115,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           tools: forModel(available.filter((spec) => !searchable.has(spec.name))),
           searchable: forModel(available.filter((spec) => searchable.has(spec.name))),
           toolsOn: deferral.turnedOn.map((tool) => names.toModel(tool.id)),
+          search: names.toModel(TOOL_SEARCH),
         },
         controller.signal,
       );

@@ -17,9 +17,9 @@ import type { ModelGateway, ModelToken } from "@/server/models/gateway.ts";
 import { hostOf, listOf } from "@/shared/hosts.ts";
 import { makerOf } from "@/shared/makers.ts";
 
-import { ANTHROPIC_CACHE, anthropicErrors } from "./anthropic-api.ts";
+import { anthropicErrors, anthropicReply } from "./anthropic-api.ts";
 import { streamReply } from "./ai-sdk-stream.ts";
-import { openaiErrors } from "./openai-api.ts";
+import { openaiErrors, responsesSearch } from "./openai-api.ts";
 
 const SCOPE = "https://cognitiveservices.azure.com/.default";
 // Tokens are renewed this long before they expire.
@@ -102,7 +102,9 @@ export function createAzureCatalog(fetchFn: typeof fetch = fetch, entra?: Tokens
 
 // Replies through the resource, the instructions as the system prompt. A model that can think does
 // so at the effort asked for. Claude caches a prompt only up to the breakpoints it is marked with;
-// OpenAI's models cache by themselves, keyed by the thread.
+// Foundry takes no changes mid-conversation, so Claude loads tools a search turned on from its
+// result. OpenAI's models cache by themselves, keyed by the thread, and turn tools on with their own
+// tool search.
 export function createAzureGateway(fetchFn: typeof fetch = fetch, entra?: Tokens): ModelGateway {
   const tokens = entra ?? createEntraTokens(fetchFn);
   return {
@@ -118,11 +120,10 @@ export function createAzureGateway(fetchFn: typeof fetch = fetch, entra?: Tokens
           headers,
           fetch: fetchFn,
         });
-        yield* streamReply(provider.messages(request.model), request, signal, {
+        yield* anthropicReply(provider.messages(request.model), request, signal, {
           system: request.instructions,
-          ...reasoning,
           errors: anthropicErrors,
-          cache: ANTHROPIC_CACHE,
+          platform: "foundry",
         });
         return;
       }
@@ -138,9 +139,11 @@ export function createAzureGateway(fetchFn: typeof fetch = fetch, entra?: Tokens
         yield* streamReply(provider.responses(request.model), request, signal, {
           system: request.instructions,
           ...reasoning,
-          // The thread keys the resource's prompt cache.
-          providerOptions: { azure: { promptCacheKey: request.sessionId } },
+          // Each request carries the whole conversation, so the resource keeps nothing; the thread
+          // keys its prompt cache.
+          providerOptions: { azure: { store: false, promptCacheKey: request.sessionId } },
           errors: openaiErrors,
+          ...responsesSearch(request),
         });
         return;
       }

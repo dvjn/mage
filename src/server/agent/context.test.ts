@@ -115,7 +115,7 @@ describe("the system prompt", () => {
     });
     expect(prompt).toContain("with subagents__send,");
     expect(prompt).toContain("load it with skills__load_1a2b3c");
-    expect(prompt).toContain("turn on with mcp_servers__search_tools");
+    expect(prompt).toContain("MCP tools to turn on with the tool search before calling them:");
     expect(prompt).toContain("From Notes (`mcp__notes__*`):\nTitle notes.");
     expect(prompt).toContain("Notes (`mcp__notes__*`):\n- mcp__notes__echo: Say it back");
   });

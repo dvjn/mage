@@ -4,9 +4,11 @@
 // to run them, so a step that calls any ends the request with its calls; their ids become names
 // providers accept, and back. Tools go in the order given. What changed in the thread at a point in
 // its conversation goes there as a system message to a provider that takes it so, and otherwise
-// into the request's own settings. For a provider that caches a prompt only up to where it is
-// marked, the request is marked after its tools and system prompt, at the agent's last reply and at
-// its last message.
+// into the request's own settings. A provider that turns tools on from a search's results is given
+// back, by each search, the tools it turned on, so the tools sent stay the same; one with a tool
+// search of its own is offered it in place of the request's search tool. For a provider that caches
+// a prompt only up to where it is marked, the request is marked after its tools and system prompt,
+// at the agent's last reply and at its last message.
 
 import {
   APICallError,
@@ -18,6 +20,8 @@ import {
   RetryError,
   type ModelMessage as SdkMessage,
   streamText,
+  type Tool,
+  type ToolResultPart,
   type ToolSet,
 } from "ai";
 
@@ -30,6 +34,8 @@ import {
   ModelError,
   type ModelMessage,
   type ModelRequest,
+  type ModelTool,
+  type ModelToolResult,
 } from "@/server/models/gateway.ts";
 
 type ProviderOptions = NonNullable<Parameters<typeof streamText>[0]["providerOptions"]>;
@@ -45,6 +51,67 @@ export interface InlineChanges {
   message(change: ModelChange): ProviderOptions | null;
 }
 
+type ToolOutput = ToolResultPart["output"];
+
+// How a provider turns tools on from the results of the request's search tool, so that the tools
+// sent stay the same: what a search gives back, from its own result and the tools it turned on,
+// which the provider adds where the conversation has them. A provider may declare the searchable
+// tools from the first request, each left out until a search turns it on, and may take the search
+// tool as a tool of its own, whose calls still end the request to be run by whoever asked, with each
+// call's input as that tool takes it and back, and the options a call is sent back with.
+export interface ToolSearch {
+  output(result: ModelToolResult["output"], tools: ModelTool[]): ToolOutput;
+  deferred?: ProviderOptions;
+  tool?(search: ModelTool): Tool;
+  input?(callId: string, input: unknown): unknown;
+  inputOf?(input: unknown): unknown;
+  callOptions?(callId: string): ProviderOptions;
+}
+
+// The search for a request to a provider that turns tools on from its results: the search tool, the
+// searchable tools by id, the tools each search turned on, by its call, and those turned on by a call
+// the messages no longer hold.
+interface Searched {
+  search: ToolSearch;
+  toolId: string;
+  byId: Map<string, ModelTool>;
+  loaded: Map<string, string[]>;
+  left: string[];
+}
+
+// The messages for a provider that turns tools on from a search's results, with the tools a change
+// turned on given to the search whose result came before it, since the last reply, and left out of
+// the change; any other turned on are kept apart to be sent with the request's tools.
+function bySearch(request: ModelRequest, search: ToolSearch, toolId: string) {
+  const searched: Searched = {
+    search,
+    toolId,
+    byId: new Map((request.searchable ?? []).map((tool) => [tool.id, tool])),
+    loaded: new Map(),
+    left: [],
+  };
+  const messages: ModelMessage[] = [];
+  let last: string | undefined;
+  for (const message of request.messages) {
+    if (message.role === "assistant") last = undefined;
+    if (message.role === "tool") {
+      const found = message.results.find((result) => result.toolId === toolId);
+      if (found) {
+        last = found.callId;
+        searched.loaded.set(last, []);
+      }
+    }
+    if (message.role === "change" && message.tools) {
+      if (last) searched.loaded.get(last)!.push(...message.tools);
+      else searched.left.push(...message.tools);
+      if (message.effort) messages.push({ role: "change", effort: message.effort });
+      continue;
+    }
+    messages.push(message);
+  }
+  return { searched, messages };
+}
+
 // What one provider's error responses carry beyond the status and body.
 export interface ProviderErrors {
   // Whether a response header (lower case) helps explain the failure.
@@ -56,6 +123,13 @@ export interface ProviderErrors {
 // A tool's name for the model as a function name providers accept.
 export function toolName(id: string) {
   return wireToolName(id);
+}
+
+// What a call gave back, as the AI SDK takes it.
+export function toolOutput(output: ModelToolResult["output"]): ToolOutput {
+  return output.ok
+    ? { type: "json", value: (output.value ?? null) as never }
+    : { type: "error-text", value: output.error };
 }
 
 // Changes next to each other, told as one.
@@ -78,8 +152,13 @@ function joined(messages: ModelMessage[]) {
   return out;
 }
 
-// The messages as the AI SDK takes them; changes only for a provider that takes them inline.
-function sdkMessages(messages: ModelMessage[], changes?: InlineChanges): SdkMessage[] {
+// The messages as the AI SDK takes them; changes only for a provider that takes them inline, and
+// the search's calls and results as a provider's own tool search takes them.
+function sdkMessages(
+  messages: ModelMessage[],
+  changes?: InlineChanges,
+  searched?: Searched,
+): SdkMessage[] {
   return joined(messages).flatMap((message): SdkMessage[] => {
     switch (message.role) {
       case "change": {
@@ -98,7 +177,15 @@ function sdkMessages(messages: ModelMessage[], changes?: InlineChanges): SdkMess
           type: "tool-call" as const,
           toolCallId: call.callId,
           toolName: toolName(call.toolId),
-          input: call.input,
+          input:
+            searched && call.toolId === searched.toolId && searched.search.input
+              ? searched.search.input(call.callId, call.input)
+              : call.input,
+          ...(searched &&
+            call.toolId === searched.toolId &&
+            searched.search.callOptions && {
+              providerOptions: searched.search.callOptions(call.callId),
+            }),
         }));
         const text = message.text ? [{ type: "text" as const, text: message.text }] : [];
         return [{ role: "assistant", content: [...text, ...calls] }];
@@ -108,9 +195,10 @@ function sdkMessages(messages: ModelMessage[], changes?: InlineChanges): SdkMess
           type: "tool-result" as const,
           toolCallId: result.callId,
           toolName: toolName(result.toolId),
-          output: result.output.ok
-            ? { type: "json" as const, value: (result.output.value ?? null) as never }
-            : { type: "error-text" as const, value: result.output.error },
+          output:
+            searched && result.toolId === searched.toolId
+              ? searchOutput(searched, result)
+              : toolOutput(result.output),
         }));
         return [{ role: "tool", content: results }];
       }
@@ -118,11 +206,33 @@ function sdkMessages(messages: ModelMessage[], changes?: InlineChanges): SdkMess
   });
 }
 
-// The tools sent, in order: `tools`, then, for a provider that turns tools on in the conversation,
-// every searchable tool, left out until turned on, and for any other those turned on.
-function toolsSent(request: ModelRequest, changes?: InlineChanges) {
+// What a search gives back to a provider that turns tools on from it, with the tools it turned on.
+function searchOutput(searched: Searched, result: ModelToolResult) {
+  const tools = (searched.loaded.get(result.callId) ?? []).flatMap(
+    (id) => searched.byId.get(id) ?? [],
+  );
+  return searched.search.output(result.output, tools);
+}
+
+// The tools sent, in order: `tools`, then, for a provider that turns tools on in the conversation or
+// from a search's results and declares them, every searchable tool, left out until turned on, but
+// those turned on by a search the messages no longer hold; for one that does not declare them,
+// only those; and for any other those turned on.
+function toolsSent(request: ModelRequest, changes?: InlineChanges, searched?: Searched) {
   const searchable = request.searchable ?? [];
   const tools = (request.tools ?? []).map((tool) => ({ tool, providerOptions: undefined }));
+  if (searched) {
+    const left = new Set(searched.left);
+    const { deferred } = searched.search;
+    const declared = deferred ? searchable : searchable.filter((tool) => left.has(tool.id));
+    return [
+      ...tools,
+      ...declared.map((tool) => ({
+        tool,
+        providerOptions: left.has(tool.id) ? undefined : deferred,
+      })),
+    ];
+  }
   const deferred = changes?.deferred;
   if (deferred) {
     return [...tools, ...searchable.map((tool) => ({ tool, providerOptions: deferred }))];
@@ -285,20 +395,28 @@ export async function* streamReply(
     changes?: InlineChanges;
     // For a provider that caches a prompt only up to where it is marked, what marks a breakpoint.
     cache?: ProviderOptions;
+    // For a provider that turns tools on from the request's search tool's results, how.
+    search?: ToolSearch;
   },
 ): AsyncIterable<ModelEvent> {
   const { changes, cache } = options;
-  const sent = toolsSent(request, changes);
+  const offersSearch = options.search && request.tools?.some((tool) => tool.id === request.search);
+  const { searched, messages } = offersSearch
+    ? bySearch(request, options.search!, request.search!)
+    : { searched: undefined, messages: request.messages };
+  const sent = toolsSent(request, changes, searched);
   // The tools by the names the model knows them by.
   const ids = new Map(sent.map(({ tool }) => [toolName(tool.id), tool.id]));
   const tools: ToolSet = Object.fromEntries(
     sent.map(({ tool, providerOptions }) => [
       toolName(tool.id),
-      {
-        description: tool.description,
-        inputSchema: jsonSchema(tool.inputSchema as JSONSchema7),
-        ...(providerOptions && { providerOptions }),
-      },
+      searched?.search.tool && tool.id === searched.toolId
+        ? searched.search.tool(tool)
+        : {
+            description: tool.description,
+            inputSchema: jsonSchema(tool.inputSchema as JSONSchema7),
+            ...(providerOptions && { providerOptions }),
+          },
     ]),
   );
   const result = streamText({
@@ -308,8 +426,8 @@ export async function* streamReply(
     }),
     ...(options.reasoning && { reasoning: options.reasoning }),
     messages: cache
-      ? marked(sdkMessages(request.messages, changes), cache)
-      : sdkMessages(request.messages, changes),
+      ? marked(sdkMessages(messages, changes, searched), cache)
+      : sdkMessages(messages, changes, searched),
     ...(changes && { allowSystemInMessages: true }),
     ...(options.providerOptions && { providerOptions: options.providerOptions }),
     // Sent in the order given.
@@ -324,7 +442,7 @@ export async function* streamReply(
       if (stepNumber === 0 || !request.beforeStep) return undefined;
       const added = request.beforeStep();
       return added.length > 0
-        ? { messages: [...messages, ...sdkMessages(added, changes)] }
+        ? { messages: [...messages, ...sdkMessages(added, changes, searched)] }
         : undefined;
     },
     abortSignal: signal,
@@ -354,14 +472,19 @@ export async function* streamReply(
       case "text-delta":
         if (part.text) yield { type: "delta", text: part.text };
         break;
-      case "tool-call":
+      case "tool-call": {
+        const toolId = ids.get(part.toolName) ?? part.toolName;
         yield {
           type: "tool-call",
           callId: part.toolCallId,
-          toolId: ids.get(part.toolName) ?? part.toolName,
-          input: part.input,
+          toolId,
+          input:
+            searched?.search.inputOf && toolId === searched.toolId
+              ? searched.search.inputOf(part.input)
+              : part.input,
         };
         break;
+      }
       case "finish-step":
         yield {
           type: "step-end",

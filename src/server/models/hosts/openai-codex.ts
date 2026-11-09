@@ -12,7 +12,7 @@ import type { ModelGateway } from "@/server/models/gateway.ts";
 import type { DeviceOAuth, OAuthTokens } from "@/server/models/oauth.ts";
 
 import { type ProviderErrors, streamReply } from "./ai-sdk-stream.ts";
-import { responsesEffort } from "./openai-api.ts";
+import { responsesEffort, responsesSearch } from "./openai-api.ts";
 
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const ISSUER = "https://auth.openai.com";
@@ -253,10 +253,11 @@ export const codexErrors: ProviderErrors = {
 // (`store: false`), so every request carries the whole conversation, the instructions as their own
 // field rather than a system message, and the encrypted reasoning back; it takes no output token
 // limit or sampling settings. A model that can think is given the effort, told changes to it in the
-// conversation where it takes them, and streams a summary of its reasoning. The thread id keys its
-// prompt cache and names the session and thread, as the Codex CLI's do, and the model hints where
-// to route, so the backend sends the thread's requests where its cache is. A run is one turn: its later requests hand back the turn
-// state its first was given, which keeps them on the server that holds the run's cache.
+// conversation and turns tools on with its own tool search where it takes them, and streams a
+// summary of its reasoning. The thread id keys its prompt cache and names the session and thread,
+// as the Codex CLI's do, and the model hints where to route, so the backend sends the thread's
+// requests where its cache is. A run is one turn: its later requests hand back the turn state its
+// first was given, which keeps them on the server that holds the run's cache.
 export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway {
   // The turn state of the runs asked for lately, by run.
   const turns = new Map<string, string>();
@@ -308,6 +309,7 @@ export function createCodexGateway(fetchFn: typeof fetch = fetch): ModelGateway 
         },
         errors: codexErrors,
         ...(changes && { changes }),
+        ...responsesSearch(request),
       });
     },
   };

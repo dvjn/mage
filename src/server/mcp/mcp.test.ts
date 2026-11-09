@@ -1901,7 +1901,7 @@ describe("searching for MCP tools", () => {
     );
     const second = await model.next();
     expect(second.texts.slice(-2)[0]).toContain(
-      `${wireToolName(named("echo"))} is not on yet. Search for it or select it with mcp_servers__search_tools first.`,
+      `${wireToolName(named("echo"))} is not on yet. Search for it or select it with the tool search first.`,
     );
     expect(second.texts.at(-1)).toContain(`"turnedOn":["${named("echo")}"]`);
     expect(second.texts.at(-1)).toContain('"parameters":"text: string"');

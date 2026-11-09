@@ -150,12 +150,13 @@ export function createClaudeGateway(fetchFn: typeof fetch = fetch): ModelGateway
         headers: { ...CLAUDE_HEADERS, ...token.proxy?.headers },
         fetch: fetchFn,
       });
-      yield* anthropicReply(provider, request, signal, {
+      yield* anthropicReply(provider.messages(request.model), request, signal, {
         system: [
           { role: "system", content: IDENTITY },
           { role: "system", content: request.instructions },
         ],
         errors: claudeErrors,
+        platform: "anthropic",
       });
     },
   };
