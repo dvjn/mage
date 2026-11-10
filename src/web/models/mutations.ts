@@ -57,7 +57,10 @@ export function useRefreshModels() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: () => fetchModels(true),
-    onSuccess: (models) => queryClient.setQueryData(modelsQuery.queryKey, models),
+    onSuccess: async (models) => {
+      queryClient.setQueryData(modelsQuery.queryKey, models);
+      await queryClient.invalidateQueries({ queryKey: ["connection-models"] });
+    },
   });
 }
 

@@ -58,7 +58,7 @@ import {
 import { meQuery } from "@/web/auth/queries";
 import { connectionsQuery, modelsQuery } from "@/web/models/queries";
 import { ConfirmDialog } from "@/web/components/confirm-dialog";
-import { useRemoveConnection } from "@/web/models/mutations";
+import { useRefreshModels, useRemoveConnection } from "@/web/models/mutations";
 import { connectionModelsQuery } from "@/web/models/queries";
 
 // How it connects, as its host's way of connecting is called.
@@ -344,6 +344,7 @@ export function OrgProviders() {
   const manages = me.data?.role === "owner";
   const team = me.data?.org.kind === "team";
   const connections = useQuery({ ...connectionsQuery, enabled: !!me.data });
+  const refresh = useRefreshModels();
   const [adding, setAdding] = useState(false);
   const [action, setAction] = useState<RowAction | null>(null);
   const list = connections.data ?? [];
@@ -382,13 +383,27 @@ export function OrgProviders() {
           <div className="flex flex-col gap-2">
             {/* Where a table's search row would hold its action. */}
             {manages && (
-              <div className="flex justify-end">
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  aria-label="Refresh models"
+                  disabled={refresh.isPending}
+                  onClick={() => refresh.mutate()}
+                >
+                  <RotateCcwIcon className={refresh.isPending ? "animate-spin" : undefined} />
+                  <span className="hidden sm:inline">Refresh models</span>
+                </Button>
                 <HeaderAction
                   icon={<PlusIcon />}
                   label="Add provider"
                   onClick={() => setAdding(true)}
                 />
               </div>
+            )}
+            {refresh.error && (
+              <p role="alert" className="text-sm text-destructive">
+                {refresh.error.message}
+              </p>
             )}
             <ProvidersTable connections={list} manages={manages} onAction={setAction} />
           </div>
