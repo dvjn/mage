@@ -6,6 +6,7 @@ import * as z from "zod";
 
 import { AUTH_KINDS, hostIdSchema } from "@/shared/hosts.ts";
 import { MAKER_IDS } from "@/shared/makers.ts";
+import { modelPricingSchema } from "@/shared/model-pricing.ts";
 import { type Effort, effortSchema } from "@/shared/threads/thread.ts";
 
 export const modelSchema = z.object({
@@ -21,6 +22,7 @@ export const modelSchema = z.object({
   connectionLabel: z.string(),
   contextWindow: z.number().optional(),
   reasoning: z.boolean().optional(),
+  pricing: modelPricingSchema.optional(),
 });
 
 export type ModelSummary = z.infer<typeof modelSchema>;

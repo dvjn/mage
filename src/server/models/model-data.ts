@@ -3,14 +3,22 @@
 
 import data from "./data/models.json" with { type: "json" };
 import type { HostId } from "@/shared/hosts.ts";
+import type { ModelPricing } from "@/shared/model-pricing.ts";
 
 import type { CatalogModel } from "./catalog.ts";
 
 type Known = Partial<
-  Record<HostId, Record<string, { contextWindow?: number; reasoning?: boolean }>>
+  Record<
+    HostId,
+    Record<string, { contextWindow?: number; reasoning?: boolean; pricing?: ModelPricing }>
+  >
 >;
 
 const known: Known = data;
+
+export function pricingOf(host: HostId, id: string): ModelPricing | undefined {
+  return known[host]?.[id]?.pricing;
+}
 
 // The host's models in the vendored data, named by their ids.
 export function knownModels(host: HostId): CatalogModel[] {
@@ -23,6 +31,7 @@ export function described(host: HostId, model: CatalogModel): CatalogModel {
   if (!extra) return model;
   return {
     ...model,
+    ...(!model.pricing && extra.pricing && { pricing: extra.pricing }),
     ...(model.contextWindow === undefined &&
       extra.contextWindow && {
         contextWindow: extra.contextWindow,

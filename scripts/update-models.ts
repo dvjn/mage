@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 import { HOST_IDS, type HostId, hostOf } from "../src/shared/hosts.ts";
+import type { ModelPricing } from "../src/shared/model-pricing.ts";
 
 const SOURCE_REPO = "BerriAI/litellm";
 const SOURCE_FILE = "model_prices_and_context_window.json";
@@ -18,6 +19,7 @@ const LICENSE = path.join(import.meta.dirname, "../src/server/models/data/LICENS
 export interface ModelData {
   contextWindow?: number;
   reasoning?: true;
+  pricing?: ModelPricing;
 }
 
 export type Vendored = Partial<Record<HostId, Record<string, ModelData>>>;
@@ -28,6 +30,35 @@ interface Entry {
   max_input_tokens?: unknown;
   supports_reasoning?: unknown;
   deprecation_date?: unknown;
+  [key: string]: unknown;
+}
+
+// Only standard text rates: batch, priority, audio and image prices describe other services.
+export function priceData(entry: Entry): ModelPricing | undefined {
+  const fields = {
+    input: "input_cost_per_token",
+    output: "output_cost_per_token",
+    cacheRead: "cache_read_input_token_cost",
+    cacheWrite: "cache_creation_input_token_cost",
+    cacheWrite1h: "cache_creation_input_token_cost_above_1hr",
+  } as const;
+  function rates(suffix = "") {
+    const result: Partial<Omit<ModelPricing, "tiers">> = {};
+    for (const [field, key] of Object.entries(fields)) {
+      const value = entry[`${key}${suffix}`];
+      if (typeof value === "number" && Number.isFinite(value) && value >= 0) {
+        result[field as keyof typeof fields] = value;
+      }
+    }
+    return result;
+  }
+  const base = rates();
+  if (base.input === undefined || base.output === undefined) return undefined;
+  const tiers = [100, 128, 200, 272].flatMap((size) => {
+    const tier = rates(`_above_${size}k_tokens`);
+    return Object.keys(tier).length > 0 ? [{ above: size * 1000, ...tier }] : [];
+  });
+  return { ...base, input: base.input, output: base.output, ...(tiers.length > 0 && { tiers }) };
 }
 
 // Providers whose ids carry a region or route after their prefix, which their hosts never take.
@@ -66,9 +97,11 @@ export function modelData(upstream: unknown, today: string): Vendored {
       if (!id || (serves && !serves.test(id))) continue;
       const known = models[id] ?? {};
       const contextWindow = known.contextWindow ?? value.max_input_tokens;
+      const pricing = known.pricing ?? priceData(value);
       models[id] = {
         ...(typeof contextWindow === "number" && contextWindow > 0 && { contextWindow }),
         ...((known.reasoning || value.supports_reasoning === true) && { reasoning: true as const }),
+        ...(pricing && { pricing }),
       };
     }
     if (Object.keys(models).length > 0) result[host] = models;

@@ -64,6 +64,7 @@ describe("an OpenAI-compatible host's list", () => {
         maker: "openai",
         contextWindow: expect.any(Number),
         reasoning: true,
+        pricing: expect.objectContaining({ input: expect.any(Number), output: expect.any(Number) }),
       },
     ]);
   });

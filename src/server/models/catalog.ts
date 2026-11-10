@@ -2,6 +2,7 @@
 // Mage knows the host serves and the ids people typed.
 
 import type { MakerId } from "@/shared/makers.ts";
+import type { ModelPricing } from "@/shared/model-pricing.ts";
 
 import type { ModelToken } from "./gateway.ts";
 
@@ -12,6 +13,7 @@ export interface CatalogModel {
   contextWindow?: number;
   // Whether the model can think before answering, when the provider says.
   reasoning?: boolean;
+  pricing?: ModelPricing;
   // Who makes it, when the host says.
   maker?: MakerId | null;
 }

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { hostModelId, modelData, refusal, sortedJson, stampLicense } from "./update-models.ts";
+import {
+  hostModelId,
+  modelData,
+  priceData,
+  refusal,
+  sortedJson,
+  stampLicense,
+} from "./update-models.ts";
 
 const upstream = {
   sample_spec: { mode: "chat", litellm_provider: "openai" },
@@ -33,6 +40,40 @@ const upstream = {
 };
 
 describe("the model data", () => {
+  it("vendors standard USD rates, free tokens, cache rates and long-context tiers", () => {
+    const entry = {
+      input_cost_per_token: 0,
+      output_cost_per_token: 0.000012,
+      cache_read_input_token_cost: 0.0000002,
+      cache_creation_input_token_cost: 0.000003,
+      cache_creation_input_token_cost_above_1hr: 0.000004,
+      input_cost_per_token_above_200k_tokens: 0.000004,
+      output_cost_per_token_above_200k_tokens: 0.000018,
+      cache_read_input_token_cost_above_200k_tokens: 0.0000004,
+      input_cost_per_token_batches: 0.000001,
+      input_cost_per_token_priority: 0.0000036,
+    };
+    const pricing = {
+      input: 0,
+      output: 0.000012,
+      cacheRead: 0.0000002,
+      cacheWrite: 0.000003,
+      cacheWrite1h: 0.000004,
+      tiers: [{ above: 200000, input: 0.000004, output: 0.000018, cacheRead: 0.0000004 }],
+    };
+    expect(priceData(entry)).toEqual(pricing);
+    expect(
+      modelData({ fresh: { ...entry, mode: "chat", litellm_provider: "openai" } }, "2026-11-10"),
+    ).toEqual({ openai: { fresh: { pricing } } });
+  });
+
+  it("does not invent prices for missing, negative or non-finite rates", () => {
+    expect(priceData({ input_cost_per_token: 0.1 })).toBeUndefined();
+    expect(priceData({ input_cost_per_token: -1, output_cost_per_token: 0.1 })).toBeUndefined();
+    expect(
+      priceData({ input_cost_per_token: Infinity, output_cost_per_token: 0.1 }),
+    ).toBeUndefined();
+  });
   it("takes each host's chat models still served, by the ids the host knows them by", () => {
     expect(modelData(upstream, "2026-10-25")).toEqual({
       anthropic: {
