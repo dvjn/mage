@@ -37,6 +37,9 @@ export function ReplyReasoning({ row }: { row: AgentRow }) {
 export function AgentReply({ row, continued }: { row: AgentRow; continued: boolean }) {
   const ending = ENDINGS[row.status];
   const streaming = row.status === "streaming";
+  // Thinking before a tool call is a compact part of the turn, with actions under its answer.
+  // A cut-short reply or an existing version still needs its recovery/history controls.
+  const showActions = !streaming && (!!row.text.trim() || !!ending || !!row.versions);
   const model = useModelName(row.model);
   const { self } = useThreadAgent();
   return (
@@ -56,7 +59,7 @@ export function AgentReply({ row, continued }: { row: AgentRow; continued: boole
         )
       }
       footer={
-        !streaming && (
+        showActions && (
           <RowToolbar rowId={row.id} text={row.text} can={row.can} versions={row.versions} />
         )
       }
