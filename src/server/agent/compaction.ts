@@ -14,6 +14,7 @@
 
 import { ModelError, type ModelRequest, type ModelUsage } from "@/server/models/gateway.ts";
 import type { OpenModel } from "@/server/models/service.ts";
+import { addUsage } from "@/shared/usage.ts";
 import type { Actor, NewEvent } from "@/server/threads/service.ts";
 import { valueForAgent } from "@/shared/mcp.ts";
 import {
@@ -284,8 +285,7 @@ async function summaryFrom(
     if (event.type === "delta") text += event.text;
     if (event.type === "tool-call") called = true;
     if (event.type === "step-end") {
-      usage.inputTokens += event.usage.inputTokens;
-      usage.outputTokens += event.usage.outputTokens;
+      addUsage(usage, event.usage);
     }
   }
   const summary = text.trim();
@@ -386,7 +386,7 @@ export async function compact(input: {
     tokensBefore: (previous ? tokensOf(previous) : 0) + tokens(from),
     tokensAfter: tokensOf(summary) + tokens(at),
   };
-  const used = usage.inputTokens + usage.outputTokens > 0;
+  const used = usage.inputTokens + usage.outputTokens > 0 || usage.cost !== undefined;
   write((append) =>
     append({
       type: "thread.compacted",

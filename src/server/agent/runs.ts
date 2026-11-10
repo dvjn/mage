@@ -31,6 +31,7 @@ import {
   trace,
 } from "@opentelemetry/api";
 import { wireToolName } from "@/shared/tools.ts";
+import { addUsage } from "@/shared/usage.ts";
 import { ulid } from "ulid";
 import * as z from "zod";
 
@@ -1213,8 +1214,7 @@ export function createRunWorker(options: RunWorkerOptions) {
             break;
           }
           case "step-end":
-            usage.inputTokens += event.usage.inputTokens;
-            usage.outputTokens += event.usage.outputTokens;
+            addUsage(usage, event.usage);
             reply.complete(event.usage);
             break;
         }

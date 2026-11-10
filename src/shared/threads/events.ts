@@ -7,6 +7,10 @@ import * as z from "zod";
 
 import { askAnswersSchema } from "@/shared/ask.ts";
 import { effortSchema } from "@/shared/threads/thread.ts";
+import { usageSchema } from "@/shared/usage.ts";
+
+export { usageSchema } from "@/shared/usage.ts";
+export type { Usage } from "@/shared/usage.ts";
 
 export const textPartSchema = z.object({ type: z.literal("text"), text: z.string() });
 
@@ -67,14 +71,6 @@ export type ReplyStatus = z.infer<typeof replyStatusSchema>;
 export const failureKindSchema = z.enum(["auth", "limit", "model", "network"]);
 
 export type FailureKind = z.infer<typeof failureKindSchema>;
-
-// Tokens a model call read and wrote.
-export const usageSchema = z.object({
-  inputTokens: z.number().int().nonnegative(),
-  outputTokens: z.number().int().nonnegative(),
-});
-
-export type Usage = z.infer<typeof usageSchema>;
 
 // How much a tool call can do: run when everyone the agent read may run it, or ask a person who may
 // every time. Reviews by someone outside the thread come later.

@@ -1,7 +1,12 @@
 // A model the tests drive by hand: each request to it is a call whose events the test sends one at
 // a time, so a test can act between any two of them, tool calls among them.
 
-import type { ModelEvent, ModelMessage, ModelRequest } from "@/server/models/gateway.ts";
+import type {
+  ModelEvent,
+  ModelMessage,
+  ModelRequest,
+  ModelUsage,
+} from "@/server/models/gateway.ts";
 import type { OpenModel } from "@/server/models/service.ts";
 
 const END = Symbol("end");
@@ -97,7 +102,7 @@ export class Call {
     this.push({ type: "tool-call", callId, toolId, input });
   }
 
-  endStep(usage = { inputTokens: 3, outputTokens: 2 }) {
+  endStep(usage: ModelUsage = { inputTokens: 3, outputTokens: 2 }) {
     this.push({ type: "step-end", usage });
   }
 

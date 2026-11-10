@@ -32,7 +32,13 @@ import { createConnectionStore } from "./connection-store.ts";
 import { createCredentialStore } from "./credential-store.ts";
 import { createModelChoiceStore } from "./choice-store.ts";
 import { createHostAdapters } from "./hosts.ts";
-import { ModelError, type ModelGateway, type ModelRequest, type ModelToken } from "./gateway.ts";
+import {
+  ModelError,
+  type ModelGateway,
+  type ModelRequest,
+  type ModelToken,
+  type ModelUsage,
+} from "./gateway.ts";
 import type { DeviceOAuth } from "./oauth.ts";
 import { createConnections } from "./connections.ts";
 import { createModels, pickReplyModel } from "./service.ts";
@@ -96,7 +102,7 @@ const anthropicModels = {
 
 type Reply = { status: number; body?: unknown };
 
-function setup() {
+function setup(usage?: ModelUsage) {
   const db = openDatabase(":memory:");
   const logger = createLogger({ write() {} });
   const secret = "test-secret-that-is-long-enough-1234567890";
@@ -135,6 +141,7 @@ function setup() {
         streamed.push({ kind, token, request });
         if (refused.has(token.access)) throw new ModelError("auth", "401 token revoked");
         yield* [{ type: "step-start" as const }, { type: "delta" as const, text: "Hi" }];
+        if (usage) yield { type: "step-end", usage };
       },
     };
   }
@@ -717,6 +724,45 @@ describe("opening a model", () => {
     for await (const event of stream) events.push(event);
     return events;
   }
+
+  it("prices API-key usage once, preferring reported costs and leaving subscriptions unpriced", async () => {
+    const used: ModelUsage = { inputTokens: 1000, outputTokens: 100 };
+    const { models, replies, ready } = setup(used);
+    replies.anthropic = {
+      status: 200,
+      body: {
+        data: [
+          {
+            id: "claude-fable-5",
+            display_name: "Claude Fable 5",
+          },
+        ],
+      },
+    };
+    const owner = await ready();
+    const model = await models.open(owner.orgId, `${owner.anthropicId}/claude-fable-5`);
+    const events = await collect(model.stream(request, new AbortController().signal));
+    expect(events.at(-1)).toMatchObject({
+      type: "step-end",
+      usage: {
+        cost: { usd: expect.closeTo(0.015), source: "estimated" },
+      },
+    });
+    // Estimating must not mutate the provider's usage or replace its later reported charge.
+    expect(used.cost).toBeUndefined();
+    const subscription = await models.open(owner.orgId, "codex/gpt-big");
+    expect(
+      (await collect(subscription.stream(request, new AbortController().signal))).at(-1),
+    ).toEqual({
+      type: "step-end",
+      usage: used,
+    });
+    used.cost = { usd: 0.007, source: "provider" };
+    expect((await collect(model.stream(request, new AbortController().signal))).at(-1)).toEqual({
+      type: "step-end",
+      usage: used,
+    });
+  });
 
   it("streams through the org's connection of the ref's kind with a renewed token", async () => {
     const { models, clock, streamed, refreshes, ready } = setup();

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { ModelError } from "@/server/models/gateway.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
+import { threadDetailSchema } from "@/shared/threads/detail.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 
 import { LeaseLost } from "./runs.ts";
@@ -64,6 +65,49 @@ describe("agent runs", () => {
       ],
     );
     expect(usage).toEqual({ inputTokens: 22, outputTokens: 5 });
+  });
+
+  it("persists per-reply costs and cache usage and totals reported and estimated calls", async () => {
+    const { ada, model, worker, post, events, start, api, thread } = await agentThread();
+    start();
+    await post(ada, "Hello");
+    const call = await model.next();
+    call.startStep();
+    call.delta("One.");
+    call.endStep({
+      inputTokens: 1000,
+      outputTokens: 100,
+      cacheReadTokens: 500,
+      cost: { usd: 0.005, source: "provider" },
+    });
+    call.startStep();
+    call.delta("Two.");
+    call.endStep({
+      inputTokens: 2000,
+      outputTokens: 200,
+      cost: { usd: 0.01, source: "estimated" },
+    });
+    call.end();
+    await worker.idle();
+
+    const folded = transcriptOf(events());
+    expect(folded.usage).toMatchObject({
+      inputTokens: 3000,
+      outputTokens: 300,
+      cacheReadTokens: 500,
+      cost: { usd: 0.015, source: "mixed" },
+    });
+    const response = await api("GET", `/threads/${thread.id}`, ada.cookie);
+    const detail = threadDetailSchema.parse(await response.json());
+    expect(detail.rows.filter((row) => row.kind === "agent").map((row) => row.usage)).toEqual([
+      {
+        inputTokens: 1000,
+        outputTokens: 100,
+        cacheReadTokens: 500,
+        cost: { usd: 0.005, source: "provider" },
+      },
+      { inputTokens: 2000, outputTokens: 200, cost: { usd: 0.01, source: "estimated" } },
+    ]);
   });
 
   it("asks the model for the thread's reasoning effort", async () => {

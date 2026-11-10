@@ -2039,7 +2039,9 @@ export function createThreads(options: ThreadsOptions) {
           actor,
           data: { threadId: id, title: thread.title ?? UNTITLED, summary: true },
         });
-        const used = written.usage.inputTokens + written.usage.outputTokens > 0;
+        const used =
+          written.usage.inputTokens + written.usage.outputTokens > 0 ||
+          written.usage.cost !== undefined;
         append({
           type: "thread.compacted",
           actor,

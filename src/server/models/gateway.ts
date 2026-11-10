@@ -57,10 +57,7 @@ export type ModelMessage =
   | { role: "tool"; results: ModelToolResult[] }
   | ({ role: "change" } & ModelChange);
 
-export interface ModelUsage {
-  inputTokens: number;
-  outputTokens: number;
-}
+export type ModelUsage = import("@/shared/threads/events.ts").Usage;
 
 // How hard a model that can think does so before it answers.
 export type Effort = "low" | "medium" | "high";

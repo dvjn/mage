@@ -9,6 +9,8 @@
 // is in no picker and does not reply.
 
 import { ServiceError } from "@/server/kernel/errors.ts";
+import { pricingOf } from "./model-data.ts";
+import { pricedUsage } from "./usage.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { OrgSettings, OrgSettingStore } from "@/server/orgs/service.ts";
 import type { Space, SpaceStore } from "@/server/spaces/service.ts";
@@ -194,6 +196,10 @@ export function createModels(options: ModelsOptions) {
     );
     return models.map((model) => ({
       ...model,
+      ...(connection.authKind !== "oauth" &&
+        pricingOf(connection.host, model.id) && {
+          pricing: model.pricing ?? pricingOf(connection.host, model.id),
+        }),
       ref: modelRef(connection, model.id),
       connectionId: connection.id,
       host: connection.host,
@@ -413,14 +419,23 @@ export function createModels(options: ModelsOptions) {
       const gateway = gateways[connection.host];
       return {
         ...(listed?.contextWindow && { contextWindow: listed.contextWindow }),
-        stream: ({ effort, ...request }, signal) =>
-          streamFrom(
+        stream: async function* ({ effort, ...request }, signal) {
+          const pricing =
+            connection.authKind === "oauth"
+              ? undefined
+              : (listed?.pricing ?? pricingOf(connection.host, model));
+          for await (const event of streamFrom(
             gateway,
             orgId,
             connection.id,
             { ...request, model, ...(listed?.reasoning && { effort: effort ?? "medium" }) },
             signal,
-          ),
+          )) {
+            yield event.type === "step-end"
+              ? { ...event, usage: pricedUsage(event.usage, pricing) }
+              : event;
+          }
+        },
       };
     },
 

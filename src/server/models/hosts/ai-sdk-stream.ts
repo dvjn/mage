@@ -27,6 +27,7 @@ import {
 } from "ai";
 
 import { modelTelemetry } from "@/server/kernel/tracing.ts";
+import { providerUsage } from "@/server/models/usage.ts";
 import { wireToolName } from "@/shared/tools.ts";
 import {
   type ModelChange,
@@ -493,10 +494,7 @@ export async function* streamReply(
       case "finish-step":
         yield {
           type: "step-end",
-          usage: {
-            inputTokens: part.usage.inputTokens ?? 0,
-            outputTokens: part.usage.outputTokens ?? 0,
-          },
+          usage: providerUsage(part.usage, part.providerMetadata),
         };
         break;
       case "error":

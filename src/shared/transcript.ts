@@ -15,6 +15,7 @@
 // agent's turn, and that place.
 
 import type { AskAnswers } from "@/shared/ask.ts";
+import { addUsage } from "@/shared/usage.ts";
 import { COMPACT } from "@/shared/threads/commands.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
 import {
@@ -577,8 +578,7 @@ export function createFold(): TranscriptFold {
         reply.status = event.data.status;
         if (event.data.usage) {
           reply.usage = event.data.usage;
-          usage.inputTokens += event.data.usage.inputTokens;
-          usage.outputTokens += event.data.usage.outputTokens;
+          addUsage(usage, event.data.usage);
         }
         touch(reply.id);
         break;
@@ -717,15 +717,13 @@ export function createFold(): TranscriptFold {
           tokensAfter: tokensAfter ?? null,
         });
         if (used) {
-          usage.inputTokens += used.inputTokens;
-          usage.outputTokens += used.outputTokens;
+          addUsage(usage, used);
         }
         break;
       }
       case "thread.renamed":
         if (event.data.usage) {
-          usage.inputTokens += event.data.usage.inputTokens;
-          usage.outputTokens += event.data.usage.outputTokens;
+          addUsage(usage, event.data.usage);
         }
         break;
       case "run.completed":

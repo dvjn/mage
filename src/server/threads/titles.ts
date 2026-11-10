@@ -5,6 +5,7 @@
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { ModelUsage } from "@/server/models/gateway.ts";
 import type { Models } from "@/server/models/service.ts";
+import { addUsage } from "@/shared/usage.ts";
 
 import { type ThreadStore, titleFrom } from "./service.ts";
 import type { ThreadLog } from "./log.ts";
@@ -68,8 +69,7 @@ export function createTitles(options: TitlesOptions) {
     for await (const event of stream) {
       if (event.type === "delta") answer += event.text;
       if (event.type === "step-end") {
-        usage.inputTokens += event.usage.inputTokens;
-        usage.outputTokens += event.usage.outputTokens;
+        addUsage(usage, event.usage);
       }
     }
     return { title: cleanTitle(answer), usage };
@@ -89,7 +89,7 @@ export function createTitles(options: TitlesOptions) {
           const current = threads.find(threadId);
           if (!current || current.titleSource === "person") return;
           threads.update(threadId, { title, titleSource: "agent" });
-          const used = usage.inputTokens + usage.outputTokens > 0;
+          const used = usage.inputTokens + usage.outputTokens > 0 || usage.cost !== undefined;
           append({
             type: "thread.renamed",
             actor: { kind: "agent" },

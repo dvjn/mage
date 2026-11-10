@@ -89,6 +89,10 @@ run = "pnpm db:generate"
 description = "Refresh the vendored model data from LiteLLM's model map"
 run = "node scripts/update-models.ts"
 
+[tasks."costs:backfill"]
+description = "Preview historical cost estimates; pass --apply to back up the database and save them"
+run = "node scripts/backfill-costs.ts"
+
 [tasks."icons:update"]
 description = "Write the makers' and hosts' marks from the pinned Lobe Icons release"
 run = "node scripts/update-icons.ts"

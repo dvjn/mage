@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { estimateCost } from "./model-pricing.ts";
+import { addUsage } from "./usage.ts";
+import type { Usage } from "./threads/events.ts";
 
 describe("usage cost", () => {
   const rates = {
@@ -50,5 +52,31 @@ describe("usage cost", () => {
     expect(
       estimateCost(rates, { inputTokens: 100, outputTokens: 20, cacheReadTokens: 101 }),
     ).toBeUndefined();
+  });
+
+  it("aggregates reported and estimated costs while marking unpriced calls as partial", () => {
+    const usage: Usage = { inputTokens: 0, outputTokens: 0 };
+    addUsage(usage, {
+      inputTokens: 100,
+      outputTokens: 10,
+      cost: { usd: 0.01, source: "provider" },
+    });
+    addUsage(usage, {
+      inputTokens: 200,
+      outputTokens: 20,
+      cacheReadTokens: 50,
+      cost: { usd: 0.02, source: "estimated" },
+    });
+    expect(usage.cost).toEqual({ usd: 0.03, source: "mixed" });
+    addUsage(usage, { inputTokens: 300, outputTokens: 30 });
+    expect(usage).toMatchObject({
+      inputTokens: 600,
+      outputTokens: 60,
+      cacheReadTokens: 50,
+      cost: { usd: 0.03, source: "mixed", partial: true },
+    });
+    const old: Usage = { inputTokens: 1, outputTokens: 1 };
+    addUsage(old, { inputTokens: 1, outputTokens: 1, cost: { usd: 0.01, source: "provider" } });
+    expect(old.cost?.partial).toBe(true);
   });
 });
