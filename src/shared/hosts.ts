@@ -403,7 +403,7 @@ export const HOSTS = {
             placeholder: "The key's project",
           },
           vertexLocation,
-          typedModels("Added to the models Mage knows Vertex AI serves."),
+          typedModels("Added to the models listed by Vertex AI's Model Garden."),
         ],
       },
       {

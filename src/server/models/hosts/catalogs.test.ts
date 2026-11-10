@@ -312,15 +312,68 @@ describe("Vertex AI's list", () => {
     project_id: "acme",
   });
 
-  it("checks the service account by getting a token, then gives the models Vertex serves", async () => {
+  it("lists publishers live with the service account, paging and keeping inference ids and metadata", async () => {
+    const base = "https://us-central1-aiplatform.googleapis.com/v1beta1/publishers";
     const { fetchFn, requests } = fakeFetch({
       "https://oauth2.googleapis.com/token": { body: { access_token: "ya29", expires_in: 3600 } },
+      [`${base}/google/models`]: (request) => ({
+        body: new URL(request.url).searchParams.has("pageToken")
+          ? {
+              publisherModels: [
+                { name: "publishers/google/models/gemini-brand-new" },
+                { name: "publishers/google/models/gemini-3.8-flash" },
+              ],
+            }
+          : {
+              publisherModels: [
+                { name: "publishers/google/models/gemini-3.8-flash" },
+                { name: "publishers/google/models/imagen-4" },
+                { name: "publishers/google/models/gemini-embedding-001" },
+                { name: "publishers/google/models/gemini-flash-image" },
+                { name: "publishers/google/models/gemini-pro-tts" },
+                { name: "publishers/google/models/gemini-live" },
+                { name: "publishers/google/models/gemma-4" },
+                { name: "publishers/google/models/gemini-private", launchStage: "PRIVATE_PREVIEW" },
+              ],
+              nextPageToken: "page + 2",
+            },
+      }),
+      [`${base}/anthropic/models`]: {
+        body: {
+          publisherModels: [{ name: "publishers/anthropic/models/claude-brand-new@20261110" }],
+        },
+      },
+      [`${base}/meta/models`]: {
+        body: {
+          publisherModels: [
+            { name: "publishers/meta/models/llama-4-scout-17b-16e-instruct-maas" },
+            {
+              name: "publishers/meta/models/llama-self-deploy",
+              publisherModelTemplate:
+                "projects/{project}/locations/{location}/publishers/meta/models/llama-self-deploy",
+            },
+          ],
+        },
+      },
+      [`${base}/xai/models`]: {
+        body: {
+          publisherModels: [
+            {
+              name: "publishers/xai/models/grok-4.7",
+              publisherModelTemplate:
+                "projects/{project}/locations/{location}/publishers/xai/models/grok-4.7",
+            },
+          ],
+        },
+      },
     });
+    const controller = new AbortController();
     const models = await createVertexCatalog(fetchFn).list(
       token({
         settings: { location: "global", models: "my-model" },
         secrets: { serviceAccount: account },
       }),
+      controller.signal,
     );
     const assertion = new URLSearchParams(await requests[0]!.text()).get("assertion")!;
     expect(decodeJwt(assertion)).toMatchObject({
@@ -328,9 +381,58 @@ describe("Vertex AI's list", () => {
       aud: "https://oauth2.googleapis.com/token",
     });
     const ids = models.map((model) => model.id);
-    expect(ids.some((id) => id.startsWith("claude"))).toBe(true);
-    expect(ids.some((id) => id.startsWith("gemini"))).toBe(true);
-    expect(ids.at(-1)).toBe("my-model");
+    expect(ids).toEqual([
+      "gemini-3.8-flash",
+      "gemini-brand-new",
+      "claude-brand-new@20261110",
+      "meta/llama-4-scout-17b-16e-instruct-maas",
+      "xai/grok-4.7",
+      "my-model",
+    ]);
+    expect(models[0]?.contextWindow).toBeGreaterThan(0);
+    const listed = requests.filter((request) => request.url.startsWith(base));
+    expect(listed.every((request) => request.headers.get("authorization") === "Bearer ya29")).toBe(
+      true,
+    );
+    expect(listed.every((request) => request.headers.get("x-goog-user-project") === "acme")).toBe(
+      true,
+    );
+    expect(
+      listed.some((request) => new URL(request.url).searchParams.get("pageToken") === "page + 2"),
+    ).toBe(true);
+    expect(listed[0]?.signal.aborted).toBe(false);
+    controller.abort();
+    expect(requests.every((request) => request.signal.aborted)).toBe(true);
+  });
+
+  it("uses the connection's region and explicit project, and reports listing failures", async () => {
+    const base = "https://europe-west4-aiplatform.googleapis.com/v1beta1/publishers";
+    for (const answer of [{ status: 403 }, { body: { publisherModels: [{ name: 1 }] } }]) {
+      const { fetchFn, requests } = fakeFetch({
+        "https://oauth2.googleapis.com/token": { body: { access_token: "ya29" } },
+        [`${base}/google/models`]: answer,
+      });
+      await expect(
+        createVertexCatalog(fetchFn).list(
+          token({
+            settings: { location: "europe-west4", project: "other-project" },
+            secrets: { serviceAccount: account },
+          }),
+        ),
+      ).rejects.toThrow(answer.status ? /403/ : /not a list/);
+      expect(requests[1]?.headers.get("x-goog-user-project")).toBe("other-project");
+    }
+  });
+
+  it("refuses a successful token response without a token", async () => {
+    const { fetchFn } = fakeFetch({ "https://oauth2.googleapis.com/token": { body: {} } });
+    await expect(
+      createVertexCatalog(fetchFn).list(
+        token({
+          secrets: { serviceAccount: account },
+        }),
+      ),
+    ).rejects.toThrow(/no access token/);
   });
 
   it("refuses a service account Google refuses, and gives Gemini alone in express mode", async () => {
