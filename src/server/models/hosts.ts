@@ -21,6 +21,7 @@ import {
 import { createGeminiCatalog, createGeminiGateway } from "@/server/models/hosts/google-gemini.ts";
 import { createVertexCatalog, createVertexGateway } from "@/server/models/hosts/google-vertex.ts";
 import { createCodexCatalog, createCodexGateway } from "@/server/models/hosts/openai-codex.ts";
+import { createOpenCodeAdapters } from "@/server/models/hosts/opencode.ts";
 import {
   createOpenAIKeyCatalog,
   createOpenAIKeyGateway,
@@ -59,6 +60,15 @@ export function createHostAdapters(fetchFn: typeof fetch = fetch) {
         catalogs[host] = createCompatibleCatalog(host, fetchFn);
         gateways[host] = createCompatibleGateway(host, fetchFn);
         break;
+      case "opencode": {
+        // Both plans use keys; Go has its own catalog and subscription allowance.
+        if (host !== "opencode-zen" && host !== "opencode-go")
+          throw new Error("Unknown OpenCode host");
+        const adapters = createOpenCodeAdapters(host, fetchFn);
+        catalogs[host] = adapters.catalog;
+        gateways[host] = adapters.gateway;
+        break;
+      }
       case "google":
         catalogs[host] = createGeminiCatalog(fetchFn);
         gateways[host] = createGeminiGateway(fetchFn);

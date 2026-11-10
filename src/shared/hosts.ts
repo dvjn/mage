@@ -22,6 +22,7 @@ export type Shape =
   | "openai"
   | "codex"
   | "openai-compatible"
+  | "opencode"
   | "google"
   | "bedrock"
   | "vertex"
@@ -295,6 +296,28 @@ export const HOSTS = {
     mark: "openrouter",
     placeholder: "sk-or-",
   }),
+  "opencode-zen": {
+    label: "OpenCode Zen",
+    group: "popular",
+    mark: "opencode",
+    hint: "Pay as you go",
+    shape: "opencode",
+    baseUrl: "https://opencode.ai/inference",
+    models: "/v1/models",
+    methods: [
+      keyMethod("oc_sk_", "A Console API key from a workspace with pay-as-you-go credits."),
+    ],
+  },
+  "opencode-go": {
+    label: "OpenCode Go",
+    group: "popular",
+    mark: "opencode",
+    hint: "Subscription",
+    shape: "opencode",
+    baseUrl: "https://opencode.ai/inference/go",
+    models: "/v1/models",
+    methods: [keyMethod("oc_sk_", "A Console API key from a workspace subscribed to OpenCode Go.")],
+  },
   google: {
     label: "Gemini API",
     group: "popular",

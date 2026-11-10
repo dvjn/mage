@@ -16,6 +16,31 @@ function sdkUsage(raw: LanguageModelUsage["raw"]): LanguageModelUsage {
 }
 
 describe("provider usage", () => {
+  it("uses OpenCode's billed cache counts and preserves whether BYOK cost is estimated", () => {
+    const usage = providerUsage(
+      sdkUsage({
+        cost: 0.005,
+        opencode: {
+          estimated: true,
+          tokens: {
+            input: 1200,
+            output: 300,
+            cache_read: 8000,
+            cache_write_5m: 300,
+            cache_write_1h: 50,
+          },
+        },
+      }),
+    );
+    expect(usage).toEqual({
+      inputTokens: 9550,
+      outputTokens: 300,
+      cacheReadTokens: 8000,
+      cacheWriteTokens: 350,
+      cacheWrite1hTokens: 50,
+      cost: { usd: 0.005, source: "estimated" },
+    });
+  });
   it("preserves the API's monetary cost through an OpenRouter stream", async () => {
     const body =
       [

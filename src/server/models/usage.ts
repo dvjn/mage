@@ -8,6 +8,20 @@ import type { Usage } from "@/shared/threads/events.ts";
 
 const rawUsageSchema = z.object({
   cost: z.number().nonnegative().optional(),
+  opencode: z
+    .object({
+      estimated: z.boolean().optional(),
+      tokens: z
+        .object({
+          input: z.number().int().nonnegative(),
+          output: z.number().int().nonnegative(),
+          cache_read: z.number().int().nonnegative().optional(),
+          cache_write_5m: z.number().int().nonnegative().optional(),
+          cache_write_1h: z.number().int().nonnegative().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
   cache_creation: z
     .object({ ephemeral_1h_input_tokens: z.number().int().nonnegative().optional() })
     .optional(),
@@ -27,17 +41,28 @@ export function providerUsage(usage: LanguageModelUsage, metadata?: unknown): Us
         ? Number(gatewayCost)
         : undefined;
   const cache = usage.inputTokenDetails;
-  const write1h = raw.success ? raw.data.cache_creation?.ephemeral_1h_input_tokens : undefined;
+  const billed = raw.success ? raw.data.opencode?.tokens : undefined;
+  const read = billed?.cache_read ?? cache.cacheReadTokens;
+  const write1h =
+    billed?.cache_write_1h ??
+    (raw.success ? raw.data.cache_creation?.ephemeral_1h_input_tokens : undefined);
+  const write =
+    billed && (billed.cache_write_5m !== undefined || billed.cache_write_1h !== undefined)
+      ? (billed.cache_write_5m ?? 0) + (billed.cache_write_1h ?? 0)
+      : cache.cacheWriteTokens;
   return {
-    inputTokens: usage.inputTokens ?? 0,
-    outputTokens: usage.outputTokens ?? 0,
-    ...(cache.cacheReadTokens && { cacheReadTokens: cache.cacheReadTokens }),
-    ...(cache.cacheWriteTokens && { cacheWriteTokens: cache.cacheWriteTokens }),
+    inputTokens: billed ? billed.input + (read ?? 0) + (write ?? 0) : (usage.inputTokens ?? 0),
+    outputTokens: billed?.output ?? usage.outputTokens ?? 0,
+    ...(read && { cacheReadTokens: read }),
+    ...(write && { cacheWriteTokens: write }),
     ...(write1h && { cacheWrite1hTokens: write1h }),
     ...(charged !== undefined &&
       Number.isFinite(charged) &&
       charged >= 0 && {
-        cost: { usd: charged, source: "provider" },
+        cost: {
+          usd: charged,
+          source: raw.success && raw.data.opencode?.estimated ? "estimated" : "provider",
+        },
       }),
   };
 }

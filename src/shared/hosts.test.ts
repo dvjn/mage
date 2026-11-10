@@ -35,7 +35,15 @@ describe("the host registry", () => {
         method.fields.some((field) => field.name === "baseUrl" || field.name === "endpoint"),
       );
       if (
-        ["openai-compatible", "anthropic", "claude", "openai", "google", "codex"].includes(shape)
+        [
+          "openai-compatible",
+          "opencode",
+          "anthropic",
+          "claude",
+          "openai",
+          "google",
+          "codex",
+        ].includes(shape)
       ) {
         expect(baseUrl || given, host).toBeTruthy();
       }
