@@ -39,7 +39,7 @@ OTEL_METRICS_EXPORTER = "none"
 OTEL_LOGS_EXPORTER = "none"
 
 [tasks."deps:up"]
-description = "Start the dev identity provider on :9000 (Authentik: akadmin, ada, grace, alice, bob) and Jaeger on :16686"
+description = "Start the dev identity provider on :9000 (Authentik: akadmin, ada, grace, alice, bob, carol, dave, erin, frank, heidi) and Jaeger on :16686"
 run = """
 set -eu
 compose="$(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml"

@@ -1,6 +1,6 @@
 # Authentik as the dev server's OpenID Connect provider and SCIM directory, with Postgres, and
 # Jaeger keeping the dev server's traces in memory.
-# deps/authentik/mage.yaml sets up the Mage application, two groups and four people.
+# deps/authentik/mage.yaml sets up the Mage application, two groups and nine people.
 name: mage-sso
 
 x-authentik: &authentik
