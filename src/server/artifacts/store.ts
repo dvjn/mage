@@ -1,23 +1,24 @@
-// Artifacts, their versions and files, and the settings on making them public, in the database.
+// Artifacts, their versions and files, the threads that used them, and the settings on making them public, in the database.
 
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 
 import type { Db } from "@/server/db/db.ts";
 import { space } from "@/server/spaces/schema.ts";
-import { thread } from "@/server/threads/schema.ts";
 
 import {
   artifact,
   artifactAsset,
   artifactOrgSetting,
   artifactSpaceSetting,
+  artifactThreadUse,
   artifactVersion,
 } from "./schema.ts";
 import type { ArtifactStore, VersionRecord } from "./service.ts";
 
 const artifactColumns = {
   id: artifact.id,
-  threadId: artifact.threadId,
+  spaceId: artifact.spaceId,
+  createdInThreadId: artifact.createdInThreadId,
   sharing: artifact.sharing,
   version: artifact.version,
   createdAt: artifact.createdAt,
@@ -31,6 +32,7 @@ const versionColumns = {
   description: artifactVersion.description,
   icon: artifactVersion.icon,
   createdAt: artifactVersion.createdAt,
+  threadId: artifactVersion.threadId,
 };
 
 export function createArtifactStore(db: Db): ArtifactStore {
@@ -54,11 +56,15 @@ export function createArtifactStore(db: Db): ArtifactStore {
   }
 
   return {
-    create({ id, threadId, version, assets }) {
+    create({ id, spaceId, threadId, version, assets }) {
       db.transaction(() => {
-        db.insert(artifact).values({ id, threadId, version: 1 }).run();
+        db.insert(artifact).values({ id, spaceId, createdInThreadId: threadId, version: 1 }).run();
         db.insert(artifactVersion)
-          .values({ artifactId: id, version: 1, ...version })
+          .values({ artifactId: id, version: 1, threadId, ...version })
+          .run();
+        db.insert(artifactThreadUse)
+          .values({ artifactId: id, threadId })
+          .onConflictDoNothing()
           .run();
         putAssets(id, assets);
       });
@@ -72,8 +78,18 @@ export function createArtifactStore(db: Db): ArtifactStore {
       return db
         .select(artifactColumns)
         .from(artifact)
-        .where(eq(artifact.threadId, threadId))
+        .innerJoin(artifactThreadUse, eq(artifactThreadUse.artifactId, artifact.id))
+        .where(eq(artifactThreadUse.threadId, threadId))
         .orderBy(asc(artifact.createdAt), asc(artifact.id))
+        .all();
+    },
+
+    inSpace(spaceId) {
+      return db
+        .select(artifactColumns)
+        .from(artifact)
+        .where(eq(artifact.spaceId, spaceId))
+        .orderBy(desc(artifact.updatedAt), desc(artifact.id))
         .all();
     },
 
@@ -81,11 +97,24 @@ export function createArtifactStore(db: Db): ArtifactStore {
       return db
         .select(artifactColumns)
         .from(artifact)
-        .innerJoin(thread, eq(thread.id, artifact.threadId))
-        .innerJoin(space, eq(space.id, thread.spaceId))
+        .innerJoin(space, eq(space.id, artifact.spaceId))
         .where(eq(space.organizationId, orgId))
         .orderBy(desc(artifact.updatedAt), desc(artifact.id))
         .all();
+    },
+
+    use(id, threadId) {
+      db.insert(artifactThreadUse).values({ artifactId: id, threadId }).onConflictDoNothing().run();
+    },
+
+    usedIn(id) {
+      return db
+        .select({ threadId: artifactThreadUse.threadId })
+        .from(artifactThreadUse)
+        .where(eq(artifactThreadUse.artifactId, id))
+        .orderBy(asc(artifactThreadUse.createdAt), asc(artifactThreadUse.threadId))
+        .all()
+        .map((row) => row.threadId);
     },
 
     version(id, number): (VersionRecord & { html: string }) | null {
@@ -107,7 +136,7 @@ export function createArtifactStore(db: Db): ArtifactStore {
         .all();
     },
 
-    addVersion(id, basedOn, { version, assets, removed }) {
+    addVersion(id, basedOn, { version, threadId, assets, removed }) {
       return db.transaction(() => {
         const current = db
           .select({ version: artifact.version })
@@ -118,7 +147,11 @@ export function createArtifactStore(db: Db): ArtifactStore {
         if (current.version !== basedOn) return { stale: current.version };
         const number = current.version + 1;
         db.insert(artifactVersion)
-          .values({ artifactId: id, version: number, ...version })
+          .values({ artifactId: id, version: number, threadId, ...version })
+          .run();
+        db.insert(artifactThreadUse)
+          .values({ artifactId: id, threadId })
+          .onConflictDoNothing()
           .run();
         db.update(artifact).set({ version: number }).where(eq(artifact.id, id)).run();
         removeAssets(id, removed);

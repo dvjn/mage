@@ -1,5 +1,5 @@
-// Tables of the pages the agent publishes from a thread, their versions and files, and whether orgs
-// and spaces let them be made public.
+// Tables of the pages the agent publishes in a space, their versions and files, which threads used
+// them, and whether orgs and spaces let them be made public.
 
 import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer, blob, index, primaryKey } from "drizzle-orm/sqlite-core";
@@ -8,18 +8,22 @@ import { organization } from "@/server/orgs/schema.ts";
 import { space } from "@/server/spaces/schema.ts";
 import { thread } from "@/server/threads/schema.ts";
 
-// A page the agent published in a thread, kept with the thread's root and gone with it; its space
-// and org are the thread's. What it shows is its newest version.
+// A page the agent published in a space, shared by all the space's threads and gone with the space
+// or when a person deletes it. What it shows is its newest version.
 export const artifact = sqliteTable(
   "artifact",
   {
     id: text("id").primaryKey(),
-    threadId: text("thread_id")
+    spaceId: text("space_id")
       .notNull()
-      .references(() => thread.id, { onDelete: "cascade" }),
-    // Who may view it beyond the thread's readers.
-    sharing: text("sharing", { enum: ["thread", "org", "public"] })
-      .default("thread")
+      .references(() => space.id, { onDelete: "cascade" }),
+    // The thread it was first published in, while that thread exists.
+    createdInThreadId: text("created_in_thread_id").references(() => thread.id, {
+      onDelete: "set null",
+    }),
+    // Who may view it beyond the space's members.
+    sharing: text("sharing", { enum: ["space", "org", "public"] })
+      .default("space")
       .notNull(),
     // The number of its newest version.
     version: integer("version").notNull(),
@@ -31,7 +35,7 @@ export const artifact = sqliteTable(
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
   },
-  (table) => [index("artifact_thread_idx").on(table.threadId, table.createdAt)],
+  (table) => [index("artifact_space_idx").on(table.spaceId, table.updatedAt)],
 );
 
 // One publish of an artifact: its page as written, and the name, description and icon it had then.
@@ -47,6 +51,8 @@ export const artifactVersion = sqliteTable(
     title: text("title").notNull(),
     description: text("description").notNull(),
     icon: text("icon").notNull(),
+    // The thread whose agent published it, while that thread exists.
+    threadId: text("thread_id").references(() => thread.id, { onDelete: "set null" }),
     // The run and call that published it.
     runId: text("run_id"),
     callId: text("call_id"),
@@ -55,6 +61,26 @@ export const artifactVersion = sqliteTable(
       .notNull(),
   },
   (table) => [primaryKey({ columns: [table.artifactId, table.version] })],
+);
+
+// A thread whose agent published, updated or read an artifact.
+export const artifactThreadUse = sqliteTable(
+  "artifact_thread_use",
+  {
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.artifactId, table.threadId] }),
+    index("artifact_thread_use_thread_idx").on(table.threadId),
+  ],
 );
 
 // A file an artifact's page loads by its name, the same for all of its versions.

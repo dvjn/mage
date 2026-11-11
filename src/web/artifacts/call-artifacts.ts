@@ -24,17 +24,8 @@ export function artifactOf(row: ToolRow): CalledArtifact | null {
   };
 }
 
-function deletedId(row: ToolRow): string | null {
-  if (row.state !== "ran" || row.output?.ok !== true || row.toolId !== ARTIFACT_TOOLS.delete) {
-    return null;
-  }
-  const value = row.output.value as { id?: unknown } | null;
-  return typeof value?.id === "string" ? value.id : null;
-}
-
 // One card per artifact the rows published or updated, at its latest version and in the order each
-// was first made; none for one a later call deleted, nor one a reply already shows with
-// Artifact(id).
+// was first made; none for one a reply already shows with Artifact(id).
 export function cardsAfterReply(rows: readonly (ToolRow | AgentRow)[]): CalledArtifact[] {
   const found = new Map<string, CalledArtifact>();
   const shown = new Set<string>();
@@ -43,8 +34,6 @@ export function cardsAfterReply(rows: readonly (ToolRow | AgentRow)[]): CalledAr
       for (const id of artifactIdsIn(row.text)) shown.add(id);
       continue;
     }
-    const gone = deletedId(row);
-    if (gone) found.delete(gone);
     const artifact = artifactOf(row);
     if (artifact) found.set(artifact.id, artifact);
   }

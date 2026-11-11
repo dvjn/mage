@@ -4,7 +4,7 @@
 // at all they are all shown closed, with the reason said once. Below, the link to copy: the public
 // one while it is public, else the artifact's page in the app.
 
-import { Building2Icon, GlobeIcon, MessageSquareIcon, Share2Icon } from "lucide-react";
+import { Building2Icon, FolderIcon, GlobeIcon, Share2Icon } from "lucide-react";
 import type * as React from "react";
 import { useId } from "react";
 
@@ -38,7 +38,7 @@ export const SHARING_LEVELS: Record<
   ArtifactSharing,
   { label: string; reach: string; icon: React.ComponentType<{ className?: string }> }
 > = {
-  thread: { label: "Thread", reach: "People who can read the thread", icon: MessageSquareIcon },
+  space: { label: "Space", reach: "Members of the space", icon: FolderIcon },
   org: { label: "Organization", reach: "Everyone in the organization", icon: Building2Icon },
   public: { label: "Public", reach: "Anyone with the link", icon: GlobeIcon },
 };

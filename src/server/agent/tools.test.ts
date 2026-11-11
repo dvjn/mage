@@ -67,7 +67,6 @@ const ARTIFACT_TOOL_LIST = [
   "artifact.update",
   "artifact.read",
   "artifact.list",
-  "artifact.delete",
 ];
 
 const run = true;

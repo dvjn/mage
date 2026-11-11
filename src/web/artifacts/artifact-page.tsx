@@ -1,9 +1,9 @@
 // An artifact's page: its newest version or an older one, read-only, in a frame on the artifacts'
 // origin through a link the server signs for this reader and theme. The frame is reloaded when a
 // new version is published; the link is asked for again before it expires, which the frame picks up
-// at its next reload so a page in use is not reset. Above the frame, what the artifact is, the
-// thread it came from where the reader can read it, which version is shown, its versions to pick
-// from, and who may open it, as far as the server lets the reader change that.
+// at its next reload so a page in use is not reset. Above the frame, what the artifact is, its
+// space, the thread it was made in where the reader can read it, which version is shown, its
+// versions to pick from, who may open it and deleting it, as far as the server lets the reader.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 
 import type { ArtifactDetail, ArtifactEvent, ArtifactTheme } from "@/shared/artifacts.ts";
 import { artifactEventSchema } from "@/shared/artifacts.ts";
+import { DeleteArtifact } from "@/web/artifacts/delete-artifact";
 import { artifactQuery, artifactViewQuery } from "@/web/artifacts/queries";
 import { ShareArtifact } from "@/web/artifacts/share-artifact";
 import { Time } from "@/web/components/time";
@@ -104,6 +105,7 @@ function VersionHistory({
                   </span>
                   <span className="truncate text-xs text-muted-foreground">
                     {one.label && `${one.label} · `}
+                    {one.thread && `${one.thread.title ?? "Untitled"} · `}
                     <Time iso={one.createdAt} />
                   </span>
                 </span>
@@ -168,11 +170,11 @@ export function ArtifactPage() {
     <div className="flex h-full min-h-0 flex-col">
       <PageHeader
         crumbs={[
-          ...(detail?.thread
+          ...(detail?.space
             ? [
                 {
-                  label: detail.thread.title ?? "Untitled",
-                  link: { to: "/t/$threadId" as const, params: { threadId: detail.threadId } },
+                  label: detail.space.name,
+                  link: { to: "/s/$spaceId" as const, params: { spaceId: detail.space.id } },
                 },
               ]
             : []),
@@ -181,10 +183,9 @@ export function ArtifactPage() {
       >
         {detail && viewing !== undefined && (
           <>
-            {detail.versions.length > 1 && (
-              <VersionHistory artifact={detail} viewing={viewing} onPick={pick} />
-            )}
+            <VersionHistory artifact={detail} viewing={viewing} onPick={pick} />
             <ShareArtifact artifact={detail} />
+            <DeleteArtifact artifact={detail} />
           </>
         )}
       </PageHeader>

@@ -2,7 +2,7 @@
 // settings, as the server lets the person.
 
 import { Link, useMatchRoute } from "@tanstack/react-router";
-import { FileTextIcon, PlusIcon, Settings2Icon } from "lucide-react";
+import { ShapesIcon, PlusIcon, Settings2Icon } from "lucide-react";
 
 import type { SpaceSummary } from "@/shared/spaces.ts";
 import { ShortcutHint } from "@/web/components/shortcut-keys";
@@ -39,7 +39,7 @@ export function SpaceSection({ space }: { space: SpaceSummary }) {
             isActive={!!matchRoute({ to: "/artifacts", fuzzy: true })}
             render={<Link to="/artifacts" />}
           >
-            <FileTextIcon />
+            <ShapesIcon />
             <span>Artifacts</span>
           </SidebarMenuButton>
         </SidebarMenuItem>

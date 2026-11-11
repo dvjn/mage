@@ -1,31 +1,19 @@
 // The artifacts the person can open across their org, newest change first, as cards that each open
-// the artifact, narrowed by space and by who may open them, a page after another.
+// the artifact, grouped by when they were last updated, a page after another.
 
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
-import { getRouteApi, Link } from "@tanstack/react-router";
-import { FileTextIcon } from "lucide-react";
+import { useInfiniteQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { ShapesIcon } from "lucide-react";
 
-import { artifactSharingSchema, type ArtifactListItem } from "@/shared/artifacts.ts";
+import type { ArtifactListItem } from "@/shared/artifacts.ts";
 import { ArtifactIcon } from "@/web/artifacts/artifact-icon";
+import { groupByUpdate } from "@/web/artifacts/group-by-update";
 import { artifactPages } from "@/web/artifacts/queries";
 import { SHARING_LEVELS } from "@/web/artifacts/share-artifact";
 import { Time } from "@/web/components/time";
 import { Button } from "@/web/components/ui/button";
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle } from "@/web/components/ui/empty";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/web/components/ui/select";
 import { PageHeader } from "@/web/shell/page-header";
-import { spacesQuery } from "@/web/spaces/queries";
-
-const route = getRouteApi("/_app/artifacts");
-
-// The select's value for no filter.
-const ALL = "all";
 
 function GalleryCard({ artifact }: { artifact: ArtifactListItem }) {
   const sharing = SHARING_LEVELS[artifact.sharing];
@@ -65,78 +53,32 @@ function GalleryCard({ artifact }: { artifact: ArtifactListItem }) {
 }
 
 export function ArtifactGalleryPage() {
-  const search = route.useSearch();
-  const navigate = route.useNavigate();
-  const spaces = useQuery(spacesQuery);
-  const pages = useInfiniteQuery(artifactPages(search));
+  const pages = useInfiniteQuery(artifactPages);
   const items = pages.data?.pages.flatMap((page) => page.items) ?? [];
-  const spaceName = spaces.data?.find((space) => space.id === search.space)?.name;
   return (
     <>
       <PageHeader crumbs={[{ label: "Artifacts" }]} />
-      <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 p-4 pb-12">
-        <div className="flex flex-wrap gap-2">
-          <Select
-            value={search.space ?? ALL}
-            onValueChange={(value) =>
-              void navigate({
-                search: { ...search, space: value && value !== ALL ? value : undefined },
-                replace: true,
-              })
-            }
-          >
-            <SelectTrigger size="sm" aria-label="Space" className="w-44">
-              <SelectValue>{spaceName ?? "All spaces"}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>All spaces</SelectItem>
-              {spaces.data?.map((space) => (
-                <SelectItem key={space.id} value={space.id}>
-                  {space.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={search.sharing ?? ALL}
-            onValueChange={(value) => {
-              const parsed = artifactSharingSchema.safeParse(value);
-              void navigate({
-                search: { ...search, sharing: parsed.success ? parsed.data : undefined },
-                replace: true,
-              });
-            }}
-          >
-            <SelectTrigger size="sm" aria-label="Sharing" className="w-44">
-              <SelectValue>
-                {search.sharing ? SHARING_LEVELS[search.sharing].label : "Any sharing"}
-              </SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL}>Any sharing</SelectItem>
-              {artifactSharingSchema.options.map((level) => (
-                <SelectItem key={level} value={level}>
-                  {SHARING_LEVELS[level].label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-4 pb-12">
         {pages.isPending ? null : items.length === 0 ? (
           <Empty>
             <EmptyHeader>
               <EmptyMedia variant="icon">
-                <FileTextIcon />
+                <ShapesIcon />
               </EmptyMedia>
               <EmptyTitle>No artifacts yet</EmptyTitle>
             </EmptyHeader>
           </Empty>
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {items.map((artifact) => (
-              <GalleryCard key={artifact.id} artifact={artifact} />
-            ))}
-          </div>
+          groupByUpdate(items).map((group) => (
+            <section key={group.heading} className="flex flex-col gap-3">
+              <h2 className="text-sm font-medium text-muted-foreground">{group.heading}</h2>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {group.items.map((artifact) => (
+                  <GalleryCard key={artifact.id} artifact={artifact} />
+                ))}
+              </div>
+            </section>
+          ))
         )}
         {pages.hasNextPage && (
           <Button

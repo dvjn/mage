@@ -1,5 +1,5 @@
-// Artifact routes on the app's origin: listing the ones a person can open and a thread's, reading one, getting a link to view it,
-// changing its sharing, following its changes, and the settings on making them public.
+// Artifact routes on the app's origin: listing the ones a person can open and a thread's, reading one, getting a link to
+// view it, changing its sharing, deleting it, following its changes, and the settings on making them public.
 
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
@@ -38,6 +38,10 @@ export function artifactRoutes(options: {
     })
     .get("/v1/artifacts/:id", (c) => {
       return c.json(artifacts.detail(signedIn(c.var.principal), c.req.param("id")), 200);
+    })
+    .delete("/v1/artifacts/:id", (c) => {
+      artifacts.delete(signedIn(c.var.principal), c.req.param("id"));
+      return c.body(null, 204);
     })
     .post("/v1/artifacts/:id/view", viewRequest, async (c) => {
       const principal = signedIn(c.var.principal);

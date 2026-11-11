@@ -1,13 +1,12 @@
-// Artifacts as the API shows them: pages the agent publishes from a thread, who may view them, the
+// Artifacts as the API shows them: pages the agent publishes in a space, who may view them, the
 // links that open them on their own origin, and what open viewers are told as they change.
 
 import * as z from "zod";
 
 import { pageSchema } from "@/shared/paging.ts";
 
-// Who may view an artifact besides the people who can read its thread: no one else, its org's
-// members, or anyone with the link.
-export const artifactSharingSchema = z.enum(["thread", "org", "public"]);
+// Who may view an artifact: the members of its space, its org's members, or anyone with the link.
+export const artifactSharingSchema = z.enum(["space", "org", "public"]);
 
 export type ArtifactSharing = z.infer<typeof artifactSharingSchema>;
 
@@ -29,6 +28,8 @@ export const artifactVersionSchema = z.object({
   label: z.string().nullable(),
   title: z.string(),
   createdAt: z.iso.datetime(),
+  // The thread whose agent published it, when the viewer can read it.
+  thread: z.object({ id: z.string(), title: z.string().nullable() }).nullable(),
 });
 
 export type ArtifactVersion = z.infer<typeof artifactVersionSchema>;
@@ -43,7 +44,6 @@ export const artifactLevelBlockSchema = z.object({
 // to which levels, and why not to the others.
 export const artifactSchema = z.object({
   id: z.string(),
-  threadId: z.string(),
   spaceId: z.string(),
   title: z.string(),
   description: z.string(),
@@ -55,6 +55,7 @@ export const artifactSchema = z.object({
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
   canShare: z.boolean(),
+  canDelete: z.boolean(),
   sharingLevels: z.array(artifactSharingSchema),
   sharingBlocked: z.array(artifactLevelBlockSchema),
 });
@@ -63,8 +64,11 @@ export type Artifact = z.infer<typeof artifactSchema>;
 
 export const artifactDetailSchema = artifactSchema.extend({
   versions: z.array(artifactVersionSchema),
-  // The thread it was made in, when the viewer can read it.
-  thread: z.object({ title: z.string().nullable() }).nullable(),
+  // The thread it was made in, and the threads that used it, where the viewer can read them.
+  madeIn: z.object({ id: z.string(), title: z.string().nullable() }).nullable(),
+  usedIn: z.array(z.object({ id: z.string(), title: z.string().nullable() })),
+  // Its space, to a member of it.
+  space: z.object({ id: z.string(), name: z.string() }).nullable(),
   // Where anyone can open it, while it is public.
   publicUrl: z.string().nullable(),
 });
@@ -122,16 +126,18 @@ export const artifactEventSchema = z.discriminatedUnion("type", [
 
 export type ArtifactEvent = z.infer<typeof artifactEventSchema>;
 
-// The tools whose calls publish, change or delete an artifact; their output names it.
+// The tools whose calls publish or change an artifact; their output names it.
 export const ARTIFACT_TOOLSET = "artifact";
 export const ARTIFACT_TOOLS = {
   publish: "artifact.publish",
   update: "artifact.update",
   read: "artifact.read",
   list: "artifact.list",
-  delete: "artifact.delete",
   preview: "artifact.preview",
 } as const;
+
+// Which of a space's artifacts the agent's list shows: those this thread used, or all of the space's.
+export const artifactScopeSchema = z.enum(["thread", "space"]);
 
 // One artifact in the gallery: what a card shows, and where it was made.
 export const artifactListItemSchema = z.object({
@@ -143,7 +149,7 @@ export const artifactListItemSchema = z.object({
   updatedAt: z.iso.datetime(),
   sharing: artifactSharingSchema,
   // The thread it was made in, when the viewer can read it.
-  thread: z.object({ id: z.string(), title: z.string().nullable() }).nullable(),
+  madeIn: z.object({ id: z.string(), title: z.string().nullable() }).nullable(),
   space: z.object({ id: z.string(), name: z.string() }),
 });
 
@@ -151,10 +157,8 @@ export type ArtifactListItem = z.infer<typeof artifactListItemSchema>;
 
 export const artifactPageSchema = pageSchema(artifactListItemSchema);
 
-// The gallery narrowed to a space or a sharing level, and its page.
+// A page of the gallery.
 export const artifactListQuerySchema = z.object({
-  space: z.string().max(100).optional(),
-  sharing: artifactSharingSchema.optional(),
   limit: z.coerce.number().int().min(1).max(200).optional(),
   cursor: z.string().max(1000).optional(),
 });

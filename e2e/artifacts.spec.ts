@@ -193,7 +193,7 @@ test("a card shows under the reply, a reply can place one, and the header lists 
   await expect(page).toHaveURL(new RegExp(`/artifacts/${id}$`));
 });
 
-test("the gallery lists the artifacts, a filter narrows it, and a card opens the viewer", async ({
+test("the gallery groups the artifacts by when they changed, and a card opens the viewer", async ({
   page,
 }) => {
   await signUp(page);
@@ -209,22 +209,66 @@ test("the gallery lists the artifacts, a filter narrows it, and a card opens the
 
   await page.getByRole("link", { name: "Artifacts" }).click();
   await expect(page).toHaveURL(/\/artifacts$/);
+  await expect(page.getByRole("heading", { name: "Today" })).toBeVisible();
   const cards = page.getByTestId("artifact-card");
   await expect(cards).toHaveCount(1);
   await expect(cards.first()).toContainText("Sales chart");
   await expect(cards.first()).toContainText("Shown in the gallery");
   await expect(cards.first()).toContainText("v1");
-
-  // Nothing is shared past the thread yet, so the org filter leaves none.
-  await page.getByRole("combobox", { name: "Sharing" }).click();
-  await page.getByRole("option", { name: "Organization" }).click();
-  await expect(page).toHaveURL(/sharing=org/);
-  await expect(page.getByText("No artifacts yet")).toBeVisible();
-  await page.getByRole("combobox", { name: "Sharing" }).click();
-  await page.getByRole("option", { name: "Thread" }).click();
-  await expect(cards).toHaveCount(1);
+  await expect(page.getByRole("combobox")).toHaveCount(0);
 
   await cards.first().getByRole("link", { name: "Sales chart" }).click();
   await expect(page).toHaveURL(/\/artifacts\/[^/]+$/);
   await expect(page.locator("iframe")).toBeVisible();
+});
+
+test("another thread in the space updates an artifact, the header lists what it used, and deleting names the threads", async ({
+  page,
+}) => {
+  await signUp(page);
+  const spaceUrl = page.url();
+  await write(
+    page,
+    [
+      call("artifact.publish", { html: PAGE("One"), description: "One", icon: "chart" }),
+      call("artifact.publish", { html: PAGE("Two"), description: "Two", icon: "chart" }),
+    ].join("\n"),
+  );
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  const first = page.url();
+  const cards = page.getByTestId("artifact-card");
+  await expect(cards).toHaveCount(2);
+  await cards.first().getByRole("link", { name: "Open" }).click();
+  const id = page.url().split("/").pop()!;
+  await page.goto(first);
+
+  // A second thread updates the first thread's artifact.
+  await page.goto(spaceUrl);
+  await write(
+    page,
+    call("artifact.update", { id, edits: [{ old: "One", new: "Uno" }], label: "Renamed" }),
+  );
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  expect(page.url()).not.toBe(first);
+
+  // This thread used one of the space's two artifacts.
+  const button = page.getByRole("button", { name: "Artifacts", exact: true });
+  await expect(button).toContainText("1");
+  await button.click();
+  const list = page.getByRole("link", { name: /Sales chart/ });
+  await expect(list).toHaveCount(1);
+  await page.keyboard.press("Escape");
+
+  // Each version names the thread that published it, and deleting lists the threads that used it.
+  await page.goto(`/artifacts/${id}`);
+  await page.getByRole("button", { name: "Version history" }).click();
+  await expect(page.getByRole("menuitemradio")).toHaveCount(2);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Delete" }).click();
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("removed for everyone");
+  await expect(dialog.getByRole("link")).toHaveCount(2);
+  await dialog.getByRole("button", { name: "Delete" }).click();
+  await expect(page).toHaveURL(/\/artifacts$/);
+  await expect(page.getByTestId("artifact-card")).toHaveCount(1);
 });

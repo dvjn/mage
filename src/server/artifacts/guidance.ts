@@ -3,7 +3,7 @@
 
 import { FONT_SOURCES, SCRIPT_SOURCES, STYLE_SOURCES } from "./page.ts";
 
-export const ARTIFACT_GUIDANCE = `Publish an artifact when a page will be clearer than a reply, or people will use it rather than read it: an interactive tool, a dashboard, a report to share. Update it rather than publishing anew; use edits for small changes and pass basedOn. End a reply that published or updated a page with its Artifact(id) card in a \`ui\` block, not buttons. Delete only when a person asks.
+export const ARTIFACT_GUIDANCE = `Publish an artifact when a page will be clearer than a reply, or people will use it rather than read it: an interactive tool, a dashboard, a report to share. Artifacts belong to the space and are shared with its members by default; any thread there may update one, and artifact.list with scope space shows them all. Update one rather than publishing anew; use edits for small changes and pass basedOn. End a reply that published or updated a page with its Artifact(id) card in a \`ui\` block, not buttons.
 
 Page contract:
 - Write the page's content: the server adds the doctype, charset, viewport (viewport-fit=cover) and a reset (body margin 0, 14px system font, img max-width 100%, [hidden] hides). Start with a <title> of two to four words; it names the artifact. Give a one-sentence description and a one-word generic icon.

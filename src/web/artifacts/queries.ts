@@ -1,9 +1,8 @@
-import { infiniteQueryOptions, keepPreviousData, queryOptions } from "@tanstack/react-query";
+import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
 import {
   artifactDetailSchema,
   artifactPageSchema,
-  type ArtifactSharing,
   artifactSchema,
   artifactSettingsSchema,
   artifactViewSchema,
@@ -24,6 +23,7 @@ export function artifactQuery(id: string) {
   });
 }
 
+// The artifacts a thread used.
 export function threadArtifactsQuery(threadId: string) {
   return queryOptions({
     queryKey: ["artifacts", "thread", threadId],
@@ -75,19 +75,16 @@ export function spaceArtifactSettingsQuery(spaceId: string) {
   });
 }
 
-// The gallery, a page after another, narrowed to a space or a sharing level.
-export function artifactPages(filters: { space?: string; sharing?: ArtifactSharing }) {
-  return infiniteQueryOptions({
-    queryKey: ["artifacts", "gallery", filters],
-    initialPageParam: null as string | null,
-    queryFn: async ({ pageParam }) => {
-      const res = await apiClient.v1.artifacts.$get({
-        query: { ...filters, ...(pageParam && { cursor: pageParam }) },
-      });
-      if (!res.ok) throw new Error("could not read the artifacts");
-      return artifactPageSchema.parse(await res.json());
-    },
-    getNextPageParam: (last) => last.nextCursor,
-    placeholderData: keepPreviousData,
-  });
-}
+// The gallery, a page after another.
+export const artifactPages = infiniteQueryOptions({
+  queryKey: ["artifacts", "gallery"],
+  initialPageParam: null as string | null,
+  queryFn: async ({ pageParam }) => {
+    const res = await apiClient.v1.artifacts.$get({
+      query: { ...(pageParam && { cursor: pageParam }) },
+    });
+    if (!res.ok) throw new Error("could not read the artifacts");
+    return artifactPageSchema.parse(await res.json());
+  },
+  getNextPageParam: (last) => last.nextCursor,
+});

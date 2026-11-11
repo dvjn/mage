@@ -14,7 +14,6 @@ import {
   redirect,
 } from "@tanstack/react-router";
 
-import { type ArtifactSharing, artifactSharingSchema } from "@/shared/artifacts.ts";
 import type { ToolScope } from "@/shared/threads/events.ts";
 import { AppShell } from "@/web/app/app-shell";
 import { AuthFrame } from "@/web/auth/auth-frame";
@@ -240,18 +239,10 @@ const threadRoute = createRoute({
   component: ThreadPage,
 });
 
-// The artifacts the person can open, narrowed in `?space=` and `?sharing=`.
+// The artifacts the person can open.
 const artifactsRoute = createRoute({
   getParentRoute: () => appRoute,
   path: "/artifacts",
-  validateSearch: (
-    search: Record<string, unknown>,
-  ): { space?: string; sharing?: ArtifactSharing } => ({
-    ...(typeof search.space === "string" && search.space && { space: search.space }),
-    ...(artifactSharingSchema.safeParse(search.sharing).success && {
-      sharing: search.sharing as ArtifactSharing,
-    }),
-  }),
   component: ArtifactGalleryPage,
 });
 

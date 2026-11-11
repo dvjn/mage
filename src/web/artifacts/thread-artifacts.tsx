@@ -1,10 +1,11 @@
 // A thread's artifacts in one place: a header button with how many there are, opening a list of
-// them, newest update first, each linking to its page and saying who may open it. The list is
-// read again whenever the count of the thread's finished artifact calls changes.
+// them, newest update first, each linking to its page and saying who may open it. It lists the ones
+// this thread used. The list is read again whenever the count of the thread's finished artifact
+// calls changes.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { AppWindowIcon } from "lucide-react";
+import { ShapesIcon } from "lucide-react";
 import { useEffect } from "react";
 
 import { ARTIFACT_TOOLS } from "@/shared/artifacts.ts";
@@ -23,11 +24,7 @@ import {
 import { Time } from "@/web/components/time";
 import { WithTooltip } from "@/web/components/with-tooltip";
 
-const CHANGING = new Set<string>([
-  ARTIFACT_TOOLS.publish,
-  ARTIFACT_TOOLS.update,
-  ARTIFACT_TOOLS.delete,
-]);
+const CHANGING = new Set<string>([ARTIFACT_TOOLS.publish, ARTIFACT_TOOLS.update]);
 
 export function ThreadArtifacts({
   threadId,
@@ -56,7 +53,7 @@ export function ThreadArtifacts({
             <Button size="sm" variant="ghost" aria-label="Artifacts" className="tabular-nums" />
           }
         >
-          <AppWindowIcon />
+          <ShapesIcon />
           {list.length}
         </PopoverTrigger>
       </WithTooltip>
