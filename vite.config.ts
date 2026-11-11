@@ -24,11 +24,45 @@ const serverCode = {
   regex: "^@/server/[^/]+/|^@/server/(main|http|schema)\\.ts$",
   message: "The web client imports only web code and shared/.",
 };
+// One shared component per job: a feature uses it, and only it may use the parts it is made of.
+type RestrictedPath = { name: string; importNames?: string[]; message: string };
+const sharedParts: RestrictedPath[] = [
+  {
+    name: "@/web/components/ui/dialog",
+    importNames: ["DialogContent"],
+    message: "Dialogs go through ResponsiveDialog, so they become sheets on phones.",
+  },
+  {
+    name: "@/web/components/ui/sheet",
+    importNames: ["SheetContent"],
+    message: "Dialogs go through ResponsiveDialog, so they become sheets on phones.",
+  },
+  {
+    name: "lucide-react",
+    importNames: [
+      "Ellipsis",
+      "EllipsisIcon",
+      "EllipsisVertical",
+      "EllipsisVerticalIcon",
+      "MoreHorizontal",
+      "MoreHorizontalIcon",
+      "MoreVertical",
+      "MoreVerticalIcon",
+    ],
+    message: "An object's More button and menu is MoreMenu; do not draw your own.",
+  },
+  {
+    name: "@/web/components/ui/empty",
+    message: "An empty list is said through EmptyState.",
+  },
+];
 type Pattern = { regex: string; message: string } | { group: string[]; message: string };
+// The rule for web code: the client's boundaries, and the shared parts unless the code is one of
+// them.
 function webImports(
   ...patterns: Pattern[]
-): ["error", { paths: (typeof serverApiType)[]; patterns: Pattern[] }] {
-  return ["error", { paths: [serverApiType], patterns: [serverCode, ...patterns] }];
+): ["error", { paths: RestrictedPath[]; patterns: Pattern[] }] {
+  return ["error", { paths: [serverApiType, ...sharedParts], patterns: [serverCode, ...patterns] }];
 }
 // Web code may import only the given web folders.
 function onlyWeb(folders: string[], message: string): Pattern {
@@ -40,6 +74,13 @@ const webLayers = ["api", "app", "components", "hooks", "icons", "lib", "public"
 const webFeatures = readdirSync(path.join(here, "src/web"), { withFileTypes: true })
   .filter((entry) => entry.isDirectory() && !webLayers.includes(entry.name))
   .map((entry) => entry.name);
+// The shared components and the primitives they are made of.
+const sharedPartFiles = [
+  "src/web/components/ui/**",
+  "src/web/components/responsive-dialog.tsx",
+  "src/web/components/more-menu.tsx",
+  "src/web/components/page-states.tsx",
+];
 
 export default defineConfig({
   root: path.join(here, "src/web"),
@@ -135,6 +176,25 @@ export default defineConfig({
               "Components import only components, lib, hooks and icons.",
             ),
           ),
+        },
+      },
+      {
+        // The parts the shared components are made of, which only they and the primitives use.
+        files: sharedPartFiles,
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              paths: [serverApiType],
+              patterns: [
+                serverCode,
+                onlyWeb(
+                  ["components", "lib", "hooks", "icons"],
+                  "Components import only components, lib, hooks and icons.",
+                ),
+              ],
+            },
+          ],
         },
       },
       {
