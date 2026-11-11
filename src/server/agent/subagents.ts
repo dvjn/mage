@@ -18,6 +18,7 @@
 
 import * as z from "zod";
 
+import { failureSentence } from "@/server/agent/failure-text.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { EventBus } from "@/server/kernel/event-bus.ts";
 import type { ModelMessage } from "@/server/models/gateway.ts";
@@ -48,6 +49,7 @@ import { contextOf, framingMessage, type ToolsetGuidance } from "./context.ts";
 import { createNotifier, type Notification } from "./notifications.ts";
 import type { Run, RunStore } from "./runs.ts";
 import type { AnyToolSpec, ToolContext, Toolset, ToolSpec } from "./tools.ts";
+import { personLabel } from "@/shared/people.ts";
 
 export interface SubagentRecord {
   threadId: string;
@@ -121,33 +123,37 @@ export function steeringIn(rows: readonly TranscriptRow[]): Steering[] {
     if (!steering.has(key)) steering.set(key, entry);
   };
   for (const row of rows) {
-    if (row.kind === "human") add({ userId: row.author.userId, name: row.author.name, via: [] });
+    if (row.kind === "human")
+      add({ userId: row.author.userId, name: personLabel(row.author), via: [] });
     else if (row.kind === "relay") row.steeredBy.forEach(add);
     else if (row.kind === "tool" && row.answers && row.decision) {
-      add({ userId: row.decision.by.userId, name: row.decision.by.name, via: [] });
+      add({ userId: row.decision.by.userId, name: personLabel(row.decision.by), via: [] });
     }
   }
   return [...steering.values()];
 }
 
-// Everyone whose words steered the thread's agent, named `self`, in one line, each person once by
-// the shortest way their words came: "Steered by Ada Lovelace, and Priya Nair via Critic → Writer".
-// The agent that started subagents shows as `agentName`.
-export function steeringLine(rows: readonly TranscriptRow[], self: string, agentName = AGENT_NAME) {
+// Everyone whose words steered the thread's agent, named `self`, each person once by the shortest
+// way their words came: the agents it passed through, ending in `self`. The agent that started
+// subagents shows as `agentName`. Null when no one did.
+export function steeringParts(
+  rows: readonly TranscriptRow[],
+  self: string,
+  agentName = AGENT_NAME,
+): { name: string; via: string[] }[] | null {
   const shortest = new Map<string, Steering>();
   for (const entry of steeringIn(rows)) {
     const known = shortest.get(entry.userId);
     if (!known || entry.via.length < known.via.length) shortest.set(entry.userId, entry);
   }
-  const names = [...shortest.values()].map((entry) =>
-    entry.via.length > 0
-      ? `${entry.name} via ${[...entry.via.map((via) => (via === AGENT_NAME ? agentName : via)), self].join(" → ")}`
-      : entry.name,
-  );
-  if (names.length === 0) return null;
-  const listed =
-    names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")}, and ${names.at(-1)!}`;
-  return `Steered by ${listed}`;
+  const parts = [...shortest.values()].map((entry) => ({
+    name: entry.name,
+    via:
+      entry.via.length > 0
+        ? [...entry.via.map((via) => (via === AGENT_NAME ? agentName : via)), self]
+        : [],
+  }));
+  return parts.length > 0 ? parts : null;
 }
 
 // What a subagent waits on in its thread, if anything: a decision on a call, or answers.
@@ -185,8 +191,9 @@ function reported(rows: readonly TranscriptRow[], runId: string) {
 }
 
 // What happened, then the subagent's last words.
-function withLast(line: string, last: string) {
-  return last ? `${line}\n\nIts last message:\n\n${last}` : line;
+// The last thing a subagent said, where it said anything.
+function withLast(last: string) {
+  return last ? { last } : {};
 }
 
 // Whether a subagent is idle as a watch reads it: neither working nor waiting to.
@@ -329,12 +336,23 @@ export function createSubagents(options: SubagentsOptions) {
     const { name } = subagent;
     if (run.status === "failed") {
       const failure = rows.findLast((row) => row.kind === "failure" && row.runId === run.id);
-      const error = failure?.kind === "failure" ? `: ${failure.error}` : ".";
+      const found = failure?.kind === "failure" ? failure : undefined;
+      const error = found?.error || undefined;
+      const said = found
+        ? failureSentence({
+            error: found.error,
+            kind: found.failure,
+            ...(found.connection && { connection: found.connection }),
+          })
+        : undefined;
       return {
         kind: "agent.failed",
         source: sourceOf(subagent, failure?.id),
-        text: withLast(`${name} failed${error}`, last),
+        text: `${name} failed${said === undefined ? "." : `: ${said}`}`,
         people,
+        subagents: [{ threadId: subagent.threadId, name }],
+        ...(error !== undefined && { error }),
+        ...withLast(last),
       };
     }
     if (run.status === "cancelled") {
@@ -342,16 +360,20 @@ export function createSubagents(options: SubagentsOptions) {
       return {
         kind: "agent.stopped",
         source: sourceOf(subagent, stopped?.id),
-        text: withLast(`${name} was stopped.`, last),
+        text: `${name} was stopped.`,
         people,
+        subagents: [{ threadId: subagent.threadId, name }],
+        ...withLast(last),
       };
     }
     if (reported(rows, run.id)) return null;
     return {
       kind: "agent.ended",
       source: sourceOf(subagent, lastRow?.id),
-      text: withLast(`${name} ended its run without reporting.`, last),
+      text: `${name} ended its run without reporting.`,
       people,
+      subagents: [{ threadId: subagent.threadId, name }],
+      ...withLast(last),
     };
   }
 
@@ -395,6 +417,8 @@ export function createSubagents(options: SubagentsOptions) {
       source: { ...senderOf(thread).from, callId },
       text: watch.when === "all_idle" ? `All idle: ${names}` : `Idle: ${names}`,
       people: [...people.values()],
+      subagents: idle.map((subagent) => ({ threadId: subagent.threadId, name: subagent.name })),
+      when: watch.when,
     });
   }
 

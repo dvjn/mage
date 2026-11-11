@@ -66,14 +66,16 @@ export const forkSchema = z.object({
 });
 
 // A side question about a row: what was asked and answered, in order, the answer still being
-// written last while it is.
+// written last while it is. An answer that failed has no text: it was stopped, or failed with
+// what the model or provider said, where it said anything.
 export const asideTurnSchema = z.object({
   id: z.string(),
   role: z.enum(["question", "answer"]),
   text: z.string(),
   at: z.string(),
   model: z.string().nullable().optional(),
-  failed: z.boolean().optional(),
+  failure: z.enum(["stopped", "error"]).optional(),
+  error: z.string().optional(),
 });
 
 export const asideSchema = z.object({

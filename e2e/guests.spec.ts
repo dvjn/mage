@@ -104,9 +104,11 @@ test("a guest joins a thread through a link, writes in it, and loses it when rev
   await guest.getByLabel("Message", { exact: true }).fill("Can they hop frequencies?");
   await guest.getByLabel("Message", { exact: true }).press("Enter");
   await expect(replies(guest).nth(1)).toHaveText(/I have read 2 messages/);
-  await expect(
-    transcript(page).getByRole("article", { name: "Message from Hedy Lamarr" }),
-  ).toContainText("Guest");
+  await transcript(page)
+    .getByRole("article", { name: "Message from Hedy Lamarr" })
+    .getByRole("button", { name: "About Hedy Lamarr" })
+    .hover();
+  await expect(page.locator("[data-slot=hover-card-content]")).toContainText("Guest");
   // The host's row in the space's list names who wrote, whoever wrote last first, and on hover
   // her as its guest.
   await page.goto(hostSpace);

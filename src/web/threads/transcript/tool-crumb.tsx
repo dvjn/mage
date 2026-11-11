@@ -5,10 +5,25 @@ import { cn } from "cn";
 import { ChevronRightIcon } from "lucide-react";
 
 import type { ToolRow } from "@/shared/threads/rows.ts";
+import { useModelNamer } from "@/web/threads/transcript/agent";
+
+// A call as the line names it: its tool's title, then for loading a skill the skill, and for
+// starting a subagent its name and the model it runs with.
+function useCallTitle() {
+  const nameOf = useModelNamer();
+  return (row: ToolRow) => {
+    if (row.skill) return `${row.state === "ran" ? "Loaded" : "Load"} ${row.skill}`;
+    if (row.subagentName) {
+      return [row.title, row.subagentName, nameOf(row.model ?? null)].filter(Boolean).join(" · ");
+    }
+    return row.title;
+  };
+}
 
 // What a tool is called, in words: its server's name before its own where it has a server.
-export function toolPath(row: ToolRow) {
-  return [row.toolset, row.title].filter(Boolean).join(" › ");
+export function useToolPath() {
+  const titleOf = useCallTitle();
+  return (row: ToolRow) => [row.toolset, titleOf(row)].filter(Boolean).join(" › ");
 }
 
 // An item of a flex row that grows from nothing into the room its siblings leave, up to its own
@@ -20,6 +35,7 @@ export const GIVES_WAY = "min-w-0 max-w-max flex-1 truncate";
 // first, sharing the room the tool's name leaves with any other item of the row that gives way the
 // same, and the tool's own name only once the server's is gone. It takes the class given.
 export function ToolCrumb({ row, className }: { row: ToolRow; className?: string }) {
+  const titleOf = useCallTitle();
   return (
     <>
       {row.toolset && (
@@ -33,7 +49,7 @@ export function ToolCrumb({ row, className }: { row: ToolRow; className?: string
           />
         </>
       )}
-      <span className={cn("min-w-0 truncate", className)}>{row.title}</span>
+      <span className={cn("min-w-0 truncate", className)}>{titleOf(row)}</span>
     </>
   );
 }

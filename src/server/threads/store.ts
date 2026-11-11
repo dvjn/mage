@@ -310,12 +310,22 @@ export function createThreadStore(db: Db): ThreadStore {
           threadId: threadEvent.threadId,
           userId: threadEvent.actorUserId,
           name: user.name,
+          removedAt: orgFormerMember.removedAt,
           last,
           // Taken from the row with the latest seq, as SQLite does for a bare column beside max().
           guest: sql<number | null>`json_extract(${threadEvent.data}, '$.guest')`,
         })
         .from(threadEvent)
         .leftJoin(user, eq(user.id, threadEvent.actorUserId))
+        .innerJoin(thread, eq(thread.id, threadEvent.threadId))
+        .innerJoin(space, eq(space.id, thread.spaceId))
+        .leftJoin(
+          orgFormerMember,
+          and(
+            eq(orgFormerMember.organizationId, space.organizationId),
+            eq(orgFormerMember.userId, threadEvent.actorUserId),
+          ),
+        )
         .where(
           and(
             inArray(threadEvent.threadId, threadIds),
@@ -327,9 +337,12 @@ export function createThreadStore(db: Db): ThreadStore {
         .groupBy(threadEvent.threadId, threadEvent.actorUserId)
         .orderBy(desc(last))
         .all();
-      for (const { threadId, userId, name, guest } of rows) {
+      for (const { threadId, userId, name, removedAt, guest } of rows) {
         if (!userId) continue;
-        writers.set(threadId, [...(writers.get(threadId) ?? []), { userId, name, guest: !!guest }]);
+        writers.set(threadId, [
+          ...(writers.get(threadId) ?? []),
+          { userId, name, former: removedAt !== null, guest: !!guest },
+        ]);
       }
       return writers;
     },

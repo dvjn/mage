@@ -14,7 +14,7 @@ import { pricedUsage } from "./usage.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { OrgSettings, OrgSettingStore } from "@/server/orgs/service.ts";
 import type { Space, SpaceStore } from "@/server/spaces/service.ts";
-import { connectionLabel } from "@/shared/connections.ts";
+import { connectionLabel, connectionName } from "@/shared/connections.ts";
 import { type HostId, HOSTS, hostOf, isHost } from "@/shared/hosts.ts";
 import { type MakerId, makerOf } from "@/shared/makers.ts";
 import { type ModelPair, replyCandidates } from "@/shared/models.ts";
@@ -39,6 +39,7 @@ import {
   type ModelRequest,
   type ProviderProxy,
 } from "./gateway.ts";
+import { parseModelRef } from "@/shared/model-ref.ts";
 
 export interface ModelChoice {
   enabled: boolean;
@@ -66,6 +67,7 @@ export interface Model extends CatalogModel {
   authKind: Connection["authKind"];
   // How people know the connection it comes through.
   connectionLabel: string;
+  connectionName: string | null;
 }
 
 // A connection's model with whether people can pick it and when its list first had it.
@@ -206,6 +208,7 @@ export function createModels(options: ModelsOptions) {
       maker: model.maker ?? makerOf(hostOf(connection.host), model.id),
       authKind: connection.authKind,
       connectionLabel: connectionLabel(connection),
+      connectionName: connectionName(connection),
       enabled: chosen.get(model.id)?.enabled ?? connection.autoEnableModels,
       firstSeenAt: chosen.get(model.id)?.firstSeenAt ?? now(),
     }));
@@ -280,9 +283,10 @@ export function createModels(options: ModelsOptions) {
     if (found) return { ref, name: found.name, status: "ok" };
     const off = turnedOff.find((model) => model.ref === ref);
     if (off) return { ref, name: off.name, status: "off" };
-    const connection = connectionOf(orgId, ref.slice(0, ref.indexOf("/")));
+    const { connectionId, modelId } = parseModelRef(ref);
+    const connection = connectionOf(orgId, connectionId);
     const unread = !!connection && errors.some((e) => e.connectionId === connection.id);
-    return { ref, name: ref.slice(ref.indexOf("/") + 1), status: unread ? "ok" : "unavailable" };
+    return { ref, name: modelId, status: unread ? "ok" : "unavailable" };
   }
 
   // The model and effort a thread with `own` replies with; a thread that follows the defaults has
@@ -401,10 +405,8 @@ export function createModels(options: ModelsOptions) {
     // when the ref names no model or the org has no such connection. A model its live list says
     // can think is asked for the effort requested, or medium; others are asked for none.
     async open(orgId: string, ref: string): Promise<OpenModel> {
-      const slash = ref.indexOf("/");
-      const prefix = ref.slice(0, slash);
-      const model = ref.slice(slash + 1);
-      if (slash < 1 || !model) throw new ModelError("model", `${ref} is not a model ref.`);
+      const { connectionId: prefix, modelId: model } = parseModelRef(ref);
+      if (!prefix || !model) throw new ModelError("model", `${ref} is not a model ref.`);
       const connection = connectionOf(orgId, prefix);
       if (!connection) {
         const needs = isHost(prefix)
@@ -506,9 +508,7 @@ export function createModels(options: ModelsOptions) {
     shownModels(orgId: string): (ref: string) => ShownModel {
       const list = connections.list(orgId);
       return (ref) => {
-        const slash = ref.indexOf("/");
-        const prefix = ref.slice(0, slash);
-        const id = ref.slice(slash + 1);
+        const { connectionId: prefix, modelId: id } = parseModelRef(ref);
         const connection = namedBy(list, prefix);
         const listed = connection && cache.get(connection.id)?.models.find((m) => m.id === id);
         // A sign-in's ref names its host even after it is gone.

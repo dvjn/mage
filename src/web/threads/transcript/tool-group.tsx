@@ -3,7 +3,6 @@
 // while one runs, that call. It opens on who sent those messages to whom, and the calls' own lines
 // and the thinking between them.
 
-import { cn } from "cn";
 import { CheckIcon, ChevronRightIcon, SkipForwardIcon, XIcon } from "lucide-react";
 
 import type { AgentRow, AgentTurn, ToolRow } from "@/shared/threads/rows.ts";
@@ -14,11 +13,11 @@ import {
   CollapsibleTrigger,
 } from "@/web/components/ui/collapsible";
 import { Spinner } from "@/web/components/ui/spinner";
-import { AgentAvatar, useThreadAgent, useModelName } from "@/web/threads/transcript/agent";
+import { useThreadAgent } from "@/web/threads/transcript/agent";
 import { ReplyReasoning } from "@/web/threads/transcript/agent-reply";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
-import { GIVES_WAY, ToolCrumb, toolPath } from "@/web/threads/transcript/tool-crumb";
+import { GIVES_WAY, ToolCrumb, useToolPath } from "@/web/threads/transcript/tool-crumb";
 
 // What the calls that did not run are counted as, in this order.
 const MISSES: [string, ToolRow["state"][]][] = [
@@ -56,8 +55,8 @@ export function ToolGroup({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const model = useModelName(turn.model);
   const { self } = useThreadAgent();
+  const toolPath = useToolPath();
   const current = calls.findLast(running);
   const { count, toolsets, misses } = callsSummary(calls);
   const failed = calls.some((call) =>
@@ -68,11 +67,7 @@ export function ToolGroup({
     ? `${toolPath(current)} · Running`
     : [count, toolsets, ...misses].filter(Boolean).join(" · ");
   const group = (
-    <Collapsible
-      open={open}
-      onOpenChange={onOpenChange}
-      className={cn("text-xs text-muted-foreground", turn.continued && "pl-9")}
-    >
+    <Collapsible open={open} onOpenChange={onOpenChange} className="text-xs text-muted-foreground">
       <CollapsibleTrigger
         aria-label={label}
         className="group/tool flex w-full items-center gap-1.5 rounded-md py-0.5 text-left hover:text-foreground [&>svg]:size-3.5 [&>svg]:shrink-0"
@@ -124,11 +119,9 @@ export function ToolGroup({
   if (turn.continued) return group;
   return (
     <TranscriptRowFrame
-      avatar={<AgentAvatar {...self} />}
       author={self.name}
       at={calls[0]!.requestedAt}
       label={`Message from ${self.name}`}
-      note={model && <span>{model}</span>}
     >
       {group}
     </TranscriptRowFrame>

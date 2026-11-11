@@ -132,7 +132,7 @@ describe("threads", () => {
     expect(await res.json()).toMatchObject({
       seq: 1,
       type: "message",
-      actor: { kind: "user", userId, name: "Ada Lovelace" },
+      actor: { kind: "user", userId, name: "Ada Lovelace", former: false },
       data: { parts: [{ type: "text", text: "Hello" }] },
     });
     for (const text of ["", "   "]) {
@@ -193,9 +193,9 @@ describe("event log", () => {
     ];
 
     expect(authors).toEqual([
-      { kind: "user", userId: ada.userId, name: "Ada Lovelace" },
-      { kind: "user", userId: grace.userId, name: "(former member)" },
-      { kind: "user", userId: ada.userId, name: "Ada Lovelace" },
+      { kind: "user", userId: ada.userId, name: "Ada Lovelace", former: false },
+      { kind: "user", userId: grace.userId, name: null, former: true },
+      { kind: "user", userId: ada.userId, name: "Ada Lovelace", former: false },
     ]);
   });
 });
@@ -280,9 +280,9 @@ describe("a space's thread list", () => {
     expect(list.find((t) => t.id === blank.id)?.participants).toEqual({ people: [], total: 0 });
     expect(list.find((t) => t.id === talk.id)?.participants).toEqual({
       people: [
-        { userId: grace.userId, name: "Grace Hopper", guest: false },
-        { userId: hedy.userId, name: "Hedy Lamarr", guest: false },
-        { userId: alan.userId, name: "Alan Turing", guest: false },
+        { userId: grace.userId, name: "Grace Hopper", guest: false, former: false },
+        { userId: hedy.userId, name: "Hedy Lamarr", guest: false, former: false },
+        { userId: alan.userId, name: "Alan Turing", guest: false, former: false },
       ],
       total: 4,
     });
@@ -309,7 +309,7 @@ describe("a space's thread list", () => {
       participants: unknown;
     }[];
     expect(list.find((t) => t.id === talk.id)?.participants).toEqual({
-      people: [{ userId, name: "Ada Lovelace", guest: false }],
+      people: [{ userId, name: "Ada Lovelace", guest: false, former: false }],
       total: 1,
     });
   });

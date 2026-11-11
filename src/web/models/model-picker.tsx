@@ -13,12 +13,12 @@ import { CheckIcon, TriangleAlertIcon } from "lucide-react";
 import type * as React from "react";
 import { cn } from "cn";
 
-import { connectionLabel } from "@/shared/connections.ts";
+import { connectionLabel, connectionName } from "@/shared/connections.ts";
 import { type HostId, hostOf } from "@/shared/hosts.ts";
 import { MAKERS } from "@/shared/makers.ts";
 import type { ModelSummary } from "@/shared/models.ts";
 import { promptInputSelectTriggerClassName } from "@/web/components/prompt-input/parts";
-import { givenName, HostMark, MakerMark } from "@/web/models/marks";
+import { HostMark, MakerMark } from "@/web/models/marks";
 import {
   Combobox,
   ComboboxCollection,
@@ -36,6 +36,7 @@ import { selectTriggerClassName } from "@/web/components/ui/select";
 import { Skeleton } from "@/web/components/ui/skeleton";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { connectionsQuery, modelsQuery } from "@/web/models/queries";
+import { parseModelRef } from "@/shared/model-ref.ts";
 
 // A tooltip when there is something to say.
 function MaybeTooltip({ label, children }: { label?: string; children: React.ReactElement }) {
@@ -51,6 +52,7 @@ export const CONNECTION_LABELS: Record<"codex" | "claude", string> = {
 interface Group {
   value: string;
   label: string;
+  name: string | null;
   host: HostId;
   items: ModelSummary[];
 }
@@ -61,6 +63,7 @@ function groupsOf(models: ModelSummary[]): Group[] {
     const group = groups.get(model.connectionId) ?? {
       value: model.connectionId,
       label: model.connectionLabel,
+      name: model.connectionName,
       host: model.host,
       items: [],
     };
@@ -96,7 +99,13 @@ function useFailedConnections() {
     const connection = connections.data?.find((c) => c.id === connectionId);
     if (!connection) return [];
     return [
-      { id: connectionId, host: connection.host, label: connectionLabel(connection), message },
+      {
+        id: connectionId,
+        host: connection.host,
+        label: connectionLabel(connection),
+        name: connectionName(connection),
+        message,
+      },
     ];
   });
 }
@@ -119,7 +128,7 @@ export function useMissingModel(
   if (loading || !ref || models.some((model) => model.ref === ref)) return null;
   const off = list.data?.turnedOff.find((model) => model.ref === ref);
   return {
-    name: off?.name ?? ref.slice(ref.indexOf("/") + 1),
+    name: off?.name ?? parseModelRef(ref).modelId,
     off: !!off,
     message: off ? "This model is turned off." : "This model is no longer available.",
   };
@@ -303,7 +312,7 @@ export function ModelPicker({
           {(group: Group, index: number) => (
             <ComboboxGroup key={group.value} items={group.items}>
               <ComboboxLabel className="flex items-center gap-1.5">
-                <HostMark host={group.host} label={givenName(group.label)} className="size-3" />
+                <HostMark host={group.host} label={group.name} className="size-3" />
                 {group.label}
               </ComboboxLabel>
               <ComboboxCollection>
@@ -320,14 +329,14 @@ export function ModelPicker({
         </ComboboxList>
         {failed.length > 0 && (
           <ul aria-label="Not loaded" className="border-t p-1">
-            {failed.map(({ id, host, label, message }) => (
+            {failed.map(({ id, host, label, name, message }) => (
               <li key={id}>
                 <WithTooltip label={message}>
                   <span
                     tabIndex={0}
                     className="flex items-center gap-1.5 rounded-md px-2 py-1.5 text-xs text-muted-foreground"
                   >
-                    <HostMark host={host} label={givenName(label)} className="size-3" />
+                    <HostMark host={host} label={name} className="size-3" />
                     <span className="truncate">{label}</span>
                     <span className="ml-auto pl-3 whitespace-nowrap">
                       Couldn&apos;t load<span className="sr-only">: {message}</span>

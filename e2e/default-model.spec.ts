@@ -44,6 +44,7 @@ test("the default model picker groups models by connection and shows list errors
             maker: "openai",
             authKind: "oauth",
             connectionLabel: "ChatGPT",
+            connectionName: null,
           },
           {
             ref: "c2/claude-big",
@@ -54,6 +55,7 @@ test("the default model picker groups models by connection and shows list errors
             maker: "anthropic",
             authKind: "api_key",
             connectionLabel: "Anthropic API key",
+            connectionName: null,
           },
         ],
         errors: [{ connectionId: "c3", message: "Could not read the Claude models. Try again." }],

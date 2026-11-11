@@ -20,6 +20,8 @@ export const modelSchema = z.object({
   authKind: z.enum(AUTH_KINDS),
   // How people know the connection it comes through.
   connectionLabel: z.string(),
+  // The name people gave the connection, where they gave one.
+  connectionName: z.string().nullable(),
   contextWindow: z.number().optional(),
   reasoning: z.boolean().optional(),
   pricing: modelPricingSchema.optional(),

@@ -72,6 +72,19 @@ test("a reply written again keeps the first as a version, read-only when opened"
   await exchange(page, "Hello", 1);
   const url = page.url();
 
+  const human = messages(page).last();
+  const humanActions = human.getByRole("toolbar", { name: "Message actions" });
+  await expect(humanActions.getByRole("button")).toHaveCount(2);
+  await expect(humanActions.getByRole("button", { name: "Copy", exact: true })).toHaveCount(1);
+  await expect(humanActions.getByRole("button", { name: "Edit", exact: true })).toHaveCount(1);
+  await expect(human.getByText("Ada Lovelace", { exact: true })).toHaveCount(0);
+  await expect(human.locator("time")).toHaveCount(0);
+  await page.mouse.move(0, 0);
+  const controls = humanActions.locator("..").locator("..");
+  await expect(controls).toHaveCSS("opacity", "0");
+  await human.hover();
+  await expect(controls).toHaveCSS("opacity", "1");
+
   await action(replies(page).last(), "Retry");
   await idle(page);
   const versions = replies(page).last().getByRole("group", { name: "Versions" });

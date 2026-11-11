@@ -10,12 +10,14 @@ import { useState } from "react";
 import type { HumanRow } from "@/shared/threads/rows.ts";
 import { meQuery } from "@/web/auth/queries";
 import { MessageResponse } from "@/web/components/ai-elements/message";
-import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
 import { Button } from "@/web/components/ui/button";
 import { Textarea } from "@/web/components/ui/textarea";
 import { initialsOf } from "@/web/lib/initials";
+import { Time } from "@/web/components/time";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
-import { RowToolbar } from "@/web/threads/transcript/row-history";
+import { SourceCard } from "@/web/threads/transcript/source-card";
+import { RowToolbar, RowHistoryFooter } from "@/web/threads/transcript/row-history";
+import { displayName } from "@/web/lib/people.ts";
 
 export function HumanMessage({
   row,
@@ -26,7 +28,7 @@ export function HumanMessage({
   onEdit?: (text: string) => Promise<void>;
 }) {
   const me = useQuery(meQuery);
-  const author = row.author.name;
+  const author = displayName(row.author);
   const mine = row.author.userId === me.data?.user.id;
   const [editing, setEditing] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -39,36 +41,39 @@ export function HumanMessage({
   }
   return (
     <TranscriptRowFrame
+      human
+      rowId={row.id}
       avatar={
-        <Avatar size="sm">
-          <AvatarFallback className={cn(mine && "bg-primary text-primary-foreground")}>
-            {initialsOf(author)}
-          </AvatarFallback>
-        </Avatar>
+        <SourceCard
+          source={{
+            name: author,
+            kind: mine
+              ? "You"
+              : row.guest
+                ? "Guest"
+                : row.author.former
+                  ? "Former member"
+                  : "Member",
+            mark: initialsOf(author),
+            markClassName: cn(mine && "bg-primary text-primary-foreground"),
+            facts: [{ label: "Posted", value: <Time iso={row.postedAt} /> }],
+          }}
+        />
       }
       author={author}
       at={row.postedAt}
       label={`Message from ${author}`}
-      note={
-        (row.guest || row.quiet || row.author.former) && (
-          <>
-            {row.author.former && <span>former member</span>}
-            {row.guest && <span>Guest</span>}
-            {row.quiet && <span>aside</span>}
-          </>
-        )
-      }
-      footer={
+      actions={
         editing === null && (
           <RowToolbar
             rowId={row.id}
             text={row.text}
-            can={row.can}
-            versions={row.versions}
+            can={row.can?.filter((action) => action === "edit")}
             onEdit={onEdit && (() => setEditing(row.text))}
           />
         )
       }
+      footer={editing === null && <RowHistoryFooter rowId={row.id} versions={row.versions} />}
     >
       {editing !== null ? (
         <div className="flex flex-col gap-2">

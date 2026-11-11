@@ -99,9 +99,11 @@ test("a directory group linked to a team org lets its people in, and leaving it 
     timeout: 25_000,
   });
   await page.reload();
-  await expect(
-    transcript(page).getByRole("article", { name: "Message from Grace Hopper" }),
-  ).toContainText("former member");
+  await transcript(page)
+    .getByRole("article", { name: "Message from Grace Hopper" })
+    .getByRole("button", { name: "About Grace Hopper" })
+    .hover();
+  await expect(page.locator("[data-slot=hover-card-content]")).toContainText("Former member");
   await page.goto("/org/people");
   await expect(people.getByRole("row", { name: groupName })).toContainText("0 people");
 });

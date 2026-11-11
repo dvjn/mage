@@ -2,10 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { writerLine, writersInFull } from "@/web/threads/writers.ts";
 
-const grace = { userId: "u-grace", name: "Grace Hopper", guest: false };
-const ada = { userId: "u-ada", name: "Ada Lovelace", guest: false };
-const hedy = { userId: "u-hedy", name: "Hedy Lamarr", guest: true };
-const gone = { userId: "u-gone", name: "(former member)", guest: false };
+const grace = { userId: "u-grace", name: "Grace Hopper", former: false, guest: false };
+const ada = { userId: "u-ada", name: "Ada Lovelace", former: false, guest: false };
+const hedy = { userId: "u-hedy", name: "Hedy Lamarr", former: false, guest: true };
+const gone = { userId: "u-gone", name: null, former: true, guest: false };
 
 describe("a thread row's writers", () => {
   it("names the one or two who wrote last by first name, then counts the rest", () => {
@@ -21,7 +21,7 @@ describe("a thread row's writers", () => {
   });
 
   it("keeps a former member's name whole", () => {
-    expect(writerLine({ people: [gone, grace], total: 2 })).toBe("(former member), Grace");
+    expect(writerLine({ people: [gone, grace], total: 2 })).toBe("Former member, Grace");
   });
 
   it("says nothing while nobody has written", () => {

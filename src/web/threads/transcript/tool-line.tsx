@@ -24,7 +24,8 @@ import {
 } from "@/web/components/ui/collapsible";
 import { Spinner } from "@/web/components/ui/spinner";
 import { lineKey, rowElementId, RowLink, useRowFocus } from "@/web/threads/transcript/row-focus";
-import { GIVES_WAY, ToolCrumb, toolPath } from "@/web/threads/transcript/tool-crumb";
+import { GIVES_WAY, ToolCrumb, useToolPath } from "@/web/threads/transcript/tool-crumb";
+import { displayName } from "@/web/lib/people.ts";
 
 // Where a subagent stands, in words.
 export const SUBAGENT_STATES: Record<SubagentState, string> = {
@@ -56,14 +57,12 @@ function duration(ms: number | null) {
 export function ToolLine({
   row,
   definition,
-  framed,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
-  // Directly under an Agent header, rather than aligned with the text beside its avatar.
-  framed?: boolean;
 }) {
-  const by = row.decision?.by.name;
+  const toolPath = useToolPath();
+  const by = row.decision ? displayName(row.decision.by) : undefined;
   // Who let the call run, where someone did.
   const allowed =
     by && (row.decision?.scope === "for_now" ? `allowed for now by ${by}` : `allowed by ${by}`);
@@ -111,12 +110,19 @@ export function ToolLine({
     if (subagent.state === "working" || subagent.state === "queued") icon = <Spinner />;
   }
   // What became of the call follows the tool, item by item, with whose own credentials it ran.
-  const outcome = [status, who, row.ranAs && `as ${row.ranAs.name}`].filter(Boolean).join(" · ");
+  const outcome = [status, who, row.ranAs && `as ${displayName(row.ranAs)}`]
+    .filter(Boolean)
+    .join(" · ");
   const took = duration(row.ms);
+  const focus = useRowFocus();
+  const lit = focus?.lit === row.id;
   const trigger = (
     <CollapsibleTrigger
       aria-label={`${toolPath(row)} · ${outcome}`}
-      className="group/tool flex w-full min-w-0 items-center gap-1.5 rounded-md py-0.5 text-left hover:text-foreground [&>svg]:size-3.5 [&>svg]:shrink-0"
+      aria-description={lit ? "Linked tool call" : undefined}
+      className={cn(
+        "group/tool relative flex w-full min-w-0 items-center gap-1.5 rounded-md py-0.5 text-left hover:text-foreground [&>svg]:size-3.5 [&>svg]:shrink-0",
+      )}
     >
       <ChevronRightIcon className="transition-transform group-data-[panel-open]/tool:rotate-90" />
       {icon}
@@ -127,19 +133,18 @@ export function ToolLine({
       {took && <span className="shrink-0 tabular-nums">{took}</span>}
     </CollapsibleTrigger>
   );
-  const focus = useRowFocus();
-  const lit = focus?.lit === row.id;
   return (
     <Collapsible
       id={rowElementId(row.id)}
       data-lit={lit || undefined}
+      onPointerEnter={(event) => {
+        if (event.pointerType !== "touch") focus?.dismiss?.(row.id);
+      }}
+      onPointerDownCapture={() => focus?.dismiss?.(row.id)}
+      onKeyDownCapture={() => focus?.dismiss?.(row.id)}
       open={focus ? focus.opened.has(lineKey(row.id)) : undefined}
       onOpenChange={focus ? (open) => focus.onOpenChange([lineKey(row.id)], open) : undefined}
-      className={cn(
-        "rounded-md text-xs text-muted-foreground transition-colors duration-700",
-        !framed && "pl-9",
-        lit && "bg-accent ring-2 ring-ring/40",
-      )}
+      className={cn("rounded-md text-xs text-muted-foreground", lit && "row-attention")}
     >
       {subagent ? (
         <div className="flex items-center gap-2">
@@ -156,7 +161,7 @@ export function ToolLine({
       ) : (
         trigger
       )}
-      <CollapsibleContent className="mt-1 flex flex-col gap-3 rounded-md bg-muted px-3 py-2">
+      <CollapsibleContent className="mt-1 flex flex-col gap-3 rounded-md bg-muted/20 px-3 py-2.5">
         {row.effects && (
           <nav aria-label="Effects" className="flex flex-wrap gap-1.5">
             {row.effects.map((effect) => (

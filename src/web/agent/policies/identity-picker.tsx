@@ -26,6 +26,12 @@ import { EDITORS_IDENTITY } from "@/web/agent/policies/model";
 // People and groups of the org, as tokens: typing searches the directory, Enter adds the top
 // match and Backspace takes back the last one. Approvers may also be anyone who can edit the
 // thread.
+// What a line says under an identity's name: a group's size, else what the server sent.
+function detailOf({ detail, memberCount }: PolicyIdentity) {
+  if (memberCount === undefined) return detail;
+  return `Group · ${memberCount} ${memberCount === 1 ? "person" : "people"}`;
+}
+
 export function IdentityPicker({
   label,
   value,
@@ -52,7 +58,8 @@ export function IdentityPicker({
       key: `group:${group.id}`,
       kind: "group" as const,
       name: group.name,
-      detail: `Group · ${group.memberCount} ${group.memberCount === 1 ? "person" : "people"}`,
+      detail: null,
+      memberCount: group.memberCount,
       stale: false,
     })),
     ...(people.data?.pages[0]?.items ?? []).map((member) => ({
@@ -121,8 +128,10 @@ export function IdentityPicker({
               </span>
               <span className="flex min-w-0 flex-col">
                 <span className="truncate">{identity.name}</span>
-                {identity.detail && (
-                  <span className="truncate text-xs text-muted-foreground">{identity.detail}</span>
+                {detailOf(identity) && (
+                  <span className="truncate text-xs text-muted-foreground">
+                    {detailOf(identity)}
+                  </span>
                 )}
               </span>
             </ComboboxItem>

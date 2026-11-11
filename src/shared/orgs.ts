@@ -229,8 +229,10 @@ export const teamSettingsChangeSchema = teamSettingsSchema
   .partial()
   .refine((changes) => Object.keys(changes).length > 0);
 
-// What the API answers for an org the person is not in, as when they were removed from it.
+// What the API answers for an org the person is not in, as when they were removed from it: the
+// message and the code that says so.
 export const ORG_NOT_FOUND = "Organization not found";
+export const ORG_NOT_FOUND_CODE = "org_not_found";
 
 // Which org a space or thread is in, for opening it in that org.
 export const locatedSchema = z.object({ orgId: z.string() });

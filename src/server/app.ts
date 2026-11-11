@@ -35,7 +35,7 @@ import { spaceRoutes } from "@/server/spaces/routes.ts";
 import type { Spaces } from "@/server/spaces/service.ts";
 import { threadRoutes } from "@/server/threads/routes.ts";
 import type { Threads } from "@/server/threads/service.ts";
-import { ORG_NOT_FOUND } from "@/shared/orgs.ts";
+import { ORG_NOT_FOUND, ORG_NOT_FOUND_CODE } from "@/shared/orgs.ts";
 import type { SignInOptions } from "@/shared/sign-in.ts";
 
 import type { ApiEnv } from "./http.ts";
@@ -117,11 +117,12 @@ function createApi(options: AppOptions) {
       if (!account.principal && named) {
         // An org the person is not in is not found, except on routes about the person.
         const personal = PERSONAL_ROUTES.some((route) => c.req.path.startsWith(`/api${route}`));
-        if (!personal) return c.json({ error: ORG_NOT_FOUND }, 404);
+        if (!personal) return c.json({ error: ORG_NOT_FOUND, code: ORG_NOT_FOUND_CODE }, 404);
         account = await identity.resolve(c.req.raw.headers, null);
         if (!account) return c.json({ error: "unauthorized" }, 401);
       }
-      if (!account.principal) return c.json({ error: ORG_NOT_FOUND }, 404);
+      if (!account.principal)
+        return c.json({ error: ORG_NOT_FOUND, code: ORG_NOT_FOUND_CODE }, 404);
       c.set("account", account);
       c.set("principal", account.principal);
       await next();

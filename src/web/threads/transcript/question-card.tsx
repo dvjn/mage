@@ -7,7 +7,7 @@ import { MessageCircleQuestionIcon } from "lucide-react";
 import { type AskInput } from "@/shared/ask.ts";
 import type { ToolRow } from "@/shared/threads/rows.ts";
 import { QuestionForm } from "@/web/agent/question-form";
-import { AgentAvatar, useThreadAgent } from "@/web/threads/transcript/agent";
+import { useThreadAgent } from "@/web/threads/transcript/agent";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
 import { ToolCrumb } from "@/web/threads/transcript/tool-crumb";
@@ -32,7 +32,7 @@ export function QuestionCard({
   const who = subagent ? { name: subagent, subagent: true } : self;
   return (
     <TranscriptRowFrame
-      avatar={<AgentAvatar {...who} />}
+      rowId={row.id}
       author={who.name}
       at={row.requestedAt}
       label={`Questions from ${who.name}`}

@@ -67,8 +67,21 @@ export const replyStatusSchema = z.enum(["completed", "interrupted", "failed"]);
 export type ReplyStatus = z.infer<typeof replyStatusSchema>;
 
 // Why a run failed, sorted by what people can do about it: sign in to the provider again, wait for
-// a limit to reset, pick another model, or try again once the provider can be reached.
-export const failureKindSchema = z.enum(["auth", "limit", "model", "network"]);
+// a limit to reset, pick another model, or try again once the provider can be reached; or that no
+// model was picked, the thread is gone, the model failed in a way that has no kind of its own, the
+// server stopped while the agent replied, or the input was given up on after the server stopped
+// too many times.
+export const failureKindSchema = z.enum([
+  "auth",
+  "limit",
+  "model",
+  "network",
+  "no_model",
+  "gone",
+  "model_error",
+  "interrupted",
+  "gave_up",
+]);
 
 export type FailureKind = z.infer<typeof failureKindSchema>;
 
@@ -145,6 +158,19 @@ export const notificationSourceSchema = senderSchema.extend({
 
 export type NotificationSource = z.infer<typeof notificationSourceSchema>;
 
+// What a notification about subagents tells, apart from its text, so it can be shown as parts:
+// the subagents it is about, for an idle watch whether it waited for all of them, for a failure
+// its error, and the last thing the subagent said, which the text leaves out. Older notifications
+// carry only their text.
+export const notificationPartsSchema = z.object({
+  subagents: z.array(z.object({ threadId: z.string(), name: z.string() })).optional(),
+  when: z.enum(["all_idle", "any_idle"]).optional(),
+  error: z.string().optional(),
+  last: z.string().optional(),
+});
+
+export type NotificationParts = z.infer<typeof notificationPartsSchema>;
+
 // Where a subagent stands once its run ended: waiting for more, stopped, or failed.
 export const subagentEndSchema = z.enum(["idle", "stopped", "failed"]);
 
@@ -186,6 +212,7 @@ export const eventDataSchemas = {
     people: z.array(steeringSchema),
     to: z.string().optional(),
     task: subagentTaskSchema.optional(),
+    ...notificationPartsSchema.shape,
   }),
   // No longer written: one of the thread's subagents ended a run with nothing more to do, and the
   // last thing it said.
@@ -241,9 +268,9 @@ export const eventDataSchemas = {
     tokensAfter: z.number().int().nonnegative().optional(),
     usage: usageSchema.optional(),
   }),
-  // `error` says what happened; when the failure has a kind, `connection` is the kind of connection
-  // the model is reached through, `detail` what the provider said and `resetsAt` when a limit
-  // resets.
+  // `error` is what the provider or system said, empty when it said nothing; `kind` is why, when
+  // known; `connection` is the kind of connection the model is reached through, `detail` more from
+  // the provider and `resetsAt` when a limit resets.
   "run.failed": z.object({
     runId: z.string(),
     error: z.string(),
@@ -314,14 +341,14 @@ export type EventDataMap = {
 
 export type EventType = keyof EventDataMap;
 
-// Who an event is from. `name` is "(former member)" once the user is gone; `former` marks someone
-// removed from the thread's org.
+// Who an event is from. `former` marks someone removed from the thread's org; `name` is null once
+// the user is gone altogether.
 export const actorSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("user"),
     userId: z.string(),
-    name: z.string(),
-    former: z.boolean().optional(),
+    name: z.string().nullable(),
+    former: z.boolean(),
   }),
   z.object({ kind: z.literal("agent") }),
 ]);

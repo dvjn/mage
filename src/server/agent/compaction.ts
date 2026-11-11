@@ -26,6 +26,7 @@ import {
 } from "@/shared/transcript.ts";
 
 import { noticeMessage, notificationLine } from "./context.ts";
+import { personLabel } from "@/shared/people.ts";
 
 // About how many tokens of the most recent conversation are kept word for word.
 export const KEEP_TOKENS = 20_000;
@@ -161,7 +162,8 @@ export function conversationText(rows: readonly TranscriptRow[]) {
   const lines: string[] = [];
   for (const row of rows) {
     if (row.kind === "human") {
-      if (!asksToCompact(row)) lines.push(`[${row.author.name}]: ${row.command?.text ?? row.text}`);
+      if (!asksToCompact(row))
+        lines.push(`[${personLabel(row.author)}]: ${row.command?.text ?? row.text}`);
     } else if (row.kind === "relay") {
       lines.push(notificationLine(row));
     } else if (row.kind === "notice") {
@@ -218,7 +220,7 @@ export function summaryAsk(input: {
   return [
     "Write the summary this conversation continues from once its earlier part is set aside: from your next turn you read it in place of the part it covers, then the rest word for word.",
     kept
-      ? `Summarise the conversation before the message of ${kept.author.name} that starts "${excerpt}". That message and all after it are kept word for word: leave them out.`
+      ? `Summarise the conversation before the message of ${personLabel(kept.author)} that starts "${excerpt}". That message and all after it are kept word for word: leave them out.`
       : "Summarise the whole conversation.",
     ...(previous
       ? [

@@ -16,6 +16,7 @@ import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { VersionSwitcher } from "@/web/threads/transcript/row-history";
 import { RowLink } from "@/web/threads/transcript/row-focus";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
+import { displayName } from "@/web/lib/people.ts";
 
 export function TranscriptItem({
   row,
@@ -81,7 +82,7 @@ export function TranscriptItem({
       );
     case "fork": {
       const what = row.summary ? "Started from a summary of" : "Forked from";
-      const by = row.by ? ` by ${row.by.name}` : "";
+      const by = row.by ? ` by ${displayName(row.by)}` : "";
       return (
         <p role="status" className="text-center text-xs text-muted-foreground">
           {what}{" "}
@@ -109,7 +110,7 @@ export function TranscriptItem({
         >
           <span aria-hidden className="h-px flex-1 bg-border" />
           <span>
-            Restored from here{row.by && ` by ${row.by.name}`} · <Time iso={row.postedAt} />
+            Restored from here{row.by && ` by ${displayName(row.by)}`} · <Time iso={row.postedAt} />
           </span>
           {row.versions && <VersionSwitcher versions={row.versions} />}
           <span aria-hidden className="h-px flex-1 bg-border" />

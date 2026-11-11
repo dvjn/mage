@@ -73,12 +73,12 @@ export function createToolPolicies(options: ToolPoliciesOptions) {
       if (!group || !linked) {
         return { key, kind, name: group?.name ?? "Removed group", detail: null, stale: true };
       }
-      const count = directory.memberCount(id);
       return {
         key,
         kind,
         name: group.name,
-        detail: `Group · ${count} ${count === 1 ? "person" : "people"}`,
+        detail: null,
+        memberCount: directory.memberCount(id),
         stale: false,
       };
     }

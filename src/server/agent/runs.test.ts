@@ -212,7 +212,7 @@ describe("agent runs", () => {
 
     expect(transcript()).toEqual(["Ada Lovelace: Hello", "failure"]);
     expect(runs()).toEqual([expect.objectContaining({ status: "failed" })]);
-    expect(events().at(-1)).toMatchObject({ data: { error: "Pick a model for this thread." } });
+    expect(events().at(-1)).toMatchObject({ data: { kind: "no_model" } });
   }, 1000);
 
   it("keeps the partial reply when the model fails mid-reply", async () => {
@@ -229,7 +229,7 @@ describe("agent runs", () => {
     expect(transcript()).toEqual(["Ada Lovelace: Hello", "Agent (failed): Hel", "failure"]);
     expect(events().at(-1)).toMatchObject({
       type: "run.failed",
-      data: { error: "The model failed: upstream broke" },
+      data: { kind: "model_error", error: "upstream broke" },
     });
   });
 });
@@ -249,7 +249,7 @@ describe("failures", () => {
     expect(events().at(-1)).toMatchObject({
       type: "run.failed",
       data: {
-        error: "Codex limit reached.",
+        error: "",
         kind: "limit",
         connection: "codex",
         detail: "429 (empty body)\nretry-after: 60",
@@ -285,7 +285,7 @@ describe("failures", () => {
       data: {
         kind: "auth",
         connection: "codex",
-        error: expect.stringContaining("Reconnect it in Model providers"),
+        error: "",
       },
     });
   });
@@ -447,7 +447,7 @@ describe("run leases", () => {
     ]);
     expect(events().at(-1)).toMatchObject({
       type: "run.failed",
-      data: { error: "The agent stopped 2 times on this input and gave up." },
+      data: { kind: "gave_up" },
     });
   });
 });

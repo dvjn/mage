@@ -16,8 +16,6 @@ export interface ThreadLogOptions {
 
 export type ThreadLog = ReturnType<typeof createThreadLog>;
 
-export const FORMER_MEMBER = "(former member)";
-
 // Appends one event inside a write; `title` names the thread when it has no title yet, and
 // `branchId` names the branch it goes to in place of the write's.
 export type Append = (event: NewEvent, title?: string, branchId?: string) => StoredEvent;
@@ -35,8 +33,8 @@ export function eventSummary(event: StoredEvent): ThreadEventSummary {
         ? {
             kind: "user",
             userId: actor.userId,
-            name: actorName ?? FORMER_MEMBER,
-            ...(actorFormer && actorName && { former: true }),
+            name: actorName,
+            former: actorFormer || actorName === null,
           }
         : actor,
     createdAt: event.createdAt.toISOString(),

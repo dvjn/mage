@@ -25,6 +25,7 @@ import {
   type Delivery,
   type FailureKind,
   type NotificationKind,
+  type NotificationParts,
   type SubagentEnd,
   type SubagentTask,
   type ReplyPart,
@@ -192,7 +193,67 @@ export interface CompactionRow {
 // from, and the people whose words it carries, who count as steering what the agent here does with
 // it; with the call or the row there it came of, where known. A message from another agent, the
 // first of them in a subagent's thread its task, also says whom it went to.
-export interface RelayRow {
+// Notifications about a subagent written before they carried their parts said them in their
+// text, in the one fixed form they were written in.
+const LAST_MARK = "\n\nIts last message:\n\n";
+const IDLE_PREFIXES = { "All idle: ": "all_idle", "Idle: ": "any_idle" } as const;
+
+// A failure's raw message and kind. Failures stored before these were fields carry the sentence
+// they were worded with in `error`, in one of a few fixed forms.
+export function failureParts(data: { error: string; kind?: FailureKind }): {
+  error: string;
+  kind?: FailureKind;
+} {
+  if (data.kind) return { error: data.error, kind: data.kind };
+  const { error } = data;
+  if (error === "Pick a model for this thread.") return { error: "", kind: "no_model" };
+  if (error === "The thread is gone.") return { error: "", kind: "gone" };
+  if (error === "The agent could not reply.") return { error: "" };
+  if (error === "The server stopped while the agent was replying.") {
+    return { error: "", kind: "interrupted" };
+  }
+  if (/^The agent stopped \d+ times on this input and gave up\.$/.test(error)) {
+    return { error: "", kind: "gave_up" };
+  }
+  const prefix = "The model failed: ";
+  if (error.startsWith(prefix)) return { error: error.slice(prefix.length), kind: "model_error" };
+  return { error };
+}
+
+// A notification's text and parts: as written, or for an older one read back from its text. An
+// older idle notification names its subagents without their threads, which only the server knows.
+export function notificationParts(
+  data: {
+    kind: NotificationKind;
+    source: Sender;
+    text: string;
+  } & NotificationParts,
+): NotificationParts & { text: string } {
+  const { kind, source, text } = data;
+  if (data.subagents || kind === "message") return data;
+  if (kind === "agent.idle") {
+    const prefix = Object.keys(IDLE_PREFIXES).find((one) => text.startsWith(one)) as
+      | keyof typeof IDLE_PREFIXES
+      | undefined;
+    return prefix ? { text, when: IDLE_PREFIXES[prefix] } : { text };
+  }
+  const cut = text.indexOf(LAST_MARK);
+  const headline = cut >= 0 ? text.slice(0, cut) : text;
+  const last = cut >= 0 ? text.slice(cut + LAST_MARK.length) : undefined;
+  const failedAs = `${source.name} failed: `;
+  const error =
+    kind === "agent.failed" && headline.startsWith(failedAs)
+      ? headline.slice(failedAs.length)
+      : undefined;
+  return {
+    text: headline,
+    subagents: [{ threadId: source.threadId, name: source.name }],
+    ...(error !== undefined && { error }),
+    ...(last && { last }),
+  };
+}
+
+export interface RelayRow extends NotificationParts {
   kind: "relay";
   // The notification's id.
   id: string;
@@ -405,7 +466,7 @@ export function createFold(): TranscriptFold {
   // The runs that compact the thread: those that took in a message asking for it, and retries.
   const compacting = new Set<string>();
   const personOf = (userId: string): Person =>
-    people.get(userId) ?? { kind: "user", userId, name: "(former member)" };
+    people.get(userId) ?? { kind: "user", userId, name: null, former: true };
 
   // Where a branch or a fork starts afresh: nothing runs, a reply being written ends there, the
   // open calls will not run, and of the messages waiting only those kept still wait.
@@ -492,7 +553,8 @@ export function createFold(): TranscriptFold {
         break;
       }
       case "notification": {
-        const { kind, source, text, people, to, task } = event.data;
+        const { kind, source, people, to, task } = event.data;
+        const { text, subagents, when, error, last } = notificationParts(event.data);
         const { callId, rowId, ...from } = source;
         inbox.set(event.id, {
           id: event.id,
@@ -504,6 +566,10 @@ export function createFold(): TranscriptFold {
           text,
           steeredBy: people,
           ...(task && { task }),
+          ...(subagents && { subagents }),
+          ...(when && { when }),
+          ...(error !== undefined && { error }),
+          ...(last && { last }),
           ...(callId && { call: { threadId: source.threadId, callId } }),
           ...(rowId && { rowId }),
         });
@@ -605,7 +671,8 @@ export function createFold(): TranscriptFold {
         };
         break;
       case "run.failed": {
-        const { runId, error, kind, connection, detail, resetsAt } = event.data;
+        const { runId, connection, detail, resetsAt } = event.data;
+        const { error, kind } = failureParts(event.data);
         push({
           kind: "failure",
           id: event.id,

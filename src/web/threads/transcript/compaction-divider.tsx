@@ -10,9 +10,10 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/web/components/ui/collapsible";
+import { displayName } from "@/web/lib/people.ts";
 
 export function CompactionDivider({ row }: { row: CompactionRow }) {
-  const by = row.by ? row.by.name : "the agent";
+  const by = row.by ? displayName(row.by) : "the agent";
   return (
     <Collapsible className="flex flex-col gap-2" role="group" aria-label="Compaction">
       <div className="flex items-center gap-3 text-xs text-muted-foreground">

@@ -8,7 +8,7 @@ import {
   ChevronLeftIcon,
   ChevronRightIcon,
   MessageCircleIcon,
-  SendIcon,
+  CornerDownLeftIcon,
   SquareIcon,
 } from "lucide-react";
 import { cn } from "cn";
@@ -157,8 +157,12 @@ export function AsideButton({
                 </span>
                 {turn.role === "question" ? (
                   <p className="whitespace-pre-wrap">{turn.text}</p>
-                ) : turn.failed ? (
-                  <p className="text-destructive">{turn.text}</p>
+                ) : turn.failure ? (
+                  <p className="text-destructive">
+                    {turn.failure === "stopped"
+                      ? "Stopped"
+                      : (turn.error ?? "The model did not answer")}
+                  </p>
                 ) : (
                   <MessageResponse>{turn.text}</MessageResponse>
                 )}
@@ -207,7 +211,7 @@ export function AsideButton({
               disabled={!draft.trim()}
               onClick={send}
             >
-              <SendIcon />
+              <CornerDownLeftIcon />
             </Button>
           )}
         </div>

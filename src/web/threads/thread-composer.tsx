@@ -44,6 +44,7 @@ import {
   matchingCommands,
 } from "@/web/threads/command-menu";
 import { useWaitingMessage } from "@/web/threads/mutations";
+import { displayName } from "@/web/lib/people.ts";
 
 export function Composer({
   running,
@@ -310,11 +311,11 @@ function WaitingItem({
 
   return (
     <li
-      aria-label={`Waiting message from ${message.author.name}`}
+      aria-label={`Waiting message from ${displayName(message.author)}`}
       className="flex flex-col gap-1 rounded-lg border bg-muted/40 px-3 py-2 text-sm"
     >
       <div className="flex items-baseline gap-2 text-xs text-muted-foreground">
-        <span className="font-medium text-foreground">{message.author.name}</span>
+        <span className="font-medium text-foreground">{displayName(message.author)}</span>
         {message.guest && <span>Guest</span>}
         <span>{MODE_LABELS[message.mode]}</span>
         {mine && !editing && (

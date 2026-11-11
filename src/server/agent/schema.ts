@@ -8,6 +8,7 @@ import {
   primaryKey,
 } from "drizzle-orm/sqlite-core";
 
+import type { FailureKind } from "@/shared/threads/events.ts";
 import { POLICY_COLORS } from "@/shared/tools.ts";
 import { user, organization } from "@/server/orgs/schema.ts";
 import { thread } from "@/server/threads/schema.ts";
@@ -152,7 +153,7 @@ export const run = sqliteTable(
     leaseEpoch: integer("lease_epoch").default(0).notNull(),
     error: text("error"),
     // Why it failed, as a failure kind, and what the provider said.
-    errorKind: text("error_kind", { enum: ["auth", "limit", "model", "network"] }),
+    errorKind: text("error_kind").$type<FailureKind>(),
     errorDetail: text("error_detail"),
     inputTokens: integer("input_tokens").default(0).notNull(),
     outputTokens: integer("output_tokens").default(0).notNull(),

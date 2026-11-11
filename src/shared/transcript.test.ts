@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { AnyThreadEvent } from "@/shared/threads/events.ts";
-import { agentTurnOf, createFold, type TranscriptRow } from "@/shared/transcript.ts";
+import {
+  agentTurnOf,
+  createFold,
+  failureParts,
+  notificationParts,
+  type TranscriptRow,
+} from "@/shared/transcript.ts";
 
 const row = (kind: string, extra: object = {}) => ({ kind, id: kind, ...extra }) as TranscriptRow;
 const human = row("human");
@@ -29,6 +35,20 @@ describe("agentTurnOf", () => {
     expect(agentTurnOf([human, tool, words], 2)?.continued).toBe(true);
   });
 
+  it("starts a new agent turn after received messages and notifications", () => {
+    const rows = [human, words, row("relay"), tool, row("notice"), thinking];
+    expect(rows.map((_, i) => agentTurnOf(rows, i)?.continued ?? null)).toEqual([
+      null,
+      false,
+      null,
+      false,
+      null,
+      false,
+    ]);
+    expect(agentTurnOf([row("relay"), words], 1)?.continued).toBe(false);
+    expect(agentTurnOf([words, row("notice"), human, thinking], 3)?.continued).toBe(false);
+  });
+
   it("names the model of the turn's reply from its first call", () => {
     expect(agentTurnOf([human, callsOnly, tool, tool, words], 2)?.model).toBe("a/b");
     expect(agentTurnOf([human, callsOnly, tool, tool, words], 3)?.model).toBe("a/b");
@@ -50,8 +70,55 @@ describe("agentTurnOf", () => {
   });
 });
 
+describe("notificationParts", () => {
+  const source = { threadId: "t1", name: "Reviewer" } as never;
+  const read = (kind: string, text: string) =>
+    notificationParts({ kind, source, text } as Parameters<typeof notificationParts>[0]);
+
+  it("reads the error and last message back out of an older subagent notification", () => {
+    expect(
+      read("agent.failed", "Reviewer failed: The model failed: Down\n\nIts last message:\n\nHalf"),
+    ).toEqual({
+      text: "Reviewer failed: The model failed: Down",
+      subagents: [{ threadId: "t1", name: "Reviewer" }],
+      error: "The model failed: Down",
+      last: "Half",
+    });
+    expect(read("agent.stopped", "Reviewer stopped")).toEqual({
+      text: "Reviewer stopped",
+      subagents: [{ threadId: "t1", name: "Reviewer" }],
+    });
+    expect(read("agent.ended", "Reviewer ended")).toMatchObject({ text: "Reviewer ended" });
+  });
+
+  it("reads which idle form an older notification was", () => {
+    expect(read("agent.idle", "All idle: A, B")).toEqual({
+      text: "All idle: A, B",
+      when: "all_idle",
+    });
+    expect(read("agent.idle", "Idle: A")).toEqual({ text: "Idle: A", when: "any_idle" });
+  });
+
+  it("keeps a notification that already has parts", () => {
+    const data = { kind: "agent.idle", source, text: "Idle", subagents: [], when: "any_idle" };
+    expect(notificationParts(data as never)).toBe(data);
+  });
+});
+
+describe("failureParts", () => {
+  it("reads old sentences back into kinds", () => {
+    expect(failureParts({ error: "The thread is gone." })).toEqual({ error: "", kind: "gone" });
+    expect(failureParts({ error: "The model failed: Down" })).toEqual({
+      error: "Down",
+      kind: "model_error",
+    });
+    expect(failureParts({ error: "Down" })).toEqual({ error: "Down" });
+    expect(failureParts({ error: "x", kind: "auth" })).toEqual({ error: "x", kind: "auth" });
+  });
+});
+
 describe("createFold", () => {
-  const ada = { kind: "user", userId: "ada", name: "Ada Lovelace" };
+  const ada = { kind: "user", userId: "ada", name: "Ada Lovelace", former: false };
   const agent = { kind: "agent" };
   let seq = 0;
   function event(type: string, data: object, actor: object = agent): AnyThreadEvent {
@@ -173,6 +240,29 @@ describe("createFold", () => {
       { continued: true, model: "a/c" },
       { continued: true, model: "a/c" },
     ]);
+  });
+
+  it("starts a new turn when the agent resumes after a subagent notification", () => {
+    const fold = createFold();
+    const add = (type: string, data: object) => fold.add(event(type, data));
+    add("message.started", { ...run, messageId: "first", model: "a/b" });
+    add("message.completed", {
+      ...run,
+      messageId: "first",
+      parts: [{ type: "text", text: "Checking" }],
+      status: "completed",
+    });
+    add("subagent.ended", { threadId: "child", name: "Reviewer", state: "idle", last: "Done" });
+    add("message.started", { runId: "r2", messageId: "second", model: "a/b" });
+    expect(fold.transcript().rows.map((_, i) => fold.turnAt(i)?.continued)).toEqual([
+      false,
+      undefined,
+      false,
+    ]);
+    fold.transcript().rows.forEach((_, i) => {
+      expect(fold.turnAt(i)).toEqual(agentTurnOf(fold.transcript().rows, i));
+    });
+    expect(fold.turnAt(2)).toEqual({ continued: false, model: "a/b" });
   });
 
   it("marks the replies a retry tries again as changed", () => {

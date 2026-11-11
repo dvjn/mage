@@ -7,6 +7,7 @@ import { eventSummary } from "@/server/threads/log.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
 import { setup } from "./workspace.ts";
+import { personLabel } from "@/shared/people.ts";
 
 export async function agentThread(options: Parameters<typeof setup>[0] = {}) {
   const workspace = setup(options);
@@ -42,13 +43,13 @@ export async function agentThread(options: Parameters<typeof setup>[0] = {}) {
   function transcript() {
     return transcriptOf(events()).rows.map((row) =>
       row.kind === "human"
-        ? `${row.author.name}: ${row.text}`
+        ? `${personLabel(row.author)}: ${row.text}`
         : row.kind === "agent"
           ? `Agent (${row.status}): ${row.text}`
           : row.kind === "stop"
             ? `stopped by ${row.by}`
             : row.kind === "tool"
-              ? `${row.toolId} (${row.state}${row.decision ? ` by ${row.decision.by.name}` : ""})`
+              ? `${row.toolId} (${row.state}${row.decision ? ` by ${personLabel(row.decision.by)}` : ""})`
               : row.kind,
     );
   }
@@ -63,7 +64,7 @@ export async function agentThread(options: Parameters<typeof setup>[0] = {}) {
   }
   function pending() {
     return transcriptOf(events()).pending.map(
-      (message) => `${message.author.name} (${message.mode}): ${message.text}`,
+      (message) => `${personLabel(message.author)} (${message.mode}): ${message.text}`,
     );
   }
   return {

@@ -223,7 +223,8 @@ describe("subagents", () => {
     // The line that started it shows where it stands.
     const shown = await workspace.rowsShown(thread.id, ada.cookie);
     expect(shown.rows.find((row) => row.kind === "tool")).toMatchObject({
-      title: "Start · Researcher",
+      title: "Start",
+      subagentName: "Researcher",
       subagent: { threadId: subagentId, state: "idle" },
     });
     expect((await workspace.rowsShown(subagentId, ada.cookie)).subagent).toMatchObject({
@@ -849,7 +850,7 @@ describe("subagents", () => {
         sentBy: {
           threadId: thread.id,
           rowId: "call-1",
-          title: "Start · Writer",
+          title: "Start",
           toolset: "Subagents",
           thread: "Go",
         },
@@ -957,7 +958,10 @@ describe("subagents", () => {
     await workspace.until(() => workspace.runStore.active(writer)?.status === "waiting");
     const shown = await workspace.rowsShown(writer, ada.cookie);
     expect(shown.rows.find((row) => row.kind === "tool")).toMatchObject({
-      steering: "Steered by Ada Lovelace via Agent → Writer, and Grace Hopper via Critic → Writer",
+      steering: [
+        { name: "Ada Lovelace", via: ["Agent", "Writer"] },
+        { name: "Grace Hopper", via: ["Critic", "Writer"] },
+      ],
       actions: ["allow", "allow_for_now", "deny"],
     });
   });
@@ -1004,17 +1008,21 @@ describe("subagents", () => {
       return (await res.json()) as { agentName: string; rows: ShownRow[] };
     };
     const steering = async () =>
-      (await shown(namer)).rows.find((row) => row.id === waiting.id) as { steering?: string };
+      (await shown(namer)).rows.find((row) => row.id === waiting.id) as {
+        steering?: { name: string; via: string[] }[];
+      };
     expect((await shown(thread.id)).agentName).toBe("Mira");
     expect((await shown(namer)).agentName).toBe("Mira");
-    expect((await steering()).steering).toBe("Steered by Grace Hopper via Mira → Namer");
+    expect((await steering()).steering).toEqual([{ name: "Grace Hopper", via: ["Mira", "Namer"] }]);
 
     // The space's name wins, and without one the org's shows again.
     const defaults = (agentName: string | null) =>
       api("PATCH", `/spaces/${workspace.space.id}/defaults`, ada.cookie, { agentName });
     expect((await defaults("Scribe")).status).toBe(200);
     expect((await shown(thread.id)).agentName).toBe("Scribe");
-    expect((await steering()).steering).toBe("Steered by Grace Hopper via Scribe → Namer");
+    expect((await steering()).steering).toEqual([
+      { name: "Grace Hopper", via: ["Scribe", "Namer"] },
+    ]);
     expect((await defaults(null)).status).toBe(200);
     expect((await shown(thread.id)).agentName).toBe("Mira");
   });
@@ -1055,7 +1063,7 @@ describe("subagents", () => {
         id: waiting.id,
         toolId: "thread.rename",
         state: "pending",
-        steering: "Steered by Grace Hopper via Agent → Namer",
+        steering: [{ name: "Grace Hopper", via: ["Agent", "Namer"] }],
         actions: ["allow", "allow_for_now", "deny"],
       },
     });
@@ -1069,7 +1077,7 @@ describe("subagents", () => {
     expect(await (await api("GET", "/org/agent", grace.cookie)).json()).toEqual({ name: "Mira" });
     expect((await api("PATCH", "/org/agent", grace.cookie, { name: "Nope" })).status).toBe(403);
     expect(await startLine(ada.cookie)).toMatchObject({
-      subagentCall: { steering: "Steered by Grace Hopper via Mira → Namer" },
+      subagentCall: { steering: [{ name: "Grace Hopper", via: ["Mira", "Namer"] }] },
     });
     const head = async (id: string) =>
       ((await (await api("GET", `/threads/${id}`, ada.cookie)).json()) as { agentName: string })
@@ -1081,7 +1089,7 @@ describe("subagents", () => {
     expect(spaced.status).toBe(200);
     expect(await head(namer)).toBe("Atlas");
     expect(await startLine(ada.cookie)).toMatchObject({
-      subagentCall: { steering: "Steered by Grace Hopper via Atlas → Namer" },
+      subagentCall: { steering: [{ name: "Grace Hopper", via: ["Atlas", "Namer"] }] },
     });
     // Emptied, the space follows the org again.
     await api("PATCH", `/spaces/${workspace.space.id}/defaults`, ada.cookie, { agentName: null });
@@ -1155,7 +1163,8 @@ describe("subagents", () => {
     const named = (toolId: string, input: unknown = {}) =>
       tools.namesIn({ id: space.id, orgId: ada.orgId })({ toolId, input, state: "ran" });
     expect(named("helpers.start", { name: "Scout" })).toEqual({
-      title: "Start · Scout",
+      title: "Start",
+      subagentName: "Scout",
       toolset: "Subagents",
     });
     expect(named("helpers.message")).toEqual({ title: "Send", toolset: "Subagents" });
@@ -1280,11 +1289,11 @@ describe("subagents", () => {
       "codex/nope is not a model this space can use. Models: codex/gpt-big, codex/gpt-mini, codex/gpt-plain.",
       "codex/gpt-plain takes no effort.",
     ]);
-    const titles = (await workspace.rowsShown(thread.id, ada.cookie)).rows.flatMap((row) =>
-      row.kind === "tool" ? [row.title] : [],
+    const starts = (await workspace.rowsShown(thread.id, ada.cookie)).rows.flatMap((row) =>
+      row.kind === "tool" && row.title === "Start" ? [[row.subagentName, row.model]] : [],
     );
-    expect(titles).toContain("Start · Mini · gpt-mini");
-    expect(titles).toContain("Start · Ignored");
+    expect(starts).toContainEqual(["Mini", "codex/gpt-mini"]);
+    expect(starts).toContainEqual(["Ignored", undefined]);
 
     // A space turns it off for itself, and a model given is ignored again.
     expect((await option(`/spaces/${space.id}`, false)).status).toBe(200);

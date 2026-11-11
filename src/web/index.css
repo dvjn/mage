@@ -155,3 +155,26 @@
     cursor: pointer;
   }
 }
+
+/* Linked messages pulse twice, then keep a faint tint until dismissed. */
+.row-attention {
+  border-radius: var(--radius-md);
+  background-color: color-mix(in oklch, var(--accent) 45%, transparent);
+  animation: row-attention-pulse 900ms ease-in-out 2;
+}
+
+@keyframes row-attention-pulse {
+  0%,
+  100% {
+    background-color: color-mix(in oklch, var(--accent) 45%, transparent);
+  }
+  50% {
+    background-color: color-mix(in oklch, var(--accent) 95%, transparent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .row-attention {
+    animation: none;
+  }
+}

@@ -84,16 +84,16 @@ test("the agent starts subagents, who report back, go idle and can be resumed an
     transcript(page).getByRole("button", { name: /^Subagents › Start · Writer · Idle/ }),
   ).toBeVisible();
 
-  // The result comes back as a message, folded into one line until opened; the writer sent
-  // nothing, so the agent is told it ended without reporting.
+  // An incoming message is a one-line title until its details are shown; system events use the
+  // same shell.
   const relayed = transcript(page).getByRole("article", { name: "Message from Researcher" });
-  const relayLine = relayed.getByRole("button", { name: "Researcher → Agent" });
-  await expect(relayLine).toBeVisible();
   await expect(relayed).not.toContainText("Recommend BullMQ");
-  await relayLine.click();
+  await relayed.getByRole("button", { name: "Show details" }).click();
   await expect(relayed).toContainText("Recommend BullMQ");
   await expect(
-    transcript(page).getByRole("button", { name: "Writer ended its run without reporting." }),
+    transcript(page)
+      .getByRole("article", { name: "Notification" })
+      .filter({ hasText: "Writer ended its run without reporting" }),
   ).toBeVisible();
   await idle(page);
 
@@ -124,16 +124,17 @@ test("the agent starts subagents, who report back, go idle and can be resumed an
   ).toBeVisible();
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Writer");
   const task = transcript(page).getByRole("article", { name: "Message from Agent" }).first();
-  await task.getByRole("button", { name: "Agent → Writer" }).click();
-  await expect(task).toContainText("Sent by Subagents › Start · Writer in Queue library");
+  await task.hover();
+  await expect(task.getByRole("link", { name: /^Open source: Subagents › Start/ })).toBeVisible();
+  await task.getByRole("button", { name: "Show details" }).click();
   await expect(task).toContainText("Draft the notes");
 
-  // A person writing there resumes it, and its replies there go by its label.
+  // A person writing there resumes it; its accessible identity remains while visual headers stay hidden.
   await write(page, "Shorter, please");
   const reply = transcript(page).getByRole("article", { name: "Message from Writer" }).last();
   await expect(reply).toContainText("I have read 2 messages,");
-  await expect(reply).toContainText("Writer");
-  await expect(reply.locator("[data-slot=avatar-fallback]")).toHaveText("W");
+  await expect(reply.locator("[data-slot=avatar-fallback]")).toHaveCount(0);
+  await expect(reply.locator("time")).toHaveCount(0);
   await idle(page);
 
   // Archived by the agent that started it, its thread is read-only until someone brings it back.
@@ -154,30 +155,29 @@ test("an agent whose turn ended is woken by its subagent's message", async ({ pa
   await signUp(page);
   await queueLibrary(page);
   await write(page, call("subagents.start", { name: "Writer", task: "Draft the notes" }));
-  const ended = transcript(page).getByRole("button", {
-    name: "Writer ended its run without reporting.",
-  });
+  const ended = transcript(page)
+    .getByRole("article", { name: "Notification" })
+    .filter({ hasText: "Writer ended its run without reporting" });
   await expect(ended).toBeVisible();
   await idle(page);
   const parentUrl = page.url();
 
-  // The notice opens on the subagent's last words and a way to its thread.
-  await ended.click();
+  // The notice shows its text and exposes its source on hover.
+  await ended.getByRole("button", { name: "Show details" }).click();
   await expect(transcript(page).getByRole("article", { name: "Notification" })).toContainText(
-    "Its last message",
+    "I have read 1 message",
   );
-  await transcript(page).getByRole("link", { name: "Open", exact: true }).click();
+  await ended.hover();
+  await ended.getByRole("link", { name: /^Open source:/ }).click();
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Writer");
   await write(page, call("subagents.send", { to: "agent", text: "Notes drafted" }));
   await idle(page);
 
   // The idle agent took the message in, and replied.
   await page.goto(parentUrl);
-  await expect(
-    transcript(page)
-      .getByRole("article", { name: "Message from Writer" })
-      .getByRole("button", { name: "Writer → Agent" }),
-  ).toBeVisible();
+  const notes = transcript(page).getByRole("article", { name: "Message from Writer" });
+  await notes.getByRole("button", { name: "Show details" }).click();
+  await expect(notes).toContainText("Notes drafted");
   await expect(
     transcript(page).getByRole("article", { name: "Message from Agent" }).last(),
   ).toContainText("I have read");
@@ -201,7 +201,9 @@ test("a watch on all idle wakes the agent once all its subagents are idle", asyn
       call("subagents.watch", { when: "all_idle" }),
     ].join("\n"),
   );
-  const fired = transcript(page).getByRole("button", { name: "All idle: Researcher, Writer" });
+  const fired = transcript(page)
+    .getByRole("article", { name: "Notification" })
+    .filter({ hasText: "All idle: Researcher, Writer" });
   await expect(fired).toHaveCount(1);
   await idle(page);
   await expect(fired).toHaveCount(1);
@@ -236,7 +238,8 @@ test("a send links to the message it delivered, which links back to the send", a
   await expect(message).toBeInViewport();
 
   // Its backlink leads to the send, opened and lit, from a fresh load of the thread.
-  await message.getByRole("link", { name: "Subagents › Send" }).click();
+  await message.hover();
+  await message.getByRole("link", { name: "Open source: Subagents › Send" }).click();
   await expect(page).toHaveURL(new RegExp(`^${parentUrl}\\?row=`));
   await page.reload();
   const lit = transcript(page).locator("[data-lit]");
@@ -250,7 +253,7 @@ test("a send links to the message it delivered, which links back to the send", a
   // Followed again after leaving the thread another way, the link lights the message again.
   await lit.getByRole("link", { name: "Message to Writer" }).click();
   await expect(message).toHaveAttribute("data-lit", "true");
-  await expect(message).not.toHaveAttribute("data-lit");
+  await expect(message).not.toHaveAttribute("data-lit", { timeout: 7000 });
   await page.locator("[data-slot=breadcrumb]").getByRole("link", { name: "Queue library" }).click();
   await expect(page).toHaveURL(parentUrl);
   // The send stays open as the reader left it.
@@ -319,7 +322,7 @@ test("subagents message each other, counted on the line that started them, and s
   await expect(
     transcript(page)
       .getByRole("article", { name: "Message from Critic" })
-      .getByRole("button", { name: "Critic → Writer" }),
+      .getByRole("button", { name: "About Critic" }),
   ).toBeVisible();
   // In its own thread its card goes by its label too.
   const card = transcript(page).getByRole("article", { name: "Approval request" });
@@ -422,7 +425,7 @@ test("the agent goes by the name its org gives it, or its space's", async ({ pag
   await expect(
     transcript(page)
       .getByRole("article", { name: "Message from Atlas" })
-      .getByRole("button", { name: "Atlas → Writer" }),
+      .getByRole("button", { name: "About Atlas" }),
   ).toBeVisible();
   await expect(
     transcript(page).getByRole("article", { name: "Message from Writer" }).first(),

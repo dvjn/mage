@@ -36,6 +36,11 @@ export type ConnectionSummary = z.infer<typeof connectionSchema>;
 
 type ConnectionKind = Pick<ConnectionSummary, "host" | "authKind" | "label">;
 
+// The name people gave a connection, as written; null for one that has none.
+export function connectionName(connection: Pick<ConnectionKind, "authKind" | "label">) {
+  return connection.authKind === "oauth" ? null : connection.label || null;
+}
+
 // How people know a connection: the host, with its name or else what it connects with.
 export function connectionLabel(connection: ConnectionKind) {
   const host = HOSTS[connection.host].label;

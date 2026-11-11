@@ -1,9 +1,9 @@
 // What can be done from a message in a thread's history, as the page wires it, and the quiet row
-// of icon buttons under each message that does it: the versions of a message written again, then
+// of icon buttons below each message that does it: the versions of a message written again, then
 // copy, retry, retry with a model and effort picked with the composer's own pickers, edit, restore
 // from here, fork and ask aside; once there is a side question about the message, it stays in view
 // at the end of the row instead. Which of them a reader sees is the server's to say; the actions
-// show on hover, on focus within the message, and always where nothing hovers.
+// stay visible under each completed message.
 
 import {
   ChevronLeftIcon,
@@ -14,7 +14,6 @@ import {
   SplitIcon,
   Undo2Icon,
 } from "lucide-react";
-import { cn } from "cn";
 import { createContext, useContext, useState } from "react";
 
 import type { ModelSummary } from "@/shared/models.ts";
@@ -174,33 +173,26 @@ export function RowToolbar({
   rowId,
   text,
   can = [],
-  versions,
   onEdit,
+  extra,
 }: {
   rowId: string;
   // What copying it copies.
   text: string;
   can?: readonly RowAction[];
-  versions?: RowVersions;
   onEdit?: () => void;
+  extra?: React.ReactNode;
 }) {
   const history = useRowHistory();
   const may = (action: RowAction) => !!history && can.includes(action);
-  const asides = useContext(AsidesContext);
-  const asked = (asides?.byRow.get(rowId)?.length ?? 0) > 0;
-  const hover = cn(
-    "opacity-0 transition-opacity duration-150 has-[[aria-expanded=true]]:opacity-100",
-    "group-focus-within/row:opacity-100 group-hover/row:opacity-100 [@media(hover:none)]:opacity-100",
-  );
   return (
-    <div className="-mx-1.5 -mb-1 flex h-6 items-center gap-0.5">
-      {versions && <VersionSwitcher versions={versions} />}
+    <div className="flex w-fit items-center gap-0.5">
       <div
         role="toolbar"
         aria-label="Message actions"
         className="flex flex-1 items-center gap-0.5 text-muted-foreground [&_svg]:size-3.5!"
       >
-        <div className={cn("flex items-center gap-0.5", hover)}>
+        <div className="flex items-center gap-0.5">
           {text && <CopyButton label="Copy" value={text} />}
           {may("retry") && (
             <>
@@ -226,9 +218,22 @@ export function RowToolbar({
             </IconAction>
           )}
           {may("aside") && <AsideButton rowId={rowId} fresh />}
+          {extra}
         </div>
-        {asked && <AsideButton rowId={rowId} fresh={false} className="ml-auto" />}
       </div>
+    </div>
+  );
+}
+
+// Only actual history lives below the message; an ordinary reply has no footer.
+export function RowHistoryFooter({ rowId, versions }: { rowId: string; versions?: RowVersions }) {
+  const asides = useContext(AsidesContext);
+  const asked = (asides?.byRow.get(rowId)?.length ?? 0) > 0;
+  if (!versions && !asked) return null;
+  return (
+    <div className="-mx-1.5 -mb-1 flex min-h-6 items-center gap-1">
+      {versions && <VersionSwitcher versions={versions} />}
+      {asked && <AsideButton rowId={rowId} fresh={false} className="ml-auto" />}
     </div>
   );
 }

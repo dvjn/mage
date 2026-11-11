@@ -1,7 +1,7 @@
 // An agent's reply under its turn's Agent header, which names the model that wrote it: what the
 // model thought first, folded away once it answers, then its Markdown with any layouts it wrote
 // drawn in place; a reply that was cut short says so. Once written, what can be done from it shows
-// below, with the reader's side question about it.
+// from its action bar, with versions and existing side questions below.
 
 import type { AgentRow } from "@/shared/threads/rows.ts";
 import { MessageResponse } from "@/web/components/ai-elements/message";
@@ -11,9 +11,10 @@ import {
   ReasoningTrigger,
 } from "@/web/components/ai-elements/reasoning";
 import { RichReply } from "@/web/replies/rich-reply";
-import { AgentAvatar, useThreadAgent, caret, useModelName } from "@/web/threads/transcript/agent";
+import { useThreadAgent, caret } from "@/web/threads/transcript/agent";
+import { showsActions } from "@/web/threads/transcript/entries";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
-import { RowToolbar } from "@/web/threads/transcript/row-history";
+import { RowToolbar, RowHistoryFooter } from "@/web/threads/transcript/row-history";
 
 const ENDINGS: Partial<Record<AgentRow["status"], string>> = {
   interrupted: "Interrupted",
@@ -37,32 +38,19 @@ export function ReplyReasoning({ row }: { row: AgentRow }) {
 export function AgentReply({ row, continued }: { row: AgentRow; continued: boolean }) {
   const ending = ENDINGS[row.status];
   const streaming = row.status === "streaming";
-  // Thinking before a tool call is a compact part of the turn, with actions under its answer.
-  // A cut-short reply or an existing version still needs its recovery/history controls.
-  const showActions = !streaming && (!!row.text.trim() || !!ending || !!row.versions);
-  const model = useModelName(row.model);
+  // Thinking before a tool call stays compact; a turn that ends on one shows its actions after it.
+  const showActions = showsActions(row);
   const { self } = useThreadAgent();
   return (
     <TranscriptRowFrame
-      avatar={<AgentAvatar {...self} />}
+      rowId={row.id}
       author={self.name}
       at={row.startedAt}
       label={`Message from ${self.name}`}
       continued={continued}
-      // The turn's header names the model.
-      note={
-        (!continued || ending) && (
-          <>
-            {!continued && model && <span>{model}</span>}
-            {ending && <span>{ending}</span>}
-          </>
-        )
-      }
-      footer={
-        showActions && (
-          <RowToolbar rowId={row.id} text={row.text} can={row.can} versions={row.versions} />
-        )
-      }
+      note={ending && <span>{ending}</span>}
+      actions={showActions && <RowToolbar rowId={row.id} text={row.text} can={row.can} />}
+      footer={!streaming && <RowHistoryFooter rowId={row.id} versions={row.versions} />}
     >
       <div className="flex flex-col gap-2 text-sm" aria-busy={streaming}>
         {row.reasoning && <ReplyReasoning row={row} />}

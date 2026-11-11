@@ -1,5 +1,4 @@
-// The initials of a name, for an avatar that has no picture. Punctuation around a word, as in
-// "(former member)", is skipped.
+// The initials of a name, for an avatar that has no picture. Punctuation around a word is skipped.
 
 export function initialsOf(name: string) {
   return name

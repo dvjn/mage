@@ -176,6 +176,7 @@ export function setup(
           maker: "openai",
           authKind: "oauth",
           connectionLabel: "ChatGPT",
+          connectionName: null,
         })),
       errors: [],
       turnedOff: [],

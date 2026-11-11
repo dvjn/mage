@@ -209,6 +209,14 @@ export interface ToolNames {
   toolset: string | null;
 }
 
+// What a call is called: its tool's names, and for a call that loads a skill, the skill; for one
+// that starts a subagent, the name it was given and the ref of the model it runs with.
+export interface CallNames extends ToolNames {
+  skill?: string;
+  subagentName?: string;
+  model?: string;
+}
+
 // What an org or a space set each tool to, for the tools it set: a policy's id, or "off". A tool
 // the org did not set is open to everyone; one a space did not set adds no rule of its own.
 export interface ToolSettingStore {
@@ -622,7 +630,7 @@ export function createTools(options: ToolsOptions) {
       row: Pick<ToolRow, "toolId" | "input" | "state" | "title" | "toolset"> & {
         output?: ToolRow["output"];
       },
-    ): ToolNames => {
+    ): CallNames => {
       now ??= space ? namesNow(space) : () => null;
       const names = now(row.toolId) ??
         (row.title ? { title: row.title, toolset: row.toolset ?? null } : null) ??
@@ -630,15 +638,12 @@ export function createTools(options: ToolsOptions) {
           title: mcpToolOf(row.toolId)?.name ?? row.toolId,
           toolset: null,
         };
-      const skill = (row.input as { name?: unknown } | null)?.name;
-      if (row.toolId === LOAD_SKILL && typeof skill === "string") {
-        return { ...names, title: row.state === "ran" ? `Loaded ${skill}` : `Load ${skill}` };
-      }
-      // Starting a subagent names the subagent, and the model it was given.
-      if (toolIdNow(row.toolId) === START_SUBAGENT && typeof skill === "string") {
+      const named = (row.input as { name?: unknown } | null)?.name;
+      if (row.toolId === LOAD_SKILL && typeof named === "string") return { ...names, skill: named };
+      // Starting a subagent also names it, and the model it was given.
+      if (toolIdNow(row.toolId) === START_SUBAGENT && typeof named === "string") {
         const model = row.output?.ok && (row.output.value as { model?: unknown } | null)?.model;
-        const given = typeof model === "string" ? ` · ${model.slice(model.indexOf("/") + 1)}` : "";
-        return { ...names, title: `${names.title} · ${skill}${given}` };
+        return { ...names, subagentName: named, ...(typeof model === "string" && { model }) };
       }
       return names;
     };

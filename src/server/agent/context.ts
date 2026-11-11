@@ -34,6 +34,7 @@ import type {
 } from "@/shared/transcript.ts";
 
 import { readOf } from "./compaction.ts";
+import { personLabel } from "@/shared/people.ts";
 
 type UserMessage = Extract<ModelMessage, { role: "user" }>;
 
@@ -47,13 +48,14 @@ export interface Context {
 // A person's message as the agent reads it: what a command they sent stands for, or what they
 // wrote.
 export function humanMessage(row: Pick<HumanRow, "author" | "text" | "command">): ModelMessage {
-  return { role: "user", text: `[${row.author.name}] ${row.command?.text ?? row.text}` };
+  return { role: "user", text: `[${personLabel(row.author)}] ${row.command?.text ?? row.text}` };
 }
 
 // A notification as the agent reads it: another agent's message named for its sender, the agent
 // that started this subagent or a subagent, and anything else as what it tells.
-export function notificationLine(row: Pick<RelayRow, "type" | "from" | "text">) {
-  if (row.type !== "message") return row.text;
+export function notificationLine(row: Pick<RelayRow, "type" | "from" | "text" | "last">) {
+  if (row.type !== "message")
+    return row.last ? `${row.text}\n\nIts last message:\n\n${row.last}` : row.text;
   const sender = row.from.main ? `Agent of ${row.from.name}` : `Subagent ${row.from.name}`;
   return `[${sender}] ${row.text}`;
 }

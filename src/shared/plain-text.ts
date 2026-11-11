@@ -23,3 +23,15 @@ export function spokenText(parts: readonly { type: string; text?: string }[]) {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+// The first line of markdown that says something: not blank, a code fence or a bare heading
+// marker, and without its heading marker.
+export function previewLine(markdown: string) {
+  for (const line of markdown.split("\n")) {
+    const text = line.trim();
+    if (!text || /^(```|~~~)/.test(text)) continue;
+    const stripped = text.replace(/^#{1,6}\s*/, "");
+    if (stripped) return stripped;
+  }
+  return "";
+}

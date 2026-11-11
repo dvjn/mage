@@ -32,7 +32,14 @@ export type ThreadActivity = z.infer<typeof threadActivitySchema>;
 // Who has written in a thread: the few who wrote most recently, whoever wrote last first, each
 // saying whether they last wrote as a guest of the thread, and how many have in all.
 export const threadParticipantsSchema = z.object({
-  people: z.array(z.object({ userId: z.string(), name: z.string(), guest: z.boolean() })),
+  people: z.array(
+    z.object({
+      userId: z.string(),
+      name: z.string().nullable(),
+      former: z.boolean(),
+      guest: z.boolean(),
+    }),
+  ),
   total: z.number().int().nonnegative(),
 });
 

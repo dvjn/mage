@@ -16,7 +16,7 @@ export function FailureNotice({ row, actions }: { row: FailureRow; actions: RowA
   // When a limit resets is said relative to now.
   useMinute();
   const label = row.connection ? CONNECTION_LABELS[row.connection] : "the provider";
-  let summary: ReactNode = `The agent stopped: ${row.error}`;
+  let summary: ReactNode = "The agent stopped.";
   let step: ReactNode = null;
   switch (row.failure) {
     case "auth":
@@ -37,6 +37,28 @@ export function FailureNotice({ row, actions }: { row: FailureRow; actions: RowA
       summary = resets ? `Limit reached, resets ${resets}.` : "Limit reached.";
       break;
     }
+    case "no_model":
+      summary = "No model is picked for this thread.";
+      if (actions.pickModel) {
+        step = (
+          <Button size="xs" variant="outline" onClick={actions.pickModel}>
+            Pick a model
+          </Button>
+        );
+      }
+      break;
+    case "gone":
+      summary = "The thread is gone.";
+      break;
+    case "interrupted":
+      summary = "The server stopped while the agent was replying.";
+      break;
+    case "gave_up":
+      summary = "The agent stopped repeatedly on this message and gave up.";
+      break;
+    case "model_error":
+      summary = "The model failed.";
+      break;
     case "model":
       summary = `${label === "the provider" ? "The provider" : label} cannot use this model.`;
       if (actions.pickModel) {
@@ -51,6 +73,8 @@ export function FailureNotice({ row, actions }: { row: FailureRow; actions: RowA
       summary = `Couldn't reach ${label}.`;
       break;
   }
+  // What the provider or system said is shown for the kinds with no steps of their own to read it by.
+  const shownError = row.failure === undefined || row.failure === "model_error" ? row.error : "";
   return (
     <div
       role="status"
@@ -62,10 +86,12 @@ export function FailureNotice({ row, actions }: { row: FailureRow; actions: RowA
         {step}
         {actions.retry && <RetryButton onRetry={actions.retry} />}
       </div>
-      {row.detail && (
+      {(row.detail || shownError) && (
         <details className="text-xs">
           <summary className="cursor-pointer select-none">Details</summary>
-          <pre className="mt-1 font-mono break-words whitespace-pre-wrap">{row.detail}</pre>
+          <pre className="mt-1 font-mono break-words whitespace-pre-wrap">
+            {[shownError, row.detail].filter(Boolean).join("\n\n")}
+          </pre>
         </details>
       )}
     </div>

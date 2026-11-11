@@ -10,6 +10,7 @@ import {
   deliverySchema,
   failureKindSchema,
   notificationKindSchema,
+  notificationPartsSchema,
   subagentEndSchema,
   subagentTaskSchema,
   replyStatusSchema,
@@ -26,8 +27,8 @@ export const ROWS_PAGE = 100;
 const personSchema = z.object({
   kind: z.literal("user"),
   userId: z.string(),
-  name: z.string(),
-  former: z.boolean().optional(),
+  name: z.string().nullable(),
+  former: z.boolean(),
 });
 
 // Where a row of the agent's sits in its turn: whether it follows another of the agent's rows, and
@@ -121,6 +122,11 @@ const callRowSchema = z.object({
   // What the tool is called, and the toolset or MCP server it comes in, where it has one.
   title: z.string(),
   toolset: z.string().nullable(),
+  // For a call that loads a skill, the skill's name; for one that starts a subagent, the name it was
+  // given and the ref of the model it runs with.
+  skill: z.string().optional(),
+  subagentName: z.string().optional(),
+  model: z.string().optional(),
   input: z.unknown(),
   // For a call that waits, the risk its tool's policy gives it now.
   risk: toolRiskSchema,
@@ -151,9 +157,9 @@ const callRowSchema = z.object({
   canAnswer: z.boolean().optional(),
   // For a waiting call that would run with the reader's own credentials, their connection.
   connection: toolConnectionSchema.optional(),
-  // For a waiting call that other agents' messages steered, everyone whose words steered it, in
-  // one line.
-  steering: z.string().optional(),
+  // For a waiting call that other agents' messages steered, everyone whose words steered it, and
+  // the agents their words passed through on the way.
+  steering: z.array(z.object({ name: z.string(), via: z.array(z.string()) })).optional(),
   // For a call that started a subagent, the subagent as it is now.
   subagent: subagentSummarySchema.optional(),
   // For a subagent call, where it had its effect, in the threads the reader may read.
@@ -228,6 +234,7 @@ const relayRowSchema = z.object({
   task: subagentTaskSchema.optional(),
   source: z.object({ threadId: z.string(), rowId: z.string() }).optional(),
   sentBy: sentBySchema.optional(),
+  ...notificationPartsSchema.shape,
 });
 
 // Subagents that ended runs, told together: each with where it stands and the last thing it said.

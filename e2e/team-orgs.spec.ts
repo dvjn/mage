@@ -223,9 +223,12 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   });
   await page.goto(generalThread);
   await expect(waiting(page)).toBeHidden();
-  await expect(
-    transcript(page).getByRole("article", { name: "Message from Grace Hopper" }).first(),
-  ).toContainText("former member");
+  await transcript(page)
+    .getByRole("article", { name: "Message from Grace Hopper" })
+    .first()
+    .getByRole("button", { name: "About Grace Hopper" })
+    .hover();
+  await expect(page.locator("[data-slot=hover-card-content]")).toContainText("Former member");
 });
 
 test("personal spaces: allowed, made, archived read-only, a thread moved out, restored", async ({

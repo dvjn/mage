@@ -348,6 +348,7 @@ describe("model lists", () => {
         maker: "openai",
         authKind: "oauth",
         connectionLabel: "ChatGPT",
+        connectionName: null,
         contextWindow: 272000,
         reasoning: true,
       },
@@ -360,6 +361,7 @@ describe("model lists", () => {
         maker: "openai",
         authKind: "oauth",
         connectionLabel: "ChatGPT",
+        connectionName: null,
         contextWindow: 128000,
         reasoning: false,
       },
@@ -387,6 +389,7 @@ describe("model lists", () => {
         maker: "anthropic",
         authKind: "api_key",
         connectionLabel: "Anthropic API key",
+        connectionName: null,
         contextWindow: 1000000,
         reasoning: true,
       },
@@ -399,6 +402,7 @@ describe("model lists", () => {
         maker: "anthropic",
         authKind: "api_key",
         connectionLabel: "Anthropic API key",
+        connectionName: null,
       },
     ]);
     const headers = requests[0]?.headers;

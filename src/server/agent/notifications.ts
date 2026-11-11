@@ -10,6 +10,7 @@ import { type Append, eventSummary, type ThreadLog } from "@/server/threads/log.
 import type { ThreadStore } from "@/server/threads/service.ts";
 import type {
   NotificationKind,
+  NotificationParts,
   NotificationSource,
   Steering,
   SubagentTask,
@@ -18,7 +19,7 @@ import { transcriptOf } from "@/shared/transcript.ts";
 
 import { type RunStore, startRun } from "./runs.ts";
 
-export interface Notification {
+export interface Notification extends NotificationParts {
   kind: NotificationKind;
   source: NotificationSource;
   text: string;

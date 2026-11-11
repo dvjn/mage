@@ -37,7 +37,7 @@ import {
   type ThreadRequest,
   tokensOf,
 } from "@/server/agent/compaction.ts";
-import { type Subagents, steeringLine } from "@/server/agent/subagents.ts";
+import { type Subagents, steeringParts } from "@/server/agent/subagents.ts";
 import { type Run, type RunStore, startRun } from "@/server/agent/runs.ts";
 import type { Tools } from "@/server/agent/tools.ts";
 import type { GuestStore, GuestThread } from "@/server/guests/service.ts";
@@ -202,7 +202,12 @@ export interface ThreadFacts {
 
 // The people who have written in a thread, whoever wrote last first, each with their name while
 // they still have one, and whether their last message was written as a guest of the thread.
-export type ThreadWriters = { userId: string; name: string | null; guest: boolean }[];
+export type ThreadWriters = {
+  userId: string;
+  name: string | null;
+  former: boolean;
+  guest: boolean;
+}[];
 
 // What a list of threads is narrowed to for its reader: those whose title, or the text named for
 // each list, contains the text, ignoring case; and those with something new for the reader, or those
@@ -611,15 +616,17 @@ function withSubagents(own: ThreadStatus, subagents: readonly ListedSubagent[]):
 
 // The most people a list names of those who have written in a thread.
 const PARTICIPANT_LIMIT = 3;
-const FORMER_MEMBER = "(former member)";
 
 // The few who wrote in the thread most recently, each saying whether they wrote as a guest, and how
 // many have.
 function participantsOf(writers: ThreadWriters = []): ThreadParticipants {
   return {
-    people: writers
-      .slice(0, PARTICIPANT_LIMIT)
-      .map(({ userId, name, guest }) => ({ userId, name: name ?? FORMER_MEMBER, guest })),
+    people: writers.slice(0, PARTICIPANT_LIMIT).map(({ userId, name, former, guest }) => ({
+      userId,
+      name,
+      former: former || name === null,
+      guest,
+    })),
     total: writers.length,
   };
 }
@@ -887,12 +894,17 @@ export function createThreads(options: ThreadsOptions) {
           if (stopped.aborted && text.trim()) {
             store.addTurn(asideId, { role: "answer", text: text.trim(), model });
           } else {
-            const reason = stopped.aborted
-              ? "Stopped"
-              : err instanceof Error && err.message
-                ? err.message
-                : "The model did not answer.";
-            store.addTurn(asideId, { role: "answer", text: reason, model, failed: true });
+            store.addTurn(asideId, {
+              role: "answer",
+              text: "",
+              model,
+              ...(stopped.aborted
+                ? { failure: "stopped" as const }
+                : {
+                    failure: "error" as const,
+                    ...(err instanceof Error && err.message && { error: err.message }),
+                  }),
+            });
           }
         } finally {
           if (answering.get(asideId) === stop) answering.delete(asideId);
@@ -1065,7 +1077,7 @@ export function createThreads(options: ThreadsOptions) {
       // Where other agents' messages steered the call, whose words they carried.
       const steering =
         transcript.rows.some((other) => other.kind === "relay") &&
-        steeringLine(
+        steeringParts(
           transcript.rows,
           subagents?.find(thread.id)?.name ?? agentNameOf(space),
           agentNameOf(space),
@@ -1093,6 +1105,19 @@ export function createThreads(options: ThreadsOptions) {
     }
     if (row.kind === "relay") {
       const { steeredBy: _steeredBy, call: _call, rowId, ...message } = row;
+      // An older idle notification names its subagents only; they are found by name among the
+      // thread's.
+      if (row.type === "agent.idle" && !row.subagents) {
+        const names = row.text.slice(row.text.indexOf(": ") + 2).split(", ");
+        const found = (subagents?.ofParents([thread.id]) ?? []).filter(({ record }) =>
+          names.includes(record.name),
+        );
+        if (found.length > 0)
+          message.subagents = found.map(({ record }) => ({
+            threadId: record.threadId,
+            name: record.name,
+          }));
+      }
       const sentBy = sentByOf(row, reader);
       const source =
         rowId && readable(reader.principal, row.from.threadId)

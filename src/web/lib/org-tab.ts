@@ -3,7 +3,7 @@
 // tab to that org, and switching orgs reloads the tab there, so nothing of the last org lingers. A
 // tab whose person is no longer in its org starts again in the org they used last.
 
-import { ORG_NOT_FOUND } from "@/shared/orgs.ts";
+import { ORG_NOT_FOUND_CODE } from "@/shared/orgs.ts";
 
 const KEY = "mage:tab-org";
 
@@ -48,8 +48,8 @@ export async function orgFetch(input: RequestInfo | URL, init?: RequestInit) {
     const body = (await res
       .clone()
       .json()
-      .catch(() => null)) as { error?: string } | null;
-    if (body?.error === ORG_NOT_FOUND) {
+      .catch(() => null)) as { code?: string } | null;
+    if (body?.code === ORG_NOT_FOUND_CODE) {
       current = null;
       try {
         sessionStorage.removeItem(KEY);

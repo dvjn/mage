@@ -28,7 +28,7 @@ export function ToolCall({
   decide?: RowActions["decide"];
   answer?: RowActions["answer"];
   turn: AgentTurn;
-  // Inside a run of calls, which carries the turn's header and the indent.
+  // Inside a run of calls, which carries the turn's header.
   framed?: boolean;
   // The subagent whose call it is, when shown outside its thread.
   subagent?: string;
@@ -47,7 +47,7 @@ export function ToolCall({
   }
   if (asked?.success && row.answers) {
     const line = framed ? (
-      <ToolLine row={row} definition={definition} framed />
+      <ToolLine row={row} definition={definition} />
     ) : turn.continued ? (
       <ToolLine row={row} definition={definition} />
     ) : (
@@ -56,7 +56,7 @@ export function ToolCall({
     return (
       <div className="flex flex-col gap-1">
         {line}
-        <div className={framed ? undefined : "pl-9"}>
+        <div>
           <GivenAnswers input={asked.data} answers={row.answers} />
         </div>
       </div>
@@ -75,7 +75,7 @@ export function ToolCall({
   }
   const artifact = artifactOf(row);
   const line = framed ? (
-    <ToolLine row={row} definition={definition} framed />
+    <ToolLine row={row} definition={definition} />
   ) : !turn.continued ? (
     <ToolOpening row={row} definition={definition} turn={turn} />
   ) : (
@@ -85,7 +85,7 @@ export function ToolCall({
   return (
     <div className="flex flex-col gap-1.5">
       {line}
-      <ArtifactCard {...artifact} className={framed ? undefined : "ml-9"} />
+      <ArtifactCard {...artifact} />
     </div>
   );
 }

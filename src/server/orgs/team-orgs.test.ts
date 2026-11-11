@@ -322,7 +322,12 @@ describe("org invites", () => {
       await api("GET", `/threads/${threads[0]!.id}`, ada.cookie, undefined, ada.orgId)
     ).json()) as ThreadDetail;
     const author = after.rows[0]?.kind === "human" ? after.rows[0].author : undefined;
-    expect(author).toEqual({ kind: "user", userId: grace.userId, name: "Grace Hopper" });
+    expect(author).toEqual({
+      kind: "user",
+      userId: grace.userId,
+      name: "Grace Hopper",
+      former: false,
+    });
   });
 });
 

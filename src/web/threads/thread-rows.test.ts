@@ -16,7 +16,7 @@ function row(order: number, seq = order + 1, text = `Note ${order}`): ShownRow {
     order,
     seq,
     turn: null,
-    author: { kind: "user", userId: "ada", name: "Ada Lovelace" },
+    author: { kind: "user", userId: "ada", name: "Ada Lovelace", former: false },
     postedAt: "2026-11-01T00:00:00.000Z",
     text,
     quiet: true,

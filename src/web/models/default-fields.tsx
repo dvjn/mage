@@ -9,18 +9,17 @@ import type { Effort } from "@/shared/threads/thread.ts";
 import { Field, FieldDescription, FieldLabel } from "@/web/components/ui/field";
 import { EffortPicker } from "@/web/models/effort-picker";
 import { fallbackReason, ModelPicker, useMissingModel } from "@/web/models/model-picker";
+import { parseModelRef } from "@/shared/model-ref.ts";
 
 export { EFFORT_LABELS } from "@/web/models/effort-picker";
 
 // A model's name; one the list does not have is named by its id, never by its ref.
 export function modelName(models: ModelSummary[], ref: string | null) {
   if (!ref) return null;
-  return models.find((model) => model.ref === ref)?.name ?? (idOf(ref) || "Unavailable model");
-}
-
-// The model's id within a ref, `<prefix>/<id>`.
-export function idOf(ref: string) {
-  return ref.slice(ref.indexOf("/") + 1);
+  return (
+    models.find((model) => model.ref === ref)?.name ??
+    (parseModelRef(ref).modelId || "Unavailable model")
+  );
 }
 
 // A model, or with `inherit` the level above's, offered first as "Default · X".

@@ -25,7 +25,7 @@ import {
 import { Badge } from "@/web/components/ui/badge";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { useConnectFlow } from "@/web/mcp/connect";
-import { AgentAvatar, useThreadAgent } from "@/web/threads/transcript/agent";
+import { useThreadAgent } from "@/web/threads/transcript/agent";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
 import { ToolCrumb } from "@/web/threads/transcript/tool-crumb";
@@ -45,6 +45,16 @@ function allowingPath(callId: string, scope: ToolScope) {
 
 // A tool call waiting for a decision: the tool's breadcrumb under the hand, its input, and the
 // buttons to decide.
+// "Steered by Ada Lovelace, and Priya Nair via Critic → Writer".
+const steeredBy = new Intl.ListFormat("en", { type: "conjunction" });
+
+function steeringSentence(steering: NonNullable<ToolRow["steering"]>) {
+  const people = steering.map(({ name, via }) =>
+    via.length > 0 ? `${name} via ${via.join(" → ")}` : name,
+  );
+  return `Steered by ${steeredBy.format(people)}`;
+}
+
 export function ToolCard({
   row,
   definition,
@@ -111,7 +121,7 @@ export function ToolCard({
   const who = subagent ? { name: subagent, subagent: true } : self;
   return (
     <TranscriptRowFrame
-      avatar={<AgentAvatar {...who} />}
+      rowId={row.id}
       author={who.name}
       at={row.requestedAt}
       label={subagent ? `Approval request from ${subagent}` : "Approval request"}
@@ -138,8 +148,10 @@ export function ToolCard({
             </Badge>
           )}
         </div>
-        {row.steering && <p className="text-xs text-muted-foreground">{row.steering}</p>}
-        <div className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+        {row.steering && (
+          <p className="text-xs text-muted-foreground">{steeringSentence(row.steering)}</p>
+        )}
+        <div className="rounded-md bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
           <ToolInput value={row.input} schema={definition?.inputSchema} />
         </div>
         {row.risk === "review" && (

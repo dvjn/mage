@@ -180,12 +180,24 @@ export function messageOf(
   return text || null;
 }
 
-// The ids of the artifacts a reply's layouts place with Artifact(id).
+// The ids of the artifacts a reply's layouts place with Artifact(id), read from the parsed layout.
 export function artifactIdsIn(text: string): string[] {
   if (!text.includes("Artifact(")) return [];
-  return splitReply(text).flatMap((piece) =>
-    piece.kind === "ui"
-      ? [...piece.source.matchAll(/\bArtifact\(\s*"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]!)
-      : [],
-  );
+  const ids: string[] = [];
+  const visit = (node: unknown) => {
+    if (Array.isArray(node)) {
+      node.forEach(visit);
+    } else if (node && typeof node === "object") {
+      const element = node as { type?: unknown; typeName?: unknown; props?: unknown };
+      if (element.type === "element" && element.typeName === "Artifact") {
+        const id = (element.props as { id?: unknown } | undefined)?.id;
+        if (typeof id === "string") ids.push(id);
+      }
+      Object.values(node).forEach(visit);
+    }
+  };
+  for (const piece of splitReply(text)) {
+    if (piece.kind === "ui") visit(parser.parse(piece.source).root);
+  }
+  return ids;
 }

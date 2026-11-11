@@ -1592,7 +1592,7 @@ describe("personal credentials", () => {
   });
 
   it("read an older call paused for someone to connect as waiting for approval", () => {
-    const grace = { kind: "user" as const, userId: "grace", name: "Grace Hopper" };
+    const grace = { kind: "user" as const, userId: "grace", name: "Grace Hopper", former: false };
     const agent = { kind: "agent" as const };
     const at = "2026-10-31T00:00:00.000Z";
     const event = (seq: number, type: string, actor: ActorSummary, data: object) => ({
@@ -2092,9 +2092,13 @@ describe("what a tool call is called", () => {
     expect(call("tools.search")).toEqual(call("mcp_servers.search_tools"));
     expect(call("mcp._.search_tools")).toEqual(call("mcp_servers.search_tools"));
     expect(call("mcp._.read_resource")).toEqual({ title: "Read resource", toolset: "MCP" });
-    expect(call("skills.load", { name: "review" })).toMatchObject({ title: "Loaded review" });
+    expect(call("skills.load", { name: "review" })).toMatchObject({
+      title: "Load",
+      skill: "review",
+    });
     expect(call("skills.load", { name: "review" }, "pending")).toMatchObject({
-      title: "Load review",
+      title: "Load",
+      skill: "review",
     });
   });
 });

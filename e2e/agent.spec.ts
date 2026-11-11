@@ -71,8 +71,8 @@ test("a message gets a streamed reply from the agent", async ({ page }) => {
   // done but its run not yet ended, so the agent's starting row shows under it until the stream
   // catches up. Listing the replies waits that out.
   await expect(replies(page)).toHaveText([/I have read 1 message, and so the engine/]);
-  // The stand-in model's name.
-  await expect(replies(page)).toContainText(["echo"]);
+  // Model metadata stays out of the reply body.
+  await expect(replies(page)).not.toContainText("echo");
   await expect(replies(page).getByRole("button", { name: "Copy" })).toHaveCount(1);
 });
 

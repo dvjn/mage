@@ -19,6 +19,8 @@ import { transcriptOf } from "@/shared/transcript.ts";
 import { askTool } from "./ask.ts";
 import { compact as compactThread } from "./compaction.ts";
 import type { Toolset, ToolSpec } from "./tools.ts";
+import { personLabel } from "@/shared/people.ts";
+import { parseModelRef } from "@/shared/model-ref.ts";
 
 export interface SystemToolsOptions {
   threads: Pick<ThreadStore, "find" | "update" | "eventsAfter">;
@@ -32,11 +34,6 @@ export interface SystemToolsOptions {
 
 // How long writing a summary may take.
 const COMPACT_TIMEOUT_MS = 5 * 60 * 1000;
-
-// The connection part of a model ref.
-function connectionOf(ref: string) {
-  return ref.slice(0, ref.indexOf("/"));
-}
 
 export function createSystemTools(options: SystemToolsOptions): Toolset {
   const { threads, spaceStore, guests, models, open } = options;
@@ -64,7 +61,7 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
         : null;
       const writers = new Set<string>();
       for (const row of transcriptOf(threads.eventsAfter(thread.id, 0).map(eventSummary)).rows) {
-        if (row.kind === "human" && !row.guest) writers.add(row.author.name);
+        if (row.kind === "human" && !row.guest) writers.add(personLabel(row.author));
       }
       return {
         ok: true,
@@ -146,7 +143,9 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
       effort: effortSchema.nullable().meta({ title: "Effort" }),
     }),
     risk: ({ model }, ctx) =>
-      ctx.model && connectionOf(model) !== connectionOf(ctx.model) ? "ask" : "normal",
+      ctx.model && parseModelRef(model).connectionId !== parseModelRef(ctx.model).connectionId
+        ? "ask"
+        : "normal",
     async run({ model, effort }, ctx) {
       try {
         await models.requireModel(ctx.orgId, model);

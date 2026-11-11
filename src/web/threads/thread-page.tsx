@@ -19,7 +19,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useLocation } from "@tanstack/react-router";
 import { cn } from "cn";
 import { FileTextIcon, HistoryIcon, SplitIcon, Undo2Icon } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AskAnswers } from "@/shared/ask.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
@@ -83,11 +83,15 @@ import {
   useSummaryThread,
 } from "@/web/threads/history-mutations";
 import { type AsideOpen, type Asides, AsidesContext } from "@/web/threads/transcript/aside-thread";
-import { type RowHistory, RowHistoryContext } from "@/web/threads/transcript/row-history";
+import {
+  type RowHistory,
+  RowHistoryContext,
+  RowToolbar,
+} from "@/web/threads/transcript/row-history";
 import { Composer, PendingTray, RunStatus } from "@/web/threads/thread-composer";
 import { withEarlier } from "@/web/threads/thread-rows";
 import { AgentStarting } from "@/web/threads/transcript/agent-starting";
-import { type EntryGap, transcriptEntries } from "@/web/threads/transcript/entries";
+import { type TranscriptEntry, transcriptTurns } from "@/web/threads/transcript/entries";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
 import { RelayMessages } from "@/web/threads/transcript/relay-message";
 import { SubagentNotice } from "@/web/threads/transcript/subagent-notice";
@@ -103,17 +107,6 @@ import {
 import { TranscriptItem } from "@/web/threads/transcript/transcript-item";
 
 const threadRoute = getRouteApi("/_app/t/$threadId");
-
-// The rows sit a turn apart; an entry that continues the agent's turn draws up close to the line
-// before it, or near where text or a card meets the rest of the turn.
-const ENTRY_GAPS: Record<EntryGap, string | undefined> = {
-  apart: undefined,
-  close: "-mt-3",
-  near: "-mt-2",
-};
-
-// How long the row a link led to stays lit.
-const LIT_MS = 3000;
 
 export function ThreadPage() {
   const { threadId } = threadRoute.useParams();
@@ -175,7 +168,15 @@ export function ThreadPage() {
     [saved, streaming],
   );
 
-  const entries = useMemo(() => transcriptEntries(rows), [rows]);
+  const running = !!detail.data?.run;
+  const turns = useMemo(() => transcriptTurns(rows, { running }), [rows, running]);
+  const entries = useMemo(
+    () =>
+      turns.flatMap((turn) =>
+        turn.blocks.flatMap((block) => (block.kind === "lines" ? block.entries : [block])),
+      ),
+    [turns],
+  );
   // The calls of the runs the reader opened, and the agents' messages and runs of them; a run stays
   // open while any of its rows is here, as it grows and as earlier rows join it.
   const [openRows, setOpenRows] = useState<ReadonlySet<string>>(() => new Set());
@@ -332,10 +333,12 @@ export function ThreadPage() {
   });
 
   // The row a link led to: once the thread is open it is read back to, when it is in an earlier
-  // page, and once here it opens, with the run it is in, is scrolled to and lit for a moment. Each
+  // page, and once here it opens, with its run, is scrolled to and marked for two to five seconds. Each
   // time a link is followed it leads there again, even to where the page already is.
   const [focused, setFocused] = useState<string>();
   const [lit, setLit] = useState<string>();
+  const [acknowledged, setAcknowledged] = useState<string>();
+  const highlightedAt = useRef(0);
   const [followed, setFollowed] = useState(0);
   const entry = useLocation({ select: (location) => location.state.__TSR_key });
   const reaching = useRef<string>(undefined);
@@ -374,16 +377,43 @@ export function ThreadPage() {
     }
     setFocused(key);
     toggleRows([target, relayRunKey(target), lineKey(target)], true);
+    highlightedAt.current = Date.now();
+    setAcknowledged(undefined);
     setLit(target);
   });
   useEffect(() => {
+    if (!target) setLit(undefined);
+  }, [target, threadId]);
+  const clearHighlight = useCallback(
+    (rowId: string) => {
+      if (lit !== rowId) return;
+      setLit(undefined);
+      if (target === rowId) {
+        void navigate({
+          search: (previous) => ({ ...previous, row: undefined }),
+          replace: true,
+          resetScroll: false,
+        });
+      }
+    },
+    [lit, target, navigate],
+  );
+  const dismiss = useCallback(
+    (rowId: string) => {
+      if (lit === rowId) setAcknowledged(rowId);
+    },
+    [lit],
+  );
+  useEffect(() => {
     if (!lit) return;
-    const timer = setTimeout(() => setLit(undefined), LIT_MS);
+    const duration = acknowledged === lit ? 2000 : 5000;
+    const remaining = Math.max(0, duration - (Date.now() - highlightedAt.current));
+    const timer = setTimeout(() => clearHighlight(lit), remaining);
     return () => clearTimeout(timer);
-  }, [lit]);
+  }, [lit, acknowledged, clearHighlight]);
   const focus = useMemo(
-    () => ({ opened: openRows, onOpenChange: toggleRows, follow, ...(lit && { lit }) }),
-    [openRows, toggleRows, follow, lit],
+    () => ({ opened: openRows, onOpenChange: toggleRows, follow, dismiss, ...(lit && { lit }) }),
+    [openRows, toggleRows, follow, dismiss, lit],
   );
 
   // What the reader may do from a row.
@@ -486,6 +516,63 @@ export function ThreadPage() {
     modelChange.mutate(json);
   }
 
+  // One entry of a turn; the one with the first new row marks where the reader stopped.
+  const entryView = (entry: TranscriptEntry) => (
+    <div key={entry.key} ref={entry.key === newEntry ? stoppedAt : undefined}>
+      {entry.kind === "calls" ? (
+        <ToolGroup
+          rows={entry.rows}
+          calls={entry.calls}
+          turn={entry.turn}
+          tools={detail.data?.tools ?? []}
+          open={entry.calls.some((call) => openRows.has(call.id))}
+          onOpenChange={(open) =>
+            toggleRows(
+              entry.calls.map((call) => call.id),
+              open,
+            )
+          }
+        />
+      ) : entry.kind === "relays" ? (
+        <RelayMessages rows={entry.rows} opened={openRows} onOpenChange={toggleRows} />
+      ) : entry.kind === "notice" ? (
+        <SubagentNotice row={entry.row} />
+      ) : entry.kind === "artifacts" ? (
+        <div className="flex flex-col gap-1.5">
+          {entry.items.map((item) => (
+            <ArtifactCard key={item.id} {...item} latest />
+          ))}
+        </div>
+      ) : entry.kind === "subagent" ? (
+        <ToolCall
+          row={entry.row}
+          definition={detail.data?.tools.find((tool) => tool.name === entry.row.toolId)}
+          turn={{ continued: false, model: null }}
+          subagent={entry.subagent.name}
+          decide={actionsFor(entry.row).decide}
+          answer={actionsFor(entry.row).answer}
+        />
+      ) : (
+        <TranscriptItem
+          row={entry.row}
+          tools={detail.data?.tools}
+          actions={actionsFor(entry.row)}
+        />
+      )}
+    </div>
+  );
+  // The agent getting to work: under its turn where it continues one, else a turn of its own.
+  const starting = run &&
+    !viewing &&
+    !run.waiting &&
+    !rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
+      <AgentStarting
+        at={run.createdAt}
+        continued={!!rows.at(-1)?.turn}
+        compacting={run.compacting}
+      />
+    );
+
   if (notFound) return <NotFound what="thread" id={threadId} />;
 
   if (ended) {
@@ -576,7 +663,7 @@ export function ThreadPage() {
                     className="min-h-0"
                     resize={arriving ? "smooth" : "instant"}
                   >
-                    <ConversationContent className={cn(pageWidth, "gap-4")}>
+                    <ConversationContent className={cn(pageWidth, "gap-6")}>
                       {rows.length === 0 ? (
                         <ConversationEmptyState description="Write the first message below." />
                       ) : (
@@ -586,76 +673,36 @@ export function ThreadPage() {
                             first={rows[0]?.id}
                             onLoad={loadEarlier}
                           />
-                          {entries.map((entry) => (
-                            <Fragment key={entry.key}>
-                              {entry.key === newEntry && (
-                                // Where the reader stopped; takes no room in the rows' gap.
-                                <div ref={stoppedAt} aria-hidden className="-my-2 h-0 shrink-0" />
-                              )}
-                              <div className={ENTRY_GAPS[entry.gap]}>
-                                {entry.kind === "calls" ? (
-                                  <ToolGroup
-                                    rows={entry.rows}
-                                    calls={entry.calls}
-                                    turn={entry.turn}
-                                    tools={detail.data?.tools ?? []}
-                                    open={entry.calls.some((call) => openRows.has(call.id))}
-                                    onOpenChange={(open) =>
-                                      toggleRows(
-                                        entry.calls.map((call) => call.id),
-                                        open,
-                                      )
-                                    }
-                                  />
-                                ) : entry.kind === "relays" ? (
-                                  <RelayMessages
-                                    rows={entry.rows}
-                                    opened={openRows}
-                                    onOpenChange={toggleRows}
-                                  />
-                                ) : entry.kind === "notice" ? (
-                                  <SubagentNotice row={entry.row} />
-                                ) : entry.kind === "artifacts" ? (
-                                  <div className="ml-9 flex flex-col gap-1.5">
-                                    {entry.items.map((item) => (
-                                      <ArtifactCard key={item.id} {...item} latest />
-                                    ))}
-                                  </div>
-                                ) : entry.kind === "subagent" ? (
-                                  <ToolCall
-                                    row={entry.row}
-                                    definition={detail.data?.tools.find(
-                                      (tool) => tool.name === entry.row.toolId,
-                                    )}
-                                    turn={{ continued: false, model: null }}
-                                    subagent={entry.subagent.name}
-                                    decide={actionsFor(entry.row).decide}
-                                    answer={actionsFor(entry.row).answer}
-                                  />
-                                ) : (
-                                  <TranscriptItem
-                                    row={entry.row}
-                                    tools={detail.data?.tools}
-                                    actions={actionsFor(entry.row)}
-                                  />
+                          {turns.map((turn, index) => (
+                            <div
+                              key={turn.key}
+                              data-turn={turn.kind}
+                              className="flex flex-col gap-1"
+                            >
+                              <div className="flex flex-col gap-3">
+                                {turn.blocks.map((block) =>
+                                  block.kind === "lines" ? (
+                                    <div key={block.key} className="flex flex-col gap-1">
+                                      {block.entries.map(entryView)}
+                                    </div>
+                                  ) : (
+                                    entryView(block)
+                                  ),
                                 )}
+                                {index === turns.length - 1 && turn.kind === "agent" && starting}
                               </div>
-                            </Fragment>
+                              {turn.actions && (
+                                <RowToolbar
+                                  rowId={turn.actions.id}
+                                  text=""
+                                  can={turn.actions.can}
+                                />
+                              )}
+                            </div>
                           ))}
                         </>
                       )}
-                      {run &&
-                        !viewing &&
-                        !run.waiting &&
-                        !rows.some((row) => row.kind === "agent" && row.status === "streaming") && (
-                          <div className={rows.at(-1)?.turn ? ENTRY_GAPS.near : undefined}>
-                            <AgentStarting
-                              at={run.createdAt}
-                              continued={!!rows.at(-1)?.turn}
-                              compacting={run.compacting}
-                            />
-                          </div>
-                        )}
+                      {turns.at(-1)?.kind !== "agent" && starting}
                     </ConversationContent>
                     <ConversationScrollButton />
                   </Conversation>

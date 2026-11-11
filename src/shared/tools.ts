@@ -108,6 +108,8 @@ export const policyIdentitySchema = z.object({
   kind: z.enum(["user", "group", "editors"]),
   name: z.string(),
   detail: z.string().nullable(),
+  // For a group, how many people it has.
+  memberCount: z.number().int().nonnegative().optional(),
   stale: z.boolean(),
 });
 

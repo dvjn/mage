@@ -130,8 +130,8 @@ describe("thread access", () => {
     }[];
     expect(list.find((t) => t.id === thread.id)?.participants).toEqual({
       people: [
-        { userId: hedy.userId, name: "Hedy Lamarr", guest: true },
-        { userId: ada.userId, name: "Ada Lovelace", guest: false },
+        { userId: hedy.userId, name: "Hedy Lamarr", guest: true, former: false },
+        { userId: ada.userId, name: "Ada Lovelace", guest: false, former: false },
       ],
       total: 2,
     });
@@ -216,7 +216,7 @@ describe("thread access", () => {
         orgName: "Ada Lovelace",
         accessUntil: null,
         participants: {
-          people: [{ userId: ada.userId, name: "Ada Lovelace", guest: false }],
+          people: [{ userId: ada.userId, name: "Ada Lovelace", guest: false, former: false }],
           total: 1,
         },
       }),

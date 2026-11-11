@@ -23,7 +23,7 @@ import {
 } from "./compaction.ts";
 import { summaryMessage } from "./context.ts";
 
-const ada = { kind: "user", userId: "ada", name: "Ada" } as const;
+const ada = { kind: "user", userId: "ada", name: "Ada", former: false } as const;
 
 function human(seq: number, text = "Hello", extra: Partial<HumanRow> = {}): HumanRow {
   return {
@@ -201,7 +201,7 @@ describe("compacting a thread", () => {
     expect(summarising.texts).toEqual([
       ...second.texts,
       "assistant: Second.",
-      `user: ${summaryAsk({ previous: false, kept: { author: { kind: "user", userId: ada.userId, name: "Ada Lovelace" }, text: "Two" }, focus: "the numbers" })}`,
+      `user: ${summaryAsk({ previous: false, kept: { author: { kind: "user", userId: ada.userId, name: "Ada Lovelace", former: false }, text: "Two" }, focus: "the numbers" })}`,
     ]);
     summarising.reply("Ada counted to one.");
     await worker.idle();
@@ -231,7 +231,7 @@ describe("compacting a thread", () => {
     expect(again.texts).toEqual([
       ...after.texts,
       "assistant: Third.",
-      `user: ${summaryAsk({ previous: true, kept: { author: { kind: "user", userId: ada.userId, name: "Ada Lovelace" }, text: "Three" } })}`,
+      `user: ${summaryAsk({ previous: true, kept: { author: { kind: "user", userId: ada.userId, name: "Ada Lovelace", former: false }, text: "Three" } })}`,
     ]);
     again.reply("Ada counted to two.");
     await worker.idle();
@@ -288,7 +288,7 @@ describe("compacting a thread", () => {
     expect(summarising.texts).toEqual([
       ...asking.texts,
       "assistant: Compacting.",
-      `user: ${summaryAsk({ previous: false, kept: { author: { kind: "user", userId: ada.userId, name: "Ada Lovelace" }, text: "Two" }, focus: "numbers" })}`,
+      `user: ${summaryAsk({ previous: false, kept: { author: { kind: "user", userId: ada.userId, name: "Ada Lovelace", former: false }, text: "Two" }, focus: "numbers" })}`,
     ]);
     summarising.reply("Ada said one.");
     const after = await model.next();

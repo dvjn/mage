@@ -39,8 +39,26 @@ export const Conversation = ({
     {children}
     <OpenScrolled at={openAt} hold={holdOpenAt} />
     <ScrolledTo id={scrollTo} />
+    <StaysOnOpen />
   </StickToBottom>
 );
+
+// Something the reader opens grows below where they are, so the view stays put rather than
+// following the end down past it.
+const StaysOnOpen = () => {
+  const { scrollRef, stopScroll } = useStickToBottomContext();
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    if (!scroll) return;
+    const open = (event: Event) => {
+      const trigger = (event.target as Element | null)?.closest('[aria-expanded="false"]');
+      if (trigger && scroll.contains(trigger)) stopScroll();
+    };
+    scroll.addEventListener("click", open, true);
+    return () => scroll.removeEventListener("click", open, true);
+  }, [scrollRef, stopScroll]);
+  return null;
+};
 
 // How far down the view an element scrolled to sits, as a share of the view's height.
 const SCROLL_TO_SHARE = 0.3;

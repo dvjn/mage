@@ -90,13 +90,6 @@ export function HostMark({
   );
 }
 
-// The name people gave a connection, from how people know it, as "Lab box" from
-// "OpenAI-compatible · Lab box"; null when it has none.
-export function givenName(connectionLabel: string | null | undefined) {
-  const at = connectionLabel?.indexOf(" · ") ?? -1;
-  return at >= 0 ? connectionLabel!.slice(at + 3) : null;
-}
-
 // How people know a model and where it comes from, as "Claude Opus · Amazon Bedrock".
 export function modelLabel(name: string, via: string | null | undefined) {
   return via ? `${name} · ${via}` : name;

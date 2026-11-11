@@ -22,8 +22,22 @@ export interface AsideStore {
   create(input: { threadId: string; branchId: string; rowId: string; userId: string }): string;
   addTurn(
     asideId: string,
-    turn: { role: "question" | "answer"; text: string; model?: string | null; failed?: boolean },
+    turn: {
+      role: "question" | "answer";
+      text: string;
+      model?: string | null;
+      failure?: "stopped" | "error";
+      error?: string;
+    },
   ): void;
+}
+
+const STOPPED = "Stopped";
+
+// A failed turn as stored: stopped, or failed with what was said, if anything.
+function failureOf(text: string) {
+  if (text === STOPPED) return { failure: "stopped" as const };
+  return { failure: "error" as const, ...(text && { error: text }) };
 }
 
 export function createAsideStore(db: Db): AsideStore {
@@ -42,10 +56,10 @@ export function createAsideStore(db: Db): AsideStore {
         {
           id: row.id,
           role: row.role,
-          text: row.text,
+          text: row.failed ? "" : row.text,
           at: row.createdAt.toISOString(),
           model: row.model,
-          ...(row.failed && { failed: true }),
+          ...(row.failed && failureOf(row.text)),
         },
       ]);
     }
@@ -94,9 +108,16 @@ export function createAsideStore(db: Db): AsideStore {
       return id;
     },
 
-    addTurn(asideId, turn) {
+    addTurn(asideId, { failure, error, ...turn }) {
       db.insert(asideTurn)
-        .values({ id: ulid(), asideId, ...turn, failed: turn.failed ?? false })
+        .values({
+          id: ulid(),
+          asideId,
+          ...turn,
+          // A failed turn keeps what went wrong in its text: "Stopped" marks one that was stopped.
+          text: failure === "stopped" ? STOPPED : failure ? (error ?? "") : turn.text,
+          failed: !!failure,
+        })
         .run();
     },
   };
@@ -110,10 +131,10 @@ export function asideHeading(name: string) {
 // The thread's request with the side conversation after it, for one answer and no tool calls.
 export function asideRequest(
   thread: ThreadRequest,
-  turns: readonly Pick<Aside["turns"][number], "role" | "text" | "failed">[],
+  turns: readonly Pick<Aside["turns"][number], "role" | "text" | "failure">[],
   name: string,
 ): Omit<ModelRequest, "model"> {
-  const said = turns.filter((turn) => !turn.failed);
+  const said = turns.filter((turn) => !turn.failure);
   const messages: ModelMessage[] = said.map((turn, index) =>
     turn.role === "answer"
       ? { role: "assistant", text: turn.text }

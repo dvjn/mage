@@ -37,6 +37,7 @@ import * as z from "zod";
 
 import type { Transact } from "@/server/db/db.ts";
 import type { EventBus } from "@/server/kernel/event-bus.ts";
+import { connectionOf, failureSentence } from "@/server/agent/failure-text.ts";
 import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import { contentRecorded, type RunTraces, tracer } from "@/server/kernel/tracing.ts";
@@ -44,7 +45,6 @@ import { ConnectionError } from "@/server/models/connections.ts";
 import {
   type Effort,
   ModelError,
-  type ModelErrorKind,
   type ModelMessage,
   type ModelToolCall,
   type ModelUsage,
@@ -266,36 +266,19 @@ export class RunFailure extends Error {
   }
 }
 
-const CONNECTION_LABELS = { codex: "Codex", claude: "Claude" } as const;
-
-type ConnectionKind = keyof typeof CONNECTION_LABELS;
-
-function connectionOf(ref: string): ConnectionKind | undefined {
-  const kind = ref.slice(0, ref.indexOf("/"));
-  return Object.hasOwn(CONNECTION_LABELS, kind) ? (kind as ConnectionKind) : undefined;
-}
-
-const FAILURE_MESSAGES: Record<ModelErrorKind, (label: string) => string> = {
-  auth: (label) => `The ${label} sign-in no longer works. Reconnect it in Model providers.`,
-  limit: (label) => `${label} limit reached.`,
-  model: (label) => `${label} cannot use this model. Pick another model.`,
-  network: (label) => `Couldn't reach ${label}.`,
-};
-
-// What people are told about a failure while replying with the model `ref`.
+// What a failure says to people: its kind and what the provider or system said while replying with the model `ref`.
 function failureOf(err: unknown, ref: string | null): RunFailure {
   if (err instanceof RunFailure) return err;
   const connection = ref ? connectionOf(ref) : undefined;
-  const label = connection ? CONNECTION_LABELS[connection] : "The provider";
   const kinded =
     err instanceof ModelError
       ? err
       : err instanceof ConnectionError
         ? new ModelError("auth", err.message)
         : null;
-  if (!kinded) return new RunFailure(`The model failed: ${messageOf(err)}`);
+  if (!kinded) return new RunFailure({ error: messageOf(err), kind: "model_error" });
   return new RunFailure({
-    error: kinded.summary ?? FAILURE_MESSAGES[kinded.kind](label),
+    error: kinded.summary ?? "",
     kind: kinded.kind,
     ...(connection && { connection }),
     detail: kinded.detail,
@@ -572,7 +555,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       append({
         type: "run.failed",
         actor: AGENT,
-        data: { runId: run.id, ...(failure ?? { error: "The agent could not reply." }) },
+        data: { runId: run.id, ...(failure ?? { error: "" }) },
       });
     } else if (status === "cancelled") {
       const by = ended.cancelRequestedBy;
@@ -804,7 +787,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       space,
       askedModel ? { model: askedModel, effort: askedEffort } : own,
     );
-    if (!picked) throw new RunFailure("Pick a model for this thread.");
+    if (!picked) throw new RunFailure({ error: "", kind: "no_model" });
     const ref = picked.used?.ref ?? picked.chosen.ref;
     execution.ref = ref;
     execution.effort = picked.effort;
@@ -1279,7 +1262,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       if (!(err instanceof RunFailure)) logger.warn({ err, runId: run.id }, "run failed");
       const { failure } = failureOf(err, execution.ref);
       outcome = "failed";
-      span.setStatus({ code: SpanStatusCode.ERROR, message: failure.error });
+      span.setStatus({ code: SpanStatusCode.ERROR, message: failureSentence(failure) });
       if (failure.kind) span.setAttribute("run.error_kind", failure.kind);
       try {
         write(lease, run, (append) => {
@@ -1315,11 +1298,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       if (!run) continue;
       const lease = { runId: run.id, owner, epoch: run.leaseEpoch };
       const retry = run.attempt < maxAttempts;
-      const failure = {
-        error: retry
-          ? "The server stopped while the agent was replying."
-          : `The agent stopped ${run.attempt} times on this input and gave up.`,
-      };
+      const failure: Failure = { error: "", kind: retry ? "interrupted" : "gave_up" };
       try {
         write(lease, run, (append) => {
           for (const row of transcript(run).rows) {
@@ -1425,9 +1404,9 @@ export function createRunWorker(options: RunWorkerOptions) {
     async requestAt(threadId: string, branchId: string, rowId?: string) {
       const thread = threads.find(threadId);
       const space = thread && spaceStore.find(thread.spaceId);
-      if (!thread || !space) throw new RunFailure("The thread is gone.");
+      if (!thread || !space) throw new RunFailure({ error: "", kind: "gone" });
       const picked = await models.replyModel(space, { model: thread.model, effort: thread.effort });
-      if (!picked) throw new RunFailure("Pick a model for this thread.");
+      if (!picked) throw new RunFailure({ error: "", kind: "no_model" });
       const ref = picked.used?.ref ?? picked.chosen.ref;
       const model = await models.open(space.orgId, ref);
       const { rows } = transcript({ threadId, branchId });

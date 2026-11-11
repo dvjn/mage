@@ -1,5 +1,6 @@
 // Which of a thread's rows the reader opened, held by its page so that they stay open as rows
-// arrive, and the row a link led to, lit for a moment; and links that lead to a row of a thread.
+// arrive, and the row a link led to, marked briefly or until the reader interacts with it;
+// and links that lead to a row of a thread.
 
 import { Link, useLocation } from "@tanstack/react-router";
 import { createContext, type ReactNode, useContext } from "react";
@@ -7,8 +8,9 @@ import { createContext, type ReactNode, useContext } from "react";
 export interface RowFocus {
   opened: ReadonlySet<string>;
   onOpenChange: (ids: string[], open: boolean) => void;
-  // The row a link led to, while it is lit.
+  // The row a link led to: shown for at least two seconds, up to five without interaction.
   lit?: string;
+  dismiss?: (rowId: string) => void;
   // Leads to the row in the address again, for a link to where the page already is.
   follow?: () => void;
 }

@@ -1,76 +1,115 @@
-// A row of a thread's transcript: an avatar beside a header with the author and the time, and the
-// body flush with the header, with what can be done from it below; a row that continues its
-// author's turn is its body alone.
+// Human messages sit on the right with their avatar; agent content and notifications use the
+// full left edge. Agent actions stay visible; human Copy/Edit controls appear on hover or focus.
 
-import { type ReactNode } from "react";
+import { cn } from "cn";
+import { type PointerEvent, type ReactNode } from "react";
 
-import { Time } from "@/web/components/time";
+import { rowElementId, useRowFocus } from "@/web/threads/transcript/row-focus";
 
-// A row of the transcript: the avatar beside a header with the author and the time, and the body
-// flush with the header.
 export function TranscriptRowFrame({
   avatar,
-  author,
-  at,
+  human = false,
+  outlined = false,
   label,
   note,
   actions,
   footer,
-  continued,
+  rowId,
   children,
 }: {
-  avatar: ReactNode;
-  author: string;
-  at: string;
+  avatar?: ReactNode;
+  human?: boolean;
+  outlined?: boolean;
+  author: ReactNode;
+  at?: string;
   label: string;
   note?: ReactNode;
-  // Shown beside the author while the row is hovered or focused.
   actions?: ReactNode;
-  // Under the body.
   footer?: ReactNode;
-  // Follows another row of the same author's turn: its body alone, under that row's header, with
-  // any note of its own above.
   continued?: boolean;
+  rowId?: string;
   children: ReactNode;
 }) {
-  if (continued) {
+  const focus = useRowFocus();
+  const highlighted = !!rowId && focus?.lit === rowId;
+  const attributes = {
+    ...(rowId && { id: rowElementId(rowId) }),
+    "data-lit": highlighted || undefined,
+    tabIndex: human ? 0 : undefined,
+    onPointerEnter: (event: PointerEvent<HTMLElement>) => {
+      if (rowId && event.pointerType !== "touch") focus?.dismiss?.(rowId);
+    },
+    onPointerDownCapture: () => {
+      if (rowId) focus?.dismiss?.(rowId);
+    },
+    onKeyDownCapture: () => {
+      if (rowId) focus?.dismiss?.(rowId);
+    },
+  };
+  const controls = actions && (
+    <div
+      className={cn(
+        "flex flex-wrap items-center gap-1 text-xs text-muted-foreground",
+        human &&
+          "pointer-events-none opacity-0 transition-opacity group-hover/row:pointer-events-auto group-hover/row:opacity-100 group-focus-within/row:pointer-events-auto group-focus-within/row:opacity-100 has-[[aria-expanded=true]]:pointer-events-auto has-[[aria-expanded=true]]:opacity-100",
+      )}
+    >
+      {actions}
+    </div>
+  );
+  if (human) {
     return (
-      <article aria-label={label} className="group/row relative flex flex-col gap-1 pl-9">
-        {note && (
-          <div className="flex items-baseline gap-2 text-xs text-muted-foreground">{note}</div>
-        )}
-        {children}
-        {footer}
-        {actions && (
-          <div className="absolute top-0 right-0 flex items-center gap-2 text-xs text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100">
-            {actions}
+      <article
+        {...attributes}
+        aria-label={label}
+        className={cn("group/row flex min-w-0 justify-end gap-2.5", highlighted && "row-attention")}
+      >
+        <div className="relative flex min-w-0 max-w-[85%] flex-col items-end gap-1">
+          <div
+            className={cn(
+              "min-w-0 max-w-full rounded-2xl px-4 py-2.5 [overflow-wrap:anywhere]",
+              outlined ? "relative" : "bg-muted",
+            )}
+          >
+            {outlined && (
+              // Drawn rather than a dashed border, whose dashes the browser sizes.
+              <svg
+                aria-hidden
+                className="pointer-events-none absolute inset-0 size-full overflow-visible text-muted-foreground/30"
+              >
+                <rect
+                  x="0.5"
+                  y="0.5"
+                  rx="15.5"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeDasharray="6 4"
+                  style={{ width: "calc(100% - 1px)", height: "calc(100% - 1px)" }}
+                />
+              </svg>
+            )}
+            {children}
           </div>
-        )}
+          {controls}
+          {footer}
+        </div>
+        <div className="mt-0.5 shrink-0">{avatar}</div>
       </article>
     );
   }
   return (
-    <article aria-label={label} className="group/row flex gap-3">
-      <div className="mt-0.5 shrink-0">{avatar}</div>
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
-        <div className="flex items-baseline gap-2">
-          <span className="text-sm font-medium">{author}</span>
-          <Time iso={at} className="text-xs text-muted-foreground" />
-          {/* Each note after the time reads as its own item. */}
-          {note && (
-            <span className="flex items-baseline gap-2 text-xs text-muted-foreground *:before:mr-2 *:before:content-['·']">
-              {note}
-            </span>
-          )}
-          {actions && (
-            <div className="-my-1 ml-auto flex items-center gap-2 self-center text-xs text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 focus-within:opacity-100">
-              {actions}
-            </div>
-          )}
-        </div>
-        {children}
-        {footer}
-      </div>
+    <article
+      {...attributes}
+      aria-label={label}
+      className={cn(
+        "group/row flex min-w-0 flex-col gap-1 [overflow-wrap:anywhere]",
+        highlighted && "row-attention",
+      )}
+    >
+      {note && <div className="flex items-center gap-2 text-xs text-muted-foreground">{note}</div>}
+      {children}
+      {controls}
+      {footer}
     </article>
   );
 }

@@ -441,8 +441,9 @@ describe("thread history", () => {
     const failed = await again();
     expect(failed?.type === "aside" && failed.aside.turns.at(-1)).toMatchObject({
       role: "answer",
-      text: "Overloaded",
-      failed: true,
+      text: "",
+      failure: "error",
+      error: "Overloaded",
     });
   });
 
@@ -460,6 +461,6 @@ describe("thread history", () => {
     while (kept[0]?.turns.length !== 2) {
       kept = (await (await api("GET", asides, ada.cookie)).json()) as Aside[];
     }
-    expect(kept[0]!.turns[1]).toMatchObject({ role: "answer", text: "Stopped", failed: true });
+    expect(kept[0]!.turns[1]).toMatchObject({ role: "answer", text: "", failure: "stopped" });
   });
 });
