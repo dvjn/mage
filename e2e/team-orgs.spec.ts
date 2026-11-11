@@ -1,4 +1,4 @@
-import { type Browser, expect, type Page, test } from "@playwright/test";
+import { type Browser, expect, type Locator, type Page, test } from "@playwright/test";
 
 // Sign-ups are rate limited per client address; each person counts as their own client.
 let client = 60;
@@ -21,6 +21,15 @@ async function fillSignUp(page: Page, name: string, email?: string) {
 async function someoneElse(browser: Browser, index: number) {
   const context = await browser.newContext({ extraHTTPHeaders: nextClient(index) });
   return context.newPage();
+}
+
+// Opens the picker's suggestions, which show before anything is typed, and takes one.
+async function pick(scope: Locator, text: string) {
+  await scope.getByPlaceholder("Add people").fill(text);
+  await scope
+    .page()
+    .getByRole("option", { name: new RegExp(text) })
+    .click();
 }
 
 function transcript(page: Page) {
@@ -82,9 +91,7 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await page.getByRole("button", { name: "Add people" }).click();
   // The directory other journeys fill may name groups here too.
   await page.getByLabel(/^Name(, email or group| or email)$/).fill(graceEmail);
-  await expect(page.getByRole("list", { name: "Suggestions" })).toContainText(
-    `Invite ${graceEmail} as`,
-  );
+  await expect(page.getByRole("list", { name: "Adding" })).toContainText(`Invite ${graceEmail}`);
   await page.getByRole("button", { name: "Invite", exact: true }).click();
   const link = page.getByRole("textbox", { name: "Invite link" });
   await expect(link).toHaveValue(/\/join\//);
@@ -160,17 +167,14 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await page.goto(`${loomRoom}/settings/members`);
   await page.getByRole("button", { name: "Add people" }).click();
   const add = page.getByRole("dialog");
-  await add.getByLabel("Person").fill("grace");
-  await add.getByRole("button", { name: /Grace Hopper/ }).click();
-  await add.getByLabel("Role").click();
-  await page.getByRole("option", { name: "Viewer" }).click();
+  await add.getByRole("combobox", { name: "Person" }).fill("grace");
+  await page.getByRole("option", { name: /Grace Hopper/ }).click();
+  await level(add, "Access for the person added", "View").click();
   await add.getByRole("button", { name: "Add", exact: true }).click();
   const spaceMembers = page.getByRole("table", { name: "Members" });
   await expect(spaceMembers.getByRole("row", { name: "Grace Hopper" })).toBeVisible();
   // Wide, the role column changes everyone's role, so their row has no menu.
-  await expect(
-    spaceMembers.getByRole("button", { name: /^Actions for Everyone in / }),
-  ).toBeHidden();
+  await expect(spaceMembers.getByRole("button", { name: /^More for Everyone in / })).toBeHidden();
   // A glance at a name says who they are.
   await spaceMembers.getByRole("button", { name: "About Grace Hopper" }).hover();
   await expect(page.getByText(graceEmail).last()).toBeVisible();
@@ -206,12 +210,10 @@ test("a team org: invites, groups, two orgs side by side, and removing a member"
   await expect(waiting(page)).toBeVisible();
   await expect(waiting(grace)).toBeVisible();
   await page.goto("/org/people");
-  await page.getByRole("row", { name: "Grace Hopper" }).hover();
-  await page.getByRole("button", { name: "Actions for Grace Hopper" }).click();
-  await page.getByRole("menuitem", { name: "Remove" }).click();
+  await page.getByRole("button", { name: "Remove Grace Hopper" }).click();
   const confirm = page.getByRole("alertdialog");
   await expect(confirm).toContainText("Remove Grace Hopper?");
-  await expect(confirm).toContainText("They lose access to Analytical Engines and its spaces.");
+  await expect(confirm).toContainText("They lose access.");
   await confirm.getByRole("button", { name: "Remove" }).click();
   await expect(page.getByRole("row", { name: "Grace Hopper" })).toBeHidden();
 
@@ -291,7 +293,8 @@ test("personal spaces: allowed, made, archived read-only, a thread moved out, re
   await page.reload();
 
   // She moves the thread to General, where she writes in it again.
-  await page.getByRole("button", { name: "Move" }).click();
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Move to space" }).click();
   const move = page.getByRole("dialog");
   await move.getByLabel("Space").click();
   await page.getByRole("option", { name: "General" }).click();
@@ -399,4 +402,205 @@ test("an owner renames an org and then deletes it", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Switch space" })).toContainText("Personal");
   await openSpaceMenu(page);
   await expect(page.getByRole("menuitem", { name: "Switch organization" })).toBeHidden();
+});
+
+// Ada's team org "Weaving Works", with Grace Hopper in it as a member, each in their own browser.
+async function orgWithGrace(page: Page, browser: Browser, index: number) {
+  const graceEmail = `grace-${crypto.randomUUID()}@example.com`;
+
+  await page.goto("/signup");
+  await fillSignUp(page, "Ada Lovelace", `ada-${crypto.randomUUID()}@example.com`);
+  await expect(page).toHaveURL(/\/s\/[^/]+$/);
+  await openSpaceMenu(page);
+  await page.getByRole("menuitem", { name: "New organization" }).click();
+  await page.getByLabel("Organization name").fill("Weaving Works");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL("/org/general");
+  const nav = page.getByRole("navigation", { name: "Organization settings" });
+  await nav.getByRole("link", { name: "People" }).click();
+  await page.getByRole("button", { name: "Add people" }).click();
+  await page.getByLabel(/^Name(, email or group| or email)$/).fill(graceEmail);
+  await page.getByRole("button", { name: "Invite", exact: true }).click();
+  const joinUrl = await page.getByRole("textbox", { name: "Invite link" }).inputValue();
+  await page.getByRole("button", { name: "Done" }).click();
+
+  const grace = await someoneElse(browser, index);
+  await grace.goto(joinUrl);
+  await grace.getByRole("button", { name: "Create account" }).click();
+  await fillSignUp(grace, "Grace Hopper");
+  await expect(grace).toHaveURL(/\/s\/[^/]+$/);
+  return grace;
+}
+
+test("an artifact is shared with a member outside its space, by name, and taken back", async ({
+  page,
+  browser,
+}, testInfo) => {
+  test.setTimeout(90_000);
+  const grace = await orgWithGrace(page, browser, testInfo.parallelIndex);
+
+  // A new space is Ada's alone; Grace is in the org but not in it.
+  await openSpaceMenu(page);
+  await page.getByRole("menuitem", { name: "New space" }).click();
+  await page.getByLabel("Name").fill("Loom room");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL(/\/s\/[^/]+$/);
+  await send(
+    page,
+    `/tool artifact.publish ${JSON.stringify({
+      html: "<title>Loom chart</title><h1>Looms</h1>",
+      description: "Looms by year",
+      icon: "chart",
+    })}`,
+  );
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  await page.getByTestId("artifact-card").getByRole("link", { name: "Open" }).click();
+  await expect(page).toHaveURL(/\/artifacts\/[^/]+$/);
+  const artifactUrl = page.url();
+
+  await grace.goto(artifactUrl);
+  await expect(grace.getByText("not found", { exact: false })).toBeVisible();
+
+  await page.getByRole("button", { name: "Share" }).click();
+  const share = page.getByRole("dialog", { name: "Share this artifact" });
+  // Suggestions show before anything is typed.
+  await pick(share, "Grace Hopper");
+  await expect(share.getByRole("button", { name: "Remove Grace Hopper" })).toBeVisible();
+
+  await grace.goto(artifactUrl);
+  await expect(grace.frameLocator("iframe").getByRole("heading", { name: "Looms" })).toBeVisible();
+
+  await share.getByRole("button", { name: "Remove Grace Hopper" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
+  await expect(share.getByRole("button", { name: "Remove Grace Hopper" })).toHaveCount(0);
+  await grace.reload();
+  await expect(grace.getByText("not found", { exact: false })).toBeVisible();
+});
+
+test("a member adds an org member outside the space to a thread as a guest", async ({
+  page,
+  browser,
+}, testInfo) => {
+  test.setTimeout(90_000);
+  const grace = await orgWithGrace(page, browser, testInfo.parallelIndex);
+
+  await openSpaceMenu(page);
+  await page.getByRole("menuitem", { name: "New space" }).click();
+  await page.getByLabel("Name").fill("Loom room");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL(/\/s\/[^/]+$/);
+  await send(page, "// Looms");
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+
+  await page.getByRole("button", { name: "Share" }).click();
+  const share = page.getByRole("dialog", { name: "Share this thread" });
+  await pick(share, "Grace Hopper");
+  await expect(share.getByRole("listitem", { name: "Grace Hopper" })).toContainText("Guest");
+
+  await grace.goto("/shared");
+  await grace.getByRole("link", { name: /Looms/ }).first().click();
+  await expect(grace).toHaveURL(/\/t\/[^/]+$/);
+  await expect(transcript(grace).getByText("// Looms")).toBeVisible();
+});
+
+// Ada's "Loom room" space with a thread she has written in, which Grace, in her org but not the
+// space, may be given.
+async function loomThread(page: Page) {
+  await openSpaceMenu(page);
+  await page.getByRole("menuitem", { name: "New space" }).click();
+  await page.getByLabel("Name").fill("Loom room");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL(/\/s\/[^/]+$/);
+  await send(page, "// Looms");
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  return page.url();
+}
+
+// One of an access level group's buttons.
+function level(scope: Locator, group: string, name: string) {
+  return scope.getByRole("group", { name: group }).getByRole("button", { name, exact: true });
+}
+
+async function openFromShared(grace: Page) {
+  await grace.goto("/shared");
+  await grace.getByRole("link", { name: /Looms/ }).first().click();
+  await expect(grace).toHaveURL(/\/t\/[^/]+$/);
+  await expect(transcript(grace).getByText("// Looms")).toBeVisible();
+}
+
+test("a thread shared with the organization is viewed, then messaged, and a guest is set to View", async ({
+  page,
+  browser,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const grace = await orgWithGrace(page, browser, testInfo.parallelIndex);
+  const threadUrl = await loomThread(page);
+
+  await page.getByRole("button", { name: "Share" }).click();
+  const share = page.getByRole("dialog", { name: "Share this thread" });
+  await share.getByRole("radio", { name: "Organization" }).click();
+  await expect(level(share, "What the organization can do", "View")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  // Grace finds it under Shared with you and can only read it.
+  await openFromShared(grace);
+  await expect(grace.getByLabel("Message", { exact: true })).toHaveCount(0);
+  await expect(grace.getByText("You can view this thread")).toBeVisible();
+
+  await level(share, "What the organization can do", "Message").click();
+  await grace.reload();
+  await send(grace, "// Warp");
+  await expect(transcript(grace).getByText("// Warp")).toBeVisible();
+
+  // Back to the space's members alone, she loses it; as a guest set to View she reads only.
+  await share.getByRole("radio", { name: "Space members" }).click();
+  await grace.reload();
+  await expect(grace.getByText("not found", { exact: false })).toBeVisible();
+  await pick(share, "Grace Hopper");
+  const row = share.getByRole("listitem", { name: "Grace Hopper" });
+  await expect(row).toContainText("Guest");
+  await level(row, "Access for Grace Hopper", "View").click();
+  await grace.goto(threadUrl);
+  await expect(grace.getByText("You can view this thread")).toBeVisible();
+});
+
+test("a person given Edit on an artifact changes its sharing", async ({
+  page,
+  browser,
+}, testInfo) => {
+  test.setTimeout(90_000);
+  const grace = await orgWithGrace(page, browser, testInfo.parallelIndex);
+  await loomThread(page);
+  await send(
+    page,
+    `/tool artifact.publish ${JSON.stringify({
+      html: "<title>Loom chart</title><h1>Looms</h1>",
+      description: "Looms by year",
+      icon: "chart",
+    })}`,
+  );
+  await page.getByTestId("artifact-card").getByRole("link", { name: "Open" }).click();
+  await expect(page).toHaveURL(/\/artifacts\/[^/]+$/);
+  const artifactUrl = page.url();
+
+  await page.getByRole("button", { name: "Share" }).click();
+  const share = page.getByRole("dialog", { name: "Share this artifact" });
+  await level(share, "Access for the person added", "Edit").click();
+  await pick(share, "Grace Hopper");
+  await expect(level(share, "Access for Grace Hopper", "Edit")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  await grace.goto(artifactUrl);
+  await grace.getByRole("button", { name: "Share" }).click();
+  const hers = grace.getByRole("dialog", { name: "Share this artifact" });
+  await hers.getByRole("radio", { name: "Organization" }).click();
+  await expect(hers.getByRole("radio", { name: "Organization" })).toBeChecked();
+  await expect(level(hers, "What the organization can do", "View")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
 });

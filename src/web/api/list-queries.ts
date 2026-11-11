@@ -11,7 +11,7 @@ import {
   useInfiniteQuery,
 } from "@tanstack/react-query";
 
-import { sharedThreadSchema } from "@/shared/guests.ts";
+import { guestCandidatePageSchema, sharedThreadSchema } from "@/shared/guests.ts";
 import {
   directoryGroupPageSchema,
   directoryPersonPageSchema,
@@ -71,6 +71,24 @@ export function membersPages(filters: { q?: string; role?: OrgRole }, limit?: nu
         await apiClient.v1.org.members.$get({ query }),
         (body) => orgMemberPageSchema.parse(body),
         "the members",
+      ),
+    filters,
+    limit,
+  );
+}
+
+// The org's members who could be added to the thread as guests.
+export function guestCandidatesPages(threadId: string, filters: { q?: string }, limit?: number) {
+  return pages(
+    ["guest-candidates", threadId],
+    async (query) =>
+      json(
+        await apiClient.v1.threads[":id"]["guest-candidates"].$get({
+          param: { id: threadId },
+          query,
+        }),
+        (body) => guestCandidatePageSchema.parse(body),
+        "who can be added",
       ),
     filters,
     limit,

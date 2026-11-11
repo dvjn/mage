@@ -20,6 +20,7 @@ import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import { type Db, withAsyncTransactions } from "@/server/db/db.ts";
 
+import { keepGroupEmails } from "./group-email.ts";
 import type { OrgRole } from "./directory.ts";
 import type { Identity, Principal } from "./identity.ts";
 import * as schema from "./schema.ts";
@@ -236,7 +237,7 @@ export function createAuth(options: AuthOptions) {
       log: (level, message, ...args) => options.logger[level](args.length ? { args } : {}, message),
     },
   });
-  return auth;
+  return directory ? { ...auth, handler: keepGroupEmails(db, auth.handler) } : auth;
 }
 
 // Reads the signed-in user from the session cookie, and their member row in the org the request

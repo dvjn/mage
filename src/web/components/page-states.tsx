@@ -32,18 +32,30 @@ export function ListSkeleton({ rows = 4 }: { rows?: number }) {
   );
 }
 
-// A page-level "nothing here yet": what would be here, and how it comes to be.
+// A "nothing here yet": what would be here, and how it comes to be. The compact one is for a list
+// inside a card, or a popover, and has only a title.
 export function EmptyState({
   icon,
   title,
   description,
   action,
+  compact,
 }: {
   icon?: React.ReactNode;
   title: string;
   description?: React.ReactNode;
   action?: React.ReactNode;
+  compact?: boolean;
 }) {
+  if (compact) {
+    return (
+      <Empty className="p-3">
+        <EmptyHeader>
+          <EmptyTitle className="text-sm font-normal text-muted-foreground">{title}</EmptyTitle>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
   return (
     <Empty className="border px-6 py-10">
       <EmptyHeader>

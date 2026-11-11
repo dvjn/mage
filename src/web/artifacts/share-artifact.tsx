@@ -1,51 +1,196 @@
-// Who may open an artifact, on one surface opened from the Share button in its header: a dialog,
-// or a sheet from the bottom on a phone. The levels are a list to pick from, each saying who it
-// reaches; one the server does not offer the reader is left out, and for one who may not share
-// at all they are all shown closed, with the reason said once. Below, the link to copy: the public
-// one while it is public, else the artifact's page in the app.
+// Who may open an artifact, on the surface its visibility button opens, whose icon and tooltip say
+// who can open it now. Top to bottom: the general access levels to pick from, each saying who it
+// reaches, the organization's with what its members may do (one the server does not offer the
+// reader is left out, and for one who may not share at all they are all shown closed, with the
+// reason said once); for one who may change it, the threads that used it with guests, each with a
+// switch for its guests, and the people given access, each to view or to edit, with a picker to
+// add more; and the link to copy: the public one while it is public, else the artifact's page in
+// the app.
 
-import { Building2Icon, FolderIcon, GlobeIcon, Share2Icon } from "lucide-react";
+import { Building2Icon, GlobeIcon, LockIcon, UsersIcon } from "lucide-react";
 import type * as React from "react";
-import { useId } from "react";
+import { useId, useState } from "react";
 
-import type { ArtifactDetail, ArtifactSharing } from "@/shared/artifacts.ts";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
+
+import type { ArtifactDetail, ArtifactRole, ArtifactSharing } from "@/shared/artifacts.ts";
 import { artifactSharingSchema } from "@/shared/artifacts.ts";
-import { useSetSharing } from "@/web/artifacts/mutations";
-import { CopyButton } from "@/web/components/copy-button";
-import { Button } from "@/web/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/web/components/ui/dialog";
+  useSetSharing,
+  useShareGroup,
+  useSharePerson,
+  useShareWithGuests,
+} from "@/web/artifacts/mutations";
+import { artifactCandidatesQuery } from "@/web/artifacts/queries";
+import { CopyField } from "@/web/components/copy-button";
 import { FieldError, FieldLabel } from "@/web/components/ui/field";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
-import { RadioGroup, RadioGroupItem } from "@/web/components/ui/radio-group";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/web/components/ui/sheet";
-import { useIsMobile } from "@/web/hooks/use-mobile";
+import { Switch } from "@/web/components/ui/switch";
+import { useDebounced } from "@/web/hooks/use-debounced";
+import { plural } from "@/web/lib/plural";
+import { AccessLevel } from "@/web/components/access-level";
+import { ARTIFACT_LEVELS } from "@/web/sharing/access-level";
+import { AddPeople } from "@/web/sharing/add-people";
+import { GeneralAccess } from "@/web/sharing/general-access";
+import { PeopleSection, type PersonRow } from "@/web/sharing/people-section";
+import { ShareSurface } from "@/web/sharing/share-surface";
+import type { SubjectOption } from "@/web/spaces/subject-picker";
 
 export const SHARING_LEVELS: Record<
   ArtifactSharing,
-  { label: string; reach: string; icon: React.ComponentType<{ className?: string }> }
+  {
+    label: string;
+    reach: string;
+    visible: string;
+    icon: React.ComponentType<{ className?: string }>;
+  }
 > = {
-  space: { label: "Space", reach: "Members of the space", icon: FolderIcon },
-  org: { label: "Organization", reach: "Everyone in the organization", icon: Building2Icon },
-  public: { label: "Public", reach: "Anyone with the link", icon: GlobeIcon },
+  space: {
+    label: "Space",
+    reach: "Members of the space",
+    visible: "Space members",
+    icon: LockIcon,
+  },
+  org: {
+    label: "Organization",
+    reach: "Everyone in the organization",
+    visible: "Everyone in the organization",
+    icon: Building2Icon,
+  },
+  public: {
+    label: "Public",
+    reach: "Anyone with the link",
+    visible: "Anyone with the link",
+    icon: GlobeIcon,
+  },
 };
+
+// Who can open an artifact, as a row says it: the level's icon and its name.
+export function SharingIndicator({ sharing }: { sharing: ArtifactSharing }) {
+  const { icon: Icon, label } = SHARING_LEVELS[sharing];
+  return (
+    <span className="flex min-w-0 items-center gap-1">
+      <Icon className="size-3 shrink-0" />
+      <span className="truncate">{label}</span>
+    </span>
+  );
+}
+
+function People({ artifact }: { artifact: ArtifactDetail }) {
+  const pickerId = useId();
+  const [text, setText] = useState("");
+  const share = useSharePerson(artifact.id);
+  const shareGroup = useShareGroup(artifact.id);
+  const [role, setRole] = useState<ArtifactRole>("view");
+  const query = useDebounced(text.trim());
+  const found = useQuery({
+    ...artifactCandidatesQuery(artifact.id, query),
+    placeholderData: keepPreviousData,
+  });
+  // A group or someone already holding more than the others is marked; one who may be given more
+  // says what they have.
+  const options: SubjectOption[] = (found.data ?? []).map((one) => {
+    const detail =
+      one.kind === "group"
+        ? `${one.email || "Group"} · ${plural(one.memberCount ?? 0, "person", "people")}`
+        : one.guest
+          ? `${one.email} · Guest`
+          : one.email;
+    return {
+      kind: one.kind,
+      id: one.id,
+      name: one.name,
+      detail: one.current ? `${detail} · ${one.current}` : detail,
+      ...(one.already && { already: one.already }),
+    };
+  });
+  const rows: PersonRow[] = [
+    ...artifact.groups.map((group): PersonRow => ({
+      id: `group:${group.groupId}`,
+      label: group.name,
+      avatar: { icon: <UsersIcon /> },
+      name: group.name,
+      detail: `Group · ${plural(group.memberCount, "person", "people")}`,
+      control: (
+        <AccessLevel
+          levels={ARTIFACT_LEVELS}
+          value={group.role}
+          label={`Access for ${group.name}`}
+          disabled={shareGroup.isPending}
+          onChange={(next) =>
+            shareGroup.mutate({ groupId: group.groupId, shared: true, role: next })
+          }
+        />
+      ),
+      confirm: "group",
+      disabled: shareGroup.isPending,
+      onRemove: () => shareGroup.mutate({ groupId: group.groupId, shared: false }),
+    })),
+    ...artifact.people.map((person): PersonRow => ({
+      id: person.userId,
+      label: person.name,
+      avatar: { initials: person.name },
+      name: person.name,
+      detail: person.former ? "Former" : person.guest ? "Guest" : person.email,
+      control: (
+        <AccessLevel
+          levels={ARTIFACT_LEVELS}
+          value={person.role}
+          label={`Access for ${person.name}`}
+          disabled={share.isPending || person.guest}
+          onChange={(next) => share.mutate({ userId: person.userId, shared: true, role: next })}
+        />
+      ),
+      confirm: "person",
+      disabled: share.isPending,
+      onRemove: () => share.mutate({ userId: person.userId, shared: false }),
+    })),
+  ];
+  return (
+    <PeopleSection
+      rows={rows}
+      add={
+        <>
+          <AddPeople
+            id={pickerId}
+            text={text}
+            onTextChange={setText}
+            placeholder="Add people"
+            options={options}
+            picked={null}
+            onPick={(one) => {
+              if (!one) return;
+              if (one.kind === "group") {
+                shareGroup.mutate(
+                  { groupId: one.id, shared: true, role },
+                  { onSuccess: () => setText("") },
+                );
+                return;
+              }
+              // A guest of a thread only views.
+              const guest = found.data?.find(
+                (candidate) => candidate.kind === "user" && candidate.id === one.id,
+              )?.guest;
+              share.mutate(
+                { userId: one.id, shared: true, role: guest ? "view" : role },
+                { onSuccess: () => setText("") },
+              );
+            }}
+            levels={ARTIFACT_LEVELS}
+            level={role}
+            onLevel={setRole}
+            empty={found.isSuccess && options.length === 0 && "No one else to add"}
+          />
+          <FieldError>{(share.error ?? shareGroup.error)?.message}</FieldError>
+        </>
+      }
+    />
+  );
+}
 
 function ShareBody({ artifact }: { artifact: ArtifactDetail }) {
   const id = useId();
   const setSharing = useSetSharing(artifact.id);
+  const shareWithGuests = useShareWithGuests(artifact.id);
   const blocked = new Map(artifact.sharingBlocked.map((one) => [one.level, one.reason]));
   const reason = [...blocked.values()][0];
   const levels = artifactSharingSchema.options.filter(
@@ -55,96 +200,87 @@ function ShareBody({ artifact }: { artifact: ArtifactDetail }) {
   return (
     <div className="flex flex-col gap-5">
       {reason && <p className="text-sm text-muted-foreground">{reason}.</p>}
-      <RadioGroup
-        aria-label="Who can open it"
+      <GeneralAccess
+        label="Who can open it"
         value={artifact.sharing}
         disabled={setSharing.isPending}
-        onValueChange={(next) => {
-          const parsed = artifactSharingSchema.safeParse(next);
-          if (parsed.success && parsed.data !== artifact.sharing) setSharing.mutate(parsed.data);
-        }}
-        className="gap-0 overflow-hidden rounded-lg border"
-      >
-        {levels.map((level) => {
-          const { label, reach, icon: Icon } = SHARING_LEVELS[level];
-          return (
-            <label
-              key={level}
-              className="flex cursor-pointer items-start gap-3 border-b px-3 py-2.5 last:border-b-0 has-data-checked:bg-muted/50 has-data-disabled:cursor-not-allowed"
-            >
-              <Icon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span
-                  className={`text-sm font-medium ${blocked.has(level) ? "text-muted-foreground" : ""}`}
-                >
-                  {label}
-                </span>
-                <span className="text-xs text-muted-foreground">{reach}</span>
-              </span>
-              <RadioGroupItem
-                value={level}
-                aria-label={label}
-                disabled={blocked.has(level)}
-                className="mt-0.5"
-              />
-            </label>
-          );
-        })}
-      </RadioGroup>
+        onChange={(sharing) => setSharing.mutate({ sharing })}
+        choices={levels.map((level) => ({
+          value: level,
+          label: SHARING_LEVELS[level].label,
+          reach: SHARING_LEVELS[level].reach,
+          icon: SHARING_LEVELS[level].icon,
+          closed: blocked.has(level),
+          ...(level === "org" &&
+            artifact.canShare && {
+              control: (
+                <AccessLevel
+                  levels={ARTIFACT_LEVELS}
+                  value={artifact.orgRole}
+                  label="What the organization can do"
+                  disabled={setSharing.isPending}
+                  onChange={(orgRole) => setSharing.mutate({ sharing: artifact.sharing, orgRole })}
+                />
+              ),
+            }),
+        }))}
+      />
       <FieldError>{setSharing.error?.message}</FieldError>
+      {artifact.guestThreads.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <FieldLabel>Thread guests</FieldLabel>
+          <ul className="overflow-hidden rounded-lg border">
+            {artifact.guestThreads.map((thread) => {
+              const title = thread.title ?? "Untitled";
+              return (
+                <li key={thread.id} className="border-b last:border-b-0">
+                  <label className="flex items-center gap-3 px-3 py-2.5">
+                    <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                      <span className="truncate text-sm font-medium">{title}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {thread.guests === 1 ? "1 guest" : `${thread.guests} guests`}
+                      </span>
+                    </span>
+                    <Switch
+                      aria-label={title}
+                      checked={thread.shared}
+                      disabled={shareWithGuests.isPending}
+                      onCheckedChange={(shared) =>
+                        shareWithGuests.mutate({ threadId: thread.id, shared })
+                      }
+                    />
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+          <FieldError>{shareWithGuests.error?.message}</FieldError>
+        </div>
+      )}
+      {artifact.canShare && <People artifact={artifact} />}
       <div className="flex flex-col gap-2">
         <FieldLabel htmlFor={id}>Link</FieldLabel>
-        <InputGroup>
-          <InputGroupInput
-            id={id}
-            value={link}
-            readOnly
-            onFocus={(event) => event.currentTarget.select()}
-          />
-          <InputGroupAddon align="inline-end">
-            <CopyButton label="Copy link" value={link} />
-          </InputGroupAddon>
-        </InputGroup>
+        <CopyField id={id} label="Link" value={link} />
       </div>
     </div>
   );
 }
 
 export function ShareArtifact({ artifact }: { artifact: ArtifactDetail }) {
-  const mobile = useIsMobile();
-  const trigger = (
-    <>
-      <Share2Icon />
-      Share
-    </>
-  );
-  const description = "Choose who can open this artifact.";
-  if (mobile) {
-    return (
-      <Sheet>
-        <SheetTrigger render={<Button size="sm" variant="outline" />}>{trigger}</SheetTrigger>
-        <SheetContent side="bottom" className="max-h-[85svh] overflow-y-auto">
-          <SheetHeader className="pb-0">
-            <SheetTitle>Share artifact</SheetTitle>
-            <SheetDescription>{description}</SheetDescription>
-          </SheetHeader>
-          <div className="px-4 pb-6">
-            <ShareBody artifact={artifact} />
-          </div>
-        </SheetContent>
-      </Sheet>
-    );
-  }
+  const { visible: label, icon } = SHARING_LEVELS[artifact.sharing];
+  const more =
+    artifact.guestThreads.reduce((sum, thread) => sum + (thread.shared ? thread.guests : 0), 0) +
+    artifact.people.length;
   return (
-    <Dialog>
-      <DialogTrigger render={<Button size="sm" variant="outline" />}>{trigger}</DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Share artifact</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        <ShareBody artifact={artifact} />
-      </DialogContent>
-    </Dialog>
+    <ShareSurface
+      title="Share this artifact"
+      description="Choose who can open this artifact."
+      visibility={{
+        icon,
+        label: more > 0 ? `${label} and ${more} more` : label,
+      }}
+    >
+      <ShareBody artifact={artifact} />
+    </ShareSurface>
   );
 }

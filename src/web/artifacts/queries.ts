@@ -1,9 +1,11 @@
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
 
 import {
+  ARTIFACT_NOT_SHARED,
   artifactDetailSchema,
   artifactPageSchema,
-  artifactSchema,
+  artifactCandidateSchema,
+  threadArtifactSchema,
   artifactSettingsSchema,
   artifactViewSchema,
   type ArtifactTheme,
@@ -11,11 +13,18 @@ import {
 import { apiClient } from "@/web/api/api-client";
 import { errorOf } from "@/web/api/api-errors";
 
+// The artifact is one the reader sees in a thread but has not been given.
+export class NotSharedError extends Error {}
+
 export function artifactQuery(id: string) {
   return queryOptions({
     queryKey: ["artifacts", "one", id],
     queryFn: async () => {
       const res = await apiClient.v1.artifacts[":id"].$get({ param: { id } });
+      if ((res.status as number) === 403) {
+        const body = (await res.json().catch(() => null)) as { reason?: string } | null;
+        if (body?.reason === ARTIFACT_NOT_SHARED) throw new NotSharedError("not shared");
+      }
       if (!res.ok) throw new Error("could not read the artifact");
       return artifactDetailSchema.parse(await res.json());
     },
@@ -30,7 +39,7 @@ export function threadArtifactsQuery(threadId: string) {
     queryFn: async () => {
       const res = await apiClient.v1.threads[":id"].artifacts.$get({ param: { id: threadId } });
       if (!res.ok) throw new Error("could not read the thread's artifacts");
-      return artifactSchema.array().parse(await res.json());
+      return threadArtifactSchema.array().parse(await res.json());
     },
   });
 }
@@ -88,3 +97,18 @@ export const artifactPages = infiniteQueryOptions({
   },
   getNextPageParam: (last) => last.nextCursor,
 });
+
+// Who an artifact may be given to, matching the text.
+export function artifactCandidatesQuery(id: string, q: string) {
+  return queryOptions({
+    queryKey: ["artifacts", "people", id, q],
+    queryFn: async () => {
+      const res = await apiClient.v1.artifacts[":id"].people.$get({
+        param: { id },
+        query: { ...(q && { q }) },
+      });
+      if (!res.ok) throw new Error(await errorOf(res));
+      return artifactCandidateSchema.array().parse(await res.json());
+    },
+  });
+}

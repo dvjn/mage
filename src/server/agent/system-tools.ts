@@ -25,7 +25,7 @@ import { parseModelRef } from "@/shared/model-ref.ts";
 export interface SystemToolsOptions {
   threads: Pick<ThreadStore, "find" | "update" | "eventsAfter">;
   spaceStore: Pick<SpaceStore, "find">;
-  guests: Pick<GuestStore, "activeIn">;
+  guests: Pick<GuestStore, "reachedIn">;
   models: Pick<Models, "replyModel" | "requireModel" | "resolveModels">;
   // Opens the model a thread replies with, to write the summary that compacts it.
   open: (orgId: string, ref: string) => Promise<OpenModel>;
@@ -76,7 +76,7 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
           people: [
             ...[...writers].map((name) => ({ name, guest: false })),
             ...guests
-              .activeIn(thread.id, now())
+              .reachedIn(thread.rootThreadId ?? thread.id, now())
               .map((guest) => ({ name: guest.name, guest: true })),
           ],
         },

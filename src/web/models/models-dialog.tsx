@@ -7,23 +7,23 @@
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 import { RotateCcwIcon } from "lucide-react";
-import { useId, useState } from "react";
+import { useState } from "react";
 
 import { type ConnectionSummary, connectionLabel } from "@/shared/connections.ts";
 import { Badge } from "@/web/components/ui/badge";
 import { Button } from "@/web/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/web/components/ui/dialog";
+import { ResponsiveDialog, ResponsiveDialogContent } from "@/web/components/responsive-dialog";
 import { FieldError } from "@/web/components/ui/field";
-import { Input } from "@/web/components/ui/input";
 import { Skeleton } from "@/web/components/ui/skeleton";
+import { FilterInput } from "@/web/components/filter-input";
 import { Switch } from "@/web/components/ui/switch";
+import { SettingsSwitch } from "@/web/shell/settings-switch";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/web/components/ui/tooltip";
 import { useConnectionModels } from "@/web/models/mutations";
 import { connectionModelsQuery } from "@/web/models/queries";
@@ -44,7 +44,6 @@ export function ModelsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const id = useId();
   const query = connectionModelsQuery(connection?.id ?? "");
   const list = useQuery({ ...query, enabled: open && !!connection });
   const [filter, setFilter] = useState("");
@@ -78,7 +77,7 @@ export function ModelsDialog({
   const allOn = switchable.length > 0 && switchable.every((m) => m.enabled);
   const name = connection ? connectionLabel(connection) : "";
   return (
-    <Dialog
+    <ResponsiveDialog
       open={open}
       onOpenChange={(next) => {
         if (!next) {
@@ -89,7 +88,7 @@ export function ModelsDialog({
         onOpenChange(next);
       }}
     >
-      <DialogContent className="flex max-h-[85svh] flex-col sm:max-w-xl">
+      <ResponsiveDialogContent className="flex max-h-[85svh] flex-col sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{name} models</DialogTitle>
           <DialogDescription>
@@ -116,27 +115,14 @@ export function ModelsDialog({
           <Skeleton className="h-40 w-full" />
         ) : (
           <>
-            <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
-              <label htmlFor={`${id}-auto`} className="flex flex-col gap-0.5">
-                <span className="text-sm font-medium">Turn on new models automatically</span>
-                <span className="text-sm text-muted-foreground">
-                  When the provider adds a model, it shows up in pickers right away. When off, new
-                  models wait here until you turn them on.
-                </span>
-              </label>
-              <Switch
-                id={`${id}-auto`}
-                checked={list.data.autoEnable}
-                onCheckedChange={(checked) => change({ autoEnable: checked })}
-              />
-            </div>
-            <Input
-              type="search"
-              aria-label="Filter models"
-              placeholder="Filter models"
-              value={filter}
-              onChange={(event) => setFilter(event.target.value)}
+            <SettingsSwitch
+              label="Turn on new models automatically"
+              description="When the provider adds a model, it shows up in pickers right away. When off, new models wait here until you turn them on."
+              checked={list.data.autoEnable}
+              onChange={(checked) => change({ autoEnable: checked })}
+              className="rounded-lg border p-3"
             />
+            <FilterInput label="Filter models" value={filter} onChange={setFilter} />
             <FieldError>{switching.error?.message}</FieldError>
             {warning && (
               <p role="status" className="text-sm text-amber-700 dark:text-amber-400">
@@ -218,7 +204,7 @@ export function ModelsDialog({
         <DialogFooter>
           <Button onClick={() => onOpenChange(false)}>Done</Button>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

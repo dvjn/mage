@@ -167,3 +167,90 @@ test("someone signed in opens a link and goes straight to the thread", async ({
   await expect(guest).toHaveURL(/\/t\/[^/]+$/);
   await expect(transcript(guest).getByText("// Looms")).toBeVisible();
 });
+
+test("a guest opens what the agent published in the thread, until a member turns it off", async ({
+  page,
+  browser,
+}, testInfo) => {
+  await signUp(page, "Ada Lovelace");
+  await page.getByLabel("Message", { exact: true }).fill(
+    `/tool artifact.publish ${JSON.stringify({
+      html: "<title>Sales chart</title><h1>Sales</h1>",
+      description: "Sales by month",
+      icon: "chart",
+    })}`,
+  );
+  await page.getByLabel("Message", { exact: true }).press("Enter");
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  await expect(page.getByTestId("artifact-card")).toContainText("Sales chart");
+  const url = await inviteLink(page);
+
+  const guest = await someoneElse(browser, testInfo.parallelIndex);
+  await guest.goto(url);
+  await guest.getByRole("button", { name: "Create account" }).click();
+  await fillSignUp(guest, "Hedy Lamarr");
+  await expect(guest).toHaveURL(/\/t\/[^/]+$/);
+  await guest.getByTestId("artifact-card").getByRole("link", { name: "Open" }).click();
+  await expect(guest).toHaveURL(/\/artifacts\/[^/]+$/);
+  await expect(guest.frameLocator("iframe").getByRole("heading", { name: "Sales" })).toBeVisible();
+
+  await page.getByTestId("artifact-card").getByRole("link", { name: "Open" }).click();
+  await expect(page).toHaveURL(/\/artifacts\/[^/]+$/);
+  await page.getByRole("button", { name: "Share" }).click();
+  const dialog = page.getByRole("dialog", { name: "Share this artifact" });
+  await expect(dialog.getByText("Thread guests")).toBeVisible();
+  await expect(dialog.getByRole("switch")).toBeChecked();
+  await dialog.getByRole("switch").click();
+  await expect(dialog.getByRole("switch")).not.toBeChecked();
+
+  await guest.goBack();
+  await guest.reload();
+  const locked = guest.getByTestId("artifact-card");
+  await expect(locked).toContainText("Not shared with you");
+  await expect(locked.getByRole("link", { name: "Open" })).toHaveCount(0);
+});
+
+test("a member gives a thread's guests access from the artifact's card", async ({
+  page,
+  browser,
+}, testInfo) => {
+  await signUp(page, "Ada Lovelace");
+  await page.getByLabel("Message", { exact: true }).fill(
+    `/tool artifact.publish ${JSON.stringify({
+      html: "<title>Sales chart</title><h1>Sales</h1>",
+      description: "Sales by month",
+      icon: "chart",
+    })}`,
+  );
+  await page.getByLabel("Message", { exact: true }).press("Enter");
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  const card = page.getByTestId("artifact-card");
+  await expect(card).toContainText("Sales chart");
+  // No guests yet, so nothing to give access to.
+  await expect(card.getByRole("button", { name: "Give guests access" })).toHaveCount(0);
+  const url = await inviteLink(page);
+
+  const guest = await someoneElse(browser, testInfo.parallelIndex);
+  await guest.goto(url);
+  await guest.getByRole("button", { name: "Create account" }).click();
+  await fillSignUp(guest, "Hedy Lamarr");
+  await expect(guest).toHaveURL(/\/t\/[^/]+$/);
+
+  // Published in the thread, it is shared with the guests already; a member turns that off.
+  await page.getByTestId("artifact-card").getByRole("link", { name: "Open" }).click();
+  await page.getByRole("button", { name: "Share" }).click();
+  const dialog = page.getByRole("dialog", { name: "Share this artifact" });
+  await dialog.getByRole("switch").click();
+  await expect(dialog.getByRole("switch")).not.toBeChecked();
+  await page.goBack();
+  await guest.reload();
+  await expect(guest.getByTestId("artifact-card")).toContainText("Not shared with you");
+  await page.reload();
+  await page.getByRole("button", { name: "Give guests access" }).click();
+  await expect(page.getByTestId("artifact-card")).toContainText("Guests can open");
+  await expect(page.getByRole("button", { name: "Give guests access" })).toHaveCount(0);
+
+  await guest.reload();
+  await guest.getByTestId("artifact-card").getByRole("link", { name: "Open" }).click();
+  await expect(guest.frameLocator("iframe").getByRole("heading", { name: "Sales" })).toBeVisible();
+});

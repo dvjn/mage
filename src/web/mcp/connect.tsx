@@ -8,14 +8,13 @@ import { type ComponentProps, type FormEvent, type ReactNode, useId, useState } 
 
 import { Button } from "@/web/components/ui/button";
 import {
-  Dialog,
   DialogClose,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/web/components/ui/dialog";
+import { ResponsiveDialog, ResponsiveDialogContent } from "@/web/components/responsive-dialog";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
 import { useConnect } from "@/web/mcp/mutations";
@@ -134,8 +133,8 @@ function HeadersDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Connect to {connection.title}</DialogTitle>
           <DialogDescription>Only your calls use these.</DialogDescription>
@@ -164,7 +163,7 @@ function HeadersDialog({
             </Button>
           </DialogFooter>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

@@ -372,6 +372,41 @@
       "when": 1794380924781,
       "tag": "0052_artifacts_in_spaces",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "6",
+      "when": 1794390714283,
+      "tag": "0053_artifact_guest_shares",
+      "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "6",
+      "when": 1794391807509,
+      "tag": "0054_artifact_person_shares",
+      "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "6",
+      "when": 1794394978094,
+      "tag": "0055_view_message_edit_levels",
+      "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "6",
+      "when": 1794411738672,
+      "tag": "0056_artifact_and_thread_group_shares",
+      "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "6",
+      "when": 1794413351308,
+      "tag": "0057_group_emails",
+      "breakpoints": true
     }
   ]
 }

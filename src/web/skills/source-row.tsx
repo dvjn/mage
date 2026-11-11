@@ -3,7 +3,6 @@
 // remove it (a built-in one only has the switches); inside, its skills with their switches, each opening a read-only preview of its
 // files.
 
-import { MoreHorizontalIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import {
@@ -17,14 +16,8 @@ import { RowBadge, SettingsRow } from "@/web/shell/settings-row";
 import { ScopedSwitch } from "@/web/shell/scoped-switch";
 import { Time } from "@/web/components/time";
 import { useToast } from "@/web/shell/toaster";
-import { Button } from "@/web/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/web/components/ui/dropdown-menu";
+import { MoreMenu } from "@/web/components/more-menu";
+import { DropdownMenuItem } from "@/web/components/ui/dropdown-menu";
 import { Spinner } from "@/web/components/ui/spinner";
 import { apiClient } from "@/web/api/api-client";
 import type { Scope } from "@/web/shell/scope";
@@ -187,31 +180,21 @@ export function SourceRow({
               onCheckedChange={switchSource}
             />
             {!locked && canManage && !source.builtin && (
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button
-                      size="icon-sm"
-                      variant="ghost"
-                      aria-label={`More for ${source.label}`}
-                    />
-                  }
-                >
-                  <MoreHorizontalIcon />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="min-w-44">
-                  <DropdownMenuItem disabled={refreshing} onClick={() => void refresh()}>
-                    Refresh
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setDialog("token")}>
-                    {source.hasToken ? "Change token" : "Add a token"}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
+              <MoreMenu
+                name={source.label}
+                destructive={
                   <DropdownMenuItem variant="destructive" onClick={() => setDialog("remove")}>
                     Remove
                   </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
+                }
+              >
+                <DropdownMenuItem disabled={refreshing} onClick={() => void refresh()}>
+                  Refresh
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setDialog("token")}>
+                  {source.hasToken ? "Change token" : "Add a token"}
+                </DropdownMenuItem>
+              </MoreMenu>
             )}
           </span>
         }

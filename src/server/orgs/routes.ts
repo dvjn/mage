@@ -185,9 +185,10 @@ export function orgRoutes(options: {
         return c.json(
           {
             ...page,
-            items: page.items.map(({ id, name, memberCount, role }) => ({
+            items: page.items.map(({ id, name, email, memberCount, role }) => ({
               id,
               name,
+              email,
               memberCount,
               role,
             })),

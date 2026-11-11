@@ -41,10 +41,10 @@ import {
 import { Button } from "@/web/components/ui/button";
 import { FieldError } from "@/web/components/ui/field";
 import { Spinner } from "@/web/components/ui/spinner";
-import { ArtifactCard } from "@/web/artifacts/artifact-card";
+import { ArtifactCard, ArtifactThreadContext } from "@/web/artifacts/artifact-card";
 import { ThreadArtifacts } from "@/web/artifacts/thread-artifacts";
 import { ShareDialog } from "@/web/guests/share-dialog";
-import { ArchivedThreadActions } from "@/web/threads/archived-thread-actions";
+import { ThreadMenu } from "@/web/threads/thread-menu";
 import { useOnline } from "@/web/lib/online";
 import { modelsQuery } from "@/web/models/queries";
 import { ThreadPickers } from "@/web/models/thread-pickers";
@@ -620,88 +620,85 @@ export function ThreadPage() {
         {subagent?.state === "archived" && (
           <span className="text-xs text-muted-foreground">Archived</span>
         )}
-        {subagent?.canUnarchive && (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={unarchiving.isPending}
-            onClick={() => unarchiving.mutate()}
-          >
-            Unarchive
-          </Button>
-        )}
         {!subagent && <ThreadArtifacts threadId={threadId} rows={rows} />}
         {can?.share && !subagent && <ShareDialog threadId={threadId} />}
-        {archived && thread && can && (can.move || can.delete) && (
-          <ArchivedThreadActions thread={thread} can={can} />
+        {thread && can && (
+          <ThreadMenu
+            thread={thread}
+            can={can}
+            archived={archived}
+            onUnarchive={subagent?.canUnarchive ? () => unarchiving.mutate() : undefined}
+          />
         )}
       </PageHeader>
       <ThreadAgentContext.Provider value={agent}>
-        <RowFocusContext.Provider value={focus}>
-          <RowHistoryContext.Provider value={history}>
-            <AsidesContext.Provider value={asides}>
-              <ReplyActions.Provider value={replyActions}>
-                {detail.data && (!viewing || older.data) ? (
-                  // The cached thread shows at once; it opens again where the reader stopped once read.
-                  <Conversation
-                    key={`${threadId}:${viewing ?? currentBranch}:${opened?.openedAt ?? ""}`}
-                    openAt={stoppedAt}
-                    holdOpenAt={opened?.hold}
-                    scrollTo={lit && rowElementId(lit)}
-                    aria-label="Events"
-                    className="min-h-0"
-                    resize={arriving ? "smooth" : "instant"}
-                  >
-                    <ConversationContent className={cn(pageWidth, "gap-6")}>
-                      {rows.length === 0 ? (
-                        <ConversationEmptyState description="Write the first message below." />
-                      ) : (
-                        <>
-                          <ConversationEarlier
-                            more={before !== null}
-                            first={rows[0]?.id}
-                            onLoad={loadEarlier}
-                          />
-                          {turns.map((turn, index) => (
-                            <div
-                              key={turn.key}
-                              data-turn={turn.kind}
-                              className="flex flex-col gap-1"
-                            >
-                              <div className="flex flex-col gap-3">
-                                {turn.blocks.map((block) =>
-                                  block.kind === "lines" ? (
-                                    <div key={block.key} className="flex flex-col gap-1">
-                                      {block.entries.map(entryView)}
-                                    </div>
-                                  ) : (
-                                    entryView(block)
-                                  ),
+        <ArtifactThreadContext.Provider value={threadId}>
+          <RowFocusContext.Provider value={focus}>
+            <RowHistoryContext.Provider value={history}>
+              <AsidesContext.Provider value={asides}>
+                <ReplyActions.Provider value={replyActions}>
+                  {detail.data && (!viewing || older.data) ? (
+                    // The cached thread shows at once; it opens again where the reader stopped once read.
+                    <Conversation
+                      key={`${threadId}:${viewing ?? currentBranch}:${opened?.openedAt ?? ""}`}
+                      openAt={stoppedAt}
+                      holdOpenAt={opened?.hold}
+                      scrollTo={lit && rowElementId(lit)}
+                      aria-label="Events"
+                      className="min-h-0"
+                      resize={arriving ? "smooth" : "instant"}
+                    >
+                      <ConversationContent className={cn(pageWidth, "gap-6")}>
+                        {rows.length === 0 ? (
+                          <ConversationEmptyState description="Write the first message below." />
+                        ) : (
+                          <>
+                            <ConversationEarlier
+                              more={before !== null}
+                              first={rows[0]?.id}
+                              onLoad={loadEarlier}
+                            />
+                            {turns.map((turn, index) => (
+                              <div
+                                key={turn.key}
+                                data-turn={turn.kind}
+                                className="flex flex-col gap-1"
+                              >
+                                <div className="flex flex-col gap-3">
+                                  {turn.blocks.map((block) =>
+                                    block.kind === "lines" ? (
+                                      <div key={block.key} className="flex flex-col gap-1">
+                                        {block.entries.map(entryView)}
+                                      </div>
+                                    ) : (
+                                      entryView(block)
+                                    ),
+                                  )}
+                                  {index === turns.length - 1 && turn.kind === "agent" && starting}
+                                </div>
+                                {turn.actions && (
+                                  <RowToolbar
+                                    rowId={turn.actions.id}
+                                    text=""
+                                    can={turn.actions.can}
+                                  />
                                 )}
-                                {index === turns.length - 1 && turn.kind === "agent" && starting}
                               </div>
-                              {turn.actions && (
-                                <RowToolbar
-                                  rowId={turn.actions.id}
-                                  text=""
-                                  can={turn.actions.can}
-                                />
-                              )}
-                            </div>
-                          ))}
-                        </>
-                      )}
-                      {turns.at(-1)?.kind !== "agent" && starting}
-                    </ConversationContent>
-                    <ConversationScrollButton />
-                  </Conversation>
-                ) : (
-                  <div className="min-h-0 flex-1" />
-                )}
-              </ReplyActions.Provider>
-            </AsidesContext.Provider>
-          </RowHistoryContext.Provider>
-        </RowFocusContext.Provider>
+                            ))}
+                          </>
+                        )}
+                        {turns.at(-1)?.kind !== "agent" && starting}
+                      </ConversationContent>
+                      <ConversationScrollButton />
+                    </Conversation>
+                  ) : (
+                    <div className="min-h-0 flex-1" />
+                  )}
+                </ReplyActions.Provider>
+              </AsidesContext.Provider>
+            </RowHistoryContext.Provider>
+          </RowFocusContext.Provider>
+        </ArtifactThreadContext.Provider>
       </ThreadAgentContext.Provider>
       <div className={cn(pageWidth, "p-4 pt-0")}>
         <div className="flex flex-col gap-2">

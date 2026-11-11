@@ -10,7 +10,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   BlocksIcon,
   ListChecksIcon,
-  MoreHorizontalIcon,
   PencilIcon,
   PlusIcon,
   RotateCcwIcon,
@@ -26,6 +25,8 @@ import { HostMark, MakerMark } from "@/web/models/marks";
 import { EmptyState } from "@/web/components/page-states";
 import { HeaderAction } from "@/web/shell/people-table";
 import { Time } from "@/web/components/time";
+import { MoreMenu } from "@/web/components/more-menu";
+import { RefreshModelsButton } from "@/web/models/refresh-models-button";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { AddProviderDialog } from "@/web/models/add-provider";
 import { EditProviderDialog } from "@/web/models/edit-provider-dialog";
@@ -41,20 +42,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/web/components/ui/table";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/web/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/web/components/ui/dropdown-menu";
+import { DialogDescription, DialogHeader, DialogTitle } from "@/web/components/ui/dialog";
+import { ResponsiveDialog, ResponsiveDialogContent } from "@/web/components/responsive-dialog";
+import { DropdownMenuItem } from "@/web/components/ui/dropdown-menu";
 import { meQuery } from "@/web/auth/queries";
 import { connectionsQuery, modelsQuery } from "@/web/models/queries";
 import { ConfirmDialog } from "@/web/components/confirm-dialog";
@@ -112,37 +102,10 @@ function RowMenu({
 }) {
   const named = connection.authKind !== "oauth";
   return (
-    <DropdownMenu>
-      <WithTooltip label="Actions">
-        <DropdownMenuTrigger
-          render={
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={`Actions for ${connectionLabel(connection)}`}
-              className="group-hover:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100 pointer-fine:opacity-0"
-            />
-          }
-        >
-          <MoreHorizontalIcon />
-        </DropdownMenuTrigger>
-      </WithTooltip>
-      <DropdownMenuContent align="end" className="min-w-44">
-        <DropdownMenuItem onClick={() => onAction({ kind: "models", connection })}>
-          <ListChecksIcon />
-          Models
-        </DropdownMenuItem>
-        {named && (
-          <DropdownMenuItem onClick={() => onAction({ kind: "edit", connection })}>
-            <PencilIcon />
-            Edit
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuItem onClick={() => onAction({ kind: "proxy", connection })}>
-          <ServerCogIcon />
-          Proxy settings
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
+    <MoreMenu
+      row
+      name={connectionLabel(connection)}
+      destructive={
         <DropdownMenuItem
           variant="destructive"
           onClick={() => onAction({ kind: "remove", connection })}
@@ -150,8 +113,23 @@ function RowMenu({
           <Trash2Icon />
           Remove
         </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+      }
+    >
+      <DropdownMenuItem onClick={() => onAction({ kind: "models", connection })}>
+        <ListChecksIcon />
+        Models
+      </DropdownMenuItem>
+      {named && (
+        <DropdownMenuItem onClick={() => onAction({ kind: "edit", connection })}>
+          <PencilIcon />
+          Edit
+        </DropdownMenuItem>
+      )}
+      <DropdownMenuItem onClick={() => onAction({ kind: "proxy", connection })}>
+        <ServerCogIcon />
+        Proxy settings
+      </DropdownMenuItem>
+    </MoreMenu>
   );
 }
 
@@ -197,7 +175,7 @@ function ModelsCount({
     <Button
       size="xs"
       variant="ghost"
-      className="-ml-2 font-normal"
+      className="font-normal"
       aria-label={`Models of ${name}`}
       onClick={onOpen}
     >
@@ -311,8 +289,8 @@ function RowDialogs({ action, onClose }: { action: RowAction | null; onClose: ()
         open={action?.kind === "edit"}
         onOpenChange={close}
       />
-      <Dialog open={action?.kind === "proxy"} onOpenChange={close}>
-        <DialogContent>
+      <ResponsiveDialog open={action?.kind === "proxy"} onOpenChange={close}>
+        <ResponsiveDialogContent>
           <DialogHeader>
             <DialogTitle>Proxy for {name}</DialogTitle>
             <DialogDescription>
@@ -323,8 +301,8 @@ function RowDialogs({ action, onClose }: { action: RowAction | null; onClose: ()
           {connection && action?.kind === "proxy" && (
             <ProxyForm key={connection.id} connection={connection} />
           )}
-        </DialogContent>
-      </Dialog>
+        </ResponsiveDialogContent>
+      </ResponsiveDialog>
       <ConfirmDialog
         open={action?.kind === "remove"}
         onOpenChange={close}
@@ -372,10 +350,11 @@ export function OrgProviders() {
             }
             action={
               manages && (
-                <Button onClick={() => setAdding(true)}>
-                  <PlusIcon />
-                  Add provider
-                </Button>
+                <HeaderAction
+                  icon={<PlusIcon />}
+                  label="Add provider"
+                  onClick={() => setAdding(true)}
+                />
               )
             }
           />
@@ -384,15 +363,10 @@ export function OrgProviders() {
             {/* Where a table's search row would hold its action. */}
             {manages && (
               <div className="flex justify-end gap-2">
-                <Button
-                  variant="outline"
-                  aria-label="Refresh models"
-                  disabled={refresh.isPending}
-                  onClick={() => refresh.mutate()}
-                >
-                  <RotateCcwIcon className={refresh.isPending ? "animate-spin" : undefined} />
-                  <span className="hidden sm:inline">Refresh models</span>
-                </Button>
+                <RefreshModelsButton
+                  pending={refresh.isPending}
+                  onRefresh={() => refresh.mutate()}
+                />
                 <HeaderAction
                   icon={<PlusIcon />}
                   label="Add provider"

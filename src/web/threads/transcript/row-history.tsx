@@ -102,29 +102,33 @@ export function VersionSwitcher({ versions }: { versions: RowVersions }) {
       aria-label="Versions"
       className="flex items-center text-xs text-muted-foreground tabular-nums"
     >
-      <Button
-        type="button"
-        size="icon-xs"
-        variant="ghost"
-        aria-label="Previous version"
-        disabled={at === 0}
-        onClick={() => go(at - 1)}
-      >
-        <ChevronLeftIcon />
-      </Button>
+      <WithTooltip label="Previous version">
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Previous version"
+          disabled={at === 0}
+          onClick={() => go(at - 1)}
+        >
+          <ChevronLeftIcon />
+        </Button>
+      </WithTooltip>
       <span>
         {at + 1}/{branches.length}
       </span>
-      <Button
-        type="button"
-        size="icon-xs"
-        variant="ghost"
-        aria-label="Next version"
-        disabled={at === branches.length - 1}
-        onClick={() => go(at + 1)}
-      >
-        <ChevronRightIcon />
-      </Button>
+      <WithTooltip label="Next version">
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Next version"
+          disabled={at === branches.length - 1}
+          onClick={() => go(at + 1)}
+        >
+          <ChevronRightIcon />
+        </Button>
+      </WithTooltip>
     </div>
   );
 }
@@ -287,7 +291,7 @@ export function RowHistoryFooter({ rowId, versions }: { rowId: string; versions?
   const asked = (asides?.byRow.get(rowId)?.length ?? 0) > 0;
   if (!versions && !asked) return null;
   return (
-    <div className="-mx-1.5 -mb-1 flex min-h-6 items-center gap-1">
+    <div className="-mb-1 flex min-h-6 items-center gap-1">
       {versions && <VersionSwitcher versions={versions} />}
       {asked && <AsideButton rowId={rowId} fresh={false} className="ml-auto" />}
     </div>

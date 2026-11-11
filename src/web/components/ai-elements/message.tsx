@@ -1,5 +1,6 @@
 "use client";
 
+import { WithTooltip } from "@/web/components/with-tooltip";
 import { Button } from "@/web/components/ui/button";
 import { ButtonGroup, ButtonGroupText } from "@/web/components/ui/button-group";
 import {
@@ -221,17 +222,19 @@ export const MessageBranchPrevious = ({ children, ...props }: MessageBranchPrevi
   const { goToPrevious, totalBranches } = useMessageBranch();
 
   return (
-    <Button
-      aria-label="Previous branch"
-      disabled={totalBranches <= 1}
-      onClick={goToPrevious}
-      size="icon-sm"
-      type="button"
-      variant="ghost"
-      {...props}
-    >
-      {children ?? <ChevronLeftIcon size={14} />}
-    </Button>
+    <WithTooltip label="Previous branch">
+      <Button
+        aria-label="Previous branch"
+        disabled={totalBranches <= 1}
+        onClick={goToPrevious}
+        size="icon-sm"
+        type="button"
+        variant="ghost"
+        {...props}
+      >
+        {children ?? <ChevronLeftIcon size={14} />}
+      </Button>
+    </WithTooltip>
   );
 };
 
@@ -241,17 +244,19 @@ export const MessageBranchNext = ({ children, ...props }: MessageBranchNextProps
   const { goToNext, totalBranches } = useMessageBranch();
 
   return (
-    <Button
-      aria-label="Next branch"
-      disabled={totalBranches <= 1}
-      onClick={goToNext}
-      size="icon-sm"
-      type="button"
-      variant="ghost"
-      {...props}
-    >
-      {children ?? <ChevronRightIcon size={14} />}
-    </Button>
+    <WithTooltip label="Next branch">
+      <Button
+        aria-label="Next branch"
+        disabled={totalBranches <= 1}
+        onClick={goToNext}
+        size="icon-sm"
+        type="button"
+        variant="ghost"
+        {...props}
+      >
+        {children ?? <ChevronRightIcon size={14} />}
+      </Button>
+    </WithTooltip>
   );
 };
 

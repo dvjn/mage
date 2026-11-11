@@ -5,7 +5,7 @@
 // typed, never shown again beyond their ends.
 
 import { useNavigate } from "@tanstack/react-router";
-import { PlusIcon, XIcon } from "lucide-react";
+import { XIcon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 
 import {
@@ -16,16 +16,16 @@ import {
   mcpSlugOf,
 } from "@/shared/mcp.ts";
 import { SegmentedControl } from "@/web/components/segmented-control";
+import { type HeaderRow, HeaderRows, headersBody } from "@/web/components/header-rows";
 import { Button } from "@/web/components/ui/button";
 import {
-  Dialog,
   DialogClose,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/web/components/ui/dialog";
+import { ResponsiveDialog, ResponsiveDialogContent } from "@/web/components/responsive-dialog";
 import {
   Field,
   FieldDescription,
@@ -50,90 +50,8 @@ const CREDENTIAL_MODES: { value: McpCredentialMode; label: string }[] = [
   { value: "personal", label: "Personal" },
 ];
 
-interface HeaderDraft {
-  key: number;
-  name: string;
-  value: string;
-  // The end of the value stored on the server, kept unless a new one is typed.
-  hint?: string;
-  stored: boolean;
-}
-
-function nextKey(rows: HeaderDraft[]) {
-  return Math.max(0, ...rows.map((row) => row.key)) + 1;
-}
-
-// The headers as the API takes them: a stored one left blank keeps its value.
-function headersBody(rows: HeaderDraft[]) {
-  return rows
-    .filter((row) => row.name.trim())
-    .map((row) => ({
-      name: row.name.trim(),
-      value: row.value || (row.stored ? null : ""),
-    }));
-}
-
-function HeaderFields({
-  rows,
-  onChange,
-}: {
-  rows: HeaderDraft[];
-  onChange: (rows: HeaderDraft[]) => void;
-}) {
-  function change(key: number, update: Partial<HeaderDraft>) {
-    onChange(rows.map((row) => (row.key === key ? { ...row, ...update } : row)));
-  }
-  return (
-    <>
-      {rows.map((row) => (
-        <div key={row.key} className="flex gap-2">
-          <Input
-            aria-label="Header name"
-            value={row.name}
-            disabled={row.stored}
-            onChange={(event) => change(row.key, { name: event.target.value })}
-            placeholder="Name"
-            autoComplete="off"
-          />
-          <Input
-            aria-label={`Value of ${row.name || "header"}`}
-            type="password"
-            value={row.value}
-            onChange={(event) => change(row.key, { value: event.target.value })}
-            placeholder={row.stored ? (row.hint ?? "••••") : "Value"}
-            autoComplete="off"
-          />
-          <WithTooltip label="Remove header">
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              aria-label={`Remove ${row.name || "header"}`}
-              onClick={() => onChange(rows.filter((other) => other.key !== row.key))}
-            >
-              <XIcon />
-            </Button>
-          </WithTooltip>
-        </div>
-      ))}
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="w-fit self-start"
-        onClick={() =>
-          onChange([...rows, { key: nextKey(rows), name: "", value: "", stored: false }])
-        }
-      >
-        <PlusIcon />
-        Add header
-      </Button>
-    </>
-  );
-}
-
 // The headers of a server authorized by them, apart from its Authorization header.
-function storedRows(server: McpServerSummary | undefined): HeaderDraft[] {
+function storedRows(server: McpServerSummary | undefined): HeaderRow[] {
   if (server?.auth.kind !== "headers") return [];
   return server.auth.headers
     .filter((header) => header.name !== "authorization")
@@ -187,7 +105,7 @@ export function McpServerDialog({
   );
   const [token, setToken] = useState("");
   const [tokenHint, setTokenHint] = useState(initial.tokenHint);
-  const [rows, setRows] = useState<HeaderDraft[]>(initial.rows);
+  const [rows, setRows] = useState<HeaderRow[]>(initial.rows);
   const [clientId, setClientId] = useState(initial.clientId);
   const [clientSecret, setClientSecret] = useState("");
   const save = useSaveServer(scope, server?.id);
@@ -287,14 +205,14 @@ export function McpServerDialog({
       ? "Add and sign in"
       : "Add server";
   return (
-    <Dialog
+    <ResponsiveDialog
       open={open}
       onOpenChange={(next) => {
         onOpenChange(next);
         if (!next || server) reset();
       }}
     >
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
+      <ResponsiveDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>{server ? "Edit MCP server" : "Add MCP server"}</DialogTitle>
           <DialogDescription>
@@ -385,7 +303,7 @@ export function McpServerDialog({
                 </Field>
                 <Field>
                   <FieldLabel>Other headers</FieldLabel>
-                  <HeaderFields rows={rows} onChange={setRows} />
+                  <HeaderRows rows={rows} onChange={setRows} />
                   <FieldDescription>
                     Sent with every request to the server, and never shown again.
                   </FieldDescription>
@@ -454,7 +372,7 @@ export function McpServerDialog({
             </Button>
           </DialogFooter>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

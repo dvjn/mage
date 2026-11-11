@@ -1,11 +1,11 @@
 // The picker that sets a tool, or a group of tools, to a policy or off; in a space, on the org's
 // tools, it follows the org's policy by default or picks a stricter one on top.
 
+import { RowBadge } from "@/web/shell/settings-row";
 import { ChevronDownIcon, PlusIcon } from "lucide-react";
 import { type ReactNode } from "react";
 
 import { TOOL_OFF } from "@/shared/tools.ts";
-import { Badge } from "@/web/components/ui/badge";
 import { Button } from "@/web/components/ui/button";
 import {
   DropdownMenu,
@@ -204,11 +204,7 @@ function PickerItem({
       <span className="flex min-w-0 flex-col">
         <span className="flex items-center gap-1.5 font-medium">
           {name}
-          {badge && (
-            <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
-              {badge}
-            </Badge>
-          )}
+          {badge && <RowBadge>{badge}</RowBadge>}
         </span>
         <span className="text-xs text-muted-foreground">{summary}</span>
       </span>

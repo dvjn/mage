@@ -3,13 +3,11 @@
 // again on demand and each connection whose list could not be read named.
 
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCw } from "lucide-react";
 
 import { connectionLabel } from "@/shared/connections.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
-import { Button } from "@/web/components/ui/button";
+import { RefreshModelsButton } from "@/web/models/refresh-models-button";
 import { FieldError, FieldGroup } from "@/web/components/ui/field";
-import { WithTooltip } from "@/web/components/with-tooltip";
 import { EffortField, modelName, ModelField } from "@/web/models/default-fields";
 import { useModelSetting, useRefreshModels } from "@/web/models/mutations";
 import {
@@ -48,17 +46,7 @@ export function ModelsCard({ canManage }: { canManage: boolean }) {
           : "New threads start with this model and effort; each space and thread can choose its own."
       }
       action={
-        <WithTooltip label="Refresh models">
-          <Button
-            variant="ghost"
-            size="icon"
-            aria-label="Refresh models"
-            disabled={refresh.isPending}
-            onClick={() => refresh.mutate()}
-          >
-            <RefreshCw className={refresh.isPending ? "animate-spin" : undefined} />
-          </Button>
-        </WithTooltip>
+        <RefreshModelsButton pending={refresh.isPending} onRefresh={() => refresh.mutate()} />
       }
       state={{ isPending: !!pending, error: failed?.error ?? null }}
     >

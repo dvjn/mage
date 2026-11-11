@@ -5,7 +5,6 @@
 import { useQuery } from "@tanstack/react-query";
 
 import type { McpConnection } from "@/shared/mcp.ts";
-import { Badge } from "@/web/components/ui/badge";
 import { Button } from "@/web/components/ui/button";
 import {
   Item,
@@ -17,19 +16,14 @@ import {
 import { ConnectButton } from "@/web/mcp/connect";
 import { useDisconnect } from "@/web/mcp/mutations";
 import { mcpConnectionsQuery } from "@/web/mcp/queries";
+import { RowBadge } from "@/web/shell/settings-row";
 import { SettingsCard, SettingsPage } from "@/web/shell/settings-page";
 import { spacesQuery } from "@/web/spaces/queries";
 
 function ConnectionBadge({ status }: { status: McpConnection["status"] }) {
-  if (status === "ok") return <Badge variant="secondary">Connected</Badge>;
-  if (status === "needs_auth") {
-    return (
-      <Badge variant="outline" className="border-tool-ask/40 text-tool-ask">
-        Needs reconnecting
-      </Badge>
-    );
-  }
-  return <Badge variant="outline">Not connected</Badge>;
+  if (status === "ok") return <RowBadge tone="ok">Connected</RowBadge>;
+  if (status === "needs_auth") return <RowBadge tone="ask">Needs reconnecting</RowBadge>;
+  return <RowBadge>Not connected</RowBadge>;
 }
 
 export function AccountPage() {

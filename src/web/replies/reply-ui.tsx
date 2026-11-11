@@ -23,7 +23,7 @@ import { useContext, useMemo } from "react";
 import type * as z from "zod";
 
 import { ArtifactCard } from "@/web/artifacts/artifact-card";
-import { artifactQuery } from "@/web/artifacts/queries";
+import { artifactQuery, NotSharedError } from "@/web/artifacts/queries";
 import { Button } from "@/web/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/web/components/ui/card";
 import { Input } from "@/web/components/ui/input";
@@ -80,10 +80,13 @@ function ActionButton({
   );
 }
 
-// An artifact's card at its latest version; one the reader cannot see, or that was deleted, is a
-// quiet line.
+// An artifact's card at its latest version; one not shared with the reader is the locked card, and
+// one deleted is a quiet line.
 function ArtifactInReply({ id }: { id: string }) {
   const artifact = useQuery(artifactQuery(id));
+  if (artifact.error instanceof NotSharedError) {
+    return <ArtifactCard id={id} version={1} title="Artifact" />;
+  }
   if (artifact.isError)
     return <p className="text-xs text-muted-foreground">Artifact unavailable</p>;
   if (!artifact.data) return null;

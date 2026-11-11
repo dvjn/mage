@@ -43,6 +43,8 @@ export interface Group {
   source: RecordSource;
   // The group's id in the directory it comes from; null for local groups.
   externalId: string | null;
+  // The group's mail address in the directory, if it has one.
+  email: string | null;
   createdAt: Date;
 }
 

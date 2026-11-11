@@ -3,11 +3,11 @@
 // new version is published; the link is asked for again before it expires, which the frame picks up
 // at its next reload so a page in use is not reset. Above the frame, what the artifact is, its
 // space, the thread it was made in where the reader can read it, which version is shown, its
-// versions to pick from, who may open it and deleting it, as far as the server lets the reader.
+// versions to pick from, who may open it and a menu to delete it, as far as the server lets the reader.
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
-import { HistoryIcon, TriangleAlertIcon } from "lucide-react";
+import { HistoryIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import type { ArtifactDetail, ArtifactEvent, ArtifactTheme } from "@/shared/artifacts.ts";
@@ -15,12 +15,14 @@ import { artifactEventSchema } from "@/shared/artifacts.ts";
 import { DeleteArtifact } from "@/web/artifacts/delete-artifact";
 import { artifactQuery, artifactViewQuery } from "@/web/artifacts/queries";
 import { ShareArtifact } from "@/web/artifacts/share-artifact";
+import { MoreMenu } from "@/web/components/more-menu";
 import { Time } from "@/web/components/time";
 import { Button } from "@/web/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
+  DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -46,6 +48,22 @@ function useShownTheme(): ArtifactTheme {
     return () => query.removeEventListener("change", change);
   }, []);
   return theme === "system" ? (dark ? "dark" : "light") : theme;
+}
+
+// The rest of what the reader may do with the artifact: deleting it, after a question.
+function ArtifactMenu({ artifact }: { artifact: ArtifactDetail }) {
+  const [deleting, setDeleting] = useState(false);
+  return (
+    <>
+      <MoreMenu empty={!artifact.canDelete}>
+        <DropdownMenuItem variant="destructive" onClick={() => setDeleting(true)}>
+          <Trash2Icon />
+          Delete
+        </DropdownMenuItem>
+      </MoreMenu>
+      <DeleteArtifact artifact={artifact} open={deleting} onOpenChange={setDeleting} />
+    </>
+  );
 }
 
 // Tells of new versions, sharing changes and deletion of the artifact while it is open.
@@ -185,7 +203,7 @@ export function ArtifactPage() {
           <>
             <VersionHistory artifact={detail} viewing={viewing} onPick={pick} />
             <ShareArtifact artifact={detail} />
-            <DeleteArtifact artifact={detail} />
+            <ArtifactMenu artifact={detail} />
           </>
         )}
       </PageHeader>

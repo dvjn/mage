@@ -5,15 +5,12 @@
 import { type FormEvent, type ReactElement, useId, useState } from "react";
 
 import { Button } from "@/web/components/ui/button";
+import { DialogClose, DialogFooter, DialogHeader, DialogTitle } from "@/web/components/ui/dialog";
 import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/web/components/ui/dialog";
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogTrigger,
+} from "@/web/components/responsive-dialog";
 import { Field, FieldError, FieldGroup, FieldLabel } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
 
@@ -63,15 +60,15 @@ export function NameDialog({
   }
 
   return (
-    <Dialog
+    <ResponsiveDialog
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
         setError(undefined);
       }}
     >
-      {trigger && <DialogTrigger render={trigger} />}
-      <DialogContent>
+      {trigger && <ResponsiveDialogTrigger render={trigger} />}
+      <ResponsiveDialogContent>
         <form onSubmit={(event) => void submit(event)}>
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
@@ -97,7 +94,7 @@ export function NameDialog({
             </Button>
           </DialogFooter>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

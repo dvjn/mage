@@ -29,6 +29,7 @@ export function createGroups(options: GroupsOptions) {
     return {
       id: group.id,
       name: group.name,
+      email: group.email,
       source: group.source,
       role: group.role,
       memberCount: group.memberCount,

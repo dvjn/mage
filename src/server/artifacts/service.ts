@@ -4,8 +4,11 @@
 // own, apart from the app's, through links the app signs for one viewer and one artifact for a
 // short while; the app's session never reaches that origin. The space's members may view its
 // artifacts; sharing widens that to its org's members, or anyone with a link, which the org and
-// the space must both allow. Only those who can post in the space change sharing or delete an
-// artifact, and people never edit one: the agent publishes and updates them with its tools.
+// the space must both allow, and to the guests of a thread that used one, thread by thread, and to
+// people picked one by one. The org's members and each person picked may be given the right to
+// edit, which lets them change who it is shared with, and a thread's guests only view. Those who
+// can post in the space may also delete it. Nobody edits its page: the agent publishes and updates
+// artifacts with its tools.
 
 import { createHmac } from "node:crypto";
 import { EventEmitter } from "node:events";
@@ -19,15 +22,18 @@ import type { Toolset, ToolSpec, ToolContext } from "@/server/agent/tools.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Directory } from "@/server/orgs/directory.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
+import type { ArtifactRole } from "@/shared/artifacts.ts";
 import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
 import { spaceNameFor } from "@/shared/spaces.ts";
 import type { ThreadAccess } from "@/server/spaces/thread-access.ts";
 import { type Page, PAGE_LIMIT } from "@/shared/paging.ts";
+import type { GuestStore } from "@/server/guests/service.ts";
 import type { ThreadStore } from "@/server/threads/service.ts";
 import {
   ARTIFACT_TOOLS,
   ARTIFACT_TOOLSET,
   type Artifact,
+  type ArtifactCandidate,
   type ArtifactDetail,
   type ArtifactEvent,
   type ArtifactListItem,
@@ -35,8 +41,10 @@ import {
   type ArtifactSettings,
   type ArtifactSharing,
   type ArtifactTheme,
+  type ThreadArtifact,
   type ArtifactView,
   type ArtifactViewRequest,
+  ARTIFACT_NOT_SHARED,
   artifactScopeSchema,
   artifactThemeSchema,
 } from "@/shared/artifacts.ts";
@@ -63,6 +71,8 @@ export interface ArtifactRecord {
   spaceId: string;
   createdInThreadId: string | null;
   sharing: ArtifactSharing;
+  // What the org's members may do while it is shared with them.
+  orgRole: ArtifactRole;
   version: number;
   createdAt: Date;
   updatedAt: Date;
@@ -108,6 +118,25 @@ export interface ArtifactStore {
   use(id: string, threadId: string): void;
   // The threads that used the artifact, earliest first.
   usedIn(id: string): string[];
+  // The threads whose guests the artifact is shared with.
+  guestShares(id: string): string[];
+  // Shares the artifact with the thread's guests, by the user; null stops.
+  setGuestShare(id: string, threadId: string, by: string | null): void;
+  // The people given access to the artifact, earliest first, with what they may do.
+  people(id: string): { userId: string; role: ArtifactRole }[];
+  // What the person was given to do, or null when they were not given it.
+  personRole(id: string, userId: string): ArtifactRole | null;
+  // The artifacts given to the person, last changed first.
+  sharedWith(userId: string): ArtifactRecord[];
+  // Gives the person access as the role, by the user, or changes their role; null takes it back.
+  setPersonShare(id: string, userId: string, by: string | null, role: ArtifactRole): void;
+  // The directory groups given access to the artifact, earliest first, with what they may do.
+  groups(id: string): { groupId: string; role: ArtifactRole }[];
+  // The most the person may do through the groups they are active in that the artifact's org
+  // still links; null when none was given access.
+  groupRole(id: string, userId: string): ArtifactRole | null;
+  // Gives the group access as the role, by the user, or changes its role; null takes it back.
+  setGroupShare(id: string, groupId: string, by: string | null, role: ArtifactRole): void;
   // Every artifact of the org's spaces, last changed first.
   inOrg(orgId: string): ArtifactRecord[];
   version(id: string, version: number): (VersionRecord & { html: string }) | null;
@@ -122,6 +151,7 @@ export interface ArtifactStore {
   assets(id: string): { name: string; contentType: string; size: number }[];
   asset(id: string, name: string): { contentType: string; data: Buffer } | null;
   setSharing(id: string, sharing: ArtifactSharing): void;
+  setOrgRole(id: string, orgRole: ArtifactRole): void;
   delete(id: string): void;
   orgPublicAllowed(orgId: string): boolean;
   setOrgPublicAllowed(orgId: string, allowed: boolean): void;
@@ -135,7 +165,11 @@ export interface ArtifactsOptions {
   spaceStore: Pick<SpaceStore, "find">;
   spaces: Pick<Spaces, "findVisible" | "can" | "require" | "isGone">;
   access: Pick<ThreadAccess, "can" | "require">;
-  directory: Pick<Directory, "roleIn" | "user">;
+  guests: Pick<GuestStore, "reachedIn">;
+  directory: Pick<
+    Directory,
+    "roleIn" | "user" | "memberPage" | "group" | "groupPage" | "linkedRole" | "memberCount"
+  >;
   // The app's origin, the only one that may frame a page.
   appOrigin: string;
   // Where pages are served from, with `*` as its leftmost label for an origin per artifact; null
@@ -160,6 +194,10 @@ const PREVIEW_ORIGIN = "https://*.preview.artifact.invalid";
 
 // Paths on the artifacts' origin: a page by signed link, or a public one by id.
 export const CONTENT_PREFIX = "/_a";
+
+// The most people a search for someone to give an artifact offers, and groups beside them.
+const CANDIDATES_MAX = 20;
+const GROUPS_MAX = 5;
 
 const LEVELS: readonly ArtifactSharing[] = ["space", "org", "public"];
 
@@ -257,29 +295,80 @@ export function createArtifacts(options: ArtifactsOptions) {
     return store.orgPublicAllowed(space.orgId) && store.spacePublicAllowed(space.id);
   }
 
-  // Whether the viewer may view the artifact: the agent always; the space's members; and as far as
-  // its sharing reaches, while its space is not gone, the org's members, or anyone, while the org
-  // and the space allow it. A thread's guests see only what is shared beyond the space.
+  // Whether the viewer may view the artifact: the agent always; the space's members; while its
+  // space is not gone, whoever can read a thread it is shared with the guests of; and as far as its
+  // sharing reaches, the org's members, or anyone, while the org and the space allow it.
   function canView(viewer: Viewer, record: ArtifactRecord) {
     const space = spaceOf(record);
     if (!space) return false;
     if (viewer && "agent" in viewer) return true;
     if (viewer && spaces.can(viewer, space, "read")) return true;
     if (spaces.isGone(space.id)) return false;
+    if (viewer && readsAThread(viewer, store.guestShares(record.id))) return true;
+    if (viewer && givenRole(record, space, viewer.userId)) return true;
     const level = LEVELS.indexOf(record.sharing);
     if (level >= 2 && publicAllowed(space)) return true;
     if (!viewer || viewer.orgId !== space.orgId) return false;
     return level >= 1 && !!directory.roleIn(space.orgId, viewer.userId);
   }
 
-  // Whether the person may change the artifacts of the space: share and delete them.
-  function mayChange(principal: Principal, space: Space) {
+  // What the person was given to do with the artifact, when they still may have it: one by one while
+  // in its org or a guest of a thread that used it, who only views, or through a group, the most
+  // either gives.
+  function givenRole(record: ArtifactRecord, space: Space, userId: string): ArtifactRole | null {
+    const member = !!directory.roleIn(space.orgId, userId);
+    const own = store.personRole(record.id, userId);
+    const single = own && couldBeGiven(record, space, userId) ? (member ? own : "view") : null;
+    const grouped = member ? store.groupRole(record.id, userId) : null;
+    return single === "edit" || grouped === "edit" ? "edit" : (single ?? grouped);
+  }
+
+  function isGuestOfUse(record: ArtifactRecord, userId: string) {
+    return store
+      .usedIn(record.id)
+      .some((threadId) =>
+        options.guests.reachedIn(threadId, now()).some((guest) => guest.userId === userId),
+      );
+  }
+
+  function couldBeGiven(record: ArtifactRecord, space: Space, userId: string) {
+    return !!directory.roleIn(space.orgId, userId) || isGuestOfUse(record, userId);
+  }
+
+  function readsAThread(viewer: { userId: string; orgId: string }, threadIds: string[]) {
+    return threadIds.some((threadId) => {
+      const thread = threads.find(threadId);
+      return !!thread && access.can(viewer, thread, "read");
+    });
+  }
+
+  // Whether the person may delete artifacts of the space: those who can post in it.
+  function mayDelete(principal: Principal, space: Space) {
     return principal.orgId === space.orgId && spaces.can(principal, space, "message");
   }
 
+  // Whether the person was given the right to edit the artifact: by its sharing with the org, or
+  // one by one.
+  function isEditor(
+    principal: Pick<Principal, "userId" | "orgId">,
+    record: ArtifactRecord,
+    space: Space,
+  ) {
+    // Membership of the artifact's org counts, whichever org the person has open.
+    if (!directory.roleIn(space.orgId, principal.userId)) return false;
+    if (record.sharing === "org" && record.orgRole === "edit") return true;
+    return givenRole(record, space, principal.userId) === "edit";
+  }
+
+  // Whether the person may change who the artifact is shared with: those who can post in its space,
+  // and those given the right to edit it.
+  function mayChange(principal: Principal, record: ArtifactRecord, space: Space) {
+    return mayDelete(principal, space) || isEditor(principal, record, space);
+  }
+
   // The levels the person may share the artifact at, none when they may not change it.
-  function levelsFor(principal: Principal, space: Space) {
-    if (!mayChange(principal, space)) return [];
+  function levelsFor(principal: Principal, record: ArtifactRecord, space: Space) {
+    if (!mayChange(principal, record, space)) return [];
     return LEVELS.filter((level) => level !== "public" || publicAllowed(space));
   }
 
@@ -287,12 +376,13 @@ export function createArtifacts(options: ArtifactsOptions) {
   // is left out of the levels instead.
   function blockedFor(
     principal: Principal,
+    record: ArtifactRecord,
     space: Space,
   ): { level: ArtifactSharing; reason: string }[] {
-    if (levelsFor(principal, space).length > 0) return [];
+    if (levelsFor(principal, record, space).length > 0) return [];
     return LEVELS.map((level) => ({
       level,
-      reason: "Only the space's messagers and owners can share artifacts",
+      reason: "Only those who can edit this artifact can share it",
     }));
   }
 
@@ -300,7 +390,7 @@ export function createArtifacts(options: ArtifactsOptions) {
     const space = spaceOf(record);
     const current = store.version(record.id, record.version);
     if (!space || !current) throw new ServiceError(404, "Artifact not found");
-    const levels = levelsFor(principal, space);
+    const levels = levelsFor(principal, record, space);
     return {
       id: record.id,
       spaceId: space.id,
@@ -310,13 +400,40 @@ export function createArtifacts(options: ArtifactsOptions) {
       version: record.version,
       label: current.label,
       sharing: record.sharing,
+      orgRole: record.orgRole,
       assets: store.assets(record.id),
       createdAt: record.createdAt.toISOString(),
       updatedAt: record.updatedAt.toISOString(),
       canShare: levels.length > 0,
-      canDelete: mayChange(principal, space),
+      canDelete: mayDelete(principal, space),
       sharingLevels: levels,
-      sharingBlocked: blockedFor(principal, space),
+      sharingBlocked: blockedFor(principal, record, space),
+      locked: false,
+    };
+  }
+
+  // What a thread shows of an artifact its reader may not open: its name, and nothing else.
+  function lockedOf(record: ArtifactRecord): Artifact | null {
+    const current = store.version(record.id, record.version);
+    if (!current) return null;
+    return {
+      id: record.id,
+      spaceId: record.spaceId,
+      title: current.title,
+      description: "",
+      icon: current.icon,
+      version: record.version,
+      label: null,
+      sharing: "space",
+      orgRole: "view",
+      assets: [],
+      createdAt: record.createdAt.toISOString(),
+      updatedAt: record.updatedAt.toISOString(),
+      canShare: false,
+      canDelete: false,
+      sharingLevels: [],
+      sharingBlocked: [],
+      locked: true,
     };
   }
 
@@ -327,6 +444,48 @@ export function createArtifacts(options: ArtifactsOptions) {
       throw new ServiceError(404, "Artifact not found");
     }
     return record;
+  }
+
+  // The artifact and its space, for one who may change it.
+  function requireChange(principal: Principal, id: string) {
+    const record = requireViewable(principal, id);
+    const space = spaceOf(record);
+    if (!space || !mayChange(principal, record, space)) {
+      throw new ServiceError(403, "Only those who can edit this artifact can share it");
+    }
+    return { record, space };
+  }
+
+  // What the person already has of the artifact, and in what words: through their role in its
+  // space, one by one, through a group or as the org's, when they do. `full` is all there is to
+  // give them: to edit it, or for a guest of a thread, who only views, to view it.
+  function holds(record: ArtifactRecord, space: Space, userId: string) {
+    const who = { userId, orgId: space.orgId };
+    const member = !!directory.roleIn(space.orgId, userId);
+    if (!member && givenRole(record, space, userId)) return { full: true, label: "Has access" };
+    const seat = member ? spaces.findVisible(who, space.id)?.role : undefined;
+    if (seat === "owner") return { full: true, label: "Owner" };
+    if (seat === "messager") return { full: true, label: "In the space · Message" };
+    if (member && (spaces.can(who, space, "message") || isEditor(who, record, space))) {
+      return { full: true, label: "Has access" };
+    }
+    if (seat === "viewer") return { full: false, label: "In the space · View" };
+    if (member && givenRole(record, space, userId)) {
+      return { full: false, label: "Can view" };
+    }
+    if (member && record.sharing !== "space") {
+      return { full: false, label: "Can view" };
+    }
+    return null;
+  }
+
+  // Whether the person may be given the artifact: in its org or a guest of a thread that used it,
+  // and not able to edit it already; one who can only view it may be given more.
+  function candidateOf(record: ArtifactRecord, space: Space, userId: string) {
+    if (!couldBeGiven(record, space, userId)) return null;
+    const had = holds(record, space, userId);
+    if (had?.full) return null;
+    return { guest: !directory.roleIn(space.orgId, userId), current: had?.label ?? null };
   }
 
   async function sign(
@@ -536,6 +695,25 @@ export function createArtifacts(options: ArtifactsOptions) {
     return record && record.spaceId === ctx.spaceId ? record : null;
   }
 
+  // Whether the thread's guests may have the artifact in the agent's hands: it is shared with
+  // them, or each of them could view it anyway. Without active guests everything is within bounds.
+  function withinGuestBounds(record: ArtifactRecord, ctx: Pick<ToolContext, "threadId">) {
+    const rootId = rootOf(ctx.threadId).id;
+    const guests = options.guests.reachedIn(rootId, now());
+    if (guests.length === 0 || store.guestShares(record.id).includes(rootId)) return true;
+    const space = spaceOf(record);
+    return (
+      !!space &&
+      guests.every((guest) => canView({ userId: guest.userId, orgId: space.orgId }, record))
+    );
+  }
+
+  function outOfBounds() {
+    return failed(
+      "Not shared with this thread's guests. Someone who can share it can give them access.",
+    );
+  }
+
   function missing(id: string) {
     return failed(`No artifact ${id} in this space. artifact.list shows its artifacts.`);
   }
@@ -556,7 +734,7 @@ export function createArtifacts(options: ArtifactsOptions) {
     title: "Publish",
     annotations: { readOnlyHint: false },
     description:
-      "Publish a new HTML page as an artifact of this space: its first version. The page's <title> names it. The space's members see it until someone shares it wider.",
+      "Publish a new HTML page as an artifact of this space: its first version. The page's <title> names it. The space's members see it until someone shares it wider; the thread's guests can open it.",
     input: z.object({
       html: htmlSchema,
       description: descriptionSchema,
@@ -640,6 +818,7 @@ export function createArtifacts(options: ArtifactsOptions) {
     run(input, ctx) {
       const record = ownArtifact(input.id, ctx);
       if (!record) return missing(input.id);
+      if (!withinGuestBounds(record, ctx)) return outOfBounds();
       const current = store.version(record.id, record.version);
       if (!current) return missing(input.id);
       if (input.basedOn !== undefined && input.basedOn !== record.version) {
@@ -703,6 +882,7 @@ export function createArtifacts(options: ArtifactsOptions) {
     run({ id, version }, ctx) {
       const record = ownArtifact(id, ctx);
       if (!record) return missing(id);
+      if (!withinGuestBounds(record, ctx)) return outOfBounds();
       const page = store.version(record.id, version ?? record.version);
       if (!page) return failed(`${id} has no version ${version}.`);
       ctx.write(() => store.use(record.id, rootOf(ctx.threadId).id));
@@ -746,7 +926,12 @@ export function createArtifacts(options: ArtifactsOptions) {
           : store
               .inThread(rootOf(ctx.threadId).id)
               .filter((record) => record.spaceId === ctx.spaceId);
-      return Promise.resolve({ ok: true, value: { artifacts: records.map(summaryOf) } });
+      return Promise.resolve({
+        ok: true,
+        value: {
+          artifacts: records.filter((record) => withinGuestBounds(record, ctx)).map(summaryOf),
+        },
+      });
     },
   };
 
@@ -807,20 +992,48 @@ export function createArtifacts(options: ArtifactsOptions) {
     },
 
     // The artifacts the thread used that the person can view, for a thread they can read.
-    inThread(principal: Principal, threadId: string): Artifact[] {
+    inThread(principal: Principal, threadId: string): ThreadArtifact[] {
       const { thread } = access.require(principal, threadId, "read");
+      const rootId = thread.rootThreadId ?? thread.id;
+      const guests = options.guests.reachedIn(rootId, now()).length;
+      const space = spaceStore.find(thread.spaceId);
+      const shares = new Set(
+        store
+          .inThread(rootId)
+          .filter((record) => store.guestShares(record.id).includes(rootId))
+          .map((record) => record.id),
+      );
       return store
-        .inThread(thread.rootThreadId ?? thread.id)
+        .inThread(rootId)
         .filter((record) => record.spaceId === thread.spaceId)
-        .filter((record) => canView(principal, record))
-        .map((record) => shown(record, principal));
+        .flatMap((record): ThreadArtifact[] => {
+          if (!canView(principal, record)) {
+            const locked = lockedOf(record);
+            return locked ? [{ ...locked, guests: null }] : [];
+          }
+          const change = !!space && mayChange(principal, record, space);
+          return [
+            {
+              ...shown(record, principal),
+              guests:
+                guests > 0 && change
+                  ? { count: guests, shared: shares.has(record.id), canChange: true }
+                  : null,
+            },
+          ];
+        });
     },
 
     // The artifacts the person can open across their org, last changed first, a page at a time
     // (the cursor is how many came before).
     list(principal: Principal, query: ArtifactListQuery): Page<ArtifactListItem> {
       const matching: ArtifactListItem[] = [];
-      for (const record of store.inOrg(principal.orgId)) {
+      const given = store.sharedWith(principal.userId);
+      const records = [
+        ...store.inOrg(principal.orgId),
+        ...given.filter((one) => spaceOf(one)?.orgId !== principal.orgId),
+      ].toSorted((a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || (a.id < b.id ? 1 : -1));
+      for (const record of records) {
         if (!canView(principal, record)) continue;
         const space = spaceOf(record);
         const current = store.version(record.id, record.version);
@@ -852,6 +1065,10 @@ export function createArtifacts(options: ArtifactsOptions) {
     },
 
     detail(principal: Principal, id: string): ArtifactDetail {
+      const found = store.find(id);
+      if (found && !canView(principal, found) && readsAThread(principal, store.usedIn(id))) {
+        throw new ServiceError(403, "This artifact is not shared with you", ARTIFACT_NOT_SHARED);
+      }
       const record = requireViewable(principal, id);
       const space = spaceOf(record);
       const origin = options.artifactOrigin;
@@ -864,8 +1081,49 @@ export function createArtifacts(options: ArtifactsOptions) {
           ? { id: thread.id, title: thread.title }
           : null;
       };
+      const shares = new Set(store.guestShares(record.id));
+      const guestThreads =
+        !space || !mayChange(principal, record, space)
+          ? []
+          : store.usedIn(record.id).flatMap((threadId) => {
+              const thread = threads.find(threadId);
+              const guests = thread ? options.guests.reachedIn(thread.id, now()).length : 0;
+              return thread && guests > 0
+                ? [{ id: thread.id, title: thread.title, guests, shared: shares.has(thread.id) }]
+                : [];
+            });
+      const people =
+        !space || !mayChange(principal, record, space)
+          ? []
+          : store.people(record.id).flatMap(({ userId, role }) => {
+              const person = directory.user(userId);
+              return person
+                ? [
+                    {
+                      userId,
+                      name: person.name,
+                      email: person.email,
+                      former: !couldBeGiven(record, space, userId),
+                      guest: !directory.roleIn(space.orgId, userId),
+                      role: directory.roleIn(space.orgId, userId) ? role : ("view" as const),
+                    },
+                  ]
+                : [];
+            });
+      const groups =
+        !space || !mayChange(principal, record, space)
+          ? []
+          : store.groups(record.id).flatMap(({ groupId, role }) => {
+              const group = directory.group(groupId);
+              return group
+                ? [{ groupId, name: group.name, memberCount: directory.memberCount(groupId), role }]
+                : [];
+            });
       return {
         ...shown(record, principal),
+        guestThreads,
+        groups,
+        people,
         madeIn: readable(record.createdInThreadId),
         usedIn: store.usedIn(record.id).flatMap((id) => readable(id) ?? []),
         space: member ? shownSpace(principal, member) : null,
@@ -912,26 +1170,152 @@ export function createArtifacts(options: ArtifactsOptions) {
       };
     },
 
-    // Shares the artifact at the level; only those who can post in its space may, and public only
-    // while the org and the space allow it.
-    setSharing(principal: Principal, id: string, sharing: ArtifactSharing): Artifact {
+    // Shares the artifact at the level, and sets what the org's members may do when asked; only
+    // those who can change it may, and public only while the org and the space allow it.
+    setSharing(
+      principal: Principal,
+      id: string,
+      sharing: ArtifactSharing,
+      orgRole?: ArtifactRole,
+    ): Artifact {
       const record = requireViewable(principal, id);
       const space = spaceOf(record);
       if (!space) throw new ServiceError(404, "Artifact not found");
-      const levels = levelsFor(principal, space);
+      const levels = levelsFor(principal, record, space);
       if (levels.length === 0) {
-        throw new ServiceError(403, "Only the space's messagers and owners can share artifacts");
+        throw new ServiceError(403, "Only those who can edit this artifact can share it");
       }
       if (!levels.includes(sharing)) {
         throw new ServiceError(
           403,
-          blockedFor(principal, space).find((one) => one.level === sharing)?.reason ??
+          blockedFor(principal, record, space).find((one) => one.level === sharing)?.reason ??
             "Not allowed",
         );
       }
+      const role = orgRole ?? record.orgRole;
       store.setSharing(record.id, sharing);
+      if (role !== record.orgRole) store.setOrgRole(record.id, role);
       publish({ type: "sharing", artifactId: record.id, sharing });
-      return shown({ ...record, sharing }, principal);
+      return shown({ ...record, sharing, orgRole: role }, principal);
+    },
+
+    // Shares the artifact with the guests of a thread that used it, or stops; only those who can
+    // change it may.
+    setGuestShare(
+      principal: Principal,
+      id: string,
+      threadId: string,
+      shared: boolean,
+    ): ArtifactDetail {
+      const record = requireViewable(principal, id);
+      const space = spaceOf(record);
+      if (!space || !mayChange(principal, record, space)) {
+        throw new ServiceError(403, "Only those who can edit this artifact can share it");
+      }
+      if (!store.usedIn(record.id).includes(threadId)) {
+        throw new ServiceError(404, "That thread did not use this artifact");
+      }
+      store.setGuestShare(record.id, threadId, shared ? principal.userId : null);
+      publish({ type: "sharing", artifactId: record.id, sharing: record.sharing });
+      return this.detail(principal, id);
+    },
+
+    // Who the artifact may be given to, matching the text in their name or email: the org's groups,
+    // its members and the guests of the threads that used it, those who have it already too, with
+    // why, and the level of those who could have more; at most 20 people and a few groups. Only
+    // those who can change it may ask.
+    candidates(principal: Principal, id: string, q: string | undefined): ArtifactCandidate[] {
+      const { record, space } = requireChange(principal, id);
+      const text = q?.trim().toLowerCase() ?? "";
+      const out: ArtifactCandidate[] = [];
+      const seen = new Set<string>([principal.userId]);
+      const held = new Set(store.groups(record.id).map((row) => row.groupId));
+      const groups = directory
+        .groupPage(space.orgId, { ...(text && { q: text }), limit: GROUPS_MAX })
+        .items.map((group): ArtifactCandidate => ({
+          kind: "group",
+          id: group.id,
+          name: group.name,
+          email: group.email ?? "",
+          guest: false,
+          memberCount: group.memberCount,
+          already: held.has(group.id) ? "Added" : null,
+          current: null,
+        }));
+      const add = (userId: string) => {
+        if (seen.has(userId) || out.length >= CANDIDATES_MAX) return;
+        seen.add(userId);
+        const person = directory.user(userId);
+        if (!person || !couldBeGiven(record, space, userId)) return;
+        if (text && !`${person.name}\n${person.email}`.toLowerCase().includes(text)) return;
+        const had = holds(record, space, userId);
+        out.push({
+          kind: "user",
+          id: userId,
+          name: person.name,
+          email: person.email,
+          guest: !directory.roleIn(space.orgId, userId),
+          memberCount: null,
+          already: had?.full ? had.label : null,
+          current: had && !had.full ? had.label : null,
+        });
+      };
+      for (const threadId of store.usedIn(record.id)) {
+        for (const guest of options.guests.reachedIn(threadId, now())) add(guest.userId);
+      }
+      let cursor: string | undefined;
+      do {
+        const page = directory.memberPage(space.orgId, {
+          ...(text && { q: text }),
+          limit: 100,
+          ...(cursor && { cursor }),
+        });
+        for (const member of page.items) add(member.id);
+        cursor = out.length >= CANDIDATES_MAX ? undefined : (page.nextCursor ?? undefined);
+      } while (cursor);
+      return [...groups, ...out];
+    },
+
+    // Gives the person access to the artifact to view or to edit, changes what they were given,
+    // or takes it back; only those who can change it may, and only for a candidate or one already
+    // given it. A guest of a thread only views.
+    setPersonShare(
+      principal: Principal,
+      id: string,
+      userId: string,
+      shared: boolean,
+      role: ArtifactRole = "view",
+    ): ArtifactDetail {
+      const { record, space } = requireChange(principal, id);
+      const already = store.personRole(record.id, userId) !== null;
+      if (shared ? !already && !candidateOf(record, space, userId) : !already) {
+        throw new ServiceError(404, "That person cannot be given this artifact");
+      }
+      if (shared && role === "edit" && !directory.roleIn(space.orgId, userId)) {
+        throw new ServiceError(400, "A guest of a thread can only view an artifact");
+      }
+      store.setPersonShare(record.id, userId, shared ? principal.userId : null, role);
+      publish({ type: "sharing", artifactId: record.id, sharing: record.sharing });
+      return this.detail(principal, id);
+    },
+
+    // Gives everyone in a group of the artifact's org access to view or to edit while they are in
+    // it, changes what the group was given, or takes it back; only those who can change it may.
+    setGroupShare(
+      principal: Principal,
+      id: string,
+      groupId: string,
+      shared: boolean,
+      role: ArtifactRole = "view",
+    ): ArtifactDetail {
+      const { record, space } = requireChange(principal, id);
+      const already = store.groups(record.id).some((row) => row.groupId === groupId);
+      if (shared ? !directory.linkedRole(space.orgId, groupId) : !already) {
+        throw new ServiceError(404, "That group cannot be given this artifact");
+      }
+      store.setGroupShare(record.id, groupId, shared ? principal.userId : null, role);
+      publish({ type: "sharing", artifactId: record.id, sharing: record.sharing });
+      return this.detail(principal, id);
     },
 
     // Deletes the artifact with all its versions and files, for everyone; only those who can post
@@ -939,7 +1323,7 @@ export function createArtifacts(options: ArtifactsOptions) {
     delete(principal: Principal, id: string) {
       const record = requireViewable(principal, id);
       const space = spaceOf(record);
-      if (!space || !mayChange(principal, space)) {
+      if (!space || !mayDelete(principal, space)) {
         throw new ServiceError(403, "Only the space's messagers and owners can delete artifacts");
       }
       store.delete(record.id);

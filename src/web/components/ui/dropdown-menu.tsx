@@ -250,7 +250,7 @@ const useDropdownMenuFilter = MenuPrimitive.useFilter;
 
 function DropdownMenuInput({ className, ...props }: MenuPrimitive.Input.Props) {
   return (
-    <div data-slot="dropdown-menu-input-wrapper" className="p-1 pb-0">
+    <div data-slot="dropdown-menu-input-wrapper" className="pb-1">
       <InputGroup className="h-8! rounded-lg! border-input/30 bg-input/30 shadow-none! *:data-[slot=input-group-addon]:pl-2!">
         <MenuPrimitive.Input
           data-slot="dropdown-menu-input"

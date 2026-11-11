@@ -1,5 +1,5 @@
 // A thread's artifacts in one place: a header button with how many there are, opening a list of
-// them, newest update first, each linking to its page and saying who may open it. It lists the ones
+// them, newest update first, each linking to its page and saying who may open it; one not shared with the reader is locked. It lists the ones
 // this thread used. The list is read again whenever the count of the thread's finished artifact
 // calls changes.
 
@@ -11,8 +11,9 @@ import { useEffect } from "react";
 import { ARTIFACT_TOOLS } from "@/shared/artifacts.ts";
 import type { ShownRow } from "@/shared/threads/rows.ts";
 import { ArtifactIcon } from "@/web/artifacts/artifact-icon";
+import { LockedArtifact } from "@/web/artifacts/locked-artifact";
 import { threadArtifactsQuery } from "@/web/artifacts/queries";
-import { SHARING_LEVELS } from "@/web/artifacts/share-artifact";
+import { SharingIndicator } from "@/web/artifacts/share-artifact";
 import { Button } from "@/web/components/ui/button";
 import {
   Popover,
@@ -65,7 +66,13 @@ export function ThreadArtifacts({
         </PopoverHeader>
         <ul className="flex max-h-96 flex-col overflow-y-auto">
           {list.map((artifact) => {
-            const sharing = SHARING_LEVELS[artifact.sharing];
+            if (artifact.locked) {
+              return (
+                <li key={artifact.id} className="flex items-center gap-3 px-2 py-1.5">
+                  <LockedArtifact title={artifact.title} tile="size-8" />
+                </li>
+              );
+            }
             return (
               <li key={artifact.id}>
                 <Link
@@ -80,8 +87,7 @@ export function ThreadArtifacts({
                     <span className="truncate text-sm font-medium">{artifact.title}</span>
                     <span className="flex items-center gap-1 truncate text-xs text-muted-foreground">
                       v{artifact.version} · <Time iso={artifact.updatedAt} /> ·
-                      <sharing.icon className="size-3 shrink-0" />
-                      {sharing.label}
+                      <SharingIndicator sharing={artifact.sharing} />
                     </span>
                   </span>
                 </Link>

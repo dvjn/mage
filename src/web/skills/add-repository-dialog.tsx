@@ -5,14 +5,8 @@ import { type FormEvent, useId, useState } from "react";
 
 import { useToast } from "@/web/shell/toaster";
 import { Button } from "@/web/components/ui/button";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/web/components/ui/dialog";
+import { DialogClose, DialogFooter, DialogHeader, DialogTitle } from "@/web/components/ui/dialog";
+import { ResponsiveDialog, ResponsiveDialogContent } from "@/web/components/responsive-dialog";
 import {
   Field,
   FieldDescription,
@@ -64,8 +58,8 @@ export function AddRepositoryDialog({
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-lg">
+    <ResponsiveDialog open onOpenChange={(open) => !open && onClose()}>
+      <ResponsiveDialogContent className="sm:max-w-lg">
         <DialogHeader>
           <DialogTitle>Add repository</DialogTitle>
         </DialogHeader>
@@ -115,7 +109,7 @@ export function AddRepositoryDialog({
             </Button>
           </DialogFooter>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

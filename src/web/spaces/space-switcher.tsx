@@ -8,11 +8,11 @@
 // Enter opens the first match; the orgs' submenu has its own. The spaces scroll between the org
 // header, which steps aside while searching, and "New space" and what sits below it.
 
-import { cn } from "cn";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ArrowLeftRightIcon,
+  Building2Icon,
   CheckIcon,
   ChevronsUpDownIcon,
   PlusIcon,
@@ -66,19 +66,13 @@ function SpaceRow({
   space,
   active,
   onSelect,
-  muted,
 }: {
   space: SpaceSummary;
   active: boolean;
   onSelect: () => void;
-  // A space the person manages but is not in, or their own archived one.
-  muted?: boolean;
 }) {
   return (
-    <DropdownMenuItem
-      onClick={onSelect}
-      className={cn("gap-2 p-2", muted && "text-muted-foreground")}
-    >
+    <DropdownMenuItem onClick={onSelect} className="gap-2">
       <div className="flex size-6 shrink-0 items-center justify-center rounded-md border text-[0.625rem] font-medium">
         {initialsOf(space.name)}
       </div>
@@ -111,7 +105,7 @@ function openOrg(orgId: string) {
 
 function OrgRow({ org, active }: { org: OrgSummary; active: boolean }) {
   return (
-    <DropdownMenuItem className="gap-2 p-2" onClick={() => !active && openOrg(org.id)}>
+    <DropdownMenuItem className="gap-2" onClick={() => !active && openOrg(org.id)}>
       <div className="flex size-6 shrink-0 items-center justify-center rounded-md border text-[0.625rem] font-medium">
         {initialsOf(orgLabel(org))}
       </div>
@@ -126,14 +120,14 @@ function OrgRow({ org, active }: { org: OrgSummary; active: boolean }) {
   );
 }
 
-// Makes something new at the end of its list, muted beside what is there.
+// Makes something new at the end of its list.
 function AddRow({ label, onSelect }: { label: string; onSelect: () => void }) {
   return (
-    <DropdownMenuItem className="gap-2 p-2" onClick={onSelect}>
+    <DropdownMenuItem className="gap-2" onClick={onSelect}>
       <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">
         <PlusIcon className="size-4" />
       </div>
-      <div className="font-medium text-muted-foreground">{label}</div>
+      <span>{label}</span>
     </DropdownMenuItem>
   );
 }
@@ -156,7 +150,7 @@ function OrgSubmenu({
   return (
     <DropdownMenuFilter filter={null} value={query} onValueChange={setQuery} autoHighlight>
       <DropdownMenuSub>
-        <DropdownMenuSubTrigger className="gap-2 p-2">
+        <DropdownMenuSubTrigger className="gap-2">
           <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">
             <ArrowLeftRightIcon className="size-4" />
           </div>
@@ -164,7 +158,7 @@ function OrgSubmenu({
         </DropdownMenuSubTrigger>
         <DropdownMenuSubContent className="flex min-w-56 flex-col overflow-y-hidden">
           <DropdownMenuInput aria-label="Filter organizations" placeholder="Find an organization" />
-          <DropdownMenuList className="max-h-72 pt-1">
+          <DropdownMenuList className="max-h-72">
             {shown.map((one) => (
               <OrgRow key={one.id} org={one} active={one.id === tab} />
             ))}
@@ -311,14 +305,17 @@ export function SpaceSwitcher() {
               {/* The org this tab is in; the row opens its settings. While a search is typed it
                   steps aside, so the first match is the one Enter opens. */}
               {query.trim() === "" && (
-                <DropdownMenuGroup className="pt-1">
+                <DropdownMenuGroup>
                   <DropdownMenuItem
                     aria-label="Organization settings"
-                    className="gap-2 p-2"
+                    className="gap-2"
                     render={<Link to="/org/general" />}
                   >
-                    <span className="truncate font-medium">{org}</span>
-                    <SettingsIcon className="ml-auto text-muted-foreground" aria-hidden />
+                    <div className="flex size-6 shrink-0 items-center justify-center rounded-md border">
+                      <Building2Icon className="size-4" />
+                    </div>
+                    <span className="truncate">{org}</span>
+                    <SettingsIcon className="ml-auto" aria-hidden />
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                 </DropdownMenuGroup>
@@ -365,13 +362,12 @@ export function SpaceSwitcher() {
                         space={space}
                         active={space.id === active?.id}
                         onSelect={() => open(space)}
-                        muted
                       />
                     ))}
                   </DropdownMenuGroup>
                 )}
                 {query.trim() === "" && !!trash.data?.length && (
-                  <DropdownMenuItem className="gap-2 p-2" onClick={() => setTrashOpen(true)}>
+                  <DropdownMenuItem className="gap-2" onClick={() => setTrashOpen(true)}>
                     <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">
                       <Trash2Icon className="size-4" />
                     </div>
@@ -408,7 +404,7 @@ export function SpaceSwitcher() {
               <DropdownMenuSeparator />
               <DropdownMenuGroup className="shrink-0">
                 <DropdownMenuItem
-                  className="gap-2 p-2"
+                  className="gap-2"
                   onClick={() => void navigate({ to: "/shared" })}
                 >
                   <div className="flex size-6 items-center justify-center rounded-md border bg-transparent">

@@ -4,12 +4,12 @@
 
 import type { ReactTable, RowData } from "@tanstack/react-table";
 import { cn } from "cn";
-import { SearchIcon, XIcon } from "lucide-react";
+import { XIcon } from "lucide-react";
 import type * as React from "react";
 
 import { DataTableFacetedFilter } from "@/web/components/data-table/data-table-faceted-filter";
 import { Button } from "@/web/components/ui/button";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
+import { FilterInput } from "@/web/components/filter-input";
 import type { DataTableFeatures } from "@/web/lib/data-table";
 
 interface DataTableToolbarProps<TData extends RowData> extends React.ComponentProps<"div"> {
@@ -45,18 +45,12 @@ export function DataTableToolbar<TData extends RowData>({
       {...props}
     >
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-        <InputGroup className="h-8 w-full sm:w-56">
-          <InputGroupInput
-            type="search"
-            aria-label={search}
-            placeholder={search}
-            value={text}
-            onChange={(event) => table.setGlobalFilter(event.target.value)}
-          />
-          <InputGroupAddon>
-            <SearchIcon />
-          </InputGroupAddon>
-        </InputGroup>
+        <FilterInput
+          label={search}
+          value={text}
+          onChange={(next) => table.setGlobalFilter(next)}
+          className="w-full sm:w-56"
+        />
         {columns.map((column) => (
           <DataTableFacetedFilter
             key={column.id}

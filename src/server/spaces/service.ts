@@ -389,6 +389,11 @@ export function createSpaces(options: SpacesOptions) {
       return !!space && archived(space);
     },
 
+    // The id of the org that owns the space, or null for one that is gone.
+    orgOf(id: string) {
+      return spaces.find(id)?.orgId ?? null;
+    },
+
     // Whether the space is in trash or gone.
     isGone(id: string) {
       const space = spaces.find(id);

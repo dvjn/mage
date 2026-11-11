@@ -145,8 +145,11 @@ test("the agent starts subagents, who report back, go idle and can be resumed an
   await page.goto(writerUrl);
   await expect(page.getByText("Archived", { exact: true })).toBeVisible();
   await expect(page.getByText("This subagent is archived")).toBeVisible();
-  await page.getByRole("button", { name: "Unarchive" }).click();
-  await expect(page.getByRole("button", { name: "Unarchive" })).toHaveCount(0);
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Unarchive" }).click();
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await expect(page.getByRole("menuitem", { name: "Unarchive" })).toHaveCount(0);
+  await page.keyboard.press("Escape");
   await expect(page.getByText("Archived", { exact: true })).toHaveCount(0);
   await expect(page.getByLabel("Message", { exact: true })).toBeEditable();
 });

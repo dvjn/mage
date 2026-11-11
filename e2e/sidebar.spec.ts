@@ -75,13 +75,19 @@ test("a viewer sees no write actions, and a failed delete says why in its dialog
   // Someone else's personal org is named after its owner.
   await expect(switcher).toContainText("Ada Lovelace's Personal");
   await switcher.click();
-  await expect(alan.getByRole("group", { name: "Joined spaces" })).toContainText("Viewer");
+  await expect(alan.getByRole("group", { name: "Joined spaces" })).toContainText("View");
   await alan.keyboard.press("Escape");
   await expect(sidebar(alan).getByRole("button", { name: "New thread" })).toHaveCount(0);
   await expect(
-    sidebar(alan).getByRole("button", { name: "Actions for How do engines compute?" }),
+    sidebar(alan).getByRole("button", { name: "More for How do engines compute?" }),
   ).toHaveCount(0);
   await expect(sidebar(alan).getByRole("link", { name: "Space settings" })).toHaveCount(0);
+  // The header's menu offers a viewer no rename, move or delete.
+  await alan.getByRole("button", { name: "More", exact: true }).click();
+  await expect(alan.getByRole("menuitem", { name: "Copy link" })).toBeVisible();
+  await expect(alan.getByRole("menuitem", { name: "Rename" })).toHaveCount(0);
+  await expect(alan.getByRole("menuitem", { name: "Delete" })).toHaveCount(0);
+  await alan.keyboard.press("Escape");
   // The shortcuts do nothing for a viewer.
   await alan.keyboard.press("Control+o");
   await alan.keyboard.press("Control+Shift+O");
@@ -90,7 +96,7 @@ test("a viewer sees no write actions, and a failed delete says why in its dialog
   await context.close();
 
   // The thread's owner sees Delete; a failure would stay in the dialog with a toast.
-  await sidebar(page).getByRole("button", { name: "Actions for How do engines compute?" }).click();
+  await sidebar(page).getByRole("button", { name: "More for How do engines compute?" }).click();
   await expect(page.getByRole("menuitem", { name: "Delete" })).toBeVisible();
   await page.route("**/api/v1/threads/*", (route) =>
     route.request().method() === "DELETE"

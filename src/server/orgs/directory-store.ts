@@ -139,7 +139,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
         : sql``;
       // The first select names the columns.
       const people = sql`
-        select 'group' as kind, g.id, g.display_name as name, null as email, og.role,
+        select 'group' as kind, g.id, g.display_name as name, g.email as email, og.role,
                og.created_at as at, null as createdByName, '1' || lower(g.display_name) as sortKey,
                ${memberCountOf(sql`g.id`)} as groupCount, null as viaGroup, null as groupRole,
                null as directRole,
@@ -209,6 +209,7 @@ export function createDirectory(db: Db, auth: Auth): Directory {
                   memberCount: row.groupCount,
                   source: "scim" as const,
                   externalId: null,
+                  email: row.email,
                   createdAt: new Date(row.at),
                 }
               : {
@@ -244,9 +245,10 @@ export function createDirectory(db: Db, auth: Auth): Directory {
         id: string;
         name: string;
         externalId: string | null;
+        email: string | null;
         createdAt: number;
       }>(
-        sql`select id, display_name as name, external_id as externalId, created_at as createdAt
+        sql`select id, display_name as name, external_id as externalId, email, created_at as createdAt
               from scim_group where id = ${id}`,
       );
       return row ? { ...row, source: "scim", createdAt: new Date(row.createdAt) } : null;
@@ -265,17 +267,18 @@ export function createDirectory(db: Db, auth: Auth): Directory {
     groupPage(orgId, params) {
       const where = sql`og.organization_id = ${orgId}
         ${params.userId ? sql`and g.id in ${activeGroupsOf(sql`${params.userId}`)}` : sql``}
-        and ${containing(params.q, sql`g.display_name`)}`;
+        and ${containing(params.q, sql`g.display_name`, sql`g.email`)}`;
       const rows = db.all<{
         id: string;
         name: string;
         externalId: string | null;
+        email: string | null;
         createdAt: number;
         role: OrgRole;
         linkedAt: number;
         memberCount: number;
       }>(sql`
-        select g.id, g.display_name as name, g.external_id as externalId,
+        select g.id, g.display_name as name, g.external_id as externalId, g.email,
                g.created_at as createdAt, og.role, og.created_at as linkedAt,
                ${memberCountOf(sql`g.id`)} as memberCount
           from org_group og join scim_group g on g.id = og.group_id
@@ -350,16 +353,17 @@ export function createDirectory(db: Db, auth: Auth): Directory {
     },
 
     directoryGroupPage(orgId, params) {
-      const where = containing(params.q, sql`g.display_name`);
+      const where = containing(params.q, sql`g.display_name`, sql`g.email`);
       const rows = db.all<{
         id: string;
         name: string;
         externalId: string | null;
+        email: string | null;
         createdAt: number;
         memberCount: number;
         role: OrgRole | null;
       }>(sql`
-        select g.id, g.display_name as name, g.external_id as externalId,
+        select g.id, g.display_name as name, g.external_id as externalId, g.email,
                g.created_at as createdAt, ${memberCountOf(sql`g.id`)} as memberCount,
                (select og.role from org_group og
                  where og.organization_id = ${orgId} and og.group_id = g.id) as role

@@ -8,14 +8,13 @@ import { hostOf, methodOf } from "@/shared/hosts.ts";
 import { HostMark } from "@/web/models/marks";
 import { Button } from "@/web/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
   DialogClose,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/web/components/ui/dialog";
+import { ResponsiveDialog, ResponsiveDialogContent } from "@/web/components/responsive-dialog";
 import {
   Field,
   FieldDescription,
@@ -45,8 +44,8 @@ export function EditProviderDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-lg">
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      <ResponsiveDialogContent className="sm:max-w-lg">
         {connection && connection.authKind !== "oauth" && (
           <EditProviderForm
             key={connection.id}
@@ -54,8 +53,8 @@ export function EditProviderDialog({
             onDone={() => onOpenChange(false)}
           />
         )}
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }
 

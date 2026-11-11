@@ -2,12 +2,10 @@
 // headers added to them. The fields serve a key being added as well as a connection's own form in
 // a dialog, which saves or clears them; stored header values are never shown.
 
-import { PlusIcon, XIcon } from "lucide-react";
 import { type FormEvent, useId, useState } from "react";
 
 import type { ConnectionSummary } from "@/shared/connections.ts";
 import { type HostId, hostOf } from "@/shared/hosts.ts";
-import { WithTooltip } from "@/web/components/with-tooltip";
 import { Button } from "@/web/components/ui/button";
 import { DialogFooter } from "@/web/components/ui/dialog";
 import {
@@ -17,6 +15,7 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/web/components/ui/field";
+import { type HeaderRow, HeaderRows } from "@/web/components/header-rows";
 import { Input } from "@/web/components/ui/input";
 import { useSaveProxy } from "@/web/models/mutations";
 
@@ -24,14 +23,6 @@ import { useSaveProxy } from "@/web/models/mutations";
 // resource's it was given.
 export function defaultBaseUrl(host: HostId, settings: Record<string, string> = {}) {
   return settings.baseUrl ?? settings.endpoint ?? hostOf(host).baseUrl ?? "";
-}
-
-export interface HeaderRow {
-  key: number;
-  name: string;
-  value: string;
-  // Its value is stored on the server, and kept unless a new one is typed.
-  stored: boolean;
 }
 
 export interface ProxyDraft {
@@ -68,13 +59,6 @@ export function ProxyFields({
   const id = useId();
   const { rows } = draft;
 
-  function change(key: number, update: Partial<HeaderRow>) {
-    onChange({
-      ...draft,
-      rows: rows.map((row) => (row.key === key ? { ...row, ...update } : row)),
-    });
-  }
-
   return (
     <>
       <Field>
@@ -92,60 +76,7 @@ export function ProxyFields({
       </Field>
       <Field>
         <FieldLabel>Headers</FieldLabel>
-        {rows.map((row) => (
-          <div key={row.key} className="flex gap-2">
-            <Input
-              aria-label="Header name"
-              value={row.name}
-              disabled={row.stored}
-              onChange={(event) => change(row.key, { name: event.target.value })}
-              placeholder="Name"
-              autoComplete="off"
-            />
-            <Input
-              aria-label={`Value of ${row.name || "header"}`}
-              type="password"
-              value={row.value}
-              onChange={(event) => change(row.key, { value: event.target.value })}
-              placeholder={row.stored ? "••••" : "Value"}
-              autoComplete="off"
-            />
-            <WithTooltip label="Remove header">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label={`Remove ${row.name || "header"}`}
-                onClick={() => onChange({ ...draft, rows: rows.filter((r) => r.key !== row.key) })}
-              >
-                <XIcon />
-              </Button>
-            </WithTooltip>
-          </div>
-        ))}
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          className="w-fit"
-          onClick={() =>
-            onChange({
-              ...draft,
-              rows: [
-                ...rows,
-                {
-                  key: Math.max(0, ...rows.map((r) => r.key)) + 1,
-                  name: "",
-                  value: "",
-                  stored: false,
-                },
-              ],
-            })
-          }
-        >
-          <PlusIcon />
-          Add header
-        </Button>
+        <HeaderRows rows={rows} onChange={(next) => onChange({ ...draft, rows: next })} />
       </Field>
     </>
   );

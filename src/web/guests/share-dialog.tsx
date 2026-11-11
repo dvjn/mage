@@ -1,251 +1,252 @@
-// Sharing a thread with people outside its space, on one surface opened from the Share button in
-// the thread's header: a dialog, or a sheet from the bottom on a phone. At the top, an invite link
-// made for as long as the access it gives should last, shown once to copy; below, the thread's
-// people (the space's members who wrote, with their role, and its guests, with when their access
-// ends) and its links not yet used, each with Remove where the signed-in person may remove it;
-// removing a person asks first. A long list scrolls, with a filter above it.
+// Sharing a thread, on the surface its visibility button opens, whose icon says whether it is open
+// to the org or has guests. Top to bottom: general access, the space's members alone or the org's
+// members too, to view or to message; its people (the space's members who wrote, with their role,
+// and its guests, with when their access ends and what they may do) and its links not yet used,
+// each with Remove where the signed-in person may remove it, where a person is asked about first;
+// a picker to add the org's members outside the space, with how long their access lasts and what
+// they may do; and an invite link for anyone else, made for as long as the access it gives should
+// last, to view or to message, and shown once to copy.
 
-import { useQuery } from "@tanstack/react-query";
-import { LinkIcon, SearchIcon, UserPlusIcon } from "lucide-react";
-import { type ReactNode, useId, useState } from "react";
+import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { Building2Icon, LinkIcon, LockIcon, UsersIcon } from "lucide-react";
+import { useId, useState } from "react";
 
 import {
   type AccessFor,
-  accessForSchema,
   type CreatedInvite,
   type PendingInvite,
   type ThreadPerson,
+  type ThreadRole,
 } from "@/shared/guests.ts";
-import { CopyButton } from "@/web/components/copy-button";
-import { Subject, type SubjectAvatar } from "@/web/shell/people-table";
+import { guestCandidatesPages } from "@/web/api/list-queries";
+import { CopyField } from "@/web/components/copy-button";
 import { Until } from "@/web/components/time";
 import { Button } from "@/web/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/web/components/ui/dialog";
+import { plural } from "@/web/lib/plural";
 import { FieldError, FieldLabel } from "@/web/components/ui/field";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/web/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetHeader,
-  SheetTitle,
-  SheetTrigger,
-} from "@/web/components/ui/sheet";
-import { useIsMobile } from "@/web/hooks/use-mobile";
+  useAddGuest,
+  useCreateInvite,
+  useRevoke,
+  useSetGuestRole,
+  useSetOrgAccess,
+} from "@/web/guests/mutations";
 import { threadPeopleQuery } from "@/web/guests/queries";
+import { timeUntil } from "@/web/lib/time";
+import { useDebounced } from "@/web/hooks/use-debounced";
+import { AccessLength, ACCESS_LABELS } from "@/web/sharing/access-length";
+import { AccessLevel } from "@/web/components/access-level";
+import { THREAD_LEVELS } from "@/web/sharing/access-level";
+import { AddPeople } from "@/web/sharing/add-people";
+import { GeneralAccess } from "@/web/sharing/general-access";
+import { PeopleSection, type PersonRow } from "@/web/sharing/people-section";
+import { ShareSurface } from "@/web/sharing/share-surface";
+import type { SubjectOption } from "@/web/spaces/subject-picker";
 import { ROLE_LABELS } from "@/web/spaces/roles";
-import { fullTime, timeUntil } from "@/web/lib/time";
-import { ConfirmDialog } from "@/web/components/confirm-dialog";
-import { useCreateInvite, useRevoke } from "@/web/guests/mutations";
 
-const ACCESS_LABELS: Record<AccessFor, string> = {
-  "1h": "1 hour",
-  "1d": "1 day",
-  "7d": "7 days",
-  never: "No expiry",
-};
+const DESCRIPTION = "Guests can see this thread, and nothing else in its space.";
 
-const DESCRIPTION =
-  "Whoever opens an invite link can read and write in this thread, and nothing else in its space.";
+type Removal = { guest: string } | { group: string } | { invite: string };
 
-function Row({
-  label,
-  avatar,
-  name,
-  detail,
-  onRevoke,
-}: {
-  label: string;
-  avatar: SubjectAvatar;
-  name: ReactNode;
-  detail?: ReactNode;
-  onRevoke?: () => void;
-}) {
-  return (
-    <li aria-label={label} className="group flex min-h-10 items-center gap-2 py-1">
-      <Subject avatar={avatar} name={name} detail={detail} size="sm" />
-      {onRevoke && (
-        <Button
-          size="xs"
-          variant="ghost"
-          className="ml-auto focus-visible:opacity-100 group-hover:opacity-100 md:opacity-0"
-          onClick={onRevoke}
-        >
-          Remove
-        </Button>
-      )}
-    </li>
-  );
-}
-
-// Above this many rows the list gets a filter.
-const FILTER_FROM = 8;
-
-function People({
-  people,
-  invites,
-  onRevoke,
-}: {
-  people: ThreadPerson[];
-  invites: PendingInvite[];
-  onRevoke: (path: { guest: string } | { invite: string }) => void;
-}) {
-  const [filter, setFilter] = useState("");
-  const needle = filter.trim().toLowerCase();
-  const linkName = (invite: PendingInvite) =>
-    `Link, ${ACCESS_LABELS[invite.accessFor].toLowerCase()}`;
-  const shownPeople = people.filter((person) => person.name.toLowerCase().includes(needle));
-  const shownInvites = invites.filter((invite) => linkName(invite).toLowerCase().includes(needle));
-  const filtering = people.length + invites.length > FILTER_FROM;
-  return (
-    <section aria-label="People" className="flex flex-col gap-1">
-      <h3 className="text-sm font-medium">People in this thread</h3>
-      {filtering && (
-        <InputGroup className="my-1">
-          <InputGroupInput
-            type="search"
-            placeholder="Filter people"
-            aria-label="Filter people"
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-          />
-          <InputGroupAddon>
-            <SearchIcon />
-          </InputGroupAddon>
-        </InputGroup>
-      )}
-      <ul className="flex max-h-80 flex-col overflow-y-auto">
-        {shownPeople.map((person) => (
-          <Row
-            key={person.userId}
-            label={person.name}
-            avatar={{ initials: person.name }}
-            name={person.name}
-            detail={
-              person.kind === "guest" ? (
-                <>
-                  Guest · <Until iso={person.accessUntil} />
-                </>
-              ) : person.role ? (
-                ROLE_LABELS[person.role]
-              ) : (
-                "Member"
-              )
-            }
-            onRevoke={person.canRevoke ? () => onRevoke({ guest: person.userId }) : undefined}
-          />
-        ))}
-        {people.length === 0 && (
-          <li className="text-sm text-muted-foreground">Nobody has written yet.</li>
-        )}
-        {filtering && shownPeople.length + shownInvites.length === 0 && (
-          <li className="text-sm text-muted-foreground">Nobody matches.</li>
-        )}
-        {shownInvites.map((invite) => (
-          <Row
-            key={invite.id}
-            label="Unused link"
-            avatar={{ icon: <LinkIcon /> }}
-            name={linkName(invite)}
-            detail={
-              <span title={fullTime(invite.linkExpiresAt)}>
-                Unused · Expires {timeUntil(invite.linkExpiresAt) ?? "now"}
-              </span>
-            }
-            onRevoke={invite.canRevoke ? () => onRevoke({ invite: invite.id }) : undefined}
-          />
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-// Revokes a guest or an unused link; what went wrong, if anything.
 function ShareBody({ threadId }: { threadId: string }) {
   const id = useId();
+  const pickerId = useId();
   const people = useQuery(threadPeopleQuery(threadId));
   const [accessFor, setAccessFor] = useState<AccessFor>("1d");
+  const [linkRole, setLinkRole] = useState<ThreadRole>("message");
+  const [addFor, setAddFor] = useState<AccessFor>("1d");
+  const [addRole, setAddRole] = useState<ThreadRole>("message");
+  const [text, setText] = useState("");
   const [created, setCreated] = useState<CreatedInvite>();
-  const [confirming, setConfirming] = useState<ThreadPerson | null>(null);
+  const addGuest = useAddGuest(threadId);
   const invite = useCreateInvite(threadId);
   const revocation = useRevoke(threadId);
-  const error = (invite.error ?? revocation.error)?.message;
+  const roles = useSetGuestRole(threadId);
+  const orgAccess = useSetOrgAccess(threadId);
+  const error = (invite.error ?? revocation.error ?? roles.error ?? orgAccess.error)?.message;
+  const query = useDebounced(text.trim());
+  const found = useInfiniteQuery({
+    ...guestCandidatesPages(threadId, { q: query }, 20),
+    placeholderData: keepPreviousData,
+  });
+  const options: SubjectOption[] = (found.data?.pages[0]?.items ?? []).map((one) => ({
+    kind: one.kind,
+    id: one.id,
+    name: one.name,
+    detail:
+      one.kind === "group"
+        ? `${one.email || "Group"} · ${plural(one.memberCount ?? 0, "person", "people")}`
+        : one.email,
+    ...(one.already && { already: one.already }),
+  }));
 
   function create() {
     revocation.reset();
-    invite.mutate(accessFor, { onSuccess: setCreated });
+    invite.mutate({ accessFor, role: linkRole }, { onSuccess: setCreated });
   }
 
-  function ask(path: { guest: string } | { invite: string }) {
-    if ("invite" in path) {
-      revoke(path);
-      return;
-    }
-    setConfirming(people.data?.people.find((person) => person.userId === path.guest) ?? null);
-  }
-
-  function revoke(path: { guest: string } | { invite: string }) {
+  function revoke(path: Removal) {
     invite.reset();
     revocation.mutate(path);
     if ("invite" in path && path.invite === created?.id) setCreated(undefined);
   }
 
+  const linkName = (link: PendingInvite) => `Link, ${ACCESS_LABELS[link.accessFor].toLowerCase()}`;
+  const rows: PersonRow[] = [
+    ...(people.data?.people ?? []).map((person: ThreadPerson): PersonRow => ({
+      id: person.userId,
+      label: person.name,
+      avatar: person.kind === "group" ? { icon: <UsersIcon /> } : { initials: person.name },
+      name: person.name,
+      detail:
+        person.kind === "group" ? (
+          <>
+            Group · {plural(person.memberCount ?? 0, "person", "people")} ·{" "}
+            <Until iso={person.accessUntil} />
+          </>
+        ) : person.kind === "guest" ? (
+          <>
+            Guest · <Until iso={person.accessUntil} />
+          </>
+        ) : person.role ? (
+          ROLE_LABELS[person.role]
+        ) : (
+          "Member"
+        ),
+      ...(person.access && {
+        control: (
+          <AccessLevel
+            levels={THREAD_LEVELS}
+            value={person.access}
+            label={`Access for ${person.name}`}
+            disabled={roles.isPending}
+            onChange={(role) =>
+              roles.mutate({
+                ...(person.kind === "group" ? { group: person.userId } : { guest: person.userId }),
+                role,
+              })
+            }
+          />
+        ),
+      }),
+      ...(person.canRevoke && {
+        confirm: person.kind === "group" ? ("group" as const) : ("person" as const),
+        onRemove: () =>
+          revoke(person.kind === "group" ? { group: person.userId } : { guest: person.userId }),
+      }),
+    })),
+    ...(people.data?.invites ?? []).map((link): PersonRow => ({
+      id: link.id,
+      label: "Unused link",
+      avatar: { icon: <LinkIcon /> },
+      name: linkName(link),
+      detail: `Unused · Expires ${timeUntil(link.linkExpiresAt) ?? "now"}`,
+      control: (
+        <AccessLevel
+          levels={THREAD_LEVELS}
+          value={link.role}
+          label="Access for the link"
+          disabled={roles.isPending}
+          onChange={(role) => roles.mutate({ invite: link.id, role })}
+        />
+      ),
+      ...(link.canRevoke && { onRemove: () => revoke({ invite: link.id }) }),
+    })),
+  ];
+
   return (
     <div className="flex flex-col gap-5">
+      {people.data && (
+        <GeneralAccess
+          label="Who can open it"
+          value={people.data.orgAccess === "none" ? "space" : "org"}
+          disabled={orgAccess.isPending}
+          onChange={(next) => orgAccess.mutate(next === "space" ? "none" : "view")}
+          choices={[
+            {
+              value: "space",
+              label: "Space members",
+              reach: "Can open it through its space",
+              icon: LockIcon,
+            },
+            {
+              value: "org",
+              label: "Organization",
+              reach: "Everyone in the organization",
+              icon: Building2Icon,
+              ...(people.data.orgAccess !== "none" && {
+                control: (
+                  <AccessLevel
+                    levels={THREAD_LEVELS}
+                    value={people.data.orgAccess}
+                    label="What the organization can do"
+                    disabled={orgAccess.isPending}
+                    onChange={(level) => orgAccess.mutate(level)}
+                  />
+                ),
+              }),
+            },
+          ]}
+        />
+      )}
+      {people.data && (
+        <PeopleSection
+          rows={rows}
+          empty="Nobody has written yet."
+          add={
+            <AddPeople
+              id={pickerId}
+              text={text}
+              onTextChange={setText}
+              placeholder="Add people"
+              options={options}
+              picked={null}
+              onPick={(one) => {
+                if (one) {
+                  addGuest.mutate(
+                    {
+                      ...(one.kind === "group" ? { groupId: one.id } : { userId: one.id }),
+                      accessFor: addFor,
+                      role: addRole,
+                    },
+                    { onSuccess: () => setText("") },
+                  );
+                }
+              }}
+              levels={THREAD_LEVELS}
+              level={addRole}
+              onLevel={setAddRole}
+              length={{ value: addFor, onChange: setAddFor }}
+              empty={found.isSuccess && options.length === 0 && "No one else to add"}
+            />
+          }
+        />
+      )}
       <section aria-label="Invite with a link" className="flex flex-col gap-2">
         <FieldLabel htmlFor={id}>Invite with a link</FieldLabel>
         <div className="flex gap-2">
-          <Select
+          <AccessLength
+            id={id}
+            label="Access lasts"
             value={accessFor}
-            onValueChange={(value) => {
-              const parsed = accessForSchema.safeParse(value);
-              if (parsed.success) setAccessFor(parsed.data);
-            }}
-          >
-            <SelectTrigger id={id} aria-label="Access lasts" className="flex-1">
-              <SelectValue>{(value: AccessFor) => ACCESS_LABELS[value]}</SelectValue>
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false}>
-              {accessForSchema.options.map((option) => (
-                <SelectItem key={option} value={option}>
-                  {ACCESS_LABELS[option]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+            onChange={setAccessFor}
+            grow
+          />
+          <AccessLevel
+            levels={THREAD_LEVELS}
+            value={linkRole}
+            label="Access for the link"
+            onChange={setLinkRole}
+          />
           <Button disabled={invite.isPending} onClick={create}>
             Create link
           </Button>
         </div>
         {created && (
           <>
-            <InputGroup>
-              <InputGroupInput
-                aria-label="Invite link"
-                value={created.url}
-                readOnly
-                onFocus={(event) => event.currentTarget.select()}
-              />
-              <InputGroupAddon align="inline-end">
-                <CopyButton label="Copy link" value={created.url} />
-              </InputGroupAddon>
-            </InputGroup>
+            <CopyField label="Invite link" value={created.url} once />
             <p className="text-xs text-muted-foreground">
-              Copy it now: it is shown only once. It works once, within 7 days, and gives{" "}
+              It works once, within 7 days, and gives{" "}
               {created.accessFor === "never"
                 ? "access with no expiry"
                 : `${ACCESS_LABELS[created.accessFor]} of access`}{" "}
@@ -253,64 +254,39 @@ function ShareBody({ threadId }: { threadId: string }) {
             </p>
           </>
         )}
-        <FieldError>{error}</FieldError>
+        <FieldError>{error ?? addGuest.error?.message}</FieldError>
       </section>
-      {people.data && (
-        <People people={people.data.people} invites={people.data.invites} onRevoke={ask} />
-      )}
-      <ConfirmDialog
-        open={!!confirming}
-        onOpenChange={(open) => {
-          if (!open) setConfirming(null);
-        }}
-        title={`Remove ${confirming?.name ?? ""}?`}
-        description="They lose access to this thread."
-        action="Remove"
-        onConfirm={() => {
-          if (confirming) revoke({ guest: confirming.userId });
-          setConfirming(null);
-        }}
-      />
     </div>
   );
 }
 
 export function ShareDialog({ threadId }: { threadId: string }) {
-  const mobile = useIsMobile();
-  // Each opening starts afresh: the link made last time is not shown again.
-  const [opened, setOpened] = useState(0);
-  const trigger = (
-    <>
-      <UserPlusIcon />
-      Share
-    </>
-  );
-  if (mobile) {
-    return (
-      <Sheet onOpenChange={(open) => open && setOpened(opened + 1)}>
-        <SheetTrigger render={<Button size="sm" variant="outline" />}>{trigger}</SheetTrigger>
-        <SheetContent side="bottom" className="max-h-[85svh] overflow-y-auto">
-          <SheetHeader className="pb-0">
-            <SheetTitle>Share this thread</SheetTitle>
-            <SheetDescription>{DESCRIPTION}</SheetDescription>
-          </SheetHeader>
-          <div className="px-4 pb-6">
-            <ShareBody key={opened} threadId={threadId} />
-          </div>
-        </SheetContent>
-      </Sheet>
-    );
-  }
+  const people = useQuery(threadPeopleQuery(threadId));
+  const guests =
+    people.data?.people.reduce(
+      (count, person) =>
+        count +
+        (person.kind === "guest" ? 1 : person.kind === "group" ? (person.memberCount ?? 0) : 0),
+      0,
+    ) ?? 0;
+  const org = people.data?.orgAccess !== undefined && people.data.orgAccess !== "none";
+  const guestText = `${guests} ${guests === 1 ? "guest" : "guests"}`;
   return (
-    <Dialog onOpenChange={(open) => open && setOpened(opened + 1)}>
-      <DialogTrigger render={<Button size="sm" variant="outline" />}>{trigger}</DialogTrigger>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>Share this thread</DialogTitle>
-          <DialogDescription>{DESCRIPTION}</DialogDescription>
-        </DialogHeader>
-        <ShareBody key={opened} threadId={threadId} />
-      </DialogContent>
-    </Dialog>
+    <ShareSurface
+      title="Share this thread"
+      description={DESCRIPTION}
+      visibility={
+        org
+          ? {
+              icon: Building2Icon,
+              label: guests > 0 ? `Organization and ${guestText}` : "Organization",
+            }
+          : guests > 0
+            ? { icon: UsersIcon, label: `Space members and ${guestText}` }
+            : { icon: LockIcon, label: "Space members" }
+      }
+    >
+      <ShareBody threadId={threadId} />
+    </ShareSurface>
   );
 }

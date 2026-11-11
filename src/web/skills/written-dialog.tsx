@@ -7,14 +7,13 @@ import { SKILL_NAME } from "@/shared/skills.ts";
 import { useToast } from "@/web/shell/toaster";
 import { Button } from "@/web/components/ui/button";
 import {
-  Dialog,
   DialogClose,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/web/components/ui/dialog";
+import { ResponsiveDialog, ResponsiveDialogContent } from "@/web/components/responsive-dialog";
 import {
   Field,
   FieldDescription,
@@ -90,8 +89,8 @@ export function WrittenDialog({
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-2xl">
+    <ResponsiveDialog open onOpenChange={(open) => !open && onClose()}>
+      <ResponsiveDialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{row ? row.skill.name : "New skill"}</DialogTitle>
           <DialogDescription>
@@ -194,7 +193,7 @@ export function WrittenDialog({
         {previewing && row && (
           <SkillPreviewDialog skill={row.skill} line={null} onClose={() => setPreviewing(false)} />
         )}
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

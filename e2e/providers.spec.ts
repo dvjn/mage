@@ -84,7 +84,7 @@ test("a provider's label and server address are changed in the form it was added
   await adding.getByRole("button", { name: "Done" }).click();
 
   const row = page.getByRole("row", { name: "OpenAI-compatible · Lab box" });
-  await row.getByRole("button", { name: "Actions for OpenAI-compatible · Lab box" }).click();
+  await row.getByRole("button", { name: "More for OpenAI-compatible · Lab box" }).click();
   await page.getByRole("menuitem", { name: "Edit" }).click();
   const dialog = page.getByRole("dialog", { name: "Edit OpenAI-compatible · Lab box" });
   await expect(dialog.getByLabel("Label")).toHaveValue("Lab box");

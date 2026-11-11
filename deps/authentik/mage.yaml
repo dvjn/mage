@@ -42,11 +42,31 @@ entries:
     id: engineering
     identifiers:
       name: Engineering
+    attrs:
+      attributes:
+        email: engineering@example.com
 
   - model: authentik_core.group
     id: design
     identifiers:
       name: Design
+    attrs:
+      attributes:
+        email: design@example.com
+
+  # Authentik groups have no email of their own; this sends the one kept in the group's attributes,
+  # as the default user mapping sends a person's. Mappings merge, so the default group mapping
+  # still sends the name.
+  - model: authentik_providers_scim.scimmapping
+    id: mage-group-email
+    identifiers:
+      name: "Mage SCIM Mapping: Group email"
+    attrs:
+      expression: |
+        email = group.attributes.get("email")
+        if not email:
+            return {}
+        return {"emails": [{"value": email, "type": "work", "primary": True}]}
 
   - model: authentik_providers_scim.scimprovider
     id: mage-scim
@@ -67,6 +87,7 @@ entries:
             authentik_providers_scim.scimmapping,
             [managed, goauthentik.io/providers/scim/group],
           ]
+        - !KeyOf mage-group-email
       group_filters:
         - !KeyOf engineering
         - !KeyOf design

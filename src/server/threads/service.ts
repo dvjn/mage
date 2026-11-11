@@ -347,7 +347,7 @@ export interface ThreadsOptions {
   // Reads a thread's space for its defaults, whoever reads the thread.
   spaceStore: Pick<SpaceStore, "find">;
   access: Pick<ThreadAccess, "can" | "of" | "require">;
-  guests: Pick<GuestStore, "threadsOf" | "sharedListed" | "activeIn">;
+  guests: Pick<GuestStore, "threadsOf" | "sharedListed" | "reachedIn">;
   threads: ThreadStore;
   // How far each person has seen each thread.
   reads: ThreadReadStore;
@@ -1626,7 +1626,9 @@ export function createThreads(options: ThreadsOptions) {
     // Its events go with it.
     remove(principal: Principal, id: string) {
       const thread = visible(principal, id, "delete");
-      const guestIds = guests.activeIn(id, now()).map((guest) => guest.userId);
+      const guestIds = guests
+        .reachedIn(thread.rootThreadId ?? id, now())
+        .map((guest) => guest.userId);
       threads.delete(id);
       bus.activity({ threadId: id, gone: { spaceId: thread.spaceId, guests: guestIds } });
     },

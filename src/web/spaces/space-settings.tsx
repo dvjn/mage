@@ -12,7 +12,7 @@ import { AllowPublicArtifacts } from "@/web/artifacts/public-setting";
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi, Link, Navigate, Outlet, useNavigate } from "@tanstack/react-router";
 import { Settings2Icon, FileTextIcon, UsersIcon, WrenchIcon } from "lucide-react";
-import { type FormEvent, useEffect, useId, useState } from "react";
+import { useEffect } from "react";
 
 import { namedForPerson, type SpaceSummary } from "@/shared/spaces.ts";
 import { useMissingModel } from "@/web/models/model-picker";
@@ -25,57 +25,33 @@ import { SettingsShell, settingsNavLink } from "@/web/shell/settings-shell";
 import { McpServerPage } from "@/web/mcp/servers/page";
 import { McpServersCard } from "@/web/mcp/servers/card";
 import { SpaceToolsList } from "@/web/agent/tools-list";
-import { Button } from "@/web/components/ui/button";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@/web/components/ui/field";
-import { Input } from "@/web/components/ui/input";
+import { FieldError, FieldGroup } from "@/web/components/ui/field";
 import { rememberSpace } from "@/web/spaces/last-space";
 import { defaultEffortQuery, defaultModelQuery, modelsQuery } from "@/web/models/queries";
 import { spacesQuery } from "@/web/spaces/queries";
 import { agentNameQuery } from "@/web/orgs/queries";
 import { spaceThreadsQuery } from "@/web/threads/queries";
 import { NotFound } from "@/web/shell/not-found";
+import { NameSettingField } from "@/web/shell/name-setting-field";
 import { DeleteCard } from "@/web/shell/delete-card";
 import { meQuery } from "@/web/auth/queries";
-import { ownSpaceGoes } from "@/web/spaces/delete-own-space";
-import { useDeleteSpace, useRenameSpace, useSpaceDefaults } from "@/web/spaces/mutations";
+import { useSpaceDeletion } from "@/web/spaces/delete-space";
+import { useRenameSpace, useSpaceDefaults } from "@/web/spaces/mutations";
 
 const spaceSettingsRoute = getRouteApi("/_app/s/$spaceId/settings");
 
 function SpaceName({ space }: { space: SpaceSummary }) {
-  const id = useId();
-  const [name, setName] = useState(space.name);
   const rename = useRenameSpace(space.id);
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    rename.mutate(name);
-  }
-
   return (
     <SettingsCard title="Name">
-      <form onSubmit={submit}>
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor={id}>Space name</FieldLabel>
-            <Input
-              id={id}
-              value={name}
-              onChange={(event) => setName(event.target.value)}
-              maxLength={80}
-              required
-              autoComplete="off"
-            />
-          </Field>
-          <FieldError>{rename.error?.message}</FieldError>
-          {name.trim() !== space.name && (
-            <div>
-              <Button type="submit" disabled={rename.isPending || !name.trim()}>
-                Save
-              </Button>
-            </div>
-          )}
-        </FieldGroup>
-      </form>
+      <NameSettingField
+        label="Space name"
+        saved={space.name}
+        onSave={rename.mutate}
+        pending={rename.isPending}
+        error={rename.error?.message}
+        maxLength={80}
+      />
     </SettingsCard>
   );
 }
@@ -125,42 +101,20 @@ function SpaceModel({ space }: { space: SpaceSummary }) {
 
 // The name the agent goes by in the space's threads; left empty, the org's.
 function SpaceAgentName({ space }: { space: SpaceSummary }) {
-  const id = useId();
   const orgName = useQuery(agentNameQuery);
-  const [draft, setDraft] = useState(space.agentName ?? "");
   const defaults = useSpaceDefaults(space.id);
-  const changed = draft.trim() !== (space.agentName ?? "");
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    defaults.mutate({ agentName: draft.trim() || null });
-  }
-
   return (
     <SettingsCard title="Agent" description="Shown in threads. Empty uses the organization's.">
-      <form onSubmit={submit}>
-        <FieldGroup>
-          <Field>
-            <FieldLabel htmlFor={id}>Agent name</FieldLabel>
-            <Input
-              id={id}
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder={orgName.data?.name}
-              maxLength={40}
-              autoComplete="off"
-            />
-          </Field>
-          <FieldError>{defaults.error?.message}</FieldError>
-          {changed && (
-            <div>
-              <Button type="submit" disabled={defaults.isPending}>
-                Save
-              </Button>
-            </div>
-          )}
-        </FieldGroup>
-      </form>
+      <NameSettingField
+        label="Agent name"
+        saved={space.agentName ?? ""}
+        onSave={(agentName) => defaults.mutate({ agentName: agentName || null })}
+        pending={defaults.isPending}
+        error={defaults.error?.message}
+        maxLength={40}
+        placeholder={orgName.data?.name}
+        optional
+      />
     </SettingsCard>
   );
 }
@@ -170,8 +124,13 @@ function SpaceAgentName({ space }: { space: SpaceSummary }) {
 function DeleteSpace({ space, own }: { space: SpaceSummary; own: boolean }) {
   const navigate = useNavigate();
   const threads = useQuery({ ...spaceThreadsQuery(space.id), enabled: space.role !== null });
-  const remove = useDeleteSpace(() => navigate({ to: "/" }));
   const count = threads.data?.total ?? 0;
+  const deletion = useSpaceDeletion({
+    space,
+    own,
+    threads: count,
+    leave: () => navigate({ to: "/" }),
+  });
 
   return (
     <DeleteCard
@@ -184,12 +143,7 @@ function DeleteSpace({ space, own }: { space: SpaceSummary; own: boolean }) {
             : "Only a space without threads can be deleted."
       }
       blocked={!own && count > 0}
-      confirmTitle={`Delete ${space.name}?`}
-      confirmDescription={own ? ownSpaceGoes(count) : "This cannot be undone."}
-      action="Delete"
-      error={remove.error?.message}
-      disabled={remove.isPending}
-      onConfirm={() => remove.mutate(space.id)}
+      {...deletion}
     />
   );
 }

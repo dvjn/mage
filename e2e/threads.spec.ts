@@ -148,7 +148,7 @@ test("deleting the open thread leads back to its space", async ({ page }) => {
   await page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
 
-  await sidebar.getByRole("button", { name: "Actions for Short lived" }).click();
+  await sidebar.getByRole("button", { name: "More for Short lived" }).click();
   await page.getByRole("menuitem", { name: "Delete" }).click();
   const confirm = page.getByRole("alertdialog");
   await expect(confirm).toContainText("Delete Short lived?");
@@ -187,4 +187,27 @@ test("a collapsed sidebar stays collapsed after a reload", async ({ page }) => {
   await expect(sidebar).toHaveAttribute("data-state", "collapsed");
   await page.reload();
   await expect(sidebar).toHaveAttribute("data-state", "collapsed");
+});
+
+test("the header's More menu renames and deletes the open thread", async ({ page }) => {
+  await signUp(page);
+  const sidebar = page.locator("[data-sidebar=sidebar]");
+  await page.getByLabel("Message", { exact: true }).fill("Menu subject");
+  await page.getByLabel("Message", { exact: true }).press("Enter");
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Rename" }).click();
+  const rename = page.getByRole("dialog");
+  await rename.getByRole("textbox").fill("Renamed from header");
+  await rename.getByRole("button", { name: "Save" }).click();
+  await expect(sidebar.getByRole("link", { name: "Renamed from header" })).toBeVisible();
+
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
+  const confirm = page.getByRole("alertdialog");
+  await expect(confirm).toContainText("Delete Renamed from header?");
+  await confirm.getByRole("button", { name: "Delete" }).click();
+  await expect(page).toHaveURL(/\/s\/[^/]+$/);
+  await expect(sidebar.getByRole("link", { name: "Renamed from header" })).toHaveCount(0);
 });

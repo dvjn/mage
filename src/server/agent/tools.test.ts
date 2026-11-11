@@ -127,7 +127,10 @@ describe("levels", () => {
   it("let anyone who can message in the thread run tools, and nobody else", () => {
     expect(canPostIn({ via: "space", role: "owner" })).toBe(run);
     expect(canPostIn({ via: "space", role: "messager" })).toBe(run);
-    expect(canPostIn({ via: "guest", spaceName: "Ada" })).toBe(run);
+    expect(canPostIn({ via: "guest", spaceName: "Ada", role: "message", viaOrg: false })).toBe(run);
+    expect(canPostIn({ via: "guest", spaceName: "Ada", role: "view", viaOrg: false })).toBe(
+      approve,
+    );
     expect(canPostIn({ via: "space", role: "viewer" })).toBe(approve);
     expect(canPostIn(null)).toBe(approve);
   });

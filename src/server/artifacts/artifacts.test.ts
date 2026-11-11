@@ -31,6 +31,7 @@ function withPreviewer(workspace: ReturnType<typeof setup>, previewer: ArtifactP
     spaceStore: workspace.spaceStore,
     spaces: workspace.spaces,
     access: workspace.access,
+    guests: workspace.guestStore,
     directory: workspace.directory,
     appOrigin: "http://localhost:4783",
     artifactOrigin: ARTIFACT_ORIGIN,
@@ -373,36 +374,589 @@ describe("publishing and updating", () => {
 });
 
 describe("a thread's guest", () => {
-  it("sees only what is shared beyond the space", async () => {
+  // Bob joins the thread as a guest; Dee is a guest of another thread that did not use the artifact.
+  async function guests() {
+    const t = await team();
+    const id = await t.publish();
+    // Publishing shares with the thread's guests; these tests start from it not shared.
+    await t.json(
+      await t.api("PUT", `/artifacts/${id}/guests`, t.ada.cookie, {
+        threadId: t.thread.id,
+        shared: false,
+      }),
+    );
+    async function guestOf(threadId: string, who: { cookie: string }) {
+      const invite = await t.api("POST", `/threads/${threadId}/invites`, t.ada.cookie, {
+        accessFor: "1d",
+      });
+      const { url } = await t.json<{ url: string }>(invite);
+      const accepted = await t.api("POST", "/invites/accept", who.cookie, {
+        token: url.split("/invite/")[1],
+      });
+      expect(accepted.status).toBe(200);
+    }
+    await guestOf(t.thread.id, t.bob);
+    const elsewhere = await t.createThread(t.ada.cookie, t.space.id);
+    const dee = await t.signUp("Dee Dee", "dee@example.com");
+    await guestOf(elsewhere.id, dee);
+    const share = (who: { cookie: string }, threadId: string, shared: boolean) =>
+      t.api("PUT", `/artifacts/${id}/guests`, who.cookie, { threadId, shared });
+    return { ...t, id, dee, elsewhere, share };
+  }
+
+  it("cannot open an artifact their thread used until a member shares it with the thread", async () => {
+    const t = await guests();
+    const refused = await t.api("GET", `/artifacts/${t.id}`, t.bob.cookie);
+    expect(refused.status).toBe(403);
+    expect(await refused.json()).toMatchObject({ reason: "not_shared" });
+    expect((await t.view(t.bob, t.id)).status).toBe(404);
+    const locked = await t.json<Artifact[]>(
+      await t.api("GET", `/threads/${t.thread.id}/artifacts`, t.bob.cookie),
+    );
+    expect(locked).toHaveLength(1);
+    expect(locked[0]).toMatchObject({ id: t.id, title: "Sales chart", locked: true });
+    expect(locked[0]!.description).toBe("");
+
+    await t.json(await t.share(t.ada, t.thread.id, true));
+    const opened = await t.json<ArtifactDetail>(
+      await t.api("GET", `/artifacts/${t.id}`, t.bob.cookie),
+    );
+    expect(opened.locked).toBe(false);
+    expect((await t.view(t.bob, t.id)).status).toBe(200);
+    const listed = await t.json<Artifact[]>(
+      await t.api("GET", `/threads/${t.thread.id}/artifacts`, t.bob.cookie),
+    );
+    expect(listed.map((one) => [one.id, one.locked, one.canDelete])).toEqual([
+      [t.id, false, false],
+    ]);
+  });
+
+  it("changes nothing, and loses the artifact when sharing with the thread is turned off", async () => {
+    const t = await guests();
+    await t.json(await t.share(t.ada, t.thread.id, true));
+    expect((await t.api("DELETE", `/artifacts/${t.id}`, t.bob.cookie)).status).toBe(403);
+    expect(
+      (await t.api("PUT", `/artifacts/${t.id}/sharing`, t.bob.cookie, { sharing: "org" })).status,
+    ).toBe(403);
+    expect((await t.share(t.bob, t.thread.id, false)).status).toBe(403);
+    await t.json(await t.share(t.ada, t.thread.id, false));
+    expect((await t.api("GET", `/artifacts/${t.id}`, t.bob.cookie)).status).toBe(403);
+    expect((await t.view(t.bob, t.id)).status).toBe(404);
+  });
+
+  it("is told at once that access ended on the stream's next check", async () => {
+    const t = await guests();
+    await t.json(await t.share(t.ada, t.thread.id, true));
+    expect(t.artifacts.viewable(t.bob, t.id)).toBe(true);
+    await t.json(await t.share(t.ada, t.thread.id, false));
+    expect(t.artifacts.viewable(t.bob, t.id)).toBe(false);
+  });
+
+  it("is not given an artifact through another thread, which must have used it", async () => {
+    const t = await guests();
+    expect((await t.share(t.ada, t.elsewhere.id, true)).status).toBe(404);
+    expect((await t.api("GET", `/artifacts/${t.id}`, t.dee.cookie)).status).toBe(404);
+    expect(
+      await t.json<unknown[]>(
+        await t.api("GET", `/threads/${t.elsewhere.id}/artifacts`, t.dee.cookie),
+      ),
+    ).toEqual([]);
+  });
+
+  it("is listed to those who may change the artifact, and only to them", async () => {
+    const t = await guests();
+    const before = await t.json<ArtifactDetail>(
+      await t.api("GET", `/artifacts/${t.id}`, t.ada.cookie),
+    );
+    expect(before.guestThreads).toEqual([
+      { id: t.thread.id, title: null, guests: 1, shared: false },
+    ]);
+    const detail = await t.json<ArtifactDetail>(await t.share(t.grace, t.thread.id, true));
+    expect(detail.guestThreads[0]!.shared).toBe(true);
+    const viewer = await t.json<ArtifactDetail>(
+      await t.api("GET", `/artifacts/${t.id}`, t.alan.cookie),
+    );
+    expect(viewer.guestThreads).toEqual([]);
+    expect((await t.share(t.alan, t.thread.id, false)).status).toBe(403);
+    const guest = await t.json<ArtifactDetail>(
+      await t.api("GET", `/artifacts/${t.id}`, t.bob.cookie),
+    );
+    expect(guest.guestThreads).toEqual([]);
+  });
+
+  it("still sees an artifact shared with the org or the public", async () => {
+    const t = await guests();
+    await t.json(
+      await t.api("PUT", "/org/artifacts/settings", t.ada.cookie, { publicAllowed: true }),
+    );
+    await t.json(
+      await t.api("PUT", `/artifacts/${t.id}/sharing`, t.ada.cookie, { sharing: "public" }),
+    );
+    expect((await t.api("GET", `/artifacts/${t.id}`, t.bob.cookie)).status).toBe(200);
+  });
+});
+
+describe("the agent in a thread with guests", () => {
+  async function invite(t: Awaited<ReturnType<typeof team>>, threadId: string, who: object) {
+    const res = await t.api("POST", `/threads/${threadId}/invites`, t.ada.cookie, {
+      accessFor: "1d",
+    });
+    const { url } = await t.json<{ url: string }>(res);
+    const accepted = await t.api("POST", "/invites/accept", (who as { cookie: string }).cookie, {
+      token: url.split("/invite/")[1],
+    });
+    expect(accepted.status).toBe(200);
+  }
+  const unshare = async (t: Awaited<ReturnType<typeof team>>, id: string, threadId: string) =>
+    t.json(
+      await t.api("PUT", `/artifacts/${id}/guests`, t.ada.cookie, { threadId, shared: false }),
+    );
+  const share = async (t: Awaited<ReturnType<typeof team>>, id: string, threadId: string) =>
+    t.json(await t.api("PUT", `/artifacts/${id}/guests`, t.ada.cookie, { threadId, shared: true }));
+  const ids = (result: { ok: boolean; value?: any }) =>
+    (result.value.artifacts as { id: string }[]).map((one) => one.id);
+  const REFUSAL =
+    "Not shared with this thread's guests. Someone who can share it can give them access.";
+
+  it("shares what it publishes with the thread's guests, including ones invited later", async () => {
+    const t = await team();
+    const id = await t.publish();
+    await invite(t, t.thread.id, t.bob);
+    expect((await t.api("GET", `/artifacts/${id}`, t.bob.cookie)).status).toBe(200);
+    expect((await t.view(t.bob, id)).status).toBe(200);
+    // A member may turn it off like any other.
+    await unshare(t, id, t.thread.id);
+    expect((await t.api("GET", `/artifacts/${id}`, t.bob.cookie)).status).toBe(403);
+  });
+
+  it("lists, reads and updates only what the guests can open, until a member shares it", async () => {
+    const t = await team();
+    const mine = await t.publish();
+    const other = await t.createThread(t.ada.cookie, t.space.id);
+    const unshared = (
+      (await t.call(
+        ARTIFACT_TOOLS.publish,
+        { html: "<title>Secret</title>", description: "d", icon: "lock" },
+        other.id,
+      )) as { value: { id: string } }
+    ).value.id;
+    // Used by this thread before the guest came, so it can be shared with them.
+    expect((await t.call(ARTIFACT_TOOLS.read, { id: unshared })).ok).toBe(true);
+    await unshare(t, unshared, other.id);
+    await invite(t, t.thread.id, t.bob);
+
+    const space = await t.call(ARTIFACT_TOOLS.list, { scope: "space" });
+    expect(ids(space)).toEqual([mine]);
+    const thread = await t.call(ARTIFACT_TOOLS.list, {});
+    expect(ids(thread)).toEqual([mine]);
+    expect(await t.call(ARTIFACT_TOOLS.read, { id: unshared })).toEqual({
+      ok: false,
+      error: REFUSAL,
+    });
+    expect(
+      await t.call(ARTIFACT_TOOLS.update, { id: unshared, html: "<title>Secret two</title>" }),
+    ).toEqual({ ok: false, error: REFUSAL });
+
+    await share(t, unshared, t.thread.id);
+    expect((await t.call(ARTIFACT_TOOLS.read, { id: unshared })).ok).toBe(true);
+    expect(
+      (await t.call(ARTIFACT_TOOLS.update, { id: unshared, html: "<title>Secret two</title>" })).ok,
+    ).toBe(true);
+  });
+
+  it("changes nothing without guests", async () => {
+    const t = await team();
+    const mine = await t.publish();
+    await unshare(t, mine, t.thread.id);
+    const other = await t.createThread(t.ada.cookie, t.space.id);
+    const id = (
+      (await t.call(
+        ARTIFACT_TOOLS.publish,
+        { html: "<title>Other</title>", description: "d", icon: "x" },
+        other.id,
+      )) as { value: { id: string } }
+    ).value.id;
+    const listed = await t.call(ARTIFACT_TOOLS.list, { scope: "space" });
+    expect(ids(listed)).toHaveLength(2);
+    expect((await t.call(ARTIFACT_TOOLS.read, { id })).ok).toBe(true);
+  });
+
+  it("uses the root thread's guests in a subagent's thread", async () => {
+    const t = await team();
+    const hidden = await t.publish();
+    await unshare(t, hidden, t.thread.id);
+    await invite(t, t.thread.id, t.bob);
+    const child = t.threadStore.create({
+      spaceId: t.space.id,
+      model: null,
+      createdBy: null,
+      parentThreadId: t.thread.id,
+      rootThreadId: t.thread.id,
+    });
+    expect(await t.call(ARTIFACT_TOOLS.read, { id: hidden }, child.id)).toEqual({
+      ok: false,
+      error: REFUSAL,
+    });
+    const published = await t.call(
+      ARTIFACT_TOOLS.publish,
+      { html: "<title>Child page</title>", description: "d", icon: "x" },
+      child.id,
+    );
+    expect(published.ok).toBe(true);
+    const publishedId = (published as { value: { id: string } }).value.id;
+    expect((await t.api("GET", `/artifacts/${publishedId}`, t.bob.cookie)).status).toBe(200);
+  });
+
+  it("counts an org-level artifact within bounds only when every guest can view it", async () => {
+    const t = await team();
+    const id = await t.publish();
+    await unshare(t, id, t.thread.id);
+    await t.json(await t.api("PUT", `/artifacts/${id}/sharing`, t.ada.cookie, { sharing: "org" }));
+    await invite(t, t.thread.id, t.carol);
+    expect((await t.call(ARTIFACT_TOOLS.read, { id })).ok).toBe(true);
+    await invite(t, t.thread.id, t.bob);
+    expect(await t.call(ARTIFACT_TOOLS.read, { id })).toEqual({ ok: false, error: REFUSAL });
+  });
+
+  it("leaves editing to tool policy: update is not read-only and has normal risk", async () => {
+    const t = await team();
+    const update = t.artifacts.toolset().tools.find((tool) => tool.name === ARTIFACT_TOOLS.update)!;
+    expect(update.annotations?.readOnlyHint).toBe(false);
+    expect(update.risk({}, { model: null })).toBe("normal");
+  });
+});
+
+describe("sharing with a thread's guests from the thread's list", () => {
+  async function withGuest() {
+    const t = await team();
+    const id = await t.publish();
+    await t.json(
+      await t.api("PUT", `/artifacts/${id}/guests`, t.ada.cookie, {
+        threadId: t.thread.id,
+        shared: false,
+      }),
+    );
+    const invite = await t.api("POST", `/threads/${t.thread.id}/invites`, t.ada.cookie, {
+      accessFor: "1d",
+    });
+    const { url } = await t.json<{ url: string }>(invite);
+    await t.api("POST", "/invites/accept", t.bob.cookie, { token: url.split("/invite/")[1] });
+    const listed = async (who: { cookie: string }) =>
+      (
+        await t.json<{ id: string; guests: unknown }[]>(
+          await t.api("GET", `/threads/${t.thread.id}/artifacts`, who.cookie),
+        )
+      )[0]!.guests;
+    return { ...t, id, listed };
+  }
+
+  it("says so only to those who may change it, in a thread with guests", async () => {
+    const t = await withGuest();
+    expect(await t.listed(t.ada)).toEqual({ count: 1, shared: false, canChange: true });
+    expect(await t.listed(t.grace)).toEqual({ count: 1, shared: false, canChange: true });
+    expect(await t.listed(t.alan)).toBeNull();
+    expect(await t.listed(t.bob)).toBeNull();
+  });
+
+  it("is null in a thread without guests", async () => {
+    const t = await team();
+    await t.publish();
+    const list = await t.json<{ guests: unknown }[]>(
+      await t.api("GET", `/threads/${t.thread.id}/artifacts`, t.ada.cookie),
+    );
+    expect(list[0]!.guests).toBeNull();
+  });
+
+  it("shares with the guests, who can then open it", async () => {
+    const t = await withGuest();
+    expect((await t.api("GET", `/artifacts/${t.id}`, t.bob.cookie)).status).toBe(403);
+    await t.json(
+      await t.api("PUT", `/artifacts/${t.id}/guests`, t.ada.cookie, {
+        threadId: t.thread.id,
+        shared: true,
+      }),
+    );
+    expect(await t.listed(t.ada)).toEqual({ count: 1, shared: true, canChange: true });
+    expect((await t.api("GET", `/artifacts/${t.id}`, t.bob.cookie)).status).toBe(200);
+  });
+});
+
+describe("sharing with people", () => {
+  const put = (
+    t: Awaited<ReturnType<typeof team>>,
+    who: { cookie: string },
+    id: string,
+    u: string,
+    role?: "view" | "edit",
+  ) => t.api("PUT", `/artifacts/${id}/people/${u}`, who.cookie, role ? { role } : {});
+  const detailOf = async (
+    t: Awaited<ReturnType<typeof team>>,
+    who: { cookie: string },
+    id: string,
+  ) => t.json<ArtifactDetail>(await t.api("GET", `/artifacts/${id}`, who.cookie));
+
+  it("lets a person open it, view only, whatever its level", async () => {
+    const t = await team();
+    const id = await t.publish();
+    expect((await t.api("GET", `/artifacts/${id}`, t.carol.cookie)).status).toBe(404);
+    const detail = await t.json<ArtifactDetail>(await put(t, t.grace, id, t.carol.userId));
+    expect(detail.people).toEqual([
+      {
+        userId: t.carol.userId,
+        name: "Carol Shaw",
+        email: "carol@example.com",
+        former: false,
+        guest: false,
+        role: "view",
+      },
+    ]);
+    const opened = await detailOf(t, t.carol, id);
+    expect(opened.people).toEqual([]);
+    expect(opened.canShare).toBe(false);
+    expect((await t.view(t.carol, id)).status).toBe(200);
+    expect((await t.api("DELETE", `/artifacts/${id}`, t.carol.cookie)).status).toBe(403);
+    expect(
+      (await t.api("PUT", `/artifacts/${id}/sharing`, t.carol.cookie, { sharing: "org" })).status,
+    ).toBe(403);
+    expect((await put(t, t.carol, id, t.carol.userId)).status).toBe(403);
+    const gallery = await t.json<{ items: { id: string }[] }>(
+      await t.api("GET", "/artifacts", t.carol.cookie),
+    );
+    expect(gallery.items.map((one) => one.id)).toEqual([id]);
+  });
+
+  it("offers members outside the space and the thread's guests, not others", async () => {
     const t = await team();
     const id = await t.publish();
     const invite = await t.api("POST", `/threads/${t.thread.id}/invites`, t.ada.cookie, {
       accessFor: "1d",
     });
     const { url } = await t.json<{ url: string }>(invite);
-    const accepted = await t.api("POST", "/invites/accept", t.bob.cookie, {
-      token: url.split("/invite/")[1],
+    await t.api("POST", "/invites/accept", t.bob.cookie, { token: url.split("/invite/")[1] });
+    const candidates = async (q = "") =>
+      t.json<{ kind: string; name: string; already: string | null; current: string | null }[]>(
+        await t.api("GET", `/artifacts/${id}/people?q=${q}`, t.ada.cookie),
+      );
+    const found = async (q = "") => (await candidates(q)).map((one) => one.name);
+    // Ada is the asker. Grace posts in the space already, so she is marked; Alan only views it, so
+    // he may be given more.
+    expect((await found()).toSorted()).toEqual([
+      "Alan Turing",
+      "Bob Boole",
+      "Carol Shaw",
+      "Grace Hopper",
+    ]);
+    const marked = Object.fromEntries(
+      (await candidates()).map((one) => [one.name, [one.already, one.current]]),
+    );
+    expect(marked).toMatchObject({
+      "Grace Hopper": ["In the space · Message", null],
+      "Alan Turing": [null, "In the space · View"],
+      "Carol Shaw": [null, null],
     });
-    expect(accepted.status).toBe(200);
-    expect((await t.api("GET", `/threads/${t.thread.id}`, t.bob.cookie)).status).toBe(200);
-    expect((await t.api("GET", `/artifacts/${id}`, t.bob.cookie)).status).toBe(404);
+    expect(await found("carol")).toEqual(["Carol Shaw"]);
+    expect(await found("example")).toEqual(expect.arrayContaining(["Carol Shaw"]));
+    const outsider = await t.signUp("Dee Dee", "dee@example.com");
+    expect((await put(t, t.ada, id, outsider.userId)).status).toBe(404);
+    expect((await put(t, t.ada, id, t.grace.userId)).status).toBe(404);
+    expect((await put(t, t.ada, id, t.bob.userId)).status).toBe(200);
+    // A viewer of the space can be given Edit.
+    expect((await put(t, t.ada, id, t.alan.userId, "edit")).status).toBe(200);
     expect(
-      await t.json<unknown[]>(
-        await t.api("GET", `/threads/${t.thread.id}/artifacts`, t.bob.cookie),
-      ),
-    ).toEqual([]);
-    await t.json(
-      await t.api("PUT", "/org/artifacts/settings", t.ada.cookie, { publicAllowed: true }),
+      (await t.json<ArtifactDetail>(await t.api("GET", `/artifacts/${id}`, t.alan.cookie)))
+        .canShare,
+    ).toBe(true);
+  });
+
+  it("refuses those who may not change it, and removing someone not given it", async () => {
+    const t = await team();
+    const id = await t.publish();
+    expect((await put(t, t.alan, id, t.carol.userId)).status).toBe(403);
+    expect((await t.api("GET", `/artifacts/${id}/people`, t.alan.cookie)).status).toBe(403);
+    expect(
+      (await t.api("DELETE", `/artifacts/${id}/people/${t.carol.userId}`, t.ada.cookie)).status,
+    ).toBe(404);
+  });
+
+  it("ends when they are removed or leave the org", async () => {
+    const t = await team();
+    const id = await t.publish();
+    await t.json(await put(t, t.ada, id, t.carol.userId));
+    expect(t.artifacts.viewable(t.carol, id)).toBe(true);
+    await t.json(await t.api("DELETE", `/artifacts/${id}/people/${t.carol.userId}`, t.ada.cookie));
+    expect(t.artifacts.viewable(t.carol, id)).toBe(false);
+    await t.json(await put(t, t.ada, id, t.carol.userId));
+    expect(t.artifacts.viewable(t.carol, id)).toBe(true);
+    t.db.delete(schema.member).where(eq(schema.member.userId, t.carol.userId)).run();
+    expect(t.artifacts.viewable(t.carol, id)).toBe(false);
+    const detail = await detailOf(t, t.ada, id);
+    expect(detail.people[0]).toMatchObject({ name: "Carol Shaw", former: true });
+  });
+});
+
+describe("sharing with a group", () => {
+  // A group of the directory linked to Ada's org with Carol in it.
+  async function withGroup() {
+    const t = await team();
+    const id = await t.publish();
+    const carol = t.db.select().from(schema.user).where(eq(schema.user.id, t.carol.userId)).get()!;
+    const carolScim = await t.scim.createUser({ name: carol.name, email: carol.email });
+    const groupId = await t.scim.createGroup("Looms", [carolScim]);
+    t.db
+      .insert(schema.orgGroup)
+      .values({ organizationId: t.ada.orgId, groupId, role: "member" })
+      .run();
+    const give = (who: { cookie: string }, role?: "view" | "edit") =>
+      t.api("PUT", `/artifacts/${id}/groups/${groupId}`, who.cookie, role ? { role } : {});
+    const detailOf = async (who: { cookie: string }) =>
+      t.json<ArtifactDetail>(await t.api("GET", `/artifacts/${id}`, who.cookie));
+    return { ...t, id, groupId, carolScim, give, detailOf };
+  }
+
+  it("lets its members view the artifact, listed as one row, until it is removed", async () => {
+    const t = await withGroup();
+    expect(t.artifacts.viewable(t.carol, t.id)).toBe(false);
+    const detail = await t.json<ArtifactDetail>(await t.give(t.ada));
+    expect(detail.groups).toEqual([
+      { groupId: t.groupId, name: "Looms", memberCount: 1, role: "view" },
+    ]);
+    expect(t.artifacts.viewable(t.carol, t.id)).toBe(true);
+    expect((await t.detailOf(t.carol)).canShare).toBe(false);
+    expect((await t.detailOf(t.carol)).groups).toEqual([]);
+    expect(
+      (await t.api("DELETE", `/artifacts/${t.id}/groups/${t.groupId}`, t.ada.cookie)).status,
+    ).toBe(200);
+    expect(t.artifacts.viewable(t.carol, t.id)).toBe(false);
+    expect(
+      (await t.api("DELETE", `/artifacts/${t.id}/groups/${t.groupId}`, t.ada.cookie)).status,
+    ).toBe(404);
+  });
+
+  it("lets its members edit when given Edit, as long as they are in it", async () => {
+    const t = await withGroup();
+    await t.give(t.ada, "edit");
+    expect((await t.detailOf(t.carol)).canShare).toBe(true);
+    await t.scim.removeMembers(t.groupId, [t.carolScim]);
+    expect(t.artifacts.viewable(t.carol, t.id)).toBe(false);
+    await t.scim.addMembers(t.groupId, [t.carolScim]);
+    expect((await t.detailOf(t.carol)).canShare).toBe(true);
+  });
+
+  it("lets an editor change it while another of their orgs is open", async () => {
+    const t = await withGroup();
+    await t.give(t.ada, "edit");
+    const elsewhere = { ...t.carol, orgId: "another-org" };
+    expect(() => t.artifacts.candidates(elsewhere, t.id, undefined)).not.toThrow();
+  });
+
+  it("offers the group beside people and marks it once added", async () => {
+    const t = await withGroup();
+    const candidates = async () =>
+      t.json<{ kind: string; name: string; already: string | null; memberCount: number | null }[]>(
+        await t.api("GET", `/artifacts/${t.id}/people?q=loom`, t.ada.cookie),
+      );
+    expect(await candidates()).toEqual([
+      expect.objectContaining({ kind: "group", name: "Looms", already: null, memberCount: 1 }),
+    ]);
+    await t.give(t.ada);
+    expect((await candidates())[0]).toMatchObject({ already: "Added" });
+  });
+
+  it("refuses those who may not change the artifact", async () => {
+    const t = await withGroup();
+    expect((await t.give(t.alan)).status).toBe(403);
+    expect((await t.give(t.carol)).status).toBe(404);
+  });
+});
+
+describe("edit access", () => {
+  const sharing = (
+    t: Awaited<ReturnType<typeof team>>,
+    who: { cookie: string },
+    id: string,
+    body: object,
+  ) => t.api("PUT", `/artifacts/${id}/sharing`, who.cookie, body);
+  const detailOf = async (
+    t: Awaited<ReturnType<typeof team>>,
+    who: { cookie: string },
+    id: string,
+  ) => t.json<ArtifactDetail>(await t.api("GET", `/artifacts/${id}`, who.cookie));
+
+  it("lets a person given Edit change its sharing but not delete it", async () => {
+    const t = await team();
+    const id = await t.publish();
+    await t.api("PUT", `/artifacts/${id}/people/${t.carol.userId}`, t.grace.cookie, {
+      role: "edit",
+    });
+    const mine = await detailOf(t, t.carol, id);
+    expect(mine).toMatchObject({ canShare: true, canDelete: false });
+    expect(mine.people[0]).toMatchObject({ name: "Carol Shaw", role: "edit" });
+    expect((await sharing(t, t.carol, id, { sharing: "org" })).status).toBe(200);
+    expect((await detailOf(t, t.ada, id)).sharing).toBe("org");
+    expect((await t.api("DELETE", `/artifacts/${id}`, t.carol.cookie)).status).toBe(403);
+  });
+
+  it("keeps a person given View from changing it, and a change of role applies at once", async () => {
+    const t = await team();
+    const id = await t.publish();
+    await t.api("PUT", `/artifacts/${id}/people/${t.carol.userId}`, t.ada.cookie, { role: "edit" });
+    expect((await detailOf(t, t.carol, id)).canShare).toBe(true);
+    await t.api("PUT", `/artifacts/${id}/people/${t.carol.userId}`, t.ada.cookie, { role: "view" });
+    expect((await detailOf(t, t.carol, id)).canShare).toBe(false);
+    expect((await sharing(t, t.carol, id, { sharing: "org" })).status).toBe(403);
+  });
+
+  it("gives a guest of a thread View only", async () => {
+    const t = await team();
+    const id = await t.publish();
+    const invite = await t.api("POST", `/threads/${t.thread.id}/invites`, t.ada.cookie, {
+      accessFor: "1d",
+    });
+    const { url } = await t.json<{ url: string }>(invite);
+    await t.api("POST", "/invites/accept", t.bob.cookie, { token: url.split("/invite/")[1] });
+    const edit = await t.api("PUT", `/artifacts/${id}/people/${t.bob.userId}`, t.ada.cookie, {
+      role: "edit",
+    });
+    expect(edit.status).toBe(400);
+    const view = await t.json<ArtifactDetail>(
+      await t.api("PUT", `/artifacts/${id}/people/${t.bob.userId}`, t.ada.cookie, { role: "view" }),
     );
-    await t.json(
-      await t.api("PUT", `/artifacts/${id}/sharing`, t.ada.cookie, { sharing: "public" }),
-    );
-    expect((await t.api("GET", `/artifacts/${id}`, t.bob.cookie)).status).toBe(200);
-    const listed = await t.json<Artifact[]>(
-      await t.api("GET", `/threads/${t.thread.id}/artifacts`, t.bob.cookie),
-    );
-    expect(listed.map((one) => one.id)).toEqual([id]);
-    expect(listed[0]!.canDelete).toBe(false);
+    expect(view.people[0]).toMatchObject({ guest: true, role: "view" });
+  });
+
+  it("lets the org's members change its sharing when the org may Edit, and not when it may View", async () => {
+    const t = await team();
+    const id = await t.publish();
+    const shared = await t.json<ArtifactDetail>(await sharing(t, t.ada, id, { sharing: "org" }));
+    expect(shared.orgRole).toBe("view");
+    expect(await detailOf(t, t.carol, id)).toMatchObject({ canShare: false, orgRole: "view" });
+    expect((await sharing(t, t.carol, id, { sharing: "space" })).status).toBe(403);
+
+    await sharing(t, t.ada, id, { sharing: "org", orgRole: "edit" });
+    expect(await detailOf(t, t.carol, id)).toMatchObject({
+      canShare: true,
+      canDelete: false,
+      orgRole: "edit",
+    });
+    expect((await t.api("DELETE", `/artifacts/${id}`, t.carol.cookie)).status).toBe(403);
+    expect((await sharing(t, t.carol, id, { sharing: "org", orgRole: "view" })).status).toBe(200);
+    expect((await detailOf(t, t.carol, id)).canShare).toBe(false);
+  });
+
+  it("applies the org's Edit only while it is shared with the org", async () => {
+    const t = await team();
+    const id = await t.publish();
+    await sharing(t, t.ada, id, { sharing: "org", orgRole: "edit" });
+    await sharing(t, t.ada, id, { sharing: "space" });
+    expect((await t.api("GET", `/artifacts/${id}`, t.carol.cookie)).status).toBe(404);
+    expect((await sharing(t, t.carol, id, { sharing: "org" })).status).toBe(404);
+  });
+
+  it("leaves deleting and the space's members as they were", async () => {
+    const t = await team();
+    const id = await t.publish();
+    expect(await detailOf(t, t.grace, id)).toMatchObject({ canShare: true, canDelete: true });
+    expect(await detailOf(t, t.alan, id)).toMatchObject({ canShare: false, canDelete: false });
   });
 });
 
@@ -524,6 +1078,7 @@ describe("viewing links", () => {
       spaceStore: t.spaceStore,
       spaces: t.spaces,
       access: t.access,
+      guests: t.guestStore,
       directory: t.directory,
       appOrigin: "http://localhost:4783",
       artifactOrigin: null,
@@ -570,6 +1125,7 @@ describe("an origin per artifact", () => {
       spaceStore: t.spaceStore,
       spaces: t.spaces,
       access: t.access,
+      guests: t.guestStore,
       directory: t.directory,
       appOrigin: "http://localhost:4783",
       artifactOrigin: PATTERN,

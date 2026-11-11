@@ -3,12 +3,12 @@
 // shows is read then. A list in it scrolls, searches when long, and reads more as it is scrolled.
 
 import { cn } from "cn";
-import { SearchIcon } from "lucide-react";
 import type * as React from "react";
 import { useState } from "react";
 
+import { EmptyState } from "@/web/components/page-states";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/web/components/ui/hover-card";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
+import { FilterInput } from "@/web/components/filter-input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/web/components/ui/popover";
 import { Skeleton } from "@/web/components/ui/skeleton";
 import { useDebounced } from "@/web/hooks/use-debounced";
@@ -88,18 +88,12 @@ export function PeekList<T>({
       </div>
       {searchable && (
         <div className="px-2 pb-1.5">
-          <InputGroup className="h-7">
-            <InputGroupInput
-              aria-label={`Search ${title.toLowerCase()}`}
-              placeholder="Search"
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              className="text-xs"
-            />
-            <InputGroupAddon>
-              <SearchIcon />
-            </InputGroupAddon>
-          </InputGroup>
+          <FilterInput
+            label={`Search ${title.toLowerCase()}`}
+            placeholder="Search"
+            value={text}
+            onChange={setText}
+          />
         </div>
       )}
       <ul
@@ -128,7 +122,9 @@ export function PeekList<T>({
           </li>
         ))}
         {list.total !== undefined && list.items.length === 0 && (
-          <li className="px-2 py-1.5 text-sm text-muted-foreground">{q ? "No matches" : empty}</li>
+          <li>
+            <EmptyState compact title={q ? "No matches" : empty} />
+          </li>
         )}
       </ul>
     </div>

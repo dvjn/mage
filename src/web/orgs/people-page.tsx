@@ -8,8 +8,7 @@
 
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
-import { MailIcon, MailXIcon, UserMinusIcon, UserPlusIcon, UsersIcon } from "lucide-react";
-import type * as React from "react";
+import { MailIcon, UserPlusIcon, UsersIcon } from "lucide-react";
 import { useState } from "react";
 
 import {
@@ -24,20 +23,22 @@ import { DataTable } from "@/web/components/data-table/data-table";
 import { DataTableToolbar } from "@/web/components/data-table/data-table-toolbar";
 import {
   actionsColumn,
-  ActionsMenu,
   contextColumn,
   filterColumn,
   HeaderAction,
   nameColumn,
+  RemoveButton,
+  RemoveConfirm,
+  removalCopy,
   type RoleChoice,
   roleColumn,
-  RoleControl,
+  RoleMenu,
+  RowActions,
   Subject,
 } from "@/web/shell/people-table";
 import { SettingsCard, SettingsTitle } from "@/web/shell/settings-page";
 import { Time } from "@/web/components/time";
-import { Badge } from "@/web/components/ui/badge";
-import { DropdownMenuItem } from "@/web/components/ui/dropdown-menu";
+import { RowBadge } from "@/web/shell/settings-row";
 import { FieldError } from "@/web/components/ui/field";
 import { useDataTable } from "@/web/hooks/use-data-table";
 import { type FilterOption, lenient, tableSearchSchema, withoutUnset } from "@/web/lib/data-table";
@@ -51,11 +52,10 @@ import { meQuery } from "@/web/auth/queries";
 import { LOCK_REASONS } from "@/web/spaces/roles";
 import { timeUntil } from "@/web/lib/time";
 import { plural } from "@/web/lib/plural";
-import { ConfirmDialog } from "@/web/components/confirm-dialog";
-import { ROLE_OPTIONS } from "@/web/orgs/role-select";
-import { AddPeopleDialog } from "@/web/orgs/add-people-dialog";
+import { ORG_ROLE_LEVELS } from "@/web/sharing/access-level";
+import { AddPeopleToOrg } from "@/web/spaces/add-people-dialog";
 import { GroupMembersPeek, ViaGroups } from "@/web/orgs/people-peeks";
-import { useOrgRemoval, useOrgRole } from "@/web/orgs/mutations";
+import { useOrgAdd, useOrgRemoval, useOrgRole } from "@/web/orgs/mutations";
 
 // The search, role, status and page in the address.
 export const peopleSearchSchema = tableSearchSchema.extend({
@@ -104,6 +104,7 @@ export function OrgPeople() {
   const [removing, setRemoving] = useState<OrgPerson | null>(null);
   const roleChange = useOrgRole();
   const removeMutation = useOrgRemoval();
+  const add = useOrgAdd();
 
   function remove() {
     if (!removing) return;
@@ -142,7 +143,7 @@ export function OrgPeople() {
     filters: ["role", "status"],
     hidden: ["status"],
   });
-  const removal = removing && removalOf(removing, me.data?.org.name ?? "");
+  const removal = removing && removalOf(removing);
 
   return (
     <>
@@ -185,19 +186,34 @@ export function OrgPeople() {
           </DataTable>
         </SettingsCard>
       )}
-      <AddPeopleDialog open={adding} onOpenChange={setAdding} directory={directory} />
-      <ConfirmDialog
-        open={!!removing}
+      <AddPeopleToOrg
+        open={adding}
         onOpenChange={(open) => {
-          if (open) return;
+          setAdding(open);
+          if (!open) add.reset();
+        }}
+        directory={directory}
+        onAdd={async (target, role) => {
+          try {
+            const invite = await add.mutateAsync(
+              "option" in target
+                ? { kind: target.option.kind, id: target.option.id, role }
+                : { email: target.email, role },
+            );
+            return invite ? { invite } : undefined;
+          } catch (failed) {
+            return { error: failed instanceof Error ? failed.message : "Could not add them" };
+          }
+        }}
+      />
+      <RemoveConfirm
+        subject={removal}
+        onClose={() => {
           setRemoving(null);
           removeMutation.reset();
         }}
-        title={removal?.title}
-        description={removal?.description}
         error={removeMutation.error?.message}
         disabled={removeMutation.isPending}
-        action="Remove"
         onConfirm={remove}
       />
     </>
@@ -205,25 +221,14 @@ export function OrgPeople() {
 }
 
 // What removing a row asks: a member who is also in through a group loses only their own role.
-function removalOf(person: OrgPerson, orgName: string) {
-  if (person.kind === "invite") {
-    return {
-      title: `Remove the invite for ${person.email}?`,
-      description: "The link stops working.",
-    };
-  }
-  if (person.kind === "group") {
-    return {
-      title: `Remove ${person.name}?`,
-      description: "Its people lose access unless they're added another way.",
-    };
-  }
-  return {
-    title: `Remove ${person.name}?`,
-    description: person.groupRole
-      ? `They stay in through ${groupsOf(person)} as ${ORG_ROLE_LABELS[person.groupRole]}.`
-      : `They lose access to ${orgName} and its spaces.`,
-  };
+function removalOf(person: OrgPerson) {
+  if (person.kind === "invite") return removalCopy("invite", person.email);
+  if (person.kind === "group") return removalCopy("group", person.name);
+  return removalCopy(
+    "person",
+    person.name,
+    person.groupRole ? `${groupsOf(person)} as ${ORG_ROLE_LABELS[person.groupRole]}` : undefined,
+  );
 }
 
 // The linked groups a member is in, as "Engineering" or "Design and 1 other".
@@ -239,10 +244,10 @@ function roleOf(
   manages: boolean,
   onRole: (person: OrgPerson, role: OrgRole) => void,
 ): RoleChoice<OrgRole> {
-  if (person.kind === "invite") return { value: person.role, options: ROLE_OPTIONS };
+  if (person.kind === "invite") return { value: person.role, levels: ORG_ROLE_LEVELS };
   return {
     value: person.role,
-    options: ROLE_OPTIONS,
+    levels: ORG_ROLE_LEVELS,
     ...(manages && { onChange: (role: OrgRole) => onRole(person, role) }),
     ...(manages &&
       person.kind === "member" &&
@@ -265,12 +270,6 @@ function peopleColumns({
   onRole: (person: OrgPerson, role: OrgRole) => void;
   onRemove: (person: OrgPerson) => void;
 }) {
-  const remove = (person: OrgPerson, icon: React.ReactNode) => (
-    <DropdownMenuItem variant="destructive" onClick={() => onRemove(person)}>
-      {icon}
-      Remove
-    </DropdownMenuItem>
-  );
   return [
     nameColumn<OrgPerson>("Name", (person) =>
       person.kind === "invite" ? (
@@ -286,9 +285,9 @@ function peopleColumns({
           name={
             <>
               {person.name}{" "}
-              <Badge variant="secondary" className="ml-1 rounded-sm px-1 align-middle font-normal">
-                Directory
-              </Badge>
+              <span className="ml-1 align-middle">
+                <RowBadge>Directory</RowBadge>
+              </span>
             </>
           }
           detail={<GroupMembersPeek group={person} />}
@@ -305,14 +304,12 @@ function peopleColumns({
         />
       ),
     ),
-    roleColumn<OrgPerson>(
-      (person) => (
-        <RoleControl
-          label={`Role of ${person.kind === "invite" ? person.email : person.name}`}
-          choice={roleOf(person, manages, onRole)}
-        />
-      ),
-      ROLE_OPTIONS,
+    roleColumn<OrgPerson, OrgRole>(
+      (person) => ({
+        label: `Role of ${person.kind === "invite" ? person.email : person.name}`,
+        ...roleOf(person, manages, onRole),
+      }),
+      ORG_ROLE_LEVELS.map(({ value, label }) => ({ value, label })),
     ),
     contextColumn<OrgPerson>(
       "joined",
@@ -325,21 +322,18 @@ function peopleColumns({
         ),
       "whitespace-nowrap",
     ),
-    actionsColumn<OrgPerson>((person) =>
-      person.kind === "invite" ? (
-        <ActionsMenu label={person.email} destructive={remove(person, <MailXIcon />)} />
-      ) : (
-        <ActionsMenu
-          label={person.name}
-          role={roleOf(person, manages, onRole)}
-          destructive={
-            manages &&
-            !(person.kind === "member" && person.userId === you) &&
-            remove(person, <UserMinusIcon />)
-          }
-        />
-      ),
-    ),
+    actionsColumn<OrgPerson>((person) => {
+      const name = person.kind === "invite" ? person.email : person.name;
+      const removable =
+        person.kind === "invite" ||
+        (manages && !(person.kind === "member" && person.userId === you));
+      return (
+        <RowActions>
+          <RoleMenu name={name} role={roleOf(person, manages, onRole)} />
+          {removable && <RemoveButton name={name} onClick={() => onRemove(person)} />}
+        </RowActions>
+      );
+    }),
     ...(status ? [filterColumn<OrgPerson>("status", "Status", status)] : []),
   ];
 }

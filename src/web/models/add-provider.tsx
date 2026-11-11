@@ -26,13 +26,12 @@ import { ClaudeSignIn } from "@/web/models/claude-sign-in";
 import { CodexSignIn } from "@/web/models/codex-sign-in";
 import { Button } from "@/web/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/web/components/ui/dialog";
+import { ResponsiveDialog, ResponsiveDialogContent } from "@/web/components/responsive-dialog";
 import { Field, FieldError, FieldLabel } from "@/web/components/ui/field";
 import { defaultModelQuery, modelsQuery } from "@/web/models/queries";
 import { Choice, HostGrid } from "@/web/models/host-grid";
@@ -200,13 +199,15 @@ export function AddProviderDialog({
   }[step.name];
 
   return (
-    <Dialog
+    <ResponsiveDialog
       open={open}
       onOpenChange={(next) => {
         if (!next) close();
       }}
     >
-      <DialogContent className={cn("sm:max-w-lg", step.name === "host" && "sm:max-w-2xl")}>
+      <ResponsiveDialogContent
+        className={cn("sm:max-w-lg", step.name === "host" && "sm:max-w-2xl")}
+      >
         <DialogHeader>
           <div className="flex items-center gap-2">
             {(step.name === "method" || step.name === "credentials") && (
@@ -264,7 +265,7 @@ export function AddProviderDialog({
           />
         )}
         {step.name === "done" && <DoneStep connection={step.connection} onClose={close} />}
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

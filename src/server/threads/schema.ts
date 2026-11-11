@@ -32,6 +32,10 @@ export const thread = sqliteTable(
     rootThreadId: text("root_thread_id"),
     // The branch people see and the agent reads; set for every thread, its root's id being its own.
     currentBranchId: text("current_branch_id"),
+    // What the members of its org outside its space may do in it: nothing, read it, or read and post.
+    orgAccess: text("org_access", { enum: ["none", "view", "message"] })
+      .default("none")
+      .notNull(),
     // The seq of the thread's newest event in any branch; 0 before the first.
     lastEventSeq: integer("last_event_seq").default(0).notNull(),
     // The text of its newest message or reply without markdown, on one line, which lists find it by;

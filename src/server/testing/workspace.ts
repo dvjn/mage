@@ -231,6 +231,7 @@ export function setup(
     spaces,
     threads: threadStore,
     guests: guestStore,
+    directory,
   });
   const toolSettings = createToolSettingStore(db);
   const toolPolicyStore = createToolPolicyStore(db);
@@ -316,6 +317,7 @@ export function setup(
     spaceStore,
     spaces,
     access,
+    guests: guestStore,
     directory,
     appOrigin: baseUrl,
     artifactOrigin: ARTIFACT_ORIGIN,
@@ -459,6 +461,7 @@ export function setup(
     guests: createGuests({
       access,
       guests: guestStore,
+      directory,
       threads: threadStore,
       transact,
       bus: countingBus,

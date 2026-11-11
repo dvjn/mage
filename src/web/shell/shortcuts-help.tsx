@@ -4,13 +4,8 @@
 import { createContext, type ReactNode, use, useCallback, useState } from "react";
 
 import { ShortcutKeys } from "@/web/components/shortcut-keys";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/web/components/ui/dialog";
+import { DialogDescription, DialogHeader, DialogTitle } from "@/web/components/ui/dialog";
+import { ResponsiveDialog, ResponsiveDialogContent } from "@/web/components/responsive-dialog";
 import { shortcutsByGroup, useShortcut } from "@/web/lib/shortcuts";
 
 const OpenHelpContext = createContext<(() => void) | null>(null);
@@ -30,8 +25,8 @@ export function ShortcutsHelpProvider({ children }: { children: ReactNode }) {
   return (
     <OpenHelpContext value={show}>
       {children}
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+      <ResponsiveDialog open={open} onOpenChange={setOpen}>
+        <ResponsiveDialogContent>
           <DialogHeader>
             <DialogTitle>Keyboard shortcuts</DialogTitle>
             <DialogDescription>
@@ -56,8 +51,8 @@ export function ShortcutsHelpProvider({ children }: { children: ReactNode }) {
               </section>
             ))}
           </div>
-        </DialogContent>
-      </Dialog>
+        </ResponsiveDialogContent>
+      </ResponsiveDialog>
     </OpenHelpContext>
   );
 }

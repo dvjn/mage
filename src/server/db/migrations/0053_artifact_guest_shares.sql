@@ -1,0 +1,2 @@
+ALTER TABLE `artifact_thread_use` ADD `guests_shared_at` integer;--> statement-breakpoint
+ALTER TABLE `artifact_thread_use` ADD `guests_shared_by` text REFERENCES `user`(`id`) ON UPDATE no action ON DELETE set null;

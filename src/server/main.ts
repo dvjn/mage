@@ -145,7 +145,12 @@ const spaces = createSpaces({
   hooks,
 });
 const guestStore = createGuestStore(db);
-const access = createThreadAccess({ spaces, threads: threadStore, guests: guestStore });
+const access = createThreadAccess({
+  spaces,
+  threads: threadStore,
+  guests: guestStore,
+  directory,
+});
 const toolSettings = createToolSettingStore(db);
 const toolPolicyStore = createToolPolicyStore(db);
 const mcp = createMcpServers({
@@ -189,6 +194,7 @@ const artifacts = createArtifacts({
   spaceStore,
   spaces,
   access,
+  guests: guestStore,
   directory,
   appOrigin: new URL(config.baseUrl).origin,
   artifactOrigin: config.artifactOrigin,
@@ -359,6 +365,7 @@ const app = createApp({
   guests: createGuests({
     access,
     guests: guestStore,
+    directory,
     threads: threadStore,
     transact,
     bus,

@@ -6,14 +6,13 @@ import { type SkillSourceSummary } from "@/shared/skills.ts";
 import { useToast } from "@/web/shell/toaster";
 import { Button } from "@/web/components/ui/button";
 import {
-  Dialog,
   DialogClose,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/web/components/ui/dialog";
+import { ResponsiveDialog, ResponsiveDialogContent } from "@/web/components/responsive-dialog";
 import { Field, FieldError, FieldLabel } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
 import { apiClient } from "@/web/api/api-client";
@@ -44,8 +43,8 @@ export function TokenDialog({
   }
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-md">
+    <ResponsiveDialog open onOpenChange={(open) => !open && onClose()}>
+      <ResponsiveDialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{source.hasToken ? "Change token" : "Add a token"}</DialogTitle>
           <DialogDescription>Never shown again.</DialogDescription>
@@ -87,7 +86,7 @@ export function TokenDialog({
             </Button>
           </DialogFooter>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

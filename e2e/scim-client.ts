@@ -72,14 +72,25 @@ export function scimClient(options: ScimClientOptions) {
     },
 
     // Provisions the group with the people in it; resolves to its id at Mage's SCIM service.
-    async createGroup(name: string, memberIds: string[] = []) {
+    async createGroup(name: string, memberIds: string[] = [], email?: string) {
       const created = await request("POST", "/Groups", {
         schemas: [GROUP],
         externalId: name,
         displayName: name,
         members: members(memberIds),
+        ...(email && { emails: [{ value: email, type: "work", primary: true }] }),
       });
       return created?.id as string;
+    },
+
+    // Sets the group's email the way Entra ID sends a mapped attribute, or takes it away.
+    setGroupEmail(groupId: string, email: string | null) {
+      return patch(
+        `/Groups/${groupId}`,
+        email
+          ? [{ op: "replace", path: 'emails[type eq "work"].value', value: email }]
+          : [{ op: "remove", path: "emails" }],
+      );
     },
 
     addMembers(groupId: string, memberIds: string[]) {

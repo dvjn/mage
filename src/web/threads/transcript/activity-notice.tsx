@@ -62,7 +62,7 @@ export function ActivityNotice({
           {more && (
             <CollapsibleTrigger
               aria-label={isOpen ? "Hide details" : "Show details"}
-              className="group/notice -my-0.5 -mr-1 shrink-0 rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+              className="group/notice -my-0.5 shrink-0 rounded-md p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
             >
               <ChevronDownIcon
                 aria-hidden

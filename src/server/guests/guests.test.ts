@@ -1,8 +1,11 @@
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ThreadPeople } from "@/shared/guests.ts";
 
+import { ulid } from "ulid";
+
+import * as schema from "@/server/schema.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { openStream } from "@/server/testing/sse.ts";
 import { setup } from "@/server/testing/workspace.ts";
@@ -79,7 +82,12 @@ describe("thread access", () => {
     expect(access.of(ada, stored)).toEqual({ via: "space", role: "owner" });
     expect(access.of(alan, stored)).toEqual({ via: "space", role: "messager" });
     expect(access.of(grace, stored)).toEqual({ via: "space", role: "viewer" });
-    expect(access.of(hedy, stored)).toEqual({ via: "guest", spaceName: "Ada Lovelace's Space" });
+    expect(access.of(hedy, stored)).toEqual({
+      via: "guest",
+      role: "message",
+      viaOrg: false,
+      spaceName: "Ada Lovelace's Space",
+    });
     expect(access.can(hedy, stored, "post")).toBe(true);
     expect(access.can(grace, stored, "post")).toBe(false);
     for (const action of ["arrange", "share", "delete"] as const) {
@@ -387,6 +395,475 @@ describe("revoking", () => {
     expect(await people(workspace, ada, thread.id)).toEqual({
       people: [expect.objectContaining({ name: "Ada Lovelace", kind: "member" })],
       invites: [],
+      orgAccess: "none",
     });
+  });
+});
+
+describe("adding a guest directly", () => {
+  // Makes the person a member of the thread's org without a place in its space.
+  function intoOrg(workspace: Workspace, person: Person, orgId: string) {
+    workspace.db
+      .insert(schema.member)
+      .values({
+        id: ulid(),
+        organizationId: orgId,
+        userId: person.userId,
+        role: "member",
+        directRole: "member",
+        createdAt: new Date(),
+      })
+      .run();
+    return { ...person, orgId };
+  }
+
+  async function candidates(workspace: Workspace, by: Person, threadId: string, q = "") {
+    const res = await workspace.api(
+      "GET",
+      `/threads/${threadId}/guest-candidates?q=${q}`,
+      by.cookie,
+    );
+    expect(res.status).toBe(200);
+    return (
+      (await res.json()) as {
+        items: { kind: string; id: string; name: string; already: string | null }[];
+      }
+    ).items;
+  }
+
+  function add(
+    workspace: Workspace,
+    by: Person,
+    threadId: string,
+    userId: string,
+    accessFor = "1d",
+  ) {
+    return workspace.api("POST", `/threads/${threadId}/guests`, by.cookie, { userId, accessFor });
+  }
+
+  it("lets a messager add an org member outside the space, who then finds the thread shared", async () => {
+    const workspace = await sharedThread();
+    const { alan, ada, thread } = workspace;
+    const edsger = intoOrg(
+      workspace,
+      await workspace.signUp("Edsger Dijkstra", "e@example.com"),
+      ada.orgId,
+    );
+
+    const res = await add(workspace, alan, thread.id, edsger.userId, "never");
+    expect(res.status).toBe(200);
+
+    const shared = await workspace.api("GET", "/shared-threads", edsger.cookie);
+    expect(await shared.json()).toEqual([
+      expect.objectContaining({ id: thread.id, accessUntil: null }),
+    ]);
+    expect((await people(workspace, ada, thread.id)).people).toContainEqual(
+      expect.objectContaining({ userId: edsger.userId, kind: "guest", invitedBy: "Alan Turing" }),
+    );
+  });
+
+  it("gives access for as long as asked", async () => {
+    const workspace = await sharedThread();
+    const { ada, thread } = workspace;
+    const edsger = intoOrg(
+      workspace,
+      await workspace.signUp("Edsger Dijkstra", "e@example.com"),
+      ada.orgId,
+    );
+    await add(workspace, ada, thread.id, edsger.userId, "1h");
+
+    const { people: listed } = await people(workspace, ada, thread.id);
+    const until = new Date(listed.find((p) => p.userId === edsger.userId)!.accessUntil!).getTime();
+    expect(Math.abs(until - (Date.now() + 60 * 60 * 1000))).toBeLessThan(60_000);
+  });
+
+  it("refuses a viewer, and anyone in the space or outside the org", async () => {
+    const workspace = await sharedThread();
+    const { ada, alan, grace, hedy, thread } = workspace;
+    const edsger = intoOrg(
+      workspace,
+      await workspace.signUp("Edsger Dijkstra", "e@example.com"),
+      ada.orgId,
+    );
+
+    expect((await add(workspace, grace, thread.id, edsger.userId)).status).toBe(403);
+    expect((await add(workspace, ada, thread.id, alan.userId)).status).toBe(404);
+    expect((await add(workspace, ada, thread.id, hedy.userId)).status).toBe(404);
+    expect((await add(workspace, ada, thread.id, edsger.userId, "forever")).status).toBe(400);
+    expect((await add(workspace, ada, thread.id, edsger.userId)).status).toBe(200);
+    // Already a guest.
+    expect((await add(workspace, ada, thread.id, edsger.userId)).status).toBe(404);
+  });
+
+  it("offers the org's members who are not in the space or its guests, and marks the rest", async () => {
+    const workspace = await sharedThread();
+    const { ada, grace, thread } = workspace;
+    intoOrg(workspace, await workspace.signUp("Edsger Dijkstra", "e@example.com"), ada.orgId);
+    const donald = intoOrg(
+      workspace,
+      await workspace.signUp("Donald Knuth", "d@example.com"),
+      ada.orgId,
+    );
+
+    const open = async (q = "") =>
+      (await candidates(workspace, ada, thread.id, q))
+        .filter((one) => !one.already)
+        .map((one) => one.name);
+    expect(await open()).toEqual(["Donald Knuth", "Edsger Dijkstra"]);
+    expect(await open("edsg")).toEqual(["Edsger Dijkstra"]);
+    await add(workspace, ada, thread.id, donald.userId);
+    expect(await open()).toEqual(["Edsger Dijkstra"]);
+    const refused = await workspace.api(
+      "GET",
+      `/threads/${thread.id}/guest-candidates`,
+      grace.cookie,
+    );
+    expect(refused.status).toBe(403);
+  });
+
+  it("marks who already has access, and why", async () => {
+    const workspace = await sharedThread();
+    const { ada, thread } = workspace;
+    const donald = intoOrg(
+      workspace,
+      await workspace.signUp("Donald Knuth", "d@example.com"),
+      ada.orgId,
+    );
+    await add(workspace, ada, thread.id, donald.userId);
+    const reasons = Object.fromEntries(
+      (await candidates(workspace, ada, thread.id)).map((one) => [one.name, one.already]),
+    );
+    expect(reasons).toMatchObject({
+      "Ada Lovelace": "Owner",
+      "Alan Turing": "In the space · Message",
+      "Grace Hopper": "In the space · View",
+      "Donald Knuth": "Guest",
+    });
+  });
+});
+
+// A member of Ada's org with no role in her space.
+async function orgMember(workspace: Workspace, ada: Person, name: string, email: string) {
+  const user = await workspace.signUp(name, email);
+  workspace.db
+    .insert(schema.member)
+    .values({
+      id: ulid(),
+      organizationId: ada.orgId,
+      userId: user.userId,
+      role: "member",
+      directRole: "member",
+      createdAt: new Date(),
+    })
+    .run();
+  workspace.db
+    .update(schema.session)
+    .set({ activeOrganizationId: ada.orgId })
+    .where(eq(schema.session.userId, user.userId))
+    .run();
+  return { ...user, orgId: ada.orgId };
+}
+
+async function sharedIds(workspace: Workspace, who: Person) {
+  const res = await workspace.api("GET", "/shared-threads", who.cookie);
+  return ((await res.json()) as { id: string }[]).map((one) => one.id);
+}
+
+describe("sharing with the organization", () => {
+  async function withOrgMember() {
+    const workspace = await sharedThread();
+    const dee = await orgMember(workspace, workspace.ada, "Dee Dee", "dee@example.com");
+    const set = (orgAccess: string, by: Person = workspace.ada) =>
+      workspace.api("PUT", `/threads/${workspace.thread.id}/org-access`, by.cookie, { orgAccess });
+    const post = () =>
+      workspace.api("POST", `/threads/${workspace.thread.id}/messages`, dee.cookie, {
+        text: "// Hello",
+      });
+    return { ...workspace, dee, set, post };
+  }
+
+  it("is off until the thread is shared with the org", async () => {
+    const { api, dee, thread, post } = await withOrgMember();
+    expect((await api("GET", `/threads/${thread.id}`, dee.cookie)).status).toBe(404);
+    expect((await post()).status).toBe(404);
+  });
+
+  it("lets the org's members read it as View, and not post", async () => {
+    const t = await withOrgMember();
+    expect((await t.set("view")).status).toBe(200);
+    expect((await t.api("GET", `/threads/${t.thread.id}`, t.dee.cookie)).status).toBe(200);
+    expect(await sharedIds(t, t.dee)).toEqual([t.thread.id]);
+    expect((await t.post()).status).toBe(403);
+    expect((await t.api("GET", `/threads/${t.thread.id}/people`, t.dee.cookie)).status).toBe(403);
+  });
+
+  it("lets them post as Message, and lists it for them as shared either way", async () => {
+    const t = await withOrgMember();
+    await t.set("message");
+    expect(await sharedIds(t, t.dee)).toEqual([t.thread.id]);
+    expect((await t.post()).status).toBe(202);
+    const page = await t.api("GET", "/shared-threads/page", t.dee.cookie);
+    expect(((await page.json()) as { items: { id: string }[] }).items.map((i) => i.id)).toEqual([
+      t.thread.id,
+    ]);
+  });
+
+  it("is not a way into the space, for its members or for other orgs", async () => {
+    const t = await withOrgMember();
+    await t.set("message");
+    expect(await sharedIds(t, t.alan)).toEqual([]);
+    expect(await sharedIds(t, t.hedy)).toEqual([]);
+    expect((await t.api("GET", `/threads/${t.thread.id}`, t.hedy.cookie)).status).toBe(404);
+  });
+
+  it("ends when the org's access is turned off", async () => {
+    const t = await withOrgMember();
+    await t.set("message");
+    await t.set("none");
+    expect((await t.api("GET", `/threads/${t.thread.id}`, t.dee.cookie)).status).toBe(404);
+    expect(await sharedIds(t, t.dee)).toEqual([]);
+    expect((await t.post()).status).toBe(404);
+  });
+
+  it("is changed by those who may share the thread", async () => {
+    const t = await withOrgMember();
+    expect((await t.set("view", t.alan)).status).toBe(200);
+    expect((await t.set("none", t.grace)).status).toBe(403);
+    expect((await t.set("view", t.dee)).status).toBe(403);
+    expect((await people(t, t.ada, t.thread.id)).orgAccess).toBe("view");
+  });
+
+  it("leaves a guest of the thread their own role", async () => {
+    const t = await withOrgMember();
+    await t.set("view");
+    await letIn(t, t.ada, t.thread.id, t.dee);
+    expect((await t.post()).status).toBe(202);
+    await t.api("PUT", `/threads/${t.thread.id}/guests/${t.dee.userId}/role`, t.ada.cookie, {
+      role: "view",
+    });
+    expect((await t.post()).status).toBe(403);
+  });
+});
+
+describe("guest roles", () => {
+  const roleOf = async (workspace: Workspace, ada: Person, threadId: string, userId: string) =>
+    (await people(workspace, ada, threadId)).people.find((one) => one.userId === userId)?.access;
+
+  it("default to Message, so guests keep posting", async () => {
+    const t = await sharedThread();
+    await letIn(t, t.ada, t.thread.id, t.hedy);
+    expect(await roleOf(t, t.ada, t.thread.id, t.hedy.userId)).toBe("message");
+    // A grant that names no role, as every one made before roles was.
+    t.guestStore.grant({
+      threadId: t.thread.id,
+      userId: t.joan.userId,
+      invitedBy: t.ada.userId,
+      accessUntil: null,
+    });
+    expect(await roleOf(t, t.ada, t.thread.id, t.joan.userId)).toBe("message");
+  });
+
+  it("let a View guest read but not post, and a Message guest post", async () => {
+    const t = await sharedThread();
+    const view = await t.api("POST", `/threads/${t.thread.id}/invites`, t.ada.cookie, {
+      accessFor: "1d",
+      role: "view",
+    });
+    const { url } = (await view.json()) as { url: string };
+    expect((await accept(t, t.hedy, url.split("/invite/")[1]!)).status).toBe(200);
+    expect(await roleOf(t, t.ada, t.thread.id, t.hedy.userId)).toBe("view");
+    expect((await t.api("GET", `/threads/${t.thread.id}`, t.hedy.cookie)).status).toBe(200);
+    const body = { text: "// Hello" };
+    expect(
+      (await t.api("POST", `/threads/${t.thread.id}/messages`, t.hedy.cookie, body)).status,
+    ).toBe(403);
+    expect(t.access.can(t.hedy, t.threadStore.find(t.thread.id)!, "post")).toBe(false);
+
+    await letIn(t, t.ada, t.thread.id, t.joan);
+    expect(
+      (await t.api("POST", `/threads/${t.thread.id}/messages`, t.joan.cookie, body)).status,
+    ).toBe(202);
+  });
+
+  it("change at once, for a guest and for a link not yet used", async () => {
+    const t = await sharedThread();
+    await letIn(t, t.ada, t.thread.id, t.hedy);
+    const change = (role: string) =>
+      t.api("PUT", `/threads/${t.thread.id}/guests/${t.hedy.userId}/role`, t.ada.cookie, { role });
+    expect((await change("view")).status).toBe(200);
+    expect(await roleOf(t, t.ada, t.thread.id, t.hedy.userId)).toBe("view");
+    expect(
+      (await t.api("POST", `/threads/${t.thread.id}/messages`, t.hedy.cookie, { text: "Hi" }))
+        .status,
+    ).toBe(403);
+    expect((await change("message")).status).toBe(200);
+
+    const made = await invite(t, t.ada, t.thread.id);
+    expect(made.status).toBe(200);
+    const { id } = (await made.json()) as { id: string };
+    expect(
+      (
+        await t.api("PUT", `/threads/${t.thread.id}/invites/${id}/role`, t.ada.cookie, {
+          role: "view",
+        })
+      ).status,
+    ).toBe(200);
+    expect((await people(t, t.ada, t.thread.id)).invites[0]).toMatchObject({ id, role: "view" });
+    expect((await change("view")).status).toBe(200);
+    expect((await change("nonsense")).status).toBe(400);
+  });
+
+  it("are given when adding a member of the org directly", async () => {
+    const t = await sharedThread();
+    const dee = await orgMember(t, t.ada, "Dee Dee", "dee@example.com");
+    const res = await t.api("POST", `/threads/${t.thread.id}/guests`, t.ada.cookie, {
+      userId: dee.userId,
+      accessFor: "1d",
+      role: "view",
+    });
+    expect(res.status).toBe(200);
+    expect(await roleOf(t, t.ada, t.thread.id, dee.userId)).toBe("view");
+  });
+});
+
+describe("sharing with a group", () => {
+  async function candidates(workspace: Workspace, by: Person, threadId: string, q = "") {
+    const res = await workspace.api(
+      "GET",
+      `/threads/${threadId}/guest-candidates?q=${q}`,
+      by.cookie,
+    );
+    expect(res.status).toBe(200);
+    return (
+      (await res.json()) as {
+        items: { kind: string; id: string; name: string; already: string | null }[];
+      }
+    ).items;
+  }
+
+  // The thread's groups and guests, which leaves out the members who wrote in it.
+  async function granted(workspace: Workspace, by: Person, threadId: string) {
+    return (await people(workspace, by, threadId)).people.filter((one) => one.kind !== "member");
+  }
+
+  // A group of the directory linked to Ada's org, with these people in it, who join the org.
+  async function groupOf(workspace: Workspace, ada: Person, name: string, people: Person[]) {
+    const ids: string[] = [];
+    for (const person of people) {
+      const found = workspace.directory.user(person.userId)!;
+      ids.push(await workspace.scim.createUser({ name: found.name, email: found.email }));
+    }
+    const groupId = await workspace.scim.createGroup(name, ids);
+    workspace.db
+      .insert(schema.orgGroup)
+      .values({ organizationId: ada.orgId, groupId, role: "member" })
+      .run();
+    return { groupId, ids };
+  }
+
+  async function withGroup() {
+    const workspace = await sharedThread();
+    const { ada } = workspace;
+    const edsger = await orgMember(workspace, ada, "Edsger Dijkstra", "e@example.com");
+    const donald = await orgMember(workspace, ada, "Donald Knuth", "d@example.com");
+    const group = await groupOf(workspace, ada, "Looms", [edsger]);
+    const give = (accessFor = "1d", role = "view", by: Person = ada) =>
+      workspace.api("POST", `/threads/${workspace.thread.id}/group-guests`, by.cookie, {
+        groupId: group.groupId,
+        accessFor,
+        role,
+      });
+    const post = (who: Person) =>
+      workspace.api("POST", `/threads/${workspace.thread.id}/messages`, who.cookie, {
+        text: "// Hello",
+      });
+    const stored = () => workspace.threadStore.find(workspace.thread.id)!;
+    return { ...workspace, edsger, donald, group, give, post, stored };
+  }
+
+  it("gives its members the access at its role, and lists it as one row", async () => {
+    const t = await withGroup();
+    expect(t.access.of(t.edsger, t.stored())).toBeNull();
+    expect((await t.give("1d", "view")).status).toBe(200);
+    expect(t.access.of(t.edsger, t.stored())).toMatchObject({ via: "guest", role: "view" });
+    expect(t.access.can(t.edsger, t.stored(), "read")).toBe(true);
+    expect(t.access.can(t.edsger, t.stored(), "post")).toBe(false);
+    expect(await sharedIds(t, t.edsger)).toEqual([t.thread.id]);
+    const listed = await granted(t, t.ada, t.thread.id);
+    expect(listed).toEqual([
+      expect.objectContaining({
+        kind: "group",
+        userId: t.group.groupId,
+        name: "Looms",
+        access: "view",
+        memberCount: 1,
+        canRevoke: true,
+      }),
+    ]);
+    const roleRes = await t.api(
+      "PUT",
+      `/threads/${t.thread.id}/group-guests/${t.group.groupId}/role`,
+      t.ada.cookie,
+      { role: "message" },
+    );
+    expect(roleRes.status).toBe(200);
+    expect(t.access.can(t.edsger, t.stored(), "post")).toBe(true);
+  });
+
+  it("follows the group: a new member gains it and a leaver loses it", async () => {
+    const t = await withGroup();
+    await t.give("never", "message");
+    const donaldId = await t.scim.createUser({ name: "Donald Knuth", email: "d@example.com" });
+    expect(t.access.of(t.donald, t.stored())).toBeNull();
+    await t.scim.addMembers(t.group.groupId, [donaldId]);
+    expect(t.access.of(t.donald, t.stored())).toMatchObject({ via: "guest", role: "message" });
+    expect(await sharedIds(t, t.donald)).toEqual([t.thread.id]);
+    await t.scim.removeMembers(t.group.groupId, [t.group.ids[0]!]);
+    expect(t.access.of(t.edsger, t.stored())).toBeNull();
+    expect(await sharedIds(t, t.edsger)).toEqual([]);
+  });
+
+  it("lasts as long as asked, and ends when the group is removed", async () => {
+    const t = await withGroup();
+    await t.give("1h", "message");
+    t.db.run(
+      sql`update thread_group_guest set access_until = ${Date.now() - 1000} where thread_id = ${t.thread.id}`,
+    );
+    expect(t.access.of(t.edsger, t.stored())).toBeNull();
+    expect(await granted(t, t.ada, t.thread.id)).toEqual([]);
+    await t.give("never", "message");
+    expect(t.access.of(t.edsger, t.stored())).not.toBeNull();
+    const gone = await t.api(
+      "DELETE",
+      `/threads/${t.thread.id}/group-guests/${t.group.groupId}`,
+      t.ada.cookie,
+    );
+    expect(gone.status).toBe(200);
+    expect(t.access.of(t.edsger, t.stored())).toBeNull();
+    expect(await granted(t, t.ada, t.thread.id)).toEqual([]);
+  });
+
+  it("leaves those in the space as they are, and refuses viewers", async () => {
+    const t = await withGroup();
+    expect((await t.give("1d", "view", t.grace)).status).toBe(403);
+    await t.give("1d", "view");
+    const found = await candidates(t, t.ada, t.thread.id);
+    expect(found.find((one) => one.kind === "group")).toMatchObject({
+      name: "Looms",
+      already: "Added",
+    });
+    const reached = t.access.of(t.edsger, t.stored());
+    expect(reached).toMatchObject({ via: "guest" });
+    // A member of the space keeps their space role.
+    t.join(t.edsger, t.space.id, "messager");
+    expect(t.access.of(t.edsger, t.stored())).toEqual({ via: "space", role: "messager" });
+  });
+
+  it("offers groups beside people", async () => {
+    const t = await withGroup();
+    const found = await candidates(t, t.ada, t.thread.id, "loom");
+    expect(found.map((one) => [one.kind, one.name, one.already])).toEqual([
+      ["group", "Looms", null],
+    ]);
   });
 });

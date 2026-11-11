@@ -7,7 +7,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
-import { LayoutGridIcon, LockIcon, Settings2Icon, Trash2Icon } from "lucide-react";
+import { LayoutGridIcon, LockIcon, Settings2Icon, Trash2Icon, UserIcon } from "lucide-react";
 import { useId, useState } from "react";
 import * as z from "zod";
 
@@ -18,13 +18,14 @@ import { DataTableToolbar } from "@/web/components/data-table/data-table-toolbar
 import { EmptyState } from "@/web/components/page-states";
 import {
   actionsColumn,
-  ActionsMenu,
   contextColumn,
   filterColumn,
   nameColumn,
+  RowActions,
   Subject,
 } from "@/web/shell/people-table";
 import { SettingsCard, SettingsTitle } from "@/web/shell/settings-page";
+import { SettingsSwitch } from "@/web/shell/settings-switch";
 import { Time } from "@/web/components/time";
 import { DropdownMenuItem } from "@/web/components/ui/dropdown-menu";
 import {
@@ -42,17 +43,17 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/web/components/ui/select";
-import { Switch } from "@/web/components/ui/switch";
+import { ConfirmDialog } from "@/web/components/confirm-dialog";
+import { MoreMenu } from "@/web/components/more-menu";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { useDataTable } from "@/web/hooks/use-data-table";
 import { lenient, tableSearchSchema, withoutUnset } from "@/web/lib/data-table";
 import { orgSpacesPage } from "@/web/api/list-queries";
 import { meQuery } from "@/web/auth/queries";
 import { teamSettingsQuery } from "@/web/orgs/queries";
-import { ConfirmDialog } from "@/web/components/confirm-dialog";
 import { plural } from "@/web/lib/plural";
-import { ownSpaceGoes } from "@/web/spaces/delete-own-space";
-import { useDeleteSpace, useTeamSettings } from "@/web/spaces/mutations";
+import { DeleteSpaceConfirm } from "@/web/spaces/delete-space";
+import { useTeamSettings } from "@/web/spaces/mutations";
 import { SpaceTrash } from "@/web/spaces/space-trash";
 import { Button } from "@/web/components/ui/button";
 
@@ -65,8 +66,8 @@ const KIND_FILTER = [
 
 const EVERYONE_FILTER = [
   { value: "none", label: "None" },
-  { value: "viewer", label: "Viewer" },
-  { value: "messager", label: "Messager" },
+  { value: "viewer", label: "View" },
+  { value: "messager", label: "Message" },
 ];
 
 const CREATION_LABELS: Record<TeamSettings["spaceCreation"], string> = {
@@ -74,11 +75,10 @@ const CREATION_LABELS: Record<TeamSettings["spaceCreation"], string> = {
   owners: "Owners only",
 };
 
-const EVERYONE_LABELS = { messager: "Messager", viewer: "Viewer" } as const;
+const EVERYONE_LABELS = { messager: "Message", viewer: "View" } as const;
 
 function SpaceSettingsCard() {
   const creationId = useId();
-  const switchId = useId();
   const settings = useQuery(teamSettingsQuery);
   const settingsChange = useTeamSettings();
   // Turning members' spaces off waits for a confirmation.
@@ -114,19 +114,14 @@ function SpaceSettingsCard() {
               </SelectContent>
             </Select>
           </Field>
-          <Field orientation="horizontal">
-            <FieldContent>
-              <FieldLabel htmlFor={switchId}>Personal spaces</FieldLabel>
-              <FieldDescription>Members can make a private space of their own.</FieldDescription>
-            </FieldContent>
-            <Switch
-              id={switchId}
-              checked={settings.data.memberSpaces}
-              onCheckedChange={(memberSpaces) =>
-                memberSpaces ? settingsChange.mutate({ memberSpaces }) : setConfirming(true)
-              }
-            />
-          </Field>
+          <SettingsSwitch
+            label="Personal spaces"
+            description="Members can make a private space of their own."
+            checked={settings.data.memberSpaces}
+            onChange={(memberSpaces) =>
+              memberSpaces ? settingsChange.mutate({ memberSpaces }) : setConfirming(true)
+            }
+          />
           <FieldError>{settingsChange.error?.message}</FieldError>
         </FieldGroup>
       )}
@@ -170,10 +165,13 @@ function spacesColumns(onSettings: (space: OrgSpace) => void, onDelete: (space: 
         name={space.name}
         detail={
           space.kind === "shared" ? (
-            `Shared${space.ownerName ? ` · made by ${space.ownerName}` : ""}`
-          ) : (
             <span className="inline-flex items-center gap-1">
               <LockIcon className="size-3" />
+              {`Shared${space.ownerName ? ` · made by ${space.ownerName}` : ""}`}
+            </span>
+          ) : (
+            <span className="inline-flex items-center gap-1">
+              <UserIcon className="size-3" />
               {space.ownerName && space.name !== `${space.ownerName}'s Space`
                 ? `Private · ${space.ownerName}`
                 : "Private"}
@@ -210,12 +208,13 @@ function spacesColumns(onSettings: (space: OrgSpace) => void, onDelete: (space: 
       (space) => <Time iso={space.createdAt} />,
       "whitespace-nowrap",
     ),
-    actionsColumn<OrgSpace>((space) =>
-      space.kind === "shared" ? (
-        <ActionsMenu
-          label={space.name}
+    actionsColumn<OrgSpace>((space) => (
+      <RowActions>
+        <MoreMenu
+          row
+          name={space.name}
           destructive={
-            space.threadCount > 0 ? (
+            space.kind === "shared" && space.threadCount > 0 ? (
               <WithTooltip label="Only a space without threads can be deleted">
                 <div>
                   <DropdownMenuItem variant="destructive" disabled>
@@ -229,15 +228,15 @@ function spacesColumns(onSettings: (space: OrgSpace) => void, onDelete: (space: 
             )
           }
         >
-          <DropdownMenuItem onClick={() => onSettings(space)}>
-            <Settings2Icon />
-            Space settings
-          </DropdownMenuItem>
-        </ActionsMenu>
-      ) : (
-        <ActionsMenu label={space.name} destructive={deleteItem(space)} />
-      ),
-    ),
+          {space.kind === "shared" && (
+            <DropdownMenuItem onClick={() => onSettings(space)}>
+              <Settings2Icon />
+              Space settings
+            </DropdownMenuItem>
+          )}
+        </MoreMenu>
+      </RowActions>
+    )),
     filterColumn<OrgSpace>("kind", "Kind", KIND_FILTER),
   ];
 }
@@ -255,7 +254,6 @@ export function OrgSpaces() {
   const navigate = orgSpacesRoute.useNavigate();
   const spaces = useQuery({ ...orgSpacesPage(search), enabled: owner });
   const [deleting, setDeleting] = useState<OrgSpace | null>(null);
-  const deletion = useDeleteSpace();
   const settings = (space: OrgSpace) =>
     void navigate({ to: "/s/$spaceId/settings", params: { spaceId: space.id } });
   const table = useDataTable({
@@ -272,11 +270,6 @@ export function OrgSpaces() {
     filters: ["kind", "everyone"],
     hidden: ["kind"],
   });
-
-  function remove() {
-    if (!deleting) return;
-    deletion.mutate(deleting.id, { onSuccess: () => setDeleting(null) });
-  }
 
   return (
     <>
@@ -311,24 +304,17 @@ export function OrgSpaces() {
           </SettingsCard>
         </>
       )}
-      <ConfirmDialog
-        open={!!deleting}
-        onOpenChange={(open) => {
-          if (open) return;
-          setDeleting(null);
-          deletion.reset();
-        }}
-        title={`Delete ${deleting?.name ?? ""}?`}
-        description={
-          deleting?.kind === "personal"
-            ? ownSpaceGoes(deleting.threadCount)
-            : "This cannot be undone."
-        }
-        error={deletion.error?.message}
-        disabled={deletion.isPending}
-        action="Delete"
-        onConfirm={remove}
-      />
+      {deleting && (
+        <DeleteSpaceConfirm
+          space={deleting}
+          own={deleting.kind === "personal"}
+          threads={deleting.threadCount}
+          open
+          onOpenChange={(open) => {
+            if (!open) setDeleting(null);
+          }}
+        />
+      )}
     </>
   );
 }

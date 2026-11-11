@@ -8,13 +8,12 @@ import { policyColorSchema, type PolicyUse } from "@/shared/tools.ts";
 import { Button } from "@/web/components/ui/button";
 import { Checkbox } from "@/web/components/ui/checkbox";
 import {
-  Dialog,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/web/components/ui/dialog";
+import { ResponsiveDialog, ResponsiveDialogContent } from "@/web/components/responsive-dialog";
 import { FieldError } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
 import { Label } from "@/web/components/ui/label";
@@ -100,8 +99,8 @@ export function PolicyDialog({
       : "";
 
   return (
-    <Dialog open onOpenChange={(open) => !open && onState(null)}>
-      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
+    <ResponsiveDialog open onOpenChange={(open) => !open && onState(null)}>
+      <ResponsiveDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-lg">
         <form
           className="flex flex-col gap-5"
           onSubmit={(event) => {
@@ -290,7 +289,7 @@ export function PolicyDialog({
             </div>
           </DialogFooter>
         </form>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

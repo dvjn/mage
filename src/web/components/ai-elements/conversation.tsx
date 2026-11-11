@@ -1,5 +1,6 @@
 "use client";
 
+import { WithTooltip } from "@/web/components/with-tooltip";
 import { Button } from "@/web/components/ui/button";
 import { cn } from "cn";
 import type { UIMessage } from "ai";
@@ -217,20 +218,22 @@ export const ConversationScrollButton = ({
 
   return (
     !isAtBottom && (
-      <Button
-        className={cn(
-          "absolute bottom-4 left-[50%] translate-x-[-50%] rounded-full dark:bg-background dark:hover:bg-muted",
-          className,
-        )}
-        onClick={handleScrollToBottom}
-        aria-label="Scroll to end"
-        size="icon"
-        type="button"
-        variant="outline"
-        {...props}
-      >
-        <ArrowDownIcon className="size-4" />
-      </Button>
+      <WithTooltip label="Scroll to end">
+        <Button
+          className={cn(
+            "absolute bottom-4 left-[50%] translate-x-[-50%] rounded-full dark:bg-background dark:hover:bg-muted",
+            className,
+          )}
+          onClick={handleScrollToBottom}
+          aria-label="Scroll to end"
+          size="icon"
+          type="button"
+          variant="outline"
+          {...props}
+        >
+          <ArrowDownIcon className="size-4" />
+        </Button>
+      </WithTooltip>
     )
   );
 };
@@ -279,18 +282,21 @@ export const ConversationDownload = ({
   }, [messages, filename, formatMessage]);
 
   return (
-    <Button
-      className={cn(
-        "absolute top-4 right-4 rounded-full dark:bg-background dark:hover:bg-muted",
-        className,
-      )}
-      onClick={handleDownload}
-      size="icon"
-      type="button"
-      variant="outline"
-      {...props}
-    >
-      {children ?? <DownloadIcon className="size-4" />}
-    </Button>
+    <WithTooltip label="Download conversation">
+      <Button
+        className={cn(
+          "absolute top-4 right-4 rounded-full dark:bg-background dark:hover:bg-muted",
+          className,
+        )}
+        onClick={handleDownload}
+        aria-label="Download conversation"
+        size="icon"
+        type="button"
+        variant="outline"
+        {...props}
+      >
+        {children ?? <DownloadIcon className="size-4" />}
+      </Button>
+    </WithTooltip>
   );
 };

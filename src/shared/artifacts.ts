@@ -10,6 +10,12 @@ export const artifactSharingSchema = z.enum(["space", "org", "public"]);
 
 export type ArtifactSharing = z.infer<typeof artifactSharingSchema>;
 
+// What a person, or the org's members while it is shared with them, may do with an artifact: view
+// it, or also change who it is shared with.
+export const artifactRoleSchema = z.enum(["view", "edit"]);
+
+export type ArtifactRole = z.infer<typeof artifactRoleSchema>;
+
 // The theme a page is shown in, set as `data-theme` on its root; none leaves it unset.
 export const artifactThemeSchema = z.enum(["light", "dark"]);
 
@@ -51,6 +57,8 @@ export const artifactSchema = z.object({
   version: z.number().int().positive(),
   label: z.string().nullable(),
   sharing: artifactSharingSchema,
+  // What the org's members may do while it is shared with them.
+  orgRole: artifactRoleSchema,
   assets: z.array(artifactAssetSchema),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -58,6 +66,8 @@ export const artifactSchema = z.object({
   canDelete: z.boolean(),
   sharingLevels: z.array(artifactSharingSchema),
   sharingBlocked: z.array(artifactLevelBlockSchema),
+  // Set for one the viewer reads about in a thread but may not open: only its name is shown.
+  locked: z.boolean(),
 });
 
 export type Artifact = z.infer<typeof artifactSchema>;
@@ -69,11 +79,76 @@ export const artifactDetailSchema = artifactSchema.extend({
   usedIn: z.array(z.object({ id: z.string(), title: z.string().nullable() })),
   // Its space, to a member of it.
   space: z.object({ id: z.string(), name: z.string() }).nullable(),
+  // For one who may change it: the threads that used it with guests, and whether it is shared with
+  // them.
+  guestThreads: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string().nullable(),
+      guests: z.number().int().positive(),
+      shared: z.boolean(),
+    }),
+  ),
+  // For one who may change it: the groups given access.
+  groups: z.array(
+    z.object({
+      groupId: z.string(),
+      name: z.string(),
+      memberCount: z.number().int(),
+      role: artifactRoleSchema,
+    }),
+  ),
+  // For one who may change it: the people given access, and whether they still have it, which a
+  // former member does not.
+  people: z.array(
+    z.object({
+      userId: z.string(),
+      name: z.string(),
+      email: z.string(),
+      former: z.boolean(),
+      guest: z.boolean(),
+      role: artifactRoleSchema,
+    }),
+  ),
   // Where anyone can open it, while it is public.
   publicUrl: z.string().nullable(),
 });
 
 export type ArtifactDetail = z.infer<typeof artifactDetailSchema>;
+
+// Shares the artifact with the guests of a thread that used it, or stops.
+export const artifactGuestShareSchema = z.object({ threadId: z.string(), shared: z.boolean() });
+
+// Someone, or a group, who may be given access to an artifact: a member of its org or a guest of a
+// thread that used it. One who has it already says why, and cannot be picked; one who has it only to
+// view says at what level, and can be given edit.
+export const artifactCandidateSchema = z.object({
+  kind: z.enum(["user", "group"]),
+  id: z.string(),
+  name: z.string(),
+  // A person's email, or a group's if it has one; else empty.
+  email: z.string(),
+  guest: z.boolean(),
+  // How many people are in a group.
+  memberCount: z.number().int().nullable(),
+  already: z.string().nullable(),
+  current: z.string().nullable(),
+});
+
+export type ArtifactCandidate = z.infer<typeof artifactCandidateSchema>;
+
+export const artifactCandidateQuerySchema = z.object({ q: z.string().max(200).optional() });
+
+// What a thread's artifact says of its guests, for one who may change it in a thread that has
+// some: how many, whether it is shared with them, and whether the reader may change that.
+export const artifactGuestsSchema = z.object({
+  count: z.number().int().positive(),
+  shared: z.boolean(),
+  canChange: z.boolean(),
+});
+
+// The reason a refusal gives for an artifact the reader sees in a thread but has not been given.
+export const ARTIFACT_NOT_SHARED = "not_shared";
 
 // Asks for a link to view the artifact: its newest version or the one given, in a theme.
 export const artifactViewRequestSchema = z.object({
@@ -92,7 +167,14 @@ export const artifactViewSchema = z.object({
 
 export type ArtifactView = z.infer<typeof artifactViewSchema>;
 
-export const artifactSharingChangeSchema = z.object({ sharing: artifactSharingSchema });
+// A new level, with what the org's members may do at it when that is changed too.
+export const artifactSharingChangeSchema = z.object({
+  sharing: artifactSharingSchema,
+  orgRole: artifactRoleSchema.optional(),
+});
+
+// What a person given the artifact may do; a guest of a thread may only view.
+export const artifactPersonChangeSchema = z.object({ role: artifactRoleSchema.default("view") });
 
 // Whether artifacts may be made public: for the org, or for a space, whose own switch counts only
 // while its org's is on.
@@ -164,3 +246,10 @@ export const artifactListQuerySchema = z.object({
 });
 
 export type ArtifactListQuery = z.infer<typeof artifactListQuerySchema>;
+
+// An artifact in a thread's list: its guests, when the reader may give them access from there.
+export const threadArtifactSchema = artifactSchema.extend({
+  guests: artifactGuestsSchema.nullable(),
+});
+
+export type ThreadArtifact = z.infer<typeof threadArtifactSchema>;

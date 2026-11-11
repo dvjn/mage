@@ -119,29 +119,33 @@ export function AsideButton({
             aria-label="Side questions"
             className="-my-1 flex items-center justify-end text-xs text-muted-foreground tabular-nums"
           >
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              aria-label="Previous side question"
-              disabled={at === 0}
-              onClick={() => setPicked(at - 1)}
-            >
-              <ChevronLeftIcon />
-            </Button>
+            <WithTooltip label="Previous side question">
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Previous side question"
+                disabled={at === 0}
+                onClick={() => setPicked(at - 1)}
+              >
+                <ChevronLeftIcon />
+              </Button>
+            </WithTooltip>
             <span>
               {at + 1}/{list.length}
             </span>
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              aria-label="Next side question"
-              disabled={at === list.length - 1}
-              onClick={() => setPicked(at + 1)}
-            >
-              <ChevronRightIcon />
-            </Button>
+            <WithTooltip label="Next side question">
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Next side question"
+                disabled={at === list.length - 1}
+                onClick={() => setPicked(at + 1)}
+              >
+                <ChevronRightIcon />
+              </Button>
+            </WithTooltip>
           </div>
         )}
         {!fresh && (
@@ -192,27 +196,31 @@ export function AsideButton({
             }}
           />
           {answering ? (
-            <Button
-              type="button"
-              size="icon"
-              variant="outline"
-              aria-label="Stop answering"
-              className="shrink-0"
-              onClick={() => asides.stop()}
-            >
-              <SquareIcon className="fill-current" />
-            </Button>
+            <WithTooltip label="Stop answering">
+              <Button
+                type="button"
+                size="icon"
+                variant="outline"
+                aria-label="Stop answering"
+                className="shrink-0"
+                onClick={() => asides.stop()}
+              >
+                <SquareIcon className="fill-current" />
+              </Button>
+            </WithTooltip>
           ) : (
-            <Button
-              type="button"
-              size="icon"
-              aria-label="Ask"
-              className="shrink-0"
-              disabled={!draft.trim()}
-              onClick={send}
-            >
-              <CornerDownLeftIcon />
-            </Button>
+            <WithTooltip label="Ask">
+              <Button
+                type="button"
+                size="icon"
+                aria-label="Ask"
+                className="shrink-0"
+                disabled={!draft.trim()}
+                onClick={send}
+              >
+                <CornerDownLeftIcon />
+              </Button>
+            </WithTooltip>
           )}
         </div>
       </PopoverContent>

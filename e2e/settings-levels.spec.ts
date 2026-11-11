@@ -130,14 +130,14 @@ test("a provider is relabelled and removed from its row", async ({ page }) => {
   await dialog.getByRole("button", { name: "Done" }).click();
 
   const row = page.getByRole("row", { name: "OpenAI API key" });
-  await row.getByRole("button", { name: "Actions for OpenAI API key" }).click();
+  await row.getByRole("button", { name: "More for OpenAI API key" }).click();
   await page.getByRole("menuitem", { name: "Edit" }).click();
   await page.getByRole("dialog").getByLabel("Label").fill("Team");
   await page.getByRole("dialog").getByRole("button", { name: "Save" }).click();
   const renamed = page.getByRole("row", { name: "OpenAI · Team" });
   await expect(renamed).toBeVisible();
 
-  await renamed.getByRole("button", { name: "Actions for OpenAI · Team" }).click();
+  await renamed.getByRole("button", { name: "More for OpenAI · Team" }).click();
   await page.getByRole("menuitem", { name: "Remove" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
   await expect(page.getByText("No model providers yet")).toBeVisible();

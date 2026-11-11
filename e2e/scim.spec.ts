@@ -33,8 +33,8 @@ async function continueWithIdp(page: Page, name: string, email: string) {
 }
 
 async function send(page: Page, text: string) {
-  await page.getByLabel("Message", { exact: true }).fill(text);
-  await page.getByLabel("Message", { exact: true }).press("Enter");
+  await page.getByRole("textbox", { name: "Message" }).fill(text);
+  await page.getByRole("textbox", { name: "Message" }).press("Enter");
 }
 
 test("a directory group linked to a team org lets its people in, and leaving it takes them out", async ({
@@ -63,8 +63,8 @@ test("a directory group linked to a team org lets its people in, and leaving it 
   await page.getByRole("button", { name: "Add people" }).click();
   const add = page.getByRole("dialog");
   await add.getByLabel("Name, email or group").fill(groupName);
-  await add.getByRole("button", { name: new RegExp(groupName) }).click();
-  await add.getByRole("button", { name: "Link group" }).click();
+  await page.getByRole("option", { name: new RegExp(groupName) }).click();
+  await add.getByRole("button", { name: "Add", exact: true }).click();
   await expect(add).toBeHidden();
   const people = page.getByRole("table", { name: "People" });
   await expect(people.getByRole("row", { name: groupName })).toContainText("1 person");
@@ -106,4 +106,120 @@ test("a directory group linked to a team org lets its people in, and leaving it 
   await expect(page.locator("[data-slot=hover-card-content]")).toContainText("Former member");
   await page.goto("/org/people");
   await expect(people.getByRole("row", { name: groupName })).toContainText("0 people");
+});
+
+test("a thread and an artifact are shared with a directory group, as View and as Edit", async ({
+  page,
+  browser,
+  baseURL,
+}, testInfo) => {
+  test.setTimeout(120_000);
+  const unique = crypto.randomUUID();
+  const graceEmail = `grace-${unique}@example.com`;
+  const groupName = `Weavers ${unique.slice(0, 8)}`;
+  const directory = scimClient({ baseUrl: baseURL ?? "", token: JOURNEY_SCIM_TOKEN });
+
+  // Ada's team org, with a directory group of Grace linked to it.
+  await continueWithIdp(page, "Ada Lovelace", `ada-${unique}@example.com`);
+  await page.getByRole("button", { name: "Switch space" }).click();
+  await page.getByRole("menuitem", { name: "New organization" }).click();
+  await page.getByLabel("Organization name").fill("Weaving Works");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL("/org/general");
+  const grace = await directory.createUser({ name: "Grace Hopper", email: graceEmail });
+  await directory.createGroup(groupName, [grace]);
+  await page.goto("/org/people");
+  await page.getByRole("button", { name: "Add people" }).click();
+  const add = page.getByRole("dialog");
+  await add.getByLabel("Name, email or group").fill(groupName);
+  await page.getByRole("option", { name: new RegExp(groupName) }).click();
+  await add.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(add).toBeHidden();
+  const graceTab = await someoneElse(browser, testInfo.parallelIndex);
+  await continueWithIdp(graceTab, "Grace Hopper", graceEmail);
+
+  // Ada's own space and a thread in it, which Grace is not in.
+  await page.getByRole("button", { name: "Switch space" }).click();
+  await page.getByRole("menuitem", { name: "New space" }).click();
+  await page.getByLabel("Name").fill("Loom room");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL(/\/s\/[^/]+$/);
+  await send(page, "// Looms");
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+
+  // Someone in the space is listed and marked, not left out.
+  await page.getByRole("button", { name: "Share" }).click();
+  const share = page.getByRole("dialog", { name: "Share this thread" });
+  await share.getByPlaceholder("Add people").fill("Ada");
+  await expect(page.getByRole("option", { name: /Ada Lovelace/ })).toContainText("Owner");
+  await share.getByPlaceholder("Add people").fill("");
+  await share
+    .getByRole("group", { name: "Access for the person added" })
+    .getByRole("button", { name: "View", exact: true })
+    .click();
+  await share.getByPlaceholder("Add people").fill(groupName);
+  await page.getByRole("option", { name: new RegExp(groupName) }).click();
+  await expect(share.getByRole("listitem", { name: groupName })).toContainText("Group · 1 person");
+
+  // Grace finds it under Shared with you and can only read it.
+  await graceTab.goto("/shared");
+  await graceTab.getByRole("link", { name: /Looms/ }).first().click();
+  await expect(transcript(graceTab).getByText("// Looms")).toBeVisible();
+  await expect(graceTab.getByText("You can view this thread")).toBeVisible();
+
+  // An artifact in the space, shared with the group to edit.
+  await share.getByRole("button", { name: "Close" }).click();
+  await expect(share).toBeHidden();
+  await send(
+    page,
+    `/tool artifact.publish ${JSON.stringify({
+      html: "<title>Loom chart</title><h1>Looms</h1>",
+      description: "Looms by year",
+      icon: "chart",
+    })}`,
+  );
+  await page.getByTestId("artifact-card").getByRole("link", { name: "Open" }).click();
+  await expect(page).toHaveURL(/\/artifacts\/[^/]+$/);
+  const artifactUrl = page.url();
+  await page.getByRole("button", { name: "Share" }).click();
+  const sheet = page.getByRole("dialog", { name: "Share this artifact" });
+  await sheet
+    .getByRole("group", { name: "Access for the person added" })
+    .getByRole("button", { name: "Edit", exact: true })
+    .click();
+  await sheet.getByPlaceholder("Add people").fill(groupName);
+  await page.getByRole("option", { name: new RegExp(groupName) }).click();
+  await expect(sheet.getByRole("listitem", { name: groupName })).toContainText("Group");
+
+  await graceTab.goto(artifactUrl);
+  await graceTab.getByRole("button", { name: "Share" }).click();
+  const hers = graceTab.getByRole("dialog", { name: "Share this artifact" });
+  await hers.getByRole("radio", { name: "Organization" }).click();
+  await expect(hers.getByRole("radio", { name: "Organization" })).toBeChecked();
+});
+
+test("a directory group is found in Add people by its email", async ({ page, baseURL }) => {
+  const unique = crypto.randomUUID();
+  const groupName = `Spinners ${unique.slice(0, 8)}`;
+  const groupEmail = `spinners-${unique.slice(0, 8)}@example.com`;
+  const directory = scimClient({ baseUrl: baseURL ?? "", token: JOURNEY_SCIM_TOKEN });
+
+  await continueWithIdp(page, "Ada Lovelace", `ada-${unique}@example.com`);
+  await page.getByRole("button", { name: "Switch space" }).click();
+  await page.getByRole("menuitem", { name: "New organization" }).click();
+  await page.getByLabel("Organization name").fill("Spinning Works");
+  await page.getByRole("button", { name: "Create" }).click();
+  await expect(page).toHaveURL("/org/general");
+  await directory.createGroup(groupName, [], groupEmail);
+
+  await page.goto("/org/people");
+  await page.getByRole("button", { name: "Add people" }).click();
+  const add = page.getByRole("dialog");
+  await add.getByLabel("Name, email or group").fill(groupEmail);
+  const option = page.getByRole("option", { name: new RegExp(groupName) });
+  await expect(option).toContainText(groupEmail);
+  // The email is the group's, so there is no one to invite by it.
+  await expect(add.getByText(`Invite ${groupEmail}`)).toHaveCount(0);
+  await option.click();
+  await expect(add.getByRole("button", { name: "Add", exact: true })).toBeVisible();
 });

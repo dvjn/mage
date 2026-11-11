@@ -17,11 +17,11 @@ import type { ToolRisk } from "@/shared/threads/events.ts";
 import { EDITORS, type PolicyUse } from "@/shared/tools.ts";
 
 // Anyone who can message in the thread may use its tools and approve calls: its space's owners
-// and messagers, and its guests, who may always post there. Viewers, and anyone with no access
-// any more, may do neither.
+// and messagers, and its guests whose role is to message. Viewers, guests who only view, and anyone
+// with no access any more, may do neither.
 export function canPostIn(access: Access | null): boolean {
   if (!access) return false;
-  return access.via === "guest" || access.role !== "viewer";
+  return access.via === "guest" ? access.role === "message" : access.role !== "viewer";
 }
 
 // What a policy says: who uses its tools without approval, and who approves everyone else, by key.

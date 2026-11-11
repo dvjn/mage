@@ -1,6 +1,7 @@
 // The MCP servers card in settings: the org's servers, or for a space the org's beside its own
 // tagged as such, each a row; and the org's switch for whether spaces add their own.
 
+import { EmptyState } from "@/web/components/page-states";
 import { useQuery } from "@tanstack/react-query";
 import { CircleAlertIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
@@ -10,10 +11,10 @@ import type { ToolsetSetting } from "@/shared/tools.ts";
 import { SettingsCard } from "@/web/shell/settings-page";
 import { useOpenSections } from "@/web/agent/open-sections";
 import { Alert, AlertDescription } from "@/web/components/ui/alert";
-import { Button } from "@/web/components/ui/button";
+import { HeaderAction } from "@/web/shell/people-table";
 import { orgMcpServersQuery, spaceMcpServersQuery } from "@/web/mcp/queries";
 import type { Scope } from "@/web/shell/scope";
-import { ExtensionSwitch } from "@/web/shell/extension-switch";
+import { SettingsSwitch } from "@/web/shell/settings-switch";
 import { ServerRow } from "@/web/mcp/servers/row";
 import { McpServerDialog } from "@/web/mcp/servers/server-dialog";
 import { useSpaceServersAllowed } from "@/web/mcp/mutations";
@@ -120,10 +121,12 @@ function ServersCard({
       }
       action={
         canManage && (
-          <Button variant="outline" size="sm" disabled={!allowed} onClick={() => setAdding(true)}>
-            <PlusIcon />
-            Add server
-          </Button>
+          <HeaderAction
+            icon={<PlusIcon />}
+            label="Add server"
+            disabled={!allowed}
+            onClick={() => setAdding(true)}
+          />
         )
       }
       state={state}
@@ -153,11 +156,7 @@ function ServersCard({
             ))}
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">
-            {canManage
-              ? "No servers yet. Add one by its address to give the agent its tools."
-              : "No servers yet."}
-          </p>
+          <EmptyState compact title="No servers yet" />
         )}
         {spaceServers !== null && (
           <SpaceServersSwitch allowed={spaceServers} canManage={canManage} />
@@ -171,13 +170,13 @@ function ServersCard({
 function SpaceServersSwitch({ allowed, canManage }: { allowed: boolean; canManage: boolean }) {
   const allow = useSpaceServersAllowed();
   return (
-    <ExtensionSwitch
+    <SettingsSwitch
       label="Spaces can add their own"
       description="Those who manage a space add servers only its threads use."
-      allowed={allowed}
-      canManage={canManage}
-      pending={allow.isPending}
+      checked={allowed}
+      disabled={!canManage || allow.isPending}
       error={allow.error?.message}
+      className="border-t pt-4"
       onChange={(next) => allow.mutate(next)}
     />
   );

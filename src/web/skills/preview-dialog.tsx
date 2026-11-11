@@ -7,14 +7,13 @@ import { useState } from "react";
 import { type SkillSummary } from "@/shared/skills.ts";
 import { Button } from "@/web/components/ui/button";
 import {
-  Dialog,
   DialogClose,
-  DialogContent,
   DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/web/components/ui/dialog";
+import { ResponsiveDialog, ResponsiveDialogContent } from "@/web/components/responsive-dialog";
 import { FieldError } from "@/web/components/ui/field";
 import { Spinner } from "@/web/components/ui/spinner";
 import { skillQuery } from "@/web/skills/queries";
@@ -36,8 +35,8 @@ export function SkillPreviewDialog({
     : [];
   const current = files.find((candidate) => candidate.path === file) ?? files[0];
   return (
-    <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-3xl">
+    <ResponsiveDialog open onOpenChange={(open) => !open && onClose()}>
+      <ResponsiveDialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>{skill.name}</DialogTitle>
           <DialogDescription>
@@ -89,7 +88,7 @@ export function SkillPreviewDialog({
         <DialogFooter>
           <DialogClose render={<Button variant="outline" />}>Close</DialogClose>
         </DialogFooter>
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

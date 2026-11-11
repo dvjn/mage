@@ -1,10 +1,10 @@
 // Tables of the pages the agent publishes in a space, their versions and files, which threads used
-// them, and whether orgs and spaces let them be made public.
+// them, who they are shared with, and whether orgs and spaces let them be made public.
 
 import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer, blob, index, primaryKey } from "drizzle-orm/sqlite-core";
 
-import { organization } from "@/server/orgs/schema.ts";
+import { organization, scimGroup, user } from "@/server/orgs/schema.ts";
 import { space } from "@/server/spaces/schema.ts";
 import { thread } from "@/server/threads/schema.ts";
 
@@ -24,6 +24,10 @@ export const artifact = sqliteTable(
     // Who may view it beyond the space's members.
     sharing: text("sharing", { enum: ["space", "org", "public"] })
       .default("space")
+      .notNull(),
+    // What the org's members may do while it is shared with the org.
+    orgRole: text("org_role", { enum: ["view", "edit"] })
+      .default("view")
       .notNull(),
     // The number of its newest version.
     version: integer("version").notNull(),
@@ -63,7 +67,8 @@ export const artifactVersion = sqliteTable(
   (table) => [primaryKey({ columns: [table.artifactId, table.version] })],
 );
 
-// A thread whose agent published, updated or read an artifact.
+// A thread whose agent published, updated or read an artifact, and whether someone who may change
+// the artifact shared it with that thread's guests.
 export const artifactThreadUse = sqliteTable(
   "artifact_thread_use",
   {
@@ -76,10 +81,63 @@ export const artifactThreadUse = sqliteTable(
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),
+    // When and by whom it was shared with the thread's guests; null while it is not.
+    guestsSharedAt: integer("guests_shared_at", { mode: "timestamp_ms" }),
+    guestsSharedBy: text("guests_shared_by").references(() => user.id, { onDelete: "set null" }),
   },
   (table) => [
     primaryKey({ columns: [table.artifactId, table.threadId] }),
     index("artifact_thread_use_thread_idx").on(table.threadId),
+  ],
+);
+
+// A person someone who may change the artifact let open it, to view or to edit, for as long as they
+// stay in the org or remain a guest of a thread that used it; a guest only views.
+export const artifactPersonShare = sqliteTable(
+  "artifact_person_share",
+  {
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["view", "edit"] })
+      .default("view")
+      .notNull(),
+    sharedBy: text("shared_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.artifactId, table.userId] }),
+    index("artifact_person_share_user_idx").on(table.userId),
+  ],
+);
+
+// A directory group someone who may change the artifact let open it, to view or to edit: whoever is
+// in the group has it while they stay in it.
+export const artifactGroupShare = sqliteTable(
+  "artifact_group_share",
+  {
+    artifactId: text("artifact_id")
+      .notNull()
+      .references(() => artifact.id, { onDelete: "cascade" }),
+    groupId: text("group_id")
+      .notNull()
+      .references(() => scimGroup.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["view", "edit"] })
+      .default("view")
+      .notNull(),
+    sharedBy: text("shared_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.artifactId, table.groupId] }),
+    index("artifact_group_share_group_idx").on(table.groupId),
   ],
 );
 

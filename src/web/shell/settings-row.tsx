@@ -70,10 +70,20 @@ export function SettingsRow({
   );
 }
 
-// A tag beside a row's title, as whose it is.
-export function RowBadge({ children }: { children: ReactNode }) {
+// A tag beside a row's title or name, as whose it is or how it stands: neutral, good, asking for
+// something, or failing.
+export function RowBadge({
+  children,
+  tone = "neutral",
+}: {
+  children: ReactNode;
+  tone?: "neutral" | "ok" | "ask" | "error";
+}) {
   return (
-    <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
+    <Badge
+      variant={tone === "ok" ? "secondary" : tone === "error" ? "destructive" : "outline"}
+      className={cn("h-4 px-1.5 text-[10px]", tone === "ask" && "border-tool-ask/40 text-tool-ask")}
+    >
       {children}
     </Badge>
   );

@@ -378,6 +378,9 @@ export const scimGroup = sqliteTable(
     displayNameKey: text("display_name_key").notNull().unique(),
     externalId: text("external_id"),
     externalIdKey: text("external_id_key").unique(),
+    // The group's mail address as the directory gave it, and lower-cased to look it up by.
+    email: text("email"),
+    emailKey: text("email_key"),
     orderKey: text("order_key").notNull().unique(),
     createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
@@ -385,6 +388,7 @@ export const scimGroup = sqliteTable(
   (table) => [
     index("scim_group_connection_idx").on(table.connectionId),
     index("scim_group_domain_idx").on(table.provisioningDomainId),
+    index("scim_group_email_idx").on(table.emailKey),
   ],
 );
 

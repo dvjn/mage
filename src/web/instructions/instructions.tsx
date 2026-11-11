@@ -7,8 +7,8 @@ import { ChevronRightIcon } from "lucide-react";
 import { useState } from "react";
 
 import { INSTRUCTIONS_LONG, INSTRUCTIONS_MAX } from "@/shared/instructions.ts";
+import { SaveBar } from "@/web/shell/save-bar";
 import { SettingsCard } from "@/web/shell/settings-page";
-import { Button } from "@/web/components/ui/button";
 import {
   Collapsible,
   CollapsibleContent,
@@ -131,21 +131,18 @@ function InstructionsForm({
           </p>
         )
       )}
-      <div className="flex items-center gap-3">
-        <FieldError>{saveText.error?.message}</FieldError>
-        <span className="flex-1" />
-        {justSaved && !dirty && <span className="text-xs text-muted-foreground">Saved</span>}
-        {canManage && dirty && (
-          <Button variant="ghost" size="sm" onClick={() => setText(saved)}>
-            Discard
-          </Button>
-        )}
-        {canManage && dirty && (
-          <Button size="sm" disabled={saveText.isPending || tooLong} onClick={save}>
-            Save
-          </Button>
-        )}
-      </div>
+      <FieldError>{saveText.error?.message}</FieldError>
+      {canManage && (
+        <SaveBar
+          dirty={dirty}
+          pending={saveText.isPending}
+          disabled={tooLong}
+          onSave={save}
+          onDiscard={() => setText(saved)}
+        >
+          {justSaved && !dirty && <span className="text-xs text-muted-foreground">Saved</span>}
+        </SaveBar>
+      )}
     </div>
   );
 }

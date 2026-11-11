@@ -4,8 +4,8 @@ import type { SpaceRole } from "@/shared/spaces.ts";
 
 export const ROLE_LABELS: Record<SpaceRole, string> = {
   owner: "Owner",
-  messager: "Messager",
-  viewer: "Viewer",
+  messager: "Message",
+  viewer: "View",
 };
 
 // Why the one looking may not change a role.

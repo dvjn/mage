@@ -1,6 +1,6 @@
 // Artifacts, their versions and files, the threads that used them, and the settings on making them public, in the database.
 
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 
 import type { Db } from "@/server/db/db.ts";
 import { space } from "@/server/spaces/schema.ts";
@@ -8,7 +8,9 @@ import { space } from "@/server/spaces/schema.ts";
 import {
   artifact,
   artifactAsset,
+  artifactGroupShare,
   artifactOrgSetting,
+  artifactPersonShare,
   artifactSpaceSetting,
   artifactThreadUse,
   artifactVersion,
@@ -20,10 +22,18 @@ const artifactColumns = {
   spaceId: artifact.spaceId,
   createdInThreadId: artifact.createdInThreadId,
   sharing: artifact.sharing,
+  orgRole: artifact.orgRole,
   version: artifact.version,
   createdAt: artifact.createdAt,
   updatedAt: artifact.updatedAt,
 };
+
+// The ids of the directory groups the user is active in.
+function activeGroupsOf(userId: string) {
+  return sql`(select gm.group_id from scim_group_member gm
+                join scim_user su on su.id = gm.scim_user_id
+               where su.user_id = ${userId} and su.active = 1)`;
+}
 
 const versionColumns = {
   version: artifactVersion.version,
@@ -63,7 +73,7 @@ export function createArtifactStore(db: Db): ArtifactStore {
           .values({ artifactId: id, version: 1, threadId, ...version })
           .run();
         db.insert(artifactThreadUse)
-          .values({ artifactId: id, threadId })
+          .values({ artifactId: id, threadId, guestsSharedAt: new Date() })
           .onConflictDoNothing()
           .run();
         putAssets(id, assets);
@@ -115,6 +125,126 @@ export function createArtifactStore(db: Db): ArtifactStore {
         .orderBy(asc(artifactThreadUse.createdAt), asc(artifactThreadUse.threadId))
         .all()
         .map((row) => row.threadId);
+    },
+
+    guestShares(id) {
+      return db
+        .select({ threadId: artifactThreadUse.threadId })
+        .from(artifactThreadUse)
+        .where(
+          and(eq(artifactThreadUse.artifactId, id), isNotNull(artifactThreadUse.guestsSharedAt)),
+        )
+        .all()
+        .map((row) => row.threadId);
+    },
+
+    setGuestShare(id, threadId, by) {
+      db.update(artifactThreadUse)
+        .set(
+          by === null
+            ? { guestsSharedAt: null, guestsSharedBy: null }
+            : { guestsSharedAt: new Date(), guestsSharedBy: by },
+        )
+        .where(and(eq(artifactThreadUse.artifactId, id), eq(artifactThreadUse.threadId, threadId)))
+        .run();
+    },
+
+    people(id) {
+      return db
+        .select({ userId: artifactPersonShare.userId, role: artifactPersonShare.role })
+        .from(artifactPersonShare)
+        .where(eq(artifactPersonShare.artifactId, id))
+        .orderBy(asc(artifactPersonShare.createdAt), asc(artifactPersonShare.userId))
+        .all();
+    },
+
+    personRole(id, userId) {
+      return (
+        db
+          .select({ role: artifactPersonShare.role })
+          .from(artifactPersonShare)
+          .where(
+            and(eq(artifactPersonShare.artifactId, id), eq(artifactPersonShare.userId, userId)),
+          )
+          .get()?.role ?? null
+      );
+    },
+
+    sharedWith(userId) {
+      const personal = db
+        .select(artifactColumns)
+        .from(artifact)
+        .innerJoin(artifactPersonShare, eq(artifactPersonShare.artifactId, artifact.id))
+        .where(eq(artifactPersonShare.userId, userId))
+        .all();
+      const grouped = db
+        .select(artifactColumns)
+        .from(artifact)
+        .innerJoin(artifactGroupShare, eq(artifactGroupShare.artifactId, artifact.id))
+        .where(sql`${artifactGroupShare.groupId} in ${activeGroupsOf(userId)}`)
+        .all();
+      const seen = new Set<string>();
+      return [...personal, ...grouped]
+        .filter((record) => !seen.has(record.id) && !!seen.add(record.id))
+        .toSorted(
+          (a, b) => b.updatedAt.getTime() - a.updatedAt.getTime() || (a.id < b.id ? 1 : -1),
+        );
+    },
+
+    groups(id) {
+      return db
+        .select({ groupId: artifactGroupShare.groupId, role: artifactGroupShare.role })
+        .from(artifactGroupShare)
+        .where(eq(artifactGroupShare.artifactId, id))
+        .orderBy(asc(artifactGroupShare.createdAt), asc(artifactGroupShare.groupId))
+        .all();
+    },
+
+    groupRole(id, userId) {
+      const row = db.get<{ edit: number | null }>(sql`
+        select max(gs.role = 'edit') as edit
+          from artifact_group_share gs
+          join artifact a on a.id = gs.artifact_id
+          join space s on s.id = a.space_id
+          join org_group og on og.organization_id = s.organization_id and og.group_id = gs.group_id
+         where gs.artifact_id = ${id} and gs.group_id in ${activeGroupsOf(userId)}`);
+      return row?.edit === null || row === undefined ? null : row.edit === 1 ? "edit" : "view";
+    },
+
+    setGroupShare(id, groupId, by, role) {
+      if (by === null) {
+        db.delete(artifactGroupShare)
+          .where(
+            and(eq(artifactGroupShare.artifactId, id), eq(artifactGroupShare.groupId, groupId)),
+          )
+          .run();
+        return;
+      }
+      db.insert(artifactGroupShare)
+        .values({ artifactId: id, groupId, sharedBy: by, role })
+        .onConflictDoUpdate({
+          target: [artifactGroupShare.artifactId, artifactGroupShare.groupId],
+          set: { role },
+        })
+        .run();
+    },
+
+    setPersonShare(id, userId, by, role) {
+      if (by === null) {
+        db.delete(artifactPersonShare)
+          .where(
+            and(eq(artifactPersonShare.artifactId, id), eq(artifactPersonShare.userId, userId)),
+          )
+          .run();
+        return;
+      }
+      db.insert(artifactPersonShare)
+        .values({ artifactId: id, userId, sharedBy: by, role })
+        .onConflictDoUpdate({
+          target: [artifactPersonShare.artifactId, artifactPersonShare.userId],
+          set: { role },
+        })
+        .run();
     },
 
     version(id, number): (VersionRecord & { html: string }) | null {
@@ -185,6 +315,10 @@ export function createArtifactStore(db: Db): ArtifactStore {
 
     setSharing(id, sharing) {
       db.update(artifact).set({ sharing }).where(eq(artifact.id, id)).run();
+    },
+
+    setOrgRole(id, orgRole) {
+      db.update(artifact).set({ orgRole }).where(eq(artifact.id, id)).run();
     },
 
     delete(id) {

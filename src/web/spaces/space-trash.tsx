@@ -1,6 +1,7 @@
 // The org's members' spaces in trash that the person may see, those they deleted or, for its
 // owners, all of them: each with its threads and when it went there, to restore or delete for good.
 
+import { EmptyState } from "@/web/components/page-states";
 import { useQuery } from "@tanstack/react-query";
 import type * as React from "react";
 
@@ -8,14 +9,12 @@ import { TRASH_DAYS, type TrashedSpaceSummary } from "@/shared/spaces.ts";
 import { ConfirmDialog } from "@/web/components/confirm-dialog";
 import { Time } from "@/web/components/time";
 import { Button } from "@/web/components/ui/button";
+import { DialogDescription, DialogHeader, DialogTitle } from "@/web/components/ui/dialog";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/web/components/ui/dialog";
+  ResponsiveDialog,
+  ResponsiveDialogContent,
+  ResponsiveDialogTrigger,
+} from "@/web/components/responsive-dialog";
 import { FieldError } from "@/web/components/ui/field";
 import {
   Item,
@@ -79,15 +78,15 @@ export function SpaceTrash({
 }) {
   const trash = useQuery(spaceTrashQuery);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      {trigger && <DialogTrigger render={trigger}>Trash</DialogTrigger>}
-      <DialogContent>
+    <ResponsiveDialog open={open} onOpenChange={onOpenChange}>
+      {trigger && <ResponsiveDialogTrigger render={trigger}>Trash</ResponsiveDialogTrigger>}
+      <ResponsiveDialogContent>
         <DialogHeader>
           <DialogTitle>Trash</DialogTitle>
           <DialogDescription>Deleted for good after {TRASH_DAYS} days.</DialogDescription>
         </DialogHeader>
         {trash.data?.length === 0 ? (
-          <p className="py-4 text-center text-sm text-muted-foreground">Nothing in trash</p>
+          <EmptyState compact title="Nothing in trash" />
         ) : (
           <ItemGroup aria-label="Trash">
             {trash.data?.map((space) => (
@@ -95,7 +94,7 @@ export function SpaceTrash({
             ))}
           </ItemGroup>
         )}
-      </DialogContent>
-    </Dialog>
+      </ResponsiveDialogContent>
+    </ResponsiveDialog>
   );
 }

@@ -5,19 +5,20 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { BlocksIcon, UsersIcon } from "lucide-react";
-import { type FormEvent, useId, useState } from "react";
+import { useId, useState } from "react";
 
 import { AllowPublicArtifacts } from "@/web/artifacts/public-setting";
 import { OrgInstructions } from "@/web/instructions/instructions";
 import { SettingsCard, SettingsTitle } from "@/web/shell/settings-page";
 import { ModelsCard } from "@/web/models/models-card";
 import { Button } from "@/web/components/ui/button";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@/web/components/ui/field";
+import { Field, FieldLabel } from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
 import { switchOrg } from "@/web/lib/org-tab";
 import { meQuery } from "@/web/auth/queries";
 import { connectionsQuery } from "@/web/models/queries";
 import { agentNameQuery, orgsQuery } from "@/web/orgs/queries";
+import { NameSettingField } from "@/web/shell/name-setting-field";
 import { DeleteCard } from "@/web/shell/delete-card";
 import { useAgentName, useDeleteOrg, useRenameOrg } from "@/web/orgs/mutations";
 
@@ -46,79 +47,33 @@ function FirstSteps() {
 
 // The org's name; a team org's owners rename it.
 function OrgName({ name, canManage }: { name: string; canManage: boolean }) {
-  const id = useId();
-  const [draft, setDraft] = useState(name);
   const rename = useRenameOrg();
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    rename.mutate(draft);
-  }
-
   return (
-    <form onSubmit={submit}>
-      <FieldGroup>
-        <Field>
-          <FieldLabel htmlFor={id}>Organization name</FieldLabel>
-          <Input
-            id={id}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            maxLength={80}
-            required
-            disabled={!canManage}
-            autoComplete="off"
-          />
-        </Field>
-        <FieldError>{rename.error?.message}</FieldError>
-        {canManage && draft.trim() !== name && (
-          <div>
-            <Button type="submit" disabled={rename.isPending || !draft.trim()}>
-              Save
-            </Button>
-          </div>
-        )}
-      </FieldGroup>
-    </form>
+    <NameSettingField
+      label="Organization name"
+      saved={name}
+      onSave={rename.mutate}
+      pending={rename.isPending}
+      error={rename.error?.message}
+      maxLength={80}
+      readOnly={!canManage}
+    />
   );
 }
 
 // The name the agent goes by in the org's threads; its owners change it.
 function AgentName({ name, canManage }: { name: string; canManage: boolean }) {
-  const id = useId();
-  const [draft, setDraft] = useState(name);
   const save = useAgentName();
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    save.mutate(draft.trim());
-  }
-
   return (
-    <form onSubmit={submit}>
-      <FieldGroup>
-        <Field>
-          <FieldLabel htmlFor={id}>Agent name</FieldLabel>
-          <Input
-            id={id}
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
-            maxLength={40}
-            required
-            disabled={!canManage}
-            autoComplete="off"
-          />
-        </Field>
-        <FieldError>{save.error?.message}</FieldError>
-        {canManage && draft.trim() !== name && (
-          <div>
-            <Button type="submit" disabled={save.isPending || !draft.trim()}>
-              Save
-            </Button>
-          </div>
-        )}
-      </FieldGroup>
-    </form>
+    <NameSettingField
+      label="Agent name"
+      saved={name}
+      onSave={save.mutate}
+      pending={save.isPending}
+      error={save.error?.message}
+      maxLength={40}
+      readOnly={!canManage}
+    />
   );
 }
 
@@ -183,7 +138,7 @@ export function OrgGeneral() {
       />
       {team && <FirstSteps />}
       <SettingsCard
-        title="Organization"
+        title="Name"
         description={
           personal
             ? "Your personal organization is named after you and only has you."

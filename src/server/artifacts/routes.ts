@@ -1,12 +1,15 @@
 // Artifact routes on the app's origin: listing the ones a person can open and a thread's, reading one, getting a link to
-// view it, changing its sharing, deleting it, following its changes, and the settings on making them public.
+// view it, changing its sharing, sharing it with a thread's guests and with people, deleting it, following its changes, and the settings on making them public.
 
 import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
 import { type ApiEnv, checkedBody, queryOf, signedIn } from "@/server/http.ts";
 import {
+  artifactCandidateQuerySchema,
   artifactListQuerySchema,
+  artifactGuestShareSchema,
+  artifactPersonChangeSchema,
   artifactSettingsChangeSchema,
   artifactSharingChangeSchema,
   artifactViewRequestSchema,
@@ -17,6 +20,9 @@ import type { Artifacts } from "./service.ts";
 const listQuery = queryOf(artifactListQuerySchema);
 const viewRequest = checkedBody(artifactViewRequestSchema);
 const sharingChange = checkedBody(artifactSharingChangeSchema);
+const personChange = checkedBody(artifactPersonChangeSchema);
+const guestShare = checkedBody(artifactGuestShareSchema);
+const candidateQuery = queryOf(artifactCandidateQuerySchema);
 const settingsChange = checkedBody(artifactSettingsChangeSchema);
 
 // How often a stream checks the viewer may still view the artifact, and keeps the connection open.
@@ -49,8 +55,50 @@ export function artifactRoutes(options: {
     })
     .put("/v1/artifacts/:id/sharing", sharingChange, (c) => {
       const principal = signedIn(c.var.principal);
-      const { sharing } = c.req.valid("json");
-      return c.json(artifacts.setSharing(principal, c.req.param("id"), sharing), 200);
+      const { sharing, orgRole } = c.req.valid("json");
+      return c.json(artifacts.setSharing(principal, c.req.param("id"), sharing, orgRole), 200);
+    })
+    .put("/v1/artifacts/:id/guests", guestShare, (c) => {
+      const principal = signedIn(c.var.principal);
+      const { threadId, shared } = c.req.valid("json");
+      return c.json(artifacts.setGuestShare(principal, c.req.param("id"), threadId, shared), 200);
+    })
+    .get("/v1/artifacts/:id/people", candidateQuery, (c) => {
+      const principal = signedIn(c.var.principal);
+      return c.json(
+        artifacts.candidates(principal, c.req.param("id"), c.req.valid("query").q),
+        200,
+      );
+    })
+    .put("/v1/artifacts/:id/people/:userId", personChange, (c) => {
+      const principal = signedIn(c.var.principal);
+      const { role } = c.req.valid("json");
+      return c.json(
+        artifacts.setPersonShare(principal, c.req.param("id"), c.req.param("userId"), true, role),
+        200,
+      );
+    })
+    .delete("/v1/artifacts/:id/people/:userId", (c) => {
+      const principal = signedIn(c.var.principal);
+      return c.json(
+        artifacts.setPersonShare(principal, c.req.param("id"), c.req.param("userId"), false),
+        200,
+      );
+    })
+    .put("/v1/artifacts/:id/groups/:groupId", personChange, (c) => {
+      const principal = signedIn(c.var.principal);
+      const { role } = c.req.valid("json");
+      return c.json(
+        artifacts.setGroupShare(principal, c.req.param("id"), c.req.param("groupId"), true, role),
+        200,
+      );
+    })
+    .delete("/v1/artifacts/:id/groups/:groupId", (c) => {
+      const principal = signedIn(c.var.principal);
+      return c.json(
+        artifacts.setGroupShare(principal, c.req.param("id"), c.req.param("groupId"), false),
+        200,
+      );
     })
     .get("/v1/artifacts/:id/events", (c) => {
       const principal = signedIn(c.var.principal);

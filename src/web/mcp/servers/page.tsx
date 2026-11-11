@@ -28,7 +28,7 @@ import { Switch } from "@/web/components/ui/switch";
 import { meQuery } from "@/web/auth/queries";
 import { mcpServerQuery, spaceMcpServersQuery } from "@/web/mcp/queries";
 import type { Scope } from "@/web/shell/scope";
-import { ConfirmDialog } from "@/web/components/confirm-dialog";
+import { DeleteCard } from "@/web/shell/delete-card";
 import { StatusBadge, statusOf } from "@/web/mcp/servers/row";
 import { useServerSwitch } from "@/web/mcp/mutations";
 import { McpServerDialog } from "@/web/mcp/servers/server-dialog";
@@ -399,19 +399,14 @@ function ServerDetail({ scope, server }: { scope: Scope; server: McpServerSummar
         )}
       </SettingsCard>
       {canManage && (
-        <SettingsCard
+        <DeleteCard
           title="Remove server"
           description="The agent stops using its tools, and Mage forgets its headers or sign-in."
-        >
-          <ConfirmDialog
-            trigger={<Button variant="destructive" size="sm" />}
-            triggerLabel="Remove server"
-            title={`Remove ${server.name}?`}
-            description="The agent stops using its tools, and Mage forgets how it connects."
-            action="Remove"
-            onConfirm={remove}
-          />
-        </SettingsCard>
+          confirmTitle={`Remove ${server.name}?`}
+          confirmDescription="The agent stops using its tools, and Mage forgets how it connects."
+          action="Remove"
+          onConfirm={remove}
+        />
       )}
       <McpServerDialog
         key={`${server.id}:${server.url}:${server.auth.kind}`}

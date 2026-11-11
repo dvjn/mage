@@ -100,7 +100,7 @@ test("the agent publishes a page, it opens from the artifact origin, an update r
 
   // Sharing widens to the org; public is not offered until the org allows it.
   await page.getByRole("button", { name: "Share" }).click();
-  const dialog = page.getByRole("dialog", { name: "Share artifact" });
+  const dialog = page.getByRole("dialog", { name: "Share this artifact" });
   await expect(dialog.getByRole("radio", { name: "Organization" })).toBeVisible();
   await expect(dialog.getByRole("radio", { name: "Public" })).toHaveCount(0);
   await dialog.getByRole("radio", { name: "Organization" }).click();
@@ -264,7 +264,8 @@ test("another thread in the space updates an artifact, the header lists what it 
   await page.getByRole("button", { name: "Version history" }).click();
   await expect(page.getByRole("menuitemradio")).toHaveCount(2);
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Delete" }).click();
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Delete" }).click();
   const dialog = page.getByRole("alertdialog");
   await expect(dialog).toContainText("removed for everyone");
   await expect(dialog.getByRole("link")).toHaveCount(2);

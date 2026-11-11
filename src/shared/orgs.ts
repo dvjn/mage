@@ -140,6 +140,7 @@ export const directoryPersonPageSchema = pageSchema(directoryPersonSchema);
 export const directoryGroupSchema = z.object({
   id: z.string(),
   name: z.string(),
+  email: z.string().nullable(),
   memberCount: z.number().int(),
   role: orgRoleSchema.nullable(),
 });
@@ -196,6 +197,7 @@ export const joinRefusalSchema = z.object({
 export const groupSchema = z.object({
   id: z.string(),
   name: z.string(),
+  email: z.string().nullable(),
   source: recordSourceSchema,
   role: orgRoleSchema,
   memberCount: z.number().int(),

@@ -5,6 +5,7 @@
 // MCP servers do; the space's own are tagged as such. Only those who manage a scope change it;
 // others read it.
 
+import { EmptyState } from "@/web/components/page-states";
 import {
   ChevronDownIcon,
   CircleAlertIcon,
@@ -25,9 +26,9 @@ import { SettingsCard } from "@/web/shell/settings-page";
 import { useOpenSections } from "@/web/agent/open-sections";
 import { RowBadge, SettingsRow } from "@/web/shell/settings-row";
 import { ScopedSwitch } from "@/web/shell/scoped-switch";
-import { ExtensionSwitch } from "@/web/shell/extension-switch";
+import { SettingsSwitch } from "@/web/shell/settings-switch";
 import { Alert, AlertDescription } from "@/web/components/ui/alert";
-import { Button } from "@/web/components/ui/button";
+import { HeaderAction } from "@/web/shell/people-table";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -106,12 +107,16 @@ export function SkillsCard({
           <>
             <DropdownMenu>
               <DropdownMenuTrigger
-                render={<Button variant="outline" size="sm" disabled={!allowed || uploading} />}
-              >
-                {uploading ? <Spinner /> : <PlusIcon />}
-                Add skills
-                <ChevronDownIcon />
-              </DropdownMenuTrigger>
+                render={
+                  <HeaderAction
+                    icon={uploading ? <Spinner /> : <PlusIcon />}
+                    label="Add skills"
+                    disabled={!allowed || uploading}
+                  >
+                    <ChevronDownIcon />
+                  </HeaderAction>
+                }
+              />
               <DropdownMenuContent align="end" className="min-w-44">
                 <DropdownMenuItem onClick={() => setAdding("repository")}>
                   <GitBranchIcon />
@@ -179,7 +184,7 @@ export function SkillsCard({
             )}
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground">No skills yet</p>
+          <EmptyState compact title="No skills yet" />
         )}
         {spaceSkills !== null && <SpaceSkillsSwitch allowed={spaceSkills} canManage={canManage} />}
       </div>
@@ -293,13 +298,13 @@ function WrittenGroup({
 function SpaceSkillsSwitch({ allowed, canManage }: { allowed: boolean; canManage: boolean }) {
   const { error, pending, run } = useChange();
   return (
-    <ExtensionSwitch
+    <SettingsSwitch
       label="Spaces can add their own skills"
       description="Those who manage a space add skills only its threads use."
-      allowed={allowed}
-      canManage={canManage}
-      pending={pending}
+      checked={allowed}
+      disabled={!canManage || pending}
       error={error}
+      className="border-t pt-4"
       onChange={(next) =>
         void run(() => apiClient.v1.org.skills["space-skills"].$put({ json: { allowed: next } }))
       }

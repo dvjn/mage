@@ -289,3 +289,88 @@ describe("org access from the directory", () => {
     ).toBe(404);
   });
 });
+
+describe("group emails from the directory", () => {
+  function emailOf(workspace: Workspace, id: string) {
+    return workspace.directory.group(id)?.email ?? null;
+  }
+
+  function sendGroup(workspace: Workspace, method: string, id: string, body: object) {
+    return workspace.app.request(`/api/auth/scim/v2/Groups${id ? `/${id}` : ""}`, {
+      method,
+      headers: { Authorization: `Bearer ${SCIM_TOKEN}`, "Content-Type": "application/scim+json" },
+      body: JSON.stringify(body),
+    });
+  }
+
+  it("keeps the email a group is provisioned with, changes it, and drops it", async () => {
+    const workspace = setup();
+    const id = await workspace.scim.createGroup("Looms", [], "Looms@Example.com");
+    expect(emailOf(workspace, id)).toBe("Looms@Example.com");
+    await workspace.scim.setGroupEmail(id, "weavers@example.com");
+    expect(emailOf(workspace, id)).toBe("weavers@example.com");
+    await workspace.scim.setGroupEmail(id, null);
+    expect(emailOf(workspace, id)).toBeNull();
+  });
+
+  it("clears the email when a replace leaves it out", async () => {
+    const workspace = setup();
+    const id = await workspace.scim.createGroup("Looms", [], "looms@example.com");
+    const res = await sendGroup(workspace, "PUT", id, {
+      schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+      displayName: "Looms",
+    });
+    expect(res.status).toBe(200);
+    expect(emailOf(workspace, id)).toBeNull();
+  });
+
+  it("takes Authentik's patch, which replaces the whole group and names no message schema", async () => {
+    const workspace = setup();
+    const id = await workspace.scim.createGroup("Looms", []);
+    const res = await sendGroup(workspace, "PATCH", id, {
+      Operations: [
+        {
+          op: "replace",
+          value: {
+            schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+            displayName: "Weavers",
+            emails: [{ value: "weavers@example.com", type: "work", primary: true }],
+          },
+        },
+      ],
+    });
+    expect(res.status).toBe(200);
+    expect(workspace.directory.group(id)?.name).toBe("Weavers");
+    expect(emailOf(workspace, id)).toBe("weavers@example.com");
+  });
+
+  it("reads the primary address of Entra's group extension", async () => {
+    const workspace = setup();
+    const res = await sendGroup(workspace, "POST", "", {
+      schemas: ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+      displayName: "Entra devs",
+      "urn:ietf:params:scim:schemas:extension:Microsoft:Entra:2.0:Group": {
+        proxyAddresses: ["smtp:alias@example.com", "SMTP:devs@example.com"],
+      },
+    });
+    expect(res.status).toBe(201);
+    const { id } = (await res.json()) as { id: string };
+    expect(emailOf(workspace, id)).toBe("devs@example.com");
+  });
+
+  it("finds groups by email, and an exact email shows the group", async () => {
+    const workspace = await teamOrg();
+    const { scim, api, ada, orgId } = workspace;
+    await scim.createGroup("Looms", [], "looms@example.com");
+    await scim.createGroup("Other", []);
+    const res = await api(
+      "GET",
+      "/directory/groups?q=LOOMS@example.com",
+      ada.cookie,
+      undefined,
+      orgId,
+    );
+    const page = (await res.json()) as Page<{ name: string; email: string | null }>;
+    expect(page.items).toMatchObject([{ name: "Looms", email: "looms@example.com" }]);
+  });
+});

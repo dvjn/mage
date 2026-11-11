@@ -4,20 +4,14 @@
 // person chooses; retired subagents stay out of the list, reached from the thread.
 
 import { cn } from "cn";
-import { ChevronRightIcon, MoreHorizontalIcon, PencilIcon, Trash2Icon } from "lucide-react";
+import { ChevronRightIcon } from "lucide-react";
 import { type ReactNode, useReducer } from "react";
 
 import type { ListedSubagent, ThreadListItem } from "@/shared/threads/list.ts";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/web/components/ui/dropdown-menu";
+import { MoreMenu } from "@/web/components/more-menu";
 import { SidebarMenuAction, SidebarMenuSub, useSidebar } from "@/web/components/ui/sidebar";
-import { WithTooltip } from "@/web/components/with-tooltip";
 import { useNav } from "@/web/threads/nav/nav-context";
+import { ThreadMenuItems } from "@/web/threads/thread-menu-items";
 import { ThreadRow } from "@/web/threads/thread-row";
 
 // The room a row with a caret keeps at its end: for the caret, and beside it the menu, which on a
@@ -36,30 +30,21 @@ function ItemMenu({
 }) {
   const { isMobile } = useSidebar();
   return (
-    <DropdownMenu>
-      <WithTooltip label="Actions">
-        <DropdownMenuTrigger
-          render={
-            <SidebarMenuAction
-              className={cn(
-                "peer-hover/menu-button:opacity-100 hover:opacity-100 focus-visible:opacity-100 aria-expanded:bg-muted aria-expanded:opacity-100 md:opacity-0 peer-data-[size=lg]/menu-button:top-[5px]",
-                besideCaret && "right-7",
-              )}
-            />
-          }
-        >
-          <MoreHorizontalIcon />
-          <span className="sr-only">Actions for {name}</span>
-        </DropdownMenuTrigger>
-      </WithTooltip>
-      <DropdownMenuContent
-        className="w-48"
-        side={isMobile ? "bottom" : "right"}
-        align={isMobile ? "end" : "start"}
-      >
-        {children}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <MoreMenu
+      side={isMobile ? "bottom" : "right"}
+      align={isMobile ? "end" : "start"}
+      trigger={
+        <SidebarMenuAction
+          aria-label={`More for ${name}`}
+          className={cn(
+            "peer-hover/menu-button:opacity-100 hover:opacity-100 focus-visible:opacity-100 aria-expanded:bg-muted aria-expanded:opacity-100 md:opacity-0 peer-data-[size=lg]/menu-button:top-[5px]",
+            besideCaret && "right-7",
+          )}
+        />
+      }
+    >
+      {children}
+    </MoreMenu>
   );
 }
 
@@ -113,24 +98,12 @@ export function ThreadItem({ thread }: { thread: ThreadListItem }) {
         )}
         {(nav.can.post || nav.can.remove) && (
           <ItemMenu name={thread.title} besideCaret={subagents.length > 0}>
-            {nav.can.post && (
-              <DropdownMenuItem onClick={() => nav.act({ kind: "rename-thread", thread })}>
-                <PencilIcon />
-                Rename
-              </DropdownMenuItem>
-            )}
-            {nav.can.remove && (
-              <>
-                {nav.can.post && <DropdownMenuSeparator />}
-                <DropdownMenuItem
-                  variant="destructive"
-                  onClick={() => nav.act({ kind: "delete-thread", thread })}
-                >
-                  <Trash2Icon />
-                  Delete
-                </DropdownMenuItem>
-              </>
-            )}
+            <ThreadMenuItems
+              onRename={nav.can.post ? () => nav.act({ kind: "rename-thread", thread }) : undefined}
+              onDelete={
+                nav.can.remove ? () => nav.act({ kind: "delete-thread", thread }) : undefined
+              }
+            />
           </ItemMenu>
         )}
       </ThreadRow>

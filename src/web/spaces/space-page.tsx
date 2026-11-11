@@ -19,7 +19,7 @@ import { Button } from "@/web/components/ui/button";
 import { lenient, tableSearchSchema } from "@/web/lib/data-table";
 import { rememberSpace } from "@/web/spaces/last-space";
 import { spaceThreadsPage } from "@/web/api/list-queries";
-import { DeleteOwnSpace } from "@/web/spaces/delete-own-space";
+import { DeleteSpaceConfirm } from "@/web/spaces/delete-space";
 import { spacesQuery } from "@/web/spaces/queries";
 import { PageHeader, pageWidth } from "@/web/shell/page-header";
 import { NotFound } from "@/web/shell/not-found";
@@ -73,14 +73,19 @@ export function SpacePage() {
       <PageHeader crumbs={[{ label: space?.name ?? "" }]}>
         {space && archived && (
           <div className="px-4">
-            <DeleteOwnSpace
+            <DeleteSpaceConfirm
               space={space}
+              own
               threads={page.data?.total}
+              leave={() => navigate({ to: "/" })}
               trigger={<Button variant="outline" size="sm" />}
-            >
-              <Trash2Icon />
-              Delete space
-            </DeleteOwnSpace>
+              triggerLabel={
+                <>
+                  <Trash2Icon />
+                  Delete space
+                </>
+              }
+            />
           </div>
         )}
       </PageHeader>

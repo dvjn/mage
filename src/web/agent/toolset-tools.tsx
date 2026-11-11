@@ -3,12 +3,11 @@
 // always on, whose picker shows On and is disabled.
 
 import { cn } from "cn";
-import { SearchIcon } from "lucide-react";
 import { useState } from "react";
 
 import { type ToolSetting, type ToolsetSetting } from "@/shared/tools.ts";
 import { Button } from "@/web/components/ui/button";
-import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/ui/input-group";
+import { FilterInput } from "@/web/components/filter-input";
 import { PolicyPicker } from "@/web/agent/policies/picker";
 import { PolicyDot } from "@/web/agent/policies/tags";
 import { Popover, PopoverContent, PopoverTrigger } from "@/web/components/ui/popover";
@@ -62,18 +61,12 @@ export function ToolsetTools({
   return (
     <div className="flex flex-col gap-1">
       {toolset.tools.length > FILTER_FROM && (
-        <InputGroup className="mb-1">
-          <InputGroupInput
-            type="search"
-            placeholder="Filter tools"
-            aria-label={`Filter ${toolset.title} tools`}
-            value={filter}
-            onChange={(event) => setFilter(event.target.value)}
-          />
-          <InputGroupAddon>
-            <SearchIcon />
-          </InputGroupAddon>
-        </InputGroup>
+        <FilterInput
+          label={`Filter ${toolset.title} tools`}
+          placeholder="Filter tools"
+          value={filter}
+          onChange={setFilter}
+        />
       )}
       {groups.map((group) => (
         <ToolGroup

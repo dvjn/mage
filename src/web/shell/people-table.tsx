@@ -1,36 +1,28 @@
 // The one look for tables of people, groups, invites and spaces: a Name column, one or two columns
-// of context, a Role column and a "…" column, as columns of a data table. On a phone the context
-// and role columns fold into the name's third line and the role moves into the row menu. The row
-// menu is the row's only control: changing the role, what the surface offers, and one destructive
-// item last. Each surface has one primary action, which always opens a dialog. A subject is an
-// avatar, a name with a muted "(you)", and a muted line below.
+// of context, a Role column and an actions column, as columns of a data table. On a phone the
+// context and role columns fold into the name's third line and the role moves into the row menu.
+// The row's controls are the role, an × that removes it after a question, and a "More" menu for
+// what else the surface offers. Each surface has one primary action, which always opens a dialog.
+// A subject is an avatar, a name with a muted "(you)", and a muted line below; it is the one look
+// of a person, in tables and in the lists below a picker.
 
 import { cn } from "cn";
 import type { ColumnDef, RowData } from "@tanstack/react-table";
-import { MoreHorizontalIcon } from "lucide-react";
+import { XIcon } from "lucide-react";
 import type * as React from "react";
 
 import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
 import { Button } from "@/web/components/ui/button";
+import { AccessLevel, type Level } from "@/web/components/access-level";
+import { ConfirmDialog } from "@/web/components/confirm-dialog";
+import { MoreMenu } from "@/web/components/more-menu";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
-  DropdownMenuSeparator,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
 } from "@/web/components/ui/dropdown-menu";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/web/components/ui/select";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import type { DataTableFeatures, FilterOption } from "@/web/lib/data-table";
 import { initialsOf } from "@/web/lib/initials";
@@ -69,32 +61,35 @@ export function contextColumn<T extends RowData>(
   };
 }
 
-// The role column, wide enough for its select, hidden on a phone where the row menu changes it;
-// with options, the rows can be narrowed to one role.
-export function roleColumn<T extends RowData>(
-  cell: Cell<T>,
+// The role column, wide enough for its toggle group, hidden on a phone where the row menu changes
+// it; with options, the rows can be narrowed to one role.
+export function roleColumn<T extends RowData, V extends string = string>(
+  cell: (row: T) => { label: string } & RoleChoice<V>,
   options?: FilterOption[],
 ): ColumnDef<DataTableFeatures, T> {
   return {
     id: "role",
     header: "Role",
-    cell: ({ row }) => cell(row.original),
+    cell: ({ row }) => {
+      const { label, ...choice } = cell(row.original);
+      return <RoleControl choice={choice} label={label} />;
+    },
     meta: {
       label: "Role",
       ...(options && { options }),
-      headerClassName: "w-36",
-      className: "hidden w-36 px-3 py-2.5 sm:table-cell",
+      headerClassName: "w-32",
+      className: "hidden w-32 px-3 py-2.5 sm:table-cell",
     },
   };
 }
 
-// The "…" column.
+// The actions column: the controls of a row, at the right.
 export function actionsColumn<T extends RowData>(cell: Cell<T>): ColumnDef<DataTableFeatures, T> {
   return {
     id: "actions",
     header: () => <span className="sr-only">Actions</span>,
     cell: ({ row }) => cell(row.original),
-    meta: { headerClassName: "w-10 px-1", className: "w-10 px-1 py-2 text-right" },
+    meta: { headerClassName: "w-20 px-1", className: "w-20 px-1 py-2" },
   };
 }
 
@@ -109,6 +104,22 @@ export function filterColumn<T extends RowData>(
 
 // An avatar: a person's or space's initials, or an icon for a group, everyone or an invite.
 export type SubjectAvatar = { initials: string } | { icon: React.ReactNode };
+
+export function PersonAvatar({
+  avatar,
+  size = "default",
+}: {
+  avatar: SubjectAvatar;
+  size?: "default" | "sm";
+}) {
+  return (
+    <Avatar size={size}>
+      <AvatarFallback className="text-xs font-medium [&_svg]:size-4 group-data-[size=sm]/avatar:text-[0.625rem] group-data-[size=sm]/avatar:[&_svg]:size-3">
+        {"icon" in avatar ? avatar.icon : initialsOf(avatar.initials)}
+      </AvatarFallback>
+    </Avatar>
+  );
+}
 
 export function Subject({
   avatar,
@@ -131,11 +142,7 @@ export function Subject({
 }) {
   return (
     <div className="flex min-w-0 items-center gap-2.5">
-      <Avatar size={size}>
-        <AvatarFallback className="text-xs font-medium [&_svg]:size-4 group-data-[size=sm]/avatar:[&_svg]:size-3">
-          {"icon" in avatar ? avatar.icon : initialsOf(avatar.initials)}
-        </AvatarFallback>
-      </Avatar>
+      <PersonAvatar avatar={avatar} size={size} />
       <div className="grid min-w-0 leading-tight">
         <span className="truncate text-sm font-medium">
           {name}
@@ -151,137 +158,157 @@ export function Subject({
   );
 }
 
-export interface RoleChoice<T extends string> {
+export interface RoleChoice<T extends string = string> {
   value: T;
-  options: { value: T; label: string }[];
+  levels: readonly Level<T>[];
   onChange?: (value: T) => void;
   // Why the viewer, who may change others', may not change this one.
   locked?: string;
 }
 
-function labelOf<T extends string>(choice: RoleChoice<T>) {
-  return choice.options.find((option) => option.value === choice.value)?.label ?? choice.value;
-}
-
-// The role: a select for whoever manages it, disabled with the reason where they may not change
-// this one, otherwise its name.
-export function RoleControl<T extends string>({
+// The role, as the toggle group every access choice is: changed by whoever manages it, disabled
+// with the reason where they may not change this one, otherwise its name.
+function RoleControl<T extends string>({
   choice,
   label,
 }: {
   choice: RoleChoice<T>;
   label: string;
 }) {
-  const select = (
-    <Select
-      value={choice.value}
-      disabled={!!choice.locked}
-      onValueChange={(next) => next && choice.onChange?.(next as T)}
-    >
-      <SelectTrigger size="sm" aria-label={label} className="w-28">
-        <SelectValue>{() => labelOf(choice)}</SelectValue>
-      </SelectTrigger>
-      <SelectContent alignItemWithTrigger={false}>
-        {choice.options.map((option) => (
-          <SelectItem key={option.value} value={option.value}>
-            {option.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
-  return choice.locked ? (
-    <WithTooltip label={choice.locked}>
-      {/* A disabled control takes no pointer, so its wrapper holds the tooltip. */}
-      <span className="inline-flex" tabIndex={0}>
-        {select}
-      </span>
-    </WithTooltip>
-  ) : choice.onChange ? (
-    select
-  ) : (
-    <span className="text-sm text-muted-foreground">{labelOf(choice)}</span>
-  );
-}
-
-// The "…" menu: the role on a phone, the surface's items, and the destructive item last. Nothing
-// when there is nothing to offer.
-export function ActionsMenu<T extends string>({
-  label,
-  role,
-  children,
-  destructive,
-}: {
-  label: string;
-  role?: RoleChoice<T>;
-  children?: React.ReactNode;
-  destructive?: React.ReactNode;
-}) {
-  const changesRole = !!role?.onChange && !role.locked;
-  if (!changesRole && !children && !destructive) return null;
-  // Changing the role is in the menu only on a phone; wider, the role column does it.
-  const phoneOnly = !children && !destructive;
   return (
-    <DropdownMenu>
-      <WithTooltip label="Actions">
-        <DropdownMenuTrigger
-          render={
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label={`Actions for ${label}`}
-              className={cn(
-                "group-hover:opacity-100 focus-visible:opacity-100 aria-expanded:opacity-100 pointer-fine:opacity-0",
-                phoneOnly && "sm:hidden",
-              )}
-            />
-          }
-        >
-          <MoreHorizontalIcon />
-        </DropdownMenuTrigger>
-      </WithTooltip>
-      <DropdownMenuContent align="end" className="min-w-48">
-        {changesRole && role && (
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger className="sm:hidden">Change role</DropdownMenuSubTrigger>
-            <DropdownMenuSubContent>
-              <DropdownMenuRadioGroup
-                value={role.value}
-                onValueChange={(next) => role.onChange?.(next as T)}
-              >
-                {role.options.map((option) => (
-                  <DropdownMenuRadioItem key={option.value} value={option.value}>
-                    {option.label}
-                  </DropdownMenuRadioItem>
-                ))}
-              </DropdownMenuRadioGroup>
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        )}
-        {children && <DropdownMenuGroup>{children}</DropdownMenuGroup>}
-        {destructive && (children || changesRole) && (
-          <DropdownMenuSeparator className={children ? undefined : "sm:hidden"} />
-        )}
-        {destructive}
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <AccessLevel
+      levels={choice.levels}
+      value={choice.value}
+      label={label}
+      {...(choice.onChange && { onChange: choice.onChange })}
+      {...(choice.locked && { locked: choice.locked })}
+    />
   );
 }
 
-// A surface's one primary action; on a phone, only its icon.
-export function HeaderAction({
-  icon,
-  label,
+// The row menu of a row whose role column is hidden, which is a phone: it changes the role.
+// Nothing when the reader may not.
+export function RoleMenu<T extends string>({ name, role }: { name: string; role: RoleChoice<T> }) {
+  return (
+    <MoreMenu row name={name} empty={!role.onChange || !!role.locked} className="sm:hidden">
+      <DropdownMenuSub>
+        <DropdownMenuSubTrigger>Change role</DropdownMenuSubTrigger>
+        <DropdownMenuSubContent>
+          <DropdownMenuRadioGroup
+            value={role.value}
+            onValueChange={(next) => role.onChange?.(next as T)}
+          >
+            {role.levels.map((option) => (
+              <DropdownMenuRadioItem key={option.value} value={option.value}>
+                {option.label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuSubContent>
+      </DropdownMenuSub>
+    </MoreMenu>
+  );
+}
+
+// What removing someone asks, one description to a kind of subject. A person who stays in another
+// way says how.
+export function removalCopy(
+  kind: "person" | "group" | "invite",
+  name: string,
+  stays?: string,
+): { name: string; description: string } {
+  return {
+    name,
+    description:
+      kind === "invite"
+        ? "The link stops working."
+        : kind === "group"
+          ? "Its people lose access unless they have it another way."
+          : stays
+            ? `They stay in through ${stays}.`
+            : "They lose access.",
+  };
+}
+
+// The × that removes someone from a list.
+export function RemoveButton({
+  name,
+  disabled,
   onClick,
 }: {
-  icon: React.ReactNode;
-  label: string;
+  name: string;
+  disabled?: boolean;
   onClick: () => void;
 }) {
   return (
-    <Button onClick={onClick} aria-label={label}>
+    <WithTooltip label="Remove">
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="ghost"
+        aria-label={`Remove ${name}`}
+        disabled={disabled}
+        onClick={onClick}
+      >
+        <XIcon />
+      </Button>
+    </WithTooltip>
+  );
+}
+
+// The question before removing someone, asked of the subject `removalCopy` made; closed when there
+// is none.
+export function RemoveConfirm({
+  subject,
+  onClose,
+  onConfirm,
+  error,
+  disabled,
+}: {
+  subject: { name: string; description: string } | null;
+  onClose: () => void;
+  onConfirm: () => void;
+  error?: React.ReactNode;
+  disabled?: boolean;
+}) {
+  return (
+    <ConfirmDialog
+      open={!!subject}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title={`Remove ${subject?.name ?? ""}?`}
+      description={subject?.description ?? ""}
+      error={error}
+      disabled={disabled}
+      action="Remove"
+      onConfirm={onConfirm}
+    />
+  );
+}
+
+// The controls of a row, side by side.
+export function RowActions({ children }: { children: React.ReactNode }) {
+  return <div className="flex items-center justify-end gap-1">{children}</div>;
+}
+
+// A surface's one primary action; on a phone, only its icon. It can be what opens a menu.
+export function HeaderAction({
+  icon,
+  label,
+  children,
+  ...props
+}: Omit<React.ComponentProps<typeof Button>, "children"> & {
+  icon: React.ReactNode;
+  label: string;
+  // Beside the label, as a menu's caret.
+  children?: React.ReactNode;
+}) {
+  return (
+    <Button aria-label={label} {...props}>
       {icon}
       <span className="hidden sm:inline">{label}</span>
+      {children}
     </Button>
   );
 }

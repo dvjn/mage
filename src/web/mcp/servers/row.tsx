@@ -3,18 +3,19 @@
 // uses it, which stays off while the org has the server off) and a link to its page; inside, its
 // tools with their policy pickers.
 
-import { Link } from "@tanstack/react-router";
-import { SettingsIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { SettingsIcon, Trash2Icon } from "lucide-react";
+import { useState } from "react";
 
 import { type McpServerSummary } from "@/shared/mcp.ts";
 import type { ToolsetSetting } from "@/shared/tools.ts";
 import { PolicyCounts } from "@/web/agent/policies/tags";
 import { ToolsetTools } from "@/web/agent/toolset-tools";
-import { Badge } from "@/web/components/ui/badge";
-import { buttonVariants } from "@/web/components/ui/button";
-import { WithTooltip } from "@/web/components/with-tooltip";
+import { ConfirmDialog } from "@/web/components/confirm-dialog";
+import { MoreMenu } from "@/web/components/more-menu";
+import { DropdownMenuItem } from "@/web/components/ui/dropdown-menu";
 import type { Scope } from "@/web/shell/scope";
-import { useServerSwitch } from "@/web/mcp/mutations";
+import { useRemoveServer, useServerSwitch } from "@/web/mcp/mutations";
 import { ScopedSwitch } from "@/web/shell/scoped-switch";
 import { RowBadge, SettingsRow } from "@/web/shell/settings-row";
 import { plural } from "@/web/lib/plural";
@@ -48,15 +49,7 @@ export function statusOf(server: McpServerSummary): {
 
 export function StatusBadge({ server }: { server: McpServerSummary }) {
   const { label, tone } = statusOf(server);
-  if (tone === "error") return <Badge variant="destructive">{label}</Badge>;
-  if (tone === "ask") {
-    return (
-      <Badge variant="outline" className="border-tool-ask/40 text-tool-ask">
-        {label}
-      </Badge>
-    );
-  }
-  return <Badge variant="secondary">{label}</Badge>;
+  return <RowBadge tone={tone}>{label}</RowBadge>;
 }
 
 export function ServerRow({
@@ -76,6 +69,9 @@ export function ServerRow({
 }) {
   const { server } = row;
   const { error, pending, setEnabled, setInSpace } = useServerSwitch(scope);
+  const navigate = useNavigate();
+  const [removing, setRemoving] = useState(false);
+  const removal = useRemoveServer();
   const link = pageLink(scope, server.id);
   // The org's server as a space sees it: off there while the org has it off.
   const orgOff = row.kind === "org" && !server.enabled;
@@ -117,15 +113,24 @@ export function ServerRow({
               row.kind === "org" ? setInSpace(server, next) : setEnabled(server, next)
             }
           />
-          <WithTooltip label="Server settings">
-            <Link
-              {...link}
-              aria-label={`${server.name} settings`}
-              className={buttonVariants({ variant: "ghost", size: "icon-sm" })}
-            >
+          <MoreMenu
+            row
+            name={server.name}
+            destructive={
+              row.kind === "own" &&
+              canManage && (
+                <DropdownMenuItem variant="destructive" onClick={() => setRemoving(true)}>
+                  <Trash2Icon />
+                  Remove
+                </DropdownMenuItem>
+              )
+            }
+          >
+            <DropdownMenuItem onClick={() => void navigate(link)}>
               <SettingsIcon />
-            </Link>
-          </WithTooltip>
+              Settings
+            </DropdownMenuItem>
+          </MoreMenu>
         </span>
       }
     >
@@ -140,6 +145,19 @@ export function ServerRow({
               : "Its tools show once the server answers."}
         </p>
       )}
+      <ConfirmDialog
+        open={removing}
+        onOpenChange={(open) => {
+          setRemoving(open);
+          if (!open) removal.reset();
+        }}
+        title={`Remove ${server.name}?`}
+        description="The agent stops using its tools, and Mage forgets how it connects."
+        error={removal.error?.message}
+        disabled={removal.isPending}
+        action="Remove"
+        onConfirm={() => removal.mutate(server.id, { onSuccess: () => setRemoving(false) })}
+      />
     </SettingsRow>
   );
 }

@@ -1,13 +1,13 @@
 // The Policies card: the org's or a space's policies with a summary of each and how many tools use
 // it. A space sees the org's policies beside its own.
 
+import { RowBadge } from "@/web/shell/settings-row";
 import { cn } from "cn";
 import { PlusIcon } from "lucide-react";
 import { type ReactNode } from "react";
 
 import { type ToolPolicy } from "@/shared/tools.ts";
 import { SettingsCard } from "@/web/shell/settings-page";
-import { Badge } from "@/web/components/ui/badge";
 import { Button } from "@/web/components/ui/button";
 import { PolicyDot, PolicyTags } from "@/web/agent/policies/tags";
 import { usePolicies } from "@/web/agent/policies/provider";
@@ -90,11 +90,7 @@ function PolicyRow({
       <span className="flex min-w-0 flex-1 flex-col gap-1">
         <span className="flex items-center gap-2">
           <span className="truncate text-sm font-medium">{policy.name}</span>
-          {organization && (
-            <Badge variant="outline" className="h-4 px-1.5 text-[10px]">
-              Organization
-            </Badge>
-          )}
+          {organization && <RowBadge>Organization</RowBadge>}
         </span>
         <PolicyTags rule={{ off: false, ...policy }} />
       </span>
@@ -103,7 +99,7 @@ function PolicyRow({
       </span>
     </>
   );
-  const rowClass = "flex w-full items-start gap-3 py-3 text-left";
+  const rowClass = "flex w-full items-start gap-3 px-2 py-3 text-left";
   return (
     <li aria-label={policy.name}>
       {onEdit ? (
@@ -112,7 +108,7 @@ function PolicyRow({
           onClick={onEdit}
           className={cn(
             rowClass,
-            "-mx-2 w-[calc(100%+1rem)] rounded-md px-2 outline-none hover:bg-muted/50 focus-visible:ring-[3px] focus-visible:ring-ring/50",
+            "rounded-md outline-none hover:bg-muted/50 focus-visible:ring-[3px] focus-visible:ring-ring/50",
           )}
         >
           {body}

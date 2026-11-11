@@ -175,7 +175,7 @@ test("a connection's proxy is set from its row, its header values never shown", 
   await expect(row).toContainText("ada@chatgpt.example");
   await expect(row).toContainText("Sign in with ChatGPT");
   await expect(page.getByLabel("Base URL")).toBeHidden();
-  await row.getByRole("button", { name: "Actions for ChatGPT" }).click();
+  await row.getByRole("button", { name: "More for ChatGPT" }).click();
   await page.getByRole("menuitem", { name: "Proxy settings" }).click();
   await expect(page.getByLabel("Base URL")).toHaveAttribute(
     "placeholder",
@@ -194,14 +194,14 @@ test("a connection's proxy is set from its row, its header values never shown", 
   await page.getByRole("button", { name: "Save" }).click();
   await expect.poll(() => sent.length).toBe(2);
   await page.keyboard.press("Escape");
-  await row.getByRole("button", { name: "Actions for ChatGPT" }).click();
+  await row.getByRole("button", { name: "More for ChatGPT" }).click();
   await page.getByRole("menuitem", { name: "Proxy settings" }).click();
   await expect(page.getByLabel("Base URL")).toHaveValue("https://proxy.example.com/v1");
 
   await page.getByRole("button", { name: "Clear" }).click();
   await expect(page.getByText("Proxy cleared.")).toBeVisible();
   await page.keyboard.press("Escape");
-  await row.getByRole("button", { name: "Actions for ChatGPT" }).click();
+  await row.getByRole("button", { name: "More for ChatGPT" }).click();
   await page.getByRole("menuitem", { name: "Proxy settings" }).click();
   await expect(page.getByLabel("Base URL")).toHaveValue("");
   expect(sent).toEqual([

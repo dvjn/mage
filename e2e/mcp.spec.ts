@@ -289,7 +289,8 @@ test("a space turns one of the org's MCP servers off for itself alone", async ({
 
   // Its page in the space: the space's extra rules for its tools, and its switch; the rest is the
   // org's.
-  await row.getByRole("link", { name: "Notes settings" }).click();
+  await row.getByRole("button", { name: "More for Notes" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
   await expect(page).toHaveURL(`/s/${own}/settings/tools/mcp/${serverId}`);
   await expect(page.getByRole("heading", { name: "Notes" })).toBeVisible();
   await expect(page.getByText("Managed by the organization")).toBeVisible();
@@ -316,7 +317,8 @@ test("a space turns one of the org's MCP servers off for itself alone", async ({
   await page.goto("/org/tools");
   const inOrg = page.getByRole("region", { name: "Notes" });
   await expect(inOrg.getByRole("switch", { name: "Notes: on" })).toBeChecked();
-  await inOrg.getByRole("link", { name: "Notes settings" }).click();
+  await inOrg.getByRole("button", { name: "More for Notes" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
   await expect(
     page
       .getByRole("listitem", { name: "Add note" })
