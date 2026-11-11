@@ -24,7 +24,7 @@ export interface SystemToolsOptions {
   threads: Pick<ThreadStore, "find" | "update" | "eventsAfter">;
   spaceStore: Pick<SpaceStore, "find">;
   guests: Pick<GuestStore, "activeIn">;
-  models: Pick<Models, "replyModel" | "requireModel">;
+  models: Pick<Models, "replyModel" | "requireModel" | "resolveModels">;
   // Opens the model a thread replies with, to write the summary that compacts it.
   open: (orgId: string, ref: string) => Promise<OpenModel>;
   now?: () => Date;
@@ -87,6 +87,36 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
     },
   };
 
+  const listModels: ToolSpec<Record<string, never>> = {
+    name: "thread.list_models",
+    title: "List models",
+    annotations: { readOnlyHint: true },
+    description:
+      "List the enabled models available to this org, with exact refs for thread.set_model and subagents.start. Use these refs rather than guessing model names. Reports connections whose catalogs could not be read; a listed model is not a guarantee that inference will succeed.",
+    input: z.object({}).strict() as z.ZodType<Record<string, never>>,
+    risk: () => "normal",
+    async run(_input, ctx) {
+      const { models: available, errors } = await models.resolveModels(ctx.orgId);
+      return {
+        ok: true,
+        value: {
+          models: available.map(
+            ({ ref, name, host, maker, connectionLabel, contextWindow, reasoning }) => ({
+              ref,
+              name,
+              host,
+              maker,
+              connection: connectionLabel,
+              ...(contextWindow !== undefined && { contextWindow }),
+              ...(reasoning !== undefined && { reasoning }),
+            }),
+          ),
+          errors,
+        },
+      };
+    },
+  };
+
   const rename: ToolSpec<{ title: string }> = {
     name: "thread.rename",
     title: "Rename",
@@ -110,7 +140,7 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
     title: "Change model",
     annotations: { readOnlyHint: false },
     description:
-      "Set this thread's model and effort together; null effort is the model's default. Applies from your next step.",
+      "Use a ref from thread.list_models. Set this thread's model and effort together; null effort is the model's default. Applies from your next step.",
     input: z.object({
       model: z.string().min(1).meta({ title: "Model", description: "A model ref" }),
       effort: effortSchema.nullable().meta({ title: "Effort" }),
@@ -167,6 +197,6 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
     id: "thread",
     title: "Thread",
     source: "builtin",
-    tools: [info, rename, setModel, compact, askTool],
+    tools: [info, listModels, rename, setModel, compact, askTool],
   };
 }

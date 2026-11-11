@@ -40,7 +40,12 @@ import { createMcpClient, mcpOAuthClientAt } from "@/server/mcp/client.ts";
 import { createMcpServers } from "@/server/mcp/service.ts";
 import { createMcpCredentialStore, createMcpServerStore } from "@/server/mcp/store.ts";
 import type { Connections } from "@/server/models/connections.ts";
-import { defaultsOf, type Models, pickReplyModel } from "@/server/models/service.ts";
+import {
+  defaultsOf,
+  type Models,
+  type ModelList,
+  pickReplyModel,
+} from "@/server/models/service.ts";
 import { createAuth, createIdentity } from "@/server/orgs/auth.ts";
 import { createDirectory } from "@/server/orgs/directory-store.ts";
 import type { OrgRole } from "@/server/orgs/directory.ts";
@@ -159,6 +164,22 @@ export function setup(
     automaticTitleModel: null as string | null,
   };
   const models = {
+    resolveModels: async (_orgId: string): Promise<ModelList> => ({
+      models: org.models
+        .filter((ref) => !org.off.includes(ref))
+        .map((ref) => ({
+          id: ref.slice(ref.indexOf("/") + 1),
+          ref,
+          name: ref.slice(ref.indexOf("/") + 1),
+          connectionId: ref.slice(0, ref.indexOf("/")),
+          host: "codex",
+          maker: "openai",
+          authKind: "oauth",
+          connectionLabel: "ChatGPT",
+        })),
+      errors: [],
+      turnedOff: [],
+    }),
     defaultModel: () => org.defaultModel,
     defaults: (space: Pick<Space, "defaultModel" | "defaultEffort">) => defaultsOf(space, org),
     replyModel: (space: Pick<Space, "defaultModel" | "defaultEffort">, own: ModelPair) =>
@@ -306,7 +327,11 @@ export function setup(
         threads: threadStore,
         spaceStore,
         guests: guestStore,
-        models: { replyModel, requireModel: models.requireModel },
+        models: {
+          replyModel,
+          requireModel: models.requireModel,
+          resolveModels: models.resolveModels,
+        },
         open: () => model.open(),
       }),
       skills.toolset(),

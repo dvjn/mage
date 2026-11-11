@@ -496,6 +496,7 @@ describe("tool calls", () => {
 
     expect(first.tools).toEqual([
       "thread.info",
+      "thread.list_models",
       "thread.rename",
       "thread.set_model",
       "thread.compact",
@@ -724,6 +725,24 @@ describe("tool calls", () => {
     expect(next.texts.at(-1)).toContain('"people":[{"name":"Hedy Lamarr","guest":true}]');
   });
 
+  it("lists enabled model refs for switching and subagents without exposing prices", async () => {
+    const { ada, org, post, calls, model, worker, start, tools } = await toolThread();
+    org.off = ["codex/gpt-small"];
+    start();
+    await post(ada, "Which models can you use?");
+    await calls(["thread.list_models", {}]);
+    const next = await answered(model.next());
+    await worker.idle();
+
+    expect(tools().map((row) => row.state)).toEqual(["ran"]);
+    const result = next.texts.at(-1)!;
+    expect(result).toContain('"ref":"codex/gpt-big"');
+    expect(result).toContain('"ref":"key-2/other"');
+    expect(result).not.toContain("gpt-small");
+    expect(result).not.toContain("pricing");
+    expect(result).toContain('"errors":[]');
+  });
+
   it("change the model the next reply is written with", async () => {
     const { ada, post, calls, model, worker, start, events } = await toolThread();
     start();
@@ -744,7 +763,11 @@ describe("tool calls", () => {
   it("are not offered where the org or the space turned them off, but fixed ones always are", async () => {
     const workspace = await toolThread();
     const { ada, post, model, worker, start, toolSettings, space } = workspace;
-    toolSettings.setInOrg(ada.orgId, ["thread.rename", "thread.info"], TOOL_OFF);
+    toolSettings.setInOrg(
+      ada.orgId,
+      ["thread.rename", "thread.info", "thread.list_models"],
+      TOOL_OFF,
+    );
     toolSettings.setInSpace(space.id, ["thread.set_model", "thread.ask"], TOOL_OFF);
     start();
     await post(ada, "Hello");
@@ -1299,6 +1322,7 @@ describe("tool settings", () => {
     )!;
     expect(inSpace!.tools).toEqual([
       expect.objectContaining({ id: "thread.info", orgPolicy: null, policy: null }),
+      expect.objectContaining({ id: "thread.list_models", orgPolicy: null, policy: null }),
       expect.objectContaining({ id: "thread.rename", orgPolicy: null, policy: TOOL_OFF }),
       expect.objectContaining({ id: "thread.set_model", orgPolicy: null, policy: spacePolicy.id }),
       expect.objectContaining({ id: "thread.compact", orgPolicy: signOff.id, policy: null }),

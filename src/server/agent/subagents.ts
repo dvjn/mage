@@ -509,11 +509,10 @@ export function createSubagents(options: SubagentsOptions) {
       .boolean()
       .optional()
       .meta({ title: "Fork", description: "Start it from a copy of this conversation" }),
-    model: z
-      .string()
-      .min(1)
-      .optional()
-      .meta({ title: "Model", description: "A model ref; yours when not given" }),
+    model: z.string().min(1).optional().meta({
+      title: "Model",
+      description: "An exact ref from thread.list_models; yours when not given",
+    }),
     effort: effortSchema.optional().meta({ title: "Effort", description: "Yours when not given" }),
   });
 
