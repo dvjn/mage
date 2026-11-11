@@ -65,6 +65,23 @@ async function action(row: Locator, name: string) {
     .click();
 }
 
+// Retry and fork open a small box of options before they act.
+async function retry(row: Locator) {
+  await action(row, "Retry");
+  await row
+    .page()
+    .getByRole("group", { name: "Retry with" })
+    .getByRole("button", { name: "Retry" })
+    .click();
+}
+
+async function fork(row: Locator, summary = false) {
+  await action(row, "Fork into new thread");
+  const box = row.page().getByRole("group", { name: "Fork into new thread" });
+  if (summary) await box.getByRole("switch", { name: "Summarize conversation" }).click();
+  await box.getByRole("button", { name: "Fork" }).click();
+}
+
 test("a reply written again keeps the first as a version, read-only when opened", async ({
   page,
 }) => {
@@ -85,7 +102,7 @@ test("a reply written again keeps the first as a version, read-only when opened"
   await human.hover();
   await expect(controls).toHaveCSS("opacity", "1");
 
-  await action(replies(page).last(), "Retry");
+  await retry(replies(page).last());
   await idle(page);
   const versions = replies(page).last().getByRole("group", { name: "Versions" });
   await expect(versions).toContainText("2/2");
@@ -186,7 +203,7 @@ test("a thread forks from a message into a new one that links back", async ({ pa
   await exchange(page, "Second", 2);
   const source = page.url();
 
-  await action(replies(page).first(), "Fork into new thread");
+  await fork(replies(page).first());
   await expect(page).not.toHaveURL(source);
   await expect(messages(page)).toHaveCount(1);
   const status = transcript(page).getByRole("status").filter({ hasText: "Forked from" });
@@ -204,7 +221,7 @@ test("a link to a message only on an earlier version opens that version at it", 
   await exchange(page, "Hello", 1);
   const source = new URL(page.url()).pathname;
 
-  await action(replies(page).last(), "Retry");
+  await retry(replies(page).last());
   await idle(page);
   await replies(page)
     .last()
@@ -212,7 +229,7 @@ test("a link to a message only on an earlier version opens that version at it", 
     .getByRole("button", { name: "Previous version" })
     .click();
   await expect(page.getByRole("region", { name: "Earlier version" })).toBeVisible();
-  await action(replies(page).last(), "Fork into new thread");
+  await fork(replies(page).last());
   await expect(page).not.toHaveURL(new RegExp(source));
 
   // The fork links back to the first reply, which the thread's current branch no longer holds.
@@ -232,7 +249,7 @@ test("a new thread starts from a summary of the conversation", async ({ page }) 
   await exchange(page, "Hello", 1);
   const source = page.url();
 
-  await page.getByRole("button", { name: "New thread from summary" }).click();
+  await fork(replies(page).last(), true);
   await expect(page).not.toHaveURL(source);
   await expect(transcript(page).getByRole("status")).toContainText(
     "Started from a summary of Hello",
@@ -302,7 +319,7 @@ test("a reply is written again with a model picked for that once, the thread's l
 
   await page.goto("/");
   await exchange(page, "Hello", 1);
-  await action(replies(page).last(), "Retry with");
+  await action(replies(page).last(), "Retry");
   const picker = page.getByRole("group", { name: "Retry with" });
   await picker.getByRole("combobox", { name: "Model", exact: true }).click();
   await page
@@ -311,8 +328,15 @@ test("a reply is written again with a model picked for that once, the thread's l
     .click();
   await picker.getByRole("button", { name: "Retry" }).click();
 
-  await expect(replies(page).last()).toContainText("lab-tune-7b");
   await expect(replies(page).last().getByRole("group", { name: "Versions" })).toContainText("2/2");
+  await expect
+    .poll(async () => {
+      const detail = await (
+        await page.request.get(`/api/v1/threads/${new URL(page.url()).pathname.split("/").pop()}`)
+      ).json();
+      return detail.rows.filter((row: { kind: string }) => row.kind === "agent").at(-1)?.model;
+    })
+    .toMatch(/\/lab-tune-7b$/);
   const composer = page.getByRole("combobox", { name: "Model", exact: true });
   await expect(composer).not.toContainText("lab-tune-7b");
 });

@@ -2027,20 +2027,25 @@ export function createThreads(options: ThreadsOptions) {
       answering.get(asideId)?.abort();
     },
 
-    // Starts a thread in the same space from a summary of the current branch, which its agent
-    // reads in place of the conversation, with where it came from.
-    async fromSummary(principal: Principal, id: string) {
+    // Starts a thread in the same space from a summary of the conversation of a branch up to a
+    // row, which its agent reads in place of that conversation, with where it came from.
+    async fromSummary(
+      principal: Principal,
+      id: string,
+      input: { rowId: string; branchId?: string },
+    ) {
       const thread = visible(principal, id);
-      const { rows } = transcripts.of(id).transcript();
-      const last = rows.findLastIndex(
-        (row) => row.kind === "human" || (row.kind === "agent" && row.status !== "streaming"),
-      );
-      const reader = readerOf(principal, thread, thread.currentBranchId, rows);
-      if (last === -1 || !rowActions(rows, last, reader.history.abilities).includes("fork")) {
-        throw new ServiceError(409, "There is nothing to summarise yet");
+      const from = branchIn(thread, input.branchId);
+      const fold = transcripts.of(id, from);
+      const { rows } = fold.transcript();
+      const index = fold.indexOf(input.rowId);
+      if (index === -1) throw new ServiceError(404, "Message not found");
+      const reader = readerOf(principal, thread, from, rows);
+      if (!rowActions(rows, index, reader.history.abilities).includes("fork")) {
+        throw new ServiceError(403, "Only the space's members who can message can fork threads");
       }
       if (!options.ask) throw new ServiceError(409, "Summaries can't be written here");
-      const asked = await options.ask(id, thread.currentBranchId);
+      const asked = await options.ask(id, from, input.rowId);
       const written = await summarise({
         threadId: id,
         rows: asked.rows,
@@ -2062,7 +2067,12 @@ export function createThreads(options: ThreadsOptions) {
         const at = append({
           type: "thread.forked",
           actor,
-          data: { threadId: id, title: thread.title ?? UNTITLED, summary: true },
+          data: {
+            threadId: id,
+            rowId: input.rowId,
+            title: thread.title ?? UNTITLED,
+            summary: true,
+          },
         });
         const used =
           written.usage.inputTokens + written.usage.outputTokens > 0 ||

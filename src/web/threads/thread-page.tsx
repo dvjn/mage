@@ -18,7 +18,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi, useLocation } from "@tanstack/react-router";
 import { cn } from "cn";
-import { FileTextIcon, HistoryIcon, SplitIcon, Undo2Icon } from "lucide-react";
+import { HistoryIcon, SplitIcon, Undo2Icon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { AskAnswers } from "@/shared/ask.ts";
@@ -39,7 +39,6 @@ import {
   ConversationScrollButton,
 } from "@/web/components/ai-elements/conversation";
 import { Button } from "@/web/components/ui/button";
-import { WithTooltip } from "@/web/components/with-tooltip";
 import { FieldError } from "@/web/components/ui/field";
 import { Spinner } from "@/web/components/ui/spinner";
 import { ArtifactCard } from "@/web/artifacts/artifact-card";
@@ -466,6 +465,9 @@ export function ThreadPage() {
     restore: (rowId) =>
       void act({ action: "restore", rowId, ...(viewing && { branchId: viewing }) }),
     fork: (rowId) => forking.mutate({ rowId, ...(viewing && { branchId: viewing }) }),
+    forkFromSummary: (rowId) =>
+      summarising.mutate({ rowId, ...(viewing && { branchId: viewing }) }),
+    summarising: summarising.isPending ? (summarising.variables?.rowId ?? null) : null,
     version: (branchId) => showBranch(branchId),
     pickers: {
       models: models.data?.models ?? [],
@@ -630,19 +632,6 @@ export function ThreadPage() {
         )}
         {!subagent && <ThreadArtifacts threadId={threadId} rows={rows} />}
         {can?.share && !subagent && <ShareDialog threadId={threadId} />}
-        {!viewing && lastMessage?.can?.includes("fork") && (
-          <WithTooltip label="New thread from summary">
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="New thread from summary"
-              disabled={summarising.isPending}
-              onClick={() => summarising.mutate()}
-            >
-              {summarising.isPending ? <Spinner aria-hidden /> : <FileTextIcon />}
-            </Button>
-          </WithTooltip>
-        )}
         {archived && thread && can && (can.move || can.delete) && (
           <ArchivedThreadActions thread={thread} can={can} />
         )}

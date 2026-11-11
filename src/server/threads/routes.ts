@@ -212,9 +212,10 @@ export function threadRoutes(options: {
       threads.stopAside(signedIn(c.var.principal), id, asideId);
       return c.json({ ok: true }, 200);
     })
-    .post("/v1/threads/:id/summary-thread", async (c) => {
+    .post("/v1/threads/:id/summary-thread", fork, async (c) => {
       const principal = signedIn(c.var.principal);
-      return c.json(await threads.fromSummary(principal, c.req.param("id")), 200);
+      const input = c.req.valid("json");
+      return c.json(await threads.fromSummary(principal, c.req.param("id"), input), 200);
     })
     .patch("/v1/threads/:id", threadUpdate, async (c) => {
       const changes = c.req.valid("json");

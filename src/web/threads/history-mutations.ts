@@ -72,10 +72,11 @@ export function useSummaryThread(threadId: string) {
   const toast = useToast();
   const open = useOpenThread();
   return useMutation({
-    mutationFn: () =>
+    mutationFn: (input: { rowId: string; branchId?: string }) =>
       traced("new thread from summary", threadId, async () => {
         const res = await apiClient.v1.threads[":id"]["summary-thread"].$post({
           param: { id: threadId },
+          json: input,
         });
         if (!res.ok) throw new Error(await errorOf(res));
         return threadSchema.parse(await res.json());
