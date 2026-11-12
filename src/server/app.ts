@@ -11,8 +11,11 @@ import { requestId, type RequestIdVariables } from "hono/request-id";
 import { artifactRoutes } from "@/server/artifacts/routes.ts";
 import type { Artifacts } from "@/server/artifacts/service.ts";
 import { toolRoutes } from "@/server/agent/routes.ts";
+import { hookRoutes } from "@/server/agent/hook-routes.ts";
 import { taskRoutes } from "@/server/agent/task-routes.ts";
 import type { Tasks } from "@/server/agent/tasks.ts";
+import { triggerRoutes } from "@/server/agent/trigger-routes.ts";
+import type { Triggers } from "@/server/agent/triggers.ts";
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
 import { guestRoutes } from "@/server/guests/routes.ts";
@@ -61,6 +64,8 @@ export interface AppOptions {
   tools: ToolDecisions;
   // The tasks in threads' lists.
   tasks: Tasks;
+  // The timers and schedules in threads.
+  triggers: Triggers;
   // The access policies orgs and spaces keep for their tools.
   toolPolicies: ToolPolicies;
   // The MCP servers orgs and spaces add, and authorizing Mage with them.
@@ -142,6 +147,7 @@ function createApi(options: AppOptions) {
     .route("/", guestRoutes(options))
     .route("/", toolRoutes(options))
     .route("/", taskRoutes(options))
+    .route("/", triggerRoutes(options))
     .route("/", mcpRoutes(options))
     .route("/", instructionRoutes(options))
     .route("/", skillRoutes(options))
@@ -184,6 +190,8 @@ export function createApp(options: AppOptions): App {
     return c.json({ error: "internal error" }, 500);
   });
 
+  // Webhooks are posted to by outside services, with no login.
+  app.route("/api", hookRoutes(options));
   app.route("/api", createApi(options));
   const relay = options.traceRelay;
   if (relay) {

@@ -1,5 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { Tasks } from "@/server/agent/tasks.ts";
+import type { Triggers } from "@/server/agent/triggers.ts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
@@ -251,6 +252,7 @@ function setup(usage?: ModelUsage) {
     logger,
     signInOptions: { oidc: null },
     tasks: {} as Tasks,
+    triggers: {} as Triggers,
     pingDatabase: () => Promise.resolve(true),
   });
 

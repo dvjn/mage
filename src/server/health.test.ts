@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Tasks } from "@/server/agent/tasks.ts";
+import type { Triggers } from "@/server/agent/triggers.ts";
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
 import { openDatabase, pingDatabase } from "@/server/db/db.ts";
@@ -56,6 +57,7 @@ describe("GET /api/health", () => {
       logger,
       signInOptions: { oidc: null },
       tasks: {} as Tasks,
+      triggers: {} as Triggers,
       pingDatabase: () => pingDatabase(db),
     }).request("/api/health");
     expect(res.status).toBe(200);
@@ -82,6 +84,7 @@ describe("GET /api/health", () => {
       logger,
       signInOptions: { oidc: null },
       tasks: {} as Tasks,
+      triggers: {} as Triggers,
       pingDatabase: () => Promise.resolve(false),
     }).request("/api/health");
     expect(res.status).toBe(503);

@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import {
   sqliteTable,
+  blob,
   text,
   integer,
   index,
@@ -10,6 +11,7 @@ import {
 
 import type { FailureKind, Steering } from "@/shared/threads/events.ts";
 import type { TaskActor, TaskAssignee, TaskStatus } from "@/shared/tasks.ts";
+import type { TriggerKind, TriggerStatus } from "@/shared/triggers.ts";
 import { POLICY_COLORS } from "@/shared/tools.ts";
 import { user, organization } from "@/server/orgs/schema.ts";
 import { thread } from "@/server/threads/schema.ts";
@@ -293,5 +295,51 @@ export const threadTaskWatch = sqliteTable(
   (table) => [
     index("thread_task_watch_thread_idx").on(table.threadId),
     index("thread_task_watch_owner_idx").on(table.ownerId),
+  ],
+);
+
+// What wakes a thread's agent later: a wake-up timer (once) or a schedule (cron), with when it next
+// goes off and what it tells the agent. The claim columns are how several server instances share
+// the work: one that takes a due row notes its time to fire in `pending_fire_at` and holds it until
+// `claimed_until`; if it dies before it finishes, another takes the row once the lease runs out.
+export const threadTrigger = sqliteTable(
+  "thread_trigger",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    kind: text("kind", { enum: ["once", "cron", "webhook"] })
+      .$type<TriggerKind>()
+      .notNull(),
+    name: text("name").notNull(),
+    cron: text("cron"),
+    timezone: text("timezone"),
+    // The note or prompt the agent is told when it fires.
+    prompt: text("prompt").notNull(),
+    // Whose words steered the call that set it, and the name the agent set it by.
+    steeredBy: text("steered_by", { mode: "json" }).$type<Steering[]>().notNull(),
+    createdBy: text("created_by").notNull(),
+    status: text("status", { enum: ["active", "paused", "done", "deleted"] })
+      .$type<TriggerStatus>()
+      .notNull(),
+    nextRunAt: integer("next_run_at", { mode: "timestamp_ms" }),
+    pendingFireAt: integer("pending_fire_at", { mode: "timestamp_ms" }),
+    claimedBy: text("claimed_by"),
+    claimedUntil: integer("claimed_until", { mode: "timestamp_ms" }),
+    lastFiredAt: integer("last_fired_at", { mode: "timestamp_ms" }),
+    // A webhook's unguessable address token, and its signing secret sealed by the cipher, when a
+    // person set one.
+    hookToken: text("hook_token"),
+    secretKeyVersion: integer("secret_key_version"),
+    secret: blob("secret", { mode: "buffer" }),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [
+    uniqueIndex("thread_trigger_hook_token_idx").on(table.hookToken),
+    index("thread_trigger_thread_idx").on(table.threadId, table.createdAt),
+    index("thread_trigger_due_idx").on(table.status, table.nextRunAt),
   ],
 );

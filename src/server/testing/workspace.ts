@@ -15,6 +15,8 @@ import { createCallStore } from "@/server/agent/call-store.ts";
 import { createCalls } from "@/server/agent/calls.ts";
 import { createTasks } from "@/server/agent/tasks.ts";
 import { createTaskStore } from "@/server/agent/task-store.ts";
+import { createTriggerStore } from "@/server/agent/trigger-store.ts";
+import { createTriggers } from "@/server/agent/triggers.ts";
 import { createSubagentStore } from "@/server/agent/subagent-store.ts";
 import { createSubagents } from "@/server/agent/subagents.ts";
 import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
@@ -341,6 +343,28 @@ export function setup(
     log,
     bus: countingBus,
   });
+  // A test sets the clock and runs ticks itself, as one more instance may with `triggersFor`.
+  const clock = { now: new Date() };
+  const triggerStore = createTriggerStore(
+    db,
+    createCipher({ version: 1, key: Buffer.alloc(32, 7) }),
+  );
+  const triggersFor = (instanceId: string, leaseMs?: number) =>
+    createTriggers({
+      baseUrl,
+      triggers: triggerStore,
+      threads: threadStore,
+      access,
+      subagents,
+      runs: runStore,
+      log,
+      bus: countingBus,
+      logger,
+      instanceId,
+      ...(leaseMs && { leaseMs }),
+      now: () => clock.now,
+    });
+  const triggers = triggersFor("test");
   const artifacts = createArtifacts({
     store: createArtifactStore(db),
     threads: threadStore,
@@ -382,6 +406,7 @@ export function setup(
       subagents.toolset(),
       calls.toolset(),
       tasks.toolset(),
+      triggers.toolset(),
       artifacts.toolset(),
       ...toolsets,
     ],
@@ -419,6 +444,7 @@ export function setup(
     tools,
     subagents,
     background: callStore,
+    triggers,
     tasks,
     commands: createCommands({ skills, prompts: mcp }),
     ...(titles && {
@@ -505,6 +531,7 @@ export function setup(
       baseUrl,
     }),
     tasks,
+    triggers,
     orgs,
     groups: createGroups({ directory }),
     tools: createToolDecisions({
@@ -668,6 +695,10 @@ export function setup(
     subagentStore,
     tasks,
     calls,
+    triggers,
+    triggersFor,
+    triggerStore,
+    clock,
     mcp,
     mcpNetwork,
     mcpServerStore,

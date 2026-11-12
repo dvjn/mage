@@ -78,6 +78,13 @@ const TASK_MODEL_TOOLS = [
   "thread.archive_tasks",
   "thread.watch_tasks",
 ];
+const TRIGGER_TOOLS = [
+  "triggers.wake_at",
+  "triggers.schedule",
+  "triggers.add_webhook",
+  "triggers.list",
+  "triggers.delete",
+];
 const CALL_MODEL_TOOLS = ["jobs.start", "jobs.check", "jobs.list", "jobs.cancel"];
 
 // The tools the agent has for artifacts, whose toolset is on unless turned off; previews need a
@@ -527,6 +534,7 @@ describe("tool calls", () => {
       ...SUBAGENT_TOOLS,
       ...CALL_MODEL_TOOLS,
       ...TASK_MODEL_TOOLS,
+      ...TRIGGER_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
     expect(threadStore.find(thread.id)?.title).toBe("Engines");
@@ -804,6 +812,7 @@ describe("tool calls", () => {
       ...SUBAGENT_TOOLS,
       ...CALL_MODEL_TOOLS,
       ...TASK_MODEL_TOOLS,
+      ...TRIGGER_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
 
@@ -820,6 +829,7 @@ describe("tool calls", () => {
       ...SUBAGENT_TOOLS,
       ...CALL_MODEL_TOOLS,
       ...TASK_MODEL_TOOLS,
+      ...TRIGGER_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
   });
@@ -1228,6 +1238,7 @@ describe("built-in toolset switches", () => {
       ...SUBAGENT_TOOLS,
       ...CALL_TOOLS,
       ...TASK_TOOLS,
+      ...TRIGGER_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
     const changeWhileOff = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {

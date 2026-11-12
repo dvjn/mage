@@ -1,5 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { Tasks } from "@/server/agent/tasks.ts";
+import type { Triggers } from "@/server/agent/triggers.ts";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -50,6 +51,7 @@ const app = createApp({
   logger: createLogger({ write() {} }),
   signInOptions: { oidc: null },
   tasks: {} as Tasks,
+  triggers: {} as Triggers,
   pingDatabase: () => Promise.resolve(true),
   webRoot,
 });

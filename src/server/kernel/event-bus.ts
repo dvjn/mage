@@ -11,6 +11,8 @@ import type { ThreadFeedItem } from "@/shared/threads/events.ts";
 export interface ActivityChange {
   threadId: string;
   tasks?: true;
+  // Its rows read differently without a new event, as a schedule on one does when it is paused.
+  rows?: true;
   read?: { userId: string; seq: number };
   gone?: { spaceId: string; guests: string[] };
 }

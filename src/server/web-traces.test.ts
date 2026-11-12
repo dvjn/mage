@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Tasks } from "@/server/agent/tasks.ts";
+import type { Triggers } from "@/server/agent/triggers.ts";
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
 import type { Guests } from "@/server/guests/service.ts";
@@ -49,6 +50,7 @@ function app(identity: Identity, traceRelay?: AppOptions["traceRelay"]) {
     logger: createLogger({ write() {} }),
     signInOptions: { oidc: null },
     tasks: {} as Tasks,
+    triggers: {} as Triggers,
     pingDatabase: () => Promise.resolve(true),
     ...(traceRelay && { traceRelay }),
   });

@@ -59,6 +59,7 @@ import { BTW, COMPACT, type CommandInput, type ThreadCommand } from "@/shared/th
 import type { ThreadCan, ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
 import type { CallRecord, CallStore } from "@/server/agent/calls.ts";
 import type { Tasks } from "@/server/agent/tasks.ts";
+import type { Triggers } from "@/server/agent/triggers.ts";
 import type { BackgroundWork } from "@/shared/calls.ts";
 import type { TaskList } from "@/shared/tasks.ts";
 import type {
@@ -98,6 +99,7 @@ import {
 import type { ThreadSearchResult } from "@/shared/threads/search.ts";
 import { type Effort, UNTITLED, type ThreadSummary } from "@/shared/threads/thread.ts";
 import { toolIdNow } from "@/shared/tools.ts";
+import { ADD_WEBHOOK, SCHEDULE, WAKE_AT } from "@/shared/triggers.ts";
 import type {
   LimitRow,
   PendingMessage,
@@ -395,6 +397,8 @@ export interface ThreadsOptions {
   tasks?: Pick<Tasks, "listFor" | "ownerOf">;
   // The background calls tools start or people move there, when given.
   background?: Pick<CallStore, "find" | "open">;
+  // The timers and schedules the agent set, for their cards, when given.
+  triggers?: Pick<Triggers, "workFor">;
   // The thread's model, opened, and what its next call would send were the branch to end at the
   // row, or at its last; for asking from outside its runs. Side questions are not answered, and
   // threads are not started from summaries, without it.
@@ -512,6 +516,15 @@ function callWork(kept: CallRecord, canPost: boolean): BackgroundWork {
   };
 }
 
+// The id of the timer, schedule or webhook a call set.
+function scheduleId(row: Transcript["rows"][number]) {
+  if (row.kind !== "tool" || !row.output?.ok) return null;
+  const tool = toolIdNow(row.toolId);
+  if (tool !== WAKE_AT && tool !== SCHEDULE && tool !== ADD_WEBHOOK) return null;
+  const id = (row.output.value as { id?: unknown } | null)?.id;
+  return typeof id === "string" ? id : null;
+}
+
 // The id of the subagent the call started, for one that started a subagent.
 function startedSubagent(row: Transcript["rows"][number]) {
   if (row.kind !== "tool" || toolIdNow(row.toolId) !== START_SUBAGENT || !row.output?.ok)
@@ -528,7 +541,7 @@ function liveIndexes({ rows }: Transcript) {
   rows.forEach((row, index) => {
     if (row.kind === "tool" && row.state === "pending" && row.waits) live.add(index);
     if (startedSubagent(row)) live.add(index);
-    if (row.kind === "tool" && backgroundId(row)) live.add(index);
+    if (row.kind === "tool" && (backgroundId(row) || scheduleId(row))) live.add(index);
   });
   const last = rows.at(-1);
   if (last?.kind === "failure" || last?.kind === "stop") live.add(rows.length - 1);
@@ -730,6 +743,7 @@ export function createThreads(options: ThreadsOptions) {
     commands,
     subagents,
     background,
+    triggers,
     tasks,
   } = options;
   const now = options.now ?? (() => new Date());
@@ -1178,6 +1192,8 @@ export function createThreads(options: ThreadsOptions) {
         !row.toolId.startsWith("calls.");
       // The call's card, where it runs in the background.
       const kept = backgroundId(row) ? background?.find(row.id) : null;
+      const scheduled = scheduleId(row);
+      const schedule = scheduled ? triggers?.workFor(scheduled, thread.id, reader.can.post) : null;
       const { background: _flag, ...plain } = row;
       const call = {
         ...plain,
@@ -1189,6 +1205,7 @@ export function createThreads(options: ThreadsOptions) {
         ...(kept && {
           background: callWork(kept, reader.can.post),
         }),
+        ...(schedule && { background: schedule }),
         ...(subagent && { subagent }),
         ...(subagentCall && { subagentCall }),
         ...(effects.length > 0 && { effects }),
@@ -1867,7 +1884,7 @@ export function createThreads(options: ThreadsOptions) {
       }
       const unsubscribe = bus.onActivity((change) => {
         const { threadId, read, gone } = change;
-        if (change.tasks) return;
+        if (change.tasks || change.rows) return;
         if (read) {
           if (read.userId !== principal.userId) return;
           deliver({ kind: "read", threadId, seq: read.seq });
@@ -2393,6 +2410,10 @@ export function createThreads(options: ThreadsOptions) {
       let started = subagentsOf();
       const stopActivity = bus.onActivity((change) => {
         if (change.read || change.gone || change.tasks) return;
+        if (change.rows) {
+          if (change.threadId === id) sendRows();
+          return;
+        }
         if (change.threadId !== id) {
           if (started.has(change.threadId)) sendRows();
           return;

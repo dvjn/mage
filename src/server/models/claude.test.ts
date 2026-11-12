@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import type { Tasks } from "@/server/agent/tasks.ts";
+import type { Triggers } from "@/server/agent/triggers.ts";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -95,6 +96,7 @@ function setup() {
     logger,
     signInOptions: { oidc: null },
     tasks: {} as Tasks,
+    triggers: {} as Triggers,
     pingDatabase: () => Promise.resolve(true),
   });
 

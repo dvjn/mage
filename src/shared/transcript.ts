@@ -232,7 +232,14 @@ export function notificationParts(
   } & NotificationParts,
 ): NotificationParts & { text: string } {
   const { kind, source, text } = data;
-  if (data.subagents || kind === "message" || kind === "call.ended" || kind === "task.changed")
+  if (
+    data.subagents ||
+    kind === "message" ||
+    kind === "call.ended" ||
+    kind === "task.changed" ||
+    kind === "trigger.fired" ||
+    kind === "webhook.received"
+  )
     return data;
   if (kind === "agent.idle") {
     const prefix = Object.keys(IDLE_PREFIXES).find((one) => text.startsWith(one)) as
@@ -558,7 +565,9 @@ export function createFold(): TranscriptFold {
       }
       case "notification": {
         const { kind, source, people, to, task } = event.data;
-        const { text, subagents, when, error, last } = notificationParts(event.data);
+        const { text, subagents, when, error, last, delivery, schedule } = notificationParts(
+          event.data,
+        );
         const { callId, callIds, rowId, ...from } = source;
         const message: RelayMessage = {
           id: event.id,
@@ -574,6 +583,8 @@ export function createFold(): TranscriptFold {
           ...(when && { when }),
           ...(error !== undefined && { error }),
           ...(last && { last }),
+          ...(delivery && { delivery }),
+          ...(schedule && { schedule }),
           ...(callId && { call: { threadId: source.threadId, callId } }),
           ...(callIds && { callIds }),
           ...(rowId && { rowId }),

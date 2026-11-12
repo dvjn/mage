@@ -12,6 +12,8 @@ import { createCalls } from "@/server/agent/calls.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import { createTasks } from "@/server/agent/tasks.ts";
 import { createTaskStore } from "@/server/agent/task-store.ts";
+import { createTriggerStore } from "@/server/agent/trigger-store.ts";
+import { createTriggers, type Triggers } from "@/server/agent/triggers.ts";
 import { createSubagentStore } from "@/server/agent/subagent-store.ts";
 import { createSubagents } from "@/server/agent/subagents.ts";
 import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
@@ -220,6 +222,21 @@ const tasks = createTasks({
     return space ? agentNameIn(settingStore, space) : DEFAULT_AGENT_NAME;
   },
 });
+const triggers = createTriggers({
+  baseUrl: config.baseUrl,
+  triggers: createTriggerStore(db, cipher),
+  threads: threadStore,
+  access,
+  subagents,
+  runs: runStore,
+  log,
+  bus,
+  logger,
+  agentNameIn: (spaceId) => {
+    const space = spaceStore.find(spaceId);
+    return space ? agentNameIn(settingStore, space) : DEFAULT_AGENT_NAME;
+  },
+});
 // Previews need a browser, which servers without one go without.
 const artifacts = createArtifacts({
   store: createArtifactStore(db),
@@ -260,6 +277,7 @@ const tools = createTools({
     subagents.toolset(),
     calls.toolset(),
     tasks.toolset(),
+    triggers.toolset(),
     artifacts.toolset(),
   ],
   scoped: {
@@ -365,6 +383,7 @@ const app = createApp({
     tools,
     subagents,
     background: callStore,
+    triggers,
     tasks,
     commands: createCommands({ skills, prompts: mcp }),
     ask: (threadId, branchId, rowId) => worker.requestAt(threadId, branchId, rowId),
@@ -376,6 +395,7 @@ const app = createApp({
     }),
   }),
   tasks,
+  triggers,
   orgs,
   groups: createGroups({ directory }),
   tools: createToolDecisions({
@@ -453,6 +473,7 @@ const developing = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === tru
 if (import.meta.main || developing) {
   const shared = globalThis as {
     agentWorker?: RunWorker;
+    triggerTimer?: Triggers;
     spaceSweep?: ReturnType<typeof setInterval>;
   };
   await shared.agentWorker?.stop();
@@ -461,6 +482,10 @@ if (import.meta.main || developing) {
   calls.recover();
   worker.start();
   shared.agentWorker = worker;
+  // Timers and schedules that came due while the server was down fire first.
+  shared.triggerTimer?.stop();
+  triggers.start();
+  shared.triggerTimer = triggers;
   // Spaces kept in trash or archived for too long are deleted on start and then every hour.
   const sweep = () => {
     try {

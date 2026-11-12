@@ -3,6 +3,8 @@
 
 import * as z from "zod";
 
+import { scheduleWorkSchema, webhookWorkSchema } from "@/shared/triggers.ts";
+
 // The tools the agent starts, checks and stops them with.
 export const CALLS_TOOLSET = "calls";
 export const START_CALL = "calls.start";
@@ -24,15 +26,29 @@ export const callStatusSchema = z.enum([
 export type CallStatus = z.infer<typeof callStatusSchema>;
 
 // What kinds of background work a card shows.
-export const backgroundKindSchema = z.enum(["call"]);
+export const backgroundKindSchema = z.enum(["call", "schedule", "webhook"]);
 
 export type BackgroundKind = z.infer<typeof backgroundKindSchema>;
 
+// Where a schedule or webhook stands: waiting for its time or for a post, paused, or a timer that
+// went off.
+export const workStatusSchema = z.enum([
+  ...callStatusSchema.options,
+  "scheduled",
+  "listening",
+  "paused",
+]);
+
+export type WorkStatus = z.infer<typeof workStatusSchema>;
+
 // A card for background work as a reader sees it: what kind it is, where it stands, when it started
-// and ended, and whether they may stop it.
+// and ended, and whether they may stop it; for a schedule, what it is and when it fires; for a webhook, what it
+// is and when it last received a post.
 export const backgroundWorkSchema = z.object({
   kind: backgroundKindSchema,
-  status: callStatusSchema,
+  status: workStatusSchema,
+  schedule: scheduleWorkSchema.optional(),
+  webhook: webhookWorkSchema.optional(),
   startedAt: z.string(),
   endedAt: z.string().optional(),
   canCancel: z.boolean(),
