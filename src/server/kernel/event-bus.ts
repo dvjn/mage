@@ -13,6 +13,8 @@ export interface ActivityChange {
   tasks?: true;
   // Its rows read differently without a new event, as a schedule on one does when it is paused.
   rows?: true;
+  // Only what its activity tray shows changed, as an owner deciding what the thread proposed does.
+  background?: true;
   read?: { userId: string; seq: number };
   gone?: { spaceId: string; guests: string[] };
 }

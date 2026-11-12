@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
+import type { ThreadFollowItem } from "@/server/threads/service.ts";
 import { eventSummary } from "@/server/threads/log.ts";
 import type { TaskList } from "@/shared/tasks.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
@@ -173,6 +174,77 @@ describe("tasks", () => {
     expect((await t.tasksOf(t.thread.id)).tasks).toHaveLength(1);
   });
 
+  it("tell the agent without waking it when a person or a subagent changes the list", async () => {
+    const t = await taskThread();
+    t.start();
+    await t.post(t.ada, "Plan it");
+    await t.calls(t.thread.id, [
+      "thread.add_tasks",
+      {
+        tasks: [
+          { title: "Read", assignee: t.ada.userId },
+          { title: "Part", assignee: t.ada.userId },
+        ],
+      },
+    ]);
+    await t.answer(t.thread.id);
+    await t.worker.idle();
+    const parentCalls = () =>
+      t.model.calls.filter((call) => call.request.sessionId === t.thread.id).length;
+    const [read, part] = (await t.tasksOf(t.thread.id)).tasks;
+    const base = `/threads/${t.thread.id}/tasks`;
+    const before = parentCalls();
+    await t.api("PATCH", `${base}/${read!.id}`, t.grace.cookie, { title: "Read it" });
+    await t.api("POST", base, t.grace.cookie, { title: "Ship" });
+    await t.api("DELETE", `${base}/${read!.id}`, t.grace.cookie);
+    await t.worker.idle();
+    expect(parentCalls()).toBe(before);
+    const told = () =>
+      t
+        .rowsOf(t.thread.id)
+        .flatMap((row) => (row.kind === "relay" && row.type === "change" ? [row.text] : []));
+    expect(told()).toEqual([
+      'Grace Hopper renamed task "Read" to "Read it".',
+      'Grace Hopper added task "Ship".',
+      'Grace Hopper removed task "Read it".',
+    ]);
+    // Each also carries what was done, in parts, for its card.
+    expect(
+      t
+        .rowsOf(t.thread.id)
+        .flatMap((row) => (row.kind === "relay" && row.type === "change" ? [row.change] : [])),
+    ).toEqual([
+      { subject: { kind: "task", name: "Read it" }, action: "rename", from: "Read", to: "Read it" },
+      { subject: { kind: "task", name: "Ship" }, action: "add" },
+      { subject: { kind: "task", name: "Read it" }, action: "remove" },
+    ]);
+
+    await t.post(t.ada, "Hand over");
+    await t.calls(t.thread.id, [
+      "subagents.start",
+      { name: "Scout", task: "Do the part", tasks: [part!.id] },
+    ]);
+    await t.until(() => t.subagentStore.ofParents([t.thread.id]).length === 1);
+    const scout = t.subagentNamed("Scout");
+    await t.answer(t.thread.id);
+    const quiet = parentCalls();
+    await t.calls(scout, ["thread.update_task", { id: part!.id, status: "doing" }]);
+    await t.answer(scout);
+    expect(parentCalls()).toBe(quiet);
+    expect(told().at(-1)).toBe('Scout marked task "Part" as doing.');
+    expect(
+      t
+        .rowsOf(t.thread.id)
+        .flatMap((row) => (row.kind === "relay" && row.type === "change" ? [row.change] : []))
+        .at(-1),
+    ).toEqual({
+      subject: { kind: "task", name: "Part" },
+      action: "status",
+      from: "todo",
+      to: "doing",
+    });
+  });
+
   it("tell a refused assignee that subagents become assignees once started", async () => {
     const t = await taskThread();
     t.start();
@@ -270,6 +342,64 @@ describe("tasks", () => {
       name: "Scout",
     });
     expect((await t.tasksOf(scout)).tasks.map((task) => task.title)).toEqual(["Part"]);
+  });
+
+  it("count on the starter's line for the subagent they were given to, and reach both feeds", async () => {
+    const t = await taskThread();
+    t.start();
+    await t.post(t.ada, "Split it");
+    await t.calls(t.thread.id, [
+      "thread.add_tasks",
+      { tasks: [{ title: "One" }, { title: "Two" }, { title: "Three" }] },
+    ]);
+    await t.answer(t.thread.id);
+    const [one, two] = (await t.tasksOf(t.thread.id)).tasks;
+    await t.post(t.ada, "Go");
+    await t.calls(t.thread.id, [
+      "subagents.start",
+      { name: "Scout", task: "Do these", tasks: [one!.id, two!.id] },
+    ]);
+    await t.answer(t.thread.id);
+    const scout = t.subagentNamed("Scout");
+
+    const asAda = { userId: t.ada.userId, orgId: t.ada.orgId, role: "member" as const };
+    const parentSent: ThreadFollowItem[] = [];
+    const scoutSent: ThreadFollowItem[] = [];
+    const stopParent = t.threads.follow(asAda, t.thread.id, Number.MAX_SAFE_INTEGER, (item) =>
+      parentSent.push(item),
+    );
+    const stopScout = t.threads.follow(asAda, scout, Number.MAX_SAFE_INTEGER, (item) =>
+      scoutSent.push(item),
+    );
+    const line = () =>
+      t.threads
+        .backgroundList(asAda, t.thread.id)
+        .items.find((item) => item.work.subagent?.threadId === scout)?.work.subagent;
+    expect(line()?.tasks).toEqual({ done: 0, total: 2 });
+
+    // The subagent checks one off in the starter's list: the starter's line counts it, and the
+    // starter's page is told.
+    await t.calls(scout, ["thread.update_task", { id: one!.id, status: "done" }]);
+    await t.until(() => line()?.tasks?.done === 1);
+    await t.until(() =>
+      parentSent.some(
+        (item) =>
+          item.kind === "background" &&
+          item.list.items.some((entry) => entry.work.subagent?.tasks?.done === 1),
+      ),
+    );
+
+    // A person changes the starter's list: the subagent's page is told.
+    scoutSent.length = 0;
+    const added = await t.api("POST", `/threads/${t.thread.id}/tasks`, t.ada.cookie, {
+      title: "Four",
+    });
+    expect(added.status).toBeLessThan(300);
+    await t.until(() => scoutSent.some((item) => item.kind === "tasks"));
+    stopParent();
+    stopScout();
+    // Its own thread lists what is live there, apart from its starter's line.
+    expect(t.threads.backgroundList(asAda, scout).items).toEqual([]);
   });
 
   it("are shared with a subagent started to share them, and kept apart otherwise", async () => {

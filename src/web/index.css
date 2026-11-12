@@ -30,12 +30,9 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
-  --color-status-working: var(--status-working);
-  --color-status-unread: var(--status-unread);
-  --color-status-failed: var(--status-failed);
-  --color-status-waiting: var(--status-waiting);
-  --color-status-paused: var(--status-paused);
-  --color-tool-ask: var(--tool-ask);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-success: var(--success);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -75,12 +72,9 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
-  --status-working: oklch(0.64 0.16 65);
-  --status-unread: var(--foreground);
-  --status-failed: oklch(0.577 0.245 27.325);
-  --status-waiting: oklch(0.55 0.2 260);
-  --status-paused: oklch(0.6 0.08 255);
-  --tool-ask: oklch(0.62 0.15 70);
+  --warning: oklch(0.52 0.13 65);
+  --info: oklch(0.55 0.2 260);
+  --success: oklch(0.5 0.14 150);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -116,12 +110,9 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
-  --status-working: oklch(0.8 0.15 75);
-  --status-unread: var(--foreground);
-  --status-failed: oklch(0.704 0.191 22.216);
-  --status-waiting: oklch(0.7 0.15 255);
-  --status-paused: oklch(0.72 0.07 255);
-  --tool-ask: oklch(0.82 0.14 80);
+  --warning: oklch(0.8 0.15 75);
+  --info: oklch(0.7 0.15 255);
+  --success: oklch(0.78 0.15 150);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
@@ -156,25 +147,89 @@
   }
 }
 
-/* Linked messages pulse twice, then keep a faint tint until dismissed. */
-.row-attention {
-  border-radius: var(--radius-md);
-  background-color: color-mix(in oklch, var(--accent) 45%, transparent);
-  animation: row-attention-pulse 900ms ease-in-out 2;
+/* A linked row flashes only its own box: the element that is outlined (or, for a bare reply, the
+   reply) takes a brief tint that fades back, and keeps a faint one until dismissed. Each kind sets
+   the tint it rests at and peaks at. */
+.attention,
+.attention-card > :not([data-slot="row-note"], [data-slot="row-controls"]) {
+  --attention-rest: color-mix(in oklch, var(--primary) 5%, transparent);
+  --attention-peak: color-mix(in oklch, var(--primary) 16%, transparent);
 }
 
-@keyframes row-attention-pulse {
+/* Human bubbles keep their fill and flash a stronger one. */
+.attention-bubble {
+  --attention-rest: var(--muted);
+  --attention-peak: color-mix(in oklch, var(--primary) 18%, var(--muted));
+}
+
+/* A bare reply has no box: it flashes a fainter tint, kept to its own area. */
+.attention-reply {
+  --attention-rest: transparent;
+  --attention-peak: color-mix(in oklch, var(--primary) 7%, transparent);
+  border-radius: var(--radius-md);
+}
+
+.attention,
+.attention-bubble,
+.attention-reply,
+.attention-card > :not([data-slot="row-note"], [data-slot="row-controls"]) {
+  background-color: var(--attention-rest);
+  animation: attention 900ms ease-in-out 2;
+}
+
+@keyframes attention {
   0%,
   100% {
-    background-color: color-mix(in oklch, var(--accent) 45%, transparent);
+    background-color: var(--attention-rest);
   }
   50% {
-    background-color: color-mix(in oklch, var(--accent) 95%, transparent);
+    background-color: var(--attention-peak);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .row-attention {
+  .attention,
+  .attention-bubble,
+  .attention-reply,
+  .attention-card > :not([data-slot="row-note"], [data-slot="row-controls"]) {
     animation: none;
+    background-color: var(--attention-peak);
+  }
+}
+
+/* Surface levels. page: app background. raised: cards and panels in the page.
+   floating: anything over content (translucent, blurred). overlay: modal
+   dialogs and sheets, same look as floating. */
+@utility surface-page {
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+@utility surface-raised {
+  background-color: var(--card);
+  color: var(--card-foreground);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-xs);
+}
+
+@utility surface-floating {
+  background-color: color-mix(in oklch, var(--popover) 85%, transparent);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(var(--blur-md));
+  @supports not (backdrop-filter: blur(1px)) {
+    background-color: var(--popover);
+  }
+}
+
+@utility surface-overlay {
+  background-color: color-mix(in oklch, var(--popover) 85%, transparent);
+  color: var(--popover-foreground);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(var(--blur-md));
+  @supports not (backdrop-filter: blur(1px)) {
+    background-color: var(--popover);
   }
 }

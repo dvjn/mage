@@ -138,9 +138,9 @@ export type Cause = z.infer<typeof causeSchema>;
 
 // What a notification tells the agent it reaches: another agent's message; that a subagent ended
 // a run without sending its starter anything, failed, or was stopped; or that the subagents a
-// watch was set on went idle; that a call it started in the background ended; that a person changed
-// a task given to it; that a timer or schedule it set went off; or that a webhook it made was
-// posted to.
+// watch was set on went idle; that a call it started in the background ended; or that a person changed
+// a task given to it; that a timer or schedule it set went off; or that a webhook it made was posted to; or, quietly, that a
+// person or another agent changed something it owns or watches, or the thread's model or title.
 export const notificationKindSchema = z.enum([
   "message",
   "agent.ended",
@@ -151,6 +151,7 @@ export const notificationKindSchema = z.enum([
   "task.changed",
   "trigger.fired",
   "webhook.received",
+  "change",
 ]);
 
 export type NotificationKind = z.infer<typeof notificationKindSchema>;
@@ -166,11 +167,62 @@ export const notificationSourceSchema = senderSchema.extend({
 
 export type NotificationSource = z.infer<typeof notificationSourceSchema>;
 
+// Who a notification is shown as coming from, in one standard form: a person who changed something,
+// an agent that sent a message or report or made a change, or no one, for an outside or system
+// event. Older notifications carry none.
+export const notificationActorSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("person"), userId: z.string(), name: z.string() }),
+  z.object({
+    kind: z.literal("agent"),
+    threadId: z.string(),
+    name: z.string(),
+    main: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("source"),
+    label: z.string(),
+    type: z.enum(["webhook", "schedule", "wakeup", "job", "system"]),
+  }),
+]);
+
+export type NotificationActor = z.infer<typeof notificationActorSchema>;
+
 // What a notification about subagents tells, apart from its text, so it can be shown as parts:
 // the subagents it is about, for an idle watch whether it waited for all of them, for a failure
 // its error, and the last thing the subagent said, which the text leaves out. Older notifications
 // carry only their text.
+export const changeSchema = z.object({
+  subject: z.object({
+    kind: z.enum(["task", "schedule", "webhook", "thread"]),
+    name: z.string(),
+  }),
+  action: z.enum([
+    "status",
+    "rename",
+    "assign",
+    "add",
+    "remove",
+    "archive",
+    "pause",
+    "resume",
+    "delete",
+    "signature",
+    "model",
+  ]),
+  // What it was and became: task statuses, names, or model ids; for a signature, "on" or "off".
+  from: z.string().optional(),
+  to: z.string().optional(),
+});
+
+export type Change = z.infer<typeof changeSchema>;
+
 export const notificationPartsSchema = z.object({
+  // For a change, what was done to what, so its card can be told in parts; older ones have text only.
+  change: changeSchema.optional(),
+  // For a change, the tray's kind of what changed, so its row can open there.
+  tray: z.enum(["tasks", "triggers", "webhooks"]).optional(),
+  // For a schedule that fired or a webhook that was posted to, its id, to list its history.
+  trigger: z.string().optional(),
   subagents: z.array(z.object({ threadId: z.string(), name: z.string() })).optional(),
   when: z.enum(["all_idle", "any_idle"]).optional(),
   error: z.string().optional(),
@@ -227,10 +279,14 @@ export const eventDataSchemas = {
   notification: z.object({
     kind: notificationKindSchema,
     source: notificationSourceSchema,
+    actor: notificationActorSchema.optional(),
     text: z.string(),
     people: z.array(steeringSchema),
     to: z.string().optional(),
     task: subagentTaskSchema.optional(),
+    // False for one that does not start the agent: it is shown at once and the agent reads it at
+    // its next model call, or its next run.
+    wake: z.boolean().optional(),
     ...notificationPartsSchema.shape,
   }),
   // No longer written: one of the thread's subagents ended a run with nothing more to do, and the

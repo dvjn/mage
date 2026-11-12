@@ -13,7 +13,7 @@ import { ChevronDownIcon, EyeIcon, SquareIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useRef, useState } from "react";
 
 import { type CommandInput, commandOf, type ThreadCommand } from "@/shared/threads/commands.ts";
-import { type Delivery, QUIET_PREFIX } from "@/shared/threads/events.ts";
+import type { Delivery } from "@/shared/threads/events.ts";
 import type { PendingMessage } from "@/shared/threads/rows.ts";
 import {
   PromptInputBody,
@@ -144,7 +144,7 @@ export function Composer({
 
   if (readOnly) {
     return (
-      <p className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground">
+      <p className="flex items-center gap-2 px-3 py-2 text-sm text-muted-foreground">
         <EyeIcon className="size-4 shrink-0" aria-hidden />
         {notice}
       </p>
@@ -155,7 +155,7 @@ export function Composer({
     <div className="relative flex flex-col gap-1.5">
       {picking && <CommandMenu commands={matches} active={chosen} onPick={pick} />}
       {needs && (
-        <div className="flex items-center gap-2 px-1 text-xs text-muted-foreground">
+        <div className="flex items-center gap-2 px-3 pt-2 text-xs text-muted-foreground">
           <span>Connect to {needs.title} to send this</span>
           <Button
             size="xs"
@@ -173,6 +173,7 @@ export function Composer({
         </div>
       )}
       <PromptInput
+        className="rounded-lg"
         onSubmit={(message) => {
           const delivery = mode.current;
           mode.current = "steer";
@@ -196,11 +197,11 @@ export function Composer({
               !online
                 ? "You are offline"
                 : waiting === "answer"
-                  ? "The agent is waiting for an answer above; you can still steer or queue."
+                  ? "Answer the question above"
                   : waiting === "decision"
-                    ? "The agent is waiting for a decision above; you can still steer or queue."
+                    ? "Decide the call above"
                     : running
-                      ? "Steer the reply, or queue for the next one"
+                      ? "Steer the reply"
                       : "Write a message"
             }
             onKeyDown={onKeyDown}
@@ -253,13 +254,10 @@ export function Composer({
           </ButtonGroup>
         </PromptInputFooter>
       </PromptInput>
-      {online ? (
-        <p className="px-1 text-xs text-muted-foreground">
-          {running ? "Enter steers the reply · Alt/⌥+Enter queues it · " : "Enter sends · "}
-          Start with <code>{QUIET_PREFIX}</code> to write without waking the agent.
+      {!online && (
+        <p className="px-3 pb-2 text-xs text-muted-foreground">
+          You can send once you are back online.
         </p>
-      ) : (
-        <p className="px-1 text-xs text-muted-foreground">You can send once you are back online.</p>
       )}
     </div>
   );

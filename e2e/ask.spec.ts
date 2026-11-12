@@ -85,7 +85,7 @@ test("the agent asks, a viewer waits and a messager answers in options and their
   await expect(questions(page)).toContainText("Which quarter?");
   await expect(page.getByLabel("Message", { exact: true })).toHaveAttribute(
     "placeholder",
-    "The agent is waiting for an answer above; you can still steer or queue.",
+    "Answer the question above",
   );
 
   const grace = await someoneElse(browser, testInfo.parallelIndex);

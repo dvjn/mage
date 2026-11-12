@@ -21,23 +21,25 @@ import { eventSummary, type ThreadLog } from "@/server/threads/log.ts";
 import type { ThreadStore } from "@/server/threads/service.ts";
 import type { BackgroundWork } from "@/shared/calls.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
-import type { Steering } from "@/shared/threads/events.ts";
+import type { Change, Steering } from "@/shared/threads/events.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 import {
   ADD_WEBHOOK,
   describeCron,
+  HISTORY_PAGE,
   HOOK_PATH,
   HOOK_PAYLOAD_SHOWN,
   SCHEDULE,
   TRIGGER_LIMIT,
   TRIGGERS_TOOLSET,
+  type TriggerHistory,
   type TriggerKind,
   type TriggerStatus,
   WAKE_AT,
   WAKE_HORIZON,
 } from "@/shared/triggers.ts";
 
-import { createNotifier } from "./notifications.ts";
+import { createNotifier, silentChange } from "./notifications.ts";
 import type { RunStore } from "./runs.ts";
 import { steeringIn, type Subagents } from "./subagents.ts";
 import type { Toolset, ToolSpec } from "./tools.ts";
@@ -81,6 +83,7 @@ export interface TriggerStore {
   ): TriggerRecord;
   find(id: string): TriggerRecord | null;
   findByToken(token: string): TriggerRecord | null;
+  userName(userId: string): string | null;
   // Sets a webhook's signing secret, sealed, or clears it.
   setSecret(id: string, secret: string | null): void;
   // A webhook's signing secret, opened.
@@ -89,6 +92,8 @@ export interface TriggerStore {
   delivered(id: string, at: Date): void;
   // The thread's triggers that are active or paused, oldest first.
   inThread(threadId: string): TriggerRecord[];
+  // Every trigger the thread ever had, deleted and finished ones too.
+  everInThread(threadId: string): TriggerRecord[];
   update(
     id: string,
     fields: Partial<Pick<TriggerRecord, "status" | "nextRunAt">>,
@@ -114,6 +119,8 @@ export const TRIGGERS_GUIDANCE =
 const TICK_BATCH = 50;
 const LEASE_MS = 60_000;
 const TICK_MS = 5_000;
+// How long after its last firing an ended trigger may still own an event that carries no id.
+const ENDED_SLACK_MS = 60_000;
 
 export interface TriggersOptions {
   triggers: TriggerStore;
@@ -214,6 +221,37 @@ export function createTriggers(options: TriggersOptions) {
       }),
       prompt: record.prompt,
     };
+  }
+
+  // What a trigger fired, oldest first, from the notifications it left in the thread. Older ones do
+  // not carry the trigger's id: those count when they are of its kind, name it, and it is the only
+  // trigger of that name and kind that existed when they came in. Nothing records when a trigger
+  // was deleted, so one that ended is taken to have existed until its last firing.
+  function firings(record: TriggerRecord) {
+    const kind = record.kind === "webhook" ? "webhook.received" : "trigger.fired";
+    const peers = triggers
+      .everInThread(record.threadId)
+      .filter(
+        (one) =>
+          one.name === record.name && (one.kind === "webhook") === (kind === "webhook.received"),
+      );
+    const existed = (one: TriggerRecord, at: Date) =>
+      at >= one.createdAt &&
+      (one.status === "active" ||
+        one.status === "paused" ||
+        (one.lastFiredAt !== null && at.getTime() <= one.lastFiredAt.getTime() + ENDED_SLACK_MS));
+    return threads.eventsAfter(record.threadId, 0).filter((event) => {
+      if (event.type !== "notification") return false;
+      const { data } = event;
+      if (data.trigger) return data.trigger === record.id;
+      return (
+        data.kind === kind &&
+        data.source.threadId === record.threadId &&
+        data.source.name === record.name &&
+        existed(record, event.createdAt) &&
+        peers.filter((one) => existed(one, event.createdAt)).length === 1
+      );
+    });
   }
 
   function hookUrl(record: TriggerRecord) {
@@ -431,7 +469,13 @@ export function createTriggers(options: TriggersOptions) {
     const once = record.kind === "once";
     notifier.send(record.threadId, {
       kind: "trigger.fired",
+      trigger: record.id,
       source: { threadId: record.threadId, name: record.name, main: true },
+      actor: {
+        kind: "source",
+        label: once ? "Wake-up timer" : record.name,
+        type: once ? "wakeup" : "schedule",
+      },
       text: once ? "Wake-up timer went off" : `Schedule "${record.name}" fired`,
       people: record.steeredBy,
       last: record.prompt,
@@ -475,7 +519,9 @@ export function createTriggers(options: TriggersOptions) {
     if (record.status !== "active") throw new ServiceError(409, "This webhook is paused");
     notifier.send(record.threadId, {
       kind: "webhook.received",
+      trigger: record.id,
       source: { threadId: record.threadId, name: record.name, main: true },
+      actor: { kind: "source", label: record.name, type: "webhook" },
       text: `Webhook "${record.name}" was posted to: ${record.prompt}`,
       // Whose words steered its making; the payload is theirs no more than anyone's.
       people: record.steeredBy,
@@ -529,6 +575,41 @@ export function createTriggers(options: TriggersOptions) {
     return options.access.require(principal, threadId, action).thread;
   }
 
+  // Tells the thread's agent, without waking it, that a person did something to one of its triggers.
+  function told(
+    principal: Principal,
+    record: TriggerRecord,
+    did: string,
+    action: Change["action"],
+    to?: string,
+  ) {
+    const who = triggers.userName(principal.userId) ?? "Someone";
+    const kind =
+      record.kind === "webhook" ? "webhook" : record.kind === "once" ? "wake-up" : "schedule";
+    const name = record.kind === "once" ? record.prompt : record.name;
+    notifier.send(
+      record.threadId,
+      silentChange(
+        record.threadId,
+        who,
+        `${who} ${did} ${kind} ${name}`,
+        record.kind === "webhook" ? "webhooks" : "triggers",
+        { kind: "person", userId: principal.userId, name: who },
+        {
+          subject: { kind: kind === "webhook" ? "webhook" : "schedule", name },
+          action,
+          ...(to && { to }),
+        },
+      ),
+    );
+  }
+
+  const DID: Record<"active" | "paused" | "deleted", readonly [string, Change["action"]]> = {
+    active: ["resumed", "resume"],
+    paused: ["paused", "pause"],
+    deleted: ["deleted", "delete"],
+  };
+
   function changeStatus(
     principal: Principal,
     threadId: string,
@@ -550,6 +631,7 @@ export function createTriggers(options: TriggersOptions) {
           : record.nextRunAt;
     triggers.update(id, { status: to, nextRunAt: next });
     changed(thread.id);
+    if (record.status !== to) told(principal, record, ...DID[to]);
   }
 
   return {
@@ -621,6 +703,7 @@ export function createTriggers(options: TriggersOptions) {
             ...(record.lastFiredAt && {
               lastFiredAt: record.lastFiredAt.toISOString(),
             }),
+            fired: firings(record).length,
             canChange: change,
           },
         };
@@ -650,8 +733,32 @@ export function createTriggers(options: TriggersOptions) {
           ...(record.lastFiredAt && {
             lastFiredAt: record.lastFiredAt.toISOString(),
           }),
+          fired: firings(record).length,
           canChange: canChange && (record.status === "active" || record.status === "paused"),
         },
+      };
+    },
+
+    // A page of what a schedule fired or a webhook took, newest first, for anyone who may read the
+    // thread.
+    history(principal: Principal, threadId: string, id: string, offset: number): TriggerHistory {
+      const thread = props(principal, threadId, "read");
+      const record = triggers.find(id);
+      if (!record || record.threadId !== thread.id || record.status === "deleted") {
+        throw new ServiceError(404, "Trigger not found");
+      }
+      const all = firings(record).reverse();
+      return {
+        entries: all.slice(offset, offset + HISTORY_PAGE).map((event) => {
+          const delivery = event.type === "notification" ? event.data.delivery : undefined;
+          return {
+            id: event.id,
+            at: event.createdAt.toISOString(),
+            ...(delivery && { delivery }),
+          };
+        }),
+        total: all.length,
+        offset,
       };
     },
 
@@ -670,6 +777,13 @@ export function createTriggers(options: TriggersOptions) {
       const next = secret?.trim() || null;
       triggers.setSecret(id, next);
       changed(thread.id);
+      told(
+        principal,
+        record,
+        next ? "set the signature of" : "cleared the signature of",
+        "signature",
+        next ? "on" : "off",
+      );
     },
 
     pause: (principal: Principal, threadId: string, id: string) =>

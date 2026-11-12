@@ -12,7 +12,6 @@ import {
 } from "@/web/components/ai-elements/reasoning";
 import { RichReply } from "@/web/replies/rich-reply";
 import { useThreadAgent, caret } from "@/web/threads/transcript/agent";
-import { showsActions } from "@/web/threads/transcript/entries";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
 import { RowToolbar, RowHistoryFooter } from "@/web/threads/transcript/row-history";
 
@@ -35,11 +34,20 @@ export function ReplyReasoning({ row }: { row: AgentRow }) {
   );
 }
 
-export function AgentReply({ row, continued }: { row: AgentRow; continued: boolean }) {
+export function AgentReply({
+  row,
+  continued,
+  endsTurn,
+}: {
+  row: AgentRow;
+  continued: boolean;
+  endsTurn: boolean;
+}) {
   const ending = ENDINGS[row.status];
   const streaming = row.status === "streaming";
-  // Thinking before a tool call stays compact; a turn that ends on one shows its actions after it.
-  const showActions = showsActions(row);
+  // Only the reply that ends its turn shows the actions; a turn that ends on a tool call shows
+  // them after it.
+  const showActions = endsTurn;
   const { self } = useThreadAgent();
   return (
     <TranscriptRowFrame

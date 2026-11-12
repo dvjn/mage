@@ -126,7 +126,7 @@ function InstructionsForm({
       ) : (
         canManage &&
         text.length > INSTRUCTIONS_LONG && (
-          <p className="text-sm text-tool-ask">
+          <p className="text-sm text-warning">
             Long instructions are sent with every message, which costs more.
           </p>
         )

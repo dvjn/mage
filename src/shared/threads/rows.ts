@@ -19,6 +19,7 @@ import {
   toolRiskSchema,
   toolScopeSchema,
   usageSchema,
+  notificationActorSchema,
 } from "@/shared/threads/events.ts";
 import { toolConnectionSchema } from "@/shared/tools.ts";
 
@@ -235,6 +236,8 @@ const relayRowSchema = z.object({
   postedAt: z.string(),
   type: notificationKindSchema,
   from: senderSchema,
+  // Who it is shown as coming from; older notifications carry none.
+  actor: notificationActorSchema.optional(),
   to: z.string().optional(),
   text: z.string(),
   task: subagentTaskSchema.optional(),

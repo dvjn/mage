@@ -84,11 +84,8 @@ test("the agent starts subagents, who report back, go idle and can be resumed an
     transcript(page).getByRole("button", { name: /^Subagents › Start · Writer · Idle/ }),
   ).toBeVisible();
 
-  // An incoming message is a one-line title until its details are shown; system events use the
-  // same shell.
+  // An incoming message is a card that is open on what was said; system events use the same frame.
   const relayed = transcript(page).getByRole("article", { name: "Message from Researcher" });
-  await expect(relayed).not.toContainText("Recommend BullMQ");
-  await relayed.getByRole("button", { name: "Show details" }).click();
   await expect(relayed).toContainText("Recommend BullMQ");
   await expect(
     transcript(page)
@@ -115,6 +112,18 @@ test("the agent starts subagents, who report back, go idle and can be resumed an
     }),
   ).toHaveCount(0);
 
+  // The strip above the composer has them as cards, each with a way into its thread; idle ones stay.
+  const strip = page.getByRole("toolbar", { name: "Context" });
+  await strip.getByRole("button", { name: "Subagents" }).click();
+  const cards = page.getByTestId("tray-card");
+  await expect(cards).toHaveCount(2);
+  await expect(cards.filter({ hasText: "Writer" })).toContainText("Idle");
+  await expect(
+    cards.filter({ hasText: "Writer" }).getByRole("link", { name: "Writer" }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(strip.getByRole("button", { name: "Subagents" })).toBeVisible();
+
   // A subagent's thread: under the thread that started it, its task first.
   await group.click();
   await transcript(page).getByRole("link", { name: "Open Writer" }).click();
@@ -126,7 +135,6 @@ test("the agent starts subagents, who report back, go idle and can be resumed an
   const task = transcript(page).getByRole("article", { name: "Message from Agent" }).first();
   await task.hover();
   await expect(task.getByRole("link", { name: /^Open source: Subagents › Start/ })).toBeVisible();
-  await task.getByRole("button", { name: "Show details" }).click();
   await expect(task).toContainText("Draft the notes");
 
   // A person writing there resumes it; its accessible identity remains while visual headers stay hidden.
@@ -179,7 +187,6 @@ test("an agent whose turn ended is woken by its subagent's message", async ({ pa
   // The idle agent took the message in, and replied.
   await page.goto(parentUrl);
   const notes = transcript(page).getByRole("article", { name: "Message from Writer" });
-  await notes.getByRole("button", { name: "Show details" }).click();
   await expect(notes).toContainText("Notes drafted");
   await expect(
     transcript(page).getByRole("article", { name: "Message from Agent" }).last(),
@@ -207,7 +214,8 @@ test("a watch on all idle wakes the agent once all its subagents are idle", asyn
   const fired = transcript(page)
     .getByRole("article", { name: "Notification" })
     .filter({ hasText: "All idle: Researcher, Writer" });
-  await expect(fired).toHaveCount(1);
+  // The notice lands once the parent's run that set the watch has taken it, which can take a while.
+  await expect(fired).toHaveCount(1, { timeout: 20_000 });
   await idle(page);
   await expect(fired).toHaveCount(1);
 });
@@ -328,7 +336,7 @@ test("subagents message each other, counted on the line that started them, and s
       .getByRole("button", { name: "About Critic" }),
   ).toBeVisible();
   // In its own thread its card goes by its label too.
-  const card = transcript(page).getByRole("article", { name: "Approval request" });
+  const card = page.getByRole("region", { name: "Approvals" }).getByTestId("tray-card");
   await expect(card).toContainText("Writer");
   await expect(card).toContainText("Steered by Ada Lovelace via Agent → Writer");
   await card.getByRole("button", { name: "Allow", exact: true }).click();
@@ -339,7 +347,7 @@ test("subagents message each other, counted on the line that started them, and s
   ).toBeVisible();
 });
 
-test("a subagent's call that waits is decided from the thread that started it", async ({
+test("a subagent's call that waits shows on its line and is decided in its own thread", async ({
   page,
 }) => {
   await signUp(page);
@@ -368,10 +376,12 @@ test("a subagent's call that waits is decided from the thread that started it", 
     call("subagents.start", { name: "Namer", task: call("thread.rename", { title: "Named" }) }),
   );
 
-  // The subagent's call shows here, named for it and saying whose words steered it.
-  const card = transcript(page).getByRole("article", { name: "Approval request from Namer" });
-  await expect(card).toContainText("Namer wants to run");
-  await expect(card).toContainText("Steered by Ada Lovelace via Agent → Namer");
+  // The line that started it says it needs approval, and opens its thread, where the tray does.
+  await expect(
+    transcript(page).getByRole("button", {
+      name: /^Subagents › Start · Namer · Working · needs approval/,
+    }),
+  ).toBeVisible();
 
   // While it works its row shows under the thread's, which is open.
   const sidebar = page.locator("[data-sidebar=sidebar]");
@@ -381,10 +391,14 @@ test("a subagent's call that waits is decided from the thread that started it", 
   );
   await expect(sidebar.getByRole("link", { name: /^Namer/ })).toBeVisible();
 
-  // Allowed from here, it runs in the subagent's thread, and the card leaves; its row keeps its
-  // label though it renamed its thread.
+  // Allowed in its thread, it runs, and the card leaves; its row keeps its label though it renamed
+  // its thread.
+  await transcript(page).getByRole("link", { name: "Open Namer" }).click();
+  const card = page.getByRole("region", { name: "Approvals" }).getByTestId("tray-card");
+  await expect(card).toContainText("Steered by Ada Lovelace via Agent → Namer");
   await card.getByRole("button", { name: "Allow", exact: true }).click();
   await expect(card).toHaveCount(0);
+  await page.goBack();
   await expect(sidebarRow(page, "Namer")).toHaveAttribute("data-status", "read");
   await expect(sidebar.getByRole("link", { name: /^Named/ })).toHaveCount(0);
   await sidebar.getByRole("link", { name: /^Namer/ }).click();
@@ -442,4 +456,57 @@ test("the agent goes by the name its org gives it, or its space's", async ({ pag
   await expect(
     transcript(page).getByRole("article", { name: "Message from Mira" }).first(),
   ).toBeVisible();
+});
+
+test("a subagent's thread has its own activity tray, and its starter's card counts its tasks", async ({
+  page,
+}) => {
+  await signUp(page);
+  await queueLibrary(page);
+  const parentUrl = page.url();
+  const threadId = new URL(parentUrl).pathname.split("/")[2]!;
+  await write(
+    page,
+    call("thread.add_tasks", {
+      tasks: [{ title: "Read the spec" }, { title: "Write it" }, { title: "Ship it" }],
+    }),
+  );
+  await idle(page);
+  const list = await page.request.get(`/api/v1/threads/${threadId}/tasks`);
+  const { tasks } = (await list.json()) as { tasks: { id: string; title: string }[] };
+  const ids = tasks.filter((task) => task.title !== "Ship it").map((task) => task.id);
+  expect(ids).toHaveLength(2);
+  await write(page, call("subagents.start", { name: "Reader", task: "Begin.", tasks: ids }));
+  await idle(page);
+
+  const strip = page.getByRole("toolbar", { name: "Context" });
+  await strip.getByRole("button", { name: "Subagents" }).click();
+  const card = page.getByTestId("tray-card").filter({ hasText: "Reader" });
+  await expect(card.getByTestId("subagent-context")).toContainText("0/2 tasks");
+
+  // Its thread shows the tasks given to it, Mine first, All showing the starter's list.
+  await card.getByRole("link", { name: "Reader" }).click();
+  await expect(page).not.toHaveURL(parentUrl);
+  const tasksButton = strip.getByRole("button", { name: "Tasks" });
+  await expect(tasksButton).toContainText("0/2");
+  await tasksButton.click();
+  const shown = page.getByTestId("task-list");
+  const titles = shown.getByRole("textbox", { name: "Task title" });
+  await expect(titles).toHaveCount(2);
+  await expect(titles.first()).toHaveValue("Read the spec");
+  await shown.getByRole("button", { name: "All" }).click();
+  await expect(titles).toHaveCount(3);
+  await shown.getByRole("button", { name: "Mine" }).click();
+  await expect(titles).toHaveCount(2);
+  await shown.getByRole("button", { name: "Status: todo. Set to doing" }).click();
+  await shown.getByRole("button", { name: "Status: doing. Set to done" }).click();
+  await expect(tasksButton).toContainText("1/2");
+
+  // The count follows on its starter's card.
+  await page.goBack();
+  await expect(page).toHaveURL(parentUrl);
+  await strip.getByRole("button", { name: "Subagents" }).click();
+  await expect(
+    page.getByTestId("tray-card").filter({ hasText: "Reader" }).getByTestId("subagent-context"),
+  ).toContainText("1/2 tasks");
 });

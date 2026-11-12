@@ -2,7 +2,7 @@
 // a link with it.
 
 import { CheckIcon, CopyIcon } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { Button } from "@/web/components/ui/button";
@@ -11,10 +11,15 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "@/web/components/u
 export function CopyButton({
   value,
   label = "Copy",
+  size = "icon-xs",
+  icon = <CopyIcon />,
   className,
 }: {
   value: string;
   label?: string;
+  size?: "icon-xs" | "icon-sm";
+  // What the button shows until it has copied.
+  icon?: ReactNode;
   className?: string;
 }) {
   const [copied, setCopied] = useState(false);
@@ -22,7 +27,7 @@ export function CopyButton({
     <WithTooltip label={copied ? "Copied" : label}>
       <Button
         type="button"
-        size="icon-xs"
+        size={size}
         variant="ghost"
         aria-label={label}
         className={className}
@@ -33,7 +38,7 @@ export function CopyButton({
           });
         }}
       >
-        {copied ? <CheckIcon /> : <CopyIcon />}
+        {copied ? <CheckIcon /> : icon}
       </Button>
     </WithTooltip>
   );

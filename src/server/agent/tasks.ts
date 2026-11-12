@@ -28,10 +28,10 @@ import {
   taskStatusSchema,
   titleSchema,
 } from "@/shared/tasks.ts";
-import type { Steering } from "@/shared/threads/events.ts";
+import type { Change, NotificationActor, Steering } from "@/shared/threads/events.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
-import { createNotifier } from "./notifications.ts";
+import { createNotifier, silentChange } from "./notifications.ts";
 import type { RunStore } from "./runs.ts";
 import { steeringIn, type Subagents } from "./subagents.ts";
 import type { Toolset, ToolSpec } from "./tools.ts";
@@ -173,6 +173,17 @@ export function createTasks(options: TasksOptions) {
   // Who the agent working in the thread is, by name.
   // The agent or person that did something to the tasks.
   type ByWho = { name: string; threadId?: string; userId?: string };
+
+  function actorOf(by: ByWho): NotificationActor | undefined {
+    if (by.userId) return { kind: "person", userId: by.userId, name: by.name };
+    if (!by.threadId) return undefined;
+    return {
+      kind: "agent",
+      threadId: by.threadId,
+      name: by.name,
+      main: !subagents.find(by.threadId),
+    };
+  }
 
   function agentActor(threadId: string, spaceId: string): TaskActor {
     const subagent = subagents.find(threadId);
@@ -357,6 +368,7 @@ export function createTasks(options: TasksOptions) {
         );
         changed(ownerId);
         for (const record of added) giveToSubagent(ownerId, record, by.name, ctx.threadId);
+        announceAdded(ownerId, { name: by.name, threadId: ctx.threadId }, added);
         return { tasks: added.map(shownBrief) };
       });
     },
@@ -544,8 +556,9 @@ export function createTasks(options: TasksOptions) {
     return archived;
   }
 
-  // Tells the agents watching archived tasks, in one notice, that someone archived them. Whoever
-  // archived them is not told.
+  // Tells the agents watching archived tasks, in one notice, that someone archived them, and the
+  // agent of the list and those the tasks were given to, without waking them. Whoever archived
+  // them is not told.
   function announceArchive(
     ownerId: string,
     by: ByWho & { people: Steering[] },
@@ -557,6 +570,13 @@ export function createTasks(options: TasksOptions) {
       records.length === 1
         ? `${by.name} archived task ${titles}.`
         : `${by.name} archived ${records.length} tasks: ${titles}.`;
+    const what: Change = {
+      subject: {
+        kind: "task",
+        name: records.length === 1 ? records[0]!.title : `${records.length} tasks`,
+      },
+      action: "archive",
+    };
     const reached = new Set<string>();
     for (const watch of tasks.watchesIn(ownerId)) {
       if (!records.some((record) => fires(watch, record, record))) continue;
@@ -568,10 +588,57 @@ export function createTasks(options: TasksOptions) {
       notifier.send(threadId, {
         kind: "task.changed",
         source: { threadId: ownerId, name: "Tasks", main: true },
+        actor: actorOf(by),
+        change: what,
         text,
         people: by.people,
       });
     }
+    tellQuietly(
+      ownerId,
+      by,
+      records.flatMap((record) => [record.assignee]),
+      reached,
+      text,
+      what,
+    );
+  }
+
+  // Tells the list's agent and the agents tasks are given to, without waking them, what someone
+  // did, unless they were told already or did it.
+  function tellQuietly(
+    ownerId: string,
+    by: ByWho,
+    assignees: (TaskAssignee | null | undefined)[],
+    told: ReadonlySet<string>,
+    text: string,
+    change?: Change,
+  ) {
+    const quiet = new Set([ownerId]);
+    for (const assignee of assignees) {
+      if (assignee?.kind === "subagent") quiet.add(assignee.threadId);
+    }
+    for (const threadId of quiet) {
+      if (told.has(threadId) || threadId === by.threadId || !threads.find(threadId)) continue;
+      notifier.send(threadId, silentChange(threadId, by.name, text, "tasks", actorOf(by), change));
+    }
+  }
+
+  // Tells the list's agent, without waking it, that someone added tasks.
+  function announceAdded(ownerId: string, by: ByWho, records: TaskRecord[]) {
+    if (records.length === 0) return;
+    const titles = records.map((record) => `"${record.title}"`).join(", ");
+    const text =
+      records.length === 1
+        ? `${by.name} added task ${titles}.`
+        : `${by.name} added ${records.length} tasks: ${titles}.`;
+    tellQuietly(ownerId, by, [], new Set(), text, {
+      subject: {
+        kind: "task",
+        name: records.length === 1 ? records[0]!.title : `${records.length} tasks`,
+      },
+      action: "add",
+    });
   }
 
   // The people whose words steered the thread's agent.
@@ -592,6 +659,17 @@ export function createTasks(options: TasksOptions) {
     notifier.send(assignee.threadId, {
       kind: "task.changed",
       source: { threadId: ownerId, name: "Tasks", main: true },
+      actor: {
+        kind: "agent",
+        threadId: byThread ?? ownerId,
+        name: who,
+        main: !subagents.find(byThread ?? ownerId),
+      },
+      change: {
+        subject: { kind: "task", name: record.title },
+        action: "assign",
+        to: assignee.name,
+      },
       text: `${who} gave you task "${record.title}". The task list is now shared with you: read it with thread.list_tasks and mark the task as doing and done.`,
       people: byThread ? peopleOf(byThread) : [],
     });
@@ -617,6 +695,40 @@ export function createTasks(options: TasksOptions) {
     return parts.join(" ");
   }
 
+  // What was done to a task, in parts, for its card: the first of what changed.
+  function changeOf(
+    before: TaskRecord,
+    after: TaskRecord | null,
+    change: TaskChangeInput,
+  ): Change | undefined {
+    const name = after?.title ?? before.title;
+    if (!after) return { subject: { kind: "task", name }, action: "remove" };
+    if (change.status && change.status !== before.status) {
+      return {
+        subject: { kind: "task", name },
+        action: "status",
+        from: before.status,
+        to: change.status,
+      };
+    }
+    if (change.title && change.title !== before.title) {
+      return {
+        subject: { kind: "task", name },
+        action: "rename",
+        from: before.title,
+        to: name,
+      };
+    }
+    if (change.assignee !== undefined) {
+      return {
+        subject: { kind: "task", name },
+        action: "assign",
+        to: after.assignee?.kind === "agent" ? DEFAULT_AGENT_NAME : after.assignee?.name,
+      };
+    }
+    return undefined;
+  }
+
   // Whether the change is what the watch waits for.
   function fires(watch: TaskWatch, before: TaskRecord, after: TaskRecord | null) {
     if (!watch.taskIds.includes(before.id)) return false;
@@ -635,6 +747,7 @@ export function createTasks(options: TasksOptions) {
   ) {
     const text = noticeText(by.name, before, after, change);
     if (!text) return;
+    const what = changeOf(before, after, change);
     const reached = new Set<string>();
     // Only a person's change is told to the agent a task is given to.
     if (!by.threadId) {
@@ -653,10 +766,13 @@ export function createTasks(options: TasksOptions) {
       notifier.send(threadId, {
         kind: "task.changed",
         source: { threadId: ownerId, name: "Tasks", main: true },
+        actor: actorOf(by),
+        ...(what && { change: what }),
         text,
         people: by.people,
       });
     }
+    tellQuietly(ownerId, by, [before.assignee, after?.assignee], reached, text, what);
   }
 
   // The list's owner thread and whether the person may change it, for a reader of the thread.
@@ -770,7 +886,7 @@ export function createTasks(options: TasksOptions) {
       }
       const by = { kind: "user" as const, ...person(principal) };
       const { via: _via, ...actor } = by;
-      tasks.add([
+      const added = tasks.add([
         {
           id: ulid(),
           threadId: ownerId,
@@ -783,6 +899,7 @@ export function createTasks(options: TasksOptions) {
         },
       ]);
       changed(ownerId);
+      announceAdded(ownerId, { name: actor.name, userId: by.userId }, added);
     },
 
     change(principal: Principal, threadId: string, taskId: string, change: TaskChangeInput) {

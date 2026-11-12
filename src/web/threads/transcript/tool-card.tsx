@@ -1,20 +1,20 @@
-// A tool call waiting for a decision: a card from the agent headed by the tool under a hand, tagged
-// when the call asks each time, with the input and the choices the server offers the reader in a
-// row: Allow, Allow for now unless every call asks or needs review, and Deny. Someone who may not
-// decide sees Allow and Deny disabled and the card marked paused. A call that runs with its
-// approver's own login asks an approver with no working connection to connect first, then applies
-// their choice; a sign-in that leaves the page applies it on the way back. Where other agents'
-// messages steered the call, the card says whose words they carried. A subagent's call shown in the
-// thread that started it is headed by the subagent's name.
+// A tool call waiting for a decision, as the activity tray holds it: headed by the tool under a
+// hand, tagged when the call asks each time, with the input and the choices the server offers the
+// reader in a row: Allow, Allow for now unless every call asks or needs review, and Deny. Someone
+// who may not decide sees Allow and Deny disabled and the card marked paused. A call that runs with
+// its approver's own login asks an approver with no working connection to connect first, then
+// applies their choice; a sign-in that leaves the page applies it on the way back. Where other
+// agents' messages steered the call, the card says whose words they carried. Also a call that
+// ended, as a card without choices.
 
 import { cn } from "cn";
-import { HandIcon } from "lucide-react";
-import { useState } from "react";
+import { HandIcon, WrenchIcon } from "lucide-react";
+import { type ReactNode, useState } from "react";
 
 import type { ToolRisk, ToolScope } from "@/shared/threads/events.ts";
 import type { ToolDefinition } from "@/shared/tools.ts";
 import type { ToolRow } from "@/shared/threads/rows.ts";
-import { ToolInput } from "@/web/agent/tool-value";
+import { ToolInput, ToolOutput } from "@/web/agent/tool-value";
 import {
   Confirmation,
   ConfirmationAction,
@@ -25,9 +25,11 @@ import {
 import { Badge } from "@/web/components/ui/badge";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { useConnectFlow } from "@/web/mcp/connect";
-import { useThreadAgent } from "@/web/threads/transcript/agent";
+import { MoveToBackground } from "@/web/threads/transcript/background";
+import { STATUSES } from "@/web/threads/transcript/background-card";
+import { CardFrame } from "@/web/threads/transcript/card-frame";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
-import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
+import { duration } from "@/web/threads/transcript/tool-line";
 import { ToolCrumb } from "@/web/threads/transcript/tool-crumb";
 
 const ONLY_RUNNERS = "Only people who can run this here can decide";
@@ -59,17 +61,22 @@ export function ToolCard({
   row,
   definition,
   decide,
-  continued,
-  subagent,
+  menu,
+  finished,
+  open,
+  onOpenChange,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
   decide?: RowActions["decide"];
-  continued: boolean;
-  // The subagent whose call it is, when shown outside its thread.
-  subagent?: string;
+  // A menu beside the tool.
+  menu?: ReactNode;
+  // A call that ended, as a card without choices: its tool, how it ended, its input and output.
+  finished?: boolean;
+  // For a finished call: whether its input and output are open.
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
-  const { self } = useThreadAgent();
   const [deciding, setDeciding] = useState(false);
   const actions = row.actions ?? [];
   // The reader's own connection, for a call that would run with it.
@@ -117,58 +124,82 @@ export function ToolCard({
       </WithTooltip>
     );
   }
-  const tag = RISK_TAGS[row.risk];
-  const who = subagent ? { name: subagent, subagent: true } : self;
-  return (
-    <TranscriptRowFrame
-      rowId={row.id}
-      author={who.name}
-      at={row.requestedAt}
-      label={subagent ? `Approval request from ${subagent}` : "Approval request"}
-      note={!decide && <span>Paused</span>}
-      continued={continued}
-    >
-      <Confirmation
-        approval={{ id: row.id }}
-        state="approval-requested"
-        className="gap-2.5 px-3 py-2.5"
+  if (finished) {
+    // How the job ended, from its own card where it has one.
+    const end = row.background?.status;
+    const ended =
+      STATUSES[
+        end === "failed" || end === "cancelled" || end === "interrupted"
+          ? end
+          : row.state === "ran"
+            ? "done"
+            : "failed"
+      ];
+    return (
+      <CardFrame
+        icon={<WrenchIcon />}
+        title={<ToolCrumb row={row} className="font-semibold" />}
+        status={ended}
+        meta={duration(row.ms)}
+        open={open}
+        onOpenChange={onOpenChange}
       >
-        <div className="flex min-w-0 items-center gap-2">
-          <HandIcon
-            aria-hidden
-            className={cn("size-4 shrink-0", decide ? "text-status-waiting" : "text-status-paused")}
-          />
-          <ConfirmationTitle className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
-            {subagent && <span className="shrink-0">{subagent} wants to run</span>}
-            <ToolCrumb row={row} className="font-semibold" />
-          </ConfirmationTitle>
-          {tag && (
-            <Badge variant="outline" className="shrink-0 text-muted-foreground">
-              {tag}
-            </Badge>
-          )}
-        </div>
-        {row.steering && (
-          <p className="text-xs text-muted-foreground">{steeringSentence(row.steering)}</p>
+        <ToolInput value={row.input} schema={definition?.inputSchema} />
+        {row.output && <ToolOutput output={row.output} schema={definition?.outputSchema} />}
+      </CardFrame>
+    );
+  }
+  const tag = RISK_TAGS[row.risk];
+  const card = (
+    <Confirmation
+      approval={{ id: row.id }}
+      state="approval-requested"
+      // A flat section of the tray's panel; its padding and the panel's make 12px on every side.
+      className="gap-2.5 rounded-none border-0 bg-transparent p-1.5 shadow-none"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <HandIcon
+          aria-hidden
+          className={cn("size-4 shrink-0", decide ? "text-warning" : "text-muted-foreground")}
+        />
+        <ConfirmationTitle className="flex min-w-0 items-center gap-1.5 text-sm text-foreground">
+          <ToolCrumb row={row} className="font-semibold" />
+        </ConfirmationTitle>
+        {tag && (
+          <Badge variant="outline" className="shrink-0 text-muted-foreground">
+            {tag}
+          </Badge>
         )}
-        <div className="rounded-md bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
-          <ToolInput value={row.input} schema={definition?.inputSchema} />
-        </div>
-        {row.risk === "review" && (
-          <p className="text-xs text-muted-foreground">
-            Waiting for review by someone who has not contributed to this conversation.
-          </p>
-        )}
-        <ConfirmationRequest>
-          <ConfirmationActions className="w-full flex-col items-stretch self-stretch sm:flex-row sm:items-center sm:justify-start">
-            {button("Allow", true, "once", "default")}
-            {actions.includes("allow_for_now") &&
-              button("Allow for now", true, "for_now", "secondary")}
-            {button("Deny", false, "once", "outline")}
-          </ConfirmationActions>
-        </ConfirmationRequest>
-      </Confirmation>
+        <span className="ml-auto flex shrink-0">
+          <MoveToBackground row={row} />
+          {menu}
+        </span>
+      </div>
+      {row.steering && (
+        <p className="text-xs text-muted-foreground">{steeringSentence(row.steering)}</p>
+      )}
+      <div className="rounded-md bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
+        <ToolInput value={row.input} schema={definition?.inputSchema} />
+      </div>
+      {row.risk === "review" && (
+        <p className="text-xs text-muted-foreground">
+          Waiting for review by someone who has not contributed to this conversation.
+        </p>
+      )}
+      <ConfirmationRequest>
+        <ConfirmationActions className="w-full flex-col items-stretch self-stretch sm:flex-row sm:items-center sm:justify-start">
+          {button("Allow", true, "once", "default")}
+          {actions.includes("allow_for_now") &&
+            button("Allow for now", true, "for_now", "secondary")}
+          {button("Deny", false, "once", "outline")}
+        </ConfirmationActions>
+      </ConfirmationRequest>
+    </Confirmation>
+  );
+  return (
+    <>
+      {card}
       {connect.dialog}
-    </TranscriptRowFrame>
+    </>
   );
 }

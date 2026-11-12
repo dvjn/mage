@@ -122,6 +122,27 @@ describe("the system prompt", () => {
 });
 
 describe("the agent's request", () => {
+  it("reads a silent notification where the agent took it in, and not before", () => {
+    const thread = rowsOf();
+    thread.human(ada, "Plan the launch");
+    const quiet = thread.relay("Divya paused schedule Weekly check");
+    Object.assign(quiet, { type: "change", silent: true });
+    thread.agent("Here's the plan.");
+    const heard = (rows: typeof thread.rows) =>
+      contextOf(rows, guidance).messages.flatMap((message) =>
+        "text" in message && message.text.includes("Divya") ? [message.text] : [],
+      );
+    // Shown, but not taken in yet.
+    expect(heard(thread.rows)).toEqual([]);
+    const seen = contextOf(thread.rows, guidance);
+    Object.assign(quiet, { taken: thread.rows.at(-1)!.seq + 1 });
+    thread.human(ada, "And the budget?");
+    const later = contextOf(thread.rows, guidance);
+    expect(heard(thread.rows)).toHaveLength(1);
+    // It comes after what was read before it was taken in.
+    expect(later.messages.slice(0, seen.messages.length)).toEqual(seen.messages);
+  });
+
   it("keeps its start across the next turn, a new person's first message, an aside and a notification", () => {
     const thread = rowsOf();
     thread.human(ada, "Plan the launch");

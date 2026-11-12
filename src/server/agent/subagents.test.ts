@@ -3,6 +3,7 @@ import { describe, expect, it, onTestFinished } from "vite-plus/test";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
 import { eventSummary } from "@/server/threads/log.ts";
+import type { BackgroundItem } from "@/shared/calls.ts";
 import type { ThreadListItem } from "@/shared/threads/list.ts";
 import type { ShownRow } from "@/shared/threads/rows.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
@@ -531,6 +532,53 @@ describe("subagents", () => {
     workspace.keepAnswering(thread.id);
     resumed.reply("Carried on.");
     await workspace.worker.idle();
+  });
+
+  it("show in the thread's background list while not retired, with where each stands", async () => {
+    const workspace = await subagentThread();
+    const { ada, post, thread, start, calls, answer, callIn, subagentNamed, api } = workspace;
+    const background = async () => {
+      const res = await api("GET", `/threads/${thread.id}/background`, ada.cookie);
+      expect(res.status).toBe(200);
+      return ((await res.json()) as { items: BackgroundItem[] }).items;
+    };
+    start();
+    await post(ada, "Go");
+    await calls(thread.id, ["subagents.start", { name: "Slow", task: "Work slowly" }]);
+    await answer(thread.id);
+    const slow = subagentNamed("Slow");
+    const working = await callIn(slow);
+    working.startStep();
+    expect(await background()).toEqual([
+      {
+        rowId: slow,
+        title: "Slow",
+        work: {
+          kind: "subagent",
+          status: "running",
+          subagent: { threadId: slow, state: "working" },
+          startedAt: expect.any(String),
+          canCancel: true,
+        },
+      },
+    ]);
+    // A person stops it, and it stays listed until it is retired.
+    const quiet = workspace.keepAnswering(thread.id);
+    expect((await api("POST", `/threads/${slow}/stop`, ada.cookie)).status).toBe(202);
+    await workspace.until(() => workspace.subagents.summaryOf(slow)?.state === "stopped");
+    await workspace.worker.idle();
+    quiet();
+    expect(await background()).toMatchObject([
+      {
+        title: "Slow",
+        work: { status: "cancelled", subagent: { state: "stopped" }, canCancel: false },
+      },
+    ]);
+    await post(ada, "Retire it");
+    await calls(thread.id, ["subagents.archive", { subagent: "Slow" }]);
+    await answer(thread.id);
+    await workspace.worker.idle();
+    expect(await background()).toEqual([]);
   });
 
   it("stop with the thread that started them", async () => {

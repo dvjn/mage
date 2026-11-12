@@ -121,9 +121,7 @@ test("an org's header-authorized MCP server lists its tools, and a call that ask
   await page.goto(`/s/${spaceId}`);
   await write(page, `/tool mcp.notes.add_note {"title":"Engines","body":"They compute"}`);
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
-  const card = transcript(page).getByRole("article", {
-    name: "Approval request",
-  });
+  const card = page.getByRole("region", { name: "Approvals" }).getByTestId("tray-card");
   await expect(card).toContainText("Notes");
   await expect(card).toContainText("Add note");
   await card.getByRole("button", { name: "Allow", exact: true }).click();
@@ -371,10 +369,7 @@ test("the agent searches for a server's tool, turns it on and runs it", async ({
   await expect(own).toBeDisabled();
 
   await page.goto(`/s/${spaceId}`);
-  await write(
-    page,
-    '/tool mcp_servers.search_tools {"query":"echo"}\n/tool mcp.notes.echo {"text":"found"}',
-  );
+  await write(page, '/tool tools.search {"query":"echo"}\n/tool mcp.notes.echo {"text":"found"}');
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   // Left out at first, the tool is searched for, turned on, then called.
   await expect(transcript(page)).toContainText("I cannot use mcp.notes.echo here.");
@@ -397,10 +392,7 @@ test("a call to a server's tool keeps its name once the server is removed", asyn
   await expect(page.getByText("Connected").first()).toBeVisible();
 
   await page.goto(`/s/${spaceId}`);
-  await write(
-    page,
-    '/tool mcp_servers.search_tools {"query":"echo"}\n/tool mcp.notes.echo {"text":"found"}',
-  );
+  await write(page, '/tool tools.search {"query":"echo"}\n/tool mcp.notes.echo {"text":"found"}');
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const line = transcript(page).getByRole("button", { name: /^Notes › Echo · Ran/ });
   await expect(line).toBeVisible();

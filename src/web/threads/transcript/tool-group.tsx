@@ -1,9 +1,10 @@
 // A run of the agent's tool calls folded into one line: how many calls, the toolsets they came
-// from and what did not run, and how many messages the subagents they started sent each other; or
-// while one runs, that call. It opens on who sent those messages to whom, and the calls' own lines
-// and the thinking between them.
+// from and what did not run, and how many messages the subagents they started sent each other, and
+// the state that needs most notice: a call waiting for a decision, then one running. It opens on
+// who sent those messages to whom, and the calls' own lines and the thinking between them.
 
-import { CheckIcon, ChevronRightIcon, SkipForwardIcon, XIcon } from "lucide-react";
+import { cn } from "cn";
+import { CheckIcon, ChevronRightIcon, HandIcon, SkipForwardIcon, XIcon } from "lucide-react";
 
 import type { AgentRow, AgentTurn, ToolRow } from "@/shared/threads/rows.ts";
 import { FORMER_TOOL_IDS, type ToolDefinition } from "@/shared/tools.ts";
@@ -16,8 +17,9 @@ import { Spinner } from "@/web/components/ui/spinner";
 import { useThreadAgent } from "@/web/threads/transcript/agent";
 import { ReplyReasoning } from "@/web/threads/transcript/agent-reply";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
+import { MoveToBackground } from "@/web/threads/transcript/background";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
-import { GIVES_WAY, ToolCrumb, useToolPath } from "@/web/threads/transcript/tool-crumb";
+import { GIVES_WAY } from "@/web/threads/transcript/tool-crumb";
 
 // What the calls that did not run are counted as, in this order.
 const MISSES: [string, ToolRow["state"][]][] = [
@@ -27,7 +29,10 @@ const MISSES: [string, ToolRow["state"][]][] = [
   ["skipped", ["skipped"]],
 ];
 
-const running = (call: ToolRow) => call.state === "pending" || call.state === "allowed";
+// A call that waits for a decision, and one that is running.
+const waits = (call: ToolRow) => call.state === "pending" && call.waits;
+const running = (call: ToolRow) =>
+  call.state === "allowed" || (call.state === "pending" && !call.waits);
 
 // The run in words: how many calls, their toolsets in order, and how many of each that did not run.
 export function callsSummary(calls: ToolRow[]) {
@@ -56,47 +61,46 @@ export function ToolGroup({
   onOpenChange: (open: boolean) => void;
 }) {
   const { self } = useThreadAgent();
-  const toolPath = useToolPath();
-  const current = calls.findLast(running);
+  // The most urgent state a call is in: waiting for a decision, then running, then failed.
+  const waiting = calls.some(waits);
+  const current = waiting ? undefined : calls.findLast(running);
   const { count, toolsets, misses } = callsSummary(calls);
   const failed = calls.some((call) =>
     ["failed", "denied", "stale", "stopped"].includes(call.state),
   );
   const skipped = calls.some((call) => call.state === "skipped");
-  const label = current
-    ? `${toolPath(current)} · Running`
-    : [count, toolsets, ...misses].filter(Boolean).join(" · ");
+  const status = waiting ? "Waiting for approval" : current ? "Running" : null;
+  const label = [count, toolsets, status, ...misses].filter(Boolean).join(" · ");
   const group = (
     <Collapsible open={open} onOpenChange={onOpenChange} className="text-xs text-muted-foreground">
-      <CollapsibleTrigger
-        aria-label={label}
-        className="group/tool flex w-full items-center gap-1.5 rounded-md py-0.5 text-left hover:text-foreground [&>svg]:size-3.5 [&>svg]:shrink-0"
-      >
-        <ChevronRightIcon className="transition-transform group-data-[panel-open]/tool:rotate-90" />
-        {current ? (
-          <Spinner />
-        ) : failed ? (
-          <XIcon />
-        ) : skipped ? (
-          <SkipForwardIcon />
-        ) : (
-          <CheckIcon className="text-foreground" />
-        )}
-        <span className="flex min-w-0 flex-1 items-center gap-1">
-          {current ? (
-            <>
-              <ToolCrumb row={current} className="font-medium" />
-              <span className="shrink-0">· Running</span>
-            </>
+      <div className="flex items-center gap-2">
+        <CollapsibleTrigger
+          aria-label={label}
+          className="group/tool flex w-full items-center gap-1.5 rounded-md py-0.5 text-left hover:text-foreground [&>svg]:size-3.5 [&>svg]:shrink-0"
+        >
+          <ChevronRightIcon className="transition-transform group-data-[panel-open]/tool:rotate-90" />
+          {waiting ? (
+            <HandIcon className="text-warning" />
+          ) : current ? (
+            <Spinner />
+          ) : failed ? (
+            <XIcon />
+          ) : skipped ? (
+            <SkipForwardIcon />
           ) : (
-            <>
-              <span className="shrink-0 font-medium">{count}</span>
-              {toolsets && <span className={GIVES_WAY}>· {toolsets}</span>}
-              {misses.length > 0 && <span className="shrink-0">· {misses.join(" · ")}</span>}
-            </>
+            <CheckIcon className="text-foreground" />
           )}
-        </span>
-      </CollapsibleTrigger>
+          <span className="flex min-w-0 flex-1 items-center gap-1">
+            <span className="shrink-0 font-medium">{count}</span>
+            {toolsets && <span className={GIVES_WAY}>· {toolsets}</span>}
+            {status && (
+              <span className={cn("shrink-0", waiting && "text-warning")}>· {status}</span>
+            )}
+            {misses.length > 0 && <span className="shrink-0">· {misses.join(" · ")}</span>}
+          </span>
+        </CollapsibleTrigger>
+        {current && <MoveToBackground row={current} />}
+      </div>
       <CollapsibleContent className="mt-1 flex flex-col gap-1 pl-5">
         {rows.map((row) =>
           row.kind === "tool" ? (

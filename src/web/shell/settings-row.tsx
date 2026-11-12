@@ -71,18 +71,22 @@ export function SettingsRow({
 }
 
 // A tag beside a row's title or name, as whose it is or how it stands: neutral, good, asking for
-// something, or failing.
+// something, or failing; quiet for one that only marks the less usual kind.
 export function RowBadge({
   children,
   tone = "neutral",
 }: {
   children: ReactNode;
-  tone?: "neutral" | "ok" | "ask" | "error";
+  tone?: "neutral" | "quiet" | "ok" | "ask" | "error";
 }) {
   return (
     <Badge
       variant={tone === "ok" ? "secondary" : tone === "error" ? "destructive" : "outline"}
-      className={cn("h-4 px-1.5 text-[10px]", tone === "ask" && "border-tool-ask/40 text-tool-ask")}
+      className={cn(
+        "h-4 px-1.5 text-[10px]",
+        tone === "ask" && "border-warning/40 text-warning",
+        tone === "quiet" && "font-normal text-muted-foreground",
+      )}
     >
       {children}
     </Badge>

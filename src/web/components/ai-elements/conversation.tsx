@@ -2,6 +2,7 @@
 
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { Button } from "@/web/components/ui/button";
+import { Spinner } from "@/web/components/ui/spinner";
 import { cn } from "cn";
 import type { UIMessage } from "ai";
 import { ArrowDownIcon, DownloadIcon } from "lucide-react";
@@ -61,8 +62,16 @@ const StaysOnOpen = () => {
   return null;
 };
 
+// The stick-to-bottom state is a mutable object the library owns, set by assigning.
+function setScrollTop(state: { scrollTop: number }, top: number) {
+  state.scrollTop = Math.max(0, top);
+}
+
 // How far down the view an element scrolled to sits, as a share of the view's height.
 const SCROLL_TO_SHARE = 0.3;
+
+// How many frames a target that is not in the content yet is waited for.
+const SCROLL_TO_FRAMES = 20;
 
 // Scrolls the element with the id to near the top third of the view, once it is in the content,
 // and stops following the end. Coming after the opening scroll, it wins over it.
@@ -70,15 +79,33 @@ const ScrolledTo = ({ id }: { id?: string }) => {
   const { state, scrollRef, stopScroll } = useStickToBottomContext();
   useLayoutEffect(() => {
     const scroll = scrollRef.current;
-    const element = id ? document.getElementById(id) : null;
-    if (!scroll || !element || !scroll.contains(element)) return;
-    const top =
-      scroll.scrollTop +
-      element.getBoundingClientRect().top -
-      scroll.getBoundingClientRect().top -
-      scroll.clientHeight * SCROLL_TO_SHARE;
-    stopScroll();
-    state.scrollTop = Math.max(0, top);
+    if (!id || !scroll) return;
+    // A line inside a folded run is mounted as the run opens, which may be a frame after the id
+    // arrives, so it is looked for a few frames.
+    let frame = 0;
+    let tries = 0;
+    const scrollToTarget = () => {
+      const target = document.getElementById(id);
+      if (!target || !scroll.contains(target)) {
+        if (tries++ < SCROLL_TO_FRAMES) frame = requestAnimationFrame(scrollToTarget);
+        return;
+      }
+      // A row skipping layout has no boxes inside it, so its frame is measured; a line inside a run
+      // of calls is measured itself.
+      const element =
+        target.getClientRects().length > 0
+          ? target
+          : (target.closest("[data-row-frame]") ?? target);
+      const top =
+        scroll.scrollTop +
+        element.getBoundingClientRect().top -
+        scroll.getBoundingClientRect().top -
+        scroll.clientHeight * SCROLL_TO_SHARE;
+      stopScroll();
+      setScrollTop(state, top);
+    };
+    scrollToTarget();
+    return () => cancelAnimationFrame(frame);
   }, [id, scrollRef, state, stopScroll]);
   return null;
 };
@@ -102,12 +129,12 @@ const OpenScrolled = ({ at, hold }: { at?: RefObject<HTMLElement | null>; hold?:
         scroll.getBoundingClientRect().top -
         OPEN_AT_OFFSET_PX;
       if (top < end || hold) {
-        state.scrollTop = Math.max(0, Math.min(top, end));
+        setScrollTop(state, Math.min(top, end));
         stopScroll();
         return;
       }
     }
-    state.scrollTop = end;
+    setScrollTop(state, end);
   }, [at, hold, scrollRef, state, stopScroll]);
   return null;
 };
@@ -116,9 +143,12 @@ const OpenScrolled = ({ at, hold }: { at?: RefObject<HTMLElement | null>; hold?:
 const EARLIER_MARGIN_PX = 600;
 
 // Goes first in the content: while there is `more` before it, asks for it with `onLoad` once the
-// top comes near the view, and again while it stays near once that has arrived. What is in view
-// stays where it is as the earlier content arrives above it; `first` names the content's first
-// item, which changes when it has.
+// top comes near the view, and again while it stays near once that has arrived. A fixed-height
+// slot shows a spinner meanwhile, or a retry when `onLoad` rejects, so nothing shifts as it
+// changes. The view keeps its distance from the end of the content as earlier content arrives
+// (measured from the end, assigned before paint), so what is in view stays where it is, and an
+// end the reader is following keeps being followed. Native scroll anchoring is turned off, as it
+// would add its own correction to this one. `first` names the content's first item.
 export const ConversationEarlier = ({
   more,
   first,
@@ -130,39 +160,91 @@ export const ConversationEarlier = ({
 }) => {
   const { scrollRef, state } = useStickToBottomContext();
   const top = useRef<HTMLDivElement>(null);
-  // The item that was first, and how far it was from the top of the view, as content was asked for.
-  const anchor = useRef<{ element: Element; at: number } | null>(null);
+  // The distance from the end of the content, kept as the reader scrolls.
+  const fromEnd = useRef(0);
+  const restore = useRef(false);
   const [loading, setLoading] = useState(false);
+  // Stays set from asking until the top is seen to be out of range again, so the spinner does not
+  // blink between pages asked for in a row.
+  const [pending, setPending] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const root = scrollRef.current;
+    if (!root) return;
+    root.style.overflowAnchor = "none";
+    const measure = () => {
+      if (!restore.current) fromEnd.current = root.scrollHeight - root.scrollTop;
+    };
+    measure();
+    root.addEventListener("scroll", measure, { passive: true });
+    return () => root.removeEventListener("scroll", measure);
+  }, [scrollRef]);
+
+  const load = useCallback(() => {
+    const root = scrollRef.current;
+    if (root) fromEnd.current = root.scrollHeight - root.scrollTop;
+    restore.current = true;
+    setFailed(false);
+    setPending(true);
+    setLoading(true);
+    onLoad().then(
+      () => setLoading(false),
+      () => {
+        restore.current = false;
+        setFailed(true);
+        setPending(false);
+        setLoading(false);
+      },
+    );
+  }, [onLoad, scrollRef]);
 
   useEffect(() => {
     const root = scrollRef.current;
     const target = top.current;
-    if (!more || loading || !root || !target) return;
+    if (!more || loading || failed || !root || !target) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
+        if (!entries.some((entry) => entry.isIntersecting)) {
+          setPending(false);
+          return;
+        }
         observer.disconnect();
-        const element = target.nextElementSibling;
-        anchor.current = element && { element, at: element.getBoundingClientRect().top };
-        setLoading(true);
-        void onLoad().finally(() => setLoading(false));
+        load();
       },
       { root, rootMargin: `${EARLIER_MARGIN_PX}px 0px 0px 0px` },
     );
     observer.observe(target);
     return () => observer.disconnect();
-  }, [more, loading, onLoad, scrollRef]);
+  }, [more, loading, failed, load, scrollRef]);
 
   useLayoutEffect(() => {
-    const kept = anchor.current;
-    if (!kept) return;
-    anchor.current = null;
-    if (!kept.element.isConnected) return;
-    const moved = kept.element.getBoundingClientRect().top - kept.at;
-    if (moved !== 0) state.scrollTop += moved;
-  }, [first, state]);
+    if (!restore.current) return;
+    restore.current = false;
+    const root = scrollRef.current;
+    if (!root) return;
+    const next = root.scrollHeight - fromEnd.current;
+    if (next !== root.scrollTop) setScrollTop(state, next);
+  }, [first, more, scrollRef, state]);
 
-  return <div ref={top} aria-hidden className="-mb-4 h-0 shrink-0" />;
+  if (!more) return null;
+  return (
+    <div
+      ref={top}
+      className="-mb-4 flex h-8 shrink-0 items-center justify-center gap-2 text-xs text-muted-foreground"
+    >
+      {failed ? (
+        <>
+          <span>Couldn&apos;t load earlier messages</span>
+          <Button type="button" variant="ghost" size="sm" onClick={load}>
+            Retry
+          </Button>
+        </>
+      ) : (
+        (loading || pending) && <Spinner aria-label="Loading earlier messages" />
+      )}
+    </div>
+  );
 };
 
 export type ConversationContentProps = ComponentProps<typeof StickToBottom.Content>;

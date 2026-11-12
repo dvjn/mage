@@ -18,7 +18,7 @@ import { MessageResponse } from "@/web/components/ai-elements/message";
 import type { Aside } from "@/shared/threads/history.ts";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { Button } from "@/web/components/ui/button";
-import { Popover, PopoverContent, PopoverTrigger } from "@/web/components/ui/popover";
+import { LazyPopover } from "@/web/components/lazy-popover";
 import { Spinner } from "@/web/components/ui/spinner";
 import { Textarea } from "@/web/components/ui/textarea";
 
@@ -85,145 +85,142 @@ export function AsideButton({
     asked.catch(() => setDraft((now) => now || text));
   }
   return (
-    <Popover
+    <LazyPopover
+      label={label}
       open={open}
       onOpenChange={(next) => {
         asides.setOpen(next ? { rowId, fresh } : null);
         if (next) setPicked(null);
       }}
+      trigger={
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          aria-label={label}
+          className={cn(
+            "gap-0.5",
+            fresh ? "text-muted-foreground" : "w-auto px-1 text-foreground",
+            className,
+          )}
+        >
+          <MessageCircleIcon />
+          {!fresh && <span className="text-xs tabular-nums">{list.length}</span>}
+        </Button>
+      }
+      align="end"
+      className="w-96 max-w-[calc(100vw-2rem)] gap-3 p-3"
     >
-      <WithTooltip label={label}>
-        <PopoverTrigger
-          render={
+      {!fresh && list.length > 1 && (
+        <div
+          role="group"
+          aria-label="Side questions"
+          className="-my-1 flex items-center justify-end text-xs text-muted-foreground tabular-nums"
+        >
+          <WithTooltip label="Previous side question">
             <Button
               type="button"
               size="icon-xs"
               variant="ghost"
-              aria-label={label}
-              className={cn(
-                "gap-0.5",
-                fresh ? "text-muted-foreground" : "w-auto px-1 text-foreground",
-                className,
-              )}
+              aria-label="Previous side question"
+              disabled={at === 0}
+              onClick={() => setPicked(at - 1)}
             >
-              <MessageCircleIcon />
-              {!fresh && <span className="text-xs tabular-nums">{list.length}</span>}
+              <ChevronLeftIcon />
             </Button>
-          }
-        />
-      </WithTooltip>
-      <PopoverContent align="end" className="w-96 max-w-[calc(100vw-2rem)] gap-3 p-3">
-        {!fresh && list.length > 1 && (
-          <div
-            role="group"
-            aria-label="Side questions"
-            className="-my-1 flex items-center justify-end text-xs text-muted-foreground tabular-nums"
-          >
-            <WithTooltip label="Previous side question">
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                aria-label="Previous side question"
-                disabled={at === 0}
-                onClick={() => setPicked(at - 1)}
-              >
-                <ChevronLeftIcon />
-              </Button>
-            </WithTooltip>
-            <span>
-              {at + 1}/{list.length}
-            </span>
-            <WithTooltip label="Next side question">
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                aria-label="Next side question"
-                disabled={at === list.length - 1}
-                onClick={() => setPicked(at + 1)}
-              >
-                <ChevronRightIcon />
-              </Button>
-            </WithTooltip>
-          </div>
-        )}
-        {!fresh && (
-          <div
-            role="log"
-            aria-label="Side question"
-            className="flex max-h-96 flex-col gap-3 overflow-y-auto"
-          >
-            {aside?.turns.map((turn) => (
-              <div key={turn.id} className="flex flex-col gap-0.5 text-sm">
-                <span className="text-xs text-muted-foreground">
-                  {turn.role === "question" ? "You" : "Answer"}
-                </span>
-                {turn.role === "question" ? (
-                  <p className="whitespace-pre-wrap">{turn.text}</p>
-                ) : turn.failure ? (
-                  <p className="text-destructive">
-                    {turn.failure === "stopped"
-                      ? "Stopped"
-                      : (turn.error ?? "The model did not answer")}
-                  </p>
-                ) : (
-                  <MessageResponse>{turn.text}</MessageResponse>
-                )}
-              </div>
-            ))}
-            {waiting && (
-              <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Spinner className="size-3.5" />
-                Answering…
-              </div>
-            )}
-          </div>
-        )}
-        <div className="flex items-center gap-2">
-          <Textarea
-            aria-label="Ask aside"
-            placeholder={aside ? "Ask more" : "Ask about this message"}
-            value={draft}
-            rows={1}
-            className="min-h-8 resize-none py-[5px] text-sm md:text-sm"
-            onChange={(event) => setDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                send();
-              }
-            }}
-          />
-          {answering ? (
-            <WithTooltip label="Stop answering">
-              <Button
-                type="button"
-                size="icon"
-                variant="outline"
-                aria-label="Stop answering"
-                className="shrink-0"
-                onClick={() => asides.stop()}
-              >
-                <SquareIcon className="fill-current" />
-              </Button>
-            </WithTooltip>
-          ) : (
-            <WithTooltip label="Ask">
-              <Button
-                type="button"
-                size="icon"
-                aria-label="Ask"
-                className="shrink-0"
-                disabled={!draft.trim()}
-                onClick={send}
-              >
-                <CornerDownLeftIcon />
-              </Button>
-            </WithTooltip>
+          </WithTooltip>
+          <span>
+            {at + 1}/{list.length}
+          </span>
+          <WithTooltip label="Next side question">
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost"
+              aria-label="Next side question"
+              disabled={at === list.length - 1}
+              onClick={() => setPicked(at + 1)}
+            >
+              <ChevronRightIcon />
+            </Button>
+          </WithTooltip>
+        </div>
+      )}
+      {!fresh && (
+        <div
+          role="log"
+          aria-label="Side question"
+          className="flex max-h-96 flex-col gap-3 overflow-y-auto"
+        >
+          {aside?.turns.map((turn) => (
+            <div key={turn.id} className="flex flex-col gap-0.5 text-sm">
+              <span className="text-xs text-muted-foreground">
+                {turn.role === "question" ? "You" : "Answer"}
+              </span>
+              {turn.role === "question" ? (
+                <p className="whitespace-pre-wrap">{turn.text}</p>
+              ) : turn.failure ? (
+                <p className="text-destructive">
+                  {turn.failure === "stopped"
+                    ? "Stopped"
+                    : (turn.error ?? "The model did not answer")}
+                </p>
+              ) : (
+                <MessageResponse>{turn.text}</MessageResponse>
+              )}
+            </div>
+          ))}
+          {waiting && (
+            <div role="status" className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Spinner className="size-3.5" />
+              Answering…
+            </div>
           )}
         </div>
-      </PopoverContent>
-    </Popover>
+      )}
+      <div className="flex items-center gap-2">
+        <Textarea
+          aria-label="Ask aside"
+          placeholder={aside ? "Ask more" : "Ask about this message"}
+          value={draft}
+          rows={1}
+          className="min-h-8 resize-none py-[5px] text-sm md:text-sm"
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              send();
+            }
+          }}
+        />
+        {answering ? (
+          <WithTooltip label="Stop answering">
+            <Button
+              type="button"
+              size="icon"
+              variant="outline"
+              aria-label="Stop answering"
+              className="shrink-0"
+              onClick={() => asides.stop()}
+            >
+              <SquareIcon className="fill-current" />
+            </Button>
+          </WithTooltip>
+        ) : (
+          <WithTooltip label="Ask">
+            <Button
+              type="button"
+              size="icon"
+              aria-label="Ask"
+              className="shrink-0"
+              disabled={!draft.trim()}
+              onClick={send}
+            >
+              <CornerDownLeftIcon />
+            </Button>
+          </WithTooltip>
+        )}
+      </div>
+    </LazyPopover>
   );
 }

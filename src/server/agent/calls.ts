@@ -200,6 +200,7 @@ export function createCalls(options: CallsOptions) {
         main: true,
         callId: record.id,
       },
+      actor: { kind: "source", label: titleOf(space, record.toolId), type: "job" },
       text,
       people: record.steeredBy,
       ...(result && { last: result }),

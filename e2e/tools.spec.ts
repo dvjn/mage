@@ -45,8 +45,20 @@ function replies(page: Page) {
   return transcript(page).getByRole("article", { name: "Message from Agent" });
 }
 
+// The approval cards in the activity tray, which opens by itself for someone who may decide.
 function card(page: Page) {
-  return transcript(page).getByRole("article", { name: "Approval request" });
+  return page.getByRole("region", { name: "Approvals" }).getByTestId("tray-card");
+}
+
+// Opens the tray's approvals for someone who may not decide, which it leaves closed.
+async function showApprovals(page: Page) {
+  const region = page.getByRole("region", { name: "Approvals" });
+  const kind = page.getByRole("button", { name: "Approvals", exact: true });
+  await expect(kind).toBeVisible();
+  await expect(async () => {
+    if (!(await region.isVisible())) await kind.click();
+    await expect(region).toBeVisible({ timeout: 1000 });
+  }).toPass();
 }
 
 // The settings card of the built-in toolsets.
@@ -215,9 +227,8 @@ test("a tool that needs approval asks every time, and a guest may decide it", as
   await expect(card(page).getByRole("button", { name: "Allow for now" })).toHaveCount(0);
   await expect(page.getByLabel("Message", { exact: true })).toHaveAttribute(
     "placeholder",
-    "The agent is waiting for a decision above; you can still steer or queue.",
+    "Decide the call above",
   );
-  await expect(card(guest)).not.toContainText("Paused");
   await card(guest).getByRole("button", { name: "Allow", exact: true }).click();
   await expect(line(page, /^Thread › Rename · Ran · allowed by Hedy Lamarr/)).toBeVisible();
   await expect(page.locator("[data-slot=breadcrumb]")).toContainText("Research");
@@ -248,12 +259,11 @@ test("a viewer sees the card paused while a messager decides it", async ({
   await write(page, '/tool thread.rename {"title":"Looms"}');
 
   await alan.goto(page.url());
+  await showApprovals(alan);
   await expect(card(alan)).toContainText("Rename");
   await expect(card(alan)).toContainText("Asks each time");
-  await expect(card(alan)).toContainText("Paused");
   await expect(card(alan).getByRole("button", { name: "Deny" })).toBeDisabled();
   await grace.goto(page.url());
-  await expect(card(grace)).not.toContainText("Paused");
   await card(grace).getByRole("button", { name: "Allow", exact: true }).click();
 
   await expect(line(alan, /^Thread › Rename · Ran · allowed by Grace Hopper/)).toBeVisible();
@@ -450,10 +460,9 @@ test("a policy's people use a tool directly, and only its approvers approve the 
   await grace.goto(page.url());
   await expect(line(grace, /^Thread › Rename · Ran$/)).toBeVisible();
   await write(grace, '/tool thread.rename {"title":"Hers"}');
+  await showApprovals(grace);
   await expect(card(grace)).toContainText("Rename");
-  await expect(card(grace)).toContainText("Paused");
   await expect(card(grace).getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
-  await expect(card(page)).not.toContainText("Paused");
   await card(page).getByRole("button", { name: "Allow", exact: true }).click();
   await expect(line(grace, /^Thread › Rename · Ran · allowed by Ada Lovelace/)).toBeVisible();
   await expect(grace.locator("[data-slot=breadcrumb-page]")).toHaveText("Hers");
@@ -484,6 +493,7 @@ test("independent approval needs someone other than the author of the latest mes
 
   await page.goto(`/s/${spaceId}`);
   await startThread(page, '/tool thread.rename {"title":"Reviewed"}');
+  await showApprovals(page);
   await expect(card(page)).toContainText("Needs review");
   await expect(card(page).getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
   await expect(card(page).getByRole("button", { name: "Allow for now" })).toHaveCount(0);
@@ -506,6 +516,7 @@ test("changing independent approval to sign-off updates a pending approval for t
   await setInSpace(page, spaceId, "Rename", "Independent review");
   await startThread(page, '/tool thread.rename {"title":"Engines"}');
   const threadUrl = page.url();
+  await showApprovals(page);
   await expect(card(page)).toContainText("Needs review");
   await expect(card(page).getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
   await setInSpace(page, spaceId, "Rename", "Sign-off");

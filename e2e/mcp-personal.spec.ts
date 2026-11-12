@@ -51,9 +51,9 @@ async function connectWith(page: Page, token: string) {
   await expect(dialog).toBeHidden();
 }
 
-// The newest approval card in the thread.
+// The newest approval card in the activity tray, which opens by itself for someone who may decide.
 function approval(page: Page) {
-  return transcript(page).getByRole("article", { name: "Approval request" }).last();
+  return page.getByRole("region", { name: "Approvals" }).getByTestId("tray-card").last();
 }
 
 // The output of the thread's call at `index`, opened once its line reads `line`. Calls are picked

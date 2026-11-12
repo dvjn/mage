@@ -21,12 +21,12 @@ import type { AskedModel } from "@/shared/threads/history.ts";
 import type { RowAction, RowVersions } from "@/shared/threads/rows.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
 import { CopyButton } from "@/web/components/copy-button";
+import { LazyPopover } from "@/web/components/lazy-popover";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { Button } from "@/web/components/ui/button";
 import { Label } from "@/web/components/ui/label";
 import { Spinner } from "@/web/components/ui/spinner";
 import { Switch } from "@/web/components/ui/switch";
-import { Popover, PopoverContent, PopoverTrigger } from "@/web/components/ui/popover";
 import { ThreadPickers } from "@/web/models/thread-pickers";
 import { AsideButton, AsidesContext } from "@/web/threads/transcript/aside-thread";
 
@@ -140,48 +140,45 @@ function ForkFrom({ rowId, history }: { rowId: string; history: RowHistory }) {
   const [summary, setSummary] = useState(false);
   const summarising = history.summarising === rowId;
   return (
-    <Popover
+    <LazyPopover
+      label="Fork into new thread"
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
         if (next) setSummary(false);
       }}
+      trigger={
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Fork into new thread"
+          disabled={history.summarising !== null}
+        >
+          {summarising ? <Spinner aria-hidden /> : <SplitIcon />}
+        </Button>
+      }
+      align="start"
+      className="w-auto p-2"
     >
-      <WithTooltip label="Fork into new thread">
-        <PopoverTrigger
-          render={
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost"
-              aria-label="Fork into new thread"
-              disabled={history.summarising !== null}
-            >
-              {summarising ? <Spinner aria-hidden /> : <SplitIcon />}
-            </Button>
-          }
-        />
-      </WithTooltip>
-      <PopoverContent align="start" className="w-auto p-2">
-        <div role="group" aria-label="Fork into new thread" className="flex items-center gap-3">
-          <Label className="gap-2 text-sm font-normal">
-            <Switch checked={summary} onCheckedChange={setSummary} />
-            Summarize conversation
-          </Label>
-          <Button
-            type="button"
-            size="sm"
-            onClick={() => {
-              if (summary) history.forkFromSummary(rowId);
-              else history.fork(rowId);
-              setOpen(false);
-            }}
-          >
-            Fork
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
+      <div role="group" aria-label="Fork into new thread" className="flex items-center gap-3">
+        <Label className="gap-2 text-sm font-normal">
+          <Switch checked={summary} onCheckedChange={setSummary} />
+          Summarize conversation
+        </Label>
+        <Button
+          type="button"
+          size="sm"
+          onClick={() => {
+            if (summary) history.forkFromSummary(rowId);
+            else history.fork(rowId);
+            setOpen(false);
+          }}
+        >
+          Fork
+        </Button>
+      </div>
+    </LazyPopover>
   );
 }
 
@@ -192,7 +189,8 @@ function RetryWith({ rowId, history }: { rowId: string; history: RowHistory }) {
   const [effort, setEffort] = useState<Effort | null>(null);
   const { pickers } = history;
   return (
-    <Popover
+    <LazyPopover
+      label="Retry"
       open={open}
       onOpenChange={(next) => {
         setOpen(next);
@@ -200,43 +198,39 @@ function RetryWith({ rowId, history }: { rowId: string; history: RowHistory }) {
         setModel(pickers.model);
         setEffort(pickers.effort);
       }}
+      trigger={
+        <Button type="button" size="icon-xs" variant="ghost" aria-label="Retry">
+          <RefreshCcwIcon />
+        </Button>
+      }
+      align="start"
+      className="w-auto p-2"
     >
-      <WithTooltip label="Retry">
-        <PopoverTrigger
-          render={
-            <Button type="button" size="icon-xs" variant="ghost" aria-label="Retry">
-              <RefreshCcwIcon />
-            </Button>
-          }
+      <div role="group" aria-label="Retry with" className="flex flex-wrap items-center gap-1">
+        <ThreadPickers
+          models={pickers.models}
+          loading={pickers.loading}
+          model={model}
+          effort={effort}
+          defaults={pickers.defaults}
+          used={pickers.used}
+          onModel={setModel}
+          onEffort={setEffort}
         />
-      </WithTooltip>
-      <PopoverContent align="start" className="w-auto p-2">
-        <div role="group" aria-label="Retry with" className="flex flex-wrap items-center gap-1">
-          <ThreadPickers
-            models={pickers.models}
-            loading={pickers.loading}
-            model={model}
-            effort={effort}
-            defaults={pickers.defaults}
-            used={pickers.used}
-            onModel={setModel}
-            onEffort={setEffort}
-          />
-          <Button
-            type="button"
-            size="sm"
-            className="ml-1"
-            onClick={() => {
-              const ref = model ?? pickers.replying;
-              history.retry(rowId, ref ? { model: ref, effort } : undefined);
-              setOpen(false);
-            }}
-          >
-            Retry
-          </Button>
-        </div>
-      </PopoverContent>
-    </Popover>
+        <Button
+          type="button"
+          size="sm"
+          className="ml-1"
+          onClick={() => {
+            const ref = model ?? pickers.replying;
+            history.retry(rowId, ref ? { model: ref, effort } : undefined);
+            setOpen(false);
+          }}
+        >
+          Retry
+        </Button>
+      </div>
+    </LazyPopover>
   );
 }
 
@@ -291,7 +285,7 @@ export function RowHistoryFooter({ rowId, versions }: { rowId: string; versions?
   const asked = (asides?.byRow.get(rowId)?.length ?? 0) > 0;
   if (!versions && !asked) return null;
   return (
-    <div className="-mb-1 flex min-h-6 items-center gap-1">
+    <div className="flex flex-1 items-center gap-1">
       {versions && <VersionSwitcher versions={versions} />}
       {asked && <AsideButton rowId={rowId} fresh={false} className="ml-auto" />}
     </div>

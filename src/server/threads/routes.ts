@@ -6,6 +6,7 @@ import { validator } from "hono/validator";
 
 import type { Logger } from "@/server/kernel/logger.ts";
 import { type ApiEnv, signedIn, jsonBody, queryOf } from "@/server/http.ts";
+import { backgroundSeenSchema } from "@/shared/calls.ts";
 import { pageParams } from "@/shared/paging.ts";
 import { threadPageQuerySchema } from "@/shared/thread-status.ts";
 import {
@@ -43,6 +44,8 @@ export function feedMessage(item: ThreadFollowItem) {
       return { event: "thread", data: JSON.stringify(item.head) };
     case "tasks":
       return { event: "tasks", data: JSON.stringify(item.list) };
+    case "background":
+      return { event: "background", data: JSON.stringify(item.list) };
     case "delta":
       return { event: "message-delta", data: JSON.stringify(item.delta) };
     default: {
@@ -59,6 +62,7 @@ const newThread = jsonBody(
 
 const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or an effort");
 
+const seenInput = jsonBody(backgroundSeenSchema, "Give a kind");
 const threadMove = jsonBody(threadMoveSchema, "Give a space");
 
 const message = jsonBody(
@@ -263,6 +267,13 @@ export function threadRoutes(options: {
     .delete("/v1/threads/:id", (c) => {
       threads.remove(signedIn(c.var.principal), c.req.param("id"));
       return c.json({ ok: true }, 200);
+    })
+    .get("/v1/threads/:id/background", (c) => {
+      return c.json(threads.backgroundList(signedIn(c.var.principal), c.req.param("id")), 200);
+    })
+    .post("/v1/threads/:id/background/seen", seenInput, (c) => {
+      const { kind } = c.req.valid("json");
+      return c.json(threads.seeBackground(signedIn(c.var.principal), c.req.param("id"), kind), 200);
     })
     .get("/v1/threads/:id/events", eventCursor, (c) => {
       const principal = signedIn(c.var.principal);

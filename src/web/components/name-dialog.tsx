@@ -2,7 +2,7 @@
 // may be left empty. It opens from its trigger, or
 // from its owner when it has no trigger.
 
-import { type FormEvent, type ReactElement, useId, useState } from "react";
+import { type FormEvent, type ReactElement, type ReactNode, useId, useState } from "react";
 
 import { Button } from "@/web/components/ui/button";
 import { DialogClose, DialogFooter, DialogHeader, DialogTitle } from "@/web/components/ui/dialog";
@@ -11,7 +11,13 @@ import {
   ResponsiveDialogContent,
   ResponsiveDialogTrigger,
 } from "@/web/components/responsive-dialog";
-import { Field, FieldError, FieldGroup, FieldLabel } from "@/web/components/ui/field";
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldGroup,
+  FieldLabel,
+} from "@/web/components/ui/field";
 import { Input } from "@/web/components/ui/input";
 
 export function NameDialog({
@@ -24,6 +30,9 @@ export function NameDialog({
   maxLength = 80,
   label = "Name",
   required = true,
+  secret,
+  hint,
+  extra,
   onSubmit,
 }: {
   trigger?: ReactElement;
@@ -35,6 +44,12 @@ export function NameDialog({
   maxLength?: number;
   label?: string;
   required?: boolean;
+  // Hides what is typed, for a secret.
+  secret?: boolean;
+  // One line under the field.
+  hint?: string;
+  // A button at the start of the footer, for a way out of what the field sets.
+  extra?: ReactNode;
   // Resolves to an error to show, or nothing when done.
   onSubmit: (name: string) => Promise<string | undefined>;
 }) {
@@ -83,11 +98,14 @@ export function NameDialog({
                 required={required}
                 maxLength={maxLength}
                 autoComplete="off"
+                {...(secret && { type: "password" })}
               />
+              {hint && <FieldDescription>{hint}</FieldDescription>}
               <FieldError>{error}</FieldError>
             </Field>
           </FieldGroup>
           <DialogFooter>
+            {extra}
             <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
             <Button type="submit" disabled={pending}>
               {action}

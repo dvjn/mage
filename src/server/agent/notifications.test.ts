@@ -4,7 +4,7 @@ import { agentThread } from "@/server/testing/agent-thread.ts";
 import type { Steering } from "@/shared/threads/events.ts";
 
 import { NOTIFICATIONS_HEADING } from "./context.ts";
-import { createNotifier, type Notification } from "./notifications.ts";
+import { createNotifier, type Notification, silentChange } from "./notifications.ts";
 
 // A thread whose agent is sent notifications, as any feature sends them.
 async function notifiedThread() {
@@ -18,7 +18,9 @@ async function notifiedThread() {
     people,
   });
   const send = (text: string, people?: Steering[]) => notifier.send(thread.id, note(text, people));
-  return { ...workspace, send };
+  const sendQuietly = (by: string, text: string) =>
+    notifier.send(thread.id, silentChange(thread.id, by, text));
+  return { ...workspace, send, sendQuietly };
 }
 
 // What the model reads of notifications taken in together.
@@ -115,5 +117,115 @@ describe("notifications", () => {
       await new Promise((resolve) => setTimeout(resolve, 2));
     }
     expect(transcript().at(-1)).toBe("thread.rename (pending)");
+  });
+
+  describe("that are silent", () => {
+    it("start no run, show at once, and are read at the next run", async () => {
+      const { ada, model, worker, start, post, sendQuietly, transcript, runs } =
+        await notifiedThread();
+      start();
+      sendQuietly("Divya", "Divya paused schedule Weekly check");
+      await worker.idle();
+      expect(model.calls).toHaveLength(0);
+      expect(runs()).toEqual([]);
+      expect(transcript()).toEqual(["relay"]);
+
+      await post(ada, "Go");
+      const call = await model.next();
+      expect(call.texts).toEqual([
+        "user: [Ada Lovelace] Go",
+        `user: ${notified("Divya paused schedule Weekly check")}`,
+      ]);
+      call.reply("Noted.");
+      await worker.idle();
+      // Shown once, where it was made, and read once.
+      expect(transcript()).toEqual(["relay", "Ada Lovelace: Go", "Agent (completed): Noted."]);
+
+      await post(ada, "Again");
+      const next = await model.next();
+      expect(next.texts.filter((text) => text.includes("Divya paused"))).toHaveLength(1);
+      next.reply("Ok.");
+      await worker.idle();
+    });
+
+    it("are read at a busy agent's next model call, and never start a run when it ends", async () => {
+      const { ada, model, worker, start, post, send, sendQuietly, runs } = await notifiedThread();
+      start();
+      await post(ada, "Go");
+      const call = await model.next();
+      call.step("Working.");
+      await call.drained();
+      sendQuietly("Divya", "Divya renamed the thread to Plan");
+      send("Idle: Researcher");
+      sendQuietly("Divya", "Divya switched the model to codex/gpt-6-luna");
+      expect(call.boundary()).toEqual([
+        {
+          role: "user",
+          text: notified(
+            "Divya renamed the thread to Plan",
+            "Idle: Researcher",
+            "Divya switched the model to codex/gpt-6-luna",
+          ),
+        },
+      ]);
+      call.reply("Done.");
+      await worker.idle();
+      expect(model.calls).toHaveLength(1);
+      expect(runs().map((run) => run.status)).toEqual(["completed"]);
+    });
+
+    it("left while a run ends do not start another", async () => {
+      const { ada, model, worker, start, post, sendQuietly, runs } = await notifiedThread();
+      start();
+      await post(ada, "Go");
+      const call = await model.next();
+      call.reply("Done.");
+      await worker.idle();
+      sendQuietly("Divya", "Divya renamed the thread to Plan");
+      await worker.idle();
+      expect(model.calls).toHaveLength(1);
+      expect(runs()).toHaveLength(1);
+    });
+
+    it("tell the agent who renamed the thread or switched its model, and start no run", async () => {
+      const { ada, grace, org, api, thread, model, worker, start, post, transcript } =
+        await notifiedThread();
+      org.models.push("codex/gpt-6-luna");
+      start();
+      const patch = (who: { cookie: string }, body: object) =>
+        api("PATCH", `/threads/${thread.id}`, who.cookie, body);
+      expect((await patch(grace, { title: "Vendor plan" })).status).toBe(200);
+      expect((await patch(ada, { model: "codex/gpt-6-luna", effort: "high" })).status).toBe(200);
+      // Nothing changed, nothing said.
+      expect((await patch(ada, { model: "codex/gpt-6-luna" })).status).toBe(200);
+      await worker.idle();
+      expect(model.calls).toHaveLength(0);
+      expect(transcript()).toEqual(["relay", "relay", "relay"]);
+
+      await post(ada, "Go");
+      const call = await model.next();
+      expect(call.texts.at(-1)).toBe(
+        `user: ${notified(
+          "Grace Hopper renamed the thread to Vendor plan",
+          "Ada Lovelace switched the model to codex/gpt-6-luna",
+          "Ada Lovelace set the effort to high",
+        )}`,
+      );
+      call.reply("Ok.");
+      await worker.idle();
+    });
+
+    it("do not hold back a waking one that comes with them", async () => {
+      const { model, worker, start, send, sendQuietly } = await notifiedThread();
+      start();
+      sendQuietly("Divya", "Divya paused schedule Weekly check");
+      send("Idle: Researcher");
+      const call = await model.next();
+      expect(call.texts).toEqual([
+        `user: ${notified("Divya paused schedule Weekly check", "Idle: Researcher")}`,
+      ]);
+      call.reply("Noted.");
+      await worker.idle();
+    });
   });
 });

@@ -39,6 +39,7 @@ import {
 } from "@/server/agent/compaction.ts";
 import { type Subagents, steeringParts } from "@/server/agent/subagents.ts";
 import { type Run, type RunStore, startRun } from "@/server/agent/runs.ts";
+import { createNotifier, silentChange } from "@/server/agent/notifications.ts";
 import type { Tools } from "@/server/agent/tools.ts";
 import type { GuestStore, GuestThread } from "@/server/guests/service.ts";
 
@@ -51,7 +52,7 @@ import type { Access, ThreadAccess, ThreadAction } from "@/server/spaces/thread-
 import { ASK_TOOL } from "@/shared/ask.ts";
 import type { SharedThread } from "@/shared/guests.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
-import { SEND_SUBAGENT_MESSAGE, START_SUBAGENT } from "@/shared/subagents.ts";
+import { SEND_SUBAGENT_MESSAGE, START_SUBAGENT, type SubagentState } from "@/shared/subagents.ts";
 import type { Page, PageParams } from "@/shared/paging.ts";
 import { plainText } from "@/shared/plain-text.ts";
 import { statusOf, type ThreadShow, type ThreadStatus } from "@/shared/thread-status.ts";
@@ -60,7 +61,13 @@ import type { ThreadCan, ThreadDetail, ThreadHead } from "@/shared/threads/detai
 import type { CallRecord, CallStore } from "@/server/agent/calls.ts";
 import type { Tasks } from "@/server/agent/tasks.ts";
 import type { Triggers } from "@/server/agent/triggers.ts";
-import type { BackgroundWork } from "@/shared/calls.ts";
+import {
+  type BackgroundList,
+  type BackgroundWork,
+  type TrayKind,
+  trayKindOf,
+} from "@/shared/calls.ts";
+import { attentionOf, liveFor, underway } from "./tray.ts";
 import type { TaskList } from "@/shared/tasks.ts";
 import type {
   Aside,
@@ -76,6 +83,7 @@ import {
   type ThreadFeedItem,
   type DeltaBatch,
   type EventDataMap,
+  type Change,
 } from "@/shared/threads/events.ts";
 import type { InboxItem } from "@/shared/threads/inbox.ts";
 import {
@@ -255,6 +263,8 @@ export interface SidebarThreads {
 }
 
 export interface ThreadStore {
+  // A person's name, or null when they are gone.
+  userName(userId: string): string | null;
   // A subagent's thread names the thread whose agent started it, and the thread that started them
   // all.
   create(thread: {
@@ -336,6 +346,10 @@ export interface ThreadReadStore {
   seen(userId: string, threadIds: string[]): Map<string, number>;
   // Records the user saw the thread up to `seq`, never moving back; returns how far they have now.
   mark(userId: string, threadId: string, seq: number, at: Date): number;
+  // When the user last saw each kind of the thread's background work, in milliseconds, by kind.
+  backgroundSeen(userId: string, threadId: string): Map<string, number>;
+  // Records the user saw the kind of background work now.
+  markBackground(userId: string, threadId: string, kind: string, at: Date): void;
 }
 
 export interface DeltaStore {
@@ -428,7 +442,8 @@ export type ThreadFollowItem =
   | { kind: "rows"; update: RowsUpdate }
   | { kind: "delta"; delta: DeltaBatch }
   | { kind: "thread"; head: ThreadHead }
-  | { kind: "tasks"; list: TaskList };
+  | { kind: "tasks"; list: TaskList }
+  | { kind: "background"; list: BackgroundList };
 
 // Who reads a thread and what they may do in it, for the parts of its rows that are theirs.
 interface Reader {
@@ -515,6 +530,15 @@ function callWork(kept: CallRecord, canPost: boolean): BackgroundWork {
     canCancel: canPost && (kept.status === "running" || kept.status === "pending"),
   };
 }
+
+// The status a subagent shows as in the dock, but for one that works.
+const SUBAGENT_STATUS: Record<SubagentState, BackgroundWork["status"]> = {
+  queued: "pending",
+  working: "running",
+  idle: "done",
+  stopped: "cancelled",
+  archived: "cancelled",
+};
 
 // The id of the timer, schedule or webhook a call set.
 function scheduleId(row: Transcript["rows"][number]) {
@@ -750,6 +774,8 @@ export function createThreads(options: ThreadsOptions) {
   const agentNameOf = options.agentNameIn ?? (() => DEFAULT_AGENT_NAME);
   const runTrace = options.runTrace ?? (() => undefined);
   const transcripts = createTranscripts(threads);
+  // Tells the thread's agent what people change, without waking it.
+  const quietly = createNotifier({ threads, runs, log, bus });
 
   // Asks the thread's active run to stop, queueing it again when it waits for a decision so that a
   // worker ends it; null when there is none.
@@ -1046,6 +1072,123 @@ export function createThreads(options: ThreadsOptions) {
       throw new ServiceError(404, "Branch not found");
     }
     return branchId;
+  }
+
+  // What runs or waits in the thread, and the timers, schedules and webhooks set in it, each with
+  // the row that holds its card; what the reader may do with them is theirs to do from here.
+  function backgroundOf(principal: Principal, threadId: string): BackgroundList {
+    const thread = visible(principal, threadId);
+    const space = spaceStore.find(thread.spaceId);
+    const canPost = canIn(principal, thread).post;
+    const names = tools.namesIn(space);
+    const items: BackgroundList["items"] = [];
+    const at = now();
+    const seen = reads.backgroundSeen(principal.userId, thread.id);
+    const add = (item: BackgroundList["items"][number]) => {
+      const seenAt = seen.get(trayKindOf(item.work));
+      if (!liveFor(item.work, seenAt)) return;
+      const attention = attentionOf(item.work, at);
+      items.push({ ...item, ...(attention && { attention }) });
+    };
+    const { rows } = transcripts.of(thread.id).transcript();
+    for (const row of rows) {
+      if (row.kind !== "tool") continue;
+      // A call waiting for a decision, whoever may make it; the others see it wait.
+      const waiting = row.state === "pending" && row.waits && !!space && !tools.asks(row, space);
+      const may =
+        waiting && space
+          ? tools.canDecide(
+              principal.userId,
+              row,
+              rows,
+              thread,
+              space,
+              runs.active(thread.id)?.model ?? null,
+            )
+          : false;
+      if (waiting) {
+        add({
+          rowId: row.id,
+          title: names(row).title,
+          work: {
+            kind: "approval",
+            status: "pending",
+            canDecide: may,
+            startedAt: row.requestedAt,
+            canCancel: false,
+          },
+        });
+      }
+      const kept = backgroundId(row) ? background?.find(row.id) : null;
+      if (kept) {
+        const by = [...new Set(kept.steeredBy.map((one) => one.name))].join(", ");
+        add({
+          rowId: row.id,
+          title: names(row).title,
+          work: {
+            ...callWork(kept, canPost),
+            ...(kept.status === "pending" && { canDecide: may }),
+          },
+          ...(by && { by }),
+        });
+        continue;
+      }
+      const scheduled = scheduleId(row);
+      const work = scheduled ? triggers?.workFor(scheduled, thread.id, canPost) : null;
+      if (work && underway(work)) {
+        add({
+          rowId: row.id,
+          title: work.schedule?.name ?? work.webhook?.name ?? names(row).title,
+          work,
+        });
+      }
+    }
+    const given = tasks?.listFor(principal, thread.id).tasks ?? [];
+    for (const { record, summary } of subagents?.ofParents([thread.id]) ?? []) {
+      if (summary.state === "archived") continue;
+      const child = threads.find(record.threadId);
+      if (!child) continue;
+      const { state, needs } = summary;
+      const its = given.filter(
+        (task) => task.assignee?.kind === "subagent" && task.assignee.threadId === record.threadId,
+      );
+      const waitingRow =
+        needs === "approval"
+          ? transcripts.of(record.threadId).transcript().run?.waitingOn
+          : undefined;
+      add({
+        rowId: record.threadId,
+        title: record.name,
+        work: {
+          kind: "subagent",
+          status: state === "working" ? (needs ? "pending" : "running") : SUBAGENT_STATUS[state],
+          subagent: {
+            threadId: record.threadId,
+            state,
+            ...(needs && { needs }),
+            ...(its.length > 0 && {
+              tasks: {
+                done: its.filter((task) => task.status === "done").length,
+                total: its.length,
+              },
+            }),
+            ...(waitingRow && { waitingRow }),
+          },
+          startedAt: record.createdAt.toISOString(),
+          ...(state === "stopped" && {
+            endedAt: child.updatedAt.toISOString(),
+          }),
+          canCancel: state === "working" && canIn(principal, child).post,
+        },
+      });
+    }
+    return { items };
+  }
+
+  function seeBackground(principal: Principal, threadId: string, kind: TrayKind) {
+    const thread = visible(principal, threadId);
+    reads.markBackground(principal.userId, thread.id, kind, now());
+    return backgroundOf(principal, threadId);
   }
 
   function canIn(principal: Principal, thread: Thread): ThreadCan {
@@ -1811,12 +1954,57 @@ export function createThreads(options: ThreadsOptions) {
       visible(principal, id, "arrange");
       if (changes.model) await models.requireModel(principal.orgId, changes.model);
       // Seen again after the model check, which waits on providers.
-      visible(principal, id, "arrange");
+      const before = visible(principal, id, "arrange");
       const updated = threads.update(id, {
         ...changes,
         ...(changes.title !== undefined && { titleSource: "person" as const }),
       });
       bus.activity({ threadId: id });
+      const who = threads.userName(principal.userId) ?? "Someone";
+      const did: { text: string; change?: Change }[] = [];
+      if (changes.title && changes.title !== before.title) {
+        did.push({
+          text: `${who} renamed the thread to ${changes.title}`,
+          change: {
+            subject: { kind: "thread", name: changes.title },
+            action: "rename",
+            ...(before.title && { from: before.title }),
+            to: changes.title,
+          },
+        });
+      }
+      if (changes.model !== undefined && changes.model !== before.model) {
+        did.push({
+          text: changes.model
+            ? `${who} switched the model to ${changes.model}`
+            : `${who} set the model to the default`,
+          change: {
+            subject: { kind: "thread", name: updated.title ?? "Thread" },
+            action: "model",
+            ...(before.model && { from: before.model }),
+            ...(changes.model && { to: changes.model }),
+          },
+        });
+      }
+      if (changes.effort !== undefined && changes.effort !== before.effort) {
+        did.push({
+          text: changes.effort
+            ? `${who} set the effort to ${changes.effort}`
+            : `${who} set the effort to the default`,
+        });
+      }
+      for (const { text, change } of did)
+        quietly.send(
+          id,
+          silentChange(
+            id,
+            who,
+            text,
+            undefined,
+            { kind: "person", userId: principal.userId, name: who },
+            change,
+          ),
+        );
       return threadSummary(updated);
     },
 
@@ -1884,7 +2072,7 @@ export function createThreads(options: ThreadsOptions) {
       }
       const unsubscribe = bus.onActivity((change) => {
         const { threadId, read, gone } = change;
-        if (change.tasks || change.rows) return;
+        if (change.tasks || change.rows || change.background) return;
         if (read) {
           if (read.userId !== principal.userId) return;
           deliver({ kind: "read", threadId, seq: read.seq });
@@ -2291,6 +2479,11 @@ export function createThreads(options: ThreadsOptions) {
       return threadSummary(threads.find(forked.id) ?? forked);
     },
 
+    // The live background work of the thread, as the reader sees it.
+    backgroundList: backgroundOf,
+    // Notes that the reader has seen a kind of it, so what ended leaves their strip.
+    seeBackground,
+
     // Delivers, as the reader sees them, the rows events with seq above `after` changed, then the
     // pieces stored so far of the replies in progress, then the rows each new event changes and
     // each piece as it is stored, each exactly once. With the rows go the waiting messages and the
@@ -2379,6 +2572,7 @@ export function createThreads(options: ThreadsOptions) {
       function send(item: ThreadFeedItem) {
         if (item.kind === "event") {
           if (item.event.seq > last) sendRows();
+          sendBackground();
           return;
         }
         const { messageId, index, texts } = item.delta;
@@ -2409,7 +2603,7 @@ export function createThreads(options: ThreadsOptions) {
       const subagentsOf = () => new Set(threads.children(id).map((child) => child.id));
       let started = subagentsOf();
       const stopActivity = bus.onActivity((change) => {
-        if (change.read || change.gone || change.tasks) return;
+        if (change.read || change.gone || change.tasks || change.background) return;
         if (change.rows) {
           if (change.threadId === id) sendRows();
           return;
@@ -2447,6 +2641,31 @@ export function createThreads(options: ThreadsOptions) {
           // The reader may no longer read the thread, which the stream says on its own.
         }
       }
+      // The thread's live background work, told again whenever it differs from what was last told.
+      let toldBackground = "";
+      function sendBackground(first = false) {
+        // Reading the transcript while the stored events are read would meet it half read; the
+        // first send after the replay covers what came meanwhile.
+        if (replaying) return;
+        try {
+          const list = backgroundOf(principal, id);
+          const text = JSON.stringify(list);
+          if (text === toldBackground) return;
+          toldBackground = text;
+          // An empty list is what the page read already.
+          if (!first || list.items.length > 0) deliver({ kind: "background", list });
+        } catch {
+          // The reader may no longer read the thread, which the stream says on its own.
+        }
+      }
+      // A subagent changing where it stands changes its starter's dock.
+      const stopBackground = bus.onActivity((change) => {
+        if (stopped || change.read || change.gone) return;
+        // Tasks given to the subagents here count on their lines.
+        if (change.tasks && change.threadId !== id) return;
+        if (change.threadId !== id && !started.has(change.threadId)) return;
+        sendBackground();
+      });
       const stopTasks = bus.onActivity((change) => {
         if (change.tasks && !stopped && change.threadId === tasks?.ownerOf(id)) sendTasks();
       });
@@ -2454,12 +2673,14 @@ export function createThreads(options: ThreadsOptions) {
       sendRows();
       for (const delta of deltas.inThread(id)) send({ kind: "delta", delta });
       replaying = false;
+      sendBackground(true);
       for (const item of held) send(item);
       return () => {
         stopped = true;
         unsubscribe();
         stopActivity();
         stopTasks();
+        stopBackground();
         release();
       };
     },

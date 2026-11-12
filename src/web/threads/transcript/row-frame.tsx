@@ -1,15 +1,17 @@
-// Human messages sit on the right with their avatar; agent content and notifications use the
-// full left edge. Agent actions stay visible; human Copy/Edit controls appear on hover or focus.
+// Human messages sit on the right with their avatar, and so do notifications, as a card in place
+// of the bubble; agent content uses the full left edge. Agent actions stay visible; the controls
+// of the right-hand rows appear on hover or focus.
 
 import { cn } from "cn";
 import { type PointerEvent, type ReactNode } from "react";
 
-import { rowElementId, useRowFocus } from "@/web/threads/transcript/row-focus";
+import { rowElementId, useRowFocus, useRowLit } from "@/web/threads/transcript/row-focus";
 
 export function TranscriptRowFrame({
   avatar,
   human = false,
-  outlined = false,
+  card = false,
+  boxed = false,
   label,
   note,
   actions,
@@ -19,7 +21,10 @@ export function TranscriptRowFrame({
 }: {
   avatar?: ReactNode;
   human?: boolean;
-  outlined?: boolean;
+  // The content is a card that is the whole bubble, with its own outline, flashed on a highlight.
+  card?: boolean;
+  // The content is a card with its own outline, which is what a highlight flashes.
+  boxed?: boolean;
   author: ReactNode;
   at?: string;
   label: string;
@@ -31,7 +36,7 @@ export function TranscriptRowFrame({
   children: ReactNode;
 }) {
   const focus = useRowFocus();
-  const highlighted = !!rowId && focus?.lit === rowId;
+  const highlighted = useRowLit(rowId);
   const attributes = {
     ...(rowId && { id: rowElementId(rowId) }),
     "data-lit": highlighted || undefined,
@@ -62,36 +67,30 @@ export function TranscriptRowFrame({
       <article
         {...attributes}
         aria-label={label}
-        className={cn("group/row flex min-w-0 justify-end gap-2.5", highlighted && "row-attention")}
+        className="group/row flex min-w-0 justify-end gap-2.5"
       >
-        <div className="relative flex min-w-0 max-w-[85%] flex-col items-end gap-1">
+        <div
+          className={cn(
+            "relative flex min-w-0 max-w-[85%] flex-col items-end gap-1",
+            // An opened card takes the full width its details need, as tool cards do.
+            card && "has-data-open:w-full has-data-[state=open]:w-full",
+          )}
+        >
           <div
             className={cn(
-              "min-w-0 max-w-full rounded-2xl px-4 py-2.5 [overflow-wrap:anywhere]",
-              outlined ? "relative" : "bg-muted",
+              "min-w-0 max-w-full [overflow-wrap:anywhere]",
+              card ? "w-full rounded-lg" : "rounded-2xl bg-muted px-4 py-2.5",
+              highlighted && (card ? "attention" : "attention-bubble"),
             )}
           >
-            {outlined && (
-              // Drawn rather than a dashed border, whose dashes the browser sizes.
-              <svg
-                aria-hidden
-                className="pointer-events-none absolute inset-0 size-full overflow-visible text-muted-foreground/30"
-              >
-                <rect
-                  x="0.5"
-                  y="0.5"
-                  rx="15.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeDasharray="6 4"
-                  style={{ width: "calc(100% - 1px)", height: "calc(100% - 1px)" }}
-                />
-              </svg>
-            )}
             {children}
           </div>
-          {controls}
-          {footer}
+          {(controls || footer) && (
+            <div className="flex items-center gap-1 empty:hidden">
+              {controls}
+              {footer}
+            </div>
+          )}
         </div>
         <div className="mt-0.5 shrink-0">{avatar}</div>
       </article>
@@ -103,13 +102,23 @@ export function TranscriptRowFrame({
       aria-label={label}
       className={cn(
         "group/row flex min-w-0 flex-col gap-1 [overflow-wrap:anywhere]",
-        highlighted && "row-attention",
+        // A card is the box that flashes; a bare reply flashes its own faint background.
+        highlighted && (boxed ? "attention-card" : "attention-reply"),
       )}
     >
-      {note && <div className="flex items-center gap-2 text-xs text-muted-foreground">{note}</div>}
+      {note && (
+        <div data-slot="row-note" className="flex items-center gap-2 text-xs text-muted-foreground">
+          {note}
+        </div>
+      )}
       {children}
-      {controls}
-      {footer}
+      {(controls || footer) && (
+        // The message's actions and its history share one row, with asides at its end.
+        <div data-slot="row-controls" className="flex items-center gap-1 empty:hidden">
+          {controls}
+          {footer}
+        </div>
+      )}
     </article>
   );
 }

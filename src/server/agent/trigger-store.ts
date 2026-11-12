@@ -16,6 +16,8 @@ import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 import type { Db } from "@/server/db/db.ts";
 import type { Cipher } from "@/server/kernel/cipher.ts";
 
+import { user } from "@/server/orgs/schema.ts";
+
 import { threadTrigger } from "./schema.ts";
 import type { TriggerRecord, TriggerStore } from "./triggers.ts";
 
@@ -35,6 +37,12 @@ export function createTriggerStore(db: Db, cipher: Cipher): TriggerStore {
 
     find(id) {
       return db.select().from(threadTrigger).where(eq(threadTrigger.id, id)).get() ?? null;
+    },
+
+    userName(userId) {
+      return (
+        db.select({ name: user.name }).from(user).where(eq(user.id, userId)).get()?.name ?? null
+      );
     },
 
     findByToken(token) {
@@ -81,6 +89,15 @@ export function createTriggerStore(db: Db, cipher: Cipher): TriggerStore {
             notInArray(threadTrigger.status, ["deleted", "done"]),
           ),
         )
+        .orderBy(asc(threadTrigger.createdAt), asc(threadTrigger.id))
+        .all();
+    },
+
+    everInThread(threadId): TriggerRecord[] {
+      return db
+        .select()
+        .from(threadTrigger)
+        .where(eq(threadTrigger.threadId, threadId))
         .orderBy(asc(threadTrigger.createdAt), asc(threadTrigger.id))
         .all();
     },

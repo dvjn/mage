@@ -15,13 +15,15 @@ import { useEffect, useState } from "react";
 
 import { threadHeadSchema } from "@/shared/threads/detail.ts";
 import { type DeltaBatch, deltaBatchSchema } from "@/shared/threads/events.ts";
+import { backgroundListSchema } from "@/shared/calls.ts";
+import { taskListSchema } from "@/shared/tasks.ts";
 import { rowsUpdateSchema } from "@/shared/threads/rows.ts";
 import { sharedThreadsQuery } from "@/web/guests/queries";
 import { checkServer, useOnline } from "@/web/lib/online";
 import { tabOrg } from "@/web/lib/org-tab";
 import { pieceShown, runShown } from "@/web/lib/tracing";
-import { threadQuery } from "@/web/threads/queries";
-import { withHead, withUpdate } from "@/web/threads/thread-rows";
+import { backgroundQuery, tasksQuery, threadQuery } from "@/web/threads/queries";
+import { withBackground, withHead, withUpdate } from "@/web/threads/thread-rows";
 
 // A reply's pieces so far, of its answer and of its reasoning, joined.
 export interface Streaming {
@@ -56,10 +58,17 @@ export function useThreadEvents(threadId: string, ready: boolean) {
   const online = useOnline();
   const [streaming, setStreaming] = useState<ReadonlyMap<string, Streaming>>(new Map());
   const [reconnecting, setReconnecting] = useState(false);
-
-  useEffect(() => {
+  // What was streamed and lost belongs to one reading of one thread; a new one starts empty, set
+  // while rendering rather than after it.
+  const reading = `${threadId}:${ready && online}`;
+  const [readingNow, setReadingNow] = useState(reading);
+  if (readingNow !== reading) {
+    setReadingNow(reading);
     setStreaming(new Map());
     setReconnecting(false);
+  }
+
+  useEffect(() => {
     if (!ready || !online) return;
     const { queryKey } = threadQuery(threadId);
     const cached = queryClient.getQueryData(queryKey);
@@ -100,6 +109,20 @@ export function useThreadEvents(threadId: string, ready: boolean) {
       const head = threadHeadSchema.safeParse(JSON.parse(message.data as string));
       if (!head.success) return;
       queryClient.setQueryData(queryKey, (detail) => detail && withHead(detail, head.data));
+    });
+    source.addEventListener("tasks", (message) => {
+      const list = taskListSchema.safeParse(JSON.parse(message.data as string));
+      if (list.success) queryClient.setQueryData(tasksQuery(threadId).queryKey, list.data);
+    });
+    source.addEventListener("background", (message) => {
+      const list = backgroundListSchema.safeParse(JSON.parse(message.data as string));
+      if (!list.success) return;
+      queryClient.setQueryData(backgroundQuery(threadId).queryKey, list.data);
+      // A job's row shows what the dock's card does, from this one feed.
+      queryClient.setQueryData(
+        queryKey,
+        (detail) => detail && withBackground(detail, list.data.items),
+      );
     });
     source.addEventListener("access-ended", () => {
       source.close();

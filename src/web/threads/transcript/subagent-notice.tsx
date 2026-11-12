@@ -6,7 +6,8 @@ import { Link } from "@tanstack/react-router";
 import { cn } from "cn";
 import { BellIcon, BotIcon, ChevronRightIcon } from "lucide-react";
 
-import { ActivityNotice } from "@/web/threads/transcript/activity-notice";
+import { CardFrame } from "@/web/threads/transcript/card-frame";
+import { NotificationRow } from "@/web/threads/transcript/notification-row";
 import type { NoticeRow } from "@/shared/threads/rows.ts";
 import { MessageResponse } from "@/web/components/ai-elements/message";
 import {
@@ -32,60 +33,65 @@ export function SubagentNotice({ row }: { row: NoticeRow }) {
   const nameOf = (subagent: NoticeRow["subagents"][number]) =>
     mixed ? `${subagent.name} (${subagent.state})` : subagent.name;
   return (
-    <ActivityNotice
+    <NotificationRow
       rowId={row.id}
       source={{ name: "Subagents", kind: "System", mark: <BellIcon /> }}
-      title={
-        <>
-          {count} {stateOf(subagents)}
-          {subagents.length > 0 && ": "}
-          {subagents.map((subagent, index) => (
-            <span key={subagent.threadId}>
-              {index > 0 && ", "}
+    >
+      <CardFrame
+        icon={<BotIcon />}
+        role="status"
+        label="Subagents"
+        title={
+          <span className="min-w-0 truncate">
+            {count} {stateOf(subagents)}
+            {subagents.length > 0 && ": "}
+            {subagents.map((subagent, index) => (
+              <span key={subagent.threadId}>
+                {index > 0 && ", "}
+                <Link
+                  to="/t/$threadId"
+                  params={{ threadId: subagent.threadId }}
+                  className="font-medium underline-offset-2 hover:underline"
+                >
+                  {nameOf(subagent)}
+                </Link>
+              </span>
+            ))}
+          </span>
+        }
+      >
+        {subagents.map((subagent) => (
+          <Collapsible key={subagent.threadId}>
+            <div className="flex items-center gap-2">
+              <CollapsibleTrigger
+                aria-label={nameOf(subagent)}
+                disabled={!subagent.last}
+                className={cn("group/subagent", LINE)}
+              >
+                <ChevronRightIcon className="transition-transform group-data-[panel-open]/subagent:rotate-90" />
+                <BotIcon />
+                <span className="flex min-w-0 flex-1 items-center gap-1">
+                  <span className="shrink-0 font-medium">{nameOf(subagent)}</span>
+                  {subagent.last && (
+                    <span className="min-w-0 truncate">· {previewLine(subagent.last)}</span>
+                  )}
+                </span>
+              </CollapsibleTrigger>
               <Link
                 to="/t/$threadId"
                 params={{ threadId: subagent.threadId }}
-                className="font-medium underline-offset-2 hover:underline"
+                aria-label={`Open ${subagent.name}`}
+                className="shrink-0 rounded-md px-1.5 py-0.5 font-medium text-foreground hover:bg-muted"
               >
-                {nameOf(subagent)}
+                Open
               </Link>
-            </span>
-          ))}
-        </>
-      }
-      status="Subagents"
-    >
-      {subagents.map((subagent) => (
-        <Collapsible key={subagent.threadId}>
-          <div className="flex items-center gap-2">
-            <CollapsibleTrigger
-              aria-label={nameOf(subagent)}
-              disabled={!subagent.last}
-              className={cn("group/subagent", LINE)}
-            >
-              <ChevronRightIcon className="transition-transform group-data-[panel-open]/subagent:rotate-90" />
-              <BotIcon />
-              <span className="flex min-w-0 flex-1 items-center gap-1">
-                <span className="shrink-0 font-medium">{nameOf(subagent)}</span>
-                {subagent.last && (
-                  <span className="min-w-0 truncate">· {previewLine(subagent.last)}</span>
-                )}
-              </span>
-            </CollapsibleTrigger>
-            <Link
-              to="/t/$threadId"
-              params={{ threadId: subagent.threadId }}
-              aria-label={`Open ${subagent.name}`}
-              className="shrink-0 rounded-md px-1.5 py-0.5 font-medium text-foreground hover:bg-muted"
-            >
-              Open
-            </Link>
-          </div>
-          <CollapsibleContent className="mt-1 pl-5 text-sm text-foreground">
-            <MessageResponse>{subagent.last}</MessageResponse>
-          </CollapsibleContent>
-        </Collapsible>
-      ))}
-    </ActivityNotice>
+            </div>
+            <CollapsibleContent className="mt-1 pl-5 text-sm text-foreground">
+              <MessageResponse>{subagent.last}</MessageResponse>
+            </CollapsibleContent>
+          </Collapsible>
+        ))}
+      </CardFrame>
+    </NotificationRow>
   );
 }

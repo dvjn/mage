@@ -80,7 +80,7 @@ export function ModelField({
           })}
       />
       {missing ? (
-        <FieldDescription className="text-amber-700 dark:text-amber-400">
+        <FieldDescription className="text-warning">
           {fallback
             ? fallbackReason(missing, fallbackFor, fallback)
             : `${missing.message} Choose another.`}

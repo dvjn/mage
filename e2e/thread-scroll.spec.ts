@@ -54,10 +54,11 @@ async function distanceFromEnd(page: Page) {
   return distance as number;
 }
 
-// The thread is at its end as soon as its newest note is in place, not after scrolling there.
+// The thread is at its end once its newest note is in place and the rows near it have laid out, not
+// after scrolling there.
 async function expectOpenAtEnd(page: Page, last = 40) {
   await expect(note(page, last)).toBeAttached();
-  expect(await distanceFromEnd(page)).toBeLessThan(2);
+  await expect.poll(() => distanceFromEnd(page)).toBeLessThan(2);
   await expect(note(page, last)).toBeInViewport();
   await expect(note(page, 1)).not.toBeInViewport();
 }
@@ -150,7 +151,7 @@ test("an unread thread opens where the reader stopped, and sticks to the end onc
     .getByRole("link", { name: /^Catching up/ })
     .click();
   await expect(reply.getByText("Caught up.")).toBeInViewport();
-  expect(await distanceFromEnd(page)).toBeLessThan(2);
+  await expect.poll(() => distanceFromEnd(page)).toBeLessThan(2);
 });
 
 // A reply long enough to still be streaming when the reader comes back.
@@ -287,16 +288,16 @@ test("a thread of hundreds of rows opens at its end, and reads earlier rows as t
   await page.goto(`/t/${long}`);
   await expect(note(page, 320)).toBeInViewport();
   expect(await distanceFromEnd(page)).toBeLessThan(2);
-  await expect(note(page, 221)).toBeAttached();
-  await expect(note(page, 220)).toHaveCount(0);
+  await expect(note(page, 261)).toBeAttached();
+  await expect(note(page, 260)).toHaveCount(0);
 
   await page.evaluate(`${scroller}.scrollTop = 0`);
   await expect.poll(() => held !== undefined).toBe(true);
-  await expect(note(page, 221)).toBeInViewport();
-  const before = await topOf(page, 221);
+  await expect(note(page, 261)).toBeInViewport();
+  const before = await topOf(page, 261);
   await held!();
-  await expect(note(page, 220)).toBeAttached();
-  expect(Math.abs((await topOf(page, 221)) - before)).toBeLessThan(2);
+  await expect(note(page, 260)).toBeAttached();
+  expect(Math.abs((await topOf(page, 261)) - before)).toBeLessThan(2);
 
   // Once the start is read, nothing more loads and the top stays the top.
   await readToStart(page);
@@ -304,7 +305,7 @@ test("a thread of hundreds of rows opens at its end, and reads earlier rows as t
   await expect(note(page, 1)).toBeInViewport();
 });
 
-test("a new line in an older page of the thread is where it opens", async ({
+test("a thread with many unread rows opens at its end, with the earlier unread one press away", async ({
   page,
   browser,
 }, testInfo) => {
@@ -312,11 +313,21 @@ test("a new line in an older page of the thread is where it opens", async ({
   const grace = await someoneElse(browser, testInfo.parallelIndex, "Grace Hopper");
   const thread = addNotesThread(email, "Catching up", 30, { email: grace.email, count: 250 });
 
+  // The pages scrolling up asks for wait, so the press is what reads.
+  await page.route(
+    (url) => url.pathname.endsWith("/rows") && !url.searchParams.has("at"),
+    () => {},
+  );
   await page.goto(`/t/${thread}`);
-  await expect(note(page, 31)).toBeInViewport();
-  await expect.poll(() => topOf(page, 31)).toBeLessThan(80);
-  await expect(note(page, 280)).not.toBeInViewport();
-  await expect(page.getByRole("button", { name: "Scroll to end" })).toBeVisible();
+  await expect(note(page, 280)).toBeInViewport();
+  await expect(note(page, 31)).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "130 earlier unread" })).toBeVisible();
+
+  await page.evaluate(`${scroller}.scrollTop = 0`);
+  const earlier = page.getByRole("button", { name: "130 earlier unread" });
+  await earlier.click();
+  await expect(note(page, 31)).toBeAttached();
+  await expect(earlier).toHaveCount(0);
 });
 
 test("a row changes live at the end while the thread's earlier pages are read", async ({

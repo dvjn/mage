@@ -67,6 +67,7 @@ import {
   type ToolRow,
   type TranscriptRow,
   transcriptOf,
+  waking,
 } from "@/shared/transcript.ts";
 
 import type { Adoption } from "./calls.ts";
@@ -585,7 +586,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     const waiting = admissible(run.threadId, pending, append);
     // An interrupting message starts the next run, with everything queued; else another agent's.
     const first = waiting.find((message) => message.mode === "interrupt") ?? waiting[0];
-    const relayed = inbox[0];
+    const relayed = waking(inbox)[0];
     const next: NewRun | null = retry
       ? {
           threadId: run.threadId,

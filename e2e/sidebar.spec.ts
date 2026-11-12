@@ -226,14 +226,19 @@ test("a thread on a model turned off replies with the default until it is back o
 
   const model = page.getByRole("combobox", { name: "Model", exact: true });
   await expect(model).toContainText("Default · Echo");
-  await expect(model).toHaveClass(/text-amber/);
+  await expect(model).toHaveClass(/text-warning/);
   await expect(page.getByRole("combobox", { name: "Reasoning effort" })).toContainText(
     "Default · Low",
   );
-  await model.hover();
-  await expect(page.locator("[data-slot=tooltip-content]")).toContainText(
-    "Echo Mini is turned off, so this thread uses the default",
-  );
+  // The model's tooltip arrives with the models, so the pointer enters it again.
+  await expect(async () => {
+    await page.mouse.move(0, 0);
+    await model.hover();
+    await expect(page.locator("[data-slot=tooltip-content]")).toContainText(
+      "Echo Mini is turned off, so this thread uses the default",
+      { timeout: 1500 },
+    );
+  }).toPass();
   await model.click();
   await expect(page.getByText("Turned off", { exact: true })).toBeVisible();
   // The default row names the model it resolves to, never a ref.
@@ -254,5 +259,5 @@ test("a thread on a model turned off replies with the default until it is back o
   await turn(true);
   await page.reload();
   await expect(model).toHaveText(/^Echo Mini/);
-  await expect(model).not.toHaveClass(/text-amber/);
+  await expect(model).not.toHaveClass(/text-warning/);
 });

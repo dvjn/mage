@@ -9,6 +9,9 @@ import { Avatar, AvatarFallback } from "@/web/components/ui/avatar";
 import { Badge } from "@/web/components/ui/badge";
 import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/web/components/ui/hover-card";
 
+// The avatar colour of the reader's own messages and actions.
+export const OWN_MARK = "bg-primary text-primary-foreground";
+
 export interface Source {
   name: string;
   // What the source is: a person's standing in the thread, an agent, or the system.

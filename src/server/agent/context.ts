@@ -307,6 +307,25 @@ function resultOf(row: ToolRow): ModelToolResult | null {
   }
 }
 
+// A silent notification is shown where it was made but read where the agent took it in, so it
+// moves there, with those taken in together; one not taken in yet is not read.
+function placeSilent(rows: readonly TranscriptRow[]): TranscriptRow[] {
+  const silent = (row: TranscriptRow): row is RelayRow => row.kind === "relay" && !!row.silent;
+  const placed: TranscriptRow[] = rows.filter((row) => !silent(row));
+  for (const row of rows.filter(silent)) {
+    if (row.taken === undefined) continue;
+    // Among those taken in together, in the order they were made.
+    const at = placed.findIndex(
+      (other) =>
+        other.seq > row.taken! ||
+        (other.kind === "relay" && other.seq === row.taken && other.postedAt > row.postedAt),
+    );
+    const moved: RelayRow = { ...row, seq: row.taken };
+    placed.splice(at < 0 ? placed.length : at, 0, moved);
+  }
+  return placed;
+}
+
 // `before` is what the agent reads ahead of the thread's own messages, as a subagent reads who it
 // is; `toolsOn` the tools turned on in the thread, in the order they were; `effort` the one the
 // reply is asked for now. Where the effort changed from one reply to the next, the change is told
@@ -318,7 +337,9 @@ export function contextOf(
   toolsOn: readonly ToolOn[] = [],
   effort: Effort | null = null,
 ): Context {
-  const { summary, rows } = readOf(thread);
+  const read = readOf(thread);
+  const { summary } = read;
+  const rows = placeSilent(read.rows);
   const efforts = thread.flatMap((row) => (row.kind === "agent" && row.effort ? [row] : []));
   const firstEffort = efforts[0]?.effort;
   // The effort that held where the messages start.

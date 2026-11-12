@@ -49,19 +49,17 @@ function Glyph({ status, size }: { status: ThreadStatus; size: string }) {
   const box = cn(size, "shrink-0");
   switch (status) {
     case "waiting":
-      return <HandIcon className={cn(box, "text-status-waiting")} />;
+      return <HandIcon className={cn(box, "text-warning")} />;
     case "paused":
-      return <HandIcon className={cn(box, "text-status-paused")} />;
+      return <HandIcon className={cn(box, "text-muted-foreground")} />;
     case "failed":
-      return <TriangleAlertIcon className={cn(box, "text-status-failed")} />;
+      return <TriangleAlertIcon className={cn(box, "text-destructive")} />;
     case "working":
-      return (
-        <LoaderCircleIcon className={cn(box, "text-status-working motion-safe:animate-spin")} />
-      );
+      return <LoaderCircleIcon className={cn(box, "text-info motion-safe:animate-spin")} />;
     case "unread":
       return (
         <span className={cn(box, "grid place-items-center")}>
-          <span className="size-2.5 rounded-full bg-status-unread" />
+          <span className="size-2.5 rounded-full bg-primary" />
         </span>
       );
     case "read":
@@ -90,12 +88,12 @@ export function StatusDot({
   if (status === "read" || !label) return null;
   const mark =
     status === "working"
-      ? "size-2 border-[1.5px] border-status-working border-t-transparent motion-safe:animate-spin"
+      ? "size-2 border-[1.5px] border-info border-t-transparent motion-safe:animate-spin"
       : {
-          waiting: "size-2 bg-status-waiting",
-          paused: "size-2 bg-status-paused",
+          waiting: "size-2 bg-warning",
+          paused: "size-2 bg-muted-foreground",
           failed: "size-2 bg-destructive",
-          unread: "size-2 bg-status-unread",
+          unread: "size-2 bg-primary",
         }[status];
   return (
     <span

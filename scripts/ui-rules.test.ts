@@ -85,6 +85,21 @@ const classOf = (tag: Tag) => /className=(?:"([^"]*)"|\{([\s\S]*)\})/.exec(tag.s
 const MENU_ITEMS = /DropdownMenuItem|DropdownMenuSubTrigger|ComboboxItem|CommandItem|Item/;
 
 describe("the UI rules", () => {
+  it("Color: meaning comes from semantic tokens, not raw palette colors", () => {
+    const palette =
+      /(?<![\w-])(?:text|bg|border|ring|fill|stroke|from|to|via)-(?:red|amber|green|blue|emerald|yellow|orange|sky|rose|lime|teal|cyan|indigo|violet|purple|pink|fuchsia|slate|gray|zinc|neutral|stone)-\d/;
+    const hits = sources.flatMap(({ file, text }) =>
+      text
+        .split("\n")
+        .flatMap((line, index) =>
+          palette.test(line) ? [`${file}:${index + 1}: ${line.trim()}`] : [],
+        ),
+    );
+    report("Color: use success, warning, info, destructive or muted tokens.", hits, {
+      "agent/policies/tags.tsx": "A policy's colour is a user-chosen tag, so it needs a palette.",
+    });
+  });
+
   it("Layout: highlights never bleed past their container (no negative horizontal margins)", () => {
     const hits = sources.flatMap(({ file, text }) =>
       text

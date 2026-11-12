@@ -15,7 +15,7 @@ import { Textarea } from "@/web/components/ui/textarea";
 import { initialsOf } from "@/web/lib/initials";
 import { Time } from "@/web/components/time";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
-import { SourceCard } from "@/web/threads/transcript/source-card";
+import { OWN_MARK, SourceCard } from "@/web/threads/transcript/source-card";
 import { RowToolbar, RowHistoryFooter } from "@/web/threads/transcript/row-history";
 import { displayName } from "@/web/lib/people.ts";
 
@@ -55,7 +55,7 @@ export function HumanMessage({
                   ? "Former member"
                   : "Member",
             mark: initialsOf(author),
-            markClassName: cn(mine && "bg-primary text-primary-foreground"),
+            markClassName: cn(mine && OWN_MARK),
             facts: [{ label: "Posted", value: <Time iso={row.postedAt} /> }],
           }}
         />

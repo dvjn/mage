@@ -2,10 +2,11 @@ import { createHmac } from "node:crypto";
 
 import { describe, expect, it } from "vite-plus/test";
 
+import { NOTIFICATIONS_HEADING } from "@/server/agent/context.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
 import { eventSummary } from "@/server/threads/log.ts";
-import { describeCron } from "@/shared/triggers.ts";
+import { describeCron, HISTORY_PAGE, type TriggerHistory } from "@/shared/triggers.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
 async function triggerThread() {
@@ -294,6 +295,40 @@ describe("the card and its controls", () => {
     expect((await t.api("POST", path("/pause"), t.ada.cookie)).status).toBe(404);
   });
 
+  it("tell the agent, without waking it, what a person did to them, and who", async () => {
+    const t = await triggerThread();
+    t.start();
+    await t.set([
+      "triggers.schedule",
+      { name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Go" },
+    ]);
+    await t.worker.idle();
+    const [schedule] = t.triggerStore.inThread(t.thread.id);
+    const base = `/threads/${t.thread.id}/triggers/${schedule!.id}`;
+    const calls = t.model.calls.length;
+    await t.api("POST", `${base}/pause`, t.grace.cookie);
+    await t.api("POST", `${base}/resume`, t.grace.cookie);
+    await t.api("DELETE", base, t.grace.cookie);
+    await t.worker.idle();
+    expect(t.model.calls.length).toBe(calls);
+    const told = t.rowsOf().flatMap((row) => (row.kind === "relay" ? [row] : []));
+    expect(told.map((row) => [row.type, row.text, row.tray])).toEqual([
+      ["change", "Grace Hopper paused schedule Digest", "triggers"],
+      ["change", "Grace Hopper resumed schedule Digest", "triggers"],
+      ["change", "Grace Hopper deleted schedule Digest", "triggers"],
+    ]);
+    expect(told.map((row) => row.change)).toEqual([
+      { subject: { kind: "schedule", name: "Digest" }, action: "pause" },
+      { subject: { kind: "schedule", name: "Digest" }, action: "resume" },
+      { subject: { kind: "schedule", name: "Digest" }, action: "delete" },
+    ]);
+    await t.post(t.ada, "Go on");
+    const next = await t.answer(t.thread.id);
+    expect(next.texts.at(-1)).toBe(
+      `user: ${NOTIFICATIONS_HEADING}\n\n${told.map((row) => row.text).join("\n\n")}`,
+    );
+  });
+
   it("shows on the tool call's row in the thread", async () => {
     const t = await triggerThread();
     t.start();
@@ -397,6 +432,74 @@ describe("webhooks", () => {
     expect(t.triggers.workFor(t.made.id, t.thread.id, false)?.webhook?.path).toBeUndefined();
   });
 
+  it("counts and lists a firing recorded before notifications carried the trigger's id", async () => {
+    const t = await hook();
+    const at = (ms: number) => new Date(Date.now() + ms);
+    const old = (name: string, createdAt: Date, kind = "webhook.received") =>
+      t.log.write(t.thread.id, (append) =>
+        append({
+          type: "notification",
+          actor: { kind: "agent" },
+          createdAt,
+          data: {
+            kind,
+            source: { threadId: t.thread.id, name, main: true },
+            text: `Webhook "${name}" was posted to: {}`,
+            people: [],
+            wake: false,
+          },
+        } as never),
+      );
+    old("Deploys", at(MINUTE));
+    old("Deploys", at(-MINUTE));
+    old("Other", at(2 * MINUTE));
+    old("Deploys", at(3 * MINUTE), "trigger.fired");
+    const res = await t.api(
+      "GET",
+      `/threads/${t.thread.id}/triggers/${t.made.id}/history`,
+      t.ada.cookie,
+    );
+    expect(((await res.json()) as TriggerHistory).total).toBe(1);
+    expect(t.triggers.workFor(t.made.id, t.thread.id, true)?.webhook?.fired).toBe(1);
+  });
+
+  it("leaves an old firing with no one when two triggers of the name could own it", async () => {
+    const t = await hook();
+    const second = t.triggerStore.create({
+      id: "second-deploys",
+      threadId: t.thread.id,
+      kind: "webhook",
+      name: "Deploys",
+      cron: null,
+      timezone: null,
+      prompt: "Again",
+      steeredBy: [],
+      createdBy: "Mage",
+      status: "active",
+      nextRunAt: null,
+      hookToken: "second-token",
+    });
+    t.log.write(t.thread.id, (append) =>
+      append({
+        type: "notification",
+        actor: { kind: "agent" },
+        createdAt: new Date(Date.now() + MINUTE),
+        data: {
+          kind: "webhook.received",
+          source: { threadId: t.thread.id, name: "Deploys", main: true },
+          text: 'Webhook "Deploys" was posted to: {}',
+          people: [],
+          wake: false,
+        },
+      } as never),
+    );
+    const fired = () => t.triggers.workFor(t.made.id, t.thread.id, true)?.webhook?.fired;
+    expect(fired()).toBe(0);
+    // Once the other is deleted without ever firing, the event can only be this one's.
+    t.triggerStore.update(second.id, { status: "deleted" });
+    expect(fired()).toBe(1);
+  });
+
   it("refuses a name another live trigger has, whatever the case, and takes it again once deleted", async () => {
     const t = await triggerThread();
     t.start();
@@ -420,6 +523,48 @@ describe("webhooks", () => {
     expect(t.triggerStore.inThread(t.thread.id).map((one) => one.name)).toEqual(["daily"]);
   });
 
+  it("lists what it took, newest first, a page at a time, to anyone who may read the thread", async () => {
+    const t = await hook();
+    const url = `/threads/${t.thread.id}/triggers/${t.made.id}/history`;
+    const page = async (who: { cookie: string }, offset = 0) => {
+      const res = await t.api("GET", `${url}?offset=${offset}`, who.cookie);
+      return { status: res.status, body: (await res.json()) as TriggerHistory };
+    };
+    expect((await page(t.ada)).body).toMatchObject({ entries: [], total: 0 });
+
+    for (let n = 1; n <= 12; n += 1) {
+      t.clock.now = new Date(t.clock.now.getTime() + MINUTE);
+      const res = await t.post(JSON.stringify({ n }), {
+        "content-type": "application/json",
+      });
+      expect(res.status).toBe(200);
+    }
+    const first = (await page(t.ada)).body;
+    expect(first.total).toBe(12);
+    expect(first.entries).toHaveLength(HISTORY_PAGE);
+    const times = first.entries.map((entry) => entry.at);
+    expect(times).toEqual([...times].sort().reverse());
+    expect(first.entries[0]).toMatchObject({
+      delivery: { contentType: "application/json", bytes: 8, signed: false },
+    });
+    expect(t.triggers.workFor(t.made.id, t.thread.id, true)?.webhook?.fired).toBe(12);
+
+    const second = (await page(t.ada, HISTORY_PAGE)).body;
+    expect(second.entries).toHaveLength(2);
+    expect(second.entries[0]!.at < times.at(-1)!).toBe(true);
+    const ids = [...first.entries, ...second.entries].map((entry) => entry.id);
+    expect(new Set(ids).size).toBe(12);
+
+    // A reader sees it as well; someone with no access to the thread, or a bad offset, does not.
+    expect((await page(t.alan)).body.total).toBe(12);
+    const hedy = await t.signUp("Hedy Lamarr", "hedy@example.com");
+    expect((await page(hedy)).status).toBeGreaterThanOrEqual(400);
+    expect((await t.api("GET", `${url}?offset=-1`, t.ada.cookie)).status).toBe(400);
+    expect(
+      (await t.api("GET", `/threads/${t.thread.id}/triggers/nope/history`, t.ada.cookie)).status,
+    ).toBe(404);
+  });
+
   it("is not found once unknown or deleted, and refuses what is too big or paused", async () => {
     const t = await hook();
     expect((await t.post("{}", {}, "/api/hooks/nope")).status).toBe(404);
@@ -431,6 +576,21 @@ describe("webhooks", () => {
     expect((await t.post("{}")).status).toBe(200);
     expect((await t.api("DELETE", base, t.ada.cookie)).status).toBe(200);
     expect((await t.post("{}")).status).toBe(404);
+  });
+
+  it("tells the agent, without waking it, when a person sets or clears the signature", async () => {
+    const t = await hook();
+    const calls = t.model.calls.length;
+    const base = `/threads/${t.thread.id}/triggers/${t.made.id}/secret`;
+    await t.api("PUT", base, t.grace.cookie, { secret: "s3" });
+    await t.api("PUT", base, t.grace.cookie, { secret: null });
+    await t.worker.idle();
+    expect(t.model.calls.length).toBe(calls);
+    const told = t.rowsOf().flatMap((row) => (row.kind === "relay" ? [row] : []));
+    expect(told.map((row) => [row.type, row.text, row.tray])).toEqual([
+      ["change", "Grace Hopper set the signature of webhook Deploys", "webhooks"],
+      ["change", "Grace Hopper cleared the signature of webhook Deploys", "webhooks"],
+    ]);
   });
 
   it("takes only signed posts once a person sets a signing secret", async () => {

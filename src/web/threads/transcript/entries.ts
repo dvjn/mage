@@ -2,10 +2,12 @@
 // a person's message, an incoming message or notice, an event, or the agent's turn; the agent's
 // turn as blocks of reply text, cards and runs of lines, a line being a tool call's or the agent's
 // thinking; and the turn's actions after it where its last step shows none. Two or more of the
-// agent's calls in a row fold into one entry. A subagent's call that waits for a decision or for
-// answers shows as its card right after the entry with the line that started the subagent.
+// agent's calls in a row fold into one entry. A call that waits for a decision is a line like any
+// other; its decision is made in the activity tray. A subagent's call that waits for answers shows
+// as its card right after the entry with the line that started the subagent.
 // Received messages and notifications are turns of their own, outside the receiving agent's turn.
 
+import { ASK_TOOL } from "@/shared/ask.ts";
 import { artifactOf, type CalledArtifact, cardsAfterReply } from "@/web/artifacts/call-artifacts";
 import type {
   AgentRow,
@@ -20,7 +22,14 @@ import type {
 export type OwnRow = Exclude<ShownRow, RelayRow | NoticeRow>;
 
 export type TranscriptEntry =
-  | { kind: "row"; key: string; row: OwnRow }
+  | {
+      kind: "row";
+      key: string;
+      row: OwnRow;
+      // Set by transcriptTurns on the agent reply that ends a finished turn, which then shows the
+      // turn's one actions toolbar.
+      endsTurn?: boolean;
+    }
   | {
       kind: "calls";
       // The run's first call, which stays its first as the run grows.
@@ -33,7 +42,7 @@ export type TranscriptEntry =
   | {
       kind: "subagent";
       key: string;
-      // The subagent's waiting call, and the subagent's thread and name.
+      // The subagent's waiting question, and the subagent's thread and name.
       row: ToolRow;
       subagent: { threadId: string; name: string };
     }
@@ -63,7 +72,8 @@ export interface TranscriptTurn {
   // such as a failure or a stop.
   kind: "agent" | "human" | "incoming" | "event";
   blocks: TranscriptBlock[];
-  // The step whose actions the finished turn shows after it, where its last step shows none.
+  // The step whose actions the finished turn shows after it, where the turn does not end on a
+  // reply that shows them itself.
   actions?: AgentRow;
 }
 
@@ -76,9 +86,9 @@ export function showsActions(row: AgentRow) {
   );
 }
 
-// A call that waits for a decision or for answers shows as a card of its own.
+// A call that waits for answers shows as a card of its own; one that waits for a decision is a line.
 export function waitsAsCard(row: ToolRow) {
-  return row.state === "pending" && row.waits;
+  return row.state === "pending" && row.waits && row.toolId === ASK_TOOL;
 }
 
 // A step of the agent's that only thought: its reasoning, with no text.
@@ -108,12 +118,12 @@ function turnOf(entry: TranscriptEntry) {
   return null;
 }
 
-// The cards of the waiting calls of the subagents the entry's calls started.
+// The cards of the questions of the subagents the entry's calls started.
 function subagentCards(entry: TranscriptEntry): TranscriptEntry[] {
   if (entry.kind !== "calls" && entry.kind !== "row") return [];
   const calls = entry.kind === "calls" ? entry.calls : entry.row.kind === "tool" ? [entry.row] : [];
   return calls.flatMap((call) =>
-    call.subagent && call.subagentCall
+    call.subagent && call.subagentCall && waitsAsCard(call.subagentCall)
       ? [
           {
             kind: "subagent" as const,
@@ -281,9 +291,18 @@ export function transcriptTurns(
     const items = cardsAfterReply(members);
     if (items.length > 0)
       turn.blocks.push({ kind: "artifacts", key: `artifacts:${turn.key}`, items });
+    // A turn shows one toolbar, after its last row: the last reply's own where the turn ends on
+    // it, otherwise the turn's, acting on the turn's last step.
     const last = tail && (tail.kind === "agent" ? tail : stepOf.get(tail.id));
     const ongoing = running && index === groups.length - 1;
-    if (last && !showsActions(last) && last.status !== "streaming" && !ongoing) turn.actions = last;
+    if (last && last.status !== "streaming" && !ongoing) {
+      const ending = group.entries.findLast((entry) => entry.kind !== "subagent");
+      if (ending?.kind === "row" && ending.row === last && showsActions(last)) {
+        ending.endsTurn = true;
+      } else {
+        turn.actions = last;
+      }
+    }
     return turn;
   });
 }

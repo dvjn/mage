@@ -3,6 +3,9 @@ import { queryOptions } from "@tanstack/react-query";
 import { threadCommandsSchema } from "@/shared/threads/commands.ts";
 import { type ThreadDetail, threadDetailSchema } from "@/shared/threads/detail.ts";
 import { asideListSchema, shownBranchSchema } from "@/shared/threads/history.ts";
+import { backgroundListSchema } from "@/shared/calls.ts";
+import { triggerHistorySchema } from "@/shared/triggers.ts";
+import { taskListSchema } from "@/shared/tasks.ts";
 import { threadSidebarSchema } from "@/shared/threads/list.ts";
 import { rowsPageSchema } from "@/shared/threads/rows.ts";
 import { apiClient } from "@/web/api/api-client";
@@ -139,4 +142,55 @@ export async function earlierRows(
   });
   if (!res.ok) throw new Error("could not read the thread's earlier rows");
   return rowsPageSchema.parse(await res.json());
+}
+
+// The thread's task list as the reader sees it; its live stream keeps it current.
+export function tasksQuery(threadId: string, archived = false) {
+  return queryOptions({
+    queryKey: archived
+      ? ["threads", threadId, "tasks", "archived"]
+      : ["threads", threadId, "tasks"],
+    queryFn: async () => {
+      const res = await apiClient.v1.threads[":id"].tasks.$get({
+        param: { id: threadId },
+        query: archived ? { archived: "1" } : {},
+      });
+      if (!res.ok) throw new Error("could not read the tasks");
+      return taskListSchema.parse(await res.json());
+    },
+  });
+}
+
+// The thread's live background work; its live stream keeps it current.
+export function backgroundQuery(threadId: string) {
+  return queryOptions({
+    queryKey: ["threads", threadId, "background"],
+    queryFn: async () => {
+      const res = await apiClient.v1.threads[":id"].background.$get({ param: { id: threadId } });
+      if (!res.ok) throw new Error("could not read the background work");
+      return backgroundListSchema.parse(await res.json());
+    },
+  });
+}
+
+// One page of what a schedule fired or a webhook took, newest first; read when its list is opened.
+// `fired` is how many it has, which makes a new one read again.
+export function triggerHistoryQuery(
+  threadId: string,
+  triggerId: string,
+  offset: number,
+  fired: number,
+) {
+  return queryOptions({
+    queryKey: ["threads", threadId, "triggers", triggerId, "history", offset, fired],
+    queryFn: async () => {
+      const res = await apiClient.v1.threads[":id"].triggers[":triggerId"].history.$get({
+        param: { id: threadId, triggerId },
+        query: { offset },
+      });
+      if (!res.ok) throw new Error("could not read the history");
+      return triggerHistorySchema.parse(await res.json());
+    },
+    placeholderData: (previous) => previous,
+  });
 }

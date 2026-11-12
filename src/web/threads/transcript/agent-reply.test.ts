@@ -44,7 +44,11 @@ function render(overrides: Partial<AgentRow> = {}, subagent = false, highlighted
                 ...(highlighted && { lit: row.id }),
               },
             },
-            createElement(AgentReply, { row, continued: row.turn?.continued ?? false }),
+            createElement(AgentReply, {
+              row,
+              continued: row.turn?.continued ?? false,
+              endsTurn: false,
+            }),
           ),
         ),
       ),

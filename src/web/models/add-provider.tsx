@@ -72,7 +72,7 @@ function DoneStep({ connection, onClose }: { connection: ConnectionSummary; onCl
   return (
     <div className="flex flex-col gap-4">
       <div role="status" className="flex items-center gap-2">
-        <CheckCircle2Icon className="size-5 text-emerald-600 dark:text-emerald-400" />
+        <CheckCircle2Icon className="size-5 text-success" />
         <span className="font-medium">
           Connected ·{" "}
           {models.isPending

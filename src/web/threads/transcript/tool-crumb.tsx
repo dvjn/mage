@@ -3,6 +3,7 @@
 
 import { cn } from "cn";
 import { ChevronRightIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import type { ToolRow } from "@/shared/threads/rows.ts";
 import { useModelNamer } from "@/web/threads/transcript/agent";
@@ -30,18 +31,25 @@ export function useToolPath() {
 // width, so that it truncates before they do.
 export const GIVES_WAY = "min-w-0 max-w-max flex-1 truncate";
 
-// What a tool is called, as a breadcrumb inside a flex row: its server's name in muted text and a
-// chevron before its own where it has a server. Where the row is short, the server's name truncates
-// first, sharing the room the tool's name leaves with any other item of the row that gives way the
-// same, and the tool's own name only once the server's is gone. It takes the class given.
-export function ToolCrumb({ row, className }: { row: ToolRow; className?: string }) {
-  const titleOf = useCallTitle();
+// A breadcrumb inside a flex row: the parent in muted text and a chevron before the name where
+// there is one. Where the row is short, the parent truncates first, sharing the room the name
+// leaves with any other item of the row that gives way the same, and the name only once the
+// parent is gone. The name takes the class given.
+export function Crumb({
+  parent,
+  children,
+  className,
+}: {
+  parent?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
   return (
     <>
-      {row.toolset && (
+      {parent && (
         <>
           <span className={cn(GIVES_WAY, "text-muted-foreground group-hover/tool:text-foreground")}>
-            {row.toolset}
+            {parent}
           </span>
           <ChevronRightIcon
             aria-hidden
@@ -49,7 +57,17 @@ export function ToolCrumb({ row, className }: { row: ToolRow; className?: string
           />
         </>
       )}
-      <span className={cn("min-w-0 truncate", className)}>{titleOf(row)}</span>
+      <span className={cn("min-w-0 truncate", className)}>{children}</span>
     </>
+  );
+}
+
+// What a tool is called, as a breadcrumb: its server's name before its own where it has a server.
+export function ToolCrumb({ row, className }: { row: ToolRow; className?: string }) {
+  const titleOf = useCallTitle();
+  return (
+    <Crumb parent={row.toolset} className={className}>
+      {titleOf(row)}
+    </Crumb>
   );
 }

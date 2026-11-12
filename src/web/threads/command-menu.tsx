@@ -51,7 +51,7 @@ export function CommandMenu({
       id={COMMAND_MENU}
       role="listbox"
       aria-label="Commands"
-      className="absolute inset-x-0 bottom-full z-20 mb-1 max-h-64 overflow-y-auto rounded-lg border bg-popover p-1 text-sm text-popover-foreground shadow-md"
+      className="absolute inset-x-0 bottom-full z-20 mb-1 max-h-64 overflow-y-auto rounded-lg surface-floating p-1 text-sm"
     >
       {commands.map((command, index) => (
         <div

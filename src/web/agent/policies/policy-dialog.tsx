@@ -220,7 +220,7 @@ export function PolicyDialog({
                 </Label>
               )}
               {noApprover && (
-                <p className="text-sm text-amber-700 dark:text-amber-300">
+                <p className="text-sm text-warning">
                   Pick at least one approver, or every call that needs approval is refused.
                 </p>
               )}

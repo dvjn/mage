@@ -22,8 +22,11 @@ export function TranscriptItem({
   row,
   actions = {},
   tools = [],
+  endsTurn = false,
 }: {
   row: OwnRow;
+  // Whether the row is the agent reply that ends its turn, which shows the turn's actions.
+  endsTurn?: boolean;
   actions?: RowActions;
   // The tools' definitions, by which their calls' input and output show, those made under a
   // tool's former id too.
@@ -35,7 +38,7 @@ export function TranscriptItem({
     case "agent":
       // A step that only called tools shows as its calls.
       if (!row.turn) return null;
-      return <AgentReply row={row} continued={row.turn.continued} />;
+      return <AgentReply row={row} continued={row.turn.continued} endsTurn={endsTurn} />;
     case "tool":
       return (
         <ToolCall
@@ -43,7 +46,6 @@ export function TranscriptItem({
           definition={tools.find(
             (tool) => tool.name === (FORMER_TOOL_IDS[row.toolId] ?? row.toolId),
           )}
-          decide={actions.decide}
           answer={actions.answer}
           turn={row.turn ?? { continued: false, model: null }}
         />

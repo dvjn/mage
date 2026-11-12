@@ -49,6 +49,8 @@ export const scheduleWorkSchema = z.object({
   timezone: z.string().optional(),
   nextRunAt: z.string().optional(),
   lastFiredAt: z.string().optional(),
+  // How many times it has fired, which its history lists.
+  fired: z.number().int().nonnegative(),
   // Whether the reader may pause, resume and delete it.
   canChange: z.boolean(),
 });
@@ -63,10 +65,37 @@ export const webhookWorkSchema = z.object({
   path: z.string().optional(),
   signed: z.boolean(),
   lastFiredAt: z.string().optional(),
+  // How many posts it has taken, which its history lists.
+  fired: z.number().int().nonnegative(),
   canChange: z.boolean(),
 });
 
 export type WebhookWork = z.infer<typeof webhookWorkSchema>;
+
+// How many entries of a trigger's history a page holds.
+export const HISTORY_PAGE = 10;
+
+// One page of what a schedule fired or a webhook took, newest first: when, the row of the
+// notification in the thread, and for a post what it said it was. `total` counts all of it.
+export const triggerHistorySchema = z.object({
+  entries: z.array(
+    z.object({
+      id: z.string(),
+      at: z.string(),
+      delivery: z
+        .object({
+          contentType: z.string().nullable(),
+          bytes: z.number().int().nonnegative(),
+          signed: z.boolean(),
+        })
+        .optional(),
+    }),
+  ),
+  total: z.number().int().nonnegative(),
+  offset: z.number().int().nonnegative(),
+});
+
+export type TriggerHistory = z.infer<typeof triggerHistorySchema>;
 
 // What a person sends to set or clear a webhook's signing secret.
 export const hookSecretInputSchema = z.object({ secret: z.string().max(200).nullable() });

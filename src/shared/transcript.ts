@@ -24,6 +24,7 @@ import {
   type Cause,
   type Delivery,
   type FailureKind,
+  type NotificationActor,
   type NotificationKind,
   type NotificationParts,
   type SubagentEnd,
@@ -238,7 +239,8 @@ export function notificationParts(
     kind === "call.ended" ||
     kind === "task.changed" ||
     kind === "trigger.fired" ||
-    kind === "webhook.received"
+    kind === "webhook.received" ||
+    kind === "change"
   )
     return data;
   if (kind === "agent.idle") {
@@ -271,6 +273,7 @@ export interface RelayRow extends NotificationParts {
   postedAt: string;
   type: NotificationKind;
   from: Sender;
+  actor?: NotificationActor;
   to?: string;
   text: string;
   steeredBy: Steering[];
@@ -278,6 +281,10 @@ export interface RelayRow extends NotificationParts {
   call?: Cause;
   callIds?: string[];
   rowId?: string;
+  // A notification that did not start the agent: shown when it was made, and read by the agent
+  // from `taken` on, the event that took it in, once it has.
+  silent?: true;
+  taken?: number;
 }
 
 // A subagent that ended a run, as the thread that started it is told.
@@ -361,6 +368,11 @@ export interface ActiveRun {
 
 // Another agent's message, waiting to be taken in.
 export type RelayMessage = Omit<RelayRow, "kind">;
+
+// The notifications that start the agent: those not made silent.
+export function waking(inbox: readonly RelayMessage[]) {
+  return inbox.filter((message) => !message.silent);
+}
 
 export interface Transcript {
   rows: TranscriptRow[];
@@ -465,6 +477,8 @@ export function createFold(): TranscriptFold {
   const turns: (AgentTurn | null)[] = [];
   const pending = new Map<string, PendingMessage>();
   const inbox = new Map<string, RelayMessage>();
+  // The silent notifications already shown, by id, until the agent takes them in.
+  const silentRows = new Map<string, RelayRow>();
   const replies = new Map<string, AgentRow>();
   const calls = new Map<string, ToolRow>();
   let run: ActiveRun | null = null;
@@ -564,17 +578,18 @@ export function createFold(): TranscriptFold {
         break;
       }
       case "notification": {
-        const { kind, source, people, to, task } = event.data;
-        const { text, subagents, when, error, last, delivery, schedule } = notificationParts(
-          event.data,
-        );
+        const { kind, source, people, to, task, actor } = event.data;
+        const { text, subagents, when, error, last, delivery, schedule, tray, change } =
+          notificationParts(event.data);
         const { callId, callIds, rowId, ...from } = source;
+        const silent = event.data.wake === false;
         const message: RelayMessage = {
           id: event.id,
           seq: event.seq,
           postedAt: event.createdAt,
           type: kind,
           from,
+          ...(actor && { actor }),
           ...(to !== undefined && { to }),
           text,
           steeredBy: people,
@@ -585,11 +600,19 @@ export function createFold(): TranscriptFold {
           ...(last && { last }),
           ...(delivery && { delivery }),
           ...(schedule && { schedule }),
+          ...(tray && { tray }),
+          ...(change && { change }),
           ...(callId && { call: { threadId: source.threadId, callId } }),
           ...(callIds && { callIds }),
           ...(rowId && { rowId }),
+          ...(silent && { silent: true as const }),
         };
         inbox.set(event.id, message);
+        if (silent) {
+          const shown: RelayRow = { kind: "relay", ...message };
+          silentRows.set(event.id, shown);
+          push(shown);
+        }
         break;
       }
       case "subagent.ended": {
@@ -620,6 +643,14 @@ export function createFold(): TranscriptFold {
           const relayed = inbox.get(id);
           if (relayed) {
             inbox.delete(id);
+            // A silent one was shown when it was made; now it is read.
+            const shown = silentRows.get(id);
+            if (shown && indexOf.has(id)) {
+              silentRows.delete(id);
+              shown.taken = event.seq;
+              touch(id);
+              continue;
+            }
             push({ kind: "relay", ...relayed, seq: event.seq });
             continue;
           }

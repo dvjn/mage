@@ -7,7 +7,10 @@ import { cn } from "cn";
 import {
   CheckIcon,
   ChevronRightIcon,
+  HandIcon,
+  PowerOffIcon,
   SkipForwardIcon,
+  SquareIcon,
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
@@ -23,8 +26,17 @@ import {
   CollapsibleTrigger,
 } from "@/web/components/ui/collapsible";
 import { Spinner } from "@/web/components/ui/spinner";
-import { lineKey, rowElementId, RowLink, useRowFocus } from "@/web/threads/transcript/row-focus";
+import { useElapsed } from "@/web/threads/transcript/background-card";
+import { CancelBackground, MoveToBackground } from "@/web/threads/transcript/background";
+import {
+  lineKey,
+  rowElementId,
+  RowLink,
+  useRowFocus,
+  useRowLit,
+} from "@/web/threads/transcript/row-focus";
 import { GIVES_WAY, ToolCrumb, useToolPath } from "@/web/threads/transcript/tool-crumb";
+import { isTrigger } from "@/web/threads/transcript/trigger-call";
 import { displayName } from "@/web/lib/people.ts";
 
 // Where a subagent stands, in words.
@@ -47,7 +59,7 @@ const EFFECTS: Record<CallEffect["kind"], (name: string) => string> = {
 };
 
 // How long a call took to run, from a second on; nothing below that.
-function duration(ms: number | null) {
+export function duration(ms: number | null) {
   return ms !== null && ms >= 1000 ? `${Math.round(ms / 1000)}s` : null;
 }
 
@@ -100,8 +112,43 @@ export function ToolLine({
       who = by && `by ${by}`;
       break;
     default:
-      icon = <Spinner />;
-      status = row.waits && row.state === "pending" ? "Waiting" : "Running";
+      if (row.waits && row.state === "pending") {
+        icon = <HandIcon className="text-warning" />;
+        status = "Waiting for approval";
+      } else {
+        icon = <Spinner />;
+        status = "Running";
+      }
+  }
+  // A background call says where its job stands; its result is in the notification, not here.
+  const work = row.background && !isTrigger(row) ? row.background : null;
+  if (work) {
+    who = undefined;
+    switch (work.status) {
+      case "pending":
+        icon = <HandIcon className="text-warning" />;
+        status = "Waiting for approval";
+        break;
+      case "done":
+        icon = <CheckIcon className="text-foreground" />;
+        status = "Done";
+        break;
+      case "failed":
+        icon = <XIcon />;
+        status = "Failed";
+        break;
+      case "cancelled":
+        icon = <SquareIcon />;
+        status = "Cancelled";
+        break;
+      case "interrupted":
+        icon = <PowerOffIcon />;
+        status = "Interrupted";
+        break;
+      default:
+        icon = <Spinner />;
+        status = "Running";
+    }
   }
   const { subagent } = row;
   if (subagent) {
@@ -109,13 +156,24 @@ export function ToolLine({
     who = subagent.needs && SUBAGENT_NEEDS[subagent.needs];
     if (subagent.state === "working" || subagent.state === "queued") icon = <Spinner />;
   }
+  // A call moved to the background says so; one started there is marked.
+  const moved =
+    row.output?.ok &&
+    (row.output.value as { movedToBackground?: unknown } | null)?.movedToBackground;
+  if (moved && !work) status = "Moved to background";
   // What became of the call follows the tool, item by item, with whose own credentials it ran.
   const outcome = [status, who, row.ranAs && `as ${displayName(row.ranAs)}`]
     .filter(Boolean)
     .join(" · ");
-  const took = duration(row.ms);
+  // A call that is running counts its time; a background call's is its job's.
+  const waiting = status === "Waiting for approval";
+  const running = row.state === "allowed" || (row.state === "pending" && !row.waits);
+  const elapsed = useElapsed(
+    work ?? { startedAt: row.requestedAt, ...(!running && { endedAt: row.requestedAt }) },
+  );
+  const took = work || running ? elapsed : duration(row.ms);
   const focus = useRowFocus();
-  const lit = focus?.lit === row.id;
+  const lit = useRowLit(row.id);
   const trigger = (
     <CollapsibleTrigger
       aria-label={`${toolPath(row)} · ${outcome}`}
@@ -128,7 +186,7 @@ export function ToolLine({
       {icon}
       <span className="flex min-w-0 flex-1 items-center gap-1">
         <ToolCrumb row={row} className="font-medium" />
-        <span className={GIVES_WAY}>· {outcome}</span>
+        <span className={cn(GIVES_WAY, waiting && "text-warning")}>· {outcome}</span>
       </span>
       {took && <span className="shrink-0 tabular-nums">{took}</span>}
     </CollapsibleTrigger>
@@ -144,7 +202,7 @@ export function ToolLine({
       onKeyDownCapture={() => focus?.dismiss?.(row.id)}
       open={focus ? focus.opened.has(lineKey(row.id)) : undefined}
       onOpenChange={focus ? (open) => focus.onOpenChange([lineKey(row.id)], open) : undefined}
-      className={cn("rounded-md text-xs text-muted-foreground", lit && "row-attention")}
+      className={cn("rounded-md text-xs text-muted-foreground", lit && "attention")}
     >
       {subagent ? (
         <div className="flex items-center gap-2">
@@ -157,6 +215,16 @@ export function ToolLine({
           >
             Open
           </Link>
+        </div>
+      ) : row.canBackground ? (
+        <div className="flex items-center gap-2">
+          {trigger}
+          <MoveToBackground row={row} />
+        </div>
+      ) : work?.canCancel ? (
+        <div className="flex items-center gap-2">
+          {trigger}
+          <CancelBackground row={row} />
         </div>
       ) : (
         trigger
@@ -177,7 +245,9 @@ export function ToolLine({
           </nav>
         )}
         <ToolInput value={row.input} schema={definition?.inputSchema} />
-        {row.output && <ToolOutput output={row.output} schema={definition?.outputSchema} />}
+        {row.output && !work && (
+          <ToolOutput output={row.output} schema={definition?.outputSchema} />
+        )}
       </CollapsibleContent>
     </Collapsible>
   );

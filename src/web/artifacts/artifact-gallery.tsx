@@ -19,7 +19,7 @@ function GalleryCard({ artifact }: { artifact: ArtifactListItem }) {
   return (
     <div
       data-testid="artifact-card"
-      className="relative flex flex-col gap-3 rounded-lg border bg-card p-3 transition-colors hover:bg-muted/50"
+      className="relative flex flex-col gap-3 rounded-lg surface-raised p-3 transition-colors hover:bg-muted/50"
     >
       <div className="flex items-center gap-3">
         <span className="flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted/50 text-muted-foreground">

@@ -49,6 +49,7 @@ import {
   type Transcript,
   type TranscriptRow,
   transcriptOf,
+  waking,
 } from "@/shared/transcript.ts";
 
 import { contextOf, framingMessage, type ToolsetGuidance } from "./context.ts";
@@ -279,7 +280,7 @@ export function createSubagents(options: SubagentsOptions) {
       const needs = needsOf(read);
       return { ...base, state: "working", ...(needs && { needs }) };
     }
-    if (read.inbox.length > 0) return { ...base, state: "queued" };
+    if (waking(read.inbox).length > 0) return { ...base, state: "queued" };
     const state: SubagentState =
       runs.latest(subagent.threadId)?.status === "cancelled" ? "stopped" : "idle";
     return { ...base, state };
@@ -331,7 +332,7 @@ export function createSubagents(options: SubagentsOptions) {
   function fillPlaces(parentThreadId: string) {
     for (const subagent of live(parentThreadId)) {
       if (runs.active(subagent.threadId)) continue;
-      if (transcript(subagent.threadId).inbox.length === 0) continue;
+      if (waking(transcript(subagent.threadId).inbox).length === 0) continue;
       notifier.wake(subagent.threadId);
     }
   }
@@ -448,6 +449,7 @@ export function createSubagents(options: SubagentsOptions) {
         ...senderOf(thread).from,
         callId,
       } satisfies NotificationSource as NotificationSource,
+      actor: { kind: "source" as const, label: "Subagents", type: "system" as const },
       text: watch.when === "all_idle" ? `All idle: ${names}` : `Idle: ${names}`,
       people: [...people.values()],
       subagents: idle.map((subagent) => ({ threadId: subagent.threadId, name: subagent.name })),

@@ -9,14 +9,16 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 
 import type { AskAnswers } from "@/shared/ask.ts";
+import { backgroundListSchema, type TrayKind } from "@/shared/calls.ts";
 import type { CommandInput } from "@/shared/threads/commands.ts";
+import type { TaskChangeInput } from "@/shared/tasks.ts";
 import type { Delivery, ToolScope } from "@/shared/threads/events.ts";
 import { type Effort, threadSchema } from "@/shared/threads/thread.ts";
 import { apiClient } from "@/web/api/api-client";
 import { errorOf } from "@/web/api/api-errors";
 import { traced } from "@/web/lib/tracing";
 import { useToast } from "@/web/shell/toaster";
-import { spaceThreadsQuery, threadQuery } from "@/web/threads/queries";
+import { backgroundQuery, spaceThreadsQuery, tasksQuery, threadQuery } from "@/web/threads/queries";
 
 // Makes a thread in the space with its first message, and opens it.
 export function useCreateThread(spaceId: string) {
@@ -27,10 +29,12 @@ export function useCreateThread(spaceId: string) {
       text,
       model,
       effort,
+      command,
     }: {
       text: string;
       model?: string | null;
       effort?: Effort | null;
+      command?: CommandInput;
     }) =>
       traced(
         "start thread",
@@ -42,6 +46,7 @@ export function useCreateThread(spaceId: string) {
               text,
               ...(model && { model }),
               ...(effort && { effort }),
+              ...(command && { command }),
             },
           });
           if (!res.ok) throw new Error(await errorOf(res));
@@ -168,6 +173,52 @@ export function useToolDecision(threadId: string) {
   });
 }
 
+// Moves a running tool call to the background; the move arrives with the thread's rows.
+export function useMoveToBackground(threadId: string) {
+  const toast = useToast();
+  return useMutation({
+    mutationFn: (callId: string) =>
+      traced("move to background", threadId, async () => {
+        const res = await apiClient.v1.threads[":id"].tools[":callId"].background.$post({
+          param: { id: threadId, callId },
+        });
+        if (!res.ok) throw new Error(await errorOf(res));
+      }),
+    onError: (failed) => toast(failed.message),
+  });
+}
+
+// Notes that the reader has seen a kind of the thread's background work, so what ended leaves it.
+export function useSeenBackground(threadId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (kind: TrayKind) => {
+      const res = await apiClient.v1.threads[":id"].background.seen.$post({
+        param: { id: threadId },
+        json: { kind },
+      });
+      if (!res.ok) throw new Error(await errorOf(res));
+      return backgroundListSchema.parse(await res.json());
+    },
+    onSuccess: (list) => queryClient.setQueryData(backgroundQuery(threadId).queryKey, list),
+  });
+}
+
+// Stops a call that runs in the background; where it stands arrives with the thread's rows.
+export function useCancelBackground(threadId: string) {
+  const toast = useToast();
+  return useMutation({
+    mutationFn: (callId: string) =>
+      traced("cancel background call", threadId, async () => {
+        const res = await apiClient.v1.threads[":id"].tools[":callId"].cancel.$post({
+          param: { id: threadId, callId },
+        });
+        if (!res.ok) throw new Error(await errorOf(res));
+      }),
+    onError: (failed) => toast(failed.message),
+  });
+}
+
 // Answers the questions a call asks, or skips them; the answer arrives with the thread's rows.
 export function useToolAnswer(threadId: string) {
   const toast = useToast();
@@ -264,4 +315,70 @@ export function useDeleteThread(spaceId: string, leave: (threadId: string) => Pr
       await queryClient.invalidateQueries({ queryKey: ["spaces", spaceId] });
     },
   });
+}
+
+// Adds, changes, removes and archives tasks in the thread's list. The list arrives with the live stream; a
+// failure goes to a toast.
+export function useTaskActions(threadId: string) {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const run = useMutation({
+    mutationFn: async (work: () => Promise<Response>) => {
+      const res = await work();
+      if (!res.ok) throw new Error(await errorOf(res));
+    },
+    // Read again too, for when the live stream is reconnecting.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: tasksQuery(threadId).queryKey }),
+    onError: (failed) => toast(failed.message),
+  });
+  const param = { id: threadId };
+  return {
+    add: (title: string) =>
+      run.mutateAsync(() => apiClient.v1.threads[":id"].tasks.$post({ param, json: { title } })),
+    change: (taskId: string, json: TaskChangeInput) =>
+      run.mutate(() =>
+        apiClient.v1.threads[":id"].tasks[":taskId"].$patch({ param: { ...param, taskId }, json }),
+      ),
+    remove: (taskId: string) =>
+      run.mutate(() =>
+        apiClient.v1.threads[":id"].tasks[":taskId"].$delete({ param: { ...param, taskId } }),
+      ),
+    archiveDone: () =>
+      run.mutate(() => apiClient.v1.threads[":id"].tasks["archive-done"].$post({ param })),
+  };
+}
+
+// Pauses, resumes and deletes a timer, schedule or webhook, and sets a webhook's signing secret; where it stands arrives with the thread's rows.
+export function useTriggerActions(threadId: string) {
+  const toast = useToast();
+  const run = useMutation({
+    mutationFn: async (work: () => Promise<Response>) => {
+      const res = await work();
+      if (!res.ok) throw new Error(await errorOf(res));
+    },
+    onError: (failed) => toast(failed.message),
+  });
+  const trigger = (triggerId: string) => ({ param: { id: threadId, triggerId } });
+  return {
+    pending: run.isPending,
+    pause: (triggerId: string) =>
+      run.mutateAsync(() =>
+        apiClient.v1.threads[":id"].triggers[":triggerId"].pause.$post(trigger(triggerId)),
+      ),
+    resume: (triggerId: string) =>
+      run.mutateAsync(() =>
+        apiClient.v1.threads[":id"].triggers[":triggerId"].resume.$post(trigger(triggerId)),
+      ),
+    remove: (triggerId: string) =>
+      run.mutateAsync(() =>
+        apiClient.v1.threads[":id"].triggers[":triggerId"].$delete(trigger(triggerId)),
+      ),
+    secret: (triggerId: string, secret: string | null) =>
+      run.mutateAsync(() =>
+        apiClient.v1.threads[":id"].triggers[":triggerId"].secret.$put({
+          ...trigger(triggerId),
+          json: { secret },
+        }),
+      ),
+  };
 }

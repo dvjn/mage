@@ -127,6 +127,12 @@ export function createThreadStore(db: Db): ThreadStore {
   }
 
   return {
+    userName(userId) {
+      return (
+        db.select({ name: user.name }).from(user).where(eq(user.id, userId)).get()?.name ?? null
+      );
+    },
+
     // Its root branch takes its id.
     create(input) {
       const id = ulid();

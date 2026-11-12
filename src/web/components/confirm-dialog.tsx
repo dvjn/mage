@@ -26,6 +26,7 @@ export function ConfirmDialog({
   error,
   children,
   action,
+  tone = "destructive",
   disabled,
   onConfirm,
 }: {
@@ -40,6 +41,8 @@ export function ConfirmDialog({
   // Asked for before it can be done, as a name to type.
   children?: React.ReactNode;
   action: string;
+  // Destructive unless the action only adds or moves something.
+  tone?: "default" | "destructive";
   disabled?: boolean;
   onConfirm: () => void;
 }) {
@@ -55,7 +58,7 @@ export function ConfirmDialog({
         {children}
         <AlertDialogFooter>
           <AlertDialogCancel>Cancel</AlertDialogCancel>
-          <AlertDialogAction variant="destructive" disabled={disabled} onClick={onConfirm}>
+          <AlertDialogAction variant={tone} disabled={disabled} onClick={onConfirm}>
             {action}
           </AlertDialogAction>
         </AlertDialogFooter>

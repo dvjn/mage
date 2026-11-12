@@ -1,6 +1,7 @@
-// A tool call as its state shows it: a card while it waits for a decision or for answers, the
-// answers under its line once given, and otherwise its line. A subagent's waiting call shows as its
-// card in the thread that started it too, headed by the subagent's name.
+// A tool call as its state shows it: a card while it waits for answers, the answers under its line
+// once given, and otherwise its line, a call that waits for a decision included. A subagent's
+// waiting question shows as its card in the thread that started it too, headed by the subagent's
+// name.
 
 import { ASK_TOOL, askInputSchema } from "@/shared/ask.ts";
 import type { AgentTurn, ToolRow } from "@/shared/threads/rows.ts";
@@ -10,14 +11,12 @@ import { artifactOf } from "@/web/artifacts/call-artifacts";
 import { ArtifactCard } from "@/web/artifacts/artifact-card";
 import { QuestionCard } from "@/web/threads/transcript/question-card";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
-import { ToolCard } from "@/web/threads/transcript/tool-card";
 import { ToolLine } from "@/web/threads/transcript/tool-line";
 import { ToolOpening } from "@/web/threads/transcript/tool-opening";
 
 export function ToolCall({
   row,
   definition,
-  decide,
   answer,
   turn,
   framed,
@@ -25,7 +24,6 @@ export function ToolCall({
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
-  decide?: RowActions["decide"];
   answer?: RowActions["answer"];
   turn: AgentTurn;
   // Inside a run of calls, which carries the turn's header.
@@ -60,17 +58,6 @@ export function ToolCall({
           <GivenAnswers input={asked.data} answers={row.answers} />
         </div>
       </div>
-    );
-  }
-  if (row.state === "pending" && row.waits) {
-    return (
-      <ToolCard
-        row={row}
-        definition={definition}
-        decide={decide}
-        continued={turn.continued}
-        subagent={subagent}
-      />
     );
   }
   const artifact = artifactOf(row);

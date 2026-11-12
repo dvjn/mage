@@ -133,6 +133,23 @@ export const threadRead = sqliteTable(
   (table) => [primaryKey({ columns: [table.userId, table.threadId] })],
 );
 
+// When a person last saw a kind of a thread's background work, so what ended before then no longer
+// shows to them.
+export const threadBackgroundSeen = sqliteTable(
+  "thread_background_seen",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    seenAt: integer("seen_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.threadId, table.kind] })],
+);
+
 // The text an agent reply has streamed so far, of its answer and its reasoning, one row per piece
 // the model sent, kept until the reply completes.
 export const messageDelta = sqliteTable(

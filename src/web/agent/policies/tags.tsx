@@ -42,10 +42,10 @@ export function PolicyDot({ color, kind }: { color?: PolicyColor; kind?: "off" |
 }
 
 const TONES: Record<Tone, string> = {
-  open: "bg-green-500/10 text-green-700 dark:text-green-400",
-  team: "bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
-  need: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-  independent: "bg-violet-500/10 text-violet-700 dark:text-violet-300",
+  open: "bg-success/10 text-success",
+  team: "bg-info/10 text-info",
+  need: "bg-warning/10 text-warning",
+  independent: "bg-muted text-muted-foreground",
   off: "bg-destructive/10 text-destructive",
 };
 

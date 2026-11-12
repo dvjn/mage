@@ -43,7 +43,7 @@ export function QuestionCard({
         <div className="flex min-w-0 items-center gap-2 text-sm">
           <MessageCircleQuestionIcon
             aria-hidden
-            className={cn("size-4 shrink-0", answer ? "text-status-waiting" : "text-status-paused")}
+            className={cn("size-4 shrink-0", answer ? "text-warning" : "text-muted-foreground")}
           />
           {subagent && <span className="shrink-0">{subagent} asks</span>}
           <ToolCrumb row={row} className="font-semibold" />

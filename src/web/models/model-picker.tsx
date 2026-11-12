@@ -232,8 +232,7 @@ export function ModelPicker({
             compact ? [promptInputSelectTriggerClassName, "max-w-56"] : "w-full",
             className,
             // A model turned off or gone is a warning: something stands in, or it needs choosing.
-            missing &&
-              "text-amber-700 data-placeholder:text-amber-700 hover:text-amber-700 dark:text-amber-400 dark:data-placeholder:text-amber-400",
+            missing && "text-warning data-placeholder:text-warning hover:text-warning",
           )}
         >
           <span className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
@@ -270,7 +269,7 @@ export function ModelPicker({
             aria-disabled
             className="flex items-center gap-2 border-b px-3 py-2 text-sm text-muted-foreground"
           >
-            <TriangleAlertIcon className="size-4 text-amber-600 dark:text-amber-400" />
+            <TriangleAlertIcon className="size-4 text-warning" />
             <span className="truncate">{missing.name}</span>
             <span className="ml-auto text-xs">{missing.off ? "Turned off" : "Unavailable"}</span>
           </div>
@@ -290,7 +289,7 @@ export function ModelPicker({
                 <MaybeTooltip label={inherit.warning}>
                   <TriangleAlertIcon
                     aria-label={inherit.warning}
-                    className="size-3.5 shrink-0 text-amber-600 dark:text-amber-400"
+                    className="size-3.5 shrink-0 text-warning"
                   />
                 </MaybeTooltip>
               )}

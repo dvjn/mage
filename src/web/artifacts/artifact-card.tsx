@@ -64,7 +64,7 @@ export function ArtifactCard({
     <div
       data-testid="artifact-card"
       className={cn(
-        "relative flex items-center gap-3 rounded-lg border bg-card p-2.5 transition-colors",
+        "relative flex items-center gap-3 rounded-lg surface-raised p-2.5 transition-colors",
         !gone && !locked && "hover:bg-muted/50",
         className,
       )}

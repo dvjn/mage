@@ -58,7 +58,7 @@ export function Toaster({ children }: { children: ReactNode }) {
             key={toast.id}
             role={toast.tone === "error" ? "alert" : "status"}
             className={cn(
-              "pointer-events-auto flex w-full max-w-sm items-start gap-2 rounded-lg border bg-popover py-2 pr-1 pl-3 text-sm text-popover-foreground shadow-lg",
+              "pointer-events-auto flex w-full max-w-sm items-start gap-2 rounded-lg surface-floating py-2 pr-1 pl-3 text-sm",
               toast.tone === "error" && "border-destructive/40",
             )}
           >

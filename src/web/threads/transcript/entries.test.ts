@@ -125,6 +125,17 @@ describe("transcriptEntries", () => {
     expect(shape(rows)).toEqual([["h"], ["calls:c1", ["c1", "c2", "c3"]]]);
   });
 
+  it("folds the calls that set up schedules and webhooks and background calls with the others", () => {
+    const work = (kind: "schedule" | "webhook" | "call") =>
+      ({ kind, status: "scheduled", startedAt: "", canCancel: false }) as ToolRow["background"];
+    const rows = [
+      call("c1", { turn: turn(false), background: work("schedule") }),
+      call("c2", { background: work("webhook") }),
+      call("c3", { background: work("call") }),
+    ];
+    expect(shape(rows)).toEqual([["calls:c1", ["c1", "c2", "c3"]]]);
+  });
+
   it("keeps the steps that only thought between calls inside the run", () => {
     const rows = [call("c1", { turn: turn(false) }), thought("t1"), call("c2"), thought("t2")];
     expect(shape(rows)).toEqual([["calls:c1", ["c1", "t1", "c2"]], ["t2"]]);
@@ -448,5 +459,22 @@ describe("transcriptTurns", () => {
     const rows = [human("h"), silent("s1"), call("c1", { turn: turn(false) }), call("c2")];
     expect(turns(rows, true).at(-1)?.[2]).toBeUndefined();
     expect(turns(rows, false).at(-1)?.[2]).toBe("s1");
+  });
+
+  it("marks only the reply that ends the turn as showing the toolbar", () => {
+    const rows = [step("r1", { text: "Done", turn: turn(false) }), call("c1"), reply("r2")];
+    const entries = transcriptTurns(rows).flatMap((each) =>
+      each.blocks.flatMap((block) => (block.kind === "lines" ? block.entries : [block])),
+    );
+    expect(entries.map((entry) => entry.kind === "row" && entry.endsTurn)).toEqual([
+      undefined,
+      false,
+      true,
+    ]);
+  });
+
+  it("shows the turn's actions after a turn that ends on a call following text", () => {
+    const rows = [step("r1", { text: "Done", turn: turn(false) }), call("c1")];
+    expect(turns(rows).at(-1)?.[2]).toBe("r1");
   });
 });
