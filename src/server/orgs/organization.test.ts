@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import type { Tasks } from "@/server/agent/tasks.ts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
@@ -53,6 +54,7 @@ function setup() {
     artifacts: {} as Artifacts,
     logger,
     signInOptions: { oidc: null },
+    tasks: {} as Tasks,
     pingDatabase: () => Promise.resolve(true),
   });
 

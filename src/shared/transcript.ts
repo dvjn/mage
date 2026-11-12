@@ -232,7 +232,8 @@ export function notificationParts(
   } & NotificationParts,
 ): NotificationParts & { text: string } {
   const { kind, source, text } = data;
-  if (data.subagents || kind === "message" || kind === "call.ended") return data;
+  if (data.subagents || kind === "message" || kind === "call.ended" || kind === "task.changed")
+    return data;
   if (kind === "agent.idle") {
     const prefix = Object.keys(IDLE_PREFIXES).find((one) => text.startsWith(one)) as
       | keyof typeof IDLE_PREFIXES

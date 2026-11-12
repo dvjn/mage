@@ -1,4 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import type { Tasks } from "@/server/agent/tasks.ts";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -48,6 +49,7 @@ const app = createApp({
   artifacts: {} as Artifacts,
   logger: createLogger({ write() {} }),
   signInOptions: { oidc: null },
+  tasks: {} as Tasks,
   pingDatabase: () => Promise.resolve(true),
   webRoot,
 });

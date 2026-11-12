@@ -138,7 +138,8 @@ export type Cause = z.infer<typeof causeSchema>;
 
 // What a notification tells the agent it reaches: another agent's message; that a subagent ended
 // a run without sending its starter anything, failed, or was stopped; or that the subagents a
-// watch was set on went idle; or that a call it started in the background ended.
+// watch was set on went idle; that a call it started in the background ended; or that a person
+// changed a task given to it.
 export const notificationKindSchema = z.enum([
   "message",
   "agent.ended",
@@ -146,6 +147,7 @@ export const notificationKindSchema = z.enum([
   "agent.stopped",
   "agent.idle",
   "call.ended",
+  "task.changed",
 ]);
 
 export type NotificationKind = z.infer<typeof notificationKindSchema>;

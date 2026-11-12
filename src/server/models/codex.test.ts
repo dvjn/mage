@@ -1,4 +1,5 @@
 import { eq } from "drizzle-orm";
+import type { Tasks } from "@/server/agent/tasks.ts";
 import { UnsecuredJWT } from "jose";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -154,6 +155,7 @@ function setup() {
     artifacts: {} as Artifacts,
     logger,
     signInOptions: { oidc: null },
+    tasks: {} as Tasks,
     pingDatabase: () => Promise.resolve(true),
   });
 

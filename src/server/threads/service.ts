@@ -58,7 +58,9 @@ import { statusOf, type ThreadShow, type ThreadStatus } from "@/shared/thread-st
 import { BTW, COMPACT, type CommandInput, type ThreadCommand } from "@/shared/threads/commands.ts";
 import type { ThreadCan, ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
 import type { CallRecord, CallStore } from "@/server/agent/calls.ts";
+import type { Tasks } from "@/server/agent/tasks.ts";
 import type { BackgroundWork } from "@/shared/calls.ts";
+import type { TaskList } from "@/shared/tasks.ts";
 import type {
   Aside,
   BranchAction,
@@ -389,6 +391,8 @@ export interface ThreadsOptions {
     Subagents,
     "find" | "summaryOf" | "ofParents" | "reach" | "stopAll" | "unarchive"
   >;
+  // The thread's task list, when given.
+  tasks?: Pick<Tasks, "listFor" | "ownerOf">;
   // The background calls tools start or people move there, when given.
   background?: Pick<CallStore, "find" | "open">;
   // The thread's model, opened, and what its next call would send were the branch to end at the
@@ -419,7 +423,8 @@ export type Threads = ReturnType<typeof createThreads>;
 export type ThreadFollowItem =
   | { kind: "rows"; update: RowsUpdate }
   | { kind: "delta"; delta: DeltaBatch }
-  | { kind: "thread"; head: ThreadHead };
+  | { kind: "thread"; head: ThreadHead }
+  | { kind: "tasks"; list: TaskList };
 
 // Who reads a thread and what they may do in it, for the parts of its rows that are theirs.
 interface Reader {
@@ -725,6 +730,7 @@ export function createThreads(options: ThreadsOptions) {
     commands,
     subagents,
     background,
+    tasks,
   } = options;
   const now = options.now ?? (() => new Date());
   const agentNameOf = options.agentNameIn ?? (() => DEFAULT_AGENT_NAME);
@@ -1861,6 +1867,7 @@ export function createThreads(options: ThreadsOptions) {
       }
       const unsubscribe = bus.onActivity((change) => {
         const { threadId, read, gone } = change;
+        if (change.tasks) return;
         if (read) {
           if (read.userId !== principal.userId) return;
           deliver({ kind: "read", threadId, seq: read.seq });
@@ -2385,7 +2392,7 @@ export function createThreads(options: ThreadsOptions) {
       const subagentsOf = () => new Set(threads.children(id).map((child) => child.id));
       let started = subagentsOf();
       const stopActivity = bus.onActivity((change) => {
-        if (change.read || change.gone) return;
+        if (change.read || change.gone || change.tasks) return;
         if (change.threadId !== id) {
           if (started.has(change.threadId)) sendRows();
           return;
@@ -2404,6 +2411,25 @@ export function createThreads(options: ThreadsOptions) {
           () => {},
         );
       });
+      // The thread's task list, told again whenever it differs from what was last told.
+      let toldTasks = "";
+      function sendTasks(first = false) {
+        if (!tasks) return;
+        try {
+          const list = tasks.listFor(principal, id);
+          const text = JSON.stringify(list);
+          if (text === toldTasks) return;
+          toldTasks = text;
+          // An empty list is what the page read already.
+          if (!first || list.tasks.length > 0) deliver({ kind: "tasks", list });
+        } catch {
+          // The reader may no longer read the thread, which the stream says on its own.
+        }
+      }
+      const stopTasks = bus.onActivity((change) => {
+        if (change.tasks && !stopped && change.threadId === tasks?.ownerOf(id)) sendTasks();
+      });
+      sendTasks(true);
       sendRows();
       for (const delta of deltas.inThread(id)) send({ kind: "delta", delta });
       replaying = false;
@@ -2412,6 +2438,7 @@ export function createThreads(options: ThreadsOptions) {
         stopped = true;
         unsubscribe();
         stopActivity();
+        stopTasks();
         release();
       };
     },

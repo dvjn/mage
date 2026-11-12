@@ -41,6 +41,8 @@ export function feedMessage(item: ThreadFollowItem) {
       };
     case "thread":
       return { event: "thread", data: JSON.stringify(item.head) };
+    case "tasks":
+      return { event: "tasks", data: JSON.stringify(item.list) };
     case "delta":
       return { event: "message-delta", data: JSON.stringify(item.delta) };
     default: {

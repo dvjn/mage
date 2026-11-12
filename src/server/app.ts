@@ -11,6 +11,8 @@ import { requestId, type RequestIdVariables } from "hono/request-id";
 import { artifactRoutes } from "@/server/artifacts/routes.ts";
 import type { Artifacts } from "@/server/artifacts/service.ts";
 import { toolRoutes } from "@/server/agent/routes.ts";
+import { taskRoutes } from "@/server/agent/task-routes.ts";
+import type { Tasks } from "@/server/agent/tasks.ts";
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
 import { guestRoutes } from "@/server/guests/routes.ts";
@@ -57,6 +59,8 @@ export interface AppOptions {
   guests: Guests;
   // Decisions on the agent's tool calls, and what orgs and spaces set their tools to.
   tools: ToolDecisions;
+  // The tasks in threads' lists.
+  tasks: Tasks;
   // The access policies orgs and spaces keep for their tools.
   toolPolicies: ToolPolicies;
   // The MCP servers orgs and spaces add, and authorizing Mage with them.
@@ -137,6 +141,7 @@ function createApi(options: AppOptions) {
     .route("/", threadRoutes(options))
     .route("/", guestRoutes(options))
     .route("/", toolRoutes(options))
+    .route("/", taskRoutes(options))
     .route("/", mcpRoutes(options))
     .route("/", instructionRoutes(options))
     .route("/", skillRoutes(options))

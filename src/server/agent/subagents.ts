@@ -62,6 +62,8 @@ export interface SubagentRecord {
   parentThreadId: string;
   name: string;
   instructions: string | null;
+  // Whether it works on its starter's task list.
+  shareTasks: boolean;
   archivedAt: Date | null;
   createdAt: Date;
 }
@@ -70,6 +72,7 @@ export interface SubagentStore {
   create(
     subagent: Pick<SubagentRecord, "threadId" | "parentThreadId" | "name"> & {
       instructions?: string | null;
+      shareTasks?: boolean;
     },
   ): SubagentRecord;
   find(threadId: string): SubagentRecord | null;
@@ -77,6 +80,16 @@ export interface SubagentStore {
   ofParents(parentThreadIds: string[]): SubagentRecord[];
   // Retires the subagent, or with null brings it back.
   setArchived(threadId: string, at: Date | null): void;
+  // Lets the subagent work on its starter's task list.
+  setShareTasks(threadId: string): void;
+}
+
+// What starting a subagent with tasks asks of the starter's task list.
+export interface TaskHandover {
+  // The reason the tasks cannot be given, or null when they can.
+  check(ownerId: string, taskIds: string[]): string | null;
+  // Gives the tasks to the subagent and tells it.
+  give(ownerId: string, taskIds: string[], subagent: { threadId: string; name: string }): void;
 }
 
 // How many of a thread's subagents run at once; the rest wait their turn.
@@ -92,7 +105,7 @@ export const AGENT_NAME = "Agent";
 // What the agent of a thread that can start subagents is told about them.
 export const SUBAGENTS_GUIDANCE = [
   "Use a subagent to keep large work out of this conversation: exploring many files or results, a long investigation, or parts of a job that don't depend on each other. Each runs in the background in its own thread; its report, and runs that end without one, fail or are stopped, arrive as notifications from [Subagent <label>].",
-  "- Brief it as a peer who knows nothing: the goal, what you already know or ruled out, where to look, and what to return. The brief is all the context it has.\n- Ask for a short report: conclusions, decisions, ids and links, not raw data. Ask it to say what it verified and what it assumed.\n- Split work so subagents don't overlap, and run them in parallel.\n- Don't do the same work yourself while one runs. To wait, watch them and end your turn; a watch stays set until it fires, so don't set it again after each report.\n- Reuse a subagent that already has the context, archived or not, rather than starting another. Archive each once you've used its report, and all of them when the job is done.\n- Treat a report as a claim. Check anything that matters before acting on it.",
+  "- Brief it as a peer who knows nothing: the goal, what you already know or ruled out, where to look, and what to return. The brief is all the context it has.\n- Ask for a short report: conclusions, decisions, ids and links, not raw data. Ask it to say what it verified and what it assumed.\n- Split work so subagents don't overlap, and run them in parallel. Plan tasks first, then start them with their task ids in tasks so they pick up and check off items on this thread's list (share_tasks alone shares the list).\n- Don't do the same work yourself while one runs. To wait, watch them and end your turn; a watch stays set until it fires, so don't set it again after each report.\n- Reuse a subagent that already has the context, archived or not, rather than starting another. Archive each once you've used its report, and all of them when the job is done.\n- Treat a report as a claim. Check anything that matters before acting on it.",
 ].join("\n\n");
 
 export interface SubagentsOptions {
@@ -105,6 +118,8 @@ export interface SubagentsOptions {
   // models the org can use there, each with whether it takes an effort.
   choosesModels?: (spaceId: string) => boolean;
   modelsIn?: (orgId: string) => Promise<{ ref: string; reasoning?: boolean }[]>;
+  // The starter's task list, for subagents started with tasks.
+  taskHandover?: () => TaskHandover;
   now?: () => Date;
 }
 
@@ -570,6 +585,14 @@ export function createSubagents(options: SubagentsOptions) {
       description: "An exact ref from thread.list_models; yours when not given",
     }),
     effort: effortSchema.optional().meta({ title: "Effort", description: "Yours when not given" }),
+    tasks: z.array(z.string().min(1)).min(1).optional().meta({
+      title: "Tasks",
+      description: "Ids of this thread's tasks to give it; shares your task list with it",
+    }),
+    share_tasks: z.boolean().optional().meta({
+      title: "Share tasks",
+      description: "Let it read and update your task list, and be given tasks on it",
+    }),
   });
 
   type StartInput = z.infer<typeof startInput>;
@@ -595,6 +618,11 @@ export function createSubagents(options: SubagentsOptions) {
     if (others.some((subagent) => sameName(subagent.name, input.name))) {
       throw new ToolRefusal(`A subagent is already labelled ${input.name}.`);
     }
+    const handover = input.tasks ? options.taskHandover?.() : undefined;
+    if (input.tasks && handover) {
+      const refusal = handover.check(parent.id, input.tasks);
+      if (refusal) throw new ToolRefusal(refusal);
+    }
     const thread = threads.create({
       spaceId: parent.spaceId,
       model: model ? model.model : parent.model,
@@ -610,6 +638,7 @@ export function createSubagents(options: SubagentsOptions) {
       parentThreadId: parent.id,
       name: input.name,
       instructions: input.instructions ?? null,
+      shareTasks: (input.share_tasks ?? false) || !!input.tasks,
     });
     const { from, via } = senderOf(parent);
     deliver(thread.id, {
@@ -623,6 +652,9 @@ export function createSubagents(options: SubagentsOptions) {
       },
       call: { threadId: parent.id, callId: ctx.callId },
     });
+    if (input.tasks && handover) {
+      handover.give(parent.id, input.tasks, subagent);
+    }
     bus.activity({ threadId: parent.id });
     return {
       id: thread.id,
@@ -881,6 +913,12 @@ export function createSubagents(options: SubagentsOptions) {
     // one past its starter's limit of running ones.
     mayStart,
 
+    // Lets the subagent work on its starter's task list, if it does not already.
+    shareTasks(threadId: string) {
+      const subagent = subagents.find(threadId);
+      if (subagent && !subagent.shareTasks) subagents.setShareTasks(threadId);
+    },
+
     // The threads the thread's agent sends messages to, retired subagents' among them, each with
     // the label it was sent by: for the agent that started subagents, theirs; for a subagent, its
     // starter's, as agent, and the others started with it.
@@ -940,6 +978,7 @@ export function createSubagents(options: SubagentsOptions) {
         name: subagent.name,
         parent: task?.from.name ?? threads.find(subagent.parentThreadId)?.title ?? UNTITLED,
         ...(subagent.instructions && { instructions: subagent.instructions }),
+        ...(subagent.shareTasks && { sharesTasks: true }),
       });
       const fork = task?.task?.fork;
       if (!fork) return [framing];

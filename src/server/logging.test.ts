@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import type { Tasks } from "@/server/agent/tasks.ts";
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
 import type { Guests } from "@/server/guests/service.ts";
@@ -53,6 +54,7 @@ describe("request logging", () => {
       artifacts: {} as Artifacts,
       logger,
       signInOptions: { oidc: null },
+      tasks: {} as Tasks,
       pingDatabase: () => Promise.resolve(true),
     });
 

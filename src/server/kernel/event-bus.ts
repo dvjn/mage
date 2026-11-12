@@ -6,9 +6,11 @@ import { EventEmitter } from "node:events";
 import type { ThreadFeedItem } from "@/shared/threads/events.ts";
 
 // A thread whose list entry may read differently now; with `read`, only that someone saw it up to
-// a seq; with `gone`, it was deleted, and who could read it: its space's members and its guests.
+// a seq; with `gone`, it was deleted, and who could read it: its space's members and its guests;
+// with `tasks`, only its task list changed; with `rows`, only what its rows show.
 export interface ActivityChange {
   threadId: string;
+  tasks?: true;
   read?: { userId: string; seq: number };
   gone?: { spaceId: string; guests: string[] };
 }

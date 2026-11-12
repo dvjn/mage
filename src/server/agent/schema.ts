@@ -9,6 +9,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 
 import type { FailureKind, Steering } from "@/shared/threads/events.ts";
+import type { TaskActor, TaskAssignee, TaskStatus } from "@/shared/tasks.ts";
 import { POLICY_COLORS } from "@/shared/tools.ts";
 import { user, organization } from "@/server/orgs/schema.ts";
 import { thread } from "@/server/threads/schema.ts";
@@ -204,6 +205,8 @@ export const subagent = sqliteTable(
       .references(() => thread.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     instructions: text("instructions"),
+    // Whether it reads and updates its starter's task list in place of keeping its own.
+    shareTasks: integer("share_tasks", { mode: "boolean" }).notNull().default(false),
     archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
@@ -239,4 +242,56 @@ export const backgroundCall = sqliteTable(
     endedAt: integer("ended_at", { mode: "timestamp_ms" }),
   },
   (table) => [index("background_call_thread_idx").on(table.threadId, table.createdAt)],
+);
+
+// A task in a thread's list: its title, where it stands, whom it is for, its place in the list, and
+// who made and last changed it, by the names they went by, and when it was archived.
+export const threadTask = sqliteTable(
+  "thread_task",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    title: text("title").notNull(),
+    status: text("status", { enum: ["todo", "doing", "done"] })
+      .$type<TaskStatus>()
+      .notNull(),
+    assignee: text("assignee", { mode: "json" }).$type<TaskAssignee | null>(),
+    position: integer("position").notNull(),
+    createdBy: text("created_by", { mode: "json" }).$type<TaskActor>().notNull(),
+    updatedBy: text("updated_by", { mode: "json" }).$type<TaskActor>().notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+    // Set once the task is archived: it leaves the list and stays as history.
+    archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [index("thread_task_thread_idx").on(table.threadId, table.position)],
+);
+
+// A thread's agent waiting on tasks of a list: the ones it named, and whether it wants to hear when
+// one is done or on any change. It ends once it has told the agent.
+export const threadTaskWatch = sqliteTable(
+  "thread_task_watch",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    ownerId: text("owner_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    taskIds: text("task_ids", { mode: "json" }).$type<string[]>().notNull(),
+    until: text("until", { enum: ["done", "changed"] })
+      .$type<"done" | "changed">()
+      .notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+  },
+  (table) => [
+    index("thread_task_watch_thread_idx").on(table.threadId),
+    index("thread_task_watch_owner_idx").on(table.ownerId),
+  ],
 );

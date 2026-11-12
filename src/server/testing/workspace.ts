@@ -13,6 +13,8 @@ import { expect } from "vite-plus/test";
 
 import { createCallStore } from "@/server/agent/call-store.ts";
 import { createCalls } from "@/server/agent/calls.ts";
+import { createTasks } from "@/server/agent/tasks.ts";
+import { createTaskStore } from "@/server/agent/task-store.ts";
 import { createSubagentStore } from "@/server/agent/subagent-store.ts";
 import { createSubagents } from "@/server/agent/subagents.ts";
 import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
@@ -312,6 +314,7 @@ export function setup(
       const space = spaceStore.find(spaceId);
       return !!space && tools.optionOn(space, SUBAGENTS_TOOLSET, CHOOSE_MODELS);
     },
+    taskHandover: () => tasks.handover,
     modelsIn: () =>
       Promise.resolve(org.models.map((ref) => ({ ref, reasoning: !org.plain.includes(ref) }))),
   });
@@ -327,6 +330,16 @@ export function setup(
     tools: () => tools,
     narrow: (thread, offered) => subagents.toolsOf(thread, offered),
     mayStart: (threadId) => subagents.mayStart(threadId),
+  });
+  const tasks = createTasks({
+    tasks: createTaskStore(db),
+    threads: threadStore,
+    access,
+    orgOf: (spaceId) => spaceStore.find(spaceId)?.orgId ?? null,
+    subagents,
+    runs: runStore,
+    log,
+    bus: countingBus,
   });
   const artifacts = createArtifacts({
     store: createArtifactStore(db),
@@ -368,6 +381,7 @@ export function setup(
       ),
       subagents.toolset(),
       calls.toolset(),
+      tasks.toolset(),
       artifacts.toolset(),
       ...toolsets,
     ],
@@ -405,6 +419,7 @@ export function setup(
     tools,
     subagents,
     background: callStore,
+    tasks,
     commands: createCommands({ skills, prompts: mcp }),
     ...(titles && {
       titles: createTitles({
@@ -489,6 +504,7 @@ export function setup(
       bus: countingBus,
       baseUrl,
     }),
+    tasks,
     orgs,
     groups: createGroups({ directory }),
     tools: createToolDecisions({
@@ -650,6 +666,7 @@ export function setup(
     tools,
     subagents,
     subagentStore,
+    tasks,
     calls,
     mcp,
     mcpNetwork,

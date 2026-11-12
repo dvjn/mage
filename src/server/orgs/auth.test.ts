@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import type { Tasks } from "@/server/agent/tasks.ts";
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
 import { createApp } from "@/server/app.ts";
@@ -54,6 +55,7 @@ function setup(options: Pick<AuthOptions, "oidc"> = {}, db = openDatabase(":memo
     artifacts: {} as Artifacts,
     logger,
     signInOptions,
+    tasks: {} as Tasks,
     pingDatabase: () => Promise.resolve(true),
   });
 

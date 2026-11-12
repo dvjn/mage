@@ -107,18 +107,30 @@ export interface SubagentFraming {
   name: string;
   parent: string;
   instructions?: string;
+  // It works on its starter's task list.
+  sharesTasks?: boolean;
 }
 
 // What a subagent's framing starts with.
 const FRAMING = "You are the subagent";
 
 // A subagent's framing, as the first message of its conversation.
-export function framingMessage({ name, parent, instructions }: SubagentFraming): UserMessage {
+export function framingMessage({
+  name,
+  parent,
+  instructions,
+  sharesTasks,
+}: SubagentFraming): UserMessage {
   return {
     role: "user",
     text: [
       `${FRAMING} ${name}, started by the agent of the thread ${parent}.`,
       ...(instructions?.trim() ? [`Instructions for you:\n${instructions.trim()}`] : []),
+      ...(sharesTasks
+        ? [
+            "The task list is your starter's, shared with you: tasks given to you are yours to do; keep their status current.",
+          ]
+        : []),
     ].join("\n"),
   };
 }

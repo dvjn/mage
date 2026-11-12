@@ -25,6 +25,10 @@ export function createSubagentStore(db: Db): SubagentStore {
         .all();
     },
 
+    setShareTasks(threadId) {
+      db.update(subagent).set({ shareTasks: true }).where(eq(subagent.threadId, threadId)).run();
+    },
+
     setArchived(threadId, at) {
       db.update(subagent).set({ archivedAt: at }).where(eq(subagent.threadId, threadId)).run();
     },

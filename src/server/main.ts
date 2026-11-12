@@ -9,6 +9,9 @@ import { CONTENT_PREFIX, createArtifacts } from "@/server/artifacts/service.ts";
 import { createArtifactStore } from "@/server/artifacts/store.ts";
 import { createCallStore } from "@/server/agent/call-store.ts";
 import { createCalls } from "@/server/agent/calls.ts";
+import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
+import { createTasks } from "@/server/agent/tasks.ts";
+import { createTaskStore } from "@/server/agent/task-store.ts";
 import { createSubagentStore } from "@/server/agent/subagent-store.ts";
 import { createSubagents } from "@/server/agent/subagents.ts";
 import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
@@ -187,6 +190,7 @@ const subagents = createSubagents({
     const space = spaceStore.find(spaceId);
     return !!space && tools.optionOn(space, SUBAGENTS_TOOLSET, CHOOSE_MODELS);
   },
+  taskHandover: () => tasks.handover,
   modelsIn: async (orgId) => (await models.resolveModels(orgId)).models,
 });
 const callStore = createCallStore(db);
@@ -201,6 +205,20 @@ const calls = createCalls({
   tools: () => tools,
   narrow: (thread, offered) => subagents.toolsOf(thread, offered),
   mayStart: (threadId) => subagents.mayStart(threadId),
+});
+const tasks = createTasks({
+  tasks: createTaskStore(db),
+  threads: threadStore,
+  access,
+  orgOf: (spaceId) => spaceStore.find(spaceId)?.orgId ?? null,
+  subagents,
+  runs: runStore,
+  log,
+  bus,
+  agentNameIn: (spaceId) => {
+    const space = spaceStore.find(spaceId);
+    return space ? agentNameIn(settingStore, space) : DEFAULT_AGENT_NAME;
+  },
 });
 // Previews need a browser, which servers without one go without.
 const artifacts = createArtifacts({
@@ -241,6 +259,7 @@ const tools = createTools({
     ),
     subagents.toolset(),
     calls.toolset(),
+    tasks.toolset(),
     artifacts.toolset(),
   ],
   scoped: {
@@ -346,6 +365,7 @@ const app = createApp({
     tools,
     subagents,
     background: callStore,
+    tasks,
     commands: createCommands({ skills, prompts: mcp }),
     ask: (threadId, branchId, rowId) => worker.requestAt(threadId, branchId, rowId),
     asides: createAsideStore(db),
@@ -355,6 +375,7 @@ const app = createApp({
       titles: createTitles({ models, threads: threadStore, log, logger }),
     }),
   }),
+  tasks,
   orgs,
   groups: createGroups({ directory }),
   tools: createToolDecisions({
