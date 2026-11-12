@@ -108,11 +108,21 @@ export async function branchOfRow(threadId: string, rowId: string) {
 }
 
 // The rows of the thread before the place `before`, or with `at` as many as reach back to that row;
-// of the branch named, or else the current one.
-export async function earlierRows(threadId: string, before: number, at?: string, branch?: string) {
+// of the branch named, or else the current one. With `unreadFrom`, the row the thread opened at, the
+// page says how many rows before it are still new.
+export async function earlierRows(
+  threadId: string,
+  before: number,
+  { at, branch, unreadFrom }: { at?: string; branch?: string; unreadFrom?: string | null } = {},
+) {
   const res = await apiClient.v1.threads[":id"].rows.$get({
     param: { id: threadId },
-    query: { before: String(before), ...(at && { at }), ...(branch && { branch }) },
+    query: {
+      before: String(before),
+      ...(at && { at }),
+      ...(branch && { branch }),
+      ...(unreadFrom && { unreadFrom }),
+    },
   });
   if (!res.ok) throw new Error("could not read the thread's earlier rows");
   return rowsPageSchema.parse(await res.json());

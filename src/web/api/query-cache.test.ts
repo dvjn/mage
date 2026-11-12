@@ -1,7 +1,10 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vite-plus/test";
 
-import { type CacheOwner, cacheOwner, shouldPersist } from "@/web/api/query-cache.ts";
+import type { PersistedClient } from "@tanstack/react-query-persist-client";
+
+import { ROWS_PAGE } from "@/shared/threads/rows.ts";
+import { shouldPersist, withLatestPages } from "@/web/api/query-cache.ts";
 
 // A query in the cache that has answered once.
 function settled(queryClient: QueryClient, queryKey: readonly unknown[]) {
@@ -35,55 +38,33 @@ describe("shouldPersist", () => {
   });
 });
 
-describe("cacheOwner", () => {
-  const ada: CacheOwner = { userId: "u-ada", orgId: "o-last" };
-  const offline = () => Promise.reject(new TypeError("Failed to fetch"));
+describe("withLatestPages", () => {
+  const client = (data: unknown, queryKey: readonly unknown[]) =>
+    ({
+      clientState: { mutations: [], queries: [{ queryKey, state: { data } }] },
+    }) as unknown as PersistedClient;
+  const rows = (count: number) => Array.from({ length: count }, (_, order) => ({ order }));
+  const dataOf = (kept: PersistedClient) =>
+    kept.clientState.queries[0]!.state.data as never as {
+      rows: { order: number }[];
+      before: number | null;
+    };
 
-  function owner(
-    session: () => Promise<{ user: { id: string } } | null>,
-    { tab = "o-tab" as string | null, last = ada as CacheOwner | null } = {},
-  ) {
-    let askedForOrg = false;
-    const result = cacheOwner({
-      session,
-      org: () => {
-        askedForOrg = true;
-        return Promise.resolve(tab ?? "o-server");
-      },
-      tabOrg: () => tab,
-      last: () => Promise.resolve(last ?? undefined),
-    });
-    return result.then((found) => ({ found, askedForOrg }));
-  }
+  it("cuts a thread to its newest page, and says where it starts", () => {
+    const kept = dataOf(
+      withLatestPages(client({ rows: rows(200), before: 20 }, ["threads", "t1"])),
+    );
 
-  it("is the signed-in user, in the tab's org", async () => {
-    expect(await owner(() => Promise.resolve({ user: { id: "u-grace" } }))).toEqual({
-      found: { userId: "u-grace", orgId: "o-tab" },
-      askedForOrg: true,
-    });
+    expect(kept.rows).toHaveLength(ROWS_PAGE);
+    expect(kept.rows[0]!.order).toBe(200 - ROWS_PAGE);
+    expect(kept.before).toBe(200 - ROWS_PAGE);
   });
 
-  it("is nobody once the server says no one is signed in", async () => {
-    expect((await owner(() => Promise.resolve(null))).found).toBeNull();
-  });
+  it("leaves a thread within a page, and other queries, as they are", () => {
+    const short = client({ rows: rows(5), before: null }, ["threads", "t1"]);
+    const other = client({ rows: rows(200), before: 3 }, ["spaces", "s1"]);
 
-  it("is nobody when the server answers the session with an error", async () => {
-    const refused = () => Promise.reject(new Error("Unauthorized"));
-    expect((await owner(refused)).found).toBeNull();
-  });
-
-  it("is whoever signed in last when the server cannot be reached, in the tab's org", async () => {
-    expect(await owner(offline)).toEqual({
-      found: { userId: "u-ada", orgId: "o-tab" },
-      askedForOrg: false,
-    });
-  });
-
-  it("takes the org they were in when the tab knows none", async () => {
-    expect((await owner(offline, { tab: null })).found).toEqual(ada);
-  });
-
-  it("is nobody offline when no one signed in here before", async () => {
-    expect((await owner(offline, { last: null })).found).toBeNull();
+    expect(withLatestPages(short)).toEqual(short);
+    expect(withLatestPages(other)).toEqual(other);
   });
 });

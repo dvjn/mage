@@ -1,7 +1,8 @@
 // The sidebar's space section: starts a thread, opens the artifacts gallery and the space's
 // settings, as the server lets the person.
 
-import { Link, useMatchRoute } from "@tanstack/react-router";
+import { useMatchRoute } from "@tanstack/react-router";
+import { PressLink } from "@/web/components/press-link";
 import { ShapesIcon, PlusIcon, Settings2Icon } from "lucide-react";
 
 import type { SpaceSummary } from "@/shared/spaces.ts";
@@ -37,7 +38,7 @@ export function SpaceSection({ space }: { space: SpaceSummary }) {
         <SidebarMenuItem>
           <SidebarMenuButton
             isActive={!!matchRoute({ to: "/artifacts", fuzzy: true })}
-            render={<Link to="/artifacts" />}
+            render={<PressLink to="/artifacts" />}
           >
             <ShapesIcon />
             <span>Artifacts</span>
@@ -53,7 +54,7 @@ export function SpaceSection({ space }: { space: SpaceSummary }) {
                   fuzzy: true,
                 })
               }
-              render={<Link to="/s/$spaceId/settings" params={{ spaceId: space.id }} />}
+              render={<PressLink to="/s/$spaceId/settings" params={{ spaceId: space.id }} />}
             >
               <Settings2Icon />
               <span>Space settings</span>

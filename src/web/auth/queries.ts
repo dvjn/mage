@@ -19,7 +19,8 @@ export const signInOptionsQuery = queryOptions({
 });
 
 // Asked for even offline, so that pages waiting on it learn at once that the server cannot be
-// reached.
+// reached. Pages do not wait for it when someone is known to be signed in: it is read again in the
+// background on each navigation, and whoever it finds gone is signed out then.
 export const sessionQuery = queryOptions({
   queryKey: ["session"],
   networkMode: "always",

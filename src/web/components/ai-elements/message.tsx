@@ -3,12 +3,6 @@
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { Button } from "@/web/components/ui/button";
 import { ButtonGroup, ButtonGroupText } from "@/web/components/ui/button-group";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/web/components/ui/tooltip";
 import { cn } from "cn";
 import type { UIMessage } from "ai";
 import { ChevronLeftIcon, ChevronRightIcon } from "lucide-react";
@@ -76,18 +70,7 @@ export const MessageAction = ({
     </Button>
   );
 
-  if (tooltip) {
-    return (
-      <TooltipProvider>
-        <Tooltip>
-          <TooltipTrigger>{button}</TooltipTrigger>
-          <TooltipContent>
-            <p>{tooltip}</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
-    );
-  }
+  if (tooltip) return <WithTooltip label={tooltip}>{button}</WithTooltip>;
 
   return button;
 };

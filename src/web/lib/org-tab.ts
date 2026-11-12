@@ -36,6 +36,16 @@ export function adoptOrg(orgId: string) {
   if (!current) write(orgId);
 }
 
+// Leaves the tab's org, as when someone else signs in: it learns theirs again.
+export function forgetOrg() {
+  current = null;
+  try {
+    sessionStorage.removeItem(KEY);
+  } catch {
+    // Nothing kept.
+  }
+}
+
 // Fetches as the API client does, naming the tab's org unless the request names one, and leaving
 // the tab's org when the person is no longer in it.
 export async function orgFetch(input: RequestInfo | URL, init?: RequestInit) {
@@ -50,12 +60,7 @@ export async function orgFetch(input: RequestInfo | URL, init?: RequestInit) {
       .json()
       .catch(() => null)) as { code?: string } | null;
     if (body?.code === ORG_NOT_FOUND_CODE) {
-      current = null;
-      try {
-        sessionStorage.removeItem(KEY);
-      } catch {
-        // Nothing kept.
-      }
+      forgetOrg();
       window.location.assign("/");
     }
   }

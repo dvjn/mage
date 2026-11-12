@@ -31,7 +31,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/web/components/ui/collapsible";
-import { Popover, PopoverContent, PopoverTrigger } from "@/web/components/ui/popover";
+import { LazyPopover } from "@/web/components/lazy-popover";
 import {
   Table,
   TableBody,
@@ -139,19 +139,17 @@ function Nested({
   schema?: Column["schema"];
 }) {
   return (
-    <Popover>
-      <PopoverTrigger
-        render={<Button size="xs" variant="link" className="h-auto p-0 font-normal" />}
-      >
-        {countOf(value)}
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="max-h-80 w-auto max-w-[min(32rem,calc(100vw-2rem))] min-w-48 overflow-auto text-xs text-muted-foreground"
-      >
-        <Value layout={layoutOf(value, schema)} />
-      </PopoverContent>
-    </Popover>
+    <LazyPopover
+      trigger={
+        <Button size="xs" variant="link" className="h-auto p-0 font-normal">
+          {countOf(value)}
+        </Button>
+      }
+      align="start"
+      className="max-h-80 w-auto max-w-[min(32rem,calc(100vw-2rem))] min-w-48 overflow-auto text-xs text-muted-foreground"
+    >
+      <Value layout={layoutOf(value, schema)} />
+    </LazyPopover>
   );
 }
 

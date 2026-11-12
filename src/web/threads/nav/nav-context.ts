@@ -9,7 +9,6 @@ import type { ThreadAction } from "@/web/threads/thread-dialogs";
 export type NavAction = ThreadAction;
 
 export interface Nav {
-  activeThreadId: string | undefined;
   act: (action: NavAction) => void;
   // What the reader may do with the space's threads.
   can: Pick<SpaceSummary, "post" | "remove">;

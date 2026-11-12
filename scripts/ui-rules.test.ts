@@ -167,8 +167,8 @@ describe("the UI rules", () => {
       .map((tag) => `${at(tag)}: no aria-label`);
     const untipped = iconOnly
       .filter((tag) => {
-        const opened = (tag.before.match(/<(WithTooltip|Tooltip)\b/g) ?? []).length;
-        const closed = (tag.before.match(/<\/(WithTooltip|Tooltip)>/g) ?? []).length;
+        const opened = (tag.before.match(/<(WithTooltip|LazyPopover|Tooltip)\b/g) ?? []).length;
+        const closed = (tag.before.match(/<\/(WithTooltip|LazyPopover|Tooltip)>/g) ?? []).length;
         return opened - closed <= 0;
       })
       .map((tag) => `${at(tag)}: not in a tooltip`);

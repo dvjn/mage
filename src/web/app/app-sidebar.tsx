@@ -48,9 +48,12 @@ function NavSearch() {
 }
 
 export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
-  const me = useQuery(meQuery);
+  const { data: user } = useQuery({ ...meQuery, select: (me) => me.user });
   const { setOpenMobile } = useSidebar();
-  const { pathname, searchStr } = useLocation();
+  const { pathname, searchStr } = useLocation({
+    select: (location) => ({ pathname: location.pathname, searchStr: location.searchStr }),
+    structuralSharing: true,
+  });
   const space = useActiveSpace();
   const newThread = useNewThread();
   const hints = useModHeld();
@@ -71,7 +74,7 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       <SidebarContent>
         <NavThreads />
       </SidebarContent>
-      <SidebarFooter>{me.data && <NavUser user={me.data.user} />}</SidebarFooter>
+      <SidebarFooter>{user && <NavUser user={user} />}</SidebarFooter>
     </Sidebar>
   );
 }

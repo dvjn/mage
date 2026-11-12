@@ -4,6 +4,7 @@ import { type Context, Hono } from "hono";
 import { stream, streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 
+import type { Logger } from "@/server/kernel/logger.ts";
 import { type ApiEnv, signedIn, jsonBody, queryOf } from "@/server/http.ts";
 import { pageParams } from "@/shared/paging.ts";
 import { threadPageQuerySchema } from "@/shared/thread-status.ts";
@@ -26,7 +27,28 @@ import {
 import { rowsQuerySchema } from "@/shared/threads/rows.ts";
 import { threadSearchSchema } from "@/shared/threads/search.ts";
 
-import type { Asking, Threads } from "./service.ts";
+import type { Asking, ThreadFollowItem, Threads } from "./service.ts";
+
+// A followed thread's item as the message the stream sends. Every kind is handled, so a new one
+// fails to compile until it is.
+export function feedMessage(item: ThreadFollowItem) {
+  switch (item.kind) {
+    case "rows":
+      return {
+        id: String(item.update.seq),
+        event: "rows",
+        data: JSON.stringify(item.update),
+      };
+    case "thread":
+      return { event: "thread", data: JSON.stringify(item.head) };
+    case "delta":
+      return { event: "message-delta", data: JSON.stringify(item.delta) };
+    default: {
+      const unknown: never = item;
+      throw new Error(`unhandled thread feed item: ${JSON.stringify(unknown)}`);
+    }
+  }
+}
 
 const newThread = jsonBody(
   newThreadSchema,
@@ -70,7 +92,10 @@ const threadPageQuery = queryOf(threadPageQuerySchema);
 // `?at=` with the id of a row the page reaches back to.
 const rowsQuery = validator(
   "query",
-  (value: { before?: string; limit?: string; at?: string; branch?: string }, c) => {
+  (
+    value: { before?: string; limit?: string; at?: string; branch?: string; unreadFrom?: string },
+    c,
+  ) => {
     const parsed = rowsQuerySchema.safeParse(value);
     if (!parsed.success) return c.json({ error: "before must be a place, limit at most 100" }, 400);
     return parsed.data;
@@ -136,6 +161,7 @@ const eventCursor = validator("query", (value: { after?: string }, c) => {
 
 export function threadRoutes(options: {
   threads: Threads;
+  logger?: Logger;
   heartbeatMs?: number;
   shutdown?: AbortSignal;
 }) {
@@ -174,9 +200,12 @@ export function threadRoutes(options: {
       return c.json(await threads.get(signedIn(c.var.principal), c.req.param("id"), branch), 200);
     })
     .get("/v1/threads/:id/rows", rowsQuery, (c) => {
-      const { before, limit, at, branch } = c.req.valid("query");
+      const { before, limit, at, branch, unreadFrom } = c.req.valid("query");
       const principal = signedIn(c.var.principal);
-      return c.json(threads.rows(principal, c.req.param("id"), before, limit, at, branch), 200);
+      return c.json(
+        threads.rows(principal, c.req.param("id"), before, limit, at, branch, unreadFrom),
+        200,
+      );
     })
     .get("/v1/threads/:id/rows/:rowId/branch", (c) => {
       const { id, rowId } = c.req.param();
@@ -239,25 +268,18 @@ export function threadRoutes(options: {
       return streamSSE(c, async (stream) => {
         // One write at a time, in order.
         let writing = Promise.resolve();
+        // A write that fails is dropped, so that one bad item cannot take the server down.
         function write(send: () => Promise<void>) {
-          writing = writing.then(send, send);
+          writing = writing.then(send, send).catch((err: unknown) => {
+            options.logger?.error({ err, threadId: id }, "thread event stream write failed");
+          });
           return writing;
         }
         // Rows carry the seq of the newest event they reach as the id a reconnecting browser
         // resumes after; reply pieces carry none, and are sent again from the start of each reply
         // on reconnecting.
         const unsubscribe = threads.follow(principal, id, after, (item) => {
-          void write(() =>
-            item.kind === "rows"
-              ? stream.writeSSE({
-                  id: String(item.update.seq),
-                  event: "rows",
-                  data: JSON.stringify(item.update),
-                })
-              : item.kind === "thread"
-                ? stream.writeSSE({ event: "thread", data: JSON.stringify(item.head) })
-                : stream.writeSSE({ event: "message-delta", data: JSON.stringify(item.delta) }),
-          );
+          void write(() => stream.writeSSE(feedMessage(item)));
         });
         stream.onAbort(unsubscribe);
         while (!stream.aborted && !options.shutdown?.aborted) {

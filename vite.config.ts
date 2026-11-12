@@ -106,7 +106,8 @@ export default defineConfig({
     },
   },
   plugins: [
-    react(),
+    // The Rust React Compiler memoises components and hooks at build time.
+    react({ compiler: true }),
     tailwindcss(),
     // A service worker keeps the client's own files, so it opens without a network; each build's
     // replaces the last one's as soon as it is seen. It never answers for the API.
@@ -115,6 +116,8 @@ export default defineConfig({
       manifest: false,
       workbox: {
         globPatterns: ["**/*.{html,js,css,svg,woff2}"],
+        // The unminified build the journeys run on is over the default 2 MiB for the main chunk.
+        maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
         navigateFallback: "/index.html",
         navigateFallbackDenylist: [/^\/api(\/|$)/],
       },

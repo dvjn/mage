@@ -96,12 +96,15 @@ export type ThreadHead = z.infer<typeof threadHeadSchema>;
 export const threadDetailSchema = threadHeadSchema.extend({
   // The branch its rows are of.
   branch: shownBranchSchema,
-  // The newest rows, in order, reaching back to `newFrom`.
+  // The newest rows, in order, reaching back to `newFrom`, or at most a page further than usual.
   rows: z.array(shownRowSchema),
   // The place of the first row given, to read the rows before it; null when they start the thread.
   before: z.number().int().nonnegative().nullable(),
   // The first row the reader had not seen that is not their own nor a reply still being written.
   newFrom: z.string().nullable(),
+  // How many rows new to the reader come before the first row given, past what a read reaches back
+  // for; they start at `newFrom`.
+  earlierUnread: z.number().int().nonnegative(),
   pending: z.array(pendingMessageSchema),
   run: shownRunSchema.nullable(),
 });

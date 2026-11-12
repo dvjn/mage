@@ -5,7 +5,7 @@
 // give the thread's guests access from the card.
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { PressLink } from "@/web/components/press-link";
 import { cn } from "cn";
 
 import { createContext, useContext } from "react";
@@ -103,7 +103,7 @@ export function ArtifactCard({
         </Button>
       )}
       {!gone && !locked && (
-        <Link
+        <PressLink
           to="/artifacts/$artifactId"
           params={{ artifactId: id }}
           // The whole card opens it.
@@ -113,7 +113,7 @@ export function ArtifactCard({
           )}
         >
           Open
-        </Link>
+        </PressLink>
       )}
     </div>
   );

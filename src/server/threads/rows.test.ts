@@ -18,8 +18,14 @@ async function asides(count: number) {
       await workspace.api("GET", `/threads/${thread.id}`, who.cookie)
     ).json()) as ThreadDetail;
   }
-  async function page(who: { cookie: string }, before: number, limit?: number, at?: string) {
-    const query = `before=${before}${limit ? `&limit=${limit}` : ""}${at ? `&at=${at}` : ""}`;
+  async function page(
+    who: { cookie: string },
+    before: number,
+    limit?: number,
+    at?: string,
+    unreadFrom?: string,
+  ) {
+    const query = `before=${before}${limit ? `&limit=${limit}` : ""}${at ? `&at=${at}` : ""}${unreadFrom ? `&unreadFrom=${unreadFrom}` : ""}`;
     const res = await workspace.api("GET", `/threads/${thread.id}/rows?${query}`, who.cookie);
     return { status: res.status, body: (await res.json()) as RowsPage };
   }
@@ -33,14 +39,14 @@ describe("a thread's rows", () => {
     const { ada, detail, page } = await asides(250);
 
     const newest = await detail(ada);
-    expect(orders(newest.rows)).toEqual([150, 249, 100]);
-    expect(newest.before).toBe(150);
+    expect(orders(newest.rows)).toEqual([190, 249, 60]);
+    expect(newest.before).toBe(190);
     expect(newest.newFrom).toBeNull();
-    expect(newest.rows[0]).toMatchObject({ kind: "human", text: "// Note 151", seq: 151 });
+    expect(newest.rows[0]).toMatchObject({ kind: "human", text: "// Note 191", seq: 191 });
 
-    const middle = await page(ada, 150);
-    expect(orders(middle.body.rows)).toEqual([50, 149, 100]);
-    expect(middle.body.before).toBe(50);
+    const middle = await page(ada, 190);
+    expect(orders(middle.body.rows)).toEqual([130, 189, 60]);
+    expect(middle.body.before).toBe(130);
     const first = await page(ada, 50);
     expect(orders(first.body.rows)).toEqual([0, 49, 50]);
     expect(first.body.before).toBeNull();
@@ -57,24 +63,44 @@ describe("a thread's rows", () => {
     expect(reaching.before).toBe(20);
     // A row within the usual page, past it, or none by the id, gives the usual page.
     expect(orders((await page(ada, 150, undefined, reaching.rows[90]!.id)).body.rows)).toEqual([
-      50, 149, 100,
+      90, 149, 60,
     ]);
     expect(orders((await page(ada, 10, undefined, target.id)).body.rows)).toEqual([0, 9, 10]);
-    expect(orders((await page(ada, 150, undefined, "nothing")).body.rows)).toEqual([50, 149, 100]);
+    expect(orders((await page(ada, 150, undefined, "nothing")).body.rows)).toEqual([90, 149, 60]);
   });
 
-  it("reach back to the first row a reader has not seen", async () => {
-    const { ada, grace, api, thread, detail } = await asides(250);
+  it("reach back to the first row a reader has not seen, by one page more at most", async () => {
+    const { grace, api, thread, detail } = await asides(250);
+    // Seen up to 200: the 50 rows not seen are within the usual page.
+    expect(
+      (await api("PUT", `/threads/${thread.id}/read`, grace.cookie, { seq: 200 })).status,
+    ).toBe(200);
+    const near = await detail(grace);
+    expect(near.newFrom).toBe(near.rows[10]!.id);
+    expect(orders(near.rows)).toEqual([190, 249, 60]);
+    expect(near.earlierUnread).toBe(0);
+  });
+
+  it("stop reaching back for what a reader has not seen a page past the usual one, and count the rest", async () => {
+    const { grace, api, thread, detail, page } = await asides(250);
+    // Seen up to 30: 220 rows are new, and the read reaches back to 130, two pages in all.
     expect((await api("PUT", `/threads/${thread.id}/read`, grace.cookie, { seq: 30 })).status).toBe(
       200,
     );
-
     const opened = await detail(grace);
-    expect(opened.newFrom).toBe(opened.rows[0]!.id);
-    expect(orders(opened.rows)).toEqual([30, 249, 220]);
-    expect(opened.before).toBe(30);
-    // What the reader wrote themselves is never new to them.
-    expect((await detail(ada)).newFrom).toBeNull();
+    expect(orders(opened.rows)).toEqual([130, 249, 120]);
+    expect(opened.before).toBe(130);
+    // The row new from is further back, with the 100 rows new before the rows given.
+    expect(opened.newFrom).toBe((await page(grace, 50)).body.rows[30]!.id);
+    expect(opened.earlierUnread).toBe(100);
+    expect(opened.rows[0]).toMatchObject({ seq: 131 });
+
+    // Reading back to it takes all, and a page before says how many are still to read.
+    const partial = await page(grace, 130, 60, undefined, opened.newFrom!);
+    expect(partial.body.earlierUnread).toBe(40);
+    const rest = await page(grace, 130, undefined, opened.newFrom!, opened.newFrom!);
+    expect(orders(rest.body.rows)).toEqual([30, 129, 100]);
+    expect(rest.body.earlierUnread).toBe(0);
   });
 
   it("refuse a bad place, and a reader who cannot see the thread", async () => {
@@ -82,7 +108,7 @@ describe("a thread's rows", () => {
     const stranger = await signUp("Hedy Lamarr", "hedy@example.com");
 
     expect((await page(ada, -1)).status).toBe(400);
-    expect((await page(ada, 3, 101)).status).toBe(400);
+    expect((await page(ada, 3, 61)).status).toBe(400);
     expect((await page(stranger, 3)).status).toBe(404);
   });
 

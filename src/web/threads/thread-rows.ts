@@ -5,7 +5,7 @@
 // win, as its seq says. Another branch made current replaces them all.
 
 import type { ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
-import type { RowsPage, RowsUpdate, ShownRow } from "@/shared/threads/rows.ts";
+import { ROWS_PAGE, type RowsPage, type RowsUpdate, type ShownRow } from "@/shared/threads/rows.ts";
 
 // The rows with the changed ones in: each replacing the row with its id unless that one is newer,
 // or, with `ties` false, as new; or added when it comes after every row here; in order. Live rows
@@ -39,7 +39,12 @@ export function withUpdate(detail: ThreadDetail, update: RowsUpdate): ThreadDeta
     ...detail,
     thread: { ...detail.thread, lastEventSeq },
     rows: reset ? update.rows : withChangedRows(detail.rows, update.rows),
-    ...(reset && { branch: reset.branch, before: reset.before, newFrom: null }),
+    ...(reset && {
+      branch: reset.branch,
+      before: reset.before,
+      newFrom: null,
+      earlierUnread: 0,
+    }),
     pending: update.pending,
     run: update.run,
   };
@@ -55,7 +60,22 @@ export function withHead(detail: ThreadDetail, head: ThreadHead): ThreadDetail {
 export function withEarlier(detail: ThreadDetail, page: RowsPage): ThreadDetail {
   const first = detail.rows[0]?.order ?? Infinity;
   const earlier = page.rows.filter((row) => row.order < first);
-  return { ...detail, rows: [...earlier, ...detail.rows], before: page.before };
+  return {
+    ...detail,
+    rows: [...earlier, ...detail.rows],
+    before: page.before,
+    earlierUnread: page.earlierUnread,
+  };
+}
+
+// The detail cut to its newest page of rows, where it holds more, with `before` where that page
+// starts: what a thread keeps once the reader leaves it or it is stored.
+export function withLatestPage<T extends { rows: ShownRow[]; before: number | null }>(
+  detail: T,
+): T {
+  if (detail.rows.length <= ROWS_PAGE) return detail;
+  const rows = detail.rows.slice(-ROWS_PAGE);
+  return { ...detail, rows, before: rows[0]!.order };
 }
 
 // The fresh read, with the rows shown so far that it does not reach: the earlier pages read, when
@@ -72,6 +92,7 @@ export function withFreshRead(fetched: ThreadDetail, shown: ThreadDetail): Threa
     false,
   );
   const before = earlier.length > 0 ? shown.before : fetched.before;
+  const earlierUnread = earlier.length > 0 ? shown.earlierUnread : fetched.earlierUnread;
   // Live updates that came after the server answered say what waits and runs now.
   const live = shown.thread.lastEventSeq > fetched.thread.lastEventSeq;
   if (
@@ -85,6 +106,7 @@ export function withFreshRead(fetched: ThreadDetail, shown: ThreadDetail): Threa
     ...fetched,
     rows,
     before,
+    earlierUnread,
     ...(live && {
       thread: { ...fetched.thread, lastEventSeq: shown.thread.lastEventSeq },
       pending: shown.pending,

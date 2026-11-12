@@ -1,8 +1,8 @@
 // The query cache kept in IndexedDB between visits, under the signed-in user's id and the tab's org,
 // so a reload or a thread switch paints from it while the server is asked for what changed, and so
 // the threads read before can be read again offline. It keeps who is signed in, spaces,
-// thread lists and threads with their events; not the session, their connections, the models or
-// the settings. Beside it is who signed in last, and in which org: while the server cannot be
+// thread lists and threads with their newest page of rows; not the session, their connections, the
+// models or the settings. Beside it is who signed in last, and in which org: while the server cannot be
 // reached, the app opens as them, from their cache. A new build or seven days discard it; signing
 // out forgets it all.
 
@@ -19,8 +19,10 @@ import type {
 } from "@tanstack/react-query-persist-client";
 import { del, get, keys, set } from "idb-keyval";
 
-import { adoptOrg, tabOrg } from "@/web/lib/org-tab";
-import { meQuery, sessionQuery } from "@/web/auth/queries";
+import type { ShownRow } from "@/shared/threads/rows.ts";
+import { adoptOrg, forgetOrg, tabOrg } from "@/web/lib/org-tab";
+import { sessionQuery } from "@/web/auth/queries";
+import { withLatestPage } from "@/web/threads/thread-rows";
 
 export const cacheMaxAge = 7 * 24 * 60 * 60 * 1000;
 
@@ -30,6 +32,18 @@ const KEPT = new Set(["me", "spaces", "shared-threads", "threads"]);
 export function shouldPersist(query: Query): boolean {
   const root = query.queryKey[0];
   return typeof root === "string" && KEPT.has(root) && defaultShouldDehydrateQuery(query);
+}
+
+// The client with each cached thread cut to its newest page of rows, so a thread read once opens
+// from the cache as it does from the server, and what was scrolled back to is not kept.
+export function withLatestPages(client: PersistedClient): PersistedClient {
+  const queries = client.clientState.queries.map((query) => {
+    const data = query.state.data as { rows?: ShownRow[]; before?: number | null } | undefined;
+    if (query.queryKey[0] !== "threads" || !Array.isArray(data?.rows)) return query;
+    const kept = withLatestPage(data as { rows: ShownRow[]; before: number | null });
+    return kept === data ? query : { ...query, state: { ...query.state, data: kept } };
+  });
+  return { ...client, clientState: { ...client.clientState, queries } };
 }
 
 function cacheKey(userId: string, orgId: string) {
@@ -49,27 +63,50 @@ export function unreachable(error: unknown) {
   return error instanceof TypeError || !onlineManager.isOnline();
 }
 
-// Whose cache to restore: the signed-in user's, in the tab's org; while the server cannot be
-// reached, the user who signed in last's, in the tab's org or the one they were in; nobody's when
-// signed out, or when the session cannot be read for another reason.
-export async function cacheOwner(read: {
-  session(): Promise<{ user: { id: string } } | null>;
-  // The tab's org, learned from the server when the tab does not know it yet.
-  org(): Promise<string | null>;
-  tabOrg(): string | null;
-  last(): Promise<CacheOwner | undefined>;
-}): Promise<CacheOwner | null> {
-  let session: { user: { id: string } } | null;
-  try {
-    session = await read.session();
-  } catch (error) {
-    if (!unreachable(error)) return null;
-    const last = await read.last();
-    return last ? { userId: last.userId, orgId: read.tabOrg() ?? last.orgId } : null;
+// Who signed in last in this browser, read from storage without asking the server, so pages show
+// at once from what was kept for them. A tab that names no org takes the one they were in only
+// while the server cannot be reached; otherwise it learns its org from the server, which knows
+// whether they are still in the one they were in. The server is asked about the session in the
+// background, and `sessionReported` acts on what it says.
+export async function lastOwner(): Promise<CacheOwner | undefined> {
+  const last = await get<CacheOwner>(LAST_KEY);
+  if (!last) return undefined;
+  if (tabOrg()) return last;
+  if (onlineManager.isOnline()) return undefined;
+  adoptOrg(last.orgId);
+  return last;
+}
+
+// The user whose cache was restored, until the server confirms or contradicts it.
+let restoredFor: string | undefined;
+
+// Whether the server has said someone is signed in since nobody was.
+let signedInHere = false;
+
+// What the server says of the session once it is read: nobody is signed in, so everything kept is
+// forgotten and the guards run again, which leads to sign-in; or another user is, so what was
+// restored for the last one is dropped and read again.
+export async function sessionReported(
+  queryClient: QueryClient,
+  session: { user: { id: string } } | null,
+  guardsAgain: () => void,
+) {
+  // What was kept is restored before it is judged.
+  await restored;
+  if (!session) {
+    // Nothing was known of anyone, as on the sign-in page: nobody to sign out.
+    if (!signedInHere && !(await get<CacheOwner>(LAST_KEY))) return;
+    await forgetCache(queryClient);
+    guardsAgain();
+    return;
   }
-  if (!session) return null;
-  const orgId = await read.org();
-  return orgId ? { userId: session.user.id, orgId } : null;
+  signedInHere = true;
+  if (restoredFor && restoredFor !== session.user.id) {
+    queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "session" });
+    forgetOrg();
+    guardsAgain();
+  }
+  restoredFor = undefined;
 }
 
 // While the server cannot be reached for the session, the user who signed in last, with the tab in
@@ -85,32 +122,23 @@ function signedInUser(queryClient: QueryClient) {
   return queryClient.getQueryData(sessionQuery.queryKey)?.user.id;
 }
 
-// Restoring waits for the session, as every signed-in page does before it shows anything, and for
-// the tab's org; writes go under the user signed in and the tab's org at the time, who become the
-// last to have signed in.
+// Restoring does not wait for the server: it reads what was kept for whoever signed in last, in
+// the tab's org. Writes go under the user signed in and the tab's org at the time, who become the
+// last to have signed in; before the session is read after a reload, nothing is written.
 function createPersister(queryClient: QueryClient): Persister {
   return {
     async persistClient(client: PersistedClient) {
       const userId = signedInUser(queryClient);
       const orgId = tabOrg();
       if (!userId || !orgId) return;
-      await set(cacheKey(userId, orgId), client);
+      await set(cacheKey(userId, orgId), withLatestPages(client));
       await set(LAST_KEY, { userId, orgId } satisfies CacheOwner);
     },
     async restoreClient() {
-      const owner = await cacheOwner({
-        session: () => queryClient.fetchQuery(sessionQuery),
-        async org() {
-          // A tab that does not know its org yet learns it from who is signed in.
-          if (!tabOrg()) await queryClient.fetchQuery(meQuery).catch(() => null);
-          return tabOrg();
-        },
-        tabOrg,
-        last: () => get<CacheOwner>(LAST_KEY),
-      });
-      if (!owner) return undefined;
-      adoptOrg(owner.orgId);
-      return get<PersistedClient>(cacheKey(owner.userId, owner.orgId));
+      const last = await lastOwner();
+      if (!last) return undefined;
+      restoredFor = last.userId;
+      return get<PersistedClient>(cacheKey(last.userId, tabOrg() ?? last.orgId));
     },
     async removeClient() {
       const userId = signedInUser(queryClient);
@@ -145,7 +173,11 @@ export function cacheOptions(
 // Forgets everything cached for the signed-in user, in every org, in memory and in IndexedDB, and
 // that anyone signed in here.
 export async function forgetCache(queryClient: QueryClient) {
-  const userId = signedInUser(queryClient);
+  const userId = signedInUser(queryClient) ?? (await get<CacheOwner>(LAST_KEY))?.userId;
+  signedInHere = false;
+  restoredFor = undefined;
+  // The next to sign in here learns their own org.
+  forgetOrg();
   queryClient.clear();
   await del(LAST_KEY);
   if (!userId) return;

@@ -576,15 +576,46 @@ function copiedEvent(
   }
 }
 
-// The index of the first row the reader had not seen up to `seen` that is not their own nor a
-// reply still being written; -1 when there is none.
-function newFromOf({ rows }: Transcript, seen: number, userId: string) {
-  return rows.findIndex(
-    (row) =>
-      row.seq > seen &&
-      !(row.kind === "human" && row.author.userId === userId) &&
-      !(row.kind === "agent" && row.status === "streaming"),
+// How many rows beyond the newest page a first read reaches back for what the reader has not seen:
+// one page, so opening a thread costs at most about twice a plain open, and the rest is asked for.
+const UNREAD_REACH = ROWS_PAGE;
+
+// Where the newest page of rows starts: ROWS_PAGE rows back, or at `from` where that is earlier but
+// no more than UNREAD_REACH further, and at the last message where that is earlier still, which
+// `/btw`, retry and fork act on past a long run of tool calls.
+function pageStart({ rows }: Transcript, from: number) {
+  const lastMessage = rows.findLastIndex(
+    (row) => row.kind === "human" || (row.kind === "agent" && row.status !== "streaming"),
   );
+  const newest = Math.max(0, rows.length - ROWS_PAGE);
+  return Math.min(
+    newest,
+    Math.max(from, newest - UNREAD_REACH),
+    lastMessage === -1 ? rows.length : lastMessage,
+  );
+}
+
+// Whether a row is new to a reader: not seen up to `seen`, not their own, not a reply still being
+// written.
+function isUnread(row: Transcript["rows"][number], seen: number, userId: string) {
+  return (
+    row.seq > seen &&
+    !(row.kind === "human" && row.author.userId === userId) &&
+    !(row.kind === "agent" && row.status === "streaming")
+  );
+}
+
+// The index of the first row the reader had not seen up to `seen` that is new to them; -1 when
+// there is none.
+function newFromOf({ rows }: Transcript, seen: number, userId: string) {
+  return rows.findIndex((row) => isUnread(row, seen, userId));
+}
+
+// How many rows before the place `end` are new to the reader, from the row at `from` on.
+function unreadBefore({ rows }: Transcript, from: number, end: number, userId: string) {
+  if (from < 0 || from >= end) return 0;
+  const seen = rows[from]!.seq - 1;
+  return rows.slice(from, end).filter((row) => isUnread(row, seen, userId)).length;
 }
 
 const TITLE_LENGTH = 60;
@@ -1520,7 +1551,7 @@ export function createThreads(options: ThreadsOptions) {
       const from =
         thread.parentThreadId || !current ? -1 : newFromOf(transcript, seen, principal.userId);
       const total = transcript.rows.length;
-      const start = Math.min(Math.max(0, total - ROWS_PAGE), from === -1 ? total : from);
+      const start = pageStart(transcript, from === -1 ? total : from);
       const rows = [];
       for (let index = start; index < total; index++) {
         rows.push(shownRow(fold, transcript, index, reader));
@@ -1532,6 +1563,7 @@ export function createThreads(options: ThreadsOptions) {
         rows,
         before: start > 0 ? start : null,
         newFrom: from === -1 ? null : transcript.rows[from]!.id,
+        earlierUnread: unreadBefore(transcript, from, start, principal.userId),
         pending: current ? shownPending(transcript.pending) : [],
         run: shownRun(transcript, runTrace),
       };
@@ -1539,7 +1571,8 @@ export function createThreads(options: ThreadsOptions) {
 
     // The rows before the place `before`, at most `limit` of them, or with `at` as many as reach
     // back to the row with that id when it is before them, as the reader sees them; of the branch
-    // named, or else the current one.
+    // named, or else the current one. With `unreadFrom`, the row a read opened at, how many rows
+    // before the page are still new to the reader.
     rows(
       principal: Principal,
       id: string,
@@ -1547,6 +1580,7 @@ export function createThreads(options: ThreadsOptions) {
       limit = ROWS_PAGE,
       at?: string,
       branchId?: string,
+      unreadFrom?: string,
     ): RowsPage {
       const thread = visible(principal, id);
       const branch = branchIn(thread, branchId);
@@ -1560,7 +1594,12 @@ export function createThreads(options: ThreadsOptions) {
       for (let index = start; index < end; index++) {
         rows.push(shownRow(fold, transcript, index, reader));
       }
-      return { rows, before: start > 0 ? start : null };
+      const from = unreadFrom === undefined ? -1 : fold.indexOf(unreadFrom);
+      return {
+        rows,
+        before: start > 0 ? start : null,
+        earlierUnread: unreadBefore(transcript, from, start, principal.userId),
+      };
     },
 
     // The branch that holds the row: the current one when it does, else the newest that does.
@@ -2138,7 +2177,7 @@ export function createThreads(options: ThreadsOptions) {
           told.clear();
           able.clear();
           const total = transcript.rows.length;
-          const start = Math.max(0, total - ROWS_PAGE);
+          const start = pageStart(transcript, total);
           const rows: ShownRow[] = [];
           for (let index = start; index < total; index++) {
             const shown = shownRow(fold, transcript, index, reader);

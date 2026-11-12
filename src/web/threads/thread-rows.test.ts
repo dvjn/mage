@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ThreadDetail } from "@/shared/threads/detail.ts";
-import type { ShownRow } from "@/shared/threads/rows.ts";
+import { ROWS_PAGE, type ShownRow } from "@/shared/threads/rows.ts";
 import {
   withChangedRows,
   withEarlier,
   withFreshRead,
+  withLatestPage,
   withUpdate,
 } from "@/web/threads/thread-rows.ts";
 
@@ -51,6 +52,7 @@ function detail(rows: ShownRow[], before: number | null, lastEventSeq = 0): Thre
     rows,
     before,
     newFrom: null,
+    earlierUnread: 0,
     pending: [],
     run: null,
   };
@@ -95,10 +97,25 @@ describe("withEarlier", () => {
   it("puts the earlier page before the rows here", () => {
     const shown = detail(range(100, 200), 100);
 
-    const more = withEarlier(shown, { rows: range(0, 100), before: null });
+    const more = withEarlier(shown, { rows: range(0, 100), before: null, earlierUnread: 0 });
 
     expect(orders(more.rows)).toEqual(range(0, 200).map((each) => each.order));
     expect(more.before).toBeNull();
+  });
+});
+
+describe("withLatestPage", () => {
+  it("cuts a long thread to its newest page, and says where it starts", () => {
+    const cut = withLatestPage(detail(range(0, 200), 0));
+
+    expect(cut.rows).toHaveLength(ROWS_PAGE);
+    expect(cut.before).toBe(200 - ROWS_PAGE);
+  });
+
+  it("leaves a thread within a page as it is", () => {
+    const short = detail(range(0, 5), null);
+
+    expect(withLatestPage(short)).toBe(short);
   });
 });
 

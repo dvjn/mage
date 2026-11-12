@@ -10,7 +10,7 @@
 
 import { AllowPublicArtifacts } from "@/web/artifacts/public-setting";
 import { useQuery } from "@tanstack/react-query";
-import { getRouteApi, Link, Navigate, Outlet, useNavigate } from "@tanstack/react-router";
+import { getRouteApi, Navigate, Outlet, useNavigate } from "@tanstack/react-router";
 import { Settings2Icon, FileTextIcon, UsersIcon, WrenchIcon } from "lucide-react";
 import { useEffect } from "react";
 
@@ -21,6 +21,7 @@ import { EFFORT_LABELS, EffortField, modelName, ModelField } from "@/web/models/
 import { SpaceInstructions } from "@/web/instructions/instructions";
 import { SpaceSkills } from "@/web/skills/pages";
 import { SettingsCard, SettingsTitle } from "@/web/shell/settings-page";
+import { PressLink } from "@/web/components/press-link";
 import { SettingsShell, settingsNavLink } from "@/web/shell/settings-shell";
 import { McpServerPage } from "@/web/mcp/servers/page";
 import { McpServersCard } from "@/web/mcp/servers/card";
@@ -176,7 +177,7 @@ export function SpaceSettingsShell() {
       links={
         <>
           <li className="shrink-0">
-            <Link
+            <PressLink
               to="/s/$spaceId/settings"
               params={params}
               activeOptions={{ exact: true }}
@@ -184,27 +185,31 @@ export function SpaceSettingsShell() {
             >
               <Settings2Icon className="size-4" />
               General
-            </Link>
+            </PressLink>
           </li>
           {space?.kind === "shared" && (
             <li className="shrink-0">
-              <Link to="/s/$spaceId/settings/members" params={params} className={settingsNavLink}>
+              <PressLink
+                to="/s/$spaceId/settings/members"
+                params={params}
+                className={settingsNavLink}
+              >
                 <UsersIcon className="size-4" />
                 Members
-              </Link>
+              </PressLink>
             </li>
           )}
           <li className="shrink-0">
-            <Link to="/s/$spaceId/settings/tools" params={params} className={settingsNavLink}>
+            <PressLink to="/s/$spaceId/settings/tools" params={params} className={settingsNavLink}>
               <WrenchIcon className="size-4" />
               Tools and MCPs
-            </Link>
+            </PressLink>
           </li>
           <li className="shrink-0">
-            <Link to="/s/$spaceId/settings/skills" params={params} className={settingsNavLink}>
+            <PressLink to="/s/$spaceId/settings/skills" params={params} className={settingsNavLink}>
               <FileTextIcon className="size-4" />
               Skills
-            </Link>
+            </PressLink>
           </li>
         </>
       }

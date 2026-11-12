@@ -12,7 +12,7 @@
 // row. Every list of threads uses it, so they look and behave alike.
 
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { PressLink } from "@/web/components/press-link";
 import { cn } from "cn";
 import type * as React from "react";
 
@@ -94,8 +94,8 @@ function RowTile({ thread, status, disc }: { thread: Listed; status: ThreadStatu
 // Who has written, by first name, "You" for whoever is signed in, then where the thread is, which
 // gives way first when the line is short of room.
 function Writers({ thread, place }: RowProps) {
-  const me = useQuery(meQuery);
-  const line = writerLine(thread.participants, me.data?.user.id);
+  const { data: myId } = useQuery({ ...meQuery, select: (me) => me.user.id });
+  const line = writerLine(thread.participants, myId);
   const full = writersInFull(thread.participants);
   return (
     <>
@@ -124,7 +124,7 @@ const pageRowColour =
 function PageRow({ thread, place, time }: PageRowProps) {
   const { status } = thread;
   return (
-    <Link
+    <PressLink
       to="/t/$threadId"
       params={{ threadId: thread.id }}
       data-status={status}
@@ -143,7 +143,7 @@ function PageRow({ thread, place, time }: PageRowProps) {
         </span>
       </span>
       <RowTile thread={thread} status={status} disc="bg-(--row)" />
-    </Link>
+    </PressLink>
   );
 }
 
@@ -197,7 +197,7 @@ function SidebarRow({ thread, place, title, isActive, room, children }: SidebarR
     <SidebarMenuButton
       isActive={isActive}
       className={cn(menuRoom, leadOnSidebar, room)}
-      render={<Link to="/t/$threadId" params={{ threadId: thread.id }} />}
+      render={<PressLink to="/t/$threadId" params={{ threadId: thread.id }} />}
     >
       <ThreadTitle thread={thread} className={cn(rowTitle, status === "unread" && "font-medium")} />
       {place && (

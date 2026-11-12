@@ -5,7 +5,7 @@
 
 import { cn } from "cn";
 import { ChevronRightIcon } from "lucide-react";
-import { type ReactNode, useReducer } from "react";
+import { memo, type ReactNode, useReducer } from "react";
 
 import type { ListedSubagent, ThreadListItem } from "@/shared/threads/list.ts";
 import { MoreMenu } from "@/web/components/more-menu";
@@ -59,14 +59,25 @@ function subagentRow(subagent: ListedSubagent) {
   return { ...subagent, id: subagent.threadId };
 }
 
-export function ThreadItem({ thread }: { thread: ThreadListItem }) {
+// Takes whether it is the open thread, not which thread is open, so a thread switch re-renders only
+// the rows it changes.
+export const ThreadItem = memo(function ThreadItem({
+  thread,
+  active,
+  activeSubagent,
+}: {
+  thread: ThreadListItem;
+  active: boolean;
+  // The open thread, when it is one of this thread's subagents.
+  activeSubagent: string | undefined;
+}) {
   const nav = useNav();
   const subagents = (thread.subagents ?? []).filter((subagent) => subagent.state !== "archived");
   const busy = subagents.some(
     (subagent) =>
       subagent.state === "working" ||
       subagent.state === "queued" ||
-      subagent.threadId === nav.activeThreadId,
+      subagent.threadId === activeSubagent,
   );
   const [, shown] = useReducer((count: number) => count + 1, 0);
   const chosen = chosenSubagents.get(thread.id);
@@ -77,7 +88,7 @@ export function ThreadItem({ thread }: { thread: ThreadListItem }) {
       <ThreadRow
         variant="sidebar"
         thread={thread}
-        isActive={thread.id === nav.activeThreadId}
+        isActive={active}
         room={subagents.length > 0 ? CARET_ROOM : undefined}
       >
         {subagents.length > 0 && (
@@ -115,7 +126,7 @@ export function ThreadItem({ thread }: { thread: ThreadListItem }) {
                 key={subagent.threadId}
                 variant="sidebar"
                 thread={subagentRow(subagent)}
-                isActive={subagent.threadId === nav.activeThreadId}
+                isActive={subagent.threadId === activeSubagent}
               />
             ))}
           </SidebarMenuSub>
@@ -123,4 +134,4 @@ export function ThreadItem({ thread }: { thread: ThreadListItem }) {
       )}
     </>
   );
-}
+});

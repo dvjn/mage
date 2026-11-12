@@ -260,7 +260,7 @@ export function ThreadPage() {
   const before = shown?.before ?? null;
   const loadEarlier = useCallback(async () => {
     if (before === null) return;
-    const page = await earlierRows(threadId, before, undefined, viewing).catch(() => null);
+    const page = await earlierRows(threadId, before, { branch: viewing }).catch(() => null);
     if (!page) return;
     queryClient.setQueryData(
       viewing ? threadBranchQuery(threadId, viewing).queryKey : threadQuery(threadId).queryKey,
@@ -363,7 +363,7 @@ export function ThreadPage() {
             return;
           }
           if (before === null) return;
-          const page = await earlierRows(threadId, before, target, viewing);
+          const page = await earlierRows(threadId, before, { at: target, branch: viewing });
           queryClient.setQueryData(
             viewing
               ? threadBranchQuery(threadId, viewing).queryKey

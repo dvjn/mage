@@ -22,7 +22,7 @@ import {
 import { toolConnectionSchema } from "@/shared/tools.ts";
 
 // How many rows a page of a thread holds.
-export const ROWS_PAGE = 100;
+export const ROWS_PAGE = 60;
 
 const personSchema = z.object({
   kind: z.literal("user"),
@@ -366,12 +366,16 @@ export const rowsQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(ROWS_PAGE).optional(),
   at: z.string().min(1).optional(),
   branch: z.string().min(1).optional(),
+  // The row the thread opened at, to count how many rows before the page are still new.
+  unreadFrom: z.string().min(1).optional(),
 });
 
-// The rows before a place, and the place of the first of them, or null once they reach the start.
+// The rows before a place, and the place of the first of them, or null once they reach the start;
+// how many rows before them are new to the reader, from the row `unreadFrom` names.
 export const rowsPageSchema = z.object({
   rows: z.array(shownRowSchema),
   before: z.number().int().nonnegative().nullable(),
+  earlierUnread: z.number().int().nonnegative(),
 });
 
 export type RowsPage = z.infer<typeof rowsPageSchema>;

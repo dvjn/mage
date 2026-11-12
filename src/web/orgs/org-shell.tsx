@@ -2,7 +2,8 @@
 // open; a team org adds its people and, for its owners, its spaces.
 
 import { useQuery } from "@tanstack/react-query";
-import { Link, Outlet } from "@tanstack/react-router";
+import { Outlet } from "@tanstack/react-router";
+import { PressLink } from "@/web/components/press-link";
 import {
   BlocksIcon,
   LayoutGridIcon,
@@ -35,10 +36,10 @@ export function OrgShell() {
       label="Organization settings"
       links={pages.map(({ to, label, icon: Icon }) => (
         <li key={to} className="shrink-0">
-          <Link to={to} className={settingsNavLink}>
+          <PressLink to={to} className={settingsNavLink}>
             <Icon className="size-4" />
             {label}
-          </Link>
+          </PressLink>
         </li>
       ))}
     >

@@ -3,7 +3,7 @@
 
 import { EmptyState } from "@/web/components/page-states";
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { PressLink } from "@/web/components/press-link";
 import { ShapesIcon } from "lucide-react";
 
 import type { ArtifactListItem } from "@/shared/artifacts.ts";
@@ -26,14 +26,14 @@ function GalleryCard({ artifact }: { artifact: ArtifactListItem }) {
           <ArtifactIcon icon={artifact.icon} className="size-4" />
         </span>
         <div className="flex min-w-0 flex-1 flex-col">
-          <Link
+          <PressLink
             to="/artifacts/$artifactId"
             params={{ artifactId: artifact.id }}
             // The whole card opens it.
             className="truncate text-sm font-medium after:absolute after:inset-0 after:rounded-lg"
           >
             {artifact.title}
-          </Link>
+          </PressLink>
           <span className="truncate text-xs text-muted-foreground">{artifact.description}</span>
         </div>
       </div>

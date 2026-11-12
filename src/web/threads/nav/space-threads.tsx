@@ -23,12 +23,8 @@ export function SpaceThreads({ space }: { space: SpaceSummary }) {
   const [action, setAction] = useState<NavAction | null>(null);
 
   const nav = useMemo<Nav>(
-    () => ({
-      activeThreadId: threadId,
-      act: setAction,
-      can: { post: space.post, remove: space.remove },
-    }),
-    [threadId, space.post, space.remove],
+    () => ({ act: setAction, can: { post: space.post, remove: space.remove } }),
+    [space.post, space.remove],
   );
 
   const listed = threads.data?.threads ?? [];
@@ -42,7 +38,18 @@ export function SpaceThreads({ space }: { space: SpaceSummary }) {
           <GroupedThreads
             threads={listed}
             total={total}
-            row={(thread) => <ThreadItem key={thread.id} thread={thread} />}
+            row={(thread) => (
+              <ThreadItem
+                key={thread.id}
+                thread={thread}
+                active={threadId === thread.id}
+                activeSubagent={
+                  thread.subagents?.some((subagent) => subagent.threadId === threadId)
+                    ? threadId
+                    : undefined
+                }
+              />
+            )}
             more={(hidden) => `${hidden} more threads`}
             onMore={() => openSearch()}
           >

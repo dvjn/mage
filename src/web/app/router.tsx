@@ -46,9 +46,10 @@ import { DraftThread } from "@/web/threads/draft-thread";
 import { ThreadPage } from "@/web/threads/thread-page";
 import { lastSpace } from "@/web/spaces/last-space";
 import { tabOrg } from "@/web/lib/org-tab";
-import { lastSignedIn, restored } from "@/web/api/query-cache";
+import { lastOwner, lastSignedIn, restored } from "@/web/api/query-cache";
 import { meQuery, sessionQuery, signInOptionsQuery } from "@/web/auth/queries";
 import { spacesQuery } from "@/web/spaces/queries";
+import { threadQuery } from "@/web/threads/queries";
 import { PageHeader } from "@/web/shell/page-header";
 
 type Context = { context: { queryClient: QueryClient } };
@@ -83,13 +84,22 @@ async function redirectIfSignedIn({
   throw back ? redirect({ href: back }) : redirect({ to: "/" });
 }
 
-// While the server cannot be reached, whoever signed in last reads what was kept for them.
+// Someone known to be signed in, from the session read in this tab or whoever signed in last in
+// this browser, goes in at once, from what was kept for them, while the session is read again in
+// the background: `sessionReported` signs them out if it finds them gone. Only when nobody is known
+// does the page wait for the server; offline, it lets in whoever signed in last.
 async function requireSession({ context }: Context) {
-  const session = await context.queryClient.fetchQuery(sessionQuery).catch(lastSignedIn);
-  if (!session) throw redirect({ to: "/login" });
+  const { queryClient } = context;
+  const known = queryClient.getQueryData(sessionQuery.queryKey) ?? (await lastOwner());
+  if (known) {
+    queryClient.fetchQuery(sessionQuery).catch(() => {});
+  } else {
+    const session = await queryClient.fetchQuery(sessionQuery).catch(lastSignedIn);
+    if (!session) throw redirect({ to: "/login" });
+  }
   // A tab that does not know its org yet takes the one the server chose before anything shows, so
   // its pages stay in that org whatever the session does next.
-  if (!tabOrg()) await context.queryClient.fetchQuery(meQuery);
+  if (!tabOrg()) await queryClient.fetchQuery(meQuery);
 }
 
 const signedOutRoute = createRoute({
@@ -236,6 +246,12 @@ const threadRoute = createRoute({
     ...(typeof search.allow === "string" && { allow: search.allow }),
     ...((search.scope === "once" || search.scope === "for_now") && { scope: search.scope }),
   }),
+  // Starts reading the thread when its link is pointed at or pressed, without holding the page:
+  // it renders at once from what is cached while the reads finish.
+  loader: ({ context: { queryClient }, params: { threadId } }) => {
+    const staleTime = 5_000;
+    void queryClient.prefetchQuery({ ...threadQuery(threadId), staleTime });
+  },
   component: ThreadPage,
 });
 
@@ -396,6 +412,10 @@ export function createAppRouter(queryClient: QueryClient) {
       ]),
     ]),
     context: { queryClient },
+    // Links preload their route when pointed at or focused, after a moment so a passing pointer
+    // does not; a page never waits on a loader.
+    defaultPreload: "intent",
+    defaultPreloadDelay: 80,
   });
 }
 
