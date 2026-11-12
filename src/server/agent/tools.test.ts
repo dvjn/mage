@@ -60,6 +60,10 @@ const SUBAGENT_TOOLS = [
   "subagents.unarchive",
 ];
 
+// The tools the agent has for calls it runs in the background.
+const CALL_TOOLS = ["calls.start", "calls.status", "calls.list", "calls.cancel"];
+const CALL_MODEL_TOOLS = ["jobs.start", "jobs.check", "jobs.list", "jobs.cancel"];
+
 // The tools the agent has for artifacts, whose toolset is on unless turned off; previews need a
 // browser, which these tests go without.
 const ARTIFACT_TOOL_LIST = [
@@ -505,6 +509,7 @@ describe("tool calls", () => {
       "thread.ask",
       ...SKILL_TOOLS,
       ...SUBAGENT_TOOLS,
+      ...CALL_MODEL_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
     expect(threadStore.find(thread.id)?.title).toBe("Engines");
@@ -780,6 +785,7 @@ describe("tool calls", () => {
       "thread.ask",
       ...SKILL_TOOLS,
       ...SUBAGENT_TOOLS,
+      ...CALL_MODEL_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
 
@@ -794,6 +800,7 @@ describe("tool calls", () => {
       "thread.ask",
       ...SKILL_TOOLS,
       ...SUBAGENT_TOOLS,
+      ...CALL_MODEL_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
   });
@@ -1196,7 +1203,7 @@ describe("built-in toolset switches", () => {
     expect((await setSpace(true)).status).toBe(409);
     expect(
       toolRegistry.definitions({ id: elsewhere.id, orgId: ada.orgId }).map((tool) => tool.name),
-    ).toEqual([...fixed, ...SKILL_TOOLS, ...SUBAGENT_TOOLS, ...ARTIFACT_TOOL_LIST]);
+    ).toEqual([...fixed, ...SKILL_TOOLS, ...SUBAGENT_TOOLS, ...CALL_TOOLS, ...ARTIFACT_TOOL_LIST]);
     const changeWhileOff = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {
       toolIds: ["thread.rename"],
       policy: review.id,
@@ -1628,7 +1635,8 @@ describe("waiting calls as each reader sees them", () => {
     const asGrace = { userId: grace.userId, orgId: ada.orgId, role: "member" as const };
     threads.postMessage(asGrace, thread.id, "// Go ahead");
     stop();
-    const last = sent.at(-1);
+    // The tray's background list follows the rows, as a call waits.
+    const last = sent.findLast((item) => item.kind === "rows");
     // The reply before may now be restored from, as a message follows it.
     expect(last?.kind === "rows" && last.update.rows).toEqual([
       expect.objectContaining({ kind: "agent", can: expect.arrayContaining(["restore"]) }),

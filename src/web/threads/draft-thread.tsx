@@ -1,6 +1,7 @@
 // A new thread before its first message: the composer, ready to write in, with the model and
 // effort pickers on the space's defaults, then its org's, which can be changed before sending;
-// sending makes the thread with them and opens it. Nothing is made until then.
+// sending makes the thread with them and opens it, as a command when the message is one the space
+// has. Nothing is made until then.
 // Someone the server does not let start threads there is sent to the space instead.
 
 import { useQuery } from "@tanstack/react-query";
@@ -8,6 +9,8 @@ import { getRouteApi, Navigate } from "@tanstack/react-router";
 import { cn } from "cn";
 import { useEffect, useState } from "react";
 
+import type { CommandInput } from "@/shared/threads/commands.ts";
+import type { Delivery } from "@/shared/threads/events.ts";
 import { type ModelPair, replyCandidates } from "@/shared/models.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
 import {
@@ -22,6 +25,7 @@ import { PageHeader, pageWidth } from "@/web/shell/page-header";
 import { rememberSpace } from "@/web/spaces/last-space";
 import { spacesQuery } from "@/web/spaces/queries";
 import { useCreateThread } from "@/web/threads/mutations";
+import { spaceCommandsQuery } from "@/web/threads/queries";
 import { Composer } from "@/web/threads/thread-composer";
 
 const draftRoute = getRouteApi("/_app/s/$spaceId/new");
@@ -36,6 +40,7 @@ export function NewThreadComposer({ spaceId }: { spaceId: string }) {
   // Null follows the defaults.
   const [model, setModel] = useState<string | null>(null);
   const [effort, setEffort] = useState<Effort | null>(null);
+  const commands = useQuery(spaceCommandsQuery(spaceId));
   const create = useCreateThread(spaceId);
   const space = spaces.data?.find((s) => s.id === spaceId);
   const list = models.data?.models ?? [];
@@ -61,9 +66,9 @@ export function NewThreadComposer({ spaceId }: { spaceId: string }) {
   // What replies while the model named is turned off or gone: the space's default, then the org's.
   const used = replying({ model, effort });
 
-  async function send(text: string) {
+  async function send(text: string, _mode: Delivery, command?: CommandInput) {
     if (!text.trim()) return;
-    await create.mutateAsync({ text, model, effort });
+    await create.mutateAsync({ text, model, effort, ...(command && { command }) });
   }
 
   return (
@@ -75,6 +80,8 @@ export function NewThreadComposer({ spaceId }: { spaceId: string }) {
         stopping={false}
         onSend={send}
         onStop={() => {}}
+        commands={commands.data}
+        onConnected={() => commands.refetch()}
         tools={
           <ThreadPickers
             models={models.data?.models ?? []}

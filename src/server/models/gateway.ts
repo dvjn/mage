@@ -52,6 +52,7 @@ export interface ModelChange {
 // A person's words, the model's answer with the calls it asked for, what those calls gave back, or
 // what changed at that point.
 export type ModelMessage =
+  // `clock` marks the line telling the time, which goes last and is not a message from anyone.
   | { role: "user"; text: string }
   | { role: "assistant"; text: string; toolCalls?: ModelToolCall[] }
   | { role: "tool"; results: ModelToolResult[] }

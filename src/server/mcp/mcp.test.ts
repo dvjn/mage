@@ -1884,7 +1884,7 @@ describe("searching for MCP tools", () => {
 
     await post(ada, "Echo hello");
     const first = await model.next();
-    expect(first.tools).toContain("mcp_servers.search_tools");
+    expect(first.tools).toContain("tools.search");
     expect(first.tools).toContain("mcp_servers.list_resources");
     expect(first.tools).not.toContain(named("echo"));
     expect(first.request.instructions).toContain(
@@ -1901,7 +1901,7 @@ describe("searching for MCP tools", () => {
     );
     const second = await model.next();
     expect(second.texts.slice(-2)[0]).toContain(
-      `${wireToolName(named("echo"))} is not on yet. Search for it or select it with the tool search first.`,
+      `${wireToolName(named("echo"))} is not on yet. Search for it or select it with tools.search first.`,
     );
     expect(second.texts.at(-1)).toContain(`"turnedOn":["${named("echo")}"]`);
     expect(second.texts.at(-1)).toContain('"parameters":"text: string"');
@@ -2018,15 +2018,15 @@ describe("searching for MCP tools", () => {
     const on = await model.next();
     on.reply("Hi.");
     await worker.idle();
-    expect(on.tools).toContain("mcp_servers.search_tools");
+    expect(on.tools).toContain("tools.search");
 
     await api("DELETE", `/mcp-servers/${server.id}`, ada.cookie);
     await post(ada, "Again");
     const none = await model.next();
     none.reply("Hi.");
     await worker.idle();
-    expect(none.tools).not.toContain("mcp_servers.search_tools");
-    expect(none.request.instructions).not.toContain("search_tools");
+    expect(none.tools).not.toContain("tools.search");
+    expect(none.request.instructions).not.toContain("tools.search");
     expect(await listed("/org/tools")).toBeUndefined();
     expect(await listed(`/spaces/${space.id}/tools`)).toBeUndefined();
   });

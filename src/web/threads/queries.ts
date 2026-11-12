@@ -85,6 +85,19 @@ export function asidesQuery(threadId: string) {
   });
 }
 
+// The commands the reader may send to start a thread in the space.
+export function spaceCommandsQuery(spaceId: string) {
+  return queryOptions({
+    queryKey: ["spaces", spaceId, "commands"],
+    staleTime: 30_000,
+    queryFn: async () => {
+      const res = await apiClient.v1.spaces[":id"].commands.$get({ param: { id: spaceId } });
+      if (!res.ok) throw new Error("could not read the space's commands");
+      return threadCommandsSchema.parse(await res.json());
+    },
+  });
+}
+
 // The commands the reader may send in the thread.
 export function threadCommandsQuery(threadId: string) {
   return queryOptions({

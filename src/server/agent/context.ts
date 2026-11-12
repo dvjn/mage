@@ -54,6 +54,8 @@ export function humanMessage(row: Pick<HumanRow, "author" | "text" | "command">)
 // A notification as the agent reads it: another agent's message named for its sender, the agent
 // that started this subagent or a subagent, and anything else as what it tells.
 export function notificationLine(row: Pick<RelayRow, "type" | "from" | "text" | "last">) {
+  if (row.type === "call.ended")
+    return row.last ? `${row.text}\n\nResult:\n\n${row.last}` : row.text;
   if (row.type !== "message")
     return row.last ? `${row.text}\n\nIts last message:\n\n${row.last}` : row.text;
   const sender = row.from.main ? `Agent of ${row.from.name}` : `Subagent ${row.from.name}`;
@@ -242,7 +244,7 @@ export function instructionsFor(guidance: Guidance = NO_GUIDANCE) {
   if (guidance.deferredTools?.length) {
     sections.push(
       [
-        "MCP tools to turn on with the tool search before calling them:",
+        "MCP tools to turn on with tools.search before calling them:",
         ...guidance.deferredTools.flatMap((group) => [
           `${group.server} (\`${wirePrefix(group.prefix)}\`):`,
           ...group.tools.map((tool) => `- ${wireToolName(tool.name)}: ${tool.description}`),

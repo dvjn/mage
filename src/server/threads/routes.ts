@@ -52,7 +52,7 @@ export function feedMessage(item: ThreadFollowItem) {
 
 const newThread = jsonBody(
   newThreadSchema,
-  "text must be a non-empty string, model a ref, effort low, medium or high",
+  "text must be a non-empty string, model a ref, effort low, medium or high, command a name and args",
 );
 
 const threadUpdate = jsonBody(threadUpdateSchema, "Give a title, a model or an effort");
@@ -182,6 +182,9 @@ export function threadRoutes(options: {
       const input = c.req.valid("json");
       const thread = await threads.create(signedIn(c.var.principal), c.req.param("id"), input);
       return c.json(thread, 200);
+    })
+    .get("/v1/spaces/:id/commands", (c) => {
+      return c.json(threads.spaceCommands(signedIn(c.var.principal), c.req.param("id")), 200);
     })
     .get("/v1/shared-threads", (c) => {
       return c.json(threads.shared(signedIn(c.var.principal)), 200);

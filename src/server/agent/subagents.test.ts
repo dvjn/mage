@@ -21,8 +21,8 @@ function notified(...lines: string[]) {
 
 // A thread whose agent starts subagents, with the model's calls taken by the thread they are made
 // in.
-async function subagentThread() {
-  const workspace = await agentThread();
+async function subagentThread(options: Parameters<typeof agentThread>[0] = {}) {
+  const workspace = await agentThread(options);
   const { model, threadStore, subagentStore, thread, api } = workspace;
   const taken = new Set<Call>();
   let callCount = 0;
@@ -162,7 +162,9 @@ describe("subagents", () => {
       "subagents.start",
       { name: "Researcher", task: "Compare queues" },
     ]);
-    expect(starter.request.instructions).toContain("Subagents (`subagents__*`):\nStart them");
+    expect(starter.request.instructions).toContain(
+      "Subagents (`subagents__*`):\nUse a subagent to keep large work",
+    );
     // The start returns at once.
     await answer(thread.id, "Started.");
     const subagentId = subagentNamed("Researcher");
@@ -608,6 +610,137 @@ describe("subagents", () => {
       ok: true,
       value: { when: "any_idle", subagents: [{ id: b, name: "B" }] },
     });
+  });
+
+  async function watching(...watches: [string, Record<string, unknown>][]) {
+    const workspace = await subagentThread();
+    const { ada, post, thread, start, calls, answer, subagentNamed, rowsOf } = workspace;
+    start();
+    await post(ada, "Go");
+    await calls(
+      thread.id,
+      ["subagents.start", { name: "A", task: "Work" }],
+      ["subagents.start", { name: "B", task: "Work" }],
+      ...watches,
+    );
+    await answer(thread.id, "Watching.");
+    const quiet = workspace.keepAnswering(thread.id);
+    const settle = async (name: string) => {
+      const id = subagentNamed(name);
+      await calls(id, ["subagents.send", { to: "agent", text: `${name} done` }]);
+      await answer(id, "Sent.");
+      await workspace.until(() => workspace.subagents.summaryOf(id)?.state === "idle");
+    };
+    const idleLines = () =>
+      lines(rowsOf(thread.id)).filter((line) => line.startsWith("agent.idle"));
+    const outputs = () =>
+      rowsOf(thread.id).flatMap((row) =>
+        row.kind === "tool" && row.toolId === "subagents.watch" ? [row.output] : [],
+      );
+    return { workspace, settle, idleLines, outputs, quiet };
+  }
+
+  it("replace a pending watch set again on the same subagents", async () => {
+    const { workspace, settle, idleLines, outputs, quiet } = await watching(
+      ["subagents.watch", { when: "all_idle" }],
+      ["subagents.watch", { when: "all_idle", subagents: ["B", "A"] }],
+    );
+    expect(outputs()[0]).toMatchObject({ ok: true, value: { when: "all_idle" } });
+    expect(outputs()[1]).toMatchObject({
+      ok: true,
+      value: { replaces: ["call-3"], note: "Already watching; replaced." },
+    });
+    await settle("A");
+    await settle("B");
+    await workspace.worker.idle();
+    quiet();
+    expect(idleLines()).toEqual(["agent.idle: All idle: A, B"]);
+  });
+
+  it("fire a watch whose subagents settled before its result was stored, once", async () => {
+    // The checks at the subagents' run ends, and the one after the watch's result, are held back
+    // to stand for run ends that came before the result was there.
+    type Hear = { ended: (run: never) => void; toolRan: (run: never, toolId: string) => void };
+    let live: Hear | null = null;
+    const heldEnds: unknown[] = [];
+    const heldRan: [unknown, string][] = [];
+    const workspace = await subagentThread({
+      ended: (run) =>
+        live ? (live.ended as (run: unknown) => void)(run) : void heldEnds.push(run),
+      toolRan: (run, toolId) =>
+        live ? live.toolRan(run as never, toolId) : void heldRan.push([run, toolId]),
+    });
+    const { ada, post, thread, start, calls, answer, subagentNamed, rowsOf, until } = workspace;
+    start();
+    await post(ada, "Go");
+    await calls(
+      thread.id,
+      ["subagents.start", { name: "A", task: "Work" }],
+      ["subagents.start", { name: "B", task: "Work" }],
+      ["subagents.watch", { when: "all_idle" }],
+    );
+    await answer(thread.id, "Watching.");
+    const quiet = workspace.keepAnswering(thread.id);
+    for (const name of ["A", "B"]) {
+      const id = subagentNamed(name);
+      await calls(id, ["subagents.send", { to: "agent", text: `${name} done` }]);
+      await answer(id, "Sent.");
+      await until(() => workspace.subagents.summaryOf(id)?.state === "idle");
+    }
+    const idleLines = () =>
+      lines(rowsOf(thread.id)).filter((line) => line.startsWith("agent.idle"));
+    expect(idleLines()).toEqual([]);
+    live = {
+      ended: (run) => workspace.subagents.ended(run),
+      toolRan: (run, toolId) => workspace.subagents.toolRan(run, toolId),
+    };
+    const watched = heldRan.find(([, id]) => id === "subagents.watch")!;
+    live.toolRan(watched[0] as never, watched[1]);
+    await workspace.worker.idle();
+    expect(idleLines()).toEqual(["agent.idle: All idle: A, B"]);
+    for (const run of heldEnds) live.ended(run as never);
+    await workspace.worker.idle();
+    quiet();
+    expect(idleLines()).toHaveLength(1);
+  });
+
+  it("keep watches on a different set or condition", async () => {
+    const { workspace, settle, idleLines, outputs, quiet } = await watching(
+      ["subagents.watch", { when: "all_idle" }],
+      ["subagents.watch", { when: "any_idle" }],
+      ["subagents.watch", { when: "all_idle", subagents: ["A"] }],
+    );
+    for (const output of outputs()) {
+      expect(output).toMatchObject({ ok: true });
+      expect((output as { value: { note?: string } }).value.note).toBeUndefined();
+    }
+    await settle("A");
+    await settle("B");
+    await workspace.worker.idle();
+    quiet();
+    expect(idleLines().toSorted()).toEqual([
+      "agent.idle: All idle: A",
+      "agent.idle: All idle: A, B",
+      "agent.idle: Idle: A",
+    ]);
+  });
+
+  it("send one notice when watches fire together with the same words", async () => {
+    const { workspace, settle, idleLines, quiet } = await watching(
+      ["subagents.watch", { when: "any_idle" }],
+      ["subagents.watch", { when: "any_idle", subagents: ["A"] }],
+    );
+    await settle("A");
+    await settle("B");
+    await workspace.worker.idle();
+    quiet();
+    expect(idleLines()).toEqual(["agent.idle: Idle: A"]);
+    // The notice answers both calls, so neither fires again.
+    expect(
+      workspace
+        .rowsOf(workspace.thread.id)
+        .find((row) => row.kind === "relay" && row.type === "agent.idle"),
+    ).toMatchObject({ call: { callId: "call-3" }, callIds: ["call-4"] });
   });
 
   it("watch the others started with them, any of them idle", async () => {

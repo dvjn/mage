@@ -35,7 +35,13 @@ import {
   type SubagentState,
   type SubagentSummary,
 } from "@/shared/subagents.ts";
-import type { Cause, SubagentTask, Sender, Steering } from "@/shared/threads/events.ts";
+import type {
+  Cause,
+  NotificationSource,
+  SubagentTask,
+  Sender,
+  Steering,
+} from "@/shared/threads/events.ts";
 import { type Effort, effortSchema, UNTITLED } from "@/shared/threads/thread.ts";
 import { toolIdNow } from "@/shared/tools.ts";
 import {
@@ -84,8 +90,10 @@ export const MESSAGE_LIMIT = 30;
 export const AGENT_NAME = "Agent";
 
 // What the agent of a thread that can start subagents is told about them.
-export const SUBAGENTS_GUIDANCE =
-  "Start them for work that splits into independent parts or takes long; each works in the background in its own thread. Their results, and runs that end without a report, fail or are stopped, arrive as notifications from [Subagent <label>]. To wait for them, watch them and end your turn. Reuse a subagent that has the context, archived or not, rather than starting another. Archive each once you have used its report, and all of them when the job is done.";
+export const SUBAGENTS_GUIDANCE = [
+  "Use a subagent to keep large work out of this conversation: exploring many files or results, a long investigation, or parts of a job that don't depend on each other. Each runs in the background in its own thread; its report, and runs that end without one, fail or are stopped, arrive as notifications from [Subagent <label>].",
+  "- Brief it as a peer who knows nothing: the goal, what you already know or ruled out, where to look, and what to return. The brief is all the context it has.\n- Ask for a short report: conclusions, decisions, ids and links, not raw data. Ask it to say what it verified and what it assumed.\n- Split work so subagents don't overlap, and run them in parallel.\n- Don't do the same work yourself while one runs. To wait, watch them and end your turn; a watch stays set until it fires, so don't set it again after each report.\n- Reuse a subagent that already has the context, archived or not, rather than starting another. Archive each once you've used its report, and all of them when the job is done.\n- Treat a report as a claim. Check anything that matters before acting on it.",
+].join("\n\n");
 
 export interface SubagentsOptions {
   subagents: SubagentStore;
@@ -205,6 +213,9 @@ function idleState(state: SubagentState) {
 interface Watch {
   when: "all_idle" | "any_idle";
   subagents: { id: string; name: string }[];
+  // Set when it took the place of pending watches on the same subagents: the calls that set them.
+  replaces?: string[];
+  note?: string;
 }
 
 function sameName(a: string, b: string) {
@@ -261,18 +272,20 @@ export function createSubagents(options: SubagentsOptions) {
 
   // A subagent starts on what waits for it only while fewer than the limit of its starter's
   // subagents are running, and not once retired.
+  function mayStart(threadId: string) {
+    const subagent = subagents.find(threadId);
+    if (!subagent) return true;
+    if (subagent.archivedAt) return false;
+    const siblings = live(subagent.parentThreadId).map((other) => other.threadId);
+    return runs.activeIn(siblings).length < RUNNING_LIMIT;
+  }
+
   const notifier = createNotifier({
     threads,
     runs,
     log,
     bus,
-    mayStart(threadId) {
-      const subagent = subagents.find(threadId);
-      if (!subagent) return true;
-      if (subagent.archivedAt) return false;
-      const siblings = live(subagent.parentThreadId).map((other) => other.threadId);
-      return runs.activeIn(siblings).length < RUNNING_LIMIT;
-    },
+    mayStart: (threadId) => mayStart(threadId),
   });
 
   // Sends another agent's message to the thread, with the call that sent it.
@@ -383,20 +396,22 @@ export function createSubagents(options: SubagentsOptions) {
     const fired = new Set(
       [...rows, ...inbox].flatMap((row) =>
         "from" in row && "type" in row && row.type === "agent.idle" && row.call
-          ? [row.call.callId]
+          ? [row.call.callId, ...(row.callIds ?? [])]
           : [],
       ),
     );
-    return rows.flatMap((row) =>
+    const pending = rows.flatMap((row) =>
       row.kind === "tool" && row.toolId === WATCH_SUBAGENTS && row.output?.ok && !fired.has(row.id)
         ? [{ callId: row.id, watch: row.output.value as Watch }]
         : [],
     );
+    const replaced = new Set(pending.flatMap(({ watch }) => watch.replaces ?? []));
+    return pending.filter(({ callId }) => !replaced.has(callId));
   }
 
-  // Notifies the thread's agent, once, when the subagents its watch was set on are idle: all of
+  // The notice a watch owes its thread's agent, once the subagents it was set on are idle: all of
   // them, or any.
-  function fireIfIdle(threadId: string, callId: string, watch: Watch) {
+  function noticeFor(threadId: string, callId: string, watch: Watch) {
     const watched = watch.subagents.flatMap((one) => {
       const subagent = subagents.find(one.id);
       return subagent ? [subagent] : [];
@@ -404,7 +419,7 @@ export function createSubagents(options: SubagentsOptions) {
     const idle = watched.filter((subagent) => idleState(summaryOf(subagent).state));
     const holds = watch.when === "all_idle" ? idle.length === watched.length : idle.length > 0;
     const thread = threads.find(threadId);
-    if (!holds || idle.length === 0 || !thread) return;
+    if (!holds || idle.length === 0 || !thread) return null;
     const people = new Map<string, Steering>();
     for (const subagent of watched) {
       for (const entry of steeredIn(subagent)) {
@@ -412,21 +427,38 @@ export function createSubagents(options: SubagentsOptions) {
       }
     }
     const names = idle.map((subagent) => subagent.name).join(", ");
-    notifier.send(threadId, {
-      kind: "agent.idle",
-      source: { ...senderOf(thread).from, callId },
+    return {
+      kind: "agent.idle" as const,
+      source: {
+        ...senderOf(thread).from,
+        callId,
+      } satisfies NotificationSource as NotificationSource,
       text: watch.when === "all_idle" ? `All idle: ${names}` : `Idle: ${names}`,
       people: [...people.values()],
       subagents: idle.map((subagent) => ({ threadId: subagent.threadId, name: subagent.name })),
       when: watch.when,
-    });
+    };
   }
 
-  // Fires the watches of the starter's agent, and of its subagents, that now hold.
+  function fireIfIdle(threadId: string, callId: string, watch: Watch) {
+    const notice = noticeFor(threadId, callId, watch);
+    if (notice) notifier.send(threadId, notice);
+  }
+
+  // Fires the watches of the starter's agent, and of its subagents, that now hold. Those holding
+  // together with the same words are one notice, which lists the calls it answers.
   function checkWatches(parentThreadId: string) {
     const watchers = [parentThreadId, ...live(parentThreadId).map((one) => one.threadId)];
     for (const threadId of watchers) {
-      for (const { callId, watch } of watchesIn(threadId)) fireIfIdle(threadId, callId, watch);
+      const notices = new Map<string, NonNullable<ReturnType<typeof noticeFor>>>();
+      for (const { callId, watch } of watchesIn(threadId)) {
+        const notice = noticeFor(threadId, callId, watch);
+        if (!notice) continue;
+        const first = notices.get(notice.text);
+        if (!first) notices.set(notice.text, notice);
+        else first.source.callIds = [...(first.source.callIds ?? []), callId];
+      }
+      for (const notice of notices.values()) notifier.send(threadId, notice);
     }
   }
 
@@ -739,6 +771,19 @@ export function createSubagents(options: SubagentsOptions) {
           when: input.when,
           subagents: chosen.map((one) => ({ id: one.threadId, name: one.name })),
         };
+        // The same watch again replaces the pending one.
+        const ids = (one: Watch) =>
+          one.subagents
+            .map((entry) => entry.id)
+            .toSorted()
+            .join();
+        const same = watchesIn(ctx.threadId).filter(
+          (old) => old.watch.when === set.when && ids(old.watch) === ids(set),
+        );
+        if (same.length > 0) {
+          set.replaces = same.map((old) => old.callId);
+          set.note = "Already watching; replaced.";
+        }
         // One whose subagents are idle already fires at once.
         fireIfIdle(ctx.threadId, ctx.callId, set);
         return set;
@@ -832,6 +877,10 @@ export function createSubagents(options: SubagentsOptions) {
 
     find: (threadId: string) => subagents.find(threadId),
 
+    // Whether the thread's agent may be started on what waits for it: not a retired subagent, nor
+    // one past its starter's limit of running ones.
+    mayStart,
+
     // The threads the thread's agent sends messages to, retired subagents' among them, each with
     // the label it was sent by: for the agent that started subagents, theirs; for a subagent, its
     // starter's, as agent, and the others started with it.
@@ -915,6 +964,13 @@ export function createSubagents(options: SubagentsOptions) {
       }
       fillPlaces(subagent.parentThreadId);
       checkWatches(subagent.parentThreadId);
+    },
+
+    // Once a watch call's result is stored, fires it if its subagents settled while it was being
+    // stored; the result was not there for the checks made at their run ends.
+    toolRan(run: Run, toolId: string) {
+      if (toolId !== WATCH_SUBAGENTS) return;
+      checkWatches(subagents.find(run.threadId)?.parentThreadId ?? run.threadId);
     },
 
     // Asks every running subagent of the thread's agent to stop, as the person; whether any was.

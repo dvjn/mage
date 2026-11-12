@@ -119,3 +119,23 @@ test("an MCP server's prompt runs with the arguments given and its text reaches 
   await write(page, "/notes:greet Grace");
   await expect(transcript(page).getByText("Hello, Grace!")).toBeVisible();
 });
+
+test("a command typed in a new thread is picked from the menu and starts the thread as it", async ({
+  page,
+}) => {
+  await signUp(page);
+  await addSkill(page, "pirate", "Talk like a pirate", "/say\nArr, $ARGUMENTS!");
+
+  await box(page).fill("/pi");
+  const menu = page.getByRole("listbox", { name: "Commands" });
+  await expect(menu.getByRole("option")).toHaveText([/^\/pirate.*Talk like a pirate/]);
+  await box(page).press("Enter");
+  await expect(box(page)).toHaveValue("/pirate ");
+  await box(page).pressSequentially("matey");
+  await box(page).press("Enter");
+
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  const sent = transcript(page).getByRole("article", { name: "Message from Ada Lovelace" }).last();
+  await expect(sent.locator("code")).toHaveText("/pirate");
+  await expect(transcript(page).getByText("Arr, matey!")).toBeVisible();
+});

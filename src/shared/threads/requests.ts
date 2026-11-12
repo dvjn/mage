@@ -29,6 +29,8 @@ export const newThreadSchema = z.object({
   text: messageTextSchema.optional(),
   model: z.string().min(1).optional(),
   effort: effortSchema.optional(),
+  // The command the text starts with, when it is sent as one.
+  command: commandInputSchema.optional(),
 });
 
 export const threadUpdateSchema = z.object({

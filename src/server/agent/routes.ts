@@ -34,6 +34,16 @@ export function toolRoutes(options: { tools: ToolDecisions; toolPolicies: ToolPo
       tools.decide(signedIn(c.var.principal), id, callId, decision);
       return c.json({ ok: true }, 200);
     })
+    .post("/v1/threads/:id/tools/:callId/background", (c) => {
+      const { id, callId } = c.req.param();
+      tools.moveToBackground(signedIn(c.var.principal), id, callId);
+      return c.json({ ok: true }, 200);
+    })
+    .post("/v1/threads/:id/tools/:callId/cancel", (c) => {
+      const { id, callId } = c.req.param();
+      tools.cancelBackground(signedIn(c.var.principal), id, callId);
+      return c.json({ ok: true }, 200);
+    })
     .post("/v1/threads/:id/tools/:callId/answer", toolAnswer, (c) => {
       const { id, callId } = c.req.param();
       tools.answer(signedIn(c.var.principal), id, callId, c.req.valid("json").answers);

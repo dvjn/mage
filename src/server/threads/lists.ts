@@ -49,7 +49,9 @@ export function statused(
              ${newest(sql`e.actor_user_id`, NOTABLE)} as notable_by,
              exists (select 1 from thread c
                        join run hr on hr.thread_id = c.id and hr.status = 'waiting'
-                      where c.parent_thread_id = t.id) as subagent_waiting
+                      where c.parent_thread_id = t.id) as subagent_waiting,
+             exists (select 1 from background_call bc
+                      where bc.thread_id = t.id and bc.status = 'pending') as job_waiting
              ${columns}
         ${from}
         left join thread_read tr on tr.user_id = ${reader} and tr.thread_id = t.id
@@ -75,7 +77,7 @@ export function kept(filter: ThreadListFilter, ...fields: SQL[]) {
     filter.show === "unread"
       ? sql`status = 'unread'`
       : filter.show === "maybe-needs-you"
-        ? sql`(status = 'failed' or run_status = 'waiting' or subagent_waiting)`
+        ? sql`(status = 'failed' or run_status = 'waiting' or subagent_waiting or job_waiting)`
         : sql`1 = 1`;
   return sql`${show} and ${containing(filter.text, ...fields)}`;
 }
@@ -103,6 +105,7 @@ export interface StatusedRow {
   updated_at: number;
   run_status: string | null;
   subagent_waiting: number;
+  job_waiting: number;
   status: string;
 }
 
@@ -123,7 +126,7 @@ export function listedThread(row: StatusedRow): ListedThread {
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),
     },
-    waiting: row.run_status === "waiting" || !!row.subagent_waiting,
+    waiting: row.run_status === "waiting" || !!row.subagent_waiting || !!row.job_waiting,
     failed: row.status === "failed",
   };
 }

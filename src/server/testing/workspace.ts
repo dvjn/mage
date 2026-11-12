@@ -11,6 +11,8 @@ import { eq } from "drizzle-orm";
 import { ulid } from "ulid";
 import { expect } from "vite-plus/test";
 
+import { createCallStore } from "@/server/agent/call-store.ts";
+import { createCalls } from "@/server/agent/calls.ts";
 import { createSubagentStore } from "@/server/agent/subagent-store.ts";
 import { createSubagents } from "@/server/agent/subagents.ts";
 import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
@@ -24,7 +26,7 @@ import { createMcpTools, createToolSearch } from "@/server/agent/tool-search.ts"
 import { createToolSettingStore } from "@/server/agent/tool-setting-store.ts";
 import { createArtifacts } from "@/server/artifacts/service.ts";
 import { createArtifactStore } from "@/server/artifacts/store.ts";
-import { createToolDecisions, createTools } from "@/server/agent/tools.ts";
+import { createToolDecisions, createTools, type Toolset } from "@/server/agent/tools.ts";
 import { createApp } from "@/server/app.ts";
 import { createTransact, openDatabase } from "@/server/db/db.ts";
 import { createGuests } from "@/server/guests/service.ts";
@@ -131,6 +133,8 @@ export function setup(
     titles = false,
     teamOrgs = "everyone" as "everyone" | "operator",
     operatorEmails = [] as string[],
+    // Toolsets of Mage's own beside the usual ones, for tests of tools that need one.
+    toolsets = [] as Toolset[],
   } = {},
 ) {
   const db = openDatabase(":memory:");
@@ -311,6 +315,19 @@ export function setup(
     modelsIn: () =>
       Promise.resolve(org.models.map((ref) => ({ ref, reasoning: !org.plain.includes(ref) }))),
   });
+  const callStore = createCallStore(db);
+  const calls = createCalls({
+    calls: callStore,
+    threads: threadStore,
+    spaceStore,
+    runs: runStore,
+    log,
+    bus: countingBus,
+    logger,
+    tools: () => tools,
+    narrow: (thread, offered) => subagents.toolsOf(thread, offered),
+    mayStart: (threadId) => subagents.mayStart(threadId),
+  });
   const artifacts = createArtifacts({
     store: createArtifactStore(db),
     threads: threadStore,
@@ -350,7 +367,9 @@ export function setup(
         mcp.hasServers,
       ),
       subagents.toolset(),
+      calls.toolset(),
       artifacts.toolset(),
+      ...toolsets,
     ],
     scoped: {
       inSpace: (space) => mcp.toolsetsInSpace(space),
@@ -385,6 +404,7 @@ export function setup(
     bus: countingBus,
     tools,
     subagents,
+    background: callStore,
     commands: createCommands({ skills, prompts: mcp }),
     ...(titles && {
       titles: createTitles({
@@ -428,6 +448,8 @@ export function setup(
       narrow: (thread, offered) => subagents.toolsOf(thread, offered),
       before: (thread) => subagents.before(thread),
       ended: (run) => subagents.ended(run),
+      toolRan: (run, toolId) => subagents.toolRan(run, toolId),
+      adopt: (call) => calls.adopt(call),
       logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
       runsIn: (space) => spaces.runsIn(space),
       hooks,
@@ -480,6 +502,14 @@ export function setup(
       policies: toolPolicyStore,
       log,
       bus: countingBus,
+      background: {
+        find: (callId) => calls.find(callId),
+        proceed: (threadId, callId, allow) => calls.proceed(threadId, callId, allow),
+        room: (threadId) => calls.room(threadId),
+        move: (threadId, callId) => worker.moveToBackground(threadId, callId),
+        detach: (threadId, call, model, append) => calls.detach(threadId, call, model, append),
+        cancel: (threadId, callId) => calls.cancel(threadId, callId),
+      },
     }),
     toolPolicies: createToolPolicies({
       policies: toolPolicyStore,
@@ -620,6 +650,7 @@ export function setup(
     tools,
     subagents,
     subagentStore,
+    calls,
     mcp,
     mcpNetwork,
     mcpServerStore,

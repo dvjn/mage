@@ -378,6 +378,7 @@ export function createThreadStore(db: Db): ThreadStore {
             or (status <> 'read' and in_status = 1)
             or run_status = 'waiting'
             or subagent_waiting
+            or job_waiting
             or (status = 'failed' and in_status <= ${limit})
          ${newestFirst}`);
       const total = db.get<{ n: number }>(

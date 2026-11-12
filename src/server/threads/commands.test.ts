@@ -167,6 +167,46 @@ describe("thread commands", () => {
     expect(await commands(alan)).toEqual([]);
   });
 
+  it("lists the commands for starting a thread in the space, without those of a thread's own", async () => {
+    const { ada, alan, space, api } = await withCommands();
+    const list = async (who: { cookie: string }) => {
+      const res = await api("GET", `/spaces/${space.id}/commands`, who.cookie);
+      expect(res.status).toBe(200);
+      return ((await res.json()) as ThreadCommand[]).map((command) => command.name);
+    };
+    expect(await list(ada)).toEqual(["charts", "diagrams", "page-design", "pirate", "notes:greet"]);
+    expect(await list(alan)).toEqual([]);
+  });
+
+  it("starts a thread with its first message as a command, and none for one the space lacks", async () => {
+    const { ada, space, api, model, worker, start } = await withCommands();
+    start();
+    const refused = await api("POST", `/spaces/${space.id}/threads`, ada.cookie, {
+      text: "/deploy now",
+      command: { name: "deploy", args: "now" },
+    });
+    expect(refused.status).toBe(400);
+    const before = await api("GET", `/spaces/${space.id}/threads`, ada.cookie);
+    const count = ((await before.json()) as unknown[]).length;
+
+    const res = await api("POST", `/spaces/${space.id}/threads`, ada.cookie, {
+      text: "/pirate Grace",
+      command: { name: "pirate", args: "Grace" },
+    });
+    expect(res.status).toBe(200);
+    const { id } = (await res.json()) as { id: string };
+    const call = await model.next();
+    expect(call.texts).toEqual([
+      expect.stringMatching(/^user: \[Ada Lovelace\] \/pirate Grace\n\n.*Say arr to Grace\.$/s),
+    ]);
+    call.reply("Arr, Grace.");
+    await worker.idle();
+    const detail = (await (await api("GET", `/threads/${id}`, ada.cookie)).json()) as ThreadDetail;
+    expect(detail.rows[0]).toMatchObject({ command: { name: "pirate", args: "Grace" } });
+    const after = await api("GET", `/spaces/${space.id}/threads`, ada.cookie);
+    expect(((await after.json()) as unknown[]).length).toBe(count + 1);
+  });
+
   it("captures a server's prompts when it is read, and again on refresh", async () => {
     const { ada, api, serverId, mcpNetwork, mcpServerStore } = await withCommands();
     expect(mcpServerStore.find(serverId)?.prompts.map((prompt) => prompt.name)).toEqual(["greet"]);

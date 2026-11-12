@@ -138,13 +138,14 @@ export type Cause = z.infer<typeof causeSchema>;
 
 // What a notification tells the agent it reaches: another agent's message; that a subagent ended
 // a run without sending its starter anything, failed, or was stopped; or that the subagents a
-// watch was set on went idle.
+// watch was set on went idle; or that a call it started in the background ended.
 export const notificationKindSchema = z.enum([
   "message",
   "agent.ended",
   "agent.failed",
   "agent.stopped",
   "agent.idle",
+  "call.ended",
 ]);
 
 export type NotificationKind = z.infer<typeof notificationKindSchema>;
@@ -153,6 +154,8 @@ export type NotificationKind = z.infer<typeof notificationKindSchema>;
 // came of, where there is one.
 export const notificationSourceSchema = senderSchema.extend({
   callId: z.string().optional(),
+  // The other calls whose watch this notice answers, when watches fired as one.
+  callIds: z.array(z.string()).optional(),
   rowId: z.string().optional(),
 });
 
@@ -310,6 +313,9 @@ export const eventDataSchemas = {
     // What the tool and its toolset were called when it was asked for, for a tool that was there.
     title: z.string().optional(),
     toolset: z.string().optional(),
+    // A call the agent started in the background: it has no reply of its own and runs on after the
+    // run that started it.
+    background: z.literal(true).optional(),
   }),
   // The actor approved the call.
   "tool.approved": z.object({ runId: z.string(), callId: z.string(), scope: toolScopeSchema }),

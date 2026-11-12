@@ -146,6 +146,8 @@ export interface ToolRow {
   // What it gave back, or why it failed, once it ran, and how long that took.
   output: { ok: true; value: unknown } | { ok: false; error: string } | null;
   ms: number | null;
+  // A call started in the background, which belongs to no reply and no run.
+  background?: true;
   // Whose own login it ran with, for a tool that uses one.
   ranAs?: Person;
   // For a call that ran on a standing approval, the call that approval was given on; `decision`
@@ -230,7 +232,7 @@ export function notificationParts(
   } & NotificationParts,
 ): NotificationParts & { text: string } {
   const { kind, source, text } = data;
-  if (data.subagents || kind === "message") return data;
+  if (data.subagents || kind === "message" || kind === "call.ended") return data;
   if (kind === "agent.idle") {
     const prefix = Object.keys(IDLE_PREFIXES).find((one) => text.startsWith(one)) as
       | keyof typeof IDLE_PREFIXES
@@ -266,6 +268,7 @@ export interface RelayRow extends NotificationParts {
   steeredBy: Steering[];
   task?: SubagentTask;
   call?: Cause;
+  callIds?: string[];
   rowId?: string;
 }
 
@@ -555,8 +558,8 @@ export function createFold(): TranscriptFold {
       case "notification": {
         const { kind, source, people, to, task } = event.data;
         const { text, subagents, when, error, last } = notificationParts(event.data);
-        const { callId, rowId, ...from } = source;
-        inbox.set(event.id, {
+        const { callId, callIds, rowId, ...from } = source;
+        const message: RelayMessage = {
           id: event.id,
           seq: event.seq,
           postedAt: event.createdAt,
@@ -571,8 +574,10 @@ export function createFold(): TranscriptFold {
           ...(error !== undefined && { error }),
           ...(last && { last }),
           ...(callId && { call: { threadId: source.threadId, callId } }),
+          ...(callIds && { callIds }),
           ...(rowId && { rowId }),
-        });
+        };
+        inbox.set(event.id, message);
         break;
       }
       case "subagent.ended": {
@@ -688,7 +693,8 @@ export function createFold(): TranscriptFold {
         break;
       }
       case "tool.requested": {
-        const { runId, callId, messageId, toolId, input, risk, waits, title, toolset } = event.data;
+        const { runId, callId, messageId, toolId, input, risk, waits, title, toolset, background } =
+          event.data;
         const call: ToolRow = {
           kind: "tool",
           id: callId,
@@ -698,6 +704,7 @@ export function createFold(): TranscriptFold {
           toolId,
           ...(title && { title }),
           ...(toolset && { toolset }),
+          ...(background && { background }),
           input,
           risk,
           waits,

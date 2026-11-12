@@ -17,7 +17,7 @@ import type { Directory } from "@/server/orgs/directory.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
 import type { ThreadAccess } from "@/server/spaces/thread-access.ts";
-import { eventSummary, type ThreadLog } from "@/server/threads/log.ts";
+import { type Append, eventSummary, type ThreadLog } from "@/server/threads/log.ts";
 import type { Thread, ThreadStore, NewEvent } from "@/server/threads/service.ts";
 import { type AskAnswers, askInputSchema, answersProblem } from "@/shared/ask.ts";
 import { mcpToolOf } from "@/shared/mcp.ts";
@@ -100,6 +100,8 @@ export interface ToolContext {
   // Whose own login the call goes with, for a tool that uses one: whoever approved it, whoever gave
   // the standing approval it ran on, or the one person whose words the model read.
   runAs: string | null;
+  // Who approved this very call on its approval card, when someone did.
+  approvedBy?: string;
   // What was answered, for a tool that waits for answers.
   answers?: AskAnswers;
   // The MCP tools the run leaves out of the model's requests, those turned on among them, and a
@@ -876,6 +878,9 @@ export function createTools(options: ToolsOptions) {
 
     asks,
 
+    // The one place a tool runs: direct calls and background calls both go through it.
+    run: (spec: AnyToolSpec, input: unknown, ctx: ToolContext) => spec.run(input, ctx),
+
     // Whether the answer given to the call still holds, just before it runs: its writer may still
     // use or approve the tool, as things stood when they answered, and everyone who wrote after
     // it can still post in the thread.
@@ -946,6 +951,30 @@ export interface ToolDecisionsOptions {
   policies: Pick<ToolPolicyStore, "find">;
   log: ThreadLog;
   bus: EventBus;
+  // The background calls: where one stands, that a decision settles one that waits, whether the
+  // thread has room for another, moving the call running now to the background, moving one that
+  // waits for a decision, and stopping one.
+  background?: {
+    find(callId: string): { status: string; model: string | null } | null;
+    proceed(threadId: string, callId: string, allow: boolean): void;
+    room(threadId: string): boolean;
+    move(threadId: string, callId: string): boolean;
+    detach(
+      threadId: string,
+      call: {
+        id: string;
+        runId: string;
+        toolId: string;
+        input: unknown;
+        risk: ToolRisk;
+        title?: string;
+        toolset?: string;
+      },
+      model: string | null,
+      append: Append,
+    ): string;
+    cancel(threadId: string, callId: string): void;
+  };
 }
 
 export type ToolDecisions = ReturnType<typeof createToolDecisions>;
@@ -956,6 +985,7 @@ const OWNERS_ONLY = "Only the organization's owners can do this";
 export function createToolDecisions(options: ToolDecisionsOptions) {
   const { tools, access, threads, spaceStore, runs, spaces, settings, policies, log, bus } =
     options;
+  const { background } = options;
 
   function known(orgId: string, toolId: string, space?: Space) {
     if (!tools.find(orgId, toolId, space)) throw new ServiceError(404, "Tool not found");
@@ -1009,20 +1039,25 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
       const { thread } = access.require(principal, threadId, "post");
       const space = spaceStore.find(thread.spaceId);
       if (!space) throw new ServiceError(404, "Thread not found");
-      const { events, result: runId } = log.write(thread.id, (append) => {
+      const { events, result } = log.write(thread.id, (append) => {
         const rows = transcriptOf(threads.eventsAfter(thread.id, 0).map(eventSummary)).rows;
         const call = rows.find((row): row is ToolRow => row.kind === "tool" && row.id === callId);
         if (!call) throw new ServiceError(404, "Tool call not found");
-        const run = runs.find(call.runId);
-        const active = run && (run.status === "running" || run.status === "waiting");
+        // A background call waits for its decision without a run.
+        const waiting = call.background ? background?.find(call.id) : null;
+        const run = waiting ? null : runs.find(call.runId);
+        const active = waiting
+          ? waiting.status === "pending"
+          : run && (run.status === "running" || run.status === "waiting");
         if (!active || call.state === "stopped") throw new ServiceError(409, "No longer needed");
+        const model = waiting ? waiting.model : (run?.model ?? null);
         if (tools.asks(call, space)) throw new ServiceError(409, "This call waits for an answer");
         if (call.state !== "pending" || !call.waits) {
           throw new ServiceError(409, "Already decided");
         }
-        if (!tools.canDecide(principal.userId, call, rows, thread, space, run.model)) {
+        if (!tools.canDecide(principal.userId, call, rows, thread, space, model)) {
           const independent =
-            tools.riskForCall(call, space, run.model) === "review" &&
+            tools.riskForCall(call, space, model) === "review" &&
             latestAuthor(rows) === principal.userId;
           throw new ServiceError(
             403,
@@ -1034,7 +1069,7 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
         if (
           decision.allow &&
           decision.scope === "for_now" &&
-          tools.riskForCall(call, space, run.model) !== "normal"
+          tools.riskForCall(call, space, model) !== "normal"
         ) {
           throw new ServiceError(400, "This call can only be allowed once");
         }
@@ -1057,11 +1092,68 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
             data: { runId: call.runId, callId, reason: "denied" },
           });
         }
+        if (waiting) return { runId: call.runId, background: true };
         runs.resume(call.runId);
-        return call.runId;
+        return { runId: call.runId, background: false };
       });
       bus.wake(thread.id);
-      return { runId, event: events[0]! };
+      if (result.background) background?.proceed(thread.id, callId, decision.allow);
+      return { runId: result.runId, event: events[0]! };
+    },
+
+    // Moves the call running now in the thread's run to the background, or one that waits for a
+    // decision in it, so the run goes on.
+    moveToBackground(principal: Principal, threadId: string, callId: string) {
+      const { thread } = access.require(principal, threadId, "post");
+      const space = spaceStore.find(thread.spaceId);
+      if (!space || !background) throw new ServiceError(404, "Thread not found");
+      const { result: resumed } = log.write(thread.id, (append) => {
+        const rows = transcriptOf(threads.eventsAfter(thread.id, 0).map(eventSummary)).rows;
+        const call = rows.find((row): row is ToolRow => row.kind === "tool" && row.id === callId);
+        if (!call) throw new ServiceError(404, "Tool call not found");
+        if (call.state !== "pending" && call.state !== "allowed") {
+          throw new ServiceError(409, "This call is no longer running");
+        }
+        if (call.background || tools.asks(call, space) || call.toolId.startsWith("calls.")) {
+          throw new ServiceError(409, "This call cannot move to the background");
+        }
+        if (!background.room(thread.id)) {
+          throw new ServiceError(409, "This thread has too many background calls");
+        }
+        if (call.state === "pending" && call.waits) {
+          // Waiting in a run nobody holds: the call goes on as one of its own, and the run goes on.
+          const run = runs.find(call.runId);
+          if (!run || run.status !== "waiting") throw new ServiceError(409, "No longer needed");
+          background.detach(
+            thread.id,
+            {
+              id: call.id,
+              runId: call.runId,
+              toolId: call.toolId,
+              input: call.input,
+              risk: call.risk,
+              ...(call.title && { title: call.title }),
+              ...(call.toolset && { toolset: call.toolset }),
+            },
+            run.model,
+            append,
+          );
+          runs.resume(call.runId);
+          return true;
+        }
+        return false;
+      });
+      bus.wake(thread.id);
+      if (!resumed && !background.move(thread.id, callId)) {
+        throw new ServiceError(409, "This call is not running yet");
+      }
+    },
+
+    // Stops a background call that runs or waits for a decision, as a person asked.
+    cancelBackground(principal: Principal, threadId: string, callId: string) {
+      const { thread } = access.require(principal, threadId, "post");
+      if (!background) throw new ServiceError(404, "Thread not found");
+      background.cancel(thread.id, callId);
     },
 
     // Answers the questions a call waits on, or with null skips them, and wakes its run. Anyone

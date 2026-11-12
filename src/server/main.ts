@@ -7,6 +7,8 @@ import { serve } from "@hono/node-server";
 import { loadChromiumPreviewer } from "@/server/artifacts/preview.ts";
 import { CONTENT_PREFIX, createArtifacts } from "@/server/artifacts/service.ts";
 import { createArtifactStore } from "@/server/artifacts/store.ts";
+import { createCallStore } from "@/server/agent/call-store.ts";
+import { createCalls } from "@/server/agent/calls.ts";
 import { createSubagentStore } from "@/server/agent/subagent-store.ts";
 import { createSubagents } from "@/server/agent/subagents.ts";
 import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
@@ -187,6 +189,19 @@ const subagents = createSubagents({
   },
   modelsIn: async (orgId) => (await models.resolveModels(orgId)).models,
 });
+const callStore = createCallStore(db);
+const calls = createCalls({
+  calls: callStore,
+  threads: threadStore,
+  spaceStore,
+  runs: runStore,
+  log,
+  bus,
+  logger,
+  tools: () => tools,
+  narrow: (thread, offered) => subagents.toolsOf(thread, offered),
+  mayStart: (threadId) => subagents.mayStart(threadId),
+});
 // Previews need a browser, which servers without one go without.
 const artifacts = createArtifacts({
   store: createArtifactStore(db),
@@ -225,6 +240,7 @@ const tools = createTools({
       mcp.hasServers,
     ),
     subagents.toolset(),
+    calls.toolset(),
     artifacts.toolset(),
   ],
   scoped: {
@@ -283,6 +299,8 @@ const worker = createRunWorker({
   narrow: (thread, offered) => subagents.toolsOf(thread, offered),
   before: (thread) => subagents.before(thread),
   ended: (run) => subagents.ended(run),
+  toolRan: (run, toolId) => subagents.toolRan(run, toolId),
+  adopt: (call) => calls.adopt(call),
   logger,
   traces: runTraces,
   runsIn: (space) => spaces.runsIn(space),
@@ -327,6 +345,7 @@ const app = createApp({
     bus,
     tools,
     subagents,
+    background: callStore,
     commands: createCommands({ skills, prompts: mcp }),
     ask: (threadId, branchId, rowId) => worker.requestAt(threadId, branchId, rowId),
     asides: createAsideStore(db),
@@ -349,6 +368,14 @@ const app = createApp({
     policies: toolPolicyStore,
     log,
     bus,
+    background: {
+      find: (callId) => calls.find(callId),
+      proceed: (threadId, callId, allow) => calls.proceed(threadId, callId, allow),
+      room: (threadId) => calls.room(threadId),
+      move: (threadId, callId) => worker.moveToBackground(threadId, callId),
+      detach: (threadId, call, model, append) => calls.detach(threadId, call, model, append),
+      cancel: (threadId, callId) => calls.cancel(threadId, callId),
+    },
   }),
   toolPolicies: createToolPolicies({
     policies: toolPolicyStore,
@@ -410,6 +437,7 @@ if (import.meta.main || developing) {
   await shared.agentWorker?.stop();
   // Runs a stopped server left running are settled before anyone reads them.
   worker.recover();
+  calls.recover();
   worker.start();
   shared.agentWorker = worker;
   // Spaces kept in trash or archived for too long are deleted on start and then every hour.

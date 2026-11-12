@@ -112,6 +112,13 @@ describe("otherwise an approver vouches for it, once or for now", () => {
 });
 
 describe("strictness", () => {
+  it("a tool declared as asking waits for every call, whoever steered it and whatever stands", () => {
+    expect(decide({ ...call({ influence: [ada(1)] }), declared: "ask" })).toEqual({ kind: "wait" });
+    expect(
+      decide({ ...call({ influence: [ada(1)], standing: [vouch(5)] }), declared: "ask" }),
+    ).toEqual({ kind: "wait" });
+  });
+
   const nobody = rule({ use: "none", approvers: [EDITORS] });
   const review = rule({
     use: "some",

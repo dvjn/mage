@@ -57,6 +57,8 @@ import { plainText } from "@/shared/plain-text.ts";
 import { statusOf, type ThreadShow, type ThreadStatus } from "@/shared/thread-status.ts";
 import { BTW, COMPACT, type CommandInput, type ThreadCommand } from "@/shared/threads/commands.ts";
 import type { ThreadCan, ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
+import type { CallRecord, CallStore } from "@/server/agent/calls.ts";
+import type { BackgroundWork } from "@/shared/calls.ts";
 import type {
   Aside,
   BranchAction,
@@ -387,6 +389,8 @@ export interface ThreadsOptions {
     Subagents,
     "find" | "summaryOf" | "ofParents" | "reach" | "stopAll" | "unarchive"
   >;
+  // The background calls tools start or people move there, when given.
+  background?: Pick<CallStore, "find" | "open">;
   // The thread's model, opened, and what its next call would send were the branch to end at the
   // row, or at its last; for asking from outside its runs. Side questions are not answered, and
   // threads are not started from summaries, without it.
@@ -457,6 +461,8 @@ function readerPartsOf(row: ShownRow) {
       row.risk,
       row.actions,
       row.canAnswer,
+      row.canBackground,
+      row.background,
       row.connection,
       row.steering,
       row.subagent,
@@ -477,6 +483,30 @@ function shownPending(pending: readonly PendingMessage[]) {
   return pending.map(({ command, ...message }) => ({ ...message, ...shownCommand(command) }));
 }
 
+// The id of the background call the row stands for: one started there, or one moved there that
+// goes on under the id of the call it was.
+function backgroundId(row: Transcript["rows"][number]) {
+  if (row.kind !== "tool") return null;
+  if (row.background) return row.id;
+  const value = row.output?.ok ? (row.output.value as { callId?: unknown } | null) : null;
+  return value && (value as { movedToBackground?: unknown }).movedToBackground === true
+    ? value.callId === row.id
+      ? row.id
+      : null
+    : null;
+}
+
+// A background call as its card shows it, and whether the reader may stop it.
+function callWork(kept: CallRecord, canPost: boolean): BackgroundWork {
+  return {
+    kind: "call",
+    status: kept.status,
+    startedAt: kept.createdAt.toISOString(),
+    ...(kept.endedAt && { endedAt: kept.endedAt.toISOString() }),
+    canCancel: canPost && (kept.status === "running" || kept.status === "pending"),
+  };
+}
+
 // The id of the subagent the call started, for one that started a subagent.
 function startedSubagent(row: Transcript["rows"][number]) {
   if (row.kind !== "tool" || toolIdNow(row.toolId) !== START_SUBAGENT || !row.output?.ok)
@@ -493,6 +523,7 @@ function liveIndexes({ rows }: Transcript) {
   rows.forEach((row, index) => {
     if (row.kind === "tool" && row.state === "pending" && row.waits) live.add(index);
     if (startedSubagent(row)) live.add(index);
+    if (row.kind === "tool" && backgroundId(row)) live.add(index);
   });
   const last = rows.at(-1);
   if (last?.kind === "failure" || last?.kind === "stop") live.add(rows.length - 1);
@@ -693,6 +724,7 @@ export function createThreads(options: ThreadsOptions) {
     reads,
     commands,
     subagents,
+    background,
   } = options;
   const now = options.now ?? (() => new Date());
   const agentNameOf = options.agentNameIn ?? (() => DEFAULT_AGENT_NAME);
@@ -707,9 +739,40 @@ export function createThreads(options: ThreadsOptions) {
     return run;
   }
 
-  // The thread's active run as its list shows it, and whether the reader may decide on the call it
-  // waits for.
+  // The thread's active run as its list shows it, and whether the reader may decide on a call that
+  // waits: the one its run waits for, or a background call that waits while the run goes on or has
+  // ended. A call the reader may decide shows the thread as waiting for them, over its working.
   function runActivity(userId: string, thread: Thread, run: Run | undefined) {
+    const own = ownActivity(userId, thread, run);
+    if (own.canApprove) return own;
+    const job = decidableJob(userId, thread, run);
+    if (!job) return own;
+    return {
+      run: { status: "waiting" as const, since: job.requestedAt, toolId: job.toolId },
+      canApprove: true,
+    };
+  }
+
+  // A background call of the thread that waits for approval which the reader may give.
+  function decidableJob(userId: string, thread: Thread, run: Run | undefined) {
+    const pending = background?.open(thread.id).filter((call) => call.status === "pending") ?? [];
+    if (pending.length === 0) return null;
+    const space = spaceStore.find(thread.spaceId);
+    if (!space) return null;
+    const { rows } = transcripts.of(thread.id).transcript();
+    return (
+      rows.find(
+        (row): row is Extract<typeof row, { kind: "tool" }> =>
+          row.kind === "tool" &&
+          pending.some((call) => call.id === row.id) &&
+          row.state === "pending" &&
+          row.waits &&
+          tools.canDecide(userId, row, rows, thread, space, run?.model ?? null),
+      ) ?? null
+    );
+  }
+
+  function ownActivity(userId: string, thread: Thread, run: Run | undefined) {
     if (!run) return { run: null, canApprove: false };
     const since = (run.startedAt ?? run.createdAt).toISOString();
     if (run.status !== "waiting") {
@@ -1095,10 +1158,31 @@ export function createThreads(options: ThreadsOptions) {
       const subagent = started ? subagents?.summaryOf(started) : null;
       const subagentCall = subagent?.needs && waitingIn(subagent.threadId, reader.principal);
       const effects = effectsOf(row, reader);
+      // A call its run is running, or that waits for a decision in it, may move to the background,
+      // for whoever can post here.
+      const running = row.state === "allowed" || (row.state === "pending" && !row.waits);
+      const waitingInRun = row.state === "pending" && row.waits;
+      const movable =
+        (running || waitingInRun) &&
+        !row.background &&
+        transcript.run?.id === row.runId &&
+        reader.can.post &&
+        !!space &&
+        !tools.asks(row, space) &&
+        !row.toolId.startsWith("calls.");
+      // The call's card, where it runs in the background.
+      const kept = backgroundId(row) ? background?.find(row.id) : null;
+      const { background: _flag, ...plain } = row;
       const call = {
-        ...row,
+        ...plain,
         ...place,
         ...reader.names(row),
+        ...(movable && { canBackground: true }),
+        // What the call gave back is what the background call did, not that it moved.
+        ...(kept && { output: kept.output }),
+        ...(kept && {
+          background: callWork(kept, reader.can.post),
+        }),
         ...(subagent && { subagent }),
         ...(subagentCall && { subagentCall }),
         ...(effects.length > 0 && { effects }),
@@ -1154,7 +1238,14 @@ export function createThreads(options: ThreadsOptions) {
         rowId && readable(reader.principal, row.from.threadId)
           ? { threadId: row.from.threadId, rowId }
           : null;
-      return { ...message, ...place, ...(sentBy && { sentBy }), ...(source && { source }) };
+      const ran = ranOf(row, reader);
+      return {
+        ...message,
+        ...place,
+        ...(sentBy && { sentBy }),
+        ...(source && { source }),
+        ...(ran && { ran }),
+      };
     }
     if (row.kind === "limit") {
       const { call: _call, ...limit } = row;
@@ -1212,6 +1303,21 @@ export function createThreads(options: ThreadsOptions) {
       }
     }
     return effects.filter((effect) => readable(reader.principal, effect.threadId));
+  }
+
+  // The background call a notification tells ended, as the reader may read it where it was made.
+  function ranOf(row: RelayRow, reader: Reader) {
+    const call = row.call;
+    if (row.type !== "call.ended" || !call) return null;
+    const thread = threads.find(call.threadId);
+    if (!thread || !access.can(reader.principal, thread, "read")) return null;
+    const fold = reader.folds.get(thread.id) ?? transcripts.of(thread.id);
+    reader.folds.set(thread.id, fold);
+    const ran = fold.transcript().rows[fold.indexOf(call.callId)];
+    if (ran?.kind !== "tool") return null;
+    const kept = backgroundId(ran) ? background?.find(ran.id) : null;
+    const { background: _flag, ...plain } = ran;
+    return { ...plain, ...reader.names(ran), ...(kept && { output: kept.output }) };
   }
 
   // The call that sent another agent's message, or that was refused past the limit, as the reader
@@ -1288,6 +1394,45 @@ export function createThreads(options: ThreadsOptions) {
   // Stores the message, with the command it was sent as. When it is not quiet and the agent is
   // idle, a run starts that takes it in; while a run is under way it waits to steer that run or to
   // start the next one, and an interrupt also asks the run under way to stop.
+  // Posts the message as the command it starts with, kept with what the agent reads for it; one
+  // naming a command the thread does not have is refused.
+  async function postCommand(
+    principal: Principal,
+    id: string,
+    text: string,
+    mode: Delivery,
+    command: CommandInput,
+  ) {
+    const { thread, access: via } = access.require(principal, id, "post");
+    if (command.name === BTW) throw new ServiceError(400, "A side question is never posted");
+    if (command.name === COMPACT) {
+      // Compacting waits for the run under way; with nothing to summarise it is not asked for.
+      const rows = transcripts.of(thread.id).transcript().rows;
+      if (!runs.active(thread.id) && !anythingToCompact(rows)) {
+        throw new ServiceError(409, "There is nothing to compact yet");
+      }
+      const delivery = mode === "steer" ? "queue" : mode;
+      return post(principal, thread, text, delivery, via.via === "guest", command);
+    }
+    const space = spaceStore.find(thread.spaceId);
+    const expanded =
+      space && commands ? await commands.expand(space, principal.userId, command, text) : null;
+    if (expanded === null) throw new ServiceError(400, `There is no /${command.name} here`);
+    // Seen again after the command, which may wait on an MCP server.
+    const again = access.require(principal, id, "post");
+    return post(principal, again.thread, text, mode, again.access.via === "guest", {
+      ...command,
+      text: expanded,
+    });
+  }
+
+  // The commands of the space's skills and servers, apart from Mage's own.
+  function others(space: NonNullable<ReturnType<typeof spaceStore.find>>, principal: Principal) {
+    return (commands?.list(space, principal.userId) ?? []).filter(
+      (command) => command.name !== COMPACT && command.name !== BTW,
+    );
+  }
+
   function post(
     principal: Principal,
     thread: Thread,
@@ -1515,9 +1660,9 @@ export function createThreads(options: ThreadsOptions) {
     async create(
       principal: Principal,
       spaceId: string,
-      input: { text?: string; model?: string; effort?: Effort } = {},
+      input: { text?: string; model?: string; effort?: Effort; command?: CommandInput } = {},
     ) {
-      const { text } = input;
+      const { text, command } = input;
       spaces.require(principal, spaceId, "message");
       if (input.model) await models.requireModel(principal.orgId, input.model);
       // Seen again after the model check, which waits on providers.
@@ -1529,7 +1674,15 @@ export function createThreads(options: ThreadsOptions) {
         effort: input.effort ?? defaults.effort,
         createdBy: principal.userId,
       });
-      if (text) post(principal, thread, text, "steer");
+      if (text && command) {
+        // A command the space does not have leaves no thread behind.
+        try {
+          await postCommand(principal, thread.id, text, "steer", command);
+        } catch (error) {
+          threads.delete(thread.id);
+          throw error;
+        }
+      } else if (text) post(principal, thread, text, "steer");
       return threadSummary(threads.find(thread.id) ?? thread);
     },
 
@@ -1750,10 +1903,20 @@ export function createThreads(options: ThreadsOptions) {
       const thread = visible(principal, id);
       const space = spaceStore.find(thread.spaceId);
       if (!space || !access.can(principal, thread, "post")) return [];
-      const others = (commands?.list(space, principal.userId) ?? []).filter(
-        (command) => command.name !== COMPACT && command.name !== BTW,
-      );
-      return [COMPACT_COMMAND, ...(options.asides && options.ask ? [BTW_COMMAND] : []), ...others];
+      return [
+        COMPACT_COMMAND,
+        ...(options.asides && options.ask ? [BTW_COMMAND] : []),
+        ...others(space, principal),
+      ];
+    },
+
+    // The commands the reader may send to start a thread in the space, which has nothing yet to
+    // compact or ask aside about; none for those who may not start threads there.
+    spaceCommands(principal: Principal, spaceId: string): ThreadCommand[] {
+      const view = spaces.require(principal, spaceId, "read");
+      const space = spaceStore.find(spaceId);
+      if (!space || !spaces.can(principal, view, "message")) return [];
+      return others(space, principal);
     },
 
     postMessage(principal: Principal, id: string, text: string, mode: Delivery = "steer") {
@@ -1761,37 +1924,7 @@ export function createThreads(options: ThreadsOptions) {
       return post(principal, thread, text, mode, via.via === "guest");
     },
 
-    // Posts the message as the command it starts with, kept with what the agent reads for it; one
-    // naming a command the thread does not have is refused.
-    async postCommand(
-      principal: Principal,
-      id: string,
-      text: string,
-      mode: Delivery,
-      command: CommandInput,
-    ) {
-      const { thread, access: via } = access.require(principal, id, "post");
-      if (command.name === BTW) throw new ServiceError(400, "A side question is never posted");
-      if (command.name === COMPACT) {
-        // Compacting waits for the run under way; with nothing to summarise it is not asked for.
-        const rows = transcripts.of(thread.id).transcript().rows;
-        if (!runs.active(thread.id) && !anythingToCompact(rows)) {
-          throw new ServiceError(409, "There is nothing to compact yet");
-        }
-        const delivery = mode === "steer" ? "queue" : mode;
-        return post(principal, thread, text, delivery, via.via === "guest", command);
-      }
-      const space = spaceStore.find(thread.spaceId);
-      const expanded =
-        space && commands ? await commands.expand(space, principal.userId, command, text) : null;
-      if (expanded === null) throw new ServiceError(400, `There is no /${command.name} here`);
-      // Seen again after the command, which may wait on an MCP server.
-      const again = access.require(principal, id, "post");
-      return post(principal, again.thread, text, mode, again.access.via === "guest", {
-        ...command,
-        text: expanded,
-      });
-    },
+    postCommand,
 
     // Changes the text of a waiting message, or whether it steers or waits for the next run.
     changeMessage(

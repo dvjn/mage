@@ -8,7 +8,7 @@ import {
   primaryKey,
 } from "drizzle-orm/sqlite-core";
 
-import type { FailureKind } from "@/shared/threads/events.ts";
+import type { FailureKind, Steering } from "@/shared/threads/events.ts";
 import { POLICY_COLORS } from "@/shared/tools.ts";
 import { user, organization } from "@/server/orgs/schema.ts";
 import { thread } from "@/server/threads/schema.ts";
@@ -210,4 +210,33 @@ export const subagent = sqliteTable(
       .notNull(),
   },
   (table) => [index("subagent_parent_idx").on(table.parentThreadId, table.createdAt)],
+);
+
+// A tool call that runs in the background: the thread it belongs to, the run that started it, the
+// tool and its input, where it stands, and what it gave back or why it failed once it ended.
+export const backgroundCall = sqliteTable(
+  "background_call",
+  {
+    id: text("id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    runId: text("run_id").notNull(),
+    toolId: text("tool_id").notNull(),
+    input: text("input", { mode: "json" }).$type<unknown>(),
+    // The model that replied when it was started, and whose words steered the call.
+    model: text("model"),
+    steeredBy: text("steered_by", { mode: "json" }).$type<Steering[]>().notNull(),
+    status: text("status", {
+      enum: ["pending", "running", "done", "failed", "cancelled", "interrupted"],
+    }).notNull(),
+    output: text("output", { mode: "json" }).$type<
+      { ok: true; value: unknown } | { ok: false; error: string } | null
+    >(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+      .notNull(),
+    endedAt: integer("ended_at", { mode: "timestamp_ms" }),
+  },
+  (table) => [index("background_call_thread_idx").on(table.threadId, table.createdAt)],
 );

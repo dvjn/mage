@@ -9,8 +9,11 @@ import { transcriptOf } from "@/shared/transcript.ts";
 import { setup } from "./workspace.ts";
 import { personLabel } from "@/shared/people.ts";
 
-export async function agentThread(options: Parameters<typeof setup>[0] = {}) {
-  const workspace = setup(options);
+export async function agentThread(
+  options: Parameters<typeof setup>[0] = {},
+  harness: Parameters<typeof setup>[1] = {},
+) {
+  const workspace = setup(options, harness);
   workspace.org.defaultModel = "codex/gpt-big";
   const ada = await workspace.signUp("Ada Lovelace", "ada@example.com");
   const space = await workspace.yourSpace(ada.cookie);

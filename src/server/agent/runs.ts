@@ -69,6 +69,7 @@ import {
   transcriptOf,
 } from "@/shared/transcript.ts";
 
+import type { Adoption } from "./calls.ts";
 import { compact, type ThreadRequest } from "./compaction.ts";
 import {
   contextOf,
@@ -220,6 +221,7 @@ export interface RunWorkerOptions {
     | "modelNames"
     | "fromServers"
     | "namesNow"
+    | "run"
   >;
   // What the org and the space tell the agent beyond Mage's own prompt, given the tools offered,
   // and what the thread does about it.
@@ -230,6 +232,10 @@ export interface RunWorkerOptions {
   before?: (thread: Thread) => ModelMessage[];
   // Hears of each run that ended, after its end is stored.
   ended?: (run: Run) => void;
+  // Hears of each tool call whose result was just stored.
+  toolRan?: (run: Run, toolId: string) => void;
+  // Takes over a call moved to the background, which runs on beside the run.
+  adopt?: (call: Adoption) => void;
   logger: Logger;
   // What ties each run's span to the work that woke its thread; runs are not traced without it.
   traces?: RunTraces;
@@ -335,7 +341,12 @@ interface Execution {
   controller: AbortController;
   done: Promise<void>;
   span: Span;
+  // The call running now, and what moves it to the background.
+  running?: { callId: string; spec: AnyToolSpec; move(): void };
 }
+
+// What a call that was moved to the background gives back to the run in place of its result.
+const MOVED = Symbol("moved");
 
 const AGENT = { kind: "agent" } as const;
 
@@ -459,6 +470,7 @@ export function createRunWorker(options: RunWorkerOptions) {
   const narrow = options.narrow ?? ((_thread: Thread, offered: AnyToolSpec[]) => offered);
   const before = options.before ?? (() => []);
   const ended = options.ended ?? (() => {});
+  const toolRan = options.toolRan ?? (() => {});
   // When people may have lost a role in an org's spaces, their waiting messages there are dropped,
   // and the agent stops in spaces archived or put in trash.
   function accessChanged(orgId: string) {
@@ -833,7 +845,7 @@ export function createRunWorker(options: RunWorkerOptions) {
         const spec = unsearched
           ? undefined
           : offered.find((candidate) => candidate.name === toolId);
-        const parsed = spec?.input.safeParse(input);
+        const parsed = spec && spec.input.safeParse(input);
         const ok = !!spec && !!parsed?.success;
         const risk = ok ? tools.riskOf(space, spec, parsed.data, execution.ref) : "normal";
         // A call that asks always waits for its answer.
@@ -873,7 +885,7 @@ export function createRunWorker(options: RunWorkerOptions) {
             callId,
             ok: false,
             error: unsearched
-              ? `${modelName(space, unsearched.name)} is not on yet. Search for it or select it with the tool search first.`
+              ? `${modelName(space, unsearched.name)} is not on yet. Search for it or select it with tools.search first.`
               : spec
                 ? `The input is not valid: ${z.prettifyError(parsed!.error!)}`
                 : `No tool is named ${toolId} here.`,
@@ -901,12 +913,13 @@ export function createRunWorker(options: RunWorkerOptions) {
       let waiting = false;
       for (const call of calls) {
         const spec = offered.find((candidate) => candidate.name === call.toolId);
-        const parsed = spec?.input.safeParse(call.input);
+        const parsed = spec && spec.input.safeParse(call.input);
         let allowed = false;
         // Whose own login it goes with, for a tool that uses one, and the standing approval it
         // runs on, if any.
         let runAs: string | null = null;
         let standingOn: string | undefined;
+        let approvedBy: string | undefined;
         if (spec && parsed?.success && spec.waitsFor === "answer") {
           // A call that asks runs once answered, while the answer holds.
           if (call.state === "pending") {
@@ -918,6 +931,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           const risk = tools.riskOf(space, spec, parsed.data, execution.ref);
           if (call.state === "allowed") {
             allowed = tools.approvalHolds(call, rows, thread, space, risk);
+            approvedBy = call.decision?.by.userId;
             // An approved call runs with its approver's own login.
             if (spec.connection?.(parsed.data, space)) runAs = call.decision?.by.userId ?? null;
           } else {
@@ -933,7 +947,14 @@ export function createRunWorker(options: RunWorkerOptions) {
           }
         }
         if (allowed) {
-          return { call, spec: spec!, input: parsed!.data as unknown, runAs, standingOn };
+          return {
+            call,
+            spec: spec!,
+            input: parsed!.data as unknown,
+            runAs,
+            standingOn,
+            approvedBy,
+          };
         }
         append({
           type: "tool.denied",
@@ -955,7 +976,7 @@ export function createRunWorker(options: RunWorkerOptions) {
   async function settle(execution: Execution, space: Space, request: () => ThreadRequest) {
     const { run, lease } = execution;
     for (let next = nextCall(execution, space); next; next = nextCall(execution, space)) {
-      const { call, spec, input, runAs, standingOn } = next;
+      const { call, spec, input, runAs, standingOn, approvedBy } = next;
       const started = now().getTime();
       // The search for left-out tools is given them, and turns them on for the rest of the thread.
       const deferral = spec.name === TOOL_SEARCH ? deferralOf(execution.run.threadId, space) : null;
@@ -968,9 +989,29 @@ export function createRunWorker(options: RunWorkerOptions) {
         },
       });
       let output: ToolOutput;
+      let adoption: Omit<
+        Adoption,
+        "callId" | "threadId" | "runId" | "toolId" | "input" | "model"
+      > | null = null;
+      // The call has a stop of its own, which the run's stop reaches until it is moved.
+      const callController = new AbortController();
+      const stopCall = () => callController.abort(execution.controller.signal.reason);
+      if (execution.controller.signal.aborted) stopCall();
+      execution.controller.signal.addEventListener("abort", stopCall, { once: true });
+      let moved = false;
+      const toBackground = new Promise<typeof MOVED>((resolve) => {
+        execution.running = {
+          callId: call.id,
+          spec: spec as AnyToolSpec,
+          move: () => {
+            moved = true;
+            resolve(MOVED);
+          },
+        };
+      });
       try {
-        output = await context.with(trace.setSpan(context.active(), span), () =>
-          (spec as AnyToolSpec).run(input, {
+        const work = context.with(trace.setSpan(context.active(), span), () =>
+          tools.run(spec as AnyToolSpec, input, {
             threadId: run.threadId,
             spaceId: space.id,
             orgId: space.orgId,
@@ -979,7 +1020,8 @@ export function createRunWorker(options: RunWorkerOptions) {
             actor: AGENT,
             model: execution.ref,
             runAs,
-            signal: execution.controller.signal,
+            ...(approvedBy && { approvedBy }),
+            signal: callController.signal,
             ...(call.answers && { answers: call.answers }),
             threadRequest: request,
             ...(deferral && {
@@ -990,9 +1032,20 @@ export function createRunWorker(options: RunWorkerOptions) {
                   write(lease, run, () => runs.turnOn(lease, call.id, ids)),
               },
             }),
-            write: (work) => write(lease, run, (append) => work(append)),
+            // Once moved to the background the call writes on its own, the run's lease gone.
+            write: (work) =>
+              moved
+                ? log.write(run.threadId, (append) => work(append), run.branchId).result
+                : write(lease, run, (append) => work(append)),
           }),
         );
+        const settled = await Promise.race([work, ...(options.adopt ? [toBackground] : [])]);
+        if (settled === MOVED) {
+          adoption = { work, controller: callController, started: new Date(started) };
+          output = { ok: true, value: { movedToBackground: true, callId: call.id } };
+        } else {
+          output = settled;
+        }
       } catch (err) {
         if (err instanceof LeaseLost) {
           span.end();
@@ -1000,6 +1053,22 @@ export function createRunWorker(options: RunWorkerOptions) {
         }
         logger.warn({ err, runId: run.id, toolId: call.toolId }, "tool failed");
         output = { ok: false, error: messageOf(err) };
+      } finally {
+        execution.running = undefined;
+        if (!adoption) execution.controller.signal.removeEventListener("abort", stopCall);
+      }
+      if (adoption) {
+        // The call goes on beside the run: its stop is its own from here.
+        execution.controller.signal.removeEventListener("abort", stopCall);
+        options.adopt?.({
+          ...adoption,
+          callId: call.id,
+          threadId: run.threadId,
+          runId: run.id,
+          toolId: call.toolId,
+          input,
+          model: execution.ref,
+        });
       }
       span.setAttribute("tool.outcome", output.ok ? "ok" : "error");
       if (!output.ok) span.setStatus({ code: SpanStatusCode.ERROR });
@@ -1023,6 +1092,11 @@ export function createRunWorker(options: RunWorkerOptions) {
           },
         }),
       );
+      try {
+        toolRan(run, call.toolId);
+      } catch (err) {
+        logger.error({ err, runId: run.id }, "tool result not told");
+      }
     }
   }
 
@@ -1436,6 +1510,21 @@ export function createRunWorker(options: RunWorkerOptions) {
       });
       timer = setInterval(tick, pollMs);
       tick();
+    },
+
+    // Moves the thread's call that is running now to the background, where its run carries on
+    // without waiting for it; whether it was running here and may move.
+    moveToBackground(threadId: string, callId: string) {
+      for (const execution of executions.values()) {
+        const { running } = execution;
+        if (execution.run.threadId !== threadId || running?.callId !== callId) continue;
+        if (running.spec.waitsFor === "answer" || running.spec.name.startsWith("calls.")) {
+          return false;
+        }
+        running.move();
+        return true;
+      }
+      return false;
     },
 
     // Stops claiming and leaves the runs in progress to the next boot's recovery.

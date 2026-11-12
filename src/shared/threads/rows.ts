@@ -5,6 +5,7 @@
 import * as z from "zod";
 
 import { askAnswersSchema } from "@/shared/ask.ts";
+import { backgroundWorkSchema } from "@/shared/calls.ts";
 import { subagentSummarySchema } from "@/shared/subagents.ts";
 import {
   deliverySchema,
@@ -151,6 +152,11 @@ const callRowSchema = z.object({
   ms: z.number().nullable(),
   ranAs: personSchema.optional(),
   standingOn: z.string().optional(),
+  // For a call that runs in the background, its card.
+  background: backgroundWorkSchema.optional(),
+  // Whether the reader may move the call, which is running or waits for approval, to the
+  // background.
+  canBackground: z.boolean().optional(),
   // For a call waiting for a decision, what the reader may decide; none while it waits on others.
   actions: z.array(toolActionSchema).optional(),
   // For a call waiting for answers, whether the reader may answer or skip them.
@@ -234,6 +240,9 @@ const relayRowSchema = z.object({
   task: subagentTaskSchema.optional(),
   source: z.object({ threadId: z.string(), rowId: z.string() }).optional(),
   sentBy: sentBySchema.optional(),
+  // For a background call that ended, the call as the reader may read it where it was made.
+  // Shown on its own, so it carries no place in this transcript.
+  ran: callRowSchema.omit({ order: true, turn: true }).optional(),
   ...notificationPartsSchema.shape,
 });
 

@@ -276,6 +276,7 @@ export function createToolSearch(
 ): ToolSpec<SearchInput> {
   return {
     name: TOOL_SEARCH,
+    modelName: "tools.search",
     title: "Search tools",
     annotations: { readOnlyHint: true },
     description:
