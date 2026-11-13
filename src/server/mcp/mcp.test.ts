@@ -1,5 +1,5 @@
 import { eq } from "drizzle-orm";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 
 import { modelToolNames } from "@/server/agent/tools.ts";
 import * as schema from "@/server/schema.ts";
@@ -781,6 +781,34 @@ describe("MCP tools in a thread", () => {
       title: "Rename",
       toolset: "Thread",
     });
+  });
+
+  it("show what the server says while one runs, and hang up on it once the run is stopped", async () => {
+    const { ada, api, thread, post, calls, worker, start, named, live, mcpNetwork } =
+      await mcpThread(`${MCP_ORIGIN}/slow/mcp`);
+    start();
+    await post(ada, "Count slowly");
+    await calls(named("count"), { steps: 1000, ms: 5 });
+
+    // Each step it says is its progress, and a line of its output.
+    await vi.waitFor(() =>
+      expect(live.inThread(thread.id)[0]).toMatchObject({
+        text: expect.stringMatching(/^Step 1 of 1000\nStep 2 of 1000\n/),
+        progress: { total: 1000 },
+      }),
+    );
+    const cancelled = async () =>
+      (
+        (await (await mcpNetwork.handle(new Request(`${MCP_ORIGIN}/control/slow`))).json()) as {
+          cancelled: number;
+        }
+      ).cancelled;
+    expect(await cancelled()).toBe(0);
+
+    expect((await api("POST", `/threads/${thread.id}/stop`, ada.cookie)).status).toBe(202);
+    await worker.idle();
+    await vi.waitFor(async () => expect(await cancelled()).toBe(1));
+    expect(live.inThread(thread.id)).toEqual([]);
   });
 
   it("run on a server of the 2026-07-28 revision, and go straight to initialize on an older one", async () => {

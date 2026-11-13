@@ -1458,6 +1458,11 @@ describe("subagents", () => {
       { name: "Nope", task: "Work", model: "codex/nope" },
       { name: "Plain", task: "Work", model: "codex/gpt-plain", effort: "high" },
     );
+    // An alias names the model too; its thread stores the ref, which the start line shows.
+    workspace.org.slugs = { codex: "chatgpt" };
+    await post(ada, "By alias");
+    await startAll({ name: "Alias", task: "Work", model: "chatgpt/gpt-mini" });
+    expect(subagentThreadOf("Alias")).toMatchObject({ model: "codex/gpt-mini" });
     expect(subagentThreadOf("Mini")).toMatchObject({ model: "codex/gpt-mini", effort: "low" });
     // Not chosen, it is the starter's.
     expect(subagentThreadOf("Same")).toMatchObject({ model: parent.model, effort: parent.effort });
@@ -1472,6 +1477,7 @@ describe("subagents", () => {
       row.kind === "tool" && row.title === "Start" ? [[row.subagentName, row.model]] : [],
     );
     expect(starts).toContainEqual(["Mini", "codex/gpt-mini"]);
+    expect(starts).toContainEqual(["Alias", "codex/gpt-mini"]);
     expect(starts).toContainEqual(["Ignored", undefined]);
 
     // A space turns it off for itself, and a model given is ignored again.

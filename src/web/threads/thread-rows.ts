@@ -46,7 +46,7 @@ export function withUpdate(detail: ThreadDetail, update: RowsUpdate): ThreadDeta
       newFrom: null,
       earlierUnread: 0,
     }),
-    pending: update.pending,
+    waiting: update.waiting,
     run: update.run,
   };
 }
@@ -127,7 +127,7 @@ export function withFreshRead(fetched: ThreadDetail, shown: ThreadDetail): Threa
     earlierUnread,
     ...(live && {
       thread: { ...fetched.thread, lastEventSeq: shown.thread.lastEventSeq },
-      pending: shown.pending,
+      waiting: shown.waiting,
       run: shown.run,
     }),
   };

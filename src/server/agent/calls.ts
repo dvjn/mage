@@ -29,6 +29,7 @@ import {
 import type { ToolRisk } from "@/shared/threads/events.ts";
 import type { ToolRow } from "@/shared/transcript.ts";
 
+import type { Live } from "./live.ts";
 import type { Notifier } from "./notifications.ts";
 import type { RunStore } from "./runs.ts";
 import { steeringIn } from "./subagents.ts";
@@ -117,6 +118,8 @@ export interface CallsOptions {
   // The tools the thread's agent may call of those its space offers; all of them when not given.
   narrow?: (thread: Thread, offered: AnyToolSpec[]) => AnyToolSpec[];
   notifier: Notifier;
+  // Where running calls say what they print, for the people watching; nowhere when not given.
+  live?: Pick<Live, "open" | "move" | "moved" | "close" | "end" | "of">;
   // Names this server instance in the leases it takes on the calls it runs.
   instanceId?: string;
   leaseMs?: number;
@@ -140,6 +143,8 @@ export function callWork(record: CallRecord, canPost: boolean): BackgroundWork {
 export interface Adoption {
   threadId: string;
   runId: string;
+  // The id it had in its run.
+  callId: string;
   toolId: string;
   input: unknown;
   risk: ToolRisk;
@@ -193,6 +198,12 @@ export function createCalls(options: CallsOptions) {
 
   function leaseOf(record: CallRecord): CallLease {
     return { callId: record.id, owner, epoch: record.leaseEpoch };
+  }
+
+  // Whether this instance still carries the call out under the lease.
+  function holds(lease: CallLease) {
+    const now = calls.find(lease.callId);
+    return now?.leaseOwner === lease.owner && now.leaseEpoch === lease.epoch;
   }
 
   // Keeps the leases of the calls running here, and stops those whose lease no longer holds, as
@@ -249,6 +260,8 @@ export function createCalls(options: CallsOptions) {
     ms = 0,
     extra = {},
   ) {
+    // What it printed while it ran goes as its end is recorded.
+    options.live?.end(record.id);
     // A stop is written whatever the row, so readers see where the call stands.
     if (output === "stopped") {
       append({
@@ -344,7 +357,11 @@ export function createCalls(options: CallsOptions) {
     const held = live.get(id);
     live.delete(id);
     const record = calls.find(id);
-    if (!held || !record) return;
+    if (!held || !record) {
+      // Ended elsewhere, with what it printed.
+      options.live?.close(id);
+      return;
+    }
     const ms = Math.max(0, now().getTime() - started.getTime());
     const status = output.ok ? ("done" as const) : ("failed" as const);
     try {
@@ -375,7 +392,8 @@ export function createCalls(options: CallsOptions) {
   ) {
     const { thread, space } = contextOf(record.threadId);
     const controller = new AbortController();
-    live.set(record.id, { controller, lease: leaseOf(record) });
+    const lease = leaseOf(record);
+    live.set(record.id, { controller, lease });
     const started = now();
     let work: Promise<ToolOutput>;
     try {
@@ -392,6 +410,9 @@ export function createCalls(options: CallsOptions) {
           runAs,
           ...(approvedBy && { approvedBy }),
           signal: controller.signal,
+          ...(options.live && {
+            live: options.live.open(thread.id, record.id, () => holds(lease)),
+          }),
           write: (work) => log.write(thread.id, (append) => work(append)).result,
         }),
       );
@@ -449,6 +470,8 @@ export function createCalls(options: CallsOptions) {
     const { thread, space } = contextOf(record.threadId);
     const row = rowOf(record);
     const output = row && transcripts.whole([row])[0]!.output;
+    // What a running call has printed so far, its end cut to the cap, and how far it has come.
+    const printed = record.status === "running" ? options.live?.of(record.id) : null;
     return {
       id: record.id,
       tool: titleOf(space, record.toolId),
@@ -456,6 +479,8 @@ export function createCalls(options: CallsOptions) {
       status: record.status,
       ...(output?.ok && { result: resultText(output) }),
       ...(output && !output.ok && { error: output.error }),
+      ...(printed?.progress && { progress: printed.progress }),
+      ...(printed?.text && { output: printed.text.slice(-RESULT_CHARS) }),
       startedAt: record.createdAt.toISOString(),
       ...(record.endedAt && { endedAt: record.endedAt.toISOString() }),
       thread: thread.id,
@@ -509,7 +534,7 @@ export function createCalls(options: CallsOptions) {
             thread,
             space,
             spec.name,
-            spec.risk(parsed.data, { model: ctx.model }),
+            spec.risk(parsed.data, { model: ctx.model, orgId: space.orgId }),
             parsed.data,
           );
           const waits = decision.kind === "wait";
@@ -550,7 +575,8 @@ export function createCalls(options: CallsOptions) {
     modelName: "jobs.check",
     title: "Status",
     annotations: { readOnlyHint: true },
-    description: "Where a background call stands, and its result once it ended.",
+    description:
+      "Where a background call stands: while it runs, its progress and the end of its output, where its tool reports them; once it ended, its result.",
     input: z.object({ id: z.string().min(1).meta({ title: "Id" }) }),
     risk: () => "normal",
     run({ id }, ctx) {
@@ -570,7 +596,7 @@ export function createCalls(options: CallsOptions) {
       return Promise.resolve(
         refusing(() => ({
           calls: calls.inThread(ctx.threadId).map((record) => {
-            const { result: _result, error: _error, ...rest } = summaryOf(record);
+            const { result: _result, error: _error, output: _output, ...rest } = summaryOf(record);
             return rest;
           }),
         })),
@@ -731,9 +757,13 @@ export function createCalls(options: CallsOptions) {
           { owner, expiresAt: expiry() },
         );
         requested(append, { ...call, id, waits: false, names: call });
+        // What it printed so far goes on with it.
+        const lease = leaseOf(made);
+        options.live?.move(call.callId, id, () => holds(lease));
         return made;
       }).result;
       live.set(record.id, { controller: call.controller, lease: leaseOf(record) });
+      options.live?.moved(call.threadId, id);
       void call.work.then(
         (output) => end(record.id, output, call.started),
         (err: unknown) => {

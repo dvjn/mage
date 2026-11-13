@@ -53,7 +53,7 @@ function detail(rows: ShownRow[], before: number | null, lastEventSeq = 0): Thre
     before,
     newFrom: null,
     earlierUnread: 0,
-    pending: [],
+    waiting: [],
     run: null,
   };
 }
@@ -85,7 +85,7 @@ describe("withUpdate", () => {
     const shown = detail(range(0, 3), null);
     const run = { id: "run", createdAt: "2026-11-01T00:00:00.000Z", waiting: null };
 
-    const updated = withUpdate(shown, { seq: 7, rows: [row(3, 7)], pending: [], run });
+    const updated = withUpdate(shown, { seq: 7, rows: [row(3, 7)], waiting: [], run });
 
     expect(orders(updated.rows)).toEqual([0, 1, 2, 3]);
     expect(updated.run).toEqual(run);

@@ -12,6 +12,8 @@ import { ulid } from "ulid";
 import { expect } from "vite-plus/test";
 
 import { createCallStore } from "@/server/agent/call-store.ts";
+import { createLive } from "@/server/agent/live.ts";
+import { createLiveStore } from "@/server/agent/live-store.ts";
 import { createCalls } from "@/server/agent/calls.ts";
 import { createNotifier } from "@/server/agent/notifications.ts";
 import { createTasks } from "@/server/agent/tasks.ts";
@@ -174,16 +176,39 @@ export function setup(
     plain: [] as string[],
     // Refs turned off.
     off: [] as string[],
+    // The slug each connection goes by in aliases, by the prefix of its refs.
+    slugs: {} as Record<string, string>,
     titleModel: null as string | null,
     automaticTitleModel: null as string | null,
   };
+  const prefixOf = (ref: string) => ref.slice(0, ref.indexOf("/"));
+  const idOf = (ref: string) => ref.slice(ref.indexOf("/") + 1);
+  const canonicalRef = (_orgId: string, ref: string) => {
+    const prefix = Object.keys(org.slugs).find((one) => org.slugs[one] === prefixOf(ref));
+    return prefix ? `${prefix}/${idOf(ref)}` : ref;
+  };
+  const aliasOf = (_orgId: string, given: string) => {
+    const ref = canonicalRef("", given);
+    return `${org.slugs[prefixOf(ref)] ?? prefixOf(ref)}/${idOf(ref)}`;
+  };
+  // A ref's host by its prefix: the ChatGPT sign-in's, and an Anthropic key's, named `claude`.
+  const throughOf = (ref: string) =>
+    prefixOf(ref) === "codex" ? "ChatGPT" : prefixOf(ref) === "claude" ? "Anthropic" : null;
+  const modelLabels = () => (given: string) => {
+    const ref = canonicalRef("", given);
+    return throughOf(ref) && `${idOf(ref)} · ${throughOf(ref)}`;
+  };
   const models = {
+    aliasOf,
+    canonicalRef,
+    modelLabels,
     resolveModels: async (_orgId: string): Promise<ModelList> => ({
       models: org.models
         .filter((ref) => !org.off.includes(ref))
         .map((ref) => ({
           id: ref.slice(ref.indexOf("/") + 1),
           ref,
+          alias: aliasOf("", ref),
           name: ref.slice(ref.indexOf("/") + 1),
           connectionId: ref.slice(0, ref.indexOf("/")),
           host: "codex",
@@ -334,12 +359,20 @@ export function setup(
     },
     taskHandover: () => tasks.handover,
     modelsIn: () =>
-      Promise.resolve(org.models.map((ref) => ({ ref, reasoning: !org.plain.includes(ref) }))),
+      Promise.resolve(
+        org.models.map((ref) => ({
+          ref,
+          alias: aliasOf("", ref),
+          reasoning: !org.plain.includes(ref),
+        })),
+      ),
     notifier,
     watches,
   });
   const callStore = createCallStore(db);
+  const live = createLive({ store: createLiveStore(db), bus: countingBus, transact });
   const calls = createCalls({
+    live,
     calls: callStore,
     threads: threadStore,
     transcripts,
@@ -408,8 +441,10 @@ export function setup(
         guests: guestStore,
         models: {
           replyModel,
-          requireModel: models.requireModel,
           resolveModels: models.resolveModels,
+          canonicalRef,
+          aliasOf,
+          modelLabels,
         },
         open: () => model.open(),
       }),
@@ -442,6 +477,7 @@ export function setup(
     policies: toolPolicyStore,
     directory,
     access,
+    modelRef: canonicalRef,
     callModel: (call) =>
       call.background
         ? (runStore.find(callStore.find(call.id)?.runId ?? "")?.model ?? null)
@@ -472,6 +508,7 @@ export function setup(
     tools,
     subagents,
     background: callStore,
+    live,
     triggers,
     tasks,
     commands: createCommands({ skills, prompts: mcp }),
@@ -519,6 +556,7 @@ export function setup(
       before: (thread) => subagents.before(thread),
       ended: (run) => subagents.ended(run),
       adopt: (call) => calls.adopt(call),
+      live,
       logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
       runsIn: (space) => spaces.runsIn(space),
       hooks,
@@ -727,6 +765,7 @@ export function setup(
     triggersFor,
     triggerStore,
     callStore,
+    live,
     clock,
     mcp,
     mcpNetwork,

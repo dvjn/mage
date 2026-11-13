@@ -3,12 +3,12 @@
 // it, and asking its people questions. Each is cheap and
 // shows in the thread. Asking is always on; the rest are actions orgs and spaces set. Changing the
 // model asks first when the new one comes through another connection than the one replying now,
-// since the whole thread then goes to another provider.
+// since the whole thread then goes to another provider. The agent names models by their aliases;
+// threads store the refs they stand for.
 
 import * as z from "zod";
 
 import type { GuestStore } from "@/server/guests/service.ts";
-import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Models, OpenModel } from "@/server/models/service.ts";
 import type { SpaceStore } from "@/server/spaces/service.ts";
 import type { ThreadStore } from "@/server/threads/service.ts";
@@ -26,7 +26,7 @@ export interface SystemToolsOptions {
   transcripts: Pick<Transcripts, "of" | "whole">;
   spaceStore: Pick<SpaceStore, "find">;
   guests: Pick<GuestStore, "reachedIn">;
-  models: Pick<Models, "replyModel" | "requireModel" | "resolveModels">;
+  models: Pick<Models, "replyModel" | "resolveModels" | "canonicalRef" | "aliasOf" | "modelLabels">;
   // Opens the model a thread replies with, to write the summary that compacts it.
   open: (orgId: string, ref: string) => Promise<OpenModel>;
   now?: () => Date;
@@ -56,6 +56,7 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
     async run(_input, ctx) {
       const thread = threadOf(ctx.threadId);
       const space = spaceStore.find(thread.spaceId);
+      const aliased = (ref: string | null) => ref && models.aliasOf(ctx.orgId, ref);
       const model = space
         ? await models.replyModel(space, { model: thread.model, effort: thread.effort })
         : null;
@@ -68,9 +69,12 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
         value: {
           title: thread.title,
           model: {
-            chosen: { ref: thread.model ?? model?.chosen.ref ?? null, effort: thread.effort },
+            chosen: {
+              ref: aliased(thread.model ?? model?.chosen.ref ?? null),
+              effort: thread.effort,
+            },
             replying: model?.used
-              ? { ref: model.used.ref, name: model.used.name, effort: model.effort }
+              ? { ref: aliased(model.used.ref), name: model.used.name, effort: model.effort }
               : null,
           },
           people: [
@@ -98,8 +102,8 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
         ok: true,
         value: {
           models: available.map(
-            ({ ref, name, host, maker, connectionLabel, contextWindow, reasoning }) => ({
-              ref,
+            ({ alias, name, host, maker, connectionLabel, contextWindow, reasoning }) => ({
+              ref: alias,
               name,
               host,
               maker,
@@ -143,18 +147,29 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
       effort: effortSchema.nullable().meta({ title: "Effort" }),
     }),
     risk: ({ model }, ctx) =>
-      ctx.model && parseModelRef(model).connectionId !== parseModelRef(ctx.model).connectionId
+      ctx.model &&
+      parseModelRef(models.canonicalRef(ctx.orgId, model)).connectionId !==
+        parseModelRef(ctx.model).connectionId
         ? "ask"
         : "normal",
+    // The model as people know it, its connection, and the effort.
+    summary({ model, effort }, space) {
+      const label = models.modelLabels(space.orgId)(model);
+      return label && [label, effort].filter(Boolean).join(" · ");
+    },
     async run({ model, effort }, ctx) {
-      try {
-        await models.requireModel(ctx.orgId, model);
-      } catch (err) {
-        if (err instanceof ServiceError) return { ok: false, error: err.message };
-        throw err;
+      const ref = models.canonicalRef(ctx.orgId, model);
+      const { models: available, errors } = await models.resolveModels(ctx.orgId);
+      const found = available.find((one) => one.ref === ref);
+      if (!found) {
+        const unreadable = errors.length > 0 ? " Some connections could not be read." : "";
+        return { ok: false, error: `${model} is not a model this org can use.${unreadable}` };
       }
-      ctx.write(() => threads.update(ctx.threadId, { model, effort }));
-      return { ok: true, value: { model, effort } };
+      ctx.write(() => threads.update(ctx.threadId, { model: ref, effort }));
+      return {
+        ok: true,
+        value: { model: found.alias, name: found.name, connection: found.connectionLabel, effort },
+      };
     },
   };
 

@@ -31,7 +31,6 @@ import type { ShownRow, ToolRow } from "@/shared/threads/rows.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
 import { AuthCard, AuthFrame } from "@/web/auth/auth-frame";
 import { ConfirmDialog } from "@/web/components/confirm-dialog";
-import { meQuery } from "@/web/auth/queries";
 import {
   Conversation,
   ConversationContent,
@@ -141,7 +140,6 @@ export function ThreadPage() {
   });
   const spaces = useQuery(spacesQuery);
   const models = useQuery(modelsQuery);
-  const me = useQuery(meQuery);
   const online = useOnline();
   // The kind of the activity tray that is open.
   const [trayOpen, setTrayOpen] = useState<TrayGroup | null>(null);
@@ -794,11 +792,7 @@ export function ThreadPage() {
             {!viewing && (
               <>
                 <RunStatus stopping={!!run && run.id === stopped} />
-                <PendingTray
-                  threadId={threadId}
-                  pending={detail.data?.pending ?? []}
-                  me={me.data?.user.id}
-                />
+                <PendingTray threadId={threadId} waiting={detail.data?.waiting ?? []} />
                 <FieldError>{posting.error?.message}</FieldError>
               </>
             )}

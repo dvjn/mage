@@ -61,6 +61,7 @@ import type { ThreadCan, ThreadDetail, ThreadHead } from "@/shared/threads/detai
 import { callWork, type CallStore } from "@/server/agent/calls.ts";
 import type { Tasks } from "@/server/agent/tasks.ts";
 import type { Triggers } from "@/server/agent/triggers.ts";
+import type { Live } from "@/server/agent/live.ts";
 import { type BackgroundList, type TrayKind, trayKindOf } from "@/shared/calls.ts";
 import { attentionOf, liveFor, subagentStatus, underway } from "./tray.ts";
 import type { TaskList } from "@/shared/tasks.ts";
@@ -77,6 +78,7 @@ import {
   QUIET_PREFIX,
   type ThreadFeedItem,
   type DeltaBatch,
+  type LiveChunk,
   type EventDataMap,
   type Change,
 } from "@/shared/threads/events.ts";
@@ -98,6 +100,8 @@ import {
   type RowVersions,
   type ShownRow,
   type ShownRun,
+  type WaitingAction,
+  type WaitingRow,
 } from "@/shared/threads/rows.ts";
 import type { ThreadSearchResult } from "@/shared/threads/search.ts";
 import { type Effort, UNTITLED, type ThreadSummary } from "@/shared/threads/thread.ts";
@@ -113,6 +117,7 @@ import type {
   TranscriptFold,
   TranscriptRow,
 } from "@/shared/transcript.ts";
+import { waking } from "@/shared/transcript.ts";
 
 import { type AsideStore, asideRequest } from "./asides.ts";
 import type { Commands } from "./commands.ts";
@@ -386,7 +391,10 @@ export interface ThreadsOptions {
     | "resume"
   >;
   deltas: Pick<DeltaStore, "inThread">;
-  models: Pick<Models, "defaults" | "requireModel" | "replyModel" | "shownModels">;
+  models: Pick<
+    Models,
+    "defaults" | "requireModel" | "replyModel" | "shownModels" | "aliasOf" | "modelLabels"
+  >;
   log: ThreadLog;
   bus: EventBus;
   // Tells the thread's agent what people change, without waking it.
@@ -417,6 +425,8 @@ export interface ThreadsOptions {
   tasks?: Pick<Tasks, "listFor" | "ownerOf">;
   // The background calls tools start or people move there, when given.
   background?: Pick<CallStore, "find" | "open">;
+  // What the thread's running calls have printed so far, when kept.
+  live?: Pick<Live, "inThread">;
   // The timers and schedules the agent set, for their cards, when given.
   triggers?: Pick<Triggers, "workFor">;
   // The thread's model, opened, and what its next call would send were the branch to end at the
@@ -442,11 +452,12 @@ export type ThreadAsk = (
 export type Threads = ReturnType<typeof createThreads>;
 
 // What a thread's follower is told: the rows the log's new events changed, with the waiting
-// messages and the run as they now are; the pieces of a reply in progress; and the thread itself
-// once it is renamed, moved or set to another model.
+// messages and the run as they now are; the pieces of a reply in progress and of a running call's
+// output; and the thread itself once it is renamed, moved or set to another model.
 export type ThreadFollowItem =
   | { kind: "rows"; update: RowsUpdate }
   | { kind: "delta"; delta: DeltaBatch }
+  | { kind: "live"; live: LiveChunk }
   | { kind: "thread"; head: ThreadHead }
   | { kind: "tasks"; list: TaskList }
   | { kind: "background"; list: BackgroundList };
@@ -504,11 +515,6 @@ function readerPartsOf(row: ShownRow) {
 // A command as its message shows it: what the person typed, without what the agent reads for it.
 function shownCommand(command: SentCommand | undefined) {
   return command && { command: { name: command.name, args: command.args } };
-}
-
-// The messages waiting for the agent as readers see them.
-function shownPending(pending: readonly PendingMessage[]) {
-  return pending.map(({ command, ...message }) => ({ ...message, ...shownCommand(command) }));
 }
 
 // The id of the background call the row stands for: one started or moved there, which has a row of
@@ -760,6 +766,7 @@ export function createThreads(options: ThreadsOptions) {
     background,
     triggers,
     tasks,
+    live: printed,
   } = options;
   const now = options.now ?? (() => new Date());
   const agentNameOf = options.agentNameIn ?? (() => DEFAULT_AGENT_NAME);
@@ -1362,41 +1369,99 @@ export function createThreads(options: ThreadsOptions) {
       const { command, ...message } = row;
       return { ...message, ...place, ...shownCommand(command) };
     }
-    if (row.kind === "relay") {
-      const { steeredBy: _steeredBy, call: _call, rowId, ...message } = row;
-      // An older idle notification names its subagents only; they are found by name among the
-      // thread's.
-      if (row.type === "agent.idle" && !row.subagents) {
-        const names = row.text.slice(row.text.indexOf(": ") + 2).split(", ");
-        const found = (subagents?.ofParents([thread.id]) ?? []).filter(({ record }) =>
-          names.includes(record.name),
-        );
-        if (found.length > 0)
-          message.subagents = found.map(({ record }) => ({
-            threadId: record.threadId,
-            name: record.name,
-          }));
-      }
-      const sentBy = sentByOf(row, reader);
-      const source =
-        rowId && readable(reader.principal, row.from.threadId)
-          ? { threadId: row.from.threadId, rowId }
-          : null;
-      const ran = ranOf(row, reader);
-      return {
-        ...message,
-        ...place,
-        ...(sentBy && { sentBy }),
-        ...(source && { source }),
-        ...(ran && { ran }),
-      };
-    }
+    if (row.kind === "relay") return shownRelay(row, reader, place);
     if (row.kind === "limit") {
       const { call: _call, ...limit } = row;
       const sentBy = sentByOf(row, reader);
       return { ...limit, ...place, ...(sentBy && { sentBy }) };
     }
     return { ...row, ...place };
+  }
+
+  // A notification as the reader sees it: named as people know things, and linking back to where
+  // it came from in the threads they may read.
+  function shownRelay(
+    row: RelayRow,
+    reader: Reader,
+    place: Pick<ShownRow, "order" | "seq" | "turn" | "can" | "versions">,
+  ) {
+    const { thread } = reader;
+    const { steeredBy: _steeredBy, call: _call, rowId, ...message } = row;
+    // An older idle notification names its subagents only; they are found by name among the
+    // thread's.
+    if (row.type === "agent.idle" && !row.subagents) {
+      const names = row.text.slice(row.text.indexOf(": ") + 2).split(", ");
+      const found = (subagents?.ofParents([thread.id]) ?? []).filter(({ record }) =>
+        names.includes(record.name),
+      );
+      if (found.length > 0)
+        message.subagents = found.map(({ record }) => ({
+          threadId: record.threadId,
+          name: record.name,
+        }));
+    }
+    // A change of model names each model as people know it, in place of its ref.
+    if (message.change?.action === "model" && reader.space) {
+      const label = models.modelLabels(reader.space.orgId);
+      const { from, to } = message.change;
+      message.change = {
+        ...message.change,
+        ...(from && { from: label(from) ?? from }),
+        ...(to && { to: label(to) ?? to }),
+      };
+    }
+    const sentBy = sentByOf(row, reader);
+    const source =
+      rowId && readable(reader.principal, row.from.threadId)
+        ? { threadId: row.from.threadId, rowId }
+        : null;
+    const ran = ranOf(row, reader);
+    return {
+      ...message,
+      ...place,
+      ...(sentBy && { sentBy }),
+      ...(source && { source }),
+      ...(ran && { ran }),
+    };
+  }
+
+  // Everything waiting for the agent to take it in, oldest first, as rows after the transcript's
+  // last: each is what the reader will see once it is taken in, marked as waiting, with what they
+  // may still do with it. A person's message is its author's to change: to reword unless it was
+  // sent as a command, to switch between steering and queueing unless it interrupts, and to take
+  // back; a notification is nobody's to change. The fold keeps people's messages and other
+  // agents' notifications apart; a new kind of input is one more branch here.
+  function shownWaiting(transcript: Transcript, reader: Reader): WaitingRow[] {
+    const inputs = [
+      ...transcript.pending.map((message) => ({ seq: message.seq, message })),
+      ...waking(transcript.inbox).map((relay) => ({ seq: relay.seq, relay })),
+    ].toSorted((a, b) => a.seq - b.seq);
+    return inputs.map((input, index): WaitingRow => {
+      const place = { order: transcript.rows.length + index, seq: input.seq, turn: null };
+      if ("relay" in input) {
+        return {
+          ...shownRelay({ kind: "relay", ...input.relay }, reader, place),
+          waiting: { can: [] },
+        };
+      }
+      const { mode, command, ...message } = input.message;
+      const mine = message.author.userId === reader.userId && reader.can.post;
+      const can: WaitingAction[] = mine
+        ? [
+            ...(command ? [] : ["edit" as const]),
+            ...(mode === "interrupt" ? [] : ["mode" as const]),
+            "remove",
+          ]
+        : [];
+      return {
+        kind: "human",
+        ...message,
+        ...place,
+        quiet: false,
+        ...shownCommand(command),
+        waiting: { mode, can },
+      };
+    });
   }
 
   // The messages subagent calls sent to each thread, by the call, as far as its log was read; each
@@ -1860,7 +1925,7 @@ export function createThreads(options: ThreadsOptions) {
         before: start > 0 ? start : null,
         newFrom: from === -1 ? null : transcript.rows[from]!.id,
         earlierUnread: unreadBefore(transcript, from, start, principal.userId),
-        pending: current ? shownPending(transcript.pending) : [],
+        waiting: current ? shownWaiting(transcript, reader) : [],
         run: shownRun(transcript, runTrace),
       };
     },
@@ -1962,7 +2027,7 @@ export function createThreads(options: ThreadsOptions) {
       if (changes.model !== undefined && changes.model !== before.model) {
         did.push({
           text: changes.model
-            ? `${who} switched the model to ${changes.model}`
+            ? `${who} switched the model to ${models.aliasOf(principal.orgId, changes.model)}`
             : `${who} set the model to the default`,
           change: {
             subject: { kind: "thread", name: updated.title ?? "Thread" },
@@ -2479,8 +2544,8 @@ export function createThreads(options: ThreadsOptions) {
     seeBackground,
 
     // Delivers, as the reader sees them, the rows events with seq above `after` changed, then the
-    // pieces stored so far of the replies in progress, then the rows each new event changes and
-    // each piece as it is stored, each exactly once. With the rows go the waiting messages and the
+    // pieces stored so far of the replies in progress and of the output of the calls running, then
+    // the rows each new event changes and each piece as it is stored, each exactly once. With the rows go the waiting messages and the
     // run, and any row whose parts that are the reader's changed while the row did not, as when
     // someone else writes and a call can no longer be allowed for now. The thread itself is
     // delivered again once it is renamed, moved or set to another model. Listening starts before
@@ -2499,6 +2564,8 @@ export function createThreads(options: ThreadsOptions) {
       const told = new Map<string, string>();
       // The next piece number to send, by reply.
       const pieces = new Map<string, number>();
+      // How far each running call's output was sent, by call.
+      const outputs = new Map<string, number>();
       let replaying = true;
       const held: ThreadFeedItem[] = [];
       // The branch followed, and what the reader could do from each row and its versions as last
@@ -2514,7 +2581,7 @@ export function createThreads(options: ThreadsOptions) {
         const transcript = fold.transcript();
         const reader = readerOf(principal, thread, thread.currentBranchId, transcript.rows);
         const run = shownRun(transcript, runTrace);
-        const pending = shownPending(transcript.pending);
+        const waiting = shownWaiting(transcript, reader);
         // Another branch made current starts afresh from its newest rows.
         if (thread.currentBranchId !== branch) {
           branch = thread.currentBranchId;
@@ -2534,7 +2601,7 @@ export function createThreads(options: ThreadsOptions) {
             update: {
               seq: last,
               rows,
-              pending,
+              waiting,
               run,
               reset: { branch: { id: branch, current: true }, before: start > 0 ? start : null },
             },
@@ -2561,12 +2628,27 @@ export function createThreads(options: ThreadsOptions) {
         });
         if (fold.last <= last && rows.length === 0) return;
         last = Math.max(last, fold.last);
-        deliver({ kind: "rows", update: { seq: last, rows, pending, run } });
+        deliver({ kind: "rows", update: { seq: last, rows, waiting, run } });
+      }
+      // What was sent already is skipped; a piece wholly sent still tells the progress.
+      function sendOutput(chunk: LiveChunk) {
+        const known = Math.max(0, (outputs.get(chunk.callId) ?? 0) - chunk.offset);
+        const text = chunk.text.slice(known);
+        if (!text && !chunk.progress) return;
+        outputs.set(
+          chunk.callId,
+          Math.max(outputs.get(chunk.callId) ?? 0, chunk.offset + chunk.text.length),
+        );
+        deliver({ kind: "live", live: { ...chunk, offset: chunk.offset + known, text } });
       }
       function send(item: ThreadFeedItem) {
         if (item.kind === "event") {
           if (item.seq > last) sendRows();
           sendBackground();
+          return;
+        }
+        if (item.kind === "live") {
+          sendOutput(item.live);
           return;
         }
         const { messageId, index, texts } = item.delta;
@@ -2666,6 +2748,7 @@ export function createThreads(options: ThreadsOptions) {
       sendTasks(true);
       sendRows();
       for (const delta of deltas.inThread(id)) send({ kind: "delta", delta });
+      for (const chunk of printed?.inThread(id) ?? []) sendOutput(chunk);
       replaying = false;
       sendBackground(true);
       for (const item of held) send(item);

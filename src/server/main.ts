@@ -9,6 +9,8 @@ import { loadChromiumPreviewer } from "@/server/artifacts/preview.ts";
 import { CONTENT_PREFIX, createArtifacts } from "@/server/artifacts/service.ts";
 import { createArtifactStore } from "@/server/artifacts/store.ts";
 import { createCallStore } from "@/server/agent/call-store.ts";
+import { createLive } from "@/server/agent/live.ts";
+import { createLiveStore } from "@/server/agent/live-store.ts";
 import { type Calls, createCalls } from "@/server/agent/calls.ts";
 import { createNotifier } from "@/server/agent/notifications.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
@@ -217,7 +219,9 @@ const subagents = createSubagents({
   watches,
 });
 const callStore = createCallStore(db);
+const live = createLive({ store: createLiveStore(db), bus, transact });
 const calls = createCalls({
+  live,
   calls: callStore,
   threads: threadStore,
   transcripts,
@@ -318,6 +322,7 @@ const tools = createTools({
   policies: toolPolicyStore,
   directory,
   access,
+  modelRef: (orgId, ref) => models.canonicalRef(orgId, ref),
   callModel: (call) =>
     call.background
       ? (runStore.find(callStore.find(call.id)?.runId ?? "")?.model ?? null)
@@ -370,6 +375,7 @@ const worker = createRunWorker({
   before: (thread) => subagents.before(thread),
   ended: (run) => subagents.ended(run),
   adopt: (call) => calls.adopt(call),
+  live,
   logger,
   traces: runTraces,
   runsIn: (space) => spaces.runsIn(space),
@@ -417,6 +423,7 @@ const app = createApp({
     tools,
     subagents,
     background: callStore,
+    live,
     triggers,
     tasks,
     commands: createCommands({ skills, prompts: mcp }),

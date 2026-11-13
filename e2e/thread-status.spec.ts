@@ -132,7 +132,8 @@ test("a failed run needs the person until they open it, and a run elsewhere spin
   await expect(
     needsYou(page).getByRole("img", { name: /^Failed · .*over its limit/ }),
   ).toBeVisible();
-  await expect(page).toHaveTitle("● Mage");
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute("href", "/favicon-attention.svg");
+  await expect(page).toHaveTitle("Mage");
 
   await needsYou(page)
     .getByRole("link", { name: /Card reader/ })
@@ -142,6 +143,7 @@ test("a failed run needs the person until they open it, and a run elsewhere spin
   await page.mouse.move(800, 400);
   await expect(needsYou(page)).toHaveCount(0);
   await expect(sidebarRow(page, "Card reader")).toHaveAttribute("data-status", "read");
+  await expect(page.locator('link[rel="icon"]')).toHaveAttribute("href", "/favicon.svg");
   await expect(page).toHaveTitle("Mage");
 });
 

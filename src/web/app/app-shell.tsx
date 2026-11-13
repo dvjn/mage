@@ -1,6 +1,6 @@
 // The signed-in app: the sidebar beside the current page, open or collapsed as it was last left,
 // and the thread search and the keyboard shortcuts dialog over both. It follows the person's inbox to keep thread lists current, and
-// marks the tab's title while a thread needs them.
+// badges the tab's icon while a thread needs them.
 
 import { Outlet } from "@tanstack/react-router";
 import { useEffect } from "react";
@@ -17,12 +17,13 @@ function sidebarWasOpen() {
   return !document.cookie.split("; ").includes("sidebar_state=false");
 }
 
-// The tab's title, marked while some thread needs the person.
-function TitleMarker() {
+// The tab's icon, badged while some thread needs the person.
+function TabMarker() {
   const marked = useNeedsYou().total > 0;
   useEffect(() => {
-    const title = marked ? "● Mage" : "Mage";
-    if (document.title !== title) document.title = title;
+    const icon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    const href = marked ? "/favicon-attention.svg" : "/favicon.svg";
+    if (icon && icon.getAttribute("href") !== href) icon.setAttribute("href", href);
   }, [marked]);
   return null;
 }
@@ -38,7 +39,7 @@ export function AppShell() {
           <SidebarInset className="min-h-0 overflow-y-auto">
             <Outlet />
           </SidebarInset>
-          <TitleMarker />
+          <TabMarker />
         </SidebarProvider>
       </ThreadSearchProvider>
     </ShortcutsHelpProvider>

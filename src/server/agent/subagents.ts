@@ -117,7 +117,9 @@ export interface SubagentsOptions {
   // Whether the agent may choose the models of the subagents it starts in the space, and the
   // models the org can use there, each with whether it takes an effort.
   choosesModels?: (spaceId: string) => boolean;
-  modelsIn?: (orgId: string) => Promise<{ ref: string; reasoning?: boolean }[]>;
+  modelsIn?: (
+    orgId: string,
+  ) => Promise<{ ref: string; alias?: string; name?: string; reasoning?: boolean }[]>;
   // The starter's task list, for subagents started with tasks.
   taskHandover?: () => TaskHandover;
   // Its own `mayStart` decides whether a notified thread's agent starts.
@@ -566,7 +568,11 @@ export function createSubagents(options: SubagentsOptions) {
   function startOne(
     input: StartInput,
     ctx: ToolContext,
-    model: { model: string | null; effort: Effort | null } | null,
+    model: {
+      model: string | null;
+      effort: Effort | null;
+      shown?: { alias?: string; name?: string };
+    } | null,
   ) {
     const parent = threadOf(ctx.threadId);
     if (subagents.find(parent.id)) throw new ToolRefusal("Subagents cannot start subagents.");
@@ -623,7 +629,11 @@ export function createSubagents(options: SubagentsOptions) {
       id: thread.id,
       name: subagent.name,
       state: summaryOf(subagent).state,
-      ...(thread.model && model && { model: thread.model }),
+      ...(thread.model &&
+        model && {
+          model: model.shown?.alias ?? thread.model,
+          ...(model.shown?.name && { modelName: model.shown.name }),
+        }),
     };
   }
 
@@ -635,17 +645,20 @@ export function createSubagents(options: SubagentsOptions) {
     const parent = threadOf(ctx.threadId);
     if (!options.choosesModels?.(parent.spaceId)) return null;
     const usable = (await options.modelsIn?.(ctx.orgId)) ?? [];
-    const ref = input.model ?? parent.model;
-    const found = ref ? usable.find((one) => one.ref === ref) : undefined;
+    // The agent names a model by its alias; a stored ref still names it.
+    const wanted = input.model ?? parent.model;
+    const found =
+      usable.find((one) => one.ref === wanted) ??
+      (input.model ? usable.find((one) => one.alias === input.model) : undefined);
     if (input.model && !found) {
-      const listed = usable.map((one) => one.ref).join(", ") || "none";
+      const listed = usable.map((one) => one.alias ?? one.ref).join(", ") || "none";
       throw new ToolRefusal(`${input.model} is not a model this space can use. Models: ${listed}.`);
     }
     if (input.effort && found?.reasoning === false) {
-      throw new ToolRefusal(`${ref} takes no effort.`);
+      throw new ToolRefusal(`${found.alias ?? wanted} takes no effort.`);
     }
     const effort = input.effort ?? (found?.reasoning === false ? null : parent.effort);
-    return { model: ref, effort };
+    return { model: found?.ref ?? wanted, effort, shown: found };
   }
 
   const start: ToolSpec<StartInput> = {

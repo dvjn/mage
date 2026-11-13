@@ -11,7 +11,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 
 import { leaseColumns } from "@/server/db/lease.ts";
-import type { Steering } from "@/shared/threads/events.ts";
+import type { LiveProgress, Steering } from "@/shared/threads/events.ts";
 import type { TaskActor, TaskAssignee, TaskStatus } from "@/shared/tasks.ts";
 import type { TriggerKind, TriggerStatus } from "@/shared/triggers.ts";
 import { POLICY_COLORS } from "@/shared/tools.ts";
@@ -213,6 +213,36 @@ export const backgroundCall = sqliteTable(
     endedAt: integer("ended_at", { mode: "timestamp_ms" }),
   },
   (table) => [index("background_call_thread_idx").on(table.threadId, table.createdAt)],
+);
+
+// What a running tool call has printed so far, kept while it runs for whoever watches it, on any
+// instance: how many characters in all, and how far it says it has come. Dropped in the write that
+// records the call's result.
+export const callOutput = sqliteTable(
+  "call_output",
+  {
+    callId: text("call_id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    total: integer("total").default(0).notNull(),
+    progress: text("progress", { mode: "json" }).$type<LiveProgress>(),
+  },
+  (table) => [index("call_output_thread_idx").on(table.threadId)],
+);
+
+// The end of a running call's output, in the pieces it was stored in, each at the offset of its
+// first character in everything the call printed.
+export const callOutputChunk = sqliteTable(
+  "call_output_chunk",
+  {
+    callId: text("call_id")
+      .notNull()
+      .references(() => callOutput.callId, { onDelete: "cascade", onUpdate: "cascade" }),
+    offset: integer("offset").notNull(),
+    text: text("text").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.callId, table.offset] })],
 );
 
 // A task in a thread's list: its title, where it stands, whom it is for, its place in the list, and

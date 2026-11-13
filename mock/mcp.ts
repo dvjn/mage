@@ -13,9 +13,12 @@
 // instructions for using its tools, as servers may, and lists a few resources: a text guide, a
 // small image, and at /people/mcp who the caller is. It offers one prompt, a greeting whose text
 // starts with the line on which the stand-in model says the rest back, then embeds the guide and an
-// image.
+// image. At /slow/mcp a second server, a counter, has one tool that takes its time: it counts up a
+// step at a time, saying each step as progress on the stream its answer comes on, logs that it is
+// done, and stops when the caller hangs up.
 
 import { createHash, randomBytes } from "node:crypto";
+import { setTimeout as sleep } from "node:timers/promises";
 
 // What /headers/mcp takes: this bearer token, or this key in X-Api-Key.
 export const MCP_BEARER_TOKEN = "mcp-journey-token";
@@ -104,6 +107,24 @@ const TOOLS = [
       required: ["id"],
     },
     annotations: { readOnlyHint: false, destructiveHint: true },
+  },
+];
+
+// The counter's one tool: `steps` steps, `ms` apart, each said in a line `pad` characters longer.
+const SLOW_TOOLS = [
+  {
+    name: "count",
+    title: "Count",
+    description: "Count up slowly, saying each step.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        steps: { type: "integer", title: "Steps" },
+        ms: { type: "integer", title: "Pause" },
+        pad: { type: "integer", title: "Padding" },
+      },
+    },
+    annotations: { readOnlyHint: true },
   },
 ];
 
@@ -201,6 +222,8 @@ export function mcpStandIn(options: McpStandInOptions) {
   const refreshTokens = new Map<string, string>();
   // The legacy transport's open streams, by session.
   const streams = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
+  // How many of the counter's calls their caller hung up on.
+  let slowCancelled = 0;
   // The people whose tokens /people/mcp no longer takes.
   const revokedPeople = new Set<string>();
   // Where the server behind OAuth is, in either revision.
@@ -297,6 +320,73 @@ export function mcpStandIn(options: McpStandInOptions) {
     const message = (await req.json()) as JsonRpc;
     if (message.id === undefined) return new Response(null, { status: 202 });
     return modern ? modernReply(message) : json(reply(message, caller));
+  }
+
+  // The counter: its tool answers on a stream, each step a progress notification under the token
+  // the caller gave, then the result; a caller that hangs up stops it.
+  async function slow(req: Request) {
+    if (req.method !== "POST") return new Response(null, { status: 405 });
+    const message = (await req.json()) as JsonRpc;
+    if (message.id === undefined) return new Response(null, { status: 202 });
+    if (message.method === "tools/list") {
+      return json({ jsonrpc: "2.0", id: message.id, result: { tools: SLOW_TOOLS } });
+    }
+    if (message.method !== "tools/call") return json(reply(message));
+    const args = (message.params?.arguments ?? {}) as Record<string, unknown>;
+    const steps = Number(args.steps ?? 5);
+    const ms = Number(args.ms ?? 100);
+    const pad = "#".repeat(Number(args.pad ?? 0));
+    const token = (message.params?._meta as { progressToken?: unknown } | undefined)?.progressToken;
+    const encoder = new TextEncoder();
+    let gone = false;
+    const hangUp = () => {
+      if (!gone) slowCancelled += 1;
+      gone = true;
+    };
+    const send = (controller: ReadableStreamDefaultController<Uint8Array>, body: unknown) =>
+      controller.enqueue(encoder.encode(`event: message\ndata: ${JSON.stringify(body)}\n\n`));
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        for (let step = 1; step <= steps && !gone; step += 1) {
+          await sleep(ms);
+          if (gone) return;
+          if (token !== undefined) {
+            send(controller, {
+              jsonrpc: "2.0",
+              method: "notifications/progress",
+              params: {
+                progressToken: token,
+                progress: step,
+                total: steps,
+                message: `Step ${step} of ${steps}${pad}`,
+              },
+            });
+          }
+        }
+        if (gone) return;
+        send(controller, {
+          jsonrpc: "2.0",
+          method: "notifications/message",
+          params: { level: "info", data: `Counted ${steps} steps` },
+        });
+        send(controller, {
+          jsonrpc: "2.0",
+          id: message.id,
+          result: {
+            content: [{ type: "text", text: `Counted to ${steps}.` }],
+            structuredContent: { count: steps },
+          },
+        });
+        // Done: the caller closing its side now is no hang-up.
+        gone = true;
+        controller.close();
+      },
+      cancel: hangUp,
+    });
+    req.signal.addEventListener("abort", hangUp, { once: true });
+    return new Response(body, {
+      headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+    });
   }
 
   // Whose token the request came with at /people/mcp: the name after `person-`, unless revoked.
@@ -573,6 +663,10 @@ export function mcpStandIn(options: McpStandInOptions) {
         if (!caller) return json({ error: "Give your token" }, 401);
         return streamable(req, false, caller);
       }
+      case "/slow/mcp":
+        return slow(req);
+      case "/control/slow":
+        return json({ cancelled: slowCancelled });
       case "/sse":
         return req.method === "GET" ? openStream() : new Response(null, { status: 405 });
       case "/messages":

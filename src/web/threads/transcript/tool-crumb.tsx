@@ -9,7 +9,8 @@ import type { ToolRow } from "@/shared/threads/rows.ts";
 import { useModelNamer } from "@/web/threads/transcript/agent";
 
 // A call as the line names it: its tool's title, then for loading a skill the skill, and for
-// starting a subagent its name and the model it runs with.
+// starting a subagent its name and the model it runs with; else its input in a few words, where
+// the server says it.
 function useCallTitle() {
   const nameOf = useModelNamer();
   return (row: ToolRow) => {
@@ -17,7 +18,7 @@ function useCallTitle() {
     if (row.subagentName) {
       return [row.title, row.subagentName, nameOf(row.model ?? null)].filter(Boolean).join(" · ");
     }
-    return row.title;
+    return [row.title, row.summary].filter(Boolean).join(" · ");
   };
 }
 

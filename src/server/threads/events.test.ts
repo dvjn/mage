@@ -49,7 +49,7 @@ describe("live thread events", () => {
           turn: null,
         },
       ],
-      pending: [],
+      waiting: [],
       run: null,
     });
   });

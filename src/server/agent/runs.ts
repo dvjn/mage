@@ -66,6 +66,7 @@ import {
 } from "@/shared/transcript.ts";
 
 import type { Adoption } from "./calls.ts";
+import type { Live } from "./live.ts";
 import { compact, type ThreadRequest, wholeWhereRead } from "./compaction.ts";
 import {
   contextOf,
@@ -223,6 +224,8 @@ export interface RunWorkerOptions {
   ended?: (run: Run) => void;
   // Takes over a call moved to the background, which runs on beside the run.
   adopt?: (call: Adoption) => string;
+  // Where running calls say what they print, for the people watching; nowhere when not given.
+  live?: Pick<Live, "open" | "close" | "end">;
   logger: Logger;
   // What ties each run's span to the work that woke its thread; runs are not traced without it.
   traces?: RunTraces;
@@ -525,6 +528,17 @@ export function createRunWorker(options: RunWorkerOptions) {
     ).result;
   }
 
+  // Whether the run's lease still holds.
+  function holds(lease: Lease) {
+    try {
+      runs.hold(lease);
+      return true;
+    } catch (err) {
+      if (err instanceof LeaseLost) return false;
+      throw err;
+    }
+  }
+
   // Pending messages whose authors may still post in the thread, as members of its space or as
   // its guests; the others are dropped.
   function admissible(threadId: string, pending: PendingMessage[], append: Append) {
@@ -548,6 +562,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     // Its calls still open will not run.
     for (const row of transcript(run).rows) {
       if (row.kind !== "tool" || row.runId !== run.id || !open(row)) continue;
+      options.live?.end(row.id);
       append({
         type: "tool.denied",
         actor: AGENT,
@@ -849,7 +864,7 @@ export function createRunWorker(options: RunWorkerOptions) {
               thread,
               space,
               toolId,
-              spec.risk(parsed.data, { model: execution.ref }),
+              spec.risk(parsed.data, { model: execution.ref, orgId: space.orgId }),
               parsed.data,
             ).kind === "wait");
         const names = named(toolId);
@@ -927,7 +942,7 @@ export function createRunWorker(options: RunWorkerOptions) {
             // An approved call runs with its approver's own login.
             if (spec.connection?.(parsed.data, space)) runAs = call.decision?.by.userId ?? null;
           } else {
-            const declared = spec.risk(parsed.data, { model: execution.ref });
+            const declared = spec.risk(parsed.data, { model: execution.ref, orgId: space.orgId });
             const decision = tools.evaluate(
               rows,
               thread,
@@ -1018,6 +1033,9 @@ export function createRunWorker(options: RunWorkerOptions) {
             runAs,
             ...(approvedBy && { approvedBy }),
             signal: callController.signal,
+            ...(options.live && {
+              live: options.live.open(run.threadId, call.id, () => holds(lease)),
+            }),
             ...(call.answers && { answers: call.answers }),
             threadRequest: request,
             ...(deferral && {
@@ -1044,6 +1062,7 @@ export function createRunWorker(options: RunWorkerOptions) {
             ...adoption,
             threadId: run.threadId,
             runId: run.id,
+            callId: call.id,
             toolId: call.toolId,
             input,
             risk: call.risk,
@@ -1063,7 +1082,10 @@ export function createRunWorker(options: RunWorkerOptions) {
         output = { ok: false, error: messageOf(err) };
       } finally {
         execution.running = undefined;
-        if (!adoption) execution.controller.signal.removeEventListener("abort", stopCall);
+        if (!adoption) {
+          execution.controller.signal.removeEventListener("abort", stopCall);
+          options.live?.close(call.id);
+        }
       }
       span.setAttribute("tool.outcome", output.ok ? "ok" : "error");
       if (!output.ok) span.setStatus({ code: SpanStatusCode.ERROR });
@@ -1073,7 +1095,9 @@ export function createRunWorker(options: RunWorkerOptions) {
       }
       span.end();
       const ms = Math.max(0, now().getTime() - started);
-      write(lease, run, (append) =>
+      write(lease, run, (append) => {
+        // What it printed while it ran goes as its result is recorded.
+        options.live?.end(call.id);
         append({
           type: "tool.ran",
           actor: AGENT,
@@ -1085,8 +1109,8 @@ export function createRunWorker(options: RunWorkerOptions) {
             ...(output.ranAs && { ranAs: output.ranAs }),
             ...(standingOn && { standingOn }),
           },
-        }),
-      );
+        });
+      });
     }
   }
 

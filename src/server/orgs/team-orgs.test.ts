@@ -397,7 +397,7 @@ describe("org members", () => {
     const detail = (await (
       await api("GET", `/threads/${thread.id}`, ada.cookie, undefined, orgId)
     ).json()) as ThreadDetail;
-    expect(detail.pending).toEqual([]);
+    expect(detail.waiting).toEqual([]);
     const events = workspace.threadStore.eventsAfter(thread.id, 0);
     expect(events.map((event) => event.type)).toContain("message.dropped");
     expect((await api("GET", "/spaces", grace.cookie, undefined, orgId)).status).toBe(404);

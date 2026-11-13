@@ -41,7 +41,7 @@ describe("threads", () => {
     expect(body.thread.title).toBe("How do engines compute?");
     // The first was taken in; the second waits for the agent.
     expect(body.rows).toMatchObject([{ kind: "human", text: "How do\n engines   compute?" }]);
-    expect(body.pending).toMatchObject([{ text: "Another question" }]);
+    expect(body.waiting).toMatchObject([{ kind: "human", text: "Another question" }]);
   });
 
   it("keeps a title someone set before the first message", async () => {
@@ -200,11 +200,10 @@ describe("event log", () => {
     db.delete(schema.user).where(eq(schema.user.id, grace.userId)).run();
 
     // Ada's first message was taken in; the two after it wait for the agent.
-    const { rows, pending } = await threads.get(ada, thread.id);
-    const authors = [
-      ...rows.flatMap((row) => (row.kind === "human" ? [row.author] : [])),
-      ...pending.map((message) => message.author),
-    ];
+    const { rows, waiting } = await threads.get(ada, thread.id);
+    const authors = [...rows, ...waiting].flatMap((row) =>
+      row.kind === "human" ? [row.author] : [],
+    );
 
     expect(authors).toEqual([
       { kind: "user", userId: ada.userId, name: "Ada Lovelace", former: false },

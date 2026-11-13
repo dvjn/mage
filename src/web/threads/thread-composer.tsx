@@ -14,7 +14,7 @@ import { type KeyboardEvent, type ReactNode, useRef, useState } from "react";
 
 import { type CommandInput, commandOf, type ThreadCommand } from "@/shared/threads/commands.ts";
 import type { Delivery } from "@/shared/threads/events.ts";
-import type { PendingMessage } from "@/shared/threads/rows.ts";
+import type { HumanRow, WaitingRow } from "@/shared/threads/rows.ts";
 import {
   PromptInputBody,
   PromptInputFooter,
@@ -284,15 +284,9 @@ const MODE_LABELS: Record<Delivery, string> = {
   interrupt: "interrupts",
 };
 
-function WaitingItem({
-  threadId,
-  message,
-  mine,
-}: {
-  threadId: string;
-  message: PendingMessage;
-  mine: boolean;
-}) {
+function WaitingItem({ threadId, message }: { threadId: string; message: HumanRow }) {
+  const mode = message.waiting?.mode ?? "queue";
+  const can = new Set(message.waiting?.can);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.text);
   const waiting = useWaitingMessage(threadId, message.id);
@@ -315,21 +309,20 @@ function WaitingItem({
       <div className="flex items-baseline gap-2 text-xs text-muted-foreground">
         <span className="font-medium text-foreground">{displayName(message.author)}</span>
         {message.guest && <span>Guest</span>}
-        <span>{MODE_LABELS[message.mode]}</span>
-        {mine && !editing && (
+        <span>{MODE_LABELS[mode]}</span>
+        {can.size > 0 && !editing && (
           <span className="ml-auto flex gap-1">
-            {message.mode !== "interrupt" && (
+            {can.has("mode") && (
               <Button
                 size="xs"
                 variant="ghost"
                 disabled={busy}
-                onClick={() => void change({ mode: message.mode === "steer" ? "queue" : "steer" })}
+                onClick={() => void change({ mode: mode === "steer" ? "queue" : "steer" })}
               >
-                {message.mode === "steer" ? "Queue instead" : "Steer instead"}
+                {mode === "steer" ? "Queue instead" : "Steer instead"}
               </Button>
             )}
-            {/* A command stands for what it was sent as; it is removed and sent again instead. */}
-            {!message.command && (
+            {can.has("edit") && (
               <Button
                 size="xs"
                 variant="ghost"
@@ -342,9 +335,11 @@ function WaitingItem({
                 Edit
               </Button>
             )}
-            <Button size="xs" variant="ghost" disabled={busy} onClick={() => void remove()}>
-              Remove
-            </Button>
+            {can.has("remove") && (
+              <Button size="xs" variant="ghost" disabled={busy} onClick={() => void remove()}>
+                Remove
+              </Button>
+            )}
           </span>
         )}
       </div>
@@ -379,26 +374,14 @@ function WaitingItem({
   );
 }
 
-// The messages waiting for the agent, oldest first.
-export function PendingTray({
-  threadId,
-  pending,
-  me,
-}: {
-  threadId: string;
-  pending: PendingMessage[];
-  me: string | undefined;
-}) {
-  if (pending.length === 0) return null;
+// People's messages waiting for the agent, oldest first.
+export function PendingTray({ threadId, waiting }: { threadId: string; waiting: WaitingRow[] }) {
+  const messages = waiting.filter((row) => row.kind === "human");
+  if (messages.length === 0) return null;
   return (
     <ul aria-label="Waiting messages" className="flex flex-col gap-1.5">
-      {pending.map((message) => (
-        <WaitingItem
-          key={message.id}
-          threadId={threadId}
-          message={message}
-          mine={message.author.userId === me}
-        />
+      {messages.map((message) => (
+        <WaitingItem key={message.id} threadId={threadId} message={message} />
       ))}
     </ul>
   );

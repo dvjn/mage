@@ -71,9 +71,24 @@ const rowFields = {
 // The command a message was sent as, as the person typed it: its name and what followed it.
 const sentCommandSchema = z.object({ name: z.string(), args: z.string() });
 
+// What the reader may do with an input still waiting for the agent: change its words, change how
+// it is delivered, or take it back.
+export const waitingActionSchema = z.enum(["edit", "mode", "remove"]);
+
+export type WaitingAction = z.infer<typeof waitingActionSchema>;
+
+// The mark of a row made for the agent that it has not taken in yet: for a person's message how it
+// is to be delivered, and what the reader may still do with it. The row is otherwise as it will
+// show once taken in.
+export const waitingMarkSchema = z.object({
+  mode: deliverySchema.optional(),
+  can: z.array(waitingActionSchema),
+});
+
 const humanRowSchema = z.object({
   ...rowFields,
   kind: z.literal("human"),
+  waiting: waitingMarkSchema.optional(),
   author: personSchema,
   postedAt: z.string(),
   text: z.string(),
@@ -129,6 +144,8 @@ const callRowSchema = z.object({
   skill: z.string().optional(),
   subagentName: z.string().optional(),
   model: z.string().optional(),
+  // The input in a few words, for a call whose tool says it better than its plain values do.
+  summary: z.string().optional(),
   input: z.unknown(),
   // For a call that waits, the risk its tool's policy gives it now.
   risk: toolRiskSchema,
@@ -239,6 +256,7 @@ const sentBySchema = z.object({
 const relayRowSchema = z.object({
   ...rowFields,
   kind: z.literal("relay"),
+  waiting: waitingMarkSchema.optional(),
   postedAt: z.string(),
   type: notificationKindSchema,
   from: senderSchema,
@@ -331,19 +349,11 @@ export type ForkRow = z.infer<typeof forkRowSchema>;
 export type RestoreRow = z.infer<typeof restoreRowSchema>;
 export type AgentTurn = z.infer<typeof agentTurnSchema>;
 
-// A message posted while the agent was busy, waiting to be taken in.
-export const pendingMessageSchema = z.object({
-  id: z.string(),
-  seq: z.number().int().nonnegative(),
-  author: personSchema,
-  postedAt: z.string(),
-  text: z.string(),
-  mode: deliverySchema,
-  guest: z.literal(true).optional(),
-  command: sentCommandSchema.optional(),
-});
+// An input made for the agent that it has not taken in yet, whatever its kind: the row it will show
+// as, marked as waiting.
+export const waitingRowSchema = z.discriminatedUnion("kind", [humanRowSchema, relayRowSchema]);
 
-export type PendingMessage = z.infer<typeof pendingMessageSchema>;
+export type WaitingRow = z.infer<typeof waitingRowSchema>;
 
 // The run under way: since when, whether it waits for answers to the agent's questions or for a
 // decision on a call, whether it compacts the thread, and, while the server traces it, its span as
@@ -359,13 +369,13 @@ export const shownRunSchema = z.object({
 export type ShownRun = z.infer<typeof shownRunSchema>;
 
 // What the live stream sends as the thread's log grows, up to the event `seq`: the rows that
-// changed, whole, and the waiting messages and the run as they now are.
+// changed, whole, and what waits for the agent and the run as they now are.
 // Once another branch is current, the update starts it afresh: its rows are the branch's newest,
 // in place of every row before, and `reset` says where earlier ones are read from.
 export const rowsUpdateSchema = z.object({
   seq: z.number().int().nonnegative(),
   rows: z.array(shownRowSchema),
-  pending: z.array(pendingMessageSchema),
+  waiting: z.array(waitingRowSchema),
   run: shownRunSchema.nullable(),
   reset: z
     .object({

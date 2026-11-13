@@ -4,7 +4,9 @@
 // stream a reply from through its connection, and the model that names threads: the org's choice,
 // or a small model of its first connection that has one. A key, cloud credentials or a server is
 // added, or changed, only once its host lists models with them; a change keeps the connection's
-// refs, as they are named by its id. Each connection's models can be turned off, and
+// refs, as they are named by its id. The agent reads and writes each model by an alias instead,
+// `<connection slug>/<model id>`, worked out from the connections and resolved here to the ref,
+// which is what threads store. Each connection's models can be turned off, and
 // those it lists for the first time are turned on or not as the connection says; a model turned off
 // is in no picker and does not reply.
 
@@ -21,6 +23,7 @@ import { type ModelPair, replyCandidates } from "@/shared/models.ts";
 import type { ShownModel } from "@/shared/threads/list.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
 
+import { connectionSlugs } from "./aliases.ts";
 import type { Catalog, CatalogModel } from "./catalog.ts";
 import {
   type Connection,
@@ -61,6 +64,8 @@ export interface ModelChoiceStore {
 
 export interface Model extends CatalogModel {
   ref: string;
+  // What the agent calls it: its connection's slug and its id.
+  alias: string;
   connectionId: string;
   host: HostId;
   maker: MakerId | null;
@@ -189,7 +194,11 @@ export function createModels(options: ModelsOptions) {
   }
 
   // The connection's models with each one's choice, new ones recorded as the connection says.
-  function withChoices(connection: Connection, models: CatalogModel[]): ConnectionModel[] {
+  function withChoices(
+    connection: Connection,
+    models: CatalogModel[],
+    slug: string,
+  ): ConnectionModel[] {
     const chosen = choices.sync(
       connection.id,
       models.map((m) => m.id),
@@ -203,6 +212,7 @@ export function createModels(options: ModelsOptions) {
           pricing: model.pricing ?? pricingOf(connection.host, model.id),
         }),
       ref: modelRef(connection, model.id),
+      alias: `${slug}/${model.id}`,
       connectionId: connection.id,
       host: connection.host,
       maker: model.maker ?? makerOf(hostOf(connection.host), model.id),
@@ -230,9 +240,34 @@ export function createModels(options: ModelsOptions) {
     return namedBy(connections.list(orgId), prefix);
   }
 
+  // The connection's slug among its org's.
+  function slugIn(orgId: string, connection: Connection) {
+    return connectionSlugs(connections.list(orgId)).get(connection.id) ?? connection.id;
+  }
+
+  // The ref a model is stored under, given that or its alias; what names no connection of the org
+  // is given back as it is.
+  function canonicalRef(orgId: string, ref: string) {
+    const { connectionId: prefix, modelId } = parseModelRef(ref);
+    const list = connections.list(orgId);
+    if (!prefix || namedBy(list, prefix)) return ref;
+    const slugs = connectionSlugs(list);
+    const connection = list.find((c) => slugs.get(c.id) === prefix);
+    return connection ? modelRef(connection, modelId) : ref;
+  }
+
+  // The alias of the model a ref or alias names; given back as it is when the org has no such
+  // connection.
+  function aliasOf(orgId: string, ref: string) {
+    const { connectionId: prefix, modelId } = parseModelRef(canonicalRef(orgId, ref));
+    const connection = connectionOf(orgId, prefix);
+    return connection ? `${slugIn(orgId, connection)}/${modelId}` : ref;
+  }
+
   // The one place that decides which models exist for an org.
   async function resolveModels(orgId: string, { refresh = false } = {}): Promise<ModelList> {
     const list = connections.list(orgId);
+    const slugs = connectionSlugs(list);
     const ids = new Set(list.map((c) => c.id));
     for (const [id, cached] of cache) {
       if (cached.orgId === orgId && !ids.has(id)) cache.delete(id);
@@ -251,6 +286,7 @@ export function createModels(options: ModelsOptions) {
       for (const { enabled, firstSeenAt: _seen, ...model } of withChoices(
         connection,
         settled.value,
+        slugs.get(connectionId) ?? connectionId,
       )) {
         if (enabled) result.models.push(model);
         else result.turnedOff.push({ ref: model.ref, name: model.name, connectionId });
@@ -267,7 +303,7 @@ export function createModels(options: ModelsOptions) {
     const orgDefault = settings.get(orgId).defaultModel;
     return {
       autoEnable: connection.autoEnableModels,
-      models: withChoices(connection, list).map((model) => ({
+      models: withChoices(connection, list, slugIn(orgId, connection)).map((model) => ({
         ...model,
         orgDefault: model.ref === orgDefault,
       })),
@@ -373,6 +409,8 @@ export function createModels(options: ModelsOptions) {
   return {
     resolveModels,
     requireModel,
+    canonicalRef,
+    aliasOf,
 
     // Forgets the connection's list, as when where its requests go changed.
     invalidate(connectionId: string) {
@@ -416,7 +454,9 @@ export function createModels(options: ModelsOptions) {
       }
       // A list that cannot be read leaves the model's reasoning unknown.
       const list = await listOf(orgId, connection, false).catch(() => []);
-      const listed = withChoices(connection, list).find((m) => m.id === model);
+      const listed = withChoices(connection, list, slugIn(orgId, connection)).find(
+        (m) => m.id === model,
+      );
       if (listed && !listed.enabled) throw new ModelTurnedOff(listed.name);
       const gateway = gateways[connection.host];
       return {
@@ -521,6 +561,21 @@ export function createModels(options: ModelsOptions) {
           host,
           connection: connection ? connectionLabel(connection) : null,
         };
+      };
+    },
+
+    // Says a model in one line, given its ref or alias: the name its last list gave it, else its
+    // id, and its connection by the name people gave it, else its host's; null for a model of no
+    // connection of the org.
+    modelLabels(orgId: string): (ref: string) => string | null {
+      const list = connections.list(orgId);
+      return (given) => {
+        const { connectionId: prefix, modelId } = parseModelRef(canonicalRef(orgId, given));
+        const connection = namedBy(list, prefix);
+        if (!connection) return null;
+        const listed = cache.get(connection.id)?.models.find((m) => m.id === modelId);
+        const through = connectionName(connection) ?? hostOf(connection.host).label;
+        return `${listed?.name ?? modelId} · ${through}`;
       };
     },
 

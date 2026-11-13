@@ -390,7 +390,7 @@ describe("publishing and updating", () => {
     const publish = t.artifacts
       .toolset()
       .tools.find((tool) => tool.name === ARTIFACT_TOOLS.publish)!;
-    expect(publish.risk({}, { model: null })).toBe("normal");
+    expect(publish.risk({}, { model: null, orgId: "" })).toBe("normal");
   });
 
   it("stays when the thread it was made in is deleted", async () => {
@@ -675,7 +675,7 @@ describe("the agent in a thread with guests", () => {
     const t = await team();
     const update = t.artifacts.toolset().tools.find((tool) => tool.name === ARTIFACT_TOOLS.update)!;
     expect(update.annotations?.readOnlyHint).toBe(false);
-    expect(update.risk({}, { model: null })).toBe("normal");
+    expect(update.risk({}, { model: null, orgId: "" })).toBe("normal");
   });
 });
 

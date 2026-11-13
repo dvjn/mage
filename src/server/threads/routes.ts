@@ -48,6 +48,8 @@ export function feedMessage(item: ThreadFollowItem) {
       return { event: "background", data: JSON.stringify(item.list) };
     case "delta":
       return { event: "message-delta", data: JSON.stringify(item.delta) };
+    case "live":
+      return { event: "tool-output", data: JSON.stringify(item.live) };
     default: {
       const unknown: never = item;
       throw new Error(`unhandled thread feed item: ${JSON.stringify(unknown)}`);

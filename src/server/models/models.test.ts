@@ -346,6 +346,7 @@ describe("model lists", () => {
     expect(list).toEqual([
       {
         ref: "codex/gpt-big",
+        alias: "chatgpt/gpt-big",
         id: "gpt-big",
         name: "GPT Big",
         connectionId: id,
@@ -359,6 +360,7 @@ describe("model lists", () => {
       },
       {
         ref: "codex/gpt-mini",
+        alias: "chatgpt/gpt-mini",
         id: "gpt-mini",
         name: "GPT Mini",
         connectionId: id,
@@ -387,6 +389,7 @@ describe("model lists", () => {
     expect(list).toEqual([
       {
         ref: `${id}/claude-big`,
+        alias: "anthropic/claude-big",
         id: "claude-big",
         name: "Claude Big",
         connectionId: id,
@@ -400,6 +403,7 @@ describe("model lists", () => {
       },
       {
         ref: `${id}/claude-old`,
+        alias: "anthropic/claude-old",
         id: "claude-old",
         name: "Claude Old",
         connectionId: id,
@@ -455,6 +459,37 @@ describe("model lists", () => {
         "codex/gpt-mini",
       ].toSorted(),
     );
+  });
+
+  it("names each model by an alias, and reads an alias or a stored ref as the ref", async () => {
+    const { models, ready } = setup();
+    const { orgId, anthropicId } = await ready();
+
+    const { models: list } = await models.resolveModels(orgId);
+
+    expect(list.map((model) => model.alias).toSorted()).toEqual([
+      "anthropic/claude-big",
+      "anthropic/claude-old",
+      "chatgpt/gpt-big",
+      "chatgpt/gpt-mini",
+    ]);
+    expect(models.canonicalRef(orgId, "anthropic/claude-big")).toBe(`${anthropicId}/claude-big`);
+    expect(models.canonicalRef(orgId, "chatgpt/gpt-big")).toBe("codex/gpt-big");
+    // Refs as threads store them still name their models.
+    expect(models.canonicalRef(orgId, `${anthropicId}/claude-big`)).toBe(
+      `${anthropicId}/claude-big`,
+    );
+    expect(models.canonicalRef(orgId, "codex/gpt-big")).toBe("codex/gpt-big");
+    expect(models.canonicalRef(orgId, "gone/echo")).toBe("gone/echo");
+    expect(models.aliasOf(orgId, `${anthropicId}/claude-big`)).toBe("anthropic/claude-big");
+    expect(models.aliasOf(orgId, "codex/gpt-big")).toBe("chatgpt/gpt-big");
+    expect(models.aliasOf(orgId, "chatgpt/gpt-big")).toBe("chatgpt/gpt-big");
+    expect(models.aliasOf(orgId, "gone/echo")).toBe("gone/echo");
+    // One line says a model by its listed name and its connection's.
+    const label = models.modelLabels(orgId);
+    expect(label("anthropic/claude-big")).toBe("Claude Big · Anthropic");
+    expect(label("codex/gpt-big")).toBe("GPT Big · ChatGPT");
+    expect(label("gone/echo")).toBeNull();
   });
 
   it("shows a model by its maker, its connection's host and its listed name, without asking again", async () => {

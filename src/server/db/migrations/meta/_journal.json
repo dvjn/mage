@@ -505,6 +505,13 @@
       "when": 1794566925374,
       "tag": "0071_scoped_settings",
       "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "6",
+      "when": 1794602484906,
+      "tag": "0072_call_output",
+      "breakpoints": true
     }
   ]
 }

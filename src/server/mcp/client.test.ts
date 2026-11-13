@@ -166,3 +166,48 @@ describe("Mage's client metadata document", () => {
     expect(store.state.document).toBeUndefined();
   });
 });
+
+describe("a call that takes its time", () => {
+  const slow = {
+    url: `${ORIGIN}/slow/mcp`,
+    transport: null,
+    protocolVersion: null,
+    auth: { kind: "none" as const },
+  };
+
+  it("hears each step the server says while it runs, and what it logs", async () => {
+    const network = authorizationServer({ documents: false });
+    const { client } = mageAt("http://localhost:4783", network);
+    const heard: { progress: number; total?: number; message?: string }[] = [];
+    const logged: string[] = [];
+    const result = await client.call(slow, "count", { steps: 3, ms: 1 }, undefined, {
+      progress: (progress) => heard.push(progress),
+      log: (line) => logged.push(line),
+    });
+    expect(heard).toEqual([
+      { progress: 1, total: 3, message: "Step 1 of 3" },
+      { progress: 2, total: 3, message: "Step 2 of 3" },
+      { progress: 3, total: 3, message: "Step 3 of 3" },
+    ]);
+    expect(logged).toEqual(["Counted 3 steps"]);
+    expect(result.structuredContent).toEqual({ count: 3 });
+  });
+
+  it("hangs up on the server once the call is stopped", async () => {
+    const network = authorizationServer({ documents: false });
+    const { client } = mageAt("http://localhost:4783", network);
+    const stop = new AbortController();
+    const cancelled = async () =>
+      (
+        (await (await network.handle(new Request(`${ORIGIN}/control/slow`))).json()) as {
+          cancelled: number;
+        }
+      ).cancelled;
+    const call = client.call(slow, "count", { steps: 1000, ms: 5 }, stop.signal, {
+      progress: () => stop.abort(new Error("cancelled")),
+      log: () => {},
+    });
+    await expect(call).rejects.toThrow();
+    await expect.poll(cancelled).toBe(1);
+  });
+});

@@ -74,6 +74,7 @@ import {
   type McpCallResult,
   McpError,
   type McpClient,
+  type McpCallListener,
   type McpPrompt,
   type McpResource,
 } from "./client.ts";
@@ -580,11 +581,23 @@ export function createMcpServers(options: McpServersOptions) {
     serverId: string,
     name: string,
     args: Record<string, unknown>,
-    ctx: Pick<ToolContext, "runAs">,
+    ctx: Pick<ToolContext, "runAs" | "signal" | "live">,
   ): Promise<ToolOutput> {
     const server = servers.find(serverId);
     if (!server) return { ok: false, error: "This MCP server was removed." };
-    return reach(server, ctx, async (target) => outputOf(await client.call(target, name, args)));
+    // What the server says while it runs is the call's live output: its progress, with each of its
+    // messages and each line it logs a line.
+    const { live } = ctx;
+    const listener: McpCallListener | undefined = live && {
+      progress(progress) {
+        live.progress(progress);
+        if (progress.message) live.output(`${progress.message}\n`);
+      },
+      log: (line) => live.output(`${line}\n`),
+    };
+    return reach(server, ctx, async (target) =>
+      outputOf(await client.call(target, name, args, ctx.signal, listener)),
+    );
   }
 
   // Does the work on the server with its shared secrets, or for personal credentials with those of

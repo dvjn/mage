@@ -760,6 +760,7 @@ describe("tool calls", () => {
   it("lists enabled model refs for switching and subagents without exposing prices", async () => {
     const { ada, org, post, calls, model, worker, start, tools } = await toolThread();
     org.off = ["codex/gpt-small"];
+    org.slugs = { codex: "chatgpt" };
     start();
     await post(ada, "Which models can you use?");
     await calls(["thread.list_models", {}]);
@@ -768,7 +769,7 @@ describe("tool calls", () => {
 
     expect(tools().map((row) => row.state)).toEqual(["ran"]);
     const result = next.texts.at(-1)!;
-    expect(result).toContain('"ref":"codex/gpt-big"');
+    expect(result).toContain('"ref":"chatgpt/gpt-big"');
     expect(result).toContain('"ref":"key-2/other"');
     expect(result).not.toContain("gpt-small");
     expect(result).not.toContain("pricing");
@@ -790,6 +791,33 @@ describe("tool calls", () => {
     ]);
     expect(first.request.effort).toBeUndefined();
     expect(second.request.effort).toBe("low");
+  });
+
+  it("change the model by its alias, storing its ref and showing it by name", async () => {
+    const { ada, org, post, calls, model, worker, start, events, tools, thread, api } =
+      await toolThread();
+    org.slugs = { codex: "chatgpt", "key-2": "work" };
+    start();
+    await post(ada, "Use the small one");
+    await calls(["thread.set_model", { model: "chatgpt/gpt-small", effort: "low" }]);
+    const next = await answered(model.next());
+    await worker.idle();
+
+    // The same connection under its alias asks no one.
+    expect(tools()[0]).toMatchObject({ risk: "normal", state: "ran" });
+    expect(next.texts.at(-1)).toContain('"model":"chatgpt/gpt-small","name":"gpt-small"');
+    const started = events().filter((event) => event.type === "message.started");
+    expect((started.at(-1)!.data as { model?: string }).model).toBe("codex/gpt-small");
+    const read = await api("GET", `/threads/${thread.id}`, ada.cookie);
+    const { rows } = (await read.json()) as { rows: { kind: string; summary?: string }[] };
+    const shown = rows.flatMap((row) => (row.kind === "tool" ? [row.summary] : []));
+    expect(shown).toEqual(["gpt-small · ChatGPT · low"]);
+
+    // Another connection's alias still waits for approval.
+    await post(ada, "Now the other provider");
+    await calls(["thread.set_model", { model: "work/other", effort: null }]);
+    await worker.idle();
+    expect(tools()[1]).toMatchObject({ risk: "ask", state: "pending" });
   });
 
   it("are not offered where the org or the space turned them off, but fixed ones always are", async () => {

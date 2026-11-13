@@ -2,12 +2,12 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { openStream } from "@/server/testing/sse.ts";
 import { setup } from "@/server/testing/workspace.ts";
-import { LARGE_RESULT_CHARS } from "@/shared/threads/events.ts";
+import { LARGE_RESULT_CHARS, type LiveChunk } from "@/shared/threads/events.ts";
 
 // Two server instances on one database file: `a` with a thread in Ada's space, and `b`.
 async function twoInstances() {
@@ -127,5 +127,41 @@ describe("several server instances on one database", () => {
     expect(update.rows).toEqual([
       expect.objectContaining({ kind: "human", text: "// from the other instance" }),
     ]);
+  });
+
+  it("show a running call's output on another instance, and its end to someone who comes later", async () => {
+    const { a, b } = await twoInstances();
+    b.bus.start();
+    onTestFinished(() => b.bus.stop());
+    // The next piece of output a stream is sent, past rows and the rest.
+    async function nextOutput(stream: Awaited<ReturnType<typeof openStream>>) {
+      for (;;) {
+        const frame = await stream.nextItem();
+        if (frame.event === "tool-output") return JSON.parse(frame.data!) as LiveChunk;
+      }
+    }
+    const watching = await openStream(b.app, a.ada.cookie, a.thread.id);
+    const call = a.live.open(a.thread.id, "call-1", () => true);
+    call.output("one\n");
+    expect(await nextOutput(watching)).toEqual({
+      callId: "call-1",
+      offset: 0,
+      text: "one\n",
+      from: 0,
+    });
+    await watching.close();
+
+    call.progress({ progress: 2, total: 3 });
+    call.output("two\n");
+    await vi.waitFor(() => expect(b.live.of("call-1")?.text).toBe("one\ntwo\n"));
+    const late = await openStream(b.app, a.ada.cookie, a.thread.id);
+    expect(await nextOutput(late)).toEqual({
+      callId: "call-1",
+      offset: 0,
+      text: "one\ntwo\n",
+      from: 0,
+      progress: { progress: 2, total: 3 },
+    });
+    await late.close();
   });
 });

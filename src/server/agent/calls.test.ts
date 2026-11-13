@@ -4,15 +4,19 @@ import * as z from "zod";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
 import { BACKGROUND_LIMIT } from "@/shared/calls.ts";
+import type { ThreadFollowItem } from "@/server/threads/service.ts";
+import type { LiveChunk } from "@/shared/threads/events.ts";
 import { EDITORS } from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
+import type { LiveReporter } from "./live.ts";
 import type { ToolSpec } from "./tools.ts";
 
 // A tool that runs until the test finishes it, by the label of its call.
 function probe() {
   const open = new Map<string, (output: { ok: true; value: unknown }) => void>();
   const aborted: string[] = [];
+  const printing = new Map<string, LiveReporter>();
   const wait: ToolSpec<{ label: string }> = {
     name: "probe.wait",
     title: "Wait",
@@ -22,6 +26,7 @@ function probe() {
     run({ label }, ctx) {
       return new Promise((resolve) => {
         open.set(label, resolve);
+        if (ctx.live) printing.set(label, ctx.live);
         ctx.signal?.addEventListener("abort", () => {
           aborted.push(label);
           resolve({ ok: false, error: "aborted" });
@@ -32,6 +37,8 @@ function probe() {
   return {
     toolset: { id: "probe", title: "Probe", source: "builtin" as const, tools: [wait] },
     aborted,
+    // What the call with the label reports with while it runs.
+    live: (label: string) => printing.get(label)!,
     finish(label: string, value: unknown) {
       open.get(label)?.({ ok: true, value });
     },
@@ -348,5 +355,88 @@ describe("background calls", () => {
     expect((await t.callApi(`${id}/cancel`)).status).toBe(200);
     expect(await shown()).toMatchObject({ kind: "call", status: "cancelled", canCancel: false });
     expect((await t.callApi(`${id}/cancel`)).status).toBe(409);
+  });
+
+  it("print for those who follow the thread, and give someone who comes later the end", async () => {
+    const t = await callThread();
+    t.start();
+    await t.post(t.ada, "Wait for it");
+    await t.asks(["jobs.start", { tool: "probe.wait", input: { label: "a" } }]);
+    await t.replies("Started.");
+    await t.worker.idle();
+    const { id } = t.records()[0]!;
+    const asAda = { userId: t.ada.userId, orgId: t.ada.orgId, role: "member" as const };
+    const chunksOf = (sent: ThreadFollowItem[]) =>
+      sent.flatMap((item): LiveChunk[] => (item.kind === "live" ? [item.live] : []));
+
+    const early: ThreadFollowItem[] = [];
+    const stopEarly = t.threads.follow(asAda, t.thread.id, Number.MAX_SAFE_INTEGER, (item) =>
+      early.push(item),
+    );
+    t.tool.live("a").output("one\n");
+    t.tool.live("a").progress({ progress: 1, total: 2, message: "Half" });
+    await t.until(() => chunksOf(early).some((chunk) => chunk.progress));
+    expect(chunksOf(early)[0]).toEqual({ callId: id, offset: 0, text: "one\n", from: 0 });
+    expect(chunksOf(early).at(-1)!.progress).toEqual({ progress: 1, total: 2, message: "Half" });
+
+    // Someone who starts following now gets what was printed so far, once.
+    const late: ThreadFollowItem[] = [];
+    const stopLate = t.threads.follow(asAda, t.thread.id, Number.MAX_SAFE_INTEGER, (item) =>
+      late.push(item),
+    );
+    expect(chunksOf(late)).toEqual([
+      {
+        callId: id,
+        offset: 0,
+        text: "one\n",
+        from: 0,
+        progress: { progress: 1, total: 2, message: "Half" },
+      },
+    ]);
+    t.tool.live("a").output("two\n");
+    await t.until(() => chunksOf(late).length === 2);
+    expect(chunksOf(late)[1]).toMatchObject({ offset: 4, text: "two\n" });
+
+    // The agent may check on it; once it ends, nothing of it is kept.
+    await t.post(t.ada, "Check");
+    await t.asks(["jobs.check", { id }]);
+    const checked = await t.replies("Still going.");
+    await t.worker.idle();
+    expect(checked.texts.join("\n")).toContain('"output":"one\\ntwo\\n"');
+    expect(checked.texts.join("\n")).toContain('"progress":{"progress":1,"total":2');
+    t.tool.finish("a", "ok");
+    await t.replies("Noted.");
+    await t.worker.idle();
+    expect(t.live.inThread(t.thread.id)).toEqual([]);
+    expect(t.db.all("select * from call_output")).toEqual([]);
+    stopEarly();
+    stopLate();
+  });
+
+  it("keep what a call printed as it moves to the background, and drop it once it is stopped", async () => {
+    const t = await callThread();
+    t.start();
+    await t.post(t.ada, "Wait for it");
+    await t.asks(["probe.wait", { label: "a" }]);
+    await t.until(() => t.tools()[0]?.state === "pending");
+    const callId = t.tools()[0]!.id;
+    t.tool.live("a").output("before\n");
+    await t.until(() => t.live.inThread(t.thread.id).length === 1);
+
+    expect((await t.callApi(`${callId}/background`)).status).toBe(200);
+    await t.replies("Carrying on.");
+    await t.worker.idle();
+    const job = t.records()[0]!;
+    expect(t.live.inThread(t.thread.id)).toEqual([
+      { callId: job.id, offset: 0, text: "before\n", from: 0 },
+    ]);
+    t.tool.live("a").output("after\n");
+    await t.until(() => t.live.inThread(t.thread.id)[0]?.text === "before\nafter\n");
+
+    expect((await t.callApi(`${job.id}/cancel`)).status).toBe(200);
+    expect(t.live.inThread(t.thread.id)).toEqual([]);
+    t.tool.live("a").output("too late\n");
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(t.db.all("select * from call_output")).toEqual([]);
   });
 });

@@ -6,7 +6,7 @@ import * as z from "zod";
 
 import { subagentSummarySchema } from "@/shared/subagents.ts";
 import { shownBranchSchema } from "@/shared/threads/history.ts";
-import { pendingMessageSchema, shownRowSchema, shownRunSchema } from "@/shared/threads/rows.ts";
+import { shownRowSchema, shownRunSchema, waitingRowSchema } from "@/shared/threads/rows.ts";
 import { effortSchema, threadSchema } from "@/shared/threads/thread.ts";
 import { toolDefinitionSchema } from "@/shared/tools.ts";
 
@@ -105,7 +105,9 @@ export const threadDetailSchema = threadHeadSchema.extend({
   // How many rows new to the reader come before the first row given, past what a read reaches back
   // for; they start at `newFrom`.
   earlierUnread: z.number().int().nonnegative(),
-  pending: z.array(pendingMessageSchema),
+  // Everything waiting for the agent to take it in, oldest first: people's messages and
+  // notifications alike, each as the row it will show as.
+  waiting: z.array(waitingRowSchema),
   run: shownRunSchema.nullable(),
 });
 

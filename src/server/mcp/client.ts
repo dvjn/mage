@@ -167,16 +167,32 @@ function documentUrlOf(client: McpOAuthClient) {
   return isHttpsUrl(client.documentUrl) ? client.documentUrl : undefined;
 }
 
+// How far a call has come, as its server says while it runs.
+export interface McpProgress {
+  progress: number;
+  total?: number;
+  message?: string;
+}
+
+// Who hears what the server says while a call runs: each progress notification, and each line it
+// logs.
+export interface McpCallListener {
+  progress(progress: McpProgress): void;
+  log(line: string): void;
+}
+
 export interface McpClient {
   // Whether the address answers as an MCP server, sent with the headers given.
   probe(url: string, headers: Record<string, string>): Promise<McpAnswer>;
   // Throws McpError.
   list(target: McpTarget): Promise<McpListing>;
+  // Stopping `signal` cancels the request on the server.
   call(
     target: McpTarget,
     name: string,
     args: Record<string, unknown>,
     signal?: AbortSignal,
+    listener?: McpCallListener,
   ): Promise<McpCallResult>;
   // Every resource the server lists, all pages of them.
   listResources(target: McpTarget, signal?: AbortSignal): Promise<McpResource[]>;
@@ -579,9 +595,26 @@ export function createMcpClient(options: McpClientOptions): McpClient {
       });
     },
 
-    call(target, name, args, signal) {
+    call(target, name, args, signal, listener) {
       return using(target, async (client) => {
-        const result = await client.callTool({ name, arguments: args }, { signal });
+        // The client is this call's alone, so whatever the server logs meanwhile is the call's.
+        if (listener) {
+          client.setNotificationHandler("notifications/message", ({ params }) => {
+            const { data } = params;
+            listener.log(typeof data === "string" ? data : JSON.stringify(data));
+          });
+        }
+        const result = await client.callTool(
+          { name, arguments: args },
+          // A server that keeps reporting is at work, however long the call takes.
+          {
+            signal,
+            ...(listener && {
+              onprogress: (progress: McpProgress) => listener.progress(progress),
+              resetTimeoutOnProgress: true,
+            }),
+          },
+        );
         return result as McpCallResult;
       });
     },

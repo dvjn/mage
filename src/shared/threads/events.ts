@@ -504,5 +504,32 @@ export const deltaBatchSchema = z.object({
 
 export type DeltaBatch = z.infer<typeof deltaBatchSchema>;
 
-// What a thread's followers are told: each event appended, and each batch of reply pieces stored.
-export type ThreadFeedItem = { kind: "event"; seq: number } | { kind: "delta"; delta: DeltaBatch };
+// How far a running call has come, as its tool reports it: a count, of a total where it knows one,
+// and what it is doing in words.
+export const liveProgressSchema = z.object({
+  progress: z.number(),
+  total: z.number().optional(),
+  message: z.string().optional(),
+});
+
+export type LiveProgress = z.infer<typeof liveProgressSchema>;
+
+// A piece of what a running call prints: `text` starts at character `offset` of everything the call
+// has printed, of which the server keeps what follows character `from`; above zero, earlier output
+// was trimmed. With the call's progress as it now is.
+export const liveChunkSchema = z.object({
+  callId: z.string(),
+  offset: z.number().int().nonnegative(),
+  text: z.string(),
+  from: z.number().int().nonnegative(),
+  progress: liveProgressSchema.optional(),
+});
+
+export type LiveChunk = z.infer<typeof liveChunkSchema>;
+
+// What a thread's followers are told: each event appended, each batch of reply pieces stored, and
+// each piece of a running call's output stored.
+export type ThreadFeedItem =
+  | { kind: "event"; seq: number }
+  | { kind: "delta"; delta: DeltaBatch }
+  | { kind: "live"; live: LiveChunk };

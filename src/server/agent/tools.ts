@@ -43,6 +43,7 @@ import {
 import type { ToolRow, TranscriptRow } from "@/shared/transcript.ts";
 
 import type { ThreadRequest } from "./compaction.ts";
+import type { LiveReporter } from "./live.ts";
 import type { ToolsetGuidance } from "./context.ts";
 import type { RunStore } from "./runs.ts";
 import {
@@ -115,6 +116,9 @@ export interface ToolContext {
   threadRequest?: () => ThreadRequest;
   // Aborted once the run is to stop, for a tool that waits.
   signal?: AbortSignal;
+  // Where a tool that takes long says what it prints and how far it has come, for the people
+  // watching the call; the model is not given it.
+  live?: LiveReporter;
   write<T>(work: (append: (event: NewEvent, title?: string) => void) => T): T;
 }
 
@@ -151,7 +155,10 @@ export interface ToolSpec<I = unknown> {
     input: I,
     space: Pick<Space, "id" | "orgId">,
   ): ((userId: string) => ToolConnection) | null;
-  risk(input: I, ctx: Pick<ToolContext, "model">): ToolRisk;
+  risk(input: I, ctx: Pick<ToolContext, "model" | "orgId">): ToolRisk;
+  // A call's input in a few words for the one line it has, where its plain values would not say
+  // it; null when the tool cannot say now.
+  summary?: (input: I, space: Pick<Space, "id" | "orgId">) => string | null;
   run(input: I, ctx: ToolContext): Promise<ToolOutput>;
 }
 
@@ -216,11 +223,13 @@ export interface ToolNames {
 }
 
 // What a call is called: its tool's names, and for a call that loads a skill, the skill; for one
-// that starts a subagent, the name it was given and the ref of the model it runs with.
+// that starts a subagent, the name it was given and the ref of the model it runs with; and its
+// input in a few words, for a call whose tool says it.
 export interface CallNames extends ToolNames {
   skill?: string;
   subagentName?: string;
   model?: string;
+  summary?: string;
 }
 
 // What an org or a space set each tool to, for the tools it set: a policy's id, or "off". A tool
@@ -402,6 +411,8 @@ export interface ToolsOptions {
   access: Pick<ThreadAccess, "of">;
   // The model a call is judged under: that of the run it waits in, or the background call's own.
   callModel?: (call: ToolRow) => string | null;
+  // The ref a model is stored under, given that or the alias the agent knows it by.
+  modelRef?: (orgId: string, ref: string) => string;
 }
 
 export type Tools = ReturnType<typeof createTools>;
@@ -554,7 +565,10 @@ export function createTools(options: ToolsOptions) {
     input: unknown,
     model: string | null,
   ): ToolRisk {
-    return riskUnder(spec.risk(input, { model }), rulesIn(space)(spec.name).rule);
+    return riskUnder(
+      spec.risk(input, { model, orgId: space.orgId }),
+      rulesIn(space)(spec.name).rule,
+    );
   }
 
   // The person as the rule sees them: whether they can post in the thread as they reach it now,
@@ -640,12 +654,23 @@ export function createTools(options: ToolsOptions) {
     return (toolId) => names.get(toolIdNow(toolId)) ?? null;
   }
 
+  // Says a call's input in a few words, where its tool is one of the space's that does.
+  function summariesIn(space: Pick<Space, "id" | "orgId">) {
+    const saying = everyIn(space).filter((tool) => tool.summary);
+    return (row: Pick<ToolRow, "toolId" | "input">) => {
+      const spec = saying.find((tool) => tool.name === toolIdNow(row.toolId));
+      const parsed = spec?.input.safeParse(row.input);
+      return (spec && parsed?.success && spec.summary?.(parsed.data, space)) || null;
+    };
+  }
+
   // What each call is called where it shows: as its tool is called now; else as it was when the
   // call was asked for; else by what the model knows it by, where what added it is still there;
   // else by its id, or for an MCP server's tool, its own name there. Loading a skill names the
-  // skill, and starting a subagent the subagent.
+  // skill, and starting a subagent the subagent; a tool that says its input in a few words says it.
   function namesIn(space: Pick<Space, "id" | "orgId"> | null) {
     let now: ((toolId: string) => ToolNames | null) | undefined;
+    let said: ReturnType<typeof summariesIn> | undefined;
     return (
       row: Pick<ToolRow, "toolId" | "input" | "state" | "title" | "toolset"> & {
         output?: ToolRow["output"];
@@ -658,11 +683,19 @@ export function createTools(options: ToolsOptions) {
           title: mcpToolOf(row.toolId)?.name ?? row.toolId,
           toolset: null,
         };
+      said ??= space ? summariesIn(space) : () => null;
+      const summary = said(row);
+      if (summary) return { ...names, summary };
       const named = (row.input as { name?: unknown } | null)?.name;
       if (row.toolId === LOAD_SKILL && typeof named === "string") return { ...names, skill: named };
       // Starting a subagent also names it, and the model it was given.
       if (toolIdNow(row.toolId) === START_SUBAGENT && typeof named === "string") {
-        const model = row.output?.ok && (row.output.value as { model?: unknown } | null)?.model;
+        // The model as it was given back, an alias since aliases came in, read as its ref.
+        const given = row.output?.ok && (row.output.value as { model?: unknown } | null)?.model;
+        const model =
+          typeof given === "string" && space
+            ? (options.modelRef?.(space.orgId, given) ?? given)
+            : given;
         return { ...names, subagentName: named, ...(typeof model === "string" && { model }) };
       }
       return names;
