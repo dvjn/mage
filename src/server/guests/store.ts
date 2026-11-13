@@ -20,6 +20,7 @@ import { UNTITLED } from "@/shared/threads/thread.ts";
 
 import { threadGroupGuest, threadGuest, threadInvite } from "./schema.ts";
 import type { GuestStore, ThreadGroupGuest, ThreadGuest, ThreadInvite } from "./service.ts";
+import { parentOf } from "@/server/threads/parent.ts";
 
 const guestColumns = {
   threadId: threadGuest.threadId,
@@ -64,7 +65,7 @@ const threadColumns = {
   model: thread.model,
   effort: thread.effort,
   createdBy: thread.createdBy,
-  parentThreadId: thread.parentThreadId,
+  parentThreadId: parentOf(thread.id),
   rootThreadId: thread.rootThreadId,
   currentBranchId: sql<string>`coalesce(${thread.currentBranchId}, ${thread.id})`,
   lastEventSeq: thread.lastEventSeq,

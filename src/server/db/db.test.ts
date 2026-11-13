@@ -394,3 +394,206 @@ describe("adding toolset options", () => {
     expect(db.all(sql.raw("select option from space_toolset_option"))).toEqual([]);
   });
 });
+
+describe("linking threads to their current branch and versions to what published them", () => {
+  it("keeps each thread's branch, mends the unset ones, and sorts versions by run or background call", () => {
+    const { db, statements } = before("0069_thread_branch_and_version_origin_links");
+    for (const statement of [
+      "pragma foreign_keys = off",
+      "insert into organization (id, name, slug, created_at, kind) values ('o1', 'Ada', 'ada', 0, 'personal')",
+      "insert into space (id, organization_id, kind, name) values ('s1', 'o1', 'team', 'Lab')",
+      "insert into thread (id, space_id, current_branch_id) values ('t1', 's1', null), ('t2', 's1', 'gone'), ('t3', 's1', 'b3')",
+      "insert into thread_branch (id, thread_id, kind) values ('t1', 't1', 'root'), ('t2', 't2', 'root'), ('t3', 't3', 'root')",
+      "insert into thread_branch (id, thread_id, parent_branch_id, fork_seq, kind) values ('b3', 't3', 't3', 0, 'retry')",
+      "insert into run (id, thread_id, branch_id, status, trigger_seq) values ('r1', 't1', 't1', 'completed', 1)",
+      "insert into background_call (id, thread_id, run_id, tool_id, status) values ('c1', 't1', 'r1', 'artifacts.publish', 'done')",
+      "insert into artifact (id, space_id, version) values ('a1', 's1', 4)",
+      ...[
+        [1, "'r1'", "'call_1'"],
+        [2, "'c1'", "'c1'"],
+        [3, "'gone'", "'call_3'"],
+        [4, "null", "null"],
+      ].map(
+        ([version, run, call]) =>
+          `insert into artifact_version (artifact_id, version, html, title, description, icon, thread_id, run_id, call_id) values ('a1', ${version}, '<p>', 'Page', '', 'file', 't1', ${run}, ${call})`,
+      ),
+    ]) {
+      db.run(sql.raw(statement));
+    }
+
+    for (const statement of statements) db.run(sql.raw(statement));
+
+    expect(db.all(sql.raw("select id, current_branch_id from thread order by id"))).toEqual([
+      { id: "t1", current_branch_id: "t1" },
+      { id: "t2", current_branch_id: "t2" },
+      { id: "t3", current_branch_id: "b3" },
+    ]);
+    expect(
+      db.all(
+        sql.raw(
+          "select version, run_id, background_call_id, call_id from artifact_version order by version",
+        ),
+      ),
+    ).toEqual([
+      { version: 1, run_id: "r1", background_call_id: null, call_id: "call_1" },
+      { version: 2, run_id: null, background_call_id: "c1", call_id: "c1" },
+      { version: 3, run_id: null, background_call_id: null, call_id: "call_3" },
+      { version: 4, run_id: null, background_call_id: null, call_id: null },
+    ]);
+    expect(db.all(sql.raw("pragma foreign_key_check"))).toEqual([]);
+    // A version names a run or a background call, never both.
+    expect(() =>
+      db.run(
+        sql.raw(
+          "update artifact_version set run_id = 'r1', background_call_id = 'c1' where version = 4",
+        ),
+      ),
+    ).toThrow();
+    // A thread goes with its branches, and its versions stay without it.
+    db.run(sql.raw("delete from thread where id = 't1'"));
+    expect(db.all(sql.raw("select id from thread_branch order by id"))).toEqual([
+      { id: "b3" },
+      { id: "t2" },
+      { id: "t3" },
+    ]);
+    expect(
+      db.all(sql.raw("select thread_id, run_id, background_call_id from artifact_version")),
+    ).toEqual(
+      Array.from({ length: 4 }, () => ({
+        thread_id: null,
+        run_id: null,
+        background_call_id: null,
+      })),
+    );
+  });
+});
+
+describe("keeping large tool results apart from the log", () => {
+  it("moves each large result to a row of its own, whole, and leaves the rest of the log as it was", () => {
+    const { db, statements } = before("0070_tool_results");
+    const text = `${"é".repeat(20_000)} "quoted" \\ and a\nline`;
+    const table = {
+      rows: Array.from({ length: 2000 }, (_, i) => ({ i, name: `row ${i}`, n: null })),
+    };
+    const events: [string, string, object][] = [
+      ["e1", "tool.ran", { runId: "r", callId: "c1", ok: true, ms: 5, value: { id: "abc" } }],
+      ["e2", "tool.ran", { runId: "r", callId: "c2", ok: true, ms: 7, ranAs: "u1", value: text }],
+      ["e3", "tool.ran", { runId: "r", callId: "c3", ok: true, ms: 9, value: table }],
+      ["e4", "tool.ran", { runId: "r", callId: "c4", ok: false, ms: 1, error: "e".repeat(20_000) }],
+      ["e5", "tool.requested", { runId: "r", callId: "c5", input: { value: "v".repeat(20_000) } }],
+    ];
+    db.run(sql.raw("pragma foreign_keys = off"));
+    const insert = db.$client.prepare(
+      "insert into thread_event (id, thread_id, branch_id, seq, type, actor_kind, data) values (?, 't1', 't1', ?, ?, 'agent', ?)",
+    );
+    events.forEach(([id, type, data], index) => {
+      insert.run(id, index + 1, type, JSON.stringify(data));
+    });
+
+    for (const statement of statements) db.run(sql.raw(statement));
+
+    const logged = new Map(
+      db
+        .all<{ id: string; data: string }>(sql.raw("select id, data from thread_event"))
+        .map((row) => [row.id, JSON.parse(row.data) as unknown]),
+    );
+    expect(logged.get("e1")).toEqual(events[0]![2]);
+    expect(logged.get("e2")).toEqual({
+      runId: "r",
+      callId: "c2",
+      ok: true,
+      ms: 7,
+      ranAs: "u1",
+      large: { size: JSON.stringify(text).length },
+    });
+    expect(logged.get("e3")).toEqual({
+      runId: "r",
+      callId: "c3",
+      ok: true,
+      ms: 9,
+      large: { size: JSON.stringify(table).length },
+    });
+    expect(logged.get("e4")).toEqual(events[3]![2]);
+    expect(logged.get("e5")).toEqual(events[4]![2]);
+    const kept = db.all<{ event_id: string; value: string }>(
+      sql.raw("select event_id, value from tool_result order by event_id"),
+    );
+    expect(kept.map((row) => [row.event_id, JSON.parse(row.value)])).toEqual([
+      ["e2", text],
+      ["e3", table],
+    ]);
+  });
+});
+
+describe("keeping orgs' and spaces' settings in one table each", () => {
+  it("copies every setting, an org's with no space and a space's with its org", () => {
+    const { db, statements } = before("0071_scoped_settings");
+    for (const statement of [
+      "pragma foreign_keys = off",
+      "insert into organization (id, name, slug, created_at, kind) values ('o1', 'Ada', 'ada', 0, 'personal'), ('o2', 'Looms', 'looms', 0, 'team')",
+      "insert into space (id, organization_id, kind, name) values ('s1', 'o1', 'team', 'Lab'), ('s2', 'o2', 'team', 'Mill')",
+      "insert into tool_policy (id, organization_id, name, color, use) values ('p1', 'o1', 'Sign-off', 'orange', 'none')",
+      "insert into org_tool_setting (organization_id, tool_id, policy_id) values ('o1', 'thread.rename', 'p1'), ('o1', 'thread.info', null), ('o2', 'thread.rename', 'gone')",
+      "insert into space_tool_setting (space_id, tool_id, policy_id) values ('s1', 'thread.rename', null), ('s2', 'thread.info', null)",
+      "insert into org_toolset_setting (organization_id, toolset_id, enabled) values ('o1', 'thread', 0)",
+      "insert into space_toolset_setting (space_id, toolset_id, enabled) values ('s1', 'thread', 1), ('s2', 'thread', 0)",
+      "insert into org_toolset_option (organization_id, toolset_id, option, enabled) values ('o2', 'subagents', 'choose_models', 1)",
+      "insert into space_toolset_option (space_id, toolset_id, option, enabled) values ('s2', 'subagents', 'choose_models', 0)",
+      "insert into org_builtin_skill_setting (organization_id, key, enabled) values ('o1', 'builtin', 0)",
+      "insert into space_builtin_skill_setting (space_id, key, enabled) values ('s1', 'builtin', 1)",
+      "insert into artifact_org_setting (organization_id, public_allowed) values ('o1', 1)",
+      "insert into artifact_space_setting (space_id, public_allowed) values ('s1', 0), ('s2', 1)",
+    ]) {
+      db.run(sql.raw(statement));
+    }
+
+    for (const statement of statements) db.run(sql.raw(statement));
+
+    const rows = (table: string, columns: string) =>
+      db
+        .all<Record<string, unknown>>(
+          sql.raw(
+            `select organization_id, space_id, ${columns} from ${table} order by organization_id, space_id, 3`,
+          ),
+        )
+        .map((row) => Object.values(row).join(" "));
+    // A setting whose policy is gone is left out, as the tool then follows the default.
+    expect(rows("tool_setting", "tool_id, policy_id")).toEqual([
+      "o1  thread.info ",
+      "o1  thread.rename p1",
+      "o1 s1 thread.rename ",
+      "o2 s2 thread.info ",
+    ]);
+    expect(rows("toolset_setting", "toolset_id, enabled")).toEqual([
+      "o1  thread 0",
+      "o1 s1 thread 1",
+      "o2 s2 thread 0",
+    ]);
+    expect(rows("toolset_option", "toolset_id, option, enabled")).toEqual([
+      "o2  subagents choose_models 1",
+      "o2 s2 subagents choose_models 0",
+    ]);
+    expect(rows("builtin_skill_setting", "key, enabled")).toEqual([
+      "o1  builtin 0",
+      "o1 s1 builtin 1",
+    ]);
+    expect(rows("artifact_setting", "public_allowed")).toEqual(["o1  1", "o1 s1 0", "o2 s2 1"]);
+
+    // A scope has one row for each setting.
+    db.run(sql.raw("pragma foreign_keys = on"));
+    expect(() =>
+      db.run(sql.raw("insert into toolset_setting values ('o1', null, 'thread', 1)")),
+    ).toThrow();
+    expect(() =>
+      db.run(sql.raw("insert into toolset_setting values ('o1', 's1', 'thread', 0)")),
+    ).toThrow();
+    // A space's settings go with it, and a setting with its policy.
+    db.run(sql.raw("delete from space where id = 's1'"));
+    db.run(sql.raw("delete from tool_policy where id = 'p1'"));
+    expect(rows("tool_setting", "tool_id, policy_id")).toEqual([
+      "o1  thread.info ",
+      "o2 s2 thread.info ",
+    ]);
+    expect(rows("artifact_setting", "public_allowed")).toEqual(["o1  1", "o2 s2 1"]);
+  });
+});

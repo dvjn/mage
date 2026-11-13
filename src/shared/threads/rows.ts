@@ -144,9 +144,15 @@ const callRowSchema = z.object({
     })
     .nullable(),
   answers: askAnswersSchema.optional(),
+  // A large result is not sent with the row: `large` names it, to be asked for, with its size in
+  // characters of JSON.
   output: z
     .union([
-      z.object({ ok: z.literal(true), value: z.unknown() }),
+      z.object({
+        ok: z.literal(true),
+        value: z.unknown(),
+        large: z.object({ id: z.string(), size: z.number() }).optional(),
+      }),
       z.object({ ok: z.literal(false), error: z.string() }),
     ])
     .nullable(),

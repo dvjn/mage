@@ -1,10 +1,11 @@
 // A tool call's input and output as they show in a thread: the input as labelled fields, and the
 // output by its shape, as a table, a tree, Markdown, MCP's content parts or why the call failed.
 // Long lists, tables and texts show their start until opened, and what is folded away renders
-// only once it opens.
+// only once it opens. A large output comes without its row, and is read once it shows.
 
 import { cn } from "cn";
 import { BracesIcon, ChevronRightIcon, LinkIcon, XIcon } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 
 import type { JsonSchema } from "@/shared/tools.ts";
@@ -21,6 +22,7 @@ import {
   type Scalar,
   type ValueLayout,
 } from "@/web/agent/tool-layout";
+import { toolResultQuery } from "@/web/agent/queries";
 import { MessageResponse } from "@/web/components/ai-elements/message";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { Alert, AlertDescription } from "@/web/components/ui/alert";
@@ -404,13 +406,32 @@ export function ToolInput({ value, schema }: { value: unknown; schema?: JsonSche
   );
 }
 
+// An output its row left out for its size, read from the server.
+function LargeOutput({ id, schema }: { id: string; schema?: JsonSchema }) {
+  const result = useQuery(toolResultQuery(id));
+  if (result.isSuccess) {
+    return <ToolOutput output={{ ok: true, value: result.data.value }} schema={schema} />;
+  }
+  return (
+    <section aria-label="Output" className="flex min-w-0 flex-col gap-1.5">
+      <span className="flex h-5 items-center font-medium">Output</span>
+      <span className="text-muted-foreground" role={result.isError ? "alert" : "status"}>
+        {result.isError ? "Could not load the output" : "Loading…"}
+      </span>
+    </section>
+  );
+}
+
 export function ToolOutput({
   output,
   schema,
 }: {
-  output: { ok: true; value: unknown } | { ok: false; error: string };
+  output:
+    | { ok: true; value: unknown; large?: { id: string; size: number } }
+    | { ok: false; error: string };
   schema?: JsonSchema;
 }) {
+  if (output.ok && output.large) return <LargeOutput id={output.large.id} schema={schema} />;
   return (
     <Block title={output.ok ? "Output" : "Error"} value={output.ok ? output.value : output.error}>
       <Output layout={outputLayoutOf(output, schema)} />

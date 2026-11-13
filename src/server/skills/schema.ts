@@ -1,6 +1,7 @@
 import { sql } from "drizzle-orm";
 import { sqliteTable, text, integer, index, blob, primaryKey } from "drizzle-orm/sqlite-core";
 
+import { scopeColumns, scopeIndexes } from "@/server/spaces/scope.ts";
 import { space } from "@/server/spaces/schema.ts";
 import { user, organization } from "@/server/orgs/schema.ts";
 
@@ -107,29 +108,15 @@ export const spaceSkillSetting = sqliteTable(
   (table) => [primaryKey({ columns: [table.spaceId, table.skillId] })],
 );
 
-// Whether the org uses a built-in skill, or the whole built-in source, once it set so. The key is
-// the id the built-in source or skill is listed under; the skills themselves are never stored.
-export const orgBuiltinSkillSetting = sqliteTable(
-  "org_builtin_skill_setting",
+// Whether an org uses a built-in skill, or the whole built-in source, once it set so; or a space,
+// which can only turn off what its org has on. The key is the id the built-in source or skill is
+// listed under; the skills themselves are never stored.
+export const builtinSkillSetting = sqliteTable(
+  "builtin_skill_setting",
   {
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organization.id, { onDelete: "cascade" }),
+    ...scopeColumns(),
     key: text("key").notNull(),
     enabled: integer("enabled", { mode: "boolean" }).notNull(),
   },
-  (table) => [primaryKey({ columns: [table.organizationId, table.key] })],
-);
-
-// The same for a space, which can only turn off what the org has on.
-export const spaceBuiltinSkillSetting = sqliteTable(
-  "space_builtin_skill_setting",
-  {
-    spaceId: text("space_id")
-      .notNull()
-      .references(() => space.id, { onDelete: "cascade" }),
-    key: text("key").notNull(),
-    enabled: integer("enabled", { mode: "boolean" }).notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.spaceId, table.key] })],
+  (table) => scopeIndexes("builtin_skill_setting", table, table.key),
 );

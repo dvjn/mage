@@ -36,6 +36,7 @@ import { ulid } from "ulid";
 import * as z from "zod";
 
 import type { Transact } from "@/server/db/db.ts";
+import type { Lease as RowLease } from "@/server/db/lease.ts";
 import type { EventBus } from "@/server/kernel/event-bus.ts";
 import { connectionOf, failureSentence } from "@/server/agent/failure-text.ts";
 import type { Hooks } from "@/server/kernel/hooks.ts";
@@ -52,26 +53,20 @@ import {
 import type { Models, OpenModel } from "@/server/models/service.ts";
 import type { Space, SpaceStore } from "@/server/spaces/service.ts";
 import type { ThreadAccess } from "@/server/spaces/thread-access.ts";
-import { type Append, eventSummary, type ThreadLog } from "@/server/threads/log.ts";
+import type { Append, ThreadLog } from "@/server/threads/log.ts";
 import type { DeltaStore, Thread, ThreadStore } from "@/server/threads/service.ts";
-import type {
-  EventDataMap,
-  ReplyPart,
-  ReplyStatus,
-  FailureKind,
-  RunReason,
-} from "@/shared/threads/events.ts";
+import type { Transcripts } from "@/server/threads/transcripts.ts";
+import type { EventDataMap, ReplyPart, ReplyStatus, RunReason } from "@/shared/threads/events.ts";
 import {
   asksToCompact,
   type PendingMessage,
   type ToolRow,
   type TranscriptRow,
-  transcriptOf,
   waking,
 } from "@/shared/transcript.ts";
 
 import type { Adoption } from "./calls.ts";
-import { compact, type ThreadRequest } from "./compaction.ts";
+import { compact, type ThreadRequest, wholeWhereRead } from "./compaction.ts";
 import {
   contextOf,
   type Guidance,
@@ -112,9 +107,6 @@ export interface Run {
   leaseOwner: string | null;
   leaseExpiresAt: Date | null;
   leaseEpoch: number;
-  error: string | null;
-  errorKind: FailureKind | null;
-  errorDetail: string | null;
   inputTokens: number;
   outputTokens: number;
   createdAt: Date;
@@ -136,10 +128,8 @@ export interface NewRun {
 }
 
 // The right to write for a run, held by one worker until it ends or expires.
-export interface Lease {
+export interface Lease extends RowLease {
   runId: string;
-  owner: string;
-  epoch: number;
 }
 
 // Thrown by a write whose lease no longer holds.
@@ -170,10 +160,12 @@ export interface RunStore {
   requestCancelOn(branchId: string, userId: string | null, at: Date): Run | null;
   // Takes the oldest queued run for the owner until `expiresAt`.
   claim(owner: string, expiresAt: Date): Run | null;
-  // Takes a running run whose lease expired before `before`, or any running run without `before`.
-  takeOver(id: string, owner: string, expiresAt: Date, before?: Date): Run | null;
-  // Running runs whose lease expired before `before`, or every running run without it.
-  stale(before?: Date): Run[];
+  // Takes a running run whose lease expired before `before`.
+  takeOver(id: string, owner: string, expiresAt: Date, before: Date): Run | null;
+  // Running runs whose lease expired before `before`.
+  stale(before: Date): Run[];
+  // Ends the lease now, so that whoever looks next takes the run over.
+  expire(lease: Lease): void;
   // The run as it is now; throws LeaseLost unless the lease holds.
   hold(lease: Lease): Run;
   // Extends the lease; throws LeaseLost unless it holds.
@@ -188,22 +180,18 @@ export interface RunStore {
   wait(lease: Lease): Run;
   // Queues a waiting run again, to be claimed like any other; false when it was not waiting.
   resume(runId: string): boolean;
-  // Ends the run and lets its lease go.
+  // Ends the run and lets its lease go. Why a run failed is told by its run.failed event.
   end(
     lease: Lease,
-    outcome: {
-      status: EndStatus;
-      error?: string;
-      errorKind?: FailureKind;
-      errorDetail?: string;
-      usage?: { inputTokens: number; outputTokens: number };
-    },
+    outcome: { status: EndStatus; usage?: { inputTokens: number; outputTokens: number } },
   ): Run;
 }
 
 export interface RunWorkerOptions {
   runs: RunStore;
-  threads: Pick<ThreadStore, "find" | "eventsAfter">;
+  threads: Pick<ThreadStore, "find" | "eventAt">;
+  // Held while a run executes, so its thread is folded once.
+  transcripts: Pick<Transcripts, "of" | "hold" | "whole">;
   spaceStore: Pick<SpaceStore, "find">;
   access: Pick<ThreadAccess, "can">;
   deltas: DeltaStore;
@@ -216,7 +204,7 @@ export interface RunWorkerOptions {
     | "offered"
     | "riskOf"
     | "forModel"
-    | "decide"
+    | "evaluate"
     | "approvalHolds"
     | "answerHolds"
     | "modelNames"
@@ -233,10 +221,8 @@ export interface RunWorkerOptions {
   before?: (thread: Thread) => ModelMessage[];
   // Hears of each run that ended, after its end is stored.
   ended?: (run: Run) => void;
-  // Hears of each tool call whose result was just stored.
-  toolRan?: (run: Run, toolId: string) => void;
   // Takes over a call moved to the background, which runs on beside the run.
-  adopt?: (call: Adoption) => void;
+  adopt?: (call: Adoption) => string;
   logger: Logger;
   // What ties each run's span to the work that woke its thread; runs are not traced without it.
   traces?: RunTraces;
@@ -392,19 +378,20 @@ export function sortWaiting(
 
 // Drops the waiting messages of the org's threads whose authors can no longer post in them.
 function dropRefusedWaiting(options: {
-  threads: Pick<ThreadStore, "find" | "eventsAfter">;
+  threads: Pick<ThreadStore, "find">;
+  transcripts: Pick<Transcripts, "of">;
   spaceStore: Pick<SpaceStore, "find">;
   runs: Pick<RunStore, "activeThreadIds">;
   access: Pick<ThreadAccess, "can">;
   log: ThreadLog;
   orgId: string;
 }) {
-  const { threads, spaceStore, runs, access, log, orgId } = options;
+  const { threads, transcripts, spaceStore, runs, access, log, orgId } = options;
   for (const threadId of new Set(runs.activeThreadIds())) {
     const thread = threads.find(threadId);
     if (!thread || spaceStore.find(thread.spaceId)?.orgId !== orgId) continue;
     log.write(threadId, (append) => {
-      const pending = transcriptOf(threads.eventsAfter(threadId, 0).map(eventSummary)).pending;
+      const pending = transcripts.of(threadId).transcript().pending;
       const { refused } = sortWaiting(threads, spaceStore, access, threadId, pending);
       for (const message of refused) {
         append({ type: "message.dropped", actor: AGENT, data: { messageId: message.id } });
@@ -463,19 +450,26 @@ function messageOf(err: unknown) {
 }
 
 export function createRunWorker(options: RunWorkerOptions) {
-  const { runs, threads, spaceStore, access, deltas, log, bus, transact, models, tools, logger } =
-    options;
+  const { runs, threads, transcripts, spaceStore, access, deltas, log, bus, transact } = options;
+  const { models, tools, logger } = options;
   const now = options.now ?? (() => new Date());
   const guidance = options.guidance ?? (() => NO_GUIDANCE);
   const runsIn = options.runsIn ?? (() => true);
   const narrow = options.narrow ?? ((_thread: Thread, offered: AnyToolSpec[]) => offered);
   const before = options.before ?? (() => []);
   const ended = options.ended ?? (() => {});
-  const toolRan = options.toolRan ?? (() => {});
   // When people may have lost a role in an org's spaces, their waiting messages there are dropped,
   // and the agent stops in spaces archived or put in trash.
   function accessChanged(orgId: string) {
-    dropRefusedWaiting({ threads, spaceStore, runs, access, log, orgId });
+    dropRefusedWaiting({
+      threads,
+      transcripts,
+      spaceStore,
+      runs,
+      access,
+      log,
+      orgId,
+    });
     stopBarredRuns({ threads, spaceStore, runs, bus, runsIn, orgId, now });
   }
   options.hooks?.on("org.personalSpacesChanged", ({ orgId, allowed }) => {
@@ -494,7 +488,7 @@ export function createRunWorker(options: RunWorkerOptions) {
   let ticking = false;
   let again = false;
   let timer: ReturnType<typeof setInterval> | undefined;
-  let unsubscribe: (() => void) | undefined;
+  let unsubscribe: (() => void)[] = [];
 
   function expiry() {
     return new Date(now().getTime() + leaseMs);
@@ -502,7 +496,12 @@ export function createRunWorker(options: RunWorkerOptions) {
 
   // The transcript of the run's branch.
   function transcript(run: Pick<Run, "threadId" | "branchId">) {
-    return transcriptOf(threads.eventsAfter(run.threadId, 0, run.branchId).map(eventSummary));
+    return transcripts.of(run.threadId, run.branchId).transcript();
+  }
+
+  // The rows as the model reads them, with what its calls gave back, large or not.
+  function whole(rows: readonly TranscriptRow[]) {
+    return wholeWhereRead(rows, transcripts.whole);
   }
 
   // Whether the run's branch still takes runs: only the thread's current one does.
@@ -555,15 +554,7 @@ export function createRunWorker(options: RunWorkerOptions) {
         data: { runId: run.id, callId: row.id, reason: "stopped" },
       });
     }
-    const ended = runs.end(lease, {
-      status,
-      usage,
-      ...(failure && {
-        error: failure.error,
-        errorKind: failure.kind,
-        errorDetail: failure.detail,
-      }),
-    });
+    const ended = runs.end(lease, { status, usage });
     if (status === "failed") {
       append({
         type: "run.failed",
@@ -853,7 +844,7 @@ export function createRunWorker(options: RunWorkerOptions) {
         const waits =
           ok &&
           (spec.waitsFor === "answer" ||
-            tools.decide(
+            tools.evaluate(
               rows,
               thread,
               space,
@@ -937,7 +928,14 @@ export function createRunWorker(options: RunWorkerOptions) {
             if (spec.connection?.(parsed.data, space)) runAs = call.decision?.by.userId ?? null;
           } else {
             const declared = spec.risk(parsed.data, { model: execution.ref });
-            const decision = tools.decide(rows, thread, space, call.toolId, declared, parsed.data);
+            const decision = tools.evaluate(
+              rows,
+              thread,
+              space,
+              call.toolId,
+              declared,
+              parsed.data,
+            );
             allowed = decision.kind !== "wait";
             if (!allowed && call.waits) {
               waiting = true;
@@ -990,10 +988,7 @@ export function createRunWorker(options: RunWorkerOptions) {
         },
       });
       let output: ToolOutput;
-      let adoption: Omit<
-        Adoption,
-        "callId" | "threadId" | "runId" | "toolId" | "input" | "model"
-      > | null = null;
+      let adoption: Pick<Adoption, "work" | "controller" | "started"> | null = null;
       // The call has a stop of its own, which the run's stop reaches until it is moved.
       const callController = new AbortController();
       const stopCall = () => callController.abort(execution.controller.signal.reason);
@@ -1043,7 +1038,19 @@ export function createRunWorker(options: RunWorkerOptions) {
         const settled = await Promise.race([work, ...(options.adopt ? [toBackground] : [])]);
         if (settled === MOVED) {
           adoption = { work, controller: callController, started: new Date(started) };
-          output = { ok: true, value: { movedToBackground: true, callId: call.id } };
+          // The call goes on beside the run as one of its own, its stop its own from here.
+          execution.controller.signal.removeEventListener("abort", stopCall);
+          const id = options.adopt!({
+            ...adoption,
+            threadId: run.threadId,
+            runId: run.id,
+            toolId: call.toolId,
+            input,
+            risk: call.risk,
+            ...(call.title && { title: call.title }),
+            ...(call.toolset && { toolset: call.toolset }),
+          });
+          output = { ok: true, value: { movedToBackground: true, callId: id } };
         } else {
           output = settled;
         }
@@ -1057,19 +1064,6 @@ export function createRunWorker(options: RunWorkerOptions) {
       } finally {
         execution.running = undefined;
         if (!adoption) execution.controller.signal.removeEventListener("abort", stopCall);
-      }
-      if (adoption) {
-        // The call goes on beside the run: its stop is its own from here.
-        execution.controller.signal.removeEventListener("abort", stopCall);
-        options.adopt?.({
-          ...adoption,
-          callId: call.id,
-          threadId: run.threadId,
-          runId: run.id,
-          toolId: call.toolId,
-          input,
-          model: execution.ref,
-        });
       }
       span.setAttribute("tool.outcome", output.ok ? "ok" : "error");
       if (!output.ok) span.setStatus({ code: SpanStatusCode.ERROR });
@@ -1093,11 +1087,6 @@ export function createRunWorker(options: RunWorkerOptions) {
           },
         }),
       );
-      try {
-        toolRan(run, call.toolId);
-      } catch (err) {
-        logger.error({ err, runId: run.id }, "tool result not told");
-      }
     }
   }
 
@@ -1131,7 +1120,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     );
     const names = tools.modelNames(space);
     const { instructions, messages, firstEffort } = contextOf(
-      rows,
+      whole(rows),
       {
         ...guidance(space, available, thread),
         toolName: names.toModel,
@@ -1160,8 +1149,8 @@ export function createRunWorker(options: RunWorkerOptions) {
   // The message that woke the run when it asks to compact the thread, and so the run is one that
   // compacts it; null otherwise.
   function compactionAsked(run: Run) {
-    const [trigger] = threads.eventsAfter(run.threadId, run.triggerSeq - 1, run.branchId);
-    if (trigger?.seq !== run.triggerSeq || trigger.type !== "message") return null;
+    const trigger = threads.eventAt(run.threadId, run.triggerSeq);
+    if (trigger?.type !== "message") return null;
     if (trigger.actor.kind !== "user" || !trigger.data.command) return null;
     return asksToCompact(trigger.data)
       ? { id: trigger.id, by: trigger.actor, focus: trigger.data.command.args }
@@ -1191,7 +1180,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     if (controller.signal.aborted) throw controller.signal.reason;
     await compact({
       threadId: run.threadId,
-      rows: transcript(run).rows,
+      rows: whole(transcript(run).rows),
       model: model.model,
       request: threadRequest(execution, space, thread, model),
       ...(asked.focus && { focus: asked.focus }),
@@ -1331,6 +1320,8 @@ export function createRunWorker(options: RunWorkerOptions) {
       }
       if (err instanceof LeaseLost || abort) {
         outcome = "left";
+        // A server stopping lets the run go at once, for the next to take over.
+        if (abort?.kind === "shutdown") runs.expire(lease);
         logger.info({ runId: run.id, reason: abort?.kind ?? "lease" }, "run left to recovery");
         return;
       }
@@ -1365,9 +1356,9 @@ export function createRunWorker(options: RunWorkerOptions) {
     }
   }
 
-  // Fails running runs nobody holds any more: those whose lease expired before `before`, or all of
-  // them at boot. Each is tried again until its input has failed too many times.
-  function recover(before?: Date) {
+  // Fails running runs nobody holds any more: those whose lease expired before `before`. Another
+  // instance may hold the rest. Each is tried again until its input has failed too many times.
+  function recover(before: Date) {
     for (const stale of runs.stale(before)) {
       const run = runs.takeOver(stale.id, owner, expiry(), before);
       if (!run) continue;
@@ -1441,7 +1432,24 @@ export function createRunWorker(options: RunWorkerOptions) {
     // Claimed: the run's thread now shows the agent replying.
     bus.activity({ threadId: run.threadId });
     // A claim can happen while a request is handled; the run is traced apart from it.
-    execution.done = context.with(trace.setSpan(ROOT_CONTEXT, span), () => execute(execution));
+    const release = transcripts.hold(run.threadId);
+    execution.done = context
+      .with(trace.setSpan(ROOT_CONTEXT, span), () => execute(execution))
+      .finally(release);
+  }
+
+  // Moves the call running now in one of the runs here to the background; whether it could.
+  function moveHere(threadId: string, callId: string) {
+    for (const execution of executions.values()) {
+      const { running } = execution;
+      if (execution.run.threadId !== threadId || running?.callId !== callId) continue;
+      if (running.spec.waitsFor === "answer" || running.spec.name.startsWith("calls.")) {
+        return false;
+      }
+      running.move();
+      return true;
+    }
+    return false;
   }
 
   function tick() {
@@ -1467,9 +1475,10 @@ export function createRunWorker(options: RunWorkerOptions) {
   }
 
   return {
-    // Fails the runs a stopped server left running. Call before serving and starting.
+    // Fails the runs a stopped server left running whose leases have expired. Call before serving
+    // and starting; the worker looks again as it ticks.
     recover() {
-      recover();
+      recover(now());
     },
 
     // The model the thread replies with, opened, and what its next call would send were the
@@ -1486,14 +1495,14 @@ export function createRunWorker(options: RunWorkerOptions) {
       const model = await models.open(space.orgId, ref);
       const { rows } = transcript({ threadId, branchId });
       const index = rowId === undefined ? -1 : rows.findIndex((row) => row.id === rowId);
-      const read = index === -1 ? rows : rows.slice(0, index + 1);
+      const read = whole(rows.slice(0, index === -1 ? rows.length : index + 1));
       return { model, ref, rows: read, request: requestOf(space, thread, read, picked.effort) };
     },
 
     start() {
       if (!stopped) return;
       stopped = false;
-      unsubscribe = bus.onWake((threadId) => {
+      const wakes = bus.onWake((threadId) => {
         // Whatever woke the thread is linked from its next run, and from the one under way.
         const cause = options.traces?.caused(threadId);
         for (const execution of executions.values()) {
@@ -1509,30 +1518,32 @@ export function createRunWorker(options: RunWorkerOptions) {
         }
         tick();
       });
+      // A person asked through another instance to move a call running here.
+      const moves = bus.onMoveCall(({ threadId, callId }) => {
+        moveHere(threadId, callId);
+      });
+      unsubscribe = [wakes, moves];
       timer = setInterval(tick, pollMs);
       tick();
     },
 
     // Moves the thread's call that is running now to the background, where its run carries on
-    // without waiting for it; whether it was running here and may move.
+    // without waiting for it; whether it was running here and may move. A run another instance
+    // holds is asked to, and that instance moves it if it may.
     moveToBackground(threadId: string, callId: string) {
-      for (const execution of executions.values()) {
-        const { running } = execution;
-        if (execution.run.threadId !== threadId || running?.callId !== callId) continue;
-        if (running.spec.waitsFor === "answer" || running.spec.name.startsWith("calls.")) {
-          return false;
-        }
-        running.move();
-        return true;
-      }
-      return false;
+      if (moveHere(threadId, callId)) return true;
+      const run = runs.active(threadId);
+      if (run?.status !== "running" || !run.leaseOwner || run.leaseOwner === owner) return false;
+      bus.moveCall({ threadId, callId });
+      return true;
     },
 
-    // Stops claiming and leaves the runs in progress to the next boot's recovery.
+    // Stops claiming and lets the runs in progress go, for recovery here or elsewhere.
     async stop() {
       stopped = true;
       clearInterval(timer);
-      unsubscribe?.();
+      for (const stop of unsubscribe) stop();
+      unsubscribe = [];
       for (const execution of executions.values()) {
         execution.controller.abort({ kind: "shutdown" } satisfies Abort);
       }

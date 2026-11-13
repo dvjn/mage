@@ -1,16 +1,4 @@
-import {
-  and,
-  asc,
-  eq,
-  inArray,
-  isNotNull,
-  isNull,
-  lte,
-  lt,
-  notInArray,
-  or,
-  type SQL,
-} from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, notInArray, type SQL } from "drizzle-orm";
 import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
 
 import type { Db } from "@/server/db/db.ts";
@@ -115,23 +103,15 @@ export function createTriggerStore(db: Db, cipher: Cipher): TriggerStore {
       return db
         .select()
         .from(threadTrigger)
-        .where(
-          and(
-            eq(threadTrigger.status, "active"),
-            or(
-              and(isNull(threadTrigger.pendingFireAt), lte(threadTrigger.nextRunAt, now)),
-              and(isNotNull(threadTrigger.pendingFireAt), lt(threadTrigger.claimedUntil, now)),
-            ),
-          ),
-        )
+        .where(and(eq(threadTrigger.status, "active"), lte(threadTrigger.nextRunAt, now)))
         .orderBy(asc(threadTrigger.nextRunAt))
         .limit(limit)
         .all();
     },
 
     // One conditional update: it applies only to the row as it was read, so of several instances
-    // taking the same due row, one wins.
-    claim(seen, fields) {
+    // moving the same due row on, one wins.
+    advance(seen, fields) {
       return (
         db
           .update(threadTrigger)
@@ -141,26 +121,11 @@ export function createTriggerStore(db: Db, cipher: Cipher): TriggerStore {
               eq(threadTrigger.id, seen.id),
               eq(threadTrigger.status, "active"),
               holds(threadTrigger.nextRunAt, seen.nextRunAt),
-              holds(threadTrigger.pendingFireAt, seen.pendingFireAt),
-              holds(threadTrigger.claimedUntil, seen.claimedUntil),
             ),
           )
           .returning()
           .get() ?? null
       );
-    },
-
-    // Ends the claim, if it is still the instance's.
-    release(id, by, fields) {
-      db.update(threadTrigger)
-        .set({
-          ...fields,
-          pendingFireAt: null,
-          claimedBy: null,
-          claimedUntil: null,
-        })
-        .where(and(eq(threadTrigger.id, id), eq(threadTrigger.claimedBy, by)))
-        .run();
     },
 
     finishOnce(id) {

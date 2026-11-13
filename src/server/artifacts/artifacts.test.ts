@@ -75,6 +75,17 @@ async function team({ previewer }: { previewer?: ArtifactPreviewer } = {}) {
       .toolset()
       .tools.map((tool) => [tool.name, tool]),
   );
+  // The run the tools are called in.
+  workspace.db
+    .insert(schema.run)
+    .values({
+      id: "run",
+      threadId: thread.id,
+      branchId: thread.id,
+      status: "running",
+      triggerSeq: 0,
+    })
+    .run();
   const ctx = (threadId = thread.id, spaceId = space.id): ToolContext =>
     ({
       threadId,
@@ -87,11 +98,17 @@ async function team({ previewer }: { previewer?: ArtifactPreviewer } = {}) {
       runAs: null,
       write: (work) => work(() => {}),
     }) as ToolContext;
-  async function call(name: string, input: object, threadId?: string, spaceId?: string) {
+  async function call(
+    name: string,
+    input: object,
+    threadId?: string,
+    spaceId?: string,
+    within: Partial<ToolContext> = {},
+  ) {
     const spec = specs.get(name)!;
     const parsed = spec.input.safeParse(input);
     if (!parsed.success) return { ok: false as const, error: parsed.error.message };
-    return (await spec.run(parsed.data, ctx(threadId, spaceId))) as
+    return (await spec.run(parsed.data, { ...ctx(threadId, spaceId), ...within })) as
       | { ok: true; value: any }
       | { ok: false; error: string };
   }
@@ -152,6 +169,43 @@ describe("publishing and updating", () => {
       await t.api("GET", `/threads/${t.thread.id}/artifacts`, t.ada.cookie),
     );
     expect(list.map((artifact) => artifact.id)).toEqual([id]);
+  });
+
+  it("records the run that published a version, or the background call that did", async () => {
+    const { db, thread, call, publish } = await team();
+    const id = await publish();
+    db.insert(schema.backgroundCall)
+      .values({ id: "job", threadId: thread.id, runId: "run", toolId: "x", status: "running" })
+      .run();
+    const updated = await call(
+      ARTIFACT_TOOLS.update,
+      { id, html: PAGE.replace("Sales", "Costs") },
+      undefined,
+      undefined,
+      { runId: "job", callId: "job", background: true },
+    );
+    expect(updated.ok).toBe(true);
+    const made = () =>
+      db
+        .select({
+          version: schema.artifactVersion.version,
+          runId: schema.artifactVersion.runId,
+          backgroundCallId: schema.artifactVersion.backgroundCallId,
+          callId: schema.artifactVersion.callId,
+        })
+        .from(schema.artifactVersion)
+        .orderBy(schema.artifactVersion.version)
+        .all();
+    expect(made()).toEqual([
+      { version: 1, runId: "run", backgroundCallId: null, callId: "call" },
+      { version: 2, runId: null, backgroundCallId: "job", callId: "job" },
+    ]);
+    // The versions outlive what published them.
+    db.delete(schema.run).run();
+    expect(made()).toEqual([
+      { version: 1, runId: null, backgroundCallId: null, callId: "call" },
+      { version: 2, runId: null, backgroundCallId: null, callId: "job" },
+    ]);
   });
 
   it("makes a version of an update, from the whole page or from edits, with a label", async () => {
@@ -590,7 +644,6 @@ describe("the agent in a thread with guests", () => {
       spaceId: t.space.id,
       model: null,
       createdBy: null,
-      parentThreadId: t.thread.id,
       rootThreadId: t.thread.id,
     });
     expect(await t.call(ARTIFACT_TOOLS.read, { id: hidden }, child.id)).toEqual({

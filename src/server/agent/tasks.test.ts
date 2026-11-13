@@ -628,8 +628,8 @@ describe("tasks", () => {
 
   describe("watching", () => {
     const rows = (t: Awaited<ReturnType<typeof taskThread>>) =>
-      t.db.all<{ task_ids: string; until: string }>(
-        "select task_ids, until from thread_task_watch" as never,
+      t.db.all<{ id: string; until: string }>(
+        "select id, until from thread_watch where kind = 'tasks'" as never,
       );
 
     async function watching(args: unknown) {

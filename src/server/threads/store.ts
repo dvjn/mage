@@ -6,18 +6,21 @@ import { type Db, writeLock } from "@/server/db/db.ts";
 import { orgFormerMember, user } from "@/server/orgs/schema.ts";
 import { space } from "@/server/spaces/schema.ts";
 import { spokenText } from "@/shared/plain-text.ts";
+import { LARGE_RESULT_CHARS } from "@/shared/threads/events.ts";
 import { UNTITLED } from "@/shared/threads/thread.ts";
 
 import { kept, listedThread, newestFirst, statused, type StatusedRow, windowOf } from "./lists.ts";
-import { thread, threadBranch, threadBranchSource, threadEvent } from "./schema.ts";
+import { thread, threadBranch, threadBranchSource, threadEvent, toolResult } from "./schema.ts";
 import type {
   Branch,
+  NewEvent,
   StoredEvent,
   Thread,
   ThreadFacts,
   ThreadStore,
   ThreadWriters,
 } from "./service.ts";
+import { parentOf } from "./parent.ts";
 
 // The events a reader is told about: a person's message, a finished reply and a failed run.
 const NOTABLE = ["message", "message.completed", "run.failed"];
@@ -56,13 +59,23 @@ const columns = {
   model: thread.model,
   effort: thread.effort,
   createdBy: thread.createdBy,
-  parentThreadId: thread.parentThreadId,
+  parentThreadId: parentOf(thread.id),
   rootThreadId: thread.rootThreadId,
-  currentBranchId: sql<string>`coalesce(${thread.currentBranchId}, ${thread.id})`,
+  currentBranchId: thread.currentBranchId,
   lastEventSeq: thread.lastEventSeq,
   createdAt: thread.createdAt,
   updatedAt: thread.updatedAt,
 };
+
+// The event's data as the log holds it, and what its call gave back when that is too large for
+// the log, to be kept apart.
+function logged(event: NewEvent): { data: NewEvent["data"]; result?: unknown } {
+  if (event.type !== "tool.ran" || !event.data.ok || event.data.large) return { data: event.data };
+  const { value, ...rest } = event.data;
+  const size = JSON.stringify(value)?.length ?? 0;
+  if (size <= LARGE_RESULT_CHARS) return { data: event.data };
+  return { data: { ...rest, large: { size } }, result: value };
+}
 
 export function createThreadStore(db: Db): ThreadStore {
   function branchOf(id: string) {
@@ -85,7 +98,7 @@ export function createThreadStore(db: Db): ThreadStore {
       .select({
         id: threadEvent.id,
         threadId: threadEvent.threadId,
-        branchId: sql<string>`coalesce(${threadEvent.branchId}, ${threadEvent.threadId})`,
+        branchId: threadEvent.branchId,
         seq: threadEvent.seq,
         type: threadEvent.type,
         actorKind: threadEvent.actorKind,
@@ -133,10 +146,12 @@ export function createThreadStore(db: Db): ThreadStore {
       );
     },
 
-    // Its root branch takes its id.
+    // Its root branch takes its id. The thread names the branch before the branch is there, so
+    // that link is checked when the transaction ends rather than as the thread is written.
     create(input) {
       const id = ulid();
       return db.transaction(() => {
+        db.$client.pragma("defer_foreign_keys = ON");
         const created = db
           .insert(thread)
           .values({ id, ...input, currentBranchId: id })
@@ -146,6 +161,7 @@ export function createThreadStore(db: Db): ThreadStore {
           .values({ id, threadId: id, kind: "root", createdBy: input.createdBy })
           .run();
         db.insert(threadBranchSource).values({ branchId: id, sourceBranchId: id }).run();
+        db.$client.pragma("defer_foreign_keys = OFF");
         return created;
       }, writeLock);
     },
@@ -239,7 +255,7 @@ export function createThreadStore(db: Db): ThreadStore {
       return db
         .select(columns)
         .from(thread)
-        .where(and(eq(thread.spaceId, spaceId), isNull(thread.parentThreadId)))
+        .where(and(eq(thread.spaceId, spaceId), isNull(thread.rootThreadId)))
         .orderBy(desc(thread.updatedAt), desc(thread.id))
         .all();
     },
@@ -354,7 +370,7 @@ export function createThreadStore(db: Db): ThreadStore {
     },
 
     listed(reader, spaceId, filter, window) {
-      const where = sql`t.space_id = ${spaceId} and t.parent_thread_id is null`;
+      const where = sql`t.space_id = ${spaceId} and t.root_thread_id is null`;
       const listed = statused(reader, { from: sql`from thread t`, where });
       const keep = kept(filter, sql`coalesce(title, ${UNTITLED})`, sql`last_message_text`);
       const rows = db.all<StatusedRow>(
@@ -370,7 +386,7 @@ export function createThreadStore(db: Db): ThreadStore {
     sidebar(reader, spaceId, limit) {
       const listed = statused(reader, {
         from: sql`from thread t`,
-        where: sql`t.space_id = ${spaceId} and t.parent_thread_id is null`,
+        where: sql`t.space_id = ${spaceId} and t.root_thread_id is null`,
       });
       const rows = db.all<StatusedRow>(sql`${listed},
         placed as (
@@ -388,7 +404,7 @@ export function createThreadStore(db: Db): ThreadStore {
             or (status = 'failed' and in_status <= ${limit})
          ${newestFirst}`);
       const total = db.get<{ n: number }>(
-        sql`select count(*) as n from thread where space_id = ${spaceId} and parent_thread_id is null`,
+        sql`select count(*) as n from thread where space_id = ${spaceId} and root_thread_id is null`,
       );
       const failed = db.get<{ n: number }>(
         sql`${listed} select count(*) as n from statused where status = 'failed'`,
@@ -414,7 +430,7 @@ export function createThreadStore(db: Db): ThreadStore {
         .where(
           and(
             inArray(thread.spaceId, spaceIds),
-            isNull(thread.parentThreadId),
+            isNull(thread.rootThreadId),
             sql`lower(coalesce(${thread.title}, ${untitled})) like lower(${pattern}) escape '\\'`,
           ),
         )
@@ -451,8 +467,9 @@ export function createThreadStore(db: Db): ThreadStore {
     // message follows its current branch alone.
     append(threadId, event, title, branchId) {
       const id = ulid();
+      const { data, result } = logged(event);
       db.transaction((tx) => {
-        const current = sql`coalesce(${thread.currentBranchId}, ${thread.id})`;
+        const current = sql`${thread.currentBranchId}`;
         const branch = branchId ?? current;
         const next = tx
           .update(thread)
@@ -482,10 +499,12 @@ export function createThreadStore(db: Db): ThreadStore {
             type: event.type,
             actorKind: event.actor.kind,
             actorUserId: event.actor.kind === "user" ? event.actor.userId : null,
-            data: event.data,
+            data,
             ...(event.createdAt && { createdAt: event.createdAt }),
           })
           .run();
+        if (result !== undefined)
+          tx.insert(toolResult).values({ eventId: id, value: result }).run();
       }, writeLock);
       const [stored] = eventsWhere(eq(threadEvent.id, id));
       if (!stored) throw new Error(`event ${id} not found after append`);
@@ -500,6 +519,35 @@ export function createThreadStore(db: Db): ThreadStore {
           gt(threadEvent.seq, after),
           branchId ? ofBranch(branchId) : ofCurrent,
         ),
+      );
+    },
+
+    eventsOfType(threadId, type) {
+      return eventsWhere(
+        and(eq(threadEvent.threadId, threadId), eq(threadEvent.type, type), ofCurrent),
+      );
+    },
+
+    results(eventIds) {
+      const results = new Map<string, unknown>();
+      if (eventIds.length === 0) return results;
+      const rows = db
+        .select()
+        .from(toolResult)
+        .where(inArray(toolResult.eventId, [...eventIds]))
+        .all();
+      for (const row of rows) results.set(row.eventId, row.value);
+      return results;
+    },
+
+    result(eventId) {
+      return (
+        db
+          .select({ threadId: threadEvent.threadId, value: toolResult.value })
+          .from(toolResult)
+          .innerJoin(threadEvent, eq(threadEvent.id, toolResult.eventId))
+          .where(eq(toolResult.eventId, eventId))
+          .get() ?? null
       );
     },
   };

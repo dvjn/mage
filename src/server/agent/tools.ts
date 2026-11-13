@@ -17,8 +17,9 @@ import type { Directory } from "@/server/orgs/directory.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
 import type { ThreadAccess } from "@/server/spaces/thread-access.ts";
-import { type Append, eventSummary, type ThreadLog } from "@/server/threads/log.ts";
-import type { Thread, ThreadStore, NewEvent } from "@/server/threads/service.ts";
+import type { Append, ThreadLog } from "@/server/threads/log.ts";
+import type { Thread, NewEvent } from "@/server/threads/service.ts";
+import type { Transcripts } from "@/server/threads/transcripts.ts";
 import { type AskAnswers, askInputSchema, answersProblem } from "@/shared/ask.ts";
 import { mcpToolOf } from "@/shared/mcp.ts";
 import { START_SUBAGENT } from "@/shared/subagents.ts";
@@ -39,7 +40,7 @@ import {
   type ToolLevel,
   type ToolsetSource,
 } from "@/shared/tools.ts";
-import { type ToolRow, type TranscriptRow, transcriptOf } from "@/shared/transcript.ts";
+import type { ToolRow, TranscriptRow } from "@/shared/transcript.ts";
 
 import type { ThreadRequest } from "./compaction.ts";
 import type { ToolsetGuidance } from "./context.ts";
@@ -95,6 +96,9 @@ export interface ToolContext {
   orgId: string;
   runId: string;
   callId: string;
+  // Set for a call started in the background: it runs under no run, and its own id stands in the
+  // run's place.
+  background?: true;
   actor: { kind: "agent" };
   model: string | null;
   // Whose own login the call goes with, for a tool that uses one: whoever approved it, whoever gave
@@ -396,9 +400,19 @@ export interface ToolsOptions {
   policies: Pick<ToolPolicyStore, "inOrg">;
   directory: Pick<Directory, "groupIdsOf">;
   access: Pick<ThreadAccess, "of">;
+  // The model a call is judged under: that of the run it waits in, or the background call's own.
+  callModel?: (call: ToolRow) => string | null;
 }
 
 export type Tools = ReturnType<typeof createTools>;
+
+// Where a call stands for a person: what it waits on people for, if anything, whether this person
+// may give it, and the risk it is judged at now.
+export interface CallState {
+  waitsFor: "decision" | "answer" | null;
+  canAct: boolean;
+  risk: ToolRisk;
+}
 
 // What applies to one tool in a space: whether it is off there, and the one rule it is used under.
 export interface ToolRules {
@@ -570,22 +584,26 @@ export function createTools(options: ToolsOptions) {
     return spec?.waitsFor === "answer";
   }
 
-  // Whether the person may act on the call now: approve or deny it, or for a call that asks
-  // questions, answer or skip them.
-  function canDecide(
+  // Where the call stands for the person: whether it waits on people, for a decision or for
+  // answers, and whether they may act on it now: approve or deny it, or answer or skip its
+  // questions. Every screen and action asks this, so they agree.
+  function callState(
     userId: string,
     row: ToolRow,
     rows: readonly TranscriptRow[],
     thread: Thread,
     space: Space,
-    model: string | null = null,
-  ) {
-    return (asks(row, space) ? mayAnswer : mayApprove)(
+  ): CallState {
+    const risk = riskForCall(row, space, options.callModel?.(row) ?? null);
+    if (row.state !== "pending" || !row.waits) return { waitsFor: null, canAct: false, risk };
+    const waitsFor = asks(row, space) ? "answer" : "decision";
+    const canAct = (waitsFor === "answer" ? mayAnswer : mayApprove)(
       personIn(userId, thread, space),
       rulesIn(space)(row.toolId).rule,
-      riskForCall(row, space, model),
+      risk,
       latestAuthor(rows),
     );
+    return { waitsFor, canAct, risk };
   }
 
   // The words the model read, messages and answers, each with whether its writer can post now and
@@ -742,7 +760,7 @@ export function createTools(options: ToolsOptions) {
       };
     },
     riskForCall,
-    canDecide,
+    callState,
     rulesIn,
 
     // The person's own connection that a call of the tool with this input would run with, for a
@@ -833,7 +851,7 @@ export function createTools(options: ToolsOptions) {
 
     // Whether a call of the tool, with the risk the tool itself declares for it, runs now, on a
     // standing approval, or waits; for a tool whose calls run with a person's own login, as whom.
-    decide(
+    evaluate(
       rows: readonly TranscriptRow[],
       thread: Thread,
       space: Space,
@@ -934,16 +952,10 @@ export function createTools(options: ToolsOptions) {
 export interface ToolDecisionsOptions {
   tools: Pick<
     Tools,
-    | "find"
-    | "canDecide"
-    | "asks"
-    | "riskForCall"
-    | "connectionFor"
-    | "toolsetsInOrg"
-    | "toolsetsInSpace"
+    "find" | "callState" | "asks" | "connectionFor" | "toolsetsInOrg" | "toolsetsInSpace"
   >;
   access: Pick<ThreadAccess, "require">;
-  threads: Pick<ThreadStore, "eventsAfter">;
+  transcripts: Pick<Transcripts, "of">;
   spaceStore: Pick<SpaceStore, "find">;
   runs: Pick<RunStore, "find" | "resume">;
   spaces: Pick<Spaces, "require">;
@@ -955,7 +967,7 @@ export interface ToolDecisionsOptions {
   // thread has room for another, moving the call running now to the background, moving one that
   // waits for a decision, and stopping one.
   background?: {
-    find(callId: string): { status: string; model: string | null } | null;
+    find(callId: string): { status: string } | null;
     proceed(threadId: string, callId: string, allow: boolean): void;
     room(threadId: string): boolean;
     move(threadId: string, callId: string): boolean;
@@ -970,7 +982,6 @@ export interface ToolDecisionsOptions {
         title?: string;
         toolset?: string;
       },
-      model: string | null,
       append: Append,
     ): string;
     cancel(threadId: string, callId: string): void;
@@ -983,8 +994,7 @@ const OWNERS_ONLY = "Only the organization's owners can do this";
 
 // People's decisions on calls that wait, and what orgs and spaces set their tools to.
 export function createToolDecisions(options: ToolDecisionsOptions) {
-  const { tools, access, threads, spaceStore, runs, spaces, settings, policies, log, bus } =
-    options;
+  const { tools, access, spaceStore, runs, spaces, settings, policies, log, bus } = options;
   const { background } = options;
 
   function known(orgId: string, toolId: string, space?: Space) {
@@ -1040,7 +1050,7 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
       const space = spaceStore.find(thread.spaceId);
       if (!space) throw new ServiceError(404, "Thread not found");
       const { events, result } = log.write(thread.id, (append) => {
-        const rows = transcriptOf(threads.eventsAfter(thread.id, 0).map(eventSummary)).rows;
+        const rows = options.transcripts.of(thread.id).transcript().rows;
         const call = rows.find((row): row is ToolRow => row.kind === "tool" && row.id === callId);
         if (!call) throw new ServiceError(404, "Tool call not found");
         // A background call waits for its decision without a run.
@@ -1050,15 +1060,13 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
           ? waiting.status === "pending"
           : run && (run.status === "running" || run.status === "waiting");
         if (!active || call.state === "stopped") throw new ServiceError(409, "No longer needed");
-        const model = waiting ? waiting.model : (run?.model ?? null);
-        if (tools.asks(call, space)) throw new ServiceError(409, "This call waits for an answer");
-        if (call.state !== "pending" || !call.waits) {
-          throw new ServiceError(409, "Already decided");
+        const state = tools.callState(principal.userId, call, rows, thread, space);
+        if (state.waitsFor === "answer") {
+          throw new ServiceError(409, "This call waits for an answer");
         }
-        if (!tools.canDecide(principal.userId, call, rows, thread, space, model)) {
-          const independent =
-            tools.riskForCall(call, space, model) === "review" &&
-            latestAuthor(rows) === principal.userId;
+        if (state.waitsFor !== "decision") throw new ServiceError(409, "Already decided");
+        if (!state.canAct) {
+          const independent = state.risk === "review" && latestAuthor(rows) === principal.userId;
           throw new ServiceError(
             403,
             independent
@@ -1066,11 +1074,7 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
               : "Only this tool's approvers can decide",
           );
         }
-        if (
-          decision.allow &&
-          decision.scope === "for_now" &&
-          tools.riskForCall(call, space, model) !== "normal"
-        ) {
+        if (decision.allow && decision.scope === "for_now" && state.risk !== "normal") {
           throw new ServiceError(400, "This call can only be allowed once");
         }
         // A call allowed runs with its approver's own login, where its tool uses one.
@@ -1108,7 +1112,7 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
       const space = spaceStore.find(thread.spaceId);
       if (!space || !background) throw new ServiceError(404, "Thread not found");
       const { result: resumed } = log.write(thread.id, (append) => {
-        const rows = transcriptOf(threads.eventsAfter(thread.id, 0).map(eventSummary)).rows;
+        const rows = options.transcripts.of(thread.id).transcript().rows;
         const call = rows.find((row): row is ToolRow => row.kind === "tool" && row.id === callId);
         if (!call) throw new ServiceError(404, "Tool call not found");
         if (call.state !== "pending" && call.state !== "allowed") {
@@ -1135,7 +1139,6 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
               ...(call.title && { title: call.title }),
               ...(call.toolset && { toolset: call.toolset }),
             },
-            run.model,
             append,
           );
           runs.resume(call.runId);
@@ -1163,15 +1166,16 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
       const space = spaceStore.find(thread.spaceId);
       if (!space) throw new ServiceError(404, "Thread not found");
       const { events, result: runId } = log.write(thread.id, (append) => {
-        const rows = transcriptOf(threads.eventsAfter(thread.id, 0).map(eventSummary)).rows;
+        const rows = options.transcripts.of(thread.id).transcript().rows;
         const call = rows.find((row): row is ToolRow => row.kind === "tool" && row.id === callId);
         if (!call) throw new ServiceError(404, "Tool call not found");
         if (!tools.asks(call, space)) throw new ServiceError(409, "This call asks nothing");
         const run = runs.find(call.runId);
         const active = run && (run.status === "running" || run.status === "waiting");
         if (!active || call.state === "stopped") throw new ServiceError(409, "No longer needed");
-        if (call.state !== "pending") throw new ServiceError(409, "Already answered");
-        if (!tools.canDecide(principal.userId, call, rows, thread, space, run.model)) {
+        const state = tools.callState(principal.userId, call, rows, thread, space);
+        if (state.waitsFor !== "answer") throw new ServiceError(409, "Already answered");
+        if (!state.canAct) {
           throw new ServiceError(403, "Only people who can use this tool here can answer");
         }
         const asked = askInputSchema.safeParse(call.input);

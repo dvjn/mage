@@ -57,7 +57,7 @@ export function createThreadLog(options: ThreadLogOptions) {
         }),
       );
       const events = appended.map(eventSummary);
-      for (const event of events) bus.publish(threadId, { kind: "event", event });
+      for (const event of events) bus.publish(threadId, { kind: "event", seq: event.seq });
       // Run changes made in the write, such as waiting for a decision, show too.
       bus.activity({ threadId });
       return { result, events };

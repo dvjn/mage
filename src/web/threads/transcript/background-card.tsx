@@ -48,6 +48,8 @@ export const STATUSES: Record<WorkStatus, { label: string; icon: ReactNode }> = 
   failed: { label: "Failed", icon: <XIcon aria-hidden /> },
   cancelled: { label: "Cancelled", icon: <SquareIcon aria-hidden /> },
   interrupted: { label: "Interrupted", icon: <PowerOffIcon aria-hidden /> },
+  queued: { label: "Queued", icon: <Spinner /> },
+  idle: { label: "Idle", icon: <CheckIcon aria-hidden className="text-foreground" /> },
   scheduled: { label: "Scheduled", icon: <StatusDot /> },
   listening: { label: "Listening", icon: <StatusDot /> },
   paused: { label: "Paused", icon: <PauseIcon aria-hidden /> },

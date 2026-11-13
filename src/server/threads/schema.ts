@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnySQLiteColumn,
   sqliteTable,
   text,
   integer,
@@ -28,10 +29,17 @@ export const thread = sqliteTable(
     // The reasoning effort its model is asked for; null follows the defaults, then the usual one.
     effort: text("effort", { enum: ["low", "medium", "high"] }),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
-    parentThreadId: text("parent_thread_id"),
-    rootThreadId: text("root_thread_id"),
-    // The branch people see and the agent reads; set for every thread, its root's id being its own.
-    currentBranchId: text("current_branch_id"),
+    // For a subagent's thread, the thread its subagents descend from; its subagent row names the
+    // thread that started it.
+    rootThreadId: text("root_thread_id").references((): AnySQLiteColumn => thread.id, {
+      onDelete: "cascade",
+    }),
+    // The branch people see and the agent reads: its root at first, which takes the thread's id.
+    // A thread and its root branch name each other, so the two are written in one transaction
+    // that checks their links only at its end.
+    currentBranchId: text("current_branch_id")
+      .notNull()
+      .references((): AnySQLiteColumn => threadBranch.id),
     // What the members of its org outside its space may do in it: nothing, read it, or read and post.
     orgAccess: text("org_access", { enum: ["none", "view", "message"] })
       .default("none")
@@ -60,8 +68,10 @@ export const threadEvent = sqliteTable(
     threadId: text("thread_id")
       .notNull()
       .references(() => thread.id, { onDelete: "cascade" }),
-    // The branch it happened in; set for every event.
-    branchId: text("branch_id"),
+    // The branch it happened in.
+    branchId: text("branch_id")
+      .notNull()
+      .references((): AnySQLiteColumn => threadBranch.id, { onDelete: "cascade" }),
     seq: integer("seq").notNull(),
     type: text("type").notNull(),
     actorKind: text("actor_kind", { enum: ["user", "agent"] }).notNull(),
@@ -79,6 +89,15 @@ export const threadEvent = sqliteTable(
   ],
 );
 
+// What a tool call gave back, where it is too large for its `tool.ran` event: kept apart, so the
+// log stays light to read through, and read by the event's id where the result itself is needed.
+export const toolResult = sqliteTable("tool_result", {
+  eventId: text("event_id")
+    .primaryKey()
+    .references(() => threadEvent.id, { onDelete: "cascade" }),
+  value: text("value", { mode: "json" }).$type<unknown>().notNull(),
+});
+
 // A line of a thread's conversation. The root holds what came before any other; every other
 // branch starts from its parent as it was up to the event `forkSeq`, then goes on with events of
 // its own. One that writes a row again, a person's message or a reply, names that row and the
@@ -90,7 +109,9 @@ export const threadBranch = sqliteTable(
     threadId: text("thread_id")
       .notNull()
       .references(() => thread.id, { onDelete: "cascade" }),
-    parentBranchId: text("parent_branch_id"),
+    parentBranchId: text("parent_branch_id").references((): AnySQLiteColumn => threadBranch.id, {
+      onDelete: "cascade",
+    }),
     forkSeq: integer("fork_seq"),
     kind: text("kind", { enum: ["root", "retry", "edit", "restore"] }).notNull(),
     rowId: text("row_id"),
@@ -111,7 +132,9 @@ export const threadBranchSource = sqliteTable(
     branchId: text("branch_id")
       .notNull()
       .references(() => threadBranch.id, { onDelete: "cascade" }),
-    sourceBranchId: text("source_branch_id").notNull(),
+    sourceBranchId: text("source_branch_id")
+      .notNull()
+      .references(() => threadBranch.id, { onDelete: "cascade" }),
     untilSeq: integer("until_seq"),
   },
   (table) => [primaryKey({ columns: [table.branchId, table.sourceBranchId] })],
@@ -182,7 +205,9 @@ export const aside = sqliteTable(
     threadId: text("thread_id")
       .notNull()
       .references(() => thread.id, { onDelete: "cascade" }),
-    branchId: text("branch_id").notNull(),
+    branchId: text("branch_id")
+      .notNull()
+      .references(() => threadBranch.id, { onDelete: "cascade" }),
     rowId: text("row_id").notNull(),
     userId: text("user_id")
       .notNull()

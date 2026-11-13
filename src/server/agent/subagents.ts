@@ -16,14 +16,16 @@
 // over with each message and notification it is sent, so a call any agent makes runs directly only
 // when every person behind it could have made it.
 
+import { ulid } from "ulid";
 import * as z from "zod";
 
 import { failureSentence } from "@/server/agent/failure-text.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { EventBus } from "@/server/kernel/event-bus.ts";
 import type { ModelMessage } from "@/server/models/gateway.ts";
-import { eventSummary, type ThreadLog } from "@/server/threads/log.ts";
+import type { ThreadLog } from "@/server/threads/log.ts";
 import type { Thread, ThreadStore } from "@/server/threads/service.ts";
+import type { Transcripts } from "@/server/threads/transcripts.ts";
 import { ASK_TOOL } from "@/shared/ask.ts";
 import {
   AGENT,
@@ -44,16 +46,12 @@ import type {
 } from "@/shared/threads/events.ts";
 import { type Effort, effortSchema, UNTITLED } from "@/shared/threads/thread.ts";
 import { toolIdNow } from "@/shared/tools.ts";
-import {
-  type AgentRow,
-  type Transcript,
-  type TranscriptRow,
-  transcriptOf,
-  waking,
-} from "@/shared/transcript.ts";
+import { type AgentRow, type Transcript, type TranscriptRow, waking } from "@/shared/transcript.ts";
 
+import { wholeWhereRead } from "./compaction.ts";
 import { contextOf, framingMessage, type ToolsetGuidance } from "./context.ts";
-import { createNotifier, type Notification } from "./notifications.ts";
+import type { Notification, Notifier } from "./notifications.ts";
+import { WATCH_LIMIT, type Watch, type WatchStore } from "./watches.ts";
 import type { Run, RunStore } from "./runs.ts";
 import type { AnyToolSpec, ToolContext, Toolset, ToolSpec } from "./tools.ts";
 import { personLabel } from "@/shared/people.ts";
@@ -111,8 +109,9 @@ export const SUBAGENTS_GUIDANCE = [
 
 export interface SubagentsOptions {
   subagents: SubagentStore;
-  threads: Pick<ThreadStore, "create" | "find" | "eventsAfter">;
-  runs: Pick<RunStore, "active" | "activeIn" | "create" | "latest" | "requestCancel" | "resume">;
+  threads: Pick<ThreadStore, "create" | "find" | "eventsOfType">;
+  transcripts: Pick<Transcripts, "of" | "whole">;
+  runs: Pick<RunStore, "active" | "activeIn" | "latest" | "requestCancel" | "resume">;
   log: ThreadLog;
   bus: EventBus;
   // Whether the agent may choose the models of the subagents it starts in the space, and the
@@ -121,6 +120,10 @@ export interface SubagentsOptions {
   modelsIn?: (orgId: string) => Promise<{ ref: string; reasoning?: boolean }[]>;
   // The starter's task list, for subagents started with tasks.
   taskHandover?: () => TaskHandover;
+  // Its own `mayStart` decides whether a notified thread's agent starts.
+  notifier: Notifier;
+  // Agents waiting on subagents, as on tasks.
+  watches: Pick<WatchStore, "add" | "on" | "setIn" | "count" | "end">;
   now?: () => Date;
 }
 
@@ -225,15 +228,6 @@ function idleState(state: SubagentState) {
   return state !== "working" && state !== "queued";
 }
 
-// What a watch was set on, as its call gave back.
-interface Watch {
-  when: "all_idle" | "any_idle";
-  subagents: { id: string; name: string }[];
-  // Set when it took the place of pending watches on the same subagents: the calls that set them.
-  replaces?: string[];
-  note?: string;
-}
-
 function sameName(a: string, b: string) {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
 }
@@ -256,7 +250,7 @@ export function createSubagents(options: SubagentsOptions) {
   const stoppedWithStarter = new Set<string>();
 
   function transcript(threadId: string) {
-    return transcriptOf(threads.eventsAfter(threadId, 0).map(eventSummary));
+    return options.transcripts.of(threadId).transcript();
   }
 
   function threadOf(id: string) {
@@ -296,13 +290,7 @@ export function createSubagents(options: SubagentsOptions) {
     return runs.activeIn(siblings).length < RUNNING_LIMIT;
   }
 
-  const notifier = createNotifier({
-    threads,
-    runs,
-    log,
-    bus,
-    mayStart: (threadId) => mayStart(threadId),
-  });
+  const { notifier, watches } = options;
 
   // Sends another agent's message to the thread, with the call that sent it.
   function deliver(
@@ -406,34 +394,16 @@ export function createSubagents(options: SubagentsOptions) {
     };
   }
 
-  // The watches set in the thread that have not fired yet, each by the call that set it.
-  function watchesIn(threadId: string) {
-    const { rows, inbox } = transcript(threadId);
-    const fired = new Set(
-      [...rows, ...inbox].flatMap((row) =>
-        "from" in row && "type" in row && row.type === "agent.idle" && row.call
-          ? [row.call.callId, ...(row.callIds ?? [])]
-          : [],
-      ),
-    );
-    const pending = rows.flatMap((row) =>
-      row.kind === "tool" && row.toolId === WATCH_SUBAGENTS && row.output?.ok && !fired.has(row.id)
-        ? [{ callId: row.id, watch: row.output.value as Watch }]
-        : [],
-    );
-    const replaced = new Set(pending.flatMap(({ watch }) => watch.replaces ?? []));
-    return pending.filter(({ callId }) => !replaced.has(callId));
-  }
-
   // The notice a watch owes its thread's agent, once the subagents it was set on are idle: all of
   // them, or any.
-  function noticeFor(threadId: string, callId: string, watch: Watch) {
-    const watched = watch.subagents.flatMap((one) => {
-      const subagent = subagents.find(one.id);
+  function noticeFor(watch: Watch) {
+    const { threadId, until } = watch;
+    const watched = watch.subjects.flatMap((id) => {
+      const subagent = subagents.find(id);
       return subagent ? [subagent] : [];
     });
     const idle = watched.filter((subagent) => idleState(summaryOf(subagent).state));
-    const holds = watch.when === "all_idle" ? idle.length === watched.length : idle.length > 0;
+    const holds = until === "all_idle" ? idle.length === watched.length : idle.length > 0;
     const thread = threads.find(threadId);
     if (!holds || idle.length === 0 || !thread) return null;
     const people = new Map<string, Steering>();
@@ -447,36 +417,30 @@ export function createSubagents(options: SubagentsOptions) {
       kind: "agent.idle" as const,
       source: {
         ...senderOf(thread).from,
-        callId,
+        ...(watch.callId && { callId: watch.callId }),
       } satisfies NotificationSource as NotificationSource,
       actor: { kind: "source" as const, label: "Subagents", type: "system" as const },
-      text: watch.when === "all_idle" ? `All idle: ${names}` : `Idle: ${names}`,
+      text: until === "all_idle" ? `All idle: ${names}` : `Idle: ${names}`,
       people: [...people.values()],
       subagents: idle.map((subagent) => ({ threadId: subagent.threadId, name: subagent.name })),
-      when: watch.when,
+      when: until as "all_idle" | "any_idle",
     };
   }
 
-  function fireIfIdle(threadId: string, callId: string, watch: Watch) {
-    const notice = noticeFor(threadId, callId, watch);
-    if (notice) notifier.send(threadId, notice);
-  }
-
-  // Fires the watches of the starter's agent, and of its subagents, that now hold. Those holding
-  // together with the same words are one notice, which lists the calls it answers.
+  // Fires the watches on the starter's subagents that now hold, its own and its subagents', each
+  // once. Those of one thread holding together with the same words are one notice, which lists the
+  // calls it answers.
   function checkWatches(parentThreadId: string) {
-    const watchers = [parentThreadId, ...live(parentThreadId).map((one) => one.threadId)];
-    for (const threadId of watchers) {
-      const notices = new Map<string, NonNullable<ReturnType<typeof noticeFor>>>();
-      for (const { callId, watch } of watchesIn(threadId)) {
-        const notice = noticeFor(threadId, callId, watch);
-        if (!notice) continue;
-        const first = notices.get(notice.text);
-        if (!first) notices.set(notice.text, notice);
-        else first.source.callIds = [...(first.source.callIds ?? []), callId];
-      }
-      for (const notice of notices.values()) notifier.send(threadId, notice);
+    const notices = new Map<string, NonNullable<ReturnType<typeof noticeFor>>>();
+    for (const watch of watches.on(parentThreadId, "subagents")) {
+      const notice = noticeFor(watch);
+      if (!notice || !watches.end(watch.id)) continue;
+      const key = JSON.stringify([watch.threadId, notice.text]);
+      const first = notices.get(key);
+      if (!first) notices.set(key, notice);
+      else if (watch.callId) first.source.callIds = [...(first.source.callIds ?? []), watch.callId];
     }
+    for (const [key, notice] of notices) notifier.send(JSON.parse(key)[0] as string, notice);
   }
 
   // Refuses messages between the starter's subagents past the limit, telling its agent the first
@@ -486,9 +450,7 @@ export function createSubagents(options: SubagentsOptions) {
       .ofParents([parentThreadId])
       .reduce((total, subagent) => total + receivedFromSubagents(transcript(subagent.threadId)), 0);
     if (sent + sending <= MESSAGE_LIMIT) return;
-    const told = threads
-      .eventsAfter(parentThreadId, 0)
-      .some((event) => event.type === "subagent.limited");
+    const told = threads.eventsOfType(parentThreadId, "subagent.limited").length > 0;
     if (!told) {
       log.write(parentThreadId, (append) =>
         append({
@@ -630,7 +592,6 @@ export function createSubagents(options: SubagentsOptions) {
       model: model ? model.model : parent.model,
       effort: model ? model.effort : parent.effort,
       createdBy: null,
-      parentThreadId: parent.id,
       rootThreadId: parent.rootThreadId ?? parent.id,
       title: input.name,
       titleSource: "agent",
@@ -778,7 +739,7 @@ export function createSubagents(options: SubagentsOptions) {
     },
   };
 
-  const watch: ToolSpec<{ when: Watch["when"]; subagents?: string[] }> = {
+  const watch: ToolSpec<{ when: "all_idle" | "any_idle"; subagents?: string[] }> = {
     name: WATCH_SUBAGENTS,
     title: "Watch",
     annotations: { readOnlyHint: true },
@@ -801,26 +762,32 @@ export function createSubagents(options: SubagentsOptions) {
           ? pick(parentId, input.subagents, me?.threadId)
           : live(parentId).filter((one) => one.threadId !== me?.threadId);
         if (chosen.length === 0) throw new ToolRefusal("There are no subagents to watch.");
-        const set: Watch = {
+        const subjects = chosen.map((one) => one.threadId);
+        // The same watch again replaces the pending one.
+        const key = (ids: string[]) => ids.toSorted().join();
+        const same = watches
+          .setIn(ctx.threadId, "subagents")
+          .filter((old) => old.until === input.when && key(old.subjects) === key(subjects));
+        for (const old of same) watches.end(old.id);
+        if (watches.count(ctx.threadId) >= WATCH_LIMIT) {
+          throw new ToolRefusal(`You can have ${WATCH_LIMIT} watches at once. Wait for one first.`);
+        }
+        watches.add({
+          id: ulid(),
+          threadId: ctx.threadId,
+          ownerId: parentId,
+          kind: "subagents",
+          until: input.when,
+          callId: ctx.callId,
+          subjects,
+        });
+        // One whose subagents are idle already fires at once.
+        checkWatches(parentId);
+        return {
           when: input.when,
           subagents: chosen.map((one) => ({ id: one.threadId, name: one.name })),
+          ...(same.length > 0 && { note: "Already watching; replaced." }),
         };
-        // The same watch again replaces the pending one.
-        const ids = (one: Watch) =>
-          one.subagents
-            .map((entry) => entry.id)
-            .toSorted()
-            .join();
-        const same = watchesIn(ctx.threadId).filter(
-          (old) => old.watch.when === set.when && ids(old.watch) === ids(set),
-        );
-        if (same.length > 0) {
-          set.replaces = same.map((old) => old.callId);
-          set.note = "Already watching; replaced.";
-        }
-        // One whose subagents are idle already fires at once.
-        fireIfIdle(ctx.threadId, ctx.callId, set);
-        return set;
       });
     },
   };
@@ -988,7 +955,9 @@ export function createSubagents(options: SubagentsOptions) {
         (row) => row.seq <= fork.seq && row.id !== fork.callId,
       );
       // What changed there was its starter's, not its own.
-      const copy = contextOf(rows).messages.filter((message) => message.role !== "change");
+      const copy = contextOf(wholeWhereRead(rows, options.transcripts.whole)).messages.filter(
+        (message) => message.role !== "change",
+      );
       return [framing, ...copy];
     },
 
@@ -1005,13 +974,6 @@ export function createSubagents(options: SubagentsOptions) {
       }
       fillPlaces(subagent.parentThreadId);
       checkWatches(subagent.parentThreadId);
-    },
-
-    // Once a watch call's result is stored, fires it if its subagents settled while it was being
-    // stored; the result was not there for the checks made at their run ends.
-    toolRan(run: Run, toolId: string) {
-      if (toolId !== WATCH_SUBAGENTS) return;
-      checkWatches(subagents.find(run.threadId)?.parentThreadId ?? run.threadId);
     },
 
     // Asks every running subagent of the thread's agent to stop, as the person; whether any was.

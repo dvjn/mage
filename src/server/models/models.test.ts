@@ -26,6 +26,7 @@ import type { Artifacts } from "@/server/artifacts/service.ts";
 import type { Spaces } from "@/server/spaces/service.ts";
 import { createSpaceStore } from "@/server/spaces/store.ts";
 import type { Threads } from "@/server/threads/service.ts";
+import { createThreadStore } from "@/server/threads/store.ts";
 import { HOST_IDS, type HostId } from "@/shared/hosts.ts";
 import { replyCandidates } from "@/shared/models.ts";
 import { FIRST_SPACE_NAME } from "@/shared/spaces.ts";
@@ -1454,9 +1455,7 @@ describe("turning models on and off", () => {
       .where(eq(schema.space.organizationId, owner.orgId))
       .get();
     db.update(schema.space).set({ defaultModel: old }).run();
-    db.insert(schema.thread)
-      .values({ id: "t1", spaceId: space!.id, model: old, createdBy: owner.userId })
-      .run();
+    createThreadStore(db).create({ spaceId: space!.id, model: old, createdBy: owner.userId });
     const turn = (enabled: boolean) =>
       api("PATCH", `/connections/${owner.anthropicId}/models`, owner.cookie, {
         set: { ids: ["claude-old"], enabled },

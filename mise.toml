@@ -20,12 +20,12 @@ artifact_url = "http://*.localhost:4783"
 artifact_port = ""
 
 [tasks.setup]
-description = "Install dependencies and the browser for the journeys"
+description = "Install dependencies"
 run = ["pnpm install", "pnpm exec playwright install chromium"]
 
 [tasks.dev]
-description = "Run API and web client with hot reload on :4783, signing in through the dev identity provider and tracing to Jaeger"
-depends = ["deps:up"]
+description = "Run the app with hot reload"
+depends = ["deps:ready"]
 run = "pnpm dev {{vars.dev_args}}"
 
 [tasks.dev.env]
@@ -38,47 +38,52 @@ OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4318"
 OTEL_METRICS_EXPORTER = "none"
 OTEL_LOGS_EXPORTER = "none"
 
-[tasks."deps:up"]
-description = "Start the dev identity provider on :9000 (Authentik: akadmin, ada, grace, alice, bob, carol, dave, erin, frank, heidi) and Jaeger on :16686"
+[tasks."deps:compose"]
+description = "Compose command for the dev dependencies"
+hide = true
 run = """
 set -eu
-compose="$(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml"
-$compose up -d
+exec $(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml "$@"
+"""
+
+[tasks."deps:up"]
+description = "Run the dev dependencies in the foreground"
+usage = 'arg "[service]..." help="Services to run; all when none" var=#true'
+run = "mise run deps:compose up ${usage_service:-}"
+
+[tasks."deps:ready"]
+description = "Wait until the dev dependencies answer"
+hide = true
+run = """
+set -eu
 until curl -fs -o /dev/null http://localhost:9000/application/o/mage/.well-known/openid-configuration; do
+  echo "Waiting for the dev dependencies; start them with: mise run deps:up" >&2
   sleep 3
 done
 """
 
 [tasks."deps:down"]
-description = "Stop the dev identity provider and Jaeger, keeping the provider's database"
-run = "$(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml down"
+description = "Stop the dev dependencies"
+run = "mise run deps:compose down"
 
 [tasks."deps:reset"]
-description = "Stop the dev identity provider and Jaeger, and remove the provider's database"
-run = "$(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml down --volumes"
-
-[tasks."deps:logs"]
-description = "Follow the dev identity provider's and Jaeger's logs"
-run = "$(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml logs -f"
+description = "Stop the dev dependencies and delete their data"
+run = "mise run deps:compose down --volumes"
 
 [tasks.build]
-description = "Build the web client and the server into dist"
+description = "Build for production"
 run = "pnpm build"
-
-[tasks.start]
-description = "Serve the API and the built client (run build first)"
-run = "pnpm start"
 
 [tasks.check]
 description = "Lint, format check and type check"
 run = "pnpm check"
 
 [tasks.test]
-description = "Run the test suite"
+description = "Run the tests"
 run = "pnpm test"
 
 [tasks.e2e]
-description = "Run the browser journeys against a production build on :4793"
+description = "Run the browser journeys"
 run = "pnpm e2e"
 
 [tasks."db:generate"]
@@ -86,13 +91,9 @@ description = "Generate a migration from schema changes"
 run = "pnpm db:generate"
 
 [tasks."models:update"]
-description = "Refresh the vendored model data from LiteLLM's model map"
+description = "Refresh the vendored model data"
 run = "node scripts/update-models.ts"
 
-[tasks."costs:backfill"]
-description = "Preview historical cost estimates; pass --apply to back up the database and save them"
-run = "node scripts/backfill-costs.ts"
-
 [tasks."icons:update"]
-description = "Write the makers' and hosts' marks from the pinned Lobe Icons release"
+description = "Refresh the vendored icons"
 run = "node scripts/update-icons.ts"

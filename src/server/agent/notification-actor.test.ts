@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { eventSummary } from "@/server/threads/log.ts";
+import { createTranscripts } from "@/server/threads/transcripts.ts";
 import type { NotificationActor, NotificationKind } from "@/shared/threads/events.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
@@ -54,7 +55,12 @@ describe("notification actors", () => {
 
   it("are kept with the notification and shown on its row", async () => {
     const { threadStore, runStore, log, bus, thread } = await agentThread();
-    const notifier = createNotifier({ threads: threadStore, runs: runStore, log, bus });
+    const notifier = createNotifier({
+      transcripts: createTranscripts(threadStore),
+      runs: runStore,
+      log,
+      bus,
+    });
     const person = { kind: "person", userId: "u1", name: "Divya" } as const;
     notifier.send(
       thread.id,

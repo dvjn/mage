@@ -144,8 +144,13 @@ export interface ToolRow {
   decision: { allow: boolean; scope: ToolScope; by: Person; seq: number } | null;
   // What the person in `decision` answered, for a call that asks questions.
   answers?: AskAnswers;
-  // What it gave back, or why it failed, once it ran, and how long that took.
-  output: { ok: true; value: unknown } | { ok: false; error: string } | null;
+  // What it gave back, or why it failed, once it ran, and how long that took. A large result is
+  // kept apart from the log: its value is null here, and `large` says where it is read from, the
+  // id of the event that ended the call, and its size in characters of JSON.
+  output:
+    | { ok: true; value: unknown; large?: { id: string; size: number } }
+    | { ok: false; error: string }
+    | null;
   ms: number | null;
   // A call started in the background, which belongs to no reply and no run.
   background?: true;
@@ -814,7 +819,11 @@ export function createFold(): TranscriptFold {
         call.decision ??= parked.get(call.id) ?? null;
         call.state = event.data.ok ? "ran" : "failed";
         call.output = event.data.ok
-          ? { ok: true, value: event.data.value ?? null }
+          ? {
+              ok: true,
+              value: event.data.value ?? null,
+              ...(event.data.large && { large: { id: event.id, size: event.data.large.size } }),
+            }
           : { ok: false, error: event.data.error ?? "The tool failed." };
         call.ms = event.data.ms;
         touch(call.id);

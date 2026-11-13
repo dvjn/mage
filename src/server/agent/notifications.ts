@@ -7,8 +7,8 @@
 // which starts the next run on it, or starts one itself.
 
 import type { EventBus } from "@/server/kernel/event-bus.ts";
-import { type Append, eventSummary, type ThreadLog } from "@/server/threads/log.ts";
-import type { ThreadStore } from "@/server/threads/service.ts";
+import type { Append, ThreadLog } from "@/server/threads/log.ts";
+import type { Transcripts } from "@/server/threads/transcripts.ts";
 import type {
   Change,
   NotificationActor,
@@ -18,7 +18,7 @@ import type {
   Steering,
   SubagentTask,
 } from "@/shared/threads/events.ts";
-import { transcriptOf, waking } from "@/shared/transcript.ts";
+import { waking } from "@/shared/transcript.ts";
 
 import { type RunStore, startRun } from "./runs.ts";
 
@@ -60,7 +60,7 @@ export function silentChange(
 }
 
 export interface NotifierOptions {
-  threads: Pick<ThreadStore, "eventsAfter">;
+  transcripts: Pick<Transcripts, "of">;
   runs: Pick<RunStore, "active" | "create">;
   log: ThreadLog;
   bus: EventBus;
@@ -81,13 +81,13 @@ export function actorOf(notification: Notification): NotificationActor | undefin
 }
 
 export function createNotifier(options: NotifierOptions) {
-  const { threads, runs, log, bus } = options;
+  const { transcripts, runs, log, bus } = options;
   const mayStart = options.mayStart ?? (() => true);
 
   // Starts the thread's agent on the notifications waiting for it, when it is idle and may run.
   function startIfFree(threadId: string, append: Append) {
     if (runs.active(threadId)) return;
-    const { inbox } = transcriptOf(threads.eventsAfter(threadId, 0).map(eventSummary));
+    const { inbox } = transcripts.of(threadId).transcript();
     const waiting = waking(inbox);
     if (waiting.length === 0 || !mayStart(threadId)) return;
     startRun(

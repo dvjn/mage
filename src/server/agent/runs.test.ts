@@ -236,7 +236,7 @@ describe("agent runs", () => {
 
 describe("failures", () => {
   it("say what kind of failure it was, through which connection, and what the provider said", async () => {
-    const { ada, model, worker, post, events, db, start } = await agentThread();
+    const { ada, model, worker, post, events, start } = await agentThread();
     start();
 
     await post(ada, "Hello");
@@ -256,11 +256,6 @@ describe("failures", () => {
         resetsAt: new Date(1792000000000).toISOString(),
       },
     });
-    expect(
-      db.all<{ error_kind: string; error_detail: string }>(
-        "select error_kind, error_detail from run",
-      ),
-    ).toEqual([{ error_kind: "limit", error_detail: "429 (empty body)\nretry-after: 60" }]);
   });
 
   it("is a sign-in failure when the thread's model has no connection", async () => {
@@ -383,9 +378,11 @@ describe("run leases", () => {
 
     await post(ada, "Hello");
     const call = await model.next();
-    const [running] = runStore.stale();
-    // Another worker takes the run over, as recovery would.
-    const taken = runStore.takeOver(running!.id, "other-worker", new Date(Date.now() + 60_000));
+    // Another worker takes the run over once its lease has run out, as recovery would.
+    const later = new Date(Date.now() + 10 * 60_000);
+    expect(runStore.stale(new Date())).toEqual([]);
+    const [running] = runStore.stale(later);
+    const taken = runStore.takeOver(running!.id, "other-worker", later, later);
     expect(taken?.leaseEpoch).toBe(running!.leaseEpoch + 1);
     call.reply("Too late.");
     await worker.idle();

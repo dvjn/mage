@@ -71,18 +71,3 @@ export const credential = sqliteTable("credential", {
     .$onUpdate(() => /* @__PURE__ */ new Date())
     .notNull(),
 });
-
-// A browser sign-in a user started and had not finished, from when Mage offered them; nothing
-// writes it now.
-export const signInAttempt = sqliteTable("sign_in_attempt", {
-  state: text("state").primaryKey(),
-  kind: text("kind", { enum: ["codex"] }).notNull(),
-  codeVerifier: text("code_verifier").notNull(),
-  organizationId: text("organization_id")
-    .notNull()
-    .references(() => organization.id, { onDelete: "cascade" }),
-  userId: text("user_id")
-    .notNull()
-    .references(() => user.id, { onDelete: "cascade" }),
-  expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
-});

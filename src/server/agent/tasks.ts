@@ -12,7 +12,8 @@ import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { ThreadAccess } from "@/server/spaces/thread-access.ts";
 import type { Thread, ThreadStore } from "@/server/threads/service.ts";
-import { eventSummary, type ThreadLog } from "@/server/threads/log.ts";
+import type { Transcripts } from "@/server/threads/transcripts.ts";
+import type { ThreadLog } from "@/server/threads/log.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import {
   ADD_LIMIT,
@@ -29,10 +30,9 @@ import {
   titleSchema,
 } from "@/shared/tasks.ts";
 import type { Change, NotificationActor, Steering } from "@/shared/threads/events.ts";
-import { transcriptOf } from "@/shared/transcript.ts";
 
-import { createNotifier, silentChange } from "./notifications.ts";
-import type { RunStore } from "./runs.ts";
+import { type Notifier, silentChange } from "./notifications.ts";
+import { WATCH_LIMIT, type Watch, type WatchStore } from "./watches.ts";
 import { steeringIn, type Subagents } from "./subagents.ts";
 import type { Toolset, ToolSpec } from "./tools.ts";
 
@@ -50,19 +50,6 @@ export interface TaskRecord {
   archivedAt: Date | null;
 }
 
-// An agent waiting on tasks of a list, that it hears of once.
-export interface TaskWatch {
-  id: string;
-  // The thread whose agent waits, and the thread that owns the list.
-  threadId: string;
-  ownerId: string;
-  taskIds: string[];
-  until: "done" | "changed";
-}
-
-// How many watches a thread has at once.
-export const WATCH_LIMIT = 10;
-
 export interface TaskStore {
   // The thread's tasks in order: the ones on the list, or with archived set the ones archived.
   inThread(threadId: string, archived?: boolean): TaskRecord[];
@@ -76,10 +63,6 @@ export interface TaskStore {
     >,
   ): TaskRecord | undefined;
   remove(ids: string[]): void;
-  addWatch(watch: TaskWatch): void;
-  watchesIn(ownerId: string): TaskWatch[];
-  watchCount(threadId: string): number;
-  endWatch(id: string): void;
   userName(userId: string): string | null;
 }
 
@@ -89,16 +72,19 @@ export const TASKS_GUIDANCE =
 
 export interface TasksOptions {
   tasks: TaskStore;
-  threads: Pick<ThreadStore, "find" | "eventsAfter">;
+  threads: Pick<ThreadStore, "find">;
+  transcripts: Pick<Transcripts, "of">;
   access: Pick<ThreadAccess, "require" | "can">;
   // The org a space belongs to, for who may post.
   orgOf: (spaceId: string) => string | null;
   subagents: Pick<Subagents, "find" | "mayStart" | "ofParents" | "shareTasks">;
-  runs: Pick<RunStore, "active" | "create">;
   log: ThreadLog;
   bus: EventBus;
   // What the agent of the space's threads goes by.
   agentNameIn?: (spaceId: string) => string;
+  notifier: Notifier;
+  // Agents waiting on tasks, as on subagents.
+  watches: Pick<WatchStore, "add" | "on" | "count" | "end">;
   now?: () => Date;
 }
 
@@ -129,13 +115,7 @@ export function createTasks(options: TasksOptions) {
   const { tasks, threads, subagents, bus } = options;
   const now = options.now ?? (() => new Date());
   const agentNameIn = options.agentNameIn ?? (() => DEFAULT_AGENT_NAME);
-  const notifier = createNotifier({
-    threads,
-    runs: options.runs,
-    log: options.log,
-    bus,
-    mayStart: (threadId) => subagents.mayStart(threadId),
-  });
+  const { notifier, watches } = options;
 
   // The thread whose list the thread works on: its starter's for a subagent started to share it.
   function ownerOf(threadId: string) {
@@ -194,7 +174,7 @@ export function createTasks(options: TasksOptions) {
   function writersOf(ownerId: string) {
     const thread = threads.find(ownerId);
     const orgId = thread && options.orgOf(thread.spaceId);
-    const rows = transcriptOf(threads.eventsAfter(ownerId, 0).map(eventSummary)).rows;
+    const rows = options.transcripts.of(ownerId).transcript().rows;
     const seen = new Map<string, { userId: string; name: string; canPost: boolean }>();
     for (const row of rows) {
       if (row.kind !== "human" || seen.has(row.author.userId)) continue;
@@ -527,15 +507,17 @@ export function createTasks(options: TasksOptions) {
               : "No task is open, so there is nothing to wait on.",
           };
         }
-        if (tasks.watchCount(ctx.threadId) >= WATCH_LIMIT) {
+        if (watches.count(ctx.threadId) >= WATCH_LIMIT) {
           throw new ToolRefusal(`You can have ${WATCH_LIMIT} watches at once. Wait for one first.`);
         }
-        tasks.addWatch({
+        watches.add({
           id: ulid(),
           threadId: ctx.threadId,
           ownerId,
-          taskIds: open.map((record) => record.id),
+          kind: "tasks",
           until,
+          callId: ctx.callId,
+          subjects: open.map((record) => record.id),
         });
         return {
           watching: open.map(shownBrief),
@@ -578,10 +560,9 @@ export function createTasks(options: TasksOptions) {
       action: "archive",
     };
     const reached = new Set<string>();
-    for (const watch of tasks.watchesIn(ownerId)) {
+    for (const watch of watches.on(ownerId, "tasks")) {
       if (!records.some((record) => fires(watch, record, record))) continue;
-      tasks.endWatch(watch.id);
-      reached.add(watch.threadId);
+      if (watches.end(watch.id)) reached.add(watch.threadId);
     }
     for (const threadId of reached) {
       if (threadId === by.threadId || !threads.find(threadId)) continue;
@@ -643,7 +624,7 @@ export function createTasks(options: TasksOptions) {
 
   // The people whose words steered the thread's agent.
   function peopleOf(threadId: string): Steering[] {
-    return steeringIn(transcriptOf(threads.eventsAfter(threadId, 0).map(eventSummary)).rows);
+    return steeringIn(options.transcripts.of(threadId).transcript().rows);
   }
 
   function sameAssignee(a: TaskAssignee, b: TaskAssignee) {
@@ -730,8 +711,8 @@ export function createTasks(options: TasksOptions) {
   }
 
   // Whether the change is what the watch waits for.
-  function fires(watch: TaskWatch, before: TaskRecord, after: TaskRecord | null) {
-    if (!watch.taskIds.includes(before.id)) return false;
+  function fires(watch: Watch, before: TaskRecord, after: TaskRecord | null) {
+    if (!watch.subjects.includes(before.id)) return false;
     if (watch.until === "changed") return true;
     return !after || (after.status === "done" && before.status !== "done");
   }
@@ -756,10 +737,9 @@ export function createTasks(options: TasksOptions) {
         if (assignee?.kind === "subagent") reached.add(assignee.threadId);
       }
     }
-    for (const watch of tasks.watchesIn(ownerId)) {
+    for (const watch of watches.on(ownerId, "tasks")) {
       if (!fires(watch, before, after) || watch.threadId === by.threadId) continue;
-      tasks.endWatch(watch.id);
-      reached.add(watch.threadId);
+      if (watches.end(watch.id)) reached.add(watch.threadId);
     }
     for (const threadId of reached) {
       if (threadId === by.threadId || !threads.find(threadId)) continue;

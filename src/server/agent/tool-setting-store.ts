@@ -2,17 +2,10 @@ import { and, eq, inArray, isNotNull } from "drizzle-orm";
 
 import { TOOL_OFF } from "@/shared/tools.ts";
 import type { Db } from "@/server/db/db.ts";
-import { space } from "@/server/spaces/schema.ts";
+import { type SettingScope, scopedOn } from "@/server/spaces/scope.ts";
 
 import type { ToolSettingStore } from "./tools.ts";
-import {
-  orgToolSetting,
-  orgToolsetOption,
-  orgToolsetSetting,
-  spaceToolSetting,
-  spaceToolsetOption,
-  spaceToolsetSetting,
-} from "./schema.ts";
+import { toolSetting, toolsetOption, toolsetSetting } from "./schema.ts";
 
 function assignmentOf(policyId: string | null) {
   return policyId ?? TOOL_OFF;
@@ -22,174 +15,98 @@ function policyIdOf(assignment: string) {
   return assignment === TOOL_OFF ? null : assignment;
 }
 
-// Options by toolset, then option.
-function optionsOf(rows: { toolsetId: string; option: string; enabled: boolean }[]) {
-  const options = new Map<string, Map<string, boolean>>();
-  for (const row of rows) {
-    const set = options.get(row.toolsetId) ?? new Map<string, boolean>();
-    set.set(row.option, row.enabled);
-    options.set(row.toolsetId, set);
-  }
-  return options;
-}
+const tools = scopedOn(toolSetting);
+const toolsets = scopedOn(toolsetSetting);
+const options = scopedOn(toolsetOption);
 
 export function createToolSettingStore(db: Db): ToolSettingStore {
+  function toolsetsIn(scope: SettingScope) {
+    const rows = db.select().from(toolsetSetting).where(toolsets.at(scope)).all();
+    return new Map(rows.map((row) => [row.toolsetId, row.enabled]));
+  }
+
+  function setToolsetIn(scope: SettingScope, toolsetId: string, enabled: boolean) {
+    db.insert(toolsetSetting)
+      .values({ ...toolsets.of(scope), toolsetId, enabled })
+      .onConflictDoUpdate({
+        ...toolsets.conflict(scope, toolsetSetting.toolsetId),
+        set: { enabled },
+      })
+      .run();
+  }
+
+  // Options by toolset, then option.
+  function optionsIn(scope: SettingScope) {
+    const found = new Map<string, Map<string, boolean>>();
+    for (const row of db.select().from(toolsetOption).where(options.at(scope)).all()) {
+      const set = found.get(row.toolsetId) ?? new Map<string, boolean>();
+      set.set(row.option, row.enabled);
+      found.set(row.toolsetId, set);
+    }
+    return found;
+  }
+
+  function setOptionIn(scope: SettingScope, toolsetId: string, option: string, enabled: boolean) {
+    db.insert(toolsetOption)
+      .values({ ...options.of(scope), toolsetId, option, enabled })
+      .onConflictDoUpdate({
+        ...options.conflict(scope, toolsetOption.toolsetId, toolsetOption.option),
+        set: { enabled },
+      })
+      .run();
+  }
+
+  function toolsIn(scope: SettingScope) {
+    const rows = db
+      .select({ toolId: toolSetting.toolId, policyId: toolSetting.policyId })
+      .from(toolSetting)
+      .where(tools.at(scope))
+      .all();
+    return new Map(rows.map((row) => [row.toolId, assignmentOf(row.policyId)]));
+  }
+
+  function setToolsIn(scope: SettingScope, toolIds: readonly string[], assignment: string | null) {
+    if (toolIds.length === 0) return;
+    if (assignment === null) {
+      db.delete(toolSetting)
+        .where(and(tools.at(scope), inArray(toolSetting.toolId, [...toolIds])))
+        .run();
+      return;
+    }
+    const policyId = policyIdOf(assignment);
+    db.insert(toolSetting)
+      .values(toolIds.map((toolId) => ({ ...tools.of(scope), toolId, policyId })))
+      .onConflictDoUpdate({ ...tools.conflict(scope, toolSetting.toolId), set: { policyId } })
+      .run();
+  }
+
   return {
-    toolsetsInOrg(orgId) {
-      const rows = db
-        .select()
-        .from(orgToolsetSetting)
-        .where(eq(orgToolsetSetting.organizationId, orgId))
-        .all();
-      return new Map(rows.map((row) => [row.toolsetId, row.enabled]));
-    },
-    setToolsetInOrg(orgId, toolsetId, enabled) {
-      db.insert(orgToolsetSetting)
-        .values({ organizationId: orgId, toolsetId, enabled })
-        .onConflictDoUpdate({
-          target: [orgToolsetSetting.organizationId, orgToolsetSetting.toolsetId],
-          set: { enabled },
-        })
-        .run();
-    },
-    toolsetsInSpace(spaceId) {
-      const rows = db
-        .select()
-        .from(spaceToolsetSetting)
-        .where(eq(spaceToolsetSetting.spaceId, spaceId))
-        .all();
-      return new Map(rows.map((row) => [row.toolsetId, row.enabled]));
-    },
-    setToolsetInSpace(spaceId, toolsetId, enabled) {
-      db.insert(spaceToolsetSetting)
-        .values({ spaceId, toolsetId, enabled })
-        .onConflictDoUpdate({
-          target: [spaceToolsetSetting.spaceId, spaceToolsetSetting.toolsetId],
-          set: { enabled },
-        })
-        .run();
-    },
+    toolsetsInOrg: (orgId) => toolsetsIn({ orgId }),
+    setToolsetInOrg: (orgId, ...setting) => setToolsetIn({ orgId }, ...setting),
+    toolsetsInSpace: (spaceId) => toolsetsIn({ spaceId }),
+    setToolsetInSpace: (spaceId, ...setting) => setToolsetIn({ spaceId }, ...setting),
 
-    optionsInOrg(orgId) {
-      return optionsOf(
-        db.select().from(orgToolsetOption).where(eq(orgToolsetOption.organizationId, orgId)).all(),
-      );
-    },
-    setOptionInOrg(orgId, toolsetId, option, enabled) {
-      db.insert(orgToolsetOption)
-        .values({ organizationId: orgId, toolsetId, option, enabled })
-        .onConflictDoUpdate({
-          target: [
-            orgToolsetOption.organizationId,
-            orgToolsetOption.toolsetId,
-            orgToolsetOption.option,
-          ],
-          set: { enabled },
-        })
-        .run();
-    },
-    optionsInSpace(spaceId) {
-      return optionsOf(
-        db.select().from(spaceToolsetOption).where(eq(spaceToolsetOption.spaceId, spaceId)).all(),
-      );
-    },
-    setOptionInSpace(spaceId, toolsetId, option, enabled) {
-      db.insert(spaceToolsetOption)
-        .values({ spaceId, toolsetId, option, enabled })
-        .onConflictDoUpdate({
-          target: [
-            spaceToolsetOption.spaceId,
-            spaceToolsetOption.toolsetId,
-            spaceToolsetOption.option,
-          ],
-          set: { enabled },
-        })
-        .run();
-    },
+    optionsInOrg: (orgId) => optionsIn({ orgId }),
+    setOptionInOrg: (orgId, ...setting) => setOptionIn({ orgId }, ...setting),
+    optionsInSpace: (spaceId) => optionsIn({ spaceId }),
+    setOptionInSpace: (spaceId, ...setting) => setOptionIn({ spaceId }, ...setting),
 
-    inOrg(orgId) {
-      const rows = db
-        .select({ toolId: orgToolSetting.toolId, policyId: orgToolSetting.policyId })
-        .from(orgToolSetting)
-        .where(eq(orgToolSetting.organizationId, orgId))
-        .all();
-      return new Map(rows.map((row) => [row.toolId, assignmentOf(row.policyId)]));
-    },
-
-    setInOrg(orgId, toolIds, assignment) {
-      if (toolIds.length === 0) return;
-      if (assignment === null) {
-        db.delete(orgToolSetting)
-          .where(
-            and(
-              eq(orgToolSetting.organizationId, orgId),
-              inArray(orgToolSetting.toolId, [...toolIds]),
-            ),
-          )
-          .run();
-        return;
-      }
-      const policyId = policyIdOf(assignment);
-      db.insert(orgToolSetting)
-        .values(toolIds.map((toolId) => ({ organizationId: orgId, toolId, policyId })))
-        .onConflictDoUpdate({
-          target: [orgToolSetting.organizationId, orgToolSetting.toolId],
-          set: { policyId },
-        })
-        .run();
-    },
-
-    inSpace(spaceId) {
-      const rows = db
-        .select({ toolId: spaceToolSetting.toolId, policyId: spaceToolSetting.policyId })
-        .from(spaceToolSetting)
-        .where(eq(spaceToolSetting.spaceId, spaceId))
-        .all();
-      return new Map(rows.map((row) => [row.toolId, assignmentOf(row.policyId)]));
-    },
-
-    setInSpace(spaceId, toolIds, assignment) {
-      if (toolIds.length === 0) return;
-      if (assignment === null) {
-        db.delete(spaceToolSetting)
-          .where(
-            and(
-              eq(spaceToolSetting.spaceId, spaceId),
-              inArray(spaceToolSetting.toolId, [...toolIds]),
-            ),
-          )
-          .run();
-        return;
-      }
-      const policyId = policyIdOf(assignment);
-      db.insert(spaceToolSetting)
-        .values(toolIds.map((toolId) => ({ spaceId, toolId, policyId })))
-        .onConflictDoUpdate({
-          target: [spaceToolSetting.spaceId, spaceToolSetting.toolId],
-          set: { policyId },
-        })
-        .run();
-    },
+    inOrg: (orgId) => toolsIn({ orgId }),
+    setInOrg: (orgId, ...setting) => setToolsIn({ orgId }, ...setting),
+    inSpace: (spaceId) => toolsIn({ spaceId }),
+    setInSpace: (spaceId, ...setting) => setToolsIn({ spaceId }, ...setting),
 
     policyUses(orgId) {
-      const inOrg = db
-        .select({ toolId: orgToolSetting.toolId, policyId: orgToolSetting.policyId })
-        .from(orgToolSetting)
-        .where(and(eq(orgToolSetting.organizationId, orgId), isNotNull(orgToolSetting.policyId)))
-        .all()
-        .map((row) => ({ spaceId: null, toolId: row.toolId, policyId: row.policyId! }));
-      const inSpaces = db
+      return db
         .select({
-          spaceId: spaceToolSetting.spaceId,
-          toolId: spaceToolSetting.toolId,
-          policyId: spaceToolSetting.policyId,
+          spaceId: toolSetting.spaceId,
+          toolId: toolSetting.toolId,
+          policyId: toolSetting.policyId,
         })
-        .from(spaceToolSetting)
-        .innerJoin(space, eq(space.id, spaceToolSetting.spaceId))
-        .where(and(eq(space.organizationId, orgId), isNotNull(spaceToolSetting.policyId)))
+        .from(toolSetting)
+        .where(and(eq(toolSetting.organizationId, orgId), isNotNull(toolSetting.policyId)))
         .all()
-        .map((row) => ({ spaceId: row.spaceId, toolId: row.toolId, policyId: row.policyId! }));
-      return [...inOrg, ...inSpaces];
+        .map((row) => ({ ...row, policyId: row.policyId! }));
     },
   };
 }

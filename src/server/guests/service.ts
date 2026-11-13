@@ -168,7 +168,7 @@ export interface GuestsOptions {
   access: Pick<ThreadAccess, "of" | "require">;
   guests: GuestStore;
   directory: Pick<Directory, "memberPage" | "roleIn" | "user" | "groupPage" | "linkedRole">;
-  threads: Pick<ThreadStore, "eventsAfter">;
+  threads: Pick<ThreadStore, "eventsOfType">;
   transact: Transact;
   // Tells the guest's inbox when their access begins or ends.
   bus: Pick<EventBus, "activity">;
@@ -366,7 +366,7 @@ export function createGuests(options: GuestsOptions) {
       const groups = guests.activeGroupsIn(thread.rootThreadId ?? threadId, at);
       const guestIds = new Set(active.map((guest) => guest.userId));
       const writers = new Map<string, { name: string; role: SpaceRole }>();
-      for (const event of threads.eventsAfter(threadId, 0)) {
+      for (const event of threads.eventsOfType(threadId, "message")) {
         if (event.type !== "message" || event.actor.kind !== "user") continue;
         const { userId } = event.actor;
         if (guestIds.has(userId) || writers.has(userId) || !event.actorName) continue;

@@ -380,6 +380,43 @@ test("the agent searches for a server's tool, turns it on and runs it", async ({
   await expect(transcript(page)).toContainText('Tool mcp.notes.echo said: ok {"text":"found"}');
 });
 
+test("a call's large output is left out of the thread, and read once its line opens", async ({
+  page,
+}) => {
+  const spaceId = await signUp(page);
+  await page.goto("/org/tools");
+  await addServer(page, "Notes", `${mcpServer}/headers/mcp`, withBearer(MCP_BEARER_TOKEN));
+  await expect(page.getByText("Connected").first()).toBeVisible();
+  const asked: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/tool-results/")) asked.push(request.url());
+  });
+
+  await page.goto(`/s/${spaceId}`);
+  const text = "engine".repeat(4000);
+  await write(page, `/tool mcp.notes.echo {"text":"${text}"}`);
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  const line = transcript(page).getByRole("button", { name: /^Notes › Echo · Ran/ });
+  await expect(line).toBeVisible();
+  // The agent read it whole.
+  await expect(transcript(page)).toContainText(`Tool mcp.notes.echo said: ok`);
+  await expect(transcript(page)).toContainText(text);
+  expect(asked).toEqual([]);
+
+  await line.click();
+  const output = transcript(page).getByRole("region", { name: "Output" });
+  await expect(output).toContainText("engineengine");
+  expect(asked).toHaveLength(1);
+
+  // It is still there, and still asked for only on opening, after a reload.
+  await page.reload();
+  await expect(line).toBeVisible();
+  expect(asked).toHaveLength(1);
+  await line.click();
+  await expect(output).toContainText("engineengine");
+  expect(asked).toHaveLength(2);
+});
+
 test("a call to a server's tool keeps its name once the server is removed", async ({ page }) => {
   const spaceId = await signUp(page);
   await page.goto("/org/tools");

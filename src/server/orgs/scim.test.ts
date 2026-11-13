@@ -206,6 +206,24 @@ describe("org access from the directory", () => {
     );
   });
 
+  it("drops a group's roles in spaces when the directory deletes it", async () => {
+    const workspace = await teamOrg();
+    const { scim, api, ada, orgId, db } = workspace;
+    const looms = await scim.createGroup("Looms");
+    await link(workspace, looms, "member");
+    const space = (await (
+      await api("POST", "/spaces", ada.cookie, { name: "Loom room" }, orgId)
+    ).json()) as { id: string };
+    const grant = { kind: "group", id: looms, role: "viewer" };
+    expect((await api("PUT", `/spaces/${space.id}/members`, ada.cookie, grant, orgId)).status).toBe(
+      200,
+    );
+    await scim.deleteGroup(looms);
+    expect(
+      db.select().from(schema.spaceMember).where(eq(schema.spaceMember.subjectId, looms)).all(),
+    ).toEqual([]);
+  });
+
   it("turns off someone the directory deactivates: no sessions, no sign-in, no own roles", async () => {
     const workspace = await teamOrg();
     const { scim, api, ada, orgId, directory, app } = workspace;

@@ -216,6 +216,9 @@ export function threadRoutes(options: {
         200,
       );
     })
+    .get("/v1/tool-results/:id", (c) => {
+      return c.json(threads.result(signedIn(c.var.principal), c.req.param("id")), 200);
+    })
     .get("/v1/threads/:id/rows/:rowId/branch", (c) => {
       const { id, rowId } = c.req.param();
       return c.json(threads.branchOf(signedIn(c.var.principal), id, rowId), 200);

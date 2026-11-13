@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { agentThread } from "@/server/testing/agent-thread.ts";
+import { createTranscripts } from "@/server/threads/transcripts.ts";
 import type { Steering } from "@/shared/threads/events.ts";
 
 import { NOTIFICATIONS_HEADING } from "./context.ts";
@@ -10,7 +11,12 @@ import { createNotifier, type Notification, silentChange } from "./notifications
 async function notifiedThread() {
   const workspace = await agentThread();
   const { threadStore, runStore, log, bus, thread } = workspace;
-  const notifier = createNotifier({ threads: threadStore, runs: runStore, log, bus });
+  const notifier = createNotifier({
+    transcripts: createTranscripts(threadStore),
+    runs: runStore,
+    log,
+    bus,
+  });
   const note = (text: string, people: Steering[] = []): Notification => ({
     kind: "agent.idle",
     source: { threadId: thread.id, name: "Watcher", main: true },

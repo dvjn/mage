@@ -10,3 +10,4 @@ export * from "@/server/agent/schema.ts";
 export * from "@/server/threads/schema.ts";
 export * from "@/server/guests/schema.ts";
 export * from "@/server/artifacts/schema.ts";
+export * from "@/server/db/feed.ts";

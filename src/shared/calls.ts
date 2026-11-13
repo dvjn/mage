@@ -31,10 +31,13 @@ export const backgroundKindSchema = z.enum(["call", "schedule", "webhook", "suba
 
 export type BackgroundKind = z.infer<typeof backgroundKindSchema>;
 
-// Where a schedule or webhook stands: waiting for its time or for a post, paused, or a timer that
-// went off.
+// Where background work stands, the one set of words every card and the tray show it in: a call's
+// own; a subagent queued behind others, or idle until told more; a schedule or webhook waiting for
+// its time or for a post, or paused. Pending is waiting on a person's decision or answer.
 export const workStatusSchema = z.enum([
   ...callStatusSchema.options,
+  "queued",
+  "idle",
   "scheduled",
   "listening",
   "paused",
@@ -42,9 +45,7 @@ export const workStatusSchema = z.enum([
 
 export type WorkStatus = z.infer<typeof workStatusSchema>;
 
-// A subagent as the dock shows it: its own thread and where it stands there. Its work status is the
-// nearest of a call's: running when it works, waiting when queued or on someone, done when idle,
-// cancelled when stopped.
+// A subagent as the dock shows it: its own thread and where it stands there.
 export const subagentWorkSchema = z.object({
   threadId: z.string(),
   state: subagentStateSchema,
@@ -64,7 +65,7 @@ export const backgroundWorkSchema = z.object({
   schedule: scheduleWorkSchema.optional(),
   webhook: webhookWorkSchema.optional(),
   subagent: subagentWorkSchema.optional(),
-  // For a call that waits for a decision, whether the reader may decide it.
+  // For work that waits on a person, whether the reader may decide or answer it.
   canDecide: z.boolean().optional(),
   startedAt: z.string(),
   endedAt: z.string().optional(),

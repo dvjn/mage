@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { type BackgroundWork } from "@/shared/calls.ts";
 
-import { SOON_MS, attentionOf, liveFor } from "./tray.ts";
+import { SOON_MS, attentionOf, liveFor, subagentStatus } from "./tray.ts";
 
 const now = new Date("2026-11-12T10:00:00Z");
 
@@ -18,7 +18,9 @@ function work(fields: Partial<BackgroundWork>): BackgroundWork {
 
 describe("tray attention", () => {
   it("asks for a reader on approval, failure and a near firing", () => {
-    expect(attentionOf(work({ status: "pending" }), now)).toBe("approval");
+    expect(attentionOf(work({ status: "pending", canDecide: true }), now)).toBe("approval");
+    expect(attentionOf(work({ status: "pending", canDecide: false }), now)).toBeUndefined();
+    expect(attentionOf(work({ status: "pending" }), now)).toBeUndefined();
     expect(attentionOf(work({ status: "failed" }), now)).toBe("failed");
     expect(attentionOf(work({ status: "interrupted" }), now)).toBe("failed");
     const next = (ms: number) =>
@@ -40,6 +42,18 @@ describe("tray attention", () => {
   });
 });
 
+describe("subagent status", () => {
+  it("waits on a person only while its call does, and a queued one needs nobody", () => {
+    const queued = work({ kind: "subagent", status: subagentStatus("queued") });
+    expect(queued.status).toBe("queued");
+    expect(attentionOf(queued, now)).toBeUndefined();
+    expect(liveFor(queued, undefined)).toBe(true);
+    expect(subagentStatus("working", "approval")).toBe("pending");
+    expect(subagentStatus("working")).toBe("running");
+    expect(subagentStatus("stopped")).toBe("cancelled");
+  });
+});
+
 describe("tray liveness", () => {
   const at = (iso: string) => new Date(iso).getTime();
 
@@ -51,7 +65,7 @@ describe("tray liveness", () => {
   it("keeps an idle subagent whatever was seen, and no attention for it", () => {
     const idle = work({
       kind: "subagent",
-      status: "done",
+      status: subagentStatus("idle"),
       endedAt: "2026-11-12T09:30:00Z",
       subagent: { threadId: "t", state: "idle" },
     });

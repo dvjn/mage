@@ -87,7 +87,12 @@ function addRootBranch(db: Database.Database, threadId: string, userId: string, 
     threadId,
     threadId,
   );
-  db.prepare("update thread set current_branch_id = id where id = ?").run(threadId);
+}
+
+// Lets the transaction under way write threads before the root branches they name, as the server
+// does: the links between them are checked when it ends.
+function deferLinks(db: Database.Database) {
+  db.pragma("defer_foreign_keys = ON");
 }
 
 // When the last thread added here was last active; each one added after it is newer, so lists
@@ -100,13 +105,14 @@ export function addThreads(email: string, count: number, { prefix = "Thread" } =
   try {
     const space = primarySpaceOf(db, email);
     db.transaction(() => {
+      deferLinks(db);
       const insert = db.prepare(
-        "insert into thread (id, space_id, title, title_source, created_by, created_at, updated_at) values (?, ?, ?, 'message', ?, ?, ?)",
+        "insert into thread (id, space_id, current_branch_id, title, title_source, created_by, created_at, updated_at) values (?, ?, ?, ?, 'message', ?, ?, ?)",
       );
       for (let index = 1; index <= count; index += 1) {
         lastAdded = Math.max(Date.now(), lastAdded + 1);
         const id = randomUUID();
-        insert.run(id, space.id, `${prefix} ${index}`, space.userId, lastAdded, lastAdded);
+        insert.run(id, space.id, id, `${prefix} ${index}`, space.userId, lastAdded, lastAdded);
         addRootBranch(db, id, space.userId, lastAdded);
       }
     }).immediate();
@@ -155,11 +161,13 @@ export function addNotesThread(
     db.transaction(() => {
       lastAdded = Math.max(Date.now(), lastAdded + 1);
       const start = lastAdded - authors.length;
+      deferLinks(db);
       db.prepare(
-        "insert into thread (id, space_id, title, title_source, created_by, last_event_seq, last_message_text, created_at, updated_at) values (?, ?, ?, 'person', ?, ?, ?, ?, ?)",
+        "insert into thread (id, space_id, current_branch_id, title, title_source, created_by, last_event_seq, last_message_text, created_at, updated_at) values (?, ?, ?, ?, 'person', ?, ?, ?, ?, ?)",
       ).run(
         threadId,
         space.id,
+        threadId,
         title,
         space.userId,
         authors.length,

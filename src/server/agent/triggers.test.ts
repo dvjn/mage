@@ -210,39 +210,20 @@ describe("with several server instances", () => {
 
   it("fire a due trigger once, whichever instance looks first", async () => {
     const t = await due();
-    const other = t.triggersFor("other");
+    const other = t.triggersFor();
     expect(t.triggers.tick() + other.tick()).toBe(1);
     expect(other.tick() + t.triggers.tick()).toBe(0);
     await t.answer(t.thread.id);
     expect(t.rowsOf().filter((row) => row.kind === "relay")).toHaveLength(1);
   });
 
-  it("take a trigger again once the lease of an instance that died on it ends", async () => {
+  it("move a due trigger on once: a move on the row as it was read before loses", async () => {
     const t = await due();
     const [seen] = t.triggerStore.due(t.clock.now, 10);
-    // An instance claims it, then dies before firing.
-    const claimed = t.triggerStore.claim(seen!, {
-      nextRunAt: null,
-      pendingFireAt: seen!.nextRunAt,
-      claimedBy: "dead",
-      claimedUntil: new Date(t.clock.now.getTime() + MINUTE),
-    });
-    expect(claimed).not.toBeNull();
-    // A second claim on what was read before loses.
     expect(
-      t.triggerStore.claim(seen!, {
-        nextRunAt: null,
-        pendingFireAt: seen!.nextRunAt,
-        claimedBy: "late",
-        claimedUntil: new Date(),
-      }),
-    ).toBeNull();
-
-    expect(t.triggers.tick()).toBe(0);
-    t.clock.now = new Date(t.clock.now.getTime() + 2 * MINUTE);
-    expect(t.triggers.tick()).toBe(1);
-    expect(t.triggers.tick()).toBe(0);
-    await t.answer(t.thread.id);
+      t.triggerStore.advance(seen!, { nextRunAt: null, lastFiredAt: t.clock.now }),
+    ).not.toBeNull();
+    expect(t.triggerStore.advance(seen!, { nextRunAt: null, lastFiredAt: t.clock.now })).toBeNull();
   });
 });
 
@@ -474,7 +455,7 @@ describe("webhooks", () => {
       timezone: null,
       prompt: "Again",
       steeredBy: [],
-      createdBy: "Mage",
+      createdByLabel: "Mage",
       status: "active",
       nextRunAt: null,
       hookToken: "second-token",

@@ -415,6 +415,12 @@ describe("subagents", () => {
       ...Array.from({ length: RUNNING_LIMIT }, () => "working"),
       ...Array.from({ length: LIVE_LIMIT - RUNNING_LIMIT }, () => "queued"),
     ]);
+    // One queued waits its turn, not on anyone.
+    const res = await workspace.api("GET", `/threads/${thread.id}/background`, ada.cookie);
+    const items = ((await res.json()) as { items: BackgroundItem[] }).items;
+    const queued = items.find((item) => item.title === `H${RUNNING_LIMIT}`);
+    expect(queued?.work.status).toBe("queued");
+    expect(queued?.attention).toBeUndefined();
     // A place freed lets the next one run.
     (await callIn(subagentNamed("H0"))).reply("Done.");
     (await callIn(subagentNamed(`H${RUNNING_LIMIT}`))).reply("Done.");
@@ -696,7 +702,7 @@ describe("subagents", () => {
     expect(outputs()[0]).toMatchObject({ ok: true, value: { when: "all_idle" } });
     expect(outputs()[1]).toMatchObject({
       ok: true,
-      value: { replaces: ["call-3"], note: "Already watching; replaced." },
+      value: { note: "Already watching; replaced." },
     });
     await settle("A");
     await settle("B");
@@ -705,18 +711,14 @@ describe("subagents", () => {
     expect(idleLines()).toEqual(["agent.idle: All idle: A, B"]);
   });
 
-  it("fire a watch whose subagents settled before its result was stored, once", async () => {
-    // The checks at the subagents' run ends, and the one after the watch's result, are held back
-    // to stand for run ends that came before the result was there.
-    type Hear = { ended: (run: never) => void; toolRan: (run: never, toolId: string) => void };
-    let live: Hear | null = null;
+  it("fire a watch whose subagents settled before the checks at their run ends, once", async () => {
+    // The checks at the subagents' run ends are held back, to stand for run ends that came while
+    // the watch was being set.
+    let live: { ended: (run: never) => void } | null = null;
     const heldEnds: unknown[] = [];
-    const heldRan: [unknown, string][] = [];
     const workspace = await subagentThread({
       ended: (run) =>
         live ? (live.ended as (run: unknown) => void)(run) : void heldEnds.push(run),
-      toolRan: (run, toolId) =>
-        live ? live.toolRan(run as never, toolId) : void heldRan.push([run, toolId]),
     });
     const { ada, post, thread, start, calls, answer, subagentNamed, rowsOf, until } = workspace;
     start();
@@ -738,12 +740,8 @@ describe("subagents", () => {
     const idleLines = () =>
       lines(rowsOf(thread.id)).filter((line) => line.startsWith("agent.idle"));
     expect(idleLines()).toEqual([]);
-    live = {
-      ended: (run) => workspace.subagents.ended(run),
-      toolRan: (run, toolId) => workspace.subagents.toolRan(run, toolId),
-    };
-    const watched = heldRan.find(([, id]) => id === "subagents.watch")!;
-    live.toolRan(watched[0] as never, watched[1]);
+    live = { ended: (run) => workspace.subagents.ended(run) };
+    for (const run of heldEnds) live.ended(run as never);
     await workspace.worker.idle();
     expect(idleLines()).toEqual(["agent.idle: All idle: A, B"]);
     for (const run of heldEnds) live.ended(run as never);

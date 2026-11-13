@@ -241,10 +241,16 @@ describe("background calls", () => {
     expect((await t.callApi(`${callId}/background`)).status).toBe(200);
     const carried = await t.replies("Carrying on.");
     await t.worker.idle();
+    // It goes on as a call of its own, on its own row, which the run's call names.
+    const job = t.records()[0]!;
     expect(carried.texts.at(-1)).toBe(
-      `result probe.wait: {"ok":true,"value":{"movedToBackground":true,"callId":"${callId}"}}`,
+      `result probe.wait: {"ok":true,"value":{"movedToBackground":true,"callId":"${job.id}"}}`,
     );
-    expect(t.records()[0]).toMatchObject({ id: callId, status: "running" });
+    expect(job).toMatchObject({ status: "running" });
+    expect(t.tools().map((row) => `${row.state}${row.background ? " bg" : ""}`)).toEqual([
+      "ran",
+      "pending bg",
+    ]);
     // The run is over; the call is not.
     expect(t.runs().map((run) => run.status)).toEqual(["completed"]);
     expect((await t.callApi(`${callId}/background`)).status).toBe(409);
@@ -254,6 +260,11 @@ describe("background calls", () => {
     await t.worker.idle();
     expect(told.texts.at(-1)).toContain("Result:\n\nlate");
     expect(t.records()[0]).toMatchObject({ status: "done" });
+    // What it gave back is in the log, on its own row.
+    expect(t.tools().find((row) => row.id === job.id)).toMatchObject({
+      state: "ran",
+      output: { ok: true, value: "late" },
+    });
   });
 
   it("move from a run that waits for a decision, which stays decidable as a call of its own", async () => {
@@ -307,7 +318,10 @@ describe("background calls", () => {
     await t.worker.idle();
     expect(t.records()[0]).toMatchObject({ status: "running" });
 
+    // Held here, it is left be until its lease runs out, as when this server stopped.
     t.calls.recover();
+    expect(t.records()[0]).toMatchObject({ status: "running" });
+    t.calls.recover(new Date(Date.now() + 10 * 60_000));
     const told = await t.replies("Noted.");
     await t.worker.idle();
     expect(told.texts.at(-1)).toContain("was interrupted");

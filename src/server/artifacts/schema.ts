@@ -2,9 +2,19 @@
 // them, who they are shared with, and whether orgs and spaces let them be made public.
 
 import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer, blob, index, primaryKey } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  blob,
+  check,
+  index,
+  primaryKey,
+} from "drizzle-orm/sqlite-core";
 
-import { organization, scimGroup, user } from "@/server/orgs/schema.ts";
+import { backgroundCall, run } from "@/server/agent/schema.ts";
+import { scimGroup, user } from "@/server/orgs/schema.ts";
+import { scopeColumns, scopeIndexes } from "@/server/spaces/scope.ts";
 import { space } from "@/server/spaces/schema.ts";
 import { thread } from "@/server/threads/schema.ts";
 
@@ -57,14 +67,24 @@ export const artifactVersion = sqliteTable(
     icon: text("icon").notNull(),
     // The thread whose agent published it, while that thread exists.
     threadId: text("thread_id").references(() => thread.id, { onDelete: "set null" }),
-    // The run and call that published it.
-    runId: text("run_id"),
+    // What published it, while that exists: a run, or a call started in the background, which
+    // runs under no run; and the call's id in the thread's log.
+    runId: text("run_id").references(() => run.id, { onDelete: "set null" }),
+    backgroundCallId: text("background_call_id").references(() => backgroundCall.id, {
+      onDelete: "set null",
+    }),
     callId: text("call_id"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),
   },
-  (table) => [primaryKey({ columns: [table.artifactId, table.version] })],
+  (table) => [
+    primaryKey({ columns: [table.artifactId, table.version] }),
+    check(
+      "artifact_version_origin_check",
+      sql`${table.runId} is null or ${table.backgroundCallId} is null`,
+    ),
+  ],
 );
 
 // A thread whose agent published, updated or read an artifact, and whether someone who may change
@@ -158,18 +178,13 @@ export const artifactAsset = sqliteTable(
   (table) => [primaryKey({ columns: [table.artifactId, table.name] })],
 );
 
-// Whether an org lets its spaces' artifacts be made public; an org without a row does not.
-export const artifactOrgSetting = sqliteTable("artifact_org_setting", {
-  organizationId: text("organization_id")
-    .primaryKey()
-    .references(() => organization.id, { onDelete: "cascade" }),
-  publicAllowed: integer("public_allowed", { mode: "boolean" }).notNull(),
-});
-
-// Whether a space lets its artifacts be made public while its org does; one without a row does.
-export const artifactSpaceSetting = sqliteTable("artifact_space_setting", {
-  spaceId: text("space_id")
-    .primaryKey()
-    .references(() => space.id, { onDelete: "cascade" }),
-  publicAllowed: integer("public_allowed", { mode: "boolean" }).notNull(),
-});
+// Whether artifacts may be made public: an org lets its spaces' be, and one without a row does
+// not; a space lets its own be while its org does, and one without a row does.
+export const artifactSetting = sqliteTable(
+  "artifact_setting",
+  {
+    ...scopeColumns(),
+    publicAllowed: integer("public_allowed", { mode: "boolean" }).notNull(),
+  },
+  (table) => scopeIndexes("artifact_setting", table),
+);

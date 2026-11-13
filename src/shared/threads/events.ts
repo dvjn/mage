@@ -247,6 +247,12 @@ export const subagentEndSchema = z.enum(["idle", "stopped", "failed"]);
 
 export type SubagentEnd = z.infer<typeof subagentEndSchema>;
 
+// The most characters of JSON a tool's result takes in the log; a larger one is kept apart from it.
+export const LARGE_RESULT_CHARS = 16_000;
+
+// How large a result kept apart from the log is, in characters of JSON.
+export const largeResultSchema = z.object({ size: z.number().int().positive() });
+
 // Each event type's data.
 export const eventDataSchemas = {
   // A person's message.
@@ -400,12 +406,15 @@ export const eventDataSchemas = {
   "tool.blocked": z.object({ runId: z.string(), callId: z.string(), userId: z.string() }),
   // The call ran, with what it gave back or why it failed, in milliseconds; for a tool that runs
   // with each person's own login, whose it ran with; and for a call that ran on a standing
-  // approval, the call that approval was given on.
+  // approval, the call that approval was given on. What it gave back is kept apart from the log
+  // when it is large, under the event's id: the event then says `large`, with its size, in place
+  // of the value.
   "tool.ran": z.object({
     runId: z.string(),
     callId: z.string(),
     ok: z.boolean(),
     value: z.unknown().optional(),
+    large: largeResultSchema.optional(),
     error: z.string().optional(),
     ms: z.number().int().nonnegative(),
     ranAs: z.string().optional(),
@@ -496,6 +505,4 @@ export const deltaBatchSchema = z.object({
 export type DeltaBatch = z.infer<typeof deltaBatchSchema>;
 
 // What a thread's followers are told: each event appended, and each batch of reply pieces stored.
-export type ThreadFeedItem =
-  | { kind: "event"; event: ThreadEventSummary }
-  | { kind: "delta"; delta: DeltaBatch };
+export type ThreadFeedItem = { kind: "event"; seq: number } | { kind: "delta"; delta: DeltaBatch };

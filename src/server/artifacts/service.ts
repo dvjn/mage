@@ -99,7 +99,21 @@ export interface NewAsset {
   data: Buffer;
 }
 
-type NewVersion = VersionFields & { html: string; runId: string | null; callId: string | null };
+// What published a version: the run, or the call started in the background, and the call's id in
+// the thread's log.
+interface Publisher {
+  runId: string | null;
+  backgroundCallId: string | null;
+  callId: string | null;
+}
+
+type NewVersion = VersionFields & { html: string } & Publisher;
+
+function publisherOf(ctx: ToolContext): Publisher {
+  return ctx.background
+    ? { runId: null, backgroundCallId: ctx.callId, callId: ctx.callId }
+    : { runId: ctx.runId, backgroundCallId: null, callId: ctx.callId };
+}
 
 export interface ArtifactStore {
   create(artifact: {
@@ -761,8 +775,7 @@ export function createArtifacts(options: ArtifactsOptions) {
             description: input.description,
             icon: input.icon,
             label: input.label ?? null,
-            runId: ctx.runId,
-            callId: ctx.callId,
+            ...publisherOf(ctx),
           },
           assets: files.assets,
         }),
@@ -848,8 +861,7 @@ export function createArtifacts(options: ArtifactsOptions) {
             description: input.description ?? current.description,
             icon: input.icon ?? current.icon,
             label,
-            runId: ctx.runId,
-            callId: ctx.callId,
+            ...publisherOf(ctx),
           },
           threadId: rootOf(ctx.threadId).id,
           assets: files.assets,

@@ -3,12 +3,14 @@
 import type { Server } from "node:http";
 
 import { serve } from "@hono/node-server";
+import { ulid } from "ulid";
 
 import { loadChromiumPreviewer } from "@/server/artifacts/preview.ts";
 import { CONTENT_PREFIX, createArtifacts } from "@/server/artifacts/service.ts";
 import { createArtifactStore } from "@/server/artifacts/store.ts";
 import { createCallStore } from "@/server/agent/call-store.ts";
-import { createCalls } from "@/server/agent/calls.ts";
+import { type Calls, createCalls } from "@/server/agent/calls.ts";
+import { createNotifier } from "@/server/agent/notifications.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import { createTasks } from "@/server/agent/tasks.ts";
 import { createTaskStore } from "@/server/agent/task-store.ts";
@@ -16,6 +18,7 @@ import { createTriggerStore } from "@/server/agent/trigger-store.ts";
 import { createTriggers, type Triggers } from "@/server/agent/triggers.ts";
 import { createSubagentStore } from "@/server/agent/subagent-store.ts";
 import { createSubagents } from "@/server/agent/subagents.ts";
+import { createWatchStore } from "@/server/agent/watches.ts";
 import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
 import { createRichReplies } from "@/server/agent/rich-replies.ts";
 import { createRunStore } from "@/server/agent/run-store.ts";
@@ -27,6 +30,7 @@ import { createMcpTools, createToolSearch } from "@/server/agent/tool-search.ts"
 import { createToolSettingStore } from "@/server/agent/tool-setting-store.ts";
 import { createToolDecisions, createTools } from "@/server/agent/tools.ts";
 import { createTransact, openDatabase, pingDatabase } from "@/server/db/db.ts";
+import { createBusFeed } from "@/server/db/feed.ts";
 import { createGuests } from "@/server/guests/service.ts";
 import { createGuestStore } from "@/server/guests/store.ts";
 import { createInstructions } from "@/server/instructions/service.ts";
@@ -74,6 +78,7 @@ import { createThreadReadStore } from "@/server/threads/read-store.ts";
 import { createThreads } from "@/server/threads/service.ts";
 import { createCommands } from "@/server/threads/commands.ts";
 import { createThreadStore } from "@/server/threads/store.ts";
+import { createTranscripts } from "@/server/threads/transcripts.ts";
 import { createTitles } from "@/server/threads/titles.ts";
 
 import { createApp } from "./app.ts";
@@ -140,7 +145,9 @@ const models = createModels({
 });
 const runStore = createRunStore(db);
 const deltas = createDeltaStore(db);
-const bus = createEventBus();
+// Names this server instance among those sharing the database.
+const instanceId = ulid();
+const bus = createEventBus(createBusFeed(db, instanceId));
 const transact = createTransact(db);
 const log = createThreadLog({ threads: threadStore, bus, transact });
 const spaces = createSpaces({
@@ -182,9 +189,21 @@ const skills = createSkills({
   settings: settingStore,
   logger,
 });
+// Whether a notified thread's agent may start is the subagents' call, for every notifier.
+// Threads' transcripts, folded once for the agent and the people reading them.
+const transcripts = createTranscripts(threadStore, bus, hooks);
+const notifier = createNotifier({
+  transcripts,
+  runs: runStore,
+  log,
+  bus,
+  mayStart: (threadId) => subagents.mayStart(threadId),
+});
+const watches = createWatchStore(db);
 const subagents = createSubagents({
   subagents: createSubagentStore(db),
   threads: threadStore,
+  transcripts,
   runs: runStore,
   log,
   bus,
@@ -194,11 +213,14 @@ const subagents = createSubagents({
   },
   taskHandover: () => tasks.handover,
   modelsIn: async (orgId) => (await models.resolveModels(orgId)).models,
+  notifier,
+  watches,
 });
 const callStore = createCallStore(db);
 const calls = createCalls({
   calls: callStore,
   threads: threadStore,
+  transcripts,
   spaceStore,
   runs: runStore,
   log,
@@ -206,29 +228,33 @@ const calls = createCalls({
   logger,
   tools: () => tools,
   narrow: (thread, offered) => subagents.toolsOf(thread, offered),
-  mayStart: (threadId) => subagents.mayStart(threadId),
+  notifier,
+  instanceId,
 });
 const tasks = createTasks({
   tasks: createTaskStore(db),
   threads: threadStore,
+  transcripts,
   access,
   orgOf: (spaceId) => spaceStore.find(spaceId)?.orgId ?? null,
   subagents,
-  runs: runStore,
   log,
   bus,
   agentNameIn: (spaceId) => {
     const space = spaceStore.find(spaceId);
     return space ? agentNameIn(settingStore, space) : DEFAULT_AGENT_NAME;
   },
+  notifier,
+  watches,
 });
 const triggers = createTriggers({
   baseUrl: config.baseUrl,
+  transact,
   triggers: createTriggerStore(db, cipher),
   threads: threadStore,
+  transcripts,
   access,
   subagents,
-  runs: runStore,
   log,
   bus,
   logger,
@@ -236,6 +262,7 @@ const triggers = createTriggers({
     const space = spaceStore.find(spaceId);
     return space ? agentNameIn(settingStore, space) : DEFAULT_AGENT_NAME;
   },
+  notifier,
 });
 // Previews need a browser, which servers without one go without.
 const artifacts = createArtifacts({
@@ -256,6 +283,7 @@ const tools = createTools({
     createRichReplies(),
     createSystemTools({
       threads: threadStore,
+      transcripts,
       spaceStore,
       guests: guestStore,
       models,
@@ -290,6 +318,10 @@ const tools = createTools({
   policies: toolPolicyStore,
   directory,
   access,
+  callModel: (call) =>
+    call.background
+      ? (runStore.find(callStore.find(call.id)?.runId ?? "")?.model ?? null)
+      : (runStore.find(call.runId)?.model ?? null),
 });
 
 // The stand-in model answers every thread, whatever model it names.
@@ -318,6 +350,7 @@ const runModels: Pick<Models, "open" | "replyModel"> = config.fakeModels
 const worker = createRunWorker({
   runs: runStore,
   threads: threadStore,
+  transcripts,
   spaceStore,
   access,
   deltas,
@@ -336,7 +369,6 @@ const worker = createRunWorker({
   narrow: (thread, offered) => subagents.toolsOf(thread, offered),
   before: (thread) => subagents.before(thread),
   ended: (run) => subagents.ended(run),
-  toolRan: (run, toolId) => subagents.toolRan(run, toolId),
   adopt: (call) => calls.adopt(call),
   logger,
   traces: runTraces,
@@ -374,12 +406,14 @@ const app = createApp({
     access,
     guests: guestStore,
     threads: threadStore,
+    transcripts,
     reads: createThreadReadStore(db),
     runs: runStore,
     deltas,
     models,
     log,
     bus,
+    notifier,
     tools,
     subagents,
     background: callStore,
@@ -401,7 +435,7 @@ const app = createApp({
   tools: createToolDecisions({
     tools,
     access,
-    threads: threadStore,
+    transcripts,
     spaceStore,
     runs: runStore,
     spaces,
@@ -414,7 +448,7 @@ const app = createApp({
       proceed: (threadId, callId, allow) => calls.proceed(threadId, callId, allow),
       room: (threadId) => calls.room(threadId),
       move: (threadId, callId) => worker.moveToBackground(threadId, callId),
-      detach: (threadId, call, model, append) => calls.detach(threadId, call, model, append),
+      detach: (threadId, call, append) => calls.detach(threadId, call, append),
       cancel: (threadId, callId) => calls.cancel(threadId, callId),
     },
   }),
@@ -473,13 +507,22 @@ const developing = (import.meta as { env?: { DEV?: boolean } }).env?.DEV === tru
 if (import.meta.main || developing) {
   const shared = globalThis as {
     agentWorker?: RunWorker;
+    bus?: typeof bus;
+    backgroundCalls?: Calls;
     triggerTimer?: Triggers;
     spaceSweep?: ReturnType<typeof setInterval>;
   };
   await shared.agentWorker?.stop();
-  // Runs a stopped server left running are settled before anyone reads them.
+  shared.backgroundCalls?.stop();
+  // What other instances on the database write reaches this one's streams and worker.
+  shared.bus?.stop();
+  bus.start();
+  shared.bus = bus;
+  // Runs and background calls a stopped server left running are settled before anyone reads them,
+  // those whose leases have run out; other instances on the database may hold the rest.
   worker.recover();
-  calls.recover();
+  calls.start();
+  shared.backgroundCalls = calls;
   worker.start();
   shared.agentWorker = worker;
   // Timers and schedules that came due while the server was down fire first.
@@ -520,7 +563,8 @@ if (import.meta.main) {
     logger.info({ port: info.port, baseUrl: config.baseUrl }, "listening");
   }) as Server;
   // On a stop signal the server takes no new connections, ends the live event streams and stops
-  // its runs; connections still open after a few seconds are cut.
+  // its runs and background calls, letting them go for recovery; connections still open after a
+  // few seconds are cut.
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.once(signal, () => {
       logger.info({ signal }, "stopping");
@@ -530,6 +574,7 @@ if (import.meta.main) {
       setImmediate(() => server.closeIdleConnections());
       setTimeout(() => server.closeAllConnections(), 3000).unref();
       // Spans not yet sent go out before the process ends.
+      calls.stop();
       void Promise.all([worker.stop(), closed])
         .then(() => tracing?.shutdown().catch(() => {}))
         .then(() => process.exit(0));

@@ -3,13 +3,13 @@ import { ulid } from "ulid";
 
 import type { Cipher } from "@/server/kernel/cipher.ts";
 import type { Db } from "@/server/db/db.ts";
+import { type SettingScope, scopedOn } from "@/server/spaces/scope.ts";
 
 import type { Scope, Skill, SkillSource, SkillStore } from "./service.ts";
 import {
-  orgBuiltinSkillSetting,
+  builtinSkillSetting,
   skill,
   skillSource,
-  spaceBuiltinSkillSetting,
   spaceSkillSetting,
   spaceSkillSourceSetting,
 } from "./schema.ts";
@@ -66,7 +66,24 @@ function tokenContext(sourceId: string) {
   return `skill-source:${sourceId}`;
 }
 
+const builtins = scopedOn(builtinSkillSetting);
+
 export function createSkillStore(db: Db, cipher: Cipher): SkillStore {
+  function builtinSwitches(scope: SettingScope) {
+    const rows = db.select().from(builtinSkillSetting).where(builtins.at(scope)).all();
+    return new Map(rows.map((row) => [row.key, row.enabled]));
+  }
+
+  function setBuiltin(scope: SettingScope, key: string, enabled: boolean) {
+    db.insert(builtinSkillSetting)
+      .values({ ...builtins.of(scope), key, enabled })
+      .onConflictDoUpdate({
+        ...builtins.conflict(scope, builtinSkillSetting.key),
+        set: { enabled },
+      })
+      .run();
+  }
+
   return {
     createSource({ orgId, ...rest }) {
       return sourceOf(
@@ -178,43 +195,10 @@ export function createSkillStore(db: Db, cipher: Cipher): SkillStore {
       return new Map(rows.map((row) => [row.id, row.enabled]));
     },
 
-    orgBuiltinSwitches(orgId) {
-      const rows = db
-        .select({ key: orgBuiltinSkillSetting.key, enabled: orgBuiltinSkillSetting.enabled })
-        .from(orgBuiltinSkillSetting)
-        .where(eq(orgBuiltinSkillSetting.organizationId, orgId))
-        .all();
-      return new Map(rows.map((row) => [row.key, row.enabled]));
-    },
-
-    setOrgBuiltin(orgId, key, enabled) {
-      db.insert(orgBuiltinSkillSetting)
-        .values({ organizationId: orgId, key, enabled })
-        .onConflictDoUpdate({
-          target: [orgBuiltinSkillSetting.organizationId, orgBuiltinSkillSetting.key],
-          set: { enabled },
-        })
-        .run();
-    },
-
-    spaceBuiltinSwitches(spaceId) {
-      const rows = db
-        .select({ key: spaceBuiltinSkillSetting.key, enabled: spaceBuiltinSkillSetting.enabled })
-        .from(spaceBuiltinSkillSetting)
-        .where(eq(spaceBuiltinSkillSetting.spaceId, spaceId))
-        .all();
-      return new Map(rows.map((row) => [row.key, row.enabled]));
-    },
-
-    setSpaceBuiltin(spaceId, key, enabled) {
-      db.insert(spaceBuiltinSkillSetting)
-        .values({ spaceId, key, enabled })
-        .onConflictDoUpdate({
-          target: [spaceBuiltinSkillSetting.spaceId, spaceBuiltinSkillSetting.key],
-          set: { enabled },
-        })
-        .run();
-    },
+    orgBuiltinSwitches: (orgId) => builtinSwitches({ orgId }),
+    setOrgBuiltin: (orgId, key, enabled) => setBuiltin({ orgId }, key, enabled),
+    spaceBuiltinSwitches: (spaceId) => builtinSwitches({ spaceId }),
+    setSpaceBuiltin: (spaceId, key, enabled) => setBuiltin({ spaceId }, key, enabled),
 
     setSpaceSkill(spaceId, skillId, enabled) {
       db.insert(spaceSkillSetting)

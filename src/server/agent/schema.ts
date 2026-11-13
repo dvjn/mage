@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  type AnySQLiteColumn,
   sqliteTable,
   blob,
   text,
@@ -9,16 +10,18 @@ import {
   primaryKey,
 } from "drizzle-orm/sqlite-core";
 
-import type { FailureKind, Steering } from "@/shared/threads/events.ts";
+import { leaseColumns } from "@/server/db/lease.ts";
+import type { Steering } from "@/shared/threads/events.ts";
 import type { TaskActor, TaskAssignee, TaskStatus } from "@/shared/tasks.ts";
 import type { TriggerKind, TriggerStatus } from "@/shared/triggers.ts";
 import { POLICY_COLORS } from "@/shared/tools.ts";
 import { user, organization } from "@/server/orgs/schema.ts";
-import { thread } from "@/server/threads/schema.ts";
+import { thread, threadBranch } from "@/server/threads/schema.ts";
+import { scopeColumns, scopeIndexes } from "@/server/spaces/scope.ts";
 import { space } from "@/server/spaces/schema.ts";
 
 // An access policy: the org's when spaceId is null, usable in every space, or one space's. Who
-// can use its tools without approval and who approves are kept as JSON lists of keys.
+// can use its tools without approval and who approves are its members.
 export const toolPolicy = sqliteTable(
   "tool_policy",
   {
@@ -32,8 +35,6 @@ export const toolPolicy = sqliteTable(
       enum: POLICY_COLORS,
     }).notNull(),
     use: text("use", { enum: ["everyone", "some", "none"] }).notNull(),
-    users: text("users", { mode: "json" }).$type<string[]>().notNull(),
-    approvers: text("approvers", { mode: "json" }).$type<string[]>().notNull(),
     independent: integer("independent", { mode: "boolean" }).default(false).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
@@ -42,83 +43,56 @@ export const toolPolicy = sqliteTable(
   (table) => [index("tool_policy_organization_idx").on(table.organizationId)],
 );
 
-// The policy an org set a tool to, for all its spaces; a null policy turns the tool off.
-export const orgToolSetting = sqliteTable(
-  "org_tool_setting",
+// Whom a policy names, in the order they were set: those who may use its tools without approval,
+// and those who approve. Each is a key that names a person, a group, or a role such as editors.
+export const toolPolicyMember = sqliteTable(
+  "tool_policy_member",
   {
-    organizationId: text("organization_id")
+    policyId: text("policy_id")
       .notNull()
-      .references(() => organization.id, { onDelete: "cascade" }),
-    toolId: text("tool_id").notNull(),
-    policyId: text("policy_id").references(() => toolPolicy.id),
+      .references(() => toolPolicy.id, { onDelete: "cascade" }),
+    role: text("role", { enum: ["user", "approver"] }).notNull(),
+    key: text("key").notNull(),
+    position: integer("position").notNull(),
   },
-  (table) => [primaryKey({ columns: [table.organizationId, table.toolId] })],
+  (table) => [primaryKey({ columns: [table.policyId, table.role, table.key] })],
 );
 
-// The policy a space set a tool to: on the org's tools a rule added to the org's, on its own the
-// one that applies. A null policy turns the tool off there.
-export const spaceToolSetting = sqliteTable(
-  "space_tool_setting",
+// The policy a tool is set to: by an org for all its spaces, or by a space, where on the org's
+// tools it is a rule added to the org's, and on its own the one that applies. A null policy turns
+// the tool off there. A setting goes with its policy.
+export const toolSetting = sqliteTable(
+  "tool_setting",
   {
-    spaceId: text("space_id")
-      .notNull()
-      .references(() => space.id, { onDelete: "cascade" }),
+    ...scopeColumns(),
     toolId: text("tool_id").notNull(),
-    policyId: text("policy_id").references(() => toolPolicy.id),
+    policyId: text("policy_id").references(() => toolPolicy.id, { onDelete: "cascade" }),
   },
-  (table) => [primaryKey({ columns: [table.spaceId, table.toolId] })],
+  (table) => scopeIndexes("tool_setting", table, table.toolId),
 );
 
-export const orgToolsetSetting = sqliteTable(
-  "org_toolset_setting",
+// Whether a toolset is on: for an org's spaces, or in a space.
+export const toolsetSetting = sqliteTable(
+  "toolset_setting",
   {
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organization.id, { onDelete: "cascade" }),
+    ...scopeColumns(),
     toolsetId: text("toolset_id").notNull(),
     enabled: integer("enabled", { mode: "boolean" }).notNull(),
   },
-  (table) => [primaryKey({ columns: [table.organizationId, table.toolsetId] })],
+  (table) => scopeIndexes("toolset_setting", table, table.toolsetId),
 );
 
-export const spaceToolsetSetting = sqliteTable(
-  "space_toolset_setting",
+// An option of a built-in toolset an org turned on or off for its spaces, one not set being off;
+// or one a space turned off for itself, or back on while the org has it on.
+export const toolsetOption = sqliteTable(
+  "toolset_option",
   {
-    spaceId: text("space_id")
-      .notNull()
-      .references(() => space.id, { onDelete: "cascade" }),
-    toolsetId: text("toolset_id").notNull(),
-    enabled: integer("enabled", { mode: "boolean" }).notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.spaceId, table.toolsetId] })],
-);
-
-// An option of a built-in toolset an org turned on or off for its spaces; one not set is off.
-export const orgToolsetOption = sqliteTable(
-  "org_toolset_option",
-  {
-    organizationId: text("organization_id")
-      .notNull()
-      .references(() => organization.id, { onDelete: "cascade" }),
+    ...scopeColumns(),
     toolsetId: text("toolset_id").notNull(),
     option: text("option").notNull(),
     enabled: integer("enabled", { mode: "boolean" }).notNull(),
   },
-  (table) => [primaryKey({ columns: [table.organizationId, table.toolsetId, table.option] })],
-);
-
-// An option a space turned off for itself, or back on while the org has it on.
-export const spaceToolsetOption = sqliteTable(
-  "space_toolset_option",
-  {
-    spaceId: text("space_id")
-      .notNull()
-      .references(() => space.id, { onDelete: "cascade" }),
-    toolsetId: text("toolset_id").notNull(),
-    option: text("option").notNull(),
-    enabled: integer("enabled", { mode: "boolean" }).notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.spaceId, table.toolsetId, table.option] })],
+  (table) => scopeIndexes("toolset_option", table, table.toolsetId, table.option),
 );
 
 // A wake-up of the agent in a branch of a thread. At most one run per branch is queued, running or
@@ -130,8 +104,10 @@ export const run = sqliteTable(
     threadId: text("thread_id")
       .notNull()
       .references(() => thread.id, { onDelete: "cascade" }),
-    // The branch it writes in; set for every run.
-    branchId: text("branch_id"),
+    // The branch it writes in.
+    branchId: text("branch_id")
+      .notNull()
+      .references(() => threadBranch.id, { onDelete: "cascade" }),
     status: text("status", {
       enum: ["queued", "running", "waiting", "completed", "failed", "cancelled"],
     }).notNull(),
@@ -143,21 +119,16 @@ export const run = sqliteTable(
     askedModel: text("asked_model"),
     askedEffort: text("asked_effort", { enum: ["low", "medium", "high"] }),
     // The run this one follows, and why.
-    continuesRunId: text("continues_run_id"),
+    continuesRunId: text("continues_run_id").references((): AnySQLiteColumn => run.id, {
+      onDelete: "set null",
+    }),
     reason: text("reason", { enum: ["interrupt", "queued_input", "retry", "rewrite"] }),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     // How many times this input has been tried, counting this run.
     attempt: integer("attempt").default(1).notNull(),
     cancelRequestedAt: integer("cancel_requested_at", { mode: "timestamp_ms" }),
     cancelRequestedBy: text("cancel_requested_by"),
-    // The worker holding the run, until when, and how many times it has been claimed.
-    leaseOwner: text("lease_owner"),
-    leaseExpiresAt: integer("lease_expires_at", { mode: "timestamp_ms" }),
-    leaseEpoch: integer("lease_epoch").default(0).notNull(),
-    error: text("error"),
-    // Why it failed, as a failure kind, and what the provider said.
-    errorKind: text("error_kind").$type<FailureKind>(),
-    errorDetail: text("error_detail"),
+    ...leaseColumns(),
     inputTokens: integer("input_tokens").default(0).notNull(),
     outputTokens: integer("output_tokens").default(0).notNull(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
@@ -226,18 +197,16 @@ export const backgroundCall = sqliteTable(
     threadId: text("thread_id")
       .notNull()
       .references(() => thread.id, { onDelete: "cascade" }),
-    runId: text("run_id").notNull(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => run.id, { onDelete: "cascade" }),
     toolId: text("tool_id").notNull(),
     input: text("input", { mode: "json" }).$type<unknown>(),
-    // The model that replied when it was started, and whose words steered the call.
-    model: text("model"),
-    steeredBy: text("steered_by", { mode: "json" }).$type<Steering[]>().notNull(),
     status: text("status", {
       enum: ["pending", "running", "done", "failed", "cancelled", "interrupted"],
     }).notNull(),
-    output: text("output", { mode: "json" }).$type<
-      { ok: true; value: unknown } | { ok: false; error: string } | null
-    >(),
+    // The instance running it, while it runs.
+    ...leaseColumns(),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),
@@ -272,10 +241,11 @@ export const threadTask = sqliteTable(
   (table) => [index("thread_task_thread_idx").on(table.threadId, table.position)],
 );
 
-// A thread's agent waiting on tasks of a list: the ones it named, and whether it wants to hear when
-// one is done or on any change. It ends once it has told the agent.
-export const threadTaskWatch = sqliteTable(
-  "thread_task_watch",
+// An agent waiting to be told once about subjects: tasks of a list, until one is done or on any
+// change, or subagents, until all or any of them are idle. `owner_id` is whose they are: the
+// thread that owns the list, or the one that started the subagents. It ends once it has told.
+export const threadWatch = sqliteTable(
+  "thread_watch",
   {
     id: text("id").primaryKey(),
     threadId: text("thread_id")
@@ -284,24 +254,34 @@ export const threadTaskWatch = sqliteTable(
     ownerId: text("owner_id")
       .notNull()
       .references(() => thread.id, { onDelete: "cascade" }),
-    taskIds: text("task_ids", { mode: "json" }).$type<string[]>().notNull(),
-    until: text("until", { enum: ["done", "changed"] })
-      .$type<"done" | "changed">()
-      .notNull(),
+    kind: text("kind", { enum: ["tasks", "subagents"] }).notNull(),
+    until: text("until", { enum: ["done", "changed", "all_idle", "any_idle"] }).notNull(),
+    // The call that set it, which its notice answers.
+    callId: text("call_id"),
     createdAt: integer("created_at", { mode: "timestamp_ms" })
       .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
       .notNull(),
   },
   (table) => [
-    index("thread_task_watch_thread_idx").on(table.threadId),
-    index("thread_task_watch_owner_idx").on(table.ownerId),
+    index("thread_watch_thread_idx").on(table.threadId),
+    index("thread_watch_owner_idx").on(table.ownerId, table.kind),
   ],
 );
 
-// What wakes a thread's agent later: a wake-up timer (once) or a schedule (cron), with when it next
-// goes off and what it tells the agent. The claim columns are how several server instances share
-// the work: one that takes a due row notes its time to fire in `pending_fire_at` and holds it until
-// `claimed_until`; if it dies before it finishes, another takes the row once the lease runs out.
+// What a watch waits on: a task's id, or a subagent's thread id.
+export const threadWatchSubject = sqliteTable(
+  "thread_watch_subject",
+  {
+    watchId: text("watch_id")
+      .notNull()
+      .references(() => threadWatch.id, { onDelete: "cascade" }),
+    subjectId: text("subject_id").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.watchId, table.subjectId] })],
+);
+
+// What wakes a thread's agent later: a wake-up timer (once), a schedule (cron) or a webhook, with
+// when it next goes off and what it tells the agent.
 export const threadTrigger = sqliteTable(
   "thread_trigger",
   {
@@ -319,14 +299,12 @@ export const threadTrigger = sqliteTable(
     prompt: text("prompt").notNull(),
     // Whose words steered the call that set it, and the name the agent set it by.
     steeredBy: text("steered_by", { mode: "json" }).$type<Steering[]>().notNull(),
-    createdBy: text("created_by").notNull(),
+    // What the agent that set it went by, as a label: it names no user.
+    createdByLabel: text("created_by_label").notNull(),
     status: text("status", { enum: ["active", "paused", "done", "deleted"] })
       .$type<TriggerStatus>()
       .notNull(),
     nextRunAt: integer("next_run_at", { mode: "timestamp_ms" }),
-    pendingFireAt: integer("pending_fire_at", { mode: "timestamp_ms" }),
-    claimedBy: text("claimed_by"),
-    claimedUntil: integer("claimed_until", { mode: "timestamp_ms" }),
     lastFiredAt: integer("last_fired_at", { mode: "timestamp_ms" }),
     // A webhook's unguessable address token, and its signing secret sealed by the cipher, when a
     // person set one.

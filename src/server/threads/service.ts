@@ -37,9 +37,9 @@ import {
   type ThreadRequest,
   tokensOf,
 } from "@/server/agent/compaction.ts";
-import { type Subagents, steeringParts } from "@/server/agent/subagents.ts";
+import { type Subagents, steeringIn, steeringParts } from "@/server/agent/subagents.ts";
 import { type Run, type RunStore, startRun } from "@/server/agent/runs.ts";
-import { createNotifier, silentChange } from "@/server/agent/notifications.ts";
+import { type Notifier, silentChange } from "@/server/agent/notifications.ts";
 import type { Tools } from "@/server/agent/tools.ts";
 import type { GuestStore, GuestThread } from "@/server/guests/service.ts";
 
@@ -52,22 +52,17 @@ import type { Access, ThreadAccess, ThreadAction } from "@/server/spaces/thread-
 import { ASK_TOOL } from "@/shared/ask.ts";
 import type { SharedThread } from "@/shared/guests.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
-import { SEND_SUBAGENT_MESSAGE, START_SUBAGENT, type SubagentState } from "@/shared/subagents.ts";
+import { SEND_SUBAGENT_MESSAGE, START_SUBAGENT } from "@/shared/subagents.ts";
 import type { Page, PageParams } from "@/shared/paging.ts";
 import { plainText } from "@/shared/plain-text.ts";
 import { statusOf, type ThreadShow, type ThreadStatus } from "@/shared/thread-status.ts";
 import { BTW, COMPACT, type CommandInput, type ThreadCommand } from "@/shared/threads/commands.ts";
 import type { ThreadCan, ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
-import type { CallRecord, CallStore } from "@/server/agent/calls.ts";
+import { callWork, type CallStore } from "@/server/agent/calls.ts";
 import type { Tasks } from "@/server/agent/tasks.ts";
 import type { Triggers } from "@/server/agent/triggers.ts";
-import {
-  type BackgroundList,
-  type BackgroundWork,
-  type TrayKind,
-  trayKindOf,
-} from "@/shared/calls.ts";
-import { attentionOf, liveFor, underway } from "./tray.ts";
+import { type BackgroundList, type TrayKind, trayKindOf } from "@/shared/calls.ts";
+import { attentionOf, liveFor, subagentStatus, underway } from "./tray.ts";
 import type { TaskList } from "@/shared/tasks.ts";
 import type {
   Aside,
@@ -134,7 +129,7 @@ import {
 } from "./history.ts";
 import type { Append, ThreadLog } from "./log.ts";
 import type { Titles } from "./titles.ts";
-import { createTranscripts } from "./transcripts.ts";
+import type { Transcripts } from "./transcripts.ts";
 
 export type TitleSource = "message" | "agent" | "person";
 
@@ -265,14 +260,13 @@ export interface SidebarThreads {
 export interface ThreadStore {
   // A person's name, or null when they are gone.
   userName(userId: string): string | null;
-  // A subagent's thread names the thread whose agent started it, and the thread that started them
-  // all.
+  // A subagent's thread names the thread that started them all; its subagent row, the thread whose
+  // agent started it.
   create(thread: {
     spaceId: string;
     model: string | null;
     effort?: Effort | null;
     createdBy: string | null;
-    parentThreadId?: string;
     rootThreadId?: string;
     title?: string;
     titleSource?: TitleSource;
@@ -316,11 +310,19 @@ export interface ThreadStore {
   children(id: string): Thread[];
   // Adds the event with the thread's next seq in one transaction, to the branch, the current one
   // when none is named. `title` names the thread, as from its first message, when it has no title
-  // yet.
+  // yet. What a call gave back is kept apart from the log when it is large, and the event stored
+  // says so in place of the value.
   append(threadId: string, event: NewEvent, title?: string, branchId?: string): StoredEvent;
+  // What the calls gave back that is kept apart from the log, by the id of the event that ended
+  // each.
+  results(eventIds: readonly string[]): Map<string, unknown>;
+  // One such result, with the thread its event is in.
+  result(eventId: string): { threadId: string; value: unknown } | null;
   // The events of the branch, the thread's current one when none is named, with seq above
   // `after`, in order.
   eventsAfter(threadId: string, after: number, branchId?: string): StoredEvent[];
+  // The thread's current branch's events of the type, in order.
+  eventsOfType(threadId: string, type: StoredEvent["type"]): StoredEvent[];
   // The thread's event with the seq, in whichever branch.
   eventAt(threadId: string, seq: number): StoredEvent | null;
   // The thread's branches, oldest first.
@@ -387,6 +389,10 @@ export interface ThreadsOptions {
   models: Pick<Models, "defaults" | "requireModel" | "replyModel" | "shownModels">;
   log: ThreadLog;
   bus: EventBus;
+  // Tells the thread's agent what people change, without waking it.
+  notifier: Pick<Notifier, "send">;
+  // Threads' transcripts, shared with the agent so a thread's fold is kept once.
+  transcripts: Transcripts;
   // Names threads after their first message, when given.
   titles?: Pick<Titles, "name">;
   // The traceparent of a run's span while it runs, which its readers' traces link to; none while
@@ -397,7 +403,7 @@ export interface ThreadsOptions {
   // The agent's tools, for each reader's level for them.
   tools: Pick<
     Tools,
-    "levelsFor" | "canDecide" | "asks" | "riskForCall" | "definitions" | "connectionFor" | "namesIn"
+    "levelsFor" | "callState" | "asks" | "definitions" | "connectionFor" | "namesIn"
   >;
   // What the agent of the space's threads goes by where people see it; the usual name when not
   // given.
@@ -429,7 +435,7 @@ export type ThreadAsk = (
 ) => Promise<{
   model: OpenModel;
   ref: string;
-  rows: TranscriptRow[];
+  rows: readonly TranscriptRow[];
   request: ThreadRequest;
 }>;
 
@@ -451,8 +457,6 @@ interface Reader {
   userId: string;
   thread: Thread;
   space: Space | null;
-  // The model the run under way replies with, by which a waiting call's risk is worked out.
-  model: string | null;
   can: ThreadCan;
   // What each tool call is called where it shows.
   names: ReturnType<Tools["namesIn"]>;
@@ -507,8 +511,8 @@ function shownPending(pending: readonly PendingMessage[]) {
   return pending.map(({ command, ...message }) => ({ ...message, ...shownCommand(command) }));
 }
 
-// The id of the background call the row stands for: one started there, or one moved there that
-// goes on under the id of the call it was.
+// The id of the background call the row stands for: one started or moved there, which has a row of
+// its own, or one older threads moved there under the id of the call it was.
 function backgroundId(row: Transcript["rows"][number]) {
   if (row.kind !== "tool") return null;
   if (row.background) return row.id;
@@ -519,26 +523,6 @@ function backgroundId(row: Transcript["rows"][number]) {
       : null
     : null;
 }
-
-// A background call as its card shows it, and whether the reader may stop it.
-function callWork(kept: CallRecord, canPost: boolean): BackgroundWork {
-  return {
-    kind: "call",
-    status: kept.status,
-    startedAt: kept.createdAt.toISOString(),
-    ...(kept.endedAt && { endedAt: kept.endedAt.toISOString() }),
-    canCancel: canPost && (kept.status === "running" || kept.status === "pending"),
-  };
-}
-
-// The status a subagent shows as in the dock, but for one that works.
-const SUBAGENT_STATUS: Record<SubagentState, BackgroundWork["status"]> = {
-  queued: "pending",
-  working: "running",
-  idle: "done",
-  stopped: "cancelled",
-  archived: "cancelled",
-};
 
 // The id of the timer, schedule or webhook a call set.
 function scheduleId(row: Transcript["rows"][number]) {
@@ -613,14 +597,21 @@ const BTW_COMMAND: ThreadCommand = {
 };
 
 // The event as copied into another thread: what it says of messages and rows there, and of where a
-// compaction cut, said of their copies.
+// compaction cut, said of their copies; and what its call gave back, where that is kept apart from
+// the log, from `results`, for the copy to keep its own.
 function copiedEvent(
   event: StoredEvent,
   ids: ReadonlyMap<string, string>,
   seqs: ReadonlyMap<number, number>,
+  results: ReadonlyMap<string, unknown>,
 ): NewEvent {
   const id = (old: string) => ids.get(old) ?? old;
   switch (event.type) {
+    case "tool.ran": {
+      if (!event.data.large) return event;
+      const { large: _large, ...data } = event.data;
+      return { ...event, data: { ...data, value: results.get(event.id) ?? null } };
+    }
     case "message.admitted":
       return { ...event, data: { ...event.data, messageIds: event.data.messageIds.map(id) } };
     case "message.changed":
@@ -773,9 +764,8 @@ export function createThreads(options: ThreadsOptions) {
   const now = options.now ?? (() => new Date());
   const agentNameOf = options.agentNameIn ?? (() => DEFAULT_AGENT_NAME);
   const runTrace = options.runTrace ?? (() => undefined);
-  const transcripts = createTranscripts(threads);
-  // Tells the thread's agent what people change, without waking it.
-  const quietly = createNotifier({ threads, runs, log, bus });
+  const { transcripts } = options;
+  const quietly = options.notifier;
 
   // Asks the thread's active run to stop, queueing it again when it waits for a decision so that a
   // worker ends it; null when there is none.
@@ -791,7 +781,7 @@ export function createThreads(options: ThreadsOptions) {
   function runActivity(userId: string, thread: Thread, run: Run | undefined) {
     const own = ownActivity(userId, thread, run);
     if (own.canApprove) return own;
-    const job = decidableJob(userId, thread, run);
+    const job = decidableJob(userId, thread);
     if (!job) return own;
     return {
       run: { status: "waiting" as const, since: job.requestedAt, toolId: job.toolId },
@@ -800,7 +790,7 @@ export function createThreads(options: ThreadsOptions) {
   }
 
   // A background call of the thread that waits for approval which the reader may give.
-  function decidableJob(userId: string, thread: Thread, run: Run | undefined) {
+  function decidableJob(userId: string, thread: Thread) {
     const pending = background?.open(thread.id).filter((call) => call.status === "pending") ?? [];
     if (pending.length === 0) return null;
     const space = spaceStore.find(thread.spaceId);
@@ -811,9 +801,7 @@ export function createThreads(options: ThreadsOptions) {
         (row): row is Extract<typeof row, { kind: "tool" }> =>
           row.kind === "tool" &&
           pending.some((call) => call.id === row.id) &&
-          row.state === "pending" &&
-          row.waits &&
-          tools.canDecide(userId, row, rows, thread, space, run?.model ?? null),
+          tools.callState(userId, row, rows, thread, space).canAct,
       ) ?? null
     );
   }
@@ -830,23 +818,34 @@ export function createThreads(options: ThreadsOptions) {
         canApprove: false,
       };
     }
-    const transcript = transcripts.of(run.threadId).transcript();
-    const call = transcript.rows.find(
-      (row) => row.kind === "tool" && row.id === transcript.run?.waitingOn,
-    );
-    const toolId = call?.kind === "tool" ? call.toolId : undefined;
-    const space = toolId ? spaceStore.find(thread.spaceId) : null;
+    const waiting = waitingCallIn(thread, userId);
     return {
       run: {
         status: "waiting" as const,
-        since: call?.kind === "tool" ? call.requestedAt : since,
-        ...(toolId && { toolId }),
+        since: waiting?.call.requestedAt ?? since,
+        ...(waiting && { toolId: waiting.call.toolId }),
       },
-      canApprove:
-        call?.kind === "tool" &&
-        !!space &&
-        tools.canDecide(userId, call, transcript.rows, thread, space, run.model),
+      canApprove: waiting?.canAct ?? false,
     };
+  }
+
+  // The call the thread's run waits on, and whether the person may decide or answer it.
+  function waitingCallIn(thread: Thread, userId: string) {
+    const { rows, run } = transcripts.of(thread.id).transcript();
+    const call = rows.find((row) => row.kind === "tool" && row.id === run?.waitingOn);
+    const space = spaceStore.find(thread.spaceId);
+    if (call?.kind !== "tool" || !space) return null;
+    return { call, canAct: tools.callState(userId, call, rows, thread, space).canAct };
+  }
+
+  // The work a row's call stands for, as its card and the tray show it: the background call it
+  // started or moved to, or the timer, schedule or webhook it set; null for any other row.
+  function workOfRow(row: TranscriptRow, threadId: string, canPost: boolean) {
+    const kept = backgroundId(row) ? background?.find(row.id) : null;
+    if (kept) return { kept, work: callWork(kept, canPost) };
+    const scheduled = scheduleId(row);
+    const work = scheduled ? triggers?.workFor(scheduled, threadId, canPost) : null;
+    return work ? { kept: null, work } : null;
   }
 
   // The model each thread's row shows, its own or the default it follows; reads each space and
@@ -1091,51 +1090,37 @@ export function createThreads(options: ThreadsOptions) {
       items.push({ ...item, ...(attention && { attention }) });
     };
     const { rows } = transcripts.of(thread.id).transcript();
-    for (const row of rows) {
+    for (const [index, row] of rows.entries()) {
       if (row.kind !== "tool") continue;
+      const state = space ? tools.callState(principal.userId, row, rows, thread, space) : null;
       // A call waiting for a decision, whoever may make it; the others see it wait.
-      const waiting = row.state === "pending" && row.waits && !!space && !tools.asks(row, space);
-      const may =
-        waiting && space
-          ? tools.canDecide(
-              principal.userId,
-              row,
-              rows,
-              thread,
-              space,
-              runs.active(thread.id)?.model ?? null,
-            )
-          : false;
-      if (waiting) {
+      if (state?.waitsFor === "decision") {
         add({
           rowId: row.id,
           title: names(row).title,
           work: {
             kind: "approval",
             status: "pending",
-            canDecide: may,
+            canDecide: state.canAct,
             startedAt: row.requestedAt,
             canCancel: false,
           },
         });
       }
-      const kept = backgroundId(row) ? background?.find(row.id) : null;
-      if (kept) {
-        const by = [...new Set(kept.steeredBy.map((one) => one.name))].join(", ");
+      const shown = workOfRow(row, thread.id, canPost);
+      if (shown?.kept) {
+        // Whose words the agent had read when it asked for the call.
+        const steering = steeringIn(rows.slice(0, index));
+        const by = [...new Set(steering.map((one) => one.name))].join(", ");
+        const { work } = shown;
         add({
           rowId: row.id,
           title: names(row).title,
-          work: {
-            ...callWork(kept, canPost),
-            ...(kept.status === "pending" && { canDecide: may }),
-          },
+          work: { ...work, ...(work.status === "pending" && { canDecide: !!state?.canAct }) },
           ...(by && { by }),
         });
-        continue;
-      }
-      const scheduled = scheduleId(row);
-      const work = scheduled ? triggers?.workFor(scheduled, thread.id, canPost) : null;
-      if (work && underway(work)) {
+      } else if (shown && underway(shown.work)) {
+        const { work } = shown;
         add({
           rowId: row.id,
           title: work.schedule?.name ?? work.webhook?.name ?? names(row).title,
@@ -1152,16 +1137,16 @@ export function createThreads(options: ThreadsOptions) {
       const its = given.filter(
         (task) => task.assignee?.kind === "subagent" && task.assignee.threadId === record.threadId,
       );
-      const waitingRow =
-        needs === "approval"
-          ? transcripts.of(record.threadId).transcript().run?.waitingOn
-          : undefined;
+      // What it waits on asks only the readers who may decide or answer it.
+      const waiting = needs ? waitingCallIn(child, principal.userId) : null;
+      const waitingRow = waiting?.call.id;
       add({
         rowId: record.threadId,
         title: record.name,
         work: {
           kind: "subagent",
-          status: state === "working" ? (needs ? "pending" : "running") : SUBAGENT_STATUS[state],
+          status: subagentStatus(state, needs),
+          ...(needs && { canDecide: !!waiting?.canAct }),
           subagent: {
             threadId: record.threadId,
             state,
@@ -1216,7 +1201,6 @@ export function createThreads(options: ThreadsOptions) {
       userId: principal.userId,
       thread,
       space,
-      model: runs.active(thread.id)?.model ?? null,
       can,
       names: tools.namesIn(space),
       folds: new Map(),
@@ -1311,7 +1295,7 @@ export function createThreads(options: ThreadsOptions) {
       ...(actions.length > 0 && { can: actions }),
       ...(versions && { versions }),
     };
-    const { space, userId, thread, model } = reader;
+    const { space, userId, thread } = reader;
     const current = reader.history.abilities.current;
     if (row.kind === "fork") {
       return { ...row, ...place, linked: readable(reader.principal, row.from.threadId) };
@@ -1333,28 +1317,22 @@ export function createThreads(options: ThreadsOptions) {
         !!space &&
         !tools.asks(row, space) &&
         !row.toolId.startsWith("calls.");
-      // The call's card, where it runs in the background.
-      const kept = backgroundId(row) ? background?.find(row.id) : null;
-      const scheduled = scheduleId(row);
-      const schedule = scheduled ? triggers?.workFor(scheduled, thread.id, reader.can.post) : null;
+      // The call's card, where it runs in the background or set a timer, schedule or webhook.
+      const shown = workOfRow(row, thread.id, reader.can.post);
       const { background: _flag, ...plain } = row;
       const call = {
         ...plain,
         ...place,
         ...reader.names(row),
         ...(movable && { canBackground: true }),
-        // What the call gave back is what the background call did, not that it moved.
-        ...(kept && { output: kept.output }),
-        ...(kept && {
-          background: callWork(kept, reader.can.post),
-        }),
-        ...(schedule && { background: schedule }),
+        ...(shown && { background: shown.work }),
         ...(subagent && { subagent }),
         ...(subagentCall && { subagentCall }),
         ...(effects.length > 0 && { effects }),
       };
-      if (row.state !== "pending" || !row.waits || !space || !current) return call;
-      const may = tools.canDecide(userId, row, transcript.rows, thread, space, model);
+      const state = space && tools.callState(userId, row, transcript.rows, thread, space);
+      if (!state?.waitsFor || !space || !current) return call;
+      const may = state.canAct;
       // Where other agents' messages steered the call, whose words they carried.
       const steering =
         transcript.rows.some((other) => other.kind === "relay") &&
@@ -1364,8 +1342,8 @@ export function createThreads(options: ThreadsOptions) {
           agentNameOf(space),
         );
       const waiting = { ...call, ...(steering && { steering }) };
-      if (tools.asks(row, space)) return { ...waiting, canAnswer: may };
-      const risk = tools.riskForCall(row, space, model);
+      if (state.waitsFor === "answer") return { ...waiting, canAnswer: may };
+      const { risk } = state;
       const connection = tools.connectionFor(space, row.toolId, userId, row.input);
       const forNow = risk === "normal" ? (["allow_for_now"] as const) : [];
       return {
@@ -1481,9 +1459,8 @@ export function createThreads(options: ThreadsOptions) {
     reader.folds.set(thread.id, fold);
     const ran = fold.transcript().rows[fold.indexOf(call.callId)];
     if (ran?.kind !== "tool") return null;
-    const kept = backgroundId(ran) ? background?.find(ran.id) : null;
     const { background: _flag, ...plain } = ran;
-    return { ...plain, ...reader.names(ran), ...(kept && { output: kept.output }) };
+    return { ...plain, ...reader.names(ran) };
   }
 
   // The call that sent another agent's message, or that was refused past the limit, as the reader
@@ -1921,6 +1898,15 @@ export function createThreads(options: ThreadsOptions) {
       };
     },
 
+    // What a call gave back that its row left out for its size, by the id the row names it by, for
+    // whoever may read the call's thread.
+    result(principal: Principal, id: string): { value: unknown } {
+      const kept = threads.result(id);
+      if (!kept) throw new ServiceError(404, "Result not found");
+      visible(principal, kept.threadId);
+      return { value: kept.value };
+    },
+
     // The branch that holds the row: the current one when it does, else the newest that does.
     branchOf(principal: Principal, id: string, rowId: string): ShownBranch {
       const thread = visible(principal, id);
@@ -2338,6 +2324,11 @@ export function createThreads(options: ThreadsOptions) {
       }
       const cut = cutThrough(fold, index);
       const events = threads.eventsAfter(id, 0, from).filter((event) => event.seq <= cut);
+      const results = threads.results(
+        events.flatMap((event) =>
+          event.type === "tool.ran" && event.data.large ? [event.id] : [],
+        ),
+      );
       const forked = threads.create({
         spaceId: thread.spaceId,
         model: thread.model,
@@ -2349,7 +2340,10 @@ export function createThreads(options: ThreadsOptions) {
         const ids = new Map<string, string>();
         const seqs = new Map<number, number>();
         for (const event of events) {
-          const copied = append({ ...copiedEvent(event, ids, seqs), createdAt: event.createdAt });
+          const copied = append({
+            ...copiedEvent(event, ids, seqs, results),
+            createdAt: event.createdAt,
+          });
           ids.set(event.id, copied.id);
           seqs.set(event.seq, copied.seq);
         }
@@ -2571,7 +2565,7 @@ export function createThreads(options: ThreadsOptions) {
       }
       function send(item: ThreadFeedItem) {
         if (item.kind === "event") {
-          if (item.event.seq > last) sendRows();
+          if (item.seq > last) sendRows();
           sendBackground();
           return;
         }

@@ -3,15 +3,15 @@
 import { and, asc, desc, eq, inArray, isNotNull, sql } from "drizzle-orm";
 
 import type { Db } from "@/server/db/db.ts";
+import { type SettingScope, scopedOn } from "@/server/spaces/scope.ts";
 import { space } from "@/server/spaces/schema.ts";
 
 import {
   artifact,
   artifactAsset,
   artifactGroupShare,
-  artifactOrgSetting,
   artifactPersonShare,
-  artifactSpaceSetting,
+  artifactSetting,
   artifactThreadUse,
   artifactVersion,
 } from "./schema.ts";
@@ -45,7 +45,25 @@ const versionColumns = {
   threadId: artifactVersion.threadId,
 };
 
+const settings = scopedOn(artifactSetting);
+
 export function createArtifactStore(db: Db): ArtifactStore {
+  // Whether the scope lets artifacts be made public, where it set so.
+  function publicAllowed(scope: SettingScope) {
+    return db
+      .select({ allowed: artifactSetting.publicAllowed })
+      .from(artifactSetting)
+      .where(settings.at(scope))
+      .get()?.allowed;
+  }
+
+  function setPublicAllowed(scope: SettingScope, allowed: boolean) {
+    db.insert(artifactSetting)
+      .values({ ...settings.of(scope), publicAllowed: allowed })
+      .onConflictDoUpdate({ ...settings.conflict(scope), set: { publicAllowed: allowed } })
+      .run();
+  }
+
   function putAssets(id: string, assets: { name: string; contentType: string; data: Buffer }[]) {
     for (const asset of assets) {
       db.insert(artifactAsset)
@@ -325,42 +343,10 @@ export function createArtifactStore(db: Db): ArtifactStore {
       db.delete(artifact).where(eq(artifact.id, id)).run();
     },
 
-    orgPublicAllowed(orgId) {
-      const row = db
-        .select({ allowed: artifactOrgSetting.publicAllowed })
-        .from(artifactOrgSetting)
-        .where(eq(artifactOrgSetting.organizationId, orgId))
-        .get();
-      return row?.allowed ?? false;
-    },
-
-    setOrgPublicAllowed(orgId, allowed) {
-      db.insert(artifactOrgSetting)
-        .values({ organizationId: orgId, publicAllowed: allowed })
-        .onConflictDoUpdate({
-          target: artifactOrgSetting.organizationId,
-          set: { publicAllowed: allowed },
-        })
-        .run();
-    },
-
-    spacePublicAllowed(spaceId) {
-      const row = db
-        .select({ allowed: artifactSpaceSetting.publicAllowed })
-        .from(artifactSpaceSetting)
-        .where(eq(artifactSpaceSetting.spaceId, spaceId))
-        .get();
-      return row?.allowed ?? true;
-    },
-
-    setSpacePublicAllowed(spaceId, allowed) {
-      db.insert(artifactSpaceSetting)
-        .values({ spaceId, publicAllowed: allowed })
-        .onConflictDoUpdate({
-          target: artifactSpaceSetting.spaceId,
-          set: { publicAllowed: allowed },
-        })
-        .run();
-    },
+    // An org without a setting does not allow it; a space without one does.
+    orgPublicAllowed: (orgId) => publicAllowed({ orgId }) ?? false,
+    setOrgPublicAllowed: (orgId, allowed) => setPublicAllowed({ orgId }, allowed),
+    spacePublicAllowed: (spaceId) => publicAllowed({ spaceId }) ?? true,
+    setSpacePublicAllowed: (spaceId, allowed) => setPublicAllowed({ spaceId }, allowed),
   };
 }

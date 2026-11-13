@@ -1,10 +1,11 @@
 // Claims and lease checks are single conditional statements, so two workers never both hold a run.
 
-import { and, asc, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 
 import { thread } from "@/server/threads/schema.ts";
 import type { Db } from "@/server/db/db.ts";
+import { leasesOn } from "@/server/db/lease.ts";
 
 import { type Lease, LeaseLost, type Run, type RunStore } from "./runs.ts";
 import { run, threadTool } from "./schema.ts";
@@ -12,7 +13,7 @@ import { run, threadTool } from "./schema.ts";
 const columns = {
   id: run.id,
   threadId: run.threadId,
-  branchId: sql<string>`coalesce(${run.branchId}, ${run.threadId})`,
+  branchId: run.branchId,
   status: run.status,
   triggerSeq: run.triggerSeq,
   model: run.model,
@@ -27,9 +28,6 @@ const columns = {
   leaseOwner: run.leaseOwner,
   leaseExpiresAt: run.leaseExpiresAt,
   leaseEpoch: run.leaseEpoch,
-  error: run.error,
-  errorKind: run.errorKind,
-  errorDetail: run.errorDetail,
   inputTokens: run.inputTokens,
   outputTokens: run.outputTokens,
   createdAt: run.createdAt,
@@ -40,28 +38,23 @@ const columns = {
 const ACTIVE = ["queued", "running", "waiting"] as const;
 
 // Whether the run is in its thread's current branch, with the thread joined.
-const inCurrent = sql`${run.branchId} = coalesce(${thread.currentBranchId}, ${thread.id})`;
+const inCurrent = sql`${run.branchId} = ${thread.currentBranchId}`;
+
+const leases = leasesOn(run);
 
 export function createRunStore(db: Db): RunStore {
   function held(lease: Lease) {
-    return and(
-      eq(run.id, lease.runId),
-      eq(run.leaseOwner, lease.owner),
-      eq(run.leaseEpoch, lease.epoch),
-      eq(run.status, "running"),
-    );
+    return and(eq(run.id, lease.runId), leases.held(lease), eq(run.status, "running"));
   }
 
-  function staleWhere(before?: Date) {
-    return and(eq(run.status, "running"), before ? lt(run.leaseExpiresAt, before) : undefined);
+  function staleWhere(before: Date) {
+    return and(eq(run.status, "running"), leases.expired(before));
   }
 
   function take(owner: string, expiresAt: Date) {
     return {
       status: "running" as const,
-      leaseOwner: owner,
-      leaseExpiresAt: expiresAt,
-      leaseEpoch: sql`${run.leaseEpoch} + 1`,
+      ...leases.take(owner, expiresAt),
       startedAt: sql`coalesce(${run.startedAt}, ${Date.now()})`,
       updatedAt: new Date(),
     };
@@ -69,7 +62,7 @@ export function createRunStore(db: Db): RunStore {
 
   // The branch the thread's people see, as SQL.
   const currentOf = (threadId: string) =>
-    sql`(select coalesce(${thread.currentBranchId}, ${thread.id}) from ${thread} where ${thread.id} = ${threadId})`;
+    sql`(select ${thread.currentBranchId} from ${thread} where ${thread.id} = ${threadId})`;
 
   function activeOn(branchId: string | ReturnType<typeof sql>) {
     return (
@@ -210,12 +203,19 @@ export function createRunStore(db: Db): RunStore {
     renew(lease, expiresAt) {
       const row = db
         .update(run)
-        .set({ leaseExpiresAt: expiresAt, updatedAt: new Date() })
+        .set({ ...leases.renew(expiresAt), updatedAt: new Date() })
         .where(held(lease))
         .returning(columns)
         .get();
       if (!row) throw new LeaseLost(lease.runId);
       return row;
+    },
+
+    expire(lease) {
+      db.update(run)
+        .set({ ...leases.expire(), updatedAt: new Date() })
+        .where(held(lease))
+        .run();
     },
 
     setModel(lease, model) {
@@ -257,7 +257,7 @@ export function createRunStore(db: Db): RunStore {
     wait(lease) {
       const row = db
         .update(run)
-        .set({ status: "waiting", leaseOwner: null, leaseExpiresAt: null, updatedAt: new Date() })
+        .set({ status: "waiting", ...leases.release(), updatedAt: new Date() })
         .where(held(lease))
         .returning(columns)
         .get();
@@ -275,18 +275,14 @@ export function createRunStore(db: Db): RunStore {
       return !!row;
     },
 
-    end(lease, { status, error, errorKind, errorDetail, usage }): Run {
+    end(lease, { status, usage }): Run {
       const now = new Date();
       const row = db
         .update(run)
         .set({
           status,
-          error: error ?? null,
-          errorKind: errorKind ?? null,
-          errorDetail: errorDetail ?? null,
           ...(usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }),
-          leaseOwner: null,
-          leaseExpiresAt: null,
+          ...leases.release(),
           endedAt: now,
           updatedAt: now,
         })

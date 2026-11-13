@@ -37,7 +37,9 @@ export function statused(
   return sql`
     with listed as (
       select t.id, t.space_id, t.title, t.title_source, t.model, t.effort,
-             t.created_by, t.parent_thread_id, t.root_thread_id, t.current_branch_id,
+             t.created_by, t.root_thread_id, t.current_branch_id,
+             (select sa.parent_thread_id from subagent sa where sa.thread_id = t.id)
+               as parent_thread_id,
              t.last_event_seq, t.created_at, t.updated_at, t.last_message_text,
              (select r.status from run r
                where r.thread_id = t.id and r.status in ('queued', 'running', 'waiting')
@@ -47,8 +49,8 @@ export function statused(
              ${newest(sql`e.seq`, ["run.created"])} as created_seq,
              ${newest(sql`e.seq`, NOTABLE)} as notable_seq,
              ${newest(sql`e.actor_user_id`, NOTABLE)} as notable_by,
-             exists (select 1 from thread c
-                       join run hr on hr.thread_id = c.id and hr.status = 'waiting'
+             exists (select 1 from subagent c
+                       join run hr on hr.thread_id = c.thread_id and hr.status = 'waiting'
                       where c.parent_thread_id = t.id) as subagent_waiting,
              exists (select 1 from background_call bc
                       where bc.thread_id = t.id and bc.status = 'pending') as job_waiting
@@ -99,7 +101,7 @@ export interface StatusedRow {
   created_by: string | null;
   parent_thread_id: string | null;
   root_thread_id: string | null;
-  current_branch_id: string | null;
+  current_branch_id: string;
   last_event_seq: number;
   created_at: number;
   updated_at: number;
@@ -121,7 +123,7 @@ export function listedThread(row: StatusedRow): ListedThread {
       createdBy: row.created_by,
       parentThreadId: row.parent_thread_id,
       rootThreadId: row.root_thread_id,
-      currentBranchId: row.current_branch_id ?? row.id,
+      currentBranchId: row.current_branch_id,
       lastEventSeq: row.last_event_seq,
       createdAt: new Date(row.created_at),
       updatedAt: new Date(row.updated_at),

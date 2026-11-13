@@ -9,19 +9,27 @@
 import { ulid } from "ulid";
 import * as z from "zod";
 
+import type { Lease } from "@/server/db/lease.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { EventBus } from "@/server/kernel/event-bus.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { SpaceStore } from "@/server/spaces/service.ts";
-import { type Append, eventSummary, type ThreadLog } from "@/server/threads/log.ts";
-import type { Thread, ThreadStore } from "@/server/threads/service.ts";
+import type { Append, ThreadLog } from "@/server/threads/log.ts";
+import type { NewEvent, Thread, ThreadStore } from "@/server/threads/service.ts";
+import type { Transcripts } from "@/server/threads/transcripts.ts";
 import { valueForAgent } from "@/shared/mcp.ts";
 import { wireToolName } from "@/shared/tools.ts";
-import { BACKGROUND_LIMIT, CALLS_TOOLSET, type CallStatus, START_CALL } from "@/shared/calls.ts";
-import type { Steering, ToolRisk } from "@/shared/threads/events.ts";
-import { type ToolRow, transcriptOf } from "@/shared/transcript.ts";
+import {
+  BACKGROUND_LIMIT,
+  type BackgroundWork,
+  CALLS_TOOLSET,
+  type CallStatus,
+  START_CALL,
+} from "@/shared/calls.ts";
+import type { ToolRisk } from "@/shared/threads/events.ts";
+import type { ToolRow } from "@/shared/transcript.ts";
 
-import { createNotifier } from "./notifications.ts";
+import type { Notifier } from "./notifications.ts";
 import type { RunStore } from "./runs.ts";
 import { steeringIn } from "./subagents.ts";
 import type { AnyToolSpec, ToolOutput, Tools, Toolset, ToolSpec } from "./tools.ts";
@@ -33,24 +41,49 @@ export interface CallRecord {
   runId: string;
   toolId: string;
   input: unknown;
-  // The model that replied when it started, and whose words steered it.
-  model: string | null;
-  steeredBy: Steering[];
   status: CallStatus;
-  output: ToolOutput | null;
   createdAt: Date;
   endedAt: Date | null;
+  // The instance running it, while it runs, until when, and how many times it was taken.
+  leaseOwner: string | null;
+  leaseExpiresAt: Date | null;
+  leaseEpoch: number;
+}
+
+// The right to carry out a running call, held by one server instance.
+export interface CallLease extends Lease {
+  callId: string;
 }
 
 export interface CallStore {
-  create(call: Omit<CallRecord, "createdAt" | "endedAt" | "output">): CallRecord;
+  // Running ones are held under `lease` from the start.
+  create(
+    call: Omit<
+      CallRecord,
+      "createdAt" | "endedAt" | "leaseOwner" | "leaseExpiresAt" | "leaseEpoch"
+    >,
+    lease?: { owner: string; expiresAt: Date },
+  ): CallRecord;
   find(id: string): CallRecord | null;
   // The thread's calls, newest first.
   inThread(threadId: string): CallRecord[];
   // The thread's calls that are running or wait for approval.
   open(threadId: string): CallRecord[];
-  running(): CallRecord[];
-  update(id: string, fields: Partial<Pick<CallRecord, "status" | "output" | "endedAt">>): void;
+  // Runs a call that waited for approval, held by the owner; null when it no longer waits.
+  start(id: string, owner: string, expiresAt: Date): CallRecord | null;
+  // Extends the lease; false when it no longer holds, as when the call was stopped or taken over.
+  renew(lease: CallLease, expiresAt: Date): boolean;
+  // Ends a running call under its lease; false when the lease no longer holds.
+  finish(lease: CallLease, fields: Pick<CallRecord, "status" | "endedAt">): boolean;
+  // Ends the lease now, for whoever looks next to find the call left behind.
+  expire(lease: CallLease): void;
+  // Running calls whose lease expired before `before`.
+  stale(before: Date): CallRecord[];
+  // Marks a stale call interrupted, unless another did first; null then.
+  interrupt(id: string, before: Date, at: Date): CallRecord | null;
+  // Stops a call that runs or waits; null when it had ended already.
+  cancel(id: string, at: Date): CallRecord | null;
+  update(id: string, fields: Partial<Pick<CallRecord, "status" | "endedAt">>): void;
 }
 
 // The longest a call's result runs in the notification that tells of it.
@@ -62,9 +95,10 @@ export const CALLS_GUIDANCE =
 
 export interface CallsOptions {
   calls: CallStore;
-  threads: Pick<ThreadStore, "find" | "eventsAfter">;
+  threads: Pick<ThreadStore, "find">;
+  transcripts: Pick<Transcripts, "of" | "whole">;
   spaceStore: Pick<SpaceStore, "find">;
-  runs: Pick<RunStore, "active" | "create" | "toolsOn">;
+  runs: Pick<RunStore, "find" | "toolsOn">;
   log: ThreadLog;
   bus: EventBus;
   logger: Logger;
@@ -72,7 +106,7 @@ export interface CallsOptions {
   tools: () => Pick<
     Tools,
     | "offered"
-    | "decide"
+    | "evaluate"
     | "approvalHolds"
     | "riskOf"
     | "namesNow"
@@ -82,21 +116,35 @@ export interface CallsOptions {
   >;
   // The tools the thread's agent may call of those its space offers; all of them when not given.
   narrow?: (thread: Thread, offered: AnyToolSpec[]) => AnyToolSpec[];
-  // Whether the thread's agent may be started on the notification now; always when not given.
-  mayStart?: (threadId: string) => boolean;
+  notifier: Notifier;
+  // Names this server instance in the leases it takes on the calls it runs.
+  instanceId?: string;
+  leaseMs?: number;
   now?: () => Date;
 }
 
 export type Calls = ReturnType<typeof createCalls>;
 
+// A background call as its card and the tray show it, and whether the reader may stop it.
+export function callWork(record: CallRecord, canPost: boolean): BackgroundWork {
+  return {
+    kind: "call",
+    status: record.status,
+    startedAt: record.createdAt.toISOString(),
+    ...(record.endedAt && { endedAt: record.endedAt.toISOString() }),
+    canCancel: canPost && (record.status === "running" || record.status === "pending"),
+  };
+}
+
 // What a call that is moved to the background carries on with.
 export interface Adoption {
-  callId: string;
   threadId: string;
   runId: string;
   toolId: string;
   input: unknown;
-  model: string | null;
+  risk: ToolRisk;
+  title?: string;
+  toolset?: string;
   work: Promise<ToolOutput>;
   controller: AbortController;
   started: Date;
@@ -128,18 +176,35 @@ function resultText(output: ToolOutput) {
 }
 
 export function createCalls(options: CallsOptions) {
-  const { calls, threads, spaceStore, runs, log, bus, logger } = options;
+  const { calls, threads, transcripts, spaceStore, runs, log, bus, logger } = options;
   const now = options.now ?? (() => new Date());
   const narrow = options.narrow ?? ((_thread: Thread, offered: AnyToolSpec[]) => offered);
-  const notifier = createNotifier({
-    threads,
-    runs,
-    log,
-    bus,
-    ...(options.mayStart && { mayStart: options.mayStart }),
-  });
-  // The calls running here, by id, each with what stops it.
-  const live = new Map<string, AbortController>();
+  const { notifier } = options;
+  const owner = options.instanceId ?? ulid();
+  const leaseMs = options.leaseMs ?? 30_000;
+  // The calls running here, by id, each with what stops it and the lease it runs under.
+  const live = new Map<string, { controller: AbortController; lease: CallLease }>();
+  let timer: ReturnType<typeof setInterval> | undefined;
+  let unsubscribe: (() => void) | undefined;
+
+  function expiry() {
+    return new Date(now().getTime() + leaseMs);
+  }
+
+  function leaseOf(record: CallRecord): CallLease {
+    return { callId: record.id, owner, epoch: record.leaseEpoch };
+  }
+
+  // Keeps the leases of the calls running here, and stops those whose lease no longer holds, as
+  // when someone stopped the call through another instance.
+  function renew(threadId?: string) {
+    for (const [id, held] of live) {
+      if (threadId && calls.find(id)?.threadId !== threadId) continue;
+      if (calls.renew(held.lease, expiry())) continue;
+      live.delete(id);
+      held.controller.abort(new Error("cancelled"));
+    }
+  }
 
   function contextOf(threadId: string) {
     const thread = threads.find(threadId);
@@ -149,42 +214,108 @@ export function createCalls(options: CallsOptions) {
   }
 
   function rowsOf(threadId: string) {
-    return transcriptOf(threads.eventsAfter(threadId, 0).map(eventSummary)).rows;
+    return transcripts.of(threadId).transcript().rows;
   }
 
   function titleOf(space: { id: string; orgId: string }, toolId: string) {
     return options.tools().namesNow(space)(toolId)?.title ?? toolId;
   }
 
+  // The call's row in its thread's log, which holds what it was asked and gave back.
+  function rowOf(record: CallRecord) {
+    return rowsOf(record.threadId).find(
+      (one): one is ToolRow => one.kind === "tool" && one.id === record.id,
+    );
+  }
+
+  // The model that replied in the run that started the call.
+  function modelOf(record: CallRecord) {
+    return runs.find(record.runId)?.model ?? null;
+  }
+
+  // Whose words steered the call: those the agent had read when it was asked for.
+  function steeringOf(record: CallRecord) {
+    const rows = rowsOf(record.threadId);
+    const at = rows.findIndex((row) => row.id === record.id);
+    return steeringIn(at === -1 ? rows : rows.slice(0, at));
+  }
+
   // Closes the call's row if it is still open, as it was left: ran with its result, or stopped.
-  function closeRow(record: CallRecord, output: ToolOutput | "stopped", ms: number, extra = {}) {
-    log.write(record.threadId, (append) => {
-      // A stop is written whatever the row, so readers see where the call stands.
-      if (output === "stopped") {
-        append({
-          type: "tool.denied",
-          actor: ACTOR,
-          data: { runId: record.runId, callId: record.id, reason: "stopped" },
-        });
-        return;
-      }
-      const row = rowsOf(record.threadId).find(
-        (one): one is ToolRow => one.kind === "tool" && one.id === record.id,
-      );
-      if (!row || (row.state !== "pending" && row.state !== "allowed")) return;
+  // The log records the call; its row in the table says only where it stands.
+  function closeRow(
+    record: CallRecord,
+    append: Append,
+    output: ToolOutput | "stopped",
+    ms = 0,
+    extra = {},
+  ) {
+    // A stop is written whatever the row, so readers see where the call stands.
+    if (output === "stopped") {
       append({
-        type: "tool.ran",
+        type: "tool.denied",
         actor: ACTOR,
-        data: {
-          runId: record.runId,
-          callId: record.id,
-          ms,
-          ...(output.ok ? { ok: true, value: output.value } : { ok: false, error: output.error }),
-          ...extra,
-        },
+        data: { runId: record.id, callId: record.id, reason: "stopped" },
       });
+      return;
+    }
+    const row = rowOf(record);
+    if (!row || (row.state !== "pending" && row.state !== "allowed")) return;
+    append({
+      type: "tool.ran",
+      actor: ACTOR,
+      data: {
+        runId: record.id,
+        callId: record.id,
+        ms,
+        ...(output.ok ? { ok: true, value: output.value } : { ok: false, error: output.error }),
+        ...extra,
+      },
     });
-    bus.wake(record.threadId);
+  }
+
+  // Moves the call on in one write: `change` to its row in the table, which holds only while the
+  // call stands as it was, then `record` in the log, the agent told along with it. So the table
+  // and the log never disagree. False when the change no longer held.
+  function settle(record: CallRecord, change: () => unknown, write: (append: Append) => void) {
+    const { result } = log.write(record.threadId, (append) => {
+      if (!change()) return false;
+      write(append);
+      return true;
+    });
+    if (result) bus.wake(record.threadId);
+    return result;
+  }
+
+  // The call's row in the log. It goes under its own id as its run, so that no run of the thread
+  // counts it among its own calls: it neither waits for it nor stops it when it ends.
+  function requested(
+    append: (event: NewEvent) => unknown,
+    call: {
+      id: string;
+      toolId: string;
+      input: unknown;
+      risk: ToolRisk;
+      waits: boolean;
+      names?: { title?: string; toolset?: string | null } | null;
+    },
+  ) {
+    const { id, names } = call;
+    append({
+      type: "tool.requested",
+      actor: ACTOR,
+      data: {
+        runId: id,
+        callId: id,
+        messageId: "",
+        toolId: call.toolId,
+        input: call.input,
+        risk: call.risk,
+        waits: call.waits,
+        background: true,
+        ...(names?.title && { title: names.title }),
+        ...(names?.toolset && { toolset: names.toolset }),
+      },
+    });
   }
 
   // Tells the thread's agent how the call ended.
@@ -202,38 +333,39 @@ export function createCalls(options: CallsOptions) {
       },
       actor: { kind: "source", label: titleOf(space, record.toolId), type: "job" },
       text,
-      people: record.steeredBy,
+      people: steeringOf(record),
       ...(result && { last: result }),
     });
   }
 
-  // Ends the call with its output, unless it ended already, and tells the agent.
+  // Ends the call with its output, unless it ended already or is no longer this instance's, and
+  // tells the agent.
   function end(id: string, output: ToolOutput, started: Date, extra: object = {}) {
+    const held = live.get(id);
     live.delete(id);
     const record = calls.find(id);
-    if (!record || record.status !== "running") return;
-    const stored = output.ok
-      ? { ok: true as const, value: output.value }
-      : { ok: false as const, error: output.error };
-    calls.update(id, {
-      status: output.ok ? "done" : "failed",
-      output: stored,
-      endedAt: now(),
-    });
+    if (!held || !record) return;
     const ms = Math.max(0, now().getTime() - started.getTime());
+    const status = output.ok ? ("done" as const) : ("failed" as const);
     try {
-      closeRow(record, output, ms, extra);
-      notify(
+      settle(
         record,
-        `Background call ${id} (${titleOf(contextOf(record.threadId).space, record.toolId)}) ${output.ok ? "finished" : "failed"}`,
-        resultText(output),
+        () => calls.finish(held.lease, { status, endedAt: now() }),
+        (append) => {
+          closeRow(record, append, output, ms, extra);
+          notify(
+            record,
+            `Background call ${id} (${titleOf(contextOf(record.threadId).space, record.toolId)}) ${output.ok ? "finished" : "failed"}`,
+            resultText(output),
+          );
+        },
       );
     } catch (err) {
       logger.warn({ err, callId: id }, "background call end not recorded");
     }
   }
 
-  // Runs the call now, and ends it when it is done.
+  // Runs the call now, held here, and ends it when it is done.
   function launch(
     record: CallRecord,
     spec: AnyToolSpec,
@@ -243,7 +375,7 @@ export function createCalls(options: CallsOptions) {
   ) {
     const { thread, space } = contextOf(record.threadId);
     const controller = new AbortController();
-    live.set(record.id, controller);
+    live.set(record.id, { controller, lease: leaseOf(record) });
     const started = now();
     let work: Promise<ToolOutput>;
     try {
@@ -254,8 +386,9 @@ export function createCalls(options: CallsOptions) {
           orgId: space.orgId,
           runId: record.id,
           callId: record.id,
+          background: true,
           actor: ACTOR,
-          model: record.model,
+          model: modelOf(record),
           runAs,
           ...(approvedBy && { approvedBy }),
           signal: controller.signal,
@@ -314,25 +447,33 @@ export function createCalls(options: CallsOptions) {
 
   function summaryOf(record: CallRecord) {
     const { thread, space } = contextOf(record.threadId);
+    const row = rowOf(record);
+    const output = row && transcripts.whole([row])[0]!.output;
     return {
       id: record.id,
       tool: titleOf(space, record.toolId),
       toolId: record.toolId,
       status: record.status,
-      ...(record.output?.ok && { result: resultText(record.output) }),
-      ...(record.output && !record.output.ok && { error: record.output.error }),
+      ...(output?.ok && { result: resultText(output) }),
+      ...(output && !output.ok && { error: output.error }),
       startedAt: record.createdAt.toISOString(),
       ...(record.endedAt && { endedAt: record.endedAt.toISOString() }),
       thread: thread.id,
     };
   }
 
-  // Stops the call as the agent asked: it runs no more and tells nobody.
+  // Stops the call: it runs no more and tells nobody. Run elsewhere, the instance running it stops
+  // it once its lease no longer holds. False when it had ended already.
   function stop(record: CallRecord) {
-    calls.update(record.id, { status: "cancelled", endedAt: now() });
-    live.get(record.id)?.abort(new Error("cancelled"));
+    const stopped = settle(
+      record,
+      () => calls.cancel(record.id, now()),
+      (append) => closeRow(record, append, "stopped"),
+    );
+    if (!stopped) return false;
+    live.get(record.id)?.controller.abort(new Error("cancelled"));
     live.delete(record.id);
-    closeRow(record, "stopped", 0);
+    return true;
   }
 
   const start: ToolSpec<{ tool: string; input?: Record<string, unknown> }> = {
@@ -363,7 +504,7 @@ export function createCalls(options: CallsOptions) {
           }
           const tools = options.tools();
           const rows = rowsOf(thread.id);
-          const decision = tools.decide(
+          const decision = tools.evaluate(
             rows,
             thread,
             space,
@@ -375,34 +516,21 @@ export function createCalls(options: CallsOptions) {
           const risk = tools.riskOf(space, spec, parsed.data, ctx.model);
           const names = tools.namesNow(space)(spec.name);
           const id = ulid();
-          const record = calls.create({
-            id,
-            threadId: thread.id,
-            runId: ctx.runId,
-            toolId: spec.name,
-            input: parsed.data,
-            model: ctx.model,
-            steeredBy: steeringIn(rows),
-            status: waits ? "pending" : "running",
-          });
-          ctx.write((append) =>
-            append({
-              type: "tool.requested",
-              actor: ACTOR,
-              data: {
-                runId: id,
-                callId: id,
-                messageId: "",
+          const record = ctx.write((append) => {
+            const made = calls.create(
+              {
+                id,
+                threadId: thread.id,
+                runId: ctx.runId,
                 toolId: spec.name,
                 input: parsed.data,
-                risk,
-                waits,
-                background: true,
-                ...(names && { title: names.title }),
-                ...(names?.toolset && { toolset: names.toolset }),
+                status: waits ? "pending" : "running",
               },
-            }),
-          );
+              waits ? undefined : { owner, expiresAt: expiry() },
+            );
+            requested(append, { id, toolId: spec.name, input: parsed.data, risk, waits, names });
+            return made;
+          });
           if (!waits) {
             launch(
               record,
@@ -462,10 +590,9 @@ export function createCalls(options: CallsOptions) {
       return Promise.resolve(
         refusing(() => {
           const record = mine(id, ctx.threadId);
-          if (record.status !== "running" && record.status !== "pending") {
-            throw new ToolRefusal(`Call ${id} already ${record.status}.`);
+          if (!stop(record)) {
+            throw new ToolRefusal(`Call ${id} already ${calls.find(id)?.status ?? "ended"}.`);
           }
-          stop(record);
           return { id, status: "cancelled" };
         }),
       );
@@ -510,40 +637,42 @@ export function createCalls(options: CallsOptions) {
           rows,
           thread,
           space,
-          tools.riskOf(space, spec, parsed.data, record.model),
+          tools.riskOf(space, spec, parsed.data, modelOf(record)),
         );
       if (!holds || !spec) {
-        calls.update(callId, { status: "cancelled", endedAt: now() });
-        if (allow) {
-          log.write(threadId, (append) =>
-            append({
-              type: "tool.denied",
-              actor: ACTOR,
-              data: { runId: callId, callId, reason: "stale" },
-            }),
-          );
-        }
-        notify(
+        settle(
           record,
-          `Background call ${callId} (${record.toolId}) was ${allow ? "not allowed to run: its approval no longer held" : "denied"}.`,
+          () => calls.cancel(callId, now()),
+          (append) => {
+            if (allow) {
+              append({
+                type: "tool.denied",
+                actor: ACTOR,
+                data: { runId: callId, callId, reason: "stale" },
+              });
+            }
+            notify(
+              record,
+              `Background call ${callId} (${record.toolId}) was ${allow ? "not allowed to run: its approval no longer held" : "denied"}.`,
+            );
+          },
         );
         return;
       }
-      calls.update(callId, { status: "running" });
+      // Another instance may have taken the decision up first.
+      const started = calls.start(callId, owner, expiry());
+      if (!started) return;
       const runAs = spec.connection?.(record.input, space)
         ? (row.decision?.by.userId ?? null)
         : null;
-      launch({ ...record, status: "running" }, spec, runAs, {}, row.decision?.by.userId);
+      launch(started, spec, runAs, {}, row.decision?.by.userId);
     },
 
     // Stops a call that is running or waiting for approval, as a person asked.
     cancel(threadId: string, callId: string) {
       const record = calls.find(callId);
       if (!record || record.threadId !== threadId) throw new ServiceError(404, "Call not found");
-      if (record.status !== "running" && record.status !== "pending") {
-        throw new ServiceError(409, "This call has ended");
-      }
-      stop(record);
+      if (!stop(record)) throw new ServiceError(409, "This call has ended");
     },
 
     // Moves a call that waits for approval in a run to the background, as a call of its own that
@@ -559,65 +688,52 @@ export function createCalls(options: CallsOptions) {
         title?: string;
         toolset?: string;
       },
-      model: string | null,
       append: Append,
     ) {
       const id = ulid();
-      {
-        calls.create({
-          id,
-          threadId,
-          runId: call.runId,
-          toolId: call.toolId,
-          input: call.input,
-          model,
-          steeredBy: steeringIn(rowsOf(threadId)),
-          status: "pending",
-        });
-        append({
-          type: "tool.requested",
-          actor: ACTOR,
-          data: {
-            runId: id,
-            callId: id,
-            messageId: "",
-            toolId: call.toolId,
-            input: call.input,
-            risk: call.risk,
-            waits: true,
-            background: true,
-            ...(call.title && { title: call.title }),
-            ...(call.toolset && { toolset: call.toolset }),
-          },
-        });
-        append({
-          type: "tool.ran",
-          actor: ACTOR,
-          data: {
-            runId: call.runId,
-            callId: call.id,
-            ok: true,
-            value: { movedToBackground: true, callId: id },
-            ms: 0,
-          },
-        });
-      }
-      return id;
-    },
-
-    // Takes over a call moved to the background: it goes on, and ends as any does.
-    adopt(call: Adoption) {
-      const record = calls.create({
-        id: call.callId,
-        threadId: call.threadId,
+      calls.create({
+        id,
+        threadId,
         runId: call.runId,
         toolId: call.toolId,
         input: call.input,
-        model: call.model,
-        steeredBy: steeringIn(rowsOf(call.threadId)),
-        status: "running",
+        status: "pending",
       });
-      live.set(record.id, call.controller);
+      requested(append, { ...call, id, waits: true, names: call });
+      append({
+        type: "tool.ran",
+        actor: ACTOR,
+        data: {
+          runId: call.runId,
+          callId: call.id,
+          ok: true,
+          value: { movedToBackground: true, callId: id },
+          ms: 0,
+        },
+      });
+      return id;
+    },
+
+    // Takes over a call that was running in a run, as a call of its own beside it that goes on and
+    // ends as any does, and returns its id. The run's call says it moved there.
+    adopt(call: Adoption) {
+      const id = ulid();
+      const record = log.write(call.threadId, (append) => {
+        const made = calls.create(
+          {
+            id,
+            threadId: call.threadId,
+            runId: call.runId,
+            toolId: call.toolId,
+            input: call.input,
+            status: "running",
+          },
+          { owner, expiresAt: expiry() },
+        );
+        requested(append, { ...call, id, waits: false, names: call });
+        return made;
+      }).result;
+      live.set(record.id, { controller: call.controller, lease: leaseOf(record) });
       void call.work.then(
         (output) => end(record.id, output, call.started),
         (err: unknown) => {
@@ -625,21 +741,64 @@ export function createCalls(options: CallsOptions) {
           end(record.id, { ok: false, error: messageOf(err) }, call.started);
         },
       );
+      return id;
     },
 
-    // Ends the calls a stopped server left running, telling their threads' agents.
-    recover() {
-      for (const record of calls.running()) {
-        calls.update(record.id, { status: "interrupted", endedAt: now() });
+    // Ends the calls a stopped server left running, telling their threads' agents: those whose
+    // lease expired before `before`. Another instance may be running the rest.
+    recover(before = now()) {
+      for (const record of calls.stale(before)) {
         try {
-          closeRow(record, { ok: false, error: "The server stopped while the call ran." }, 0);
-          notify(
+          const interrupted = settle(
             record,
-            `Background call ${record.id} (${record.toolId}) was interrupted: the server stopped while it ran.`,
+            () => calls.interrupt(record.id, before, now()),
+            (append) => {
+              closeRow(record, append, {
+                ok: false,
+                error: "The server stopped while the call ran.",
+              });
+              notify(
+                record,
+                `Background call ${record.id} (${record.toolId}) was interrupted: the server stopped while it ran.`,
+              );
+            },
           );
+          if (!interrupted) continue;
+          live.get(record.id)?.controller.abort(new Error("interrupted"));
+          live.delete(record.id);
         } catch (err) {
           logger.warn({ err, callId: record.id }, "interrupted call not recorded");
         }
+      }
+    },
+
+    // Keeps the leases of the calls running here, and ends those other instances left behind, now
+    // and as time goes on. A thread woken has its calls here checked at once.
+    start() {
+      if (timer) return;
+      this.recover();
+      timer = setInterval(() => {
+        try {
+          renew();
+          this.recover();
+        } catch (err) {
+          logger.error({ err }, "background call leases not kept");
+        }
+      }, leaseMs / 3);
+      timer.unref();
+      unsubscribe = bus.onWake((threadId) => renew(threadId));
+    },
+
+    // Stops the calls running here and lets them go, to be ended as interrupted by whoever looks
+    // next.
+    stop() {
+      clearInterval(timer);
+      timer = undefined;
+      unsubscribe?.();
+      for (const [id, held] of live) {
+        live.delete(id);
+        held.controller.abort(new Error("shutdown"));
+        calls.expire(held.lease);
       }
     },
   };

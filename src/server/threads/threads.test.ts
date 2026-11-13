@@ -121,6 +121,20 @@ describe("threads", () => {
     ]);
   });
 
+  it("starts on its root branch, and is only ever on a branch there is", async () => {
+    const { db, signUp, yourSpace, createThread } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const thread = await createThread(cookie, (await yourSpace(cookie)).id);
+
+    expect(db.select().from(schema.thread).get()?.currentBranchId).toBe(thread.id);
+    expect(db.select().from(schema.threadBranch).all()).toMatchObject([
+      { id: thread.id, threadId: thread.id, kind: "root" },
+    ]);
+    expect(() => db.update(schema.thread).set({ currentBranchId: "gone" }).run()).toThrow(
+      /FOREIGN KEY/,
+    );
+  });
+
   it("answers a posted message with its event and author", async () => {
     const { api, signUp, yourSpace, createThread } = setup();
     const { userId, cookie } = await signUp("Ada Lovelace", "ada@example.com");

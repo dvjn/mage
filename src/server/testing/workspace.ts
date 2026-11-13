@@ -13,12 +13,14 @@ import { expect } from "vite-plus/test";
 
 import { createCallStore } from "@/server/agent/call-store.ts";
 import { createCalls } from "@/server/agent/calls.ts";
+import { createNotifier } from "@/server/agent/notifications.ts";
 import { createTasks } from "@/server/agent/tasks.ts";
 import { createTaskStore } from "@/server/agent/task-store.ts";
 import { createTriggerStore } from "@/server/agent/trigger-store.ts";
 import { createTriggers } from "@/server/agent/triggers.ts";
 import { createSubagentStore } from "@/server/agent/subagent-store.ts";
 import { createSubagents } from "@/server/agent/subagents.ts";
+import { createWatchStore } from "@/server/agent/watches.ts";
 import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
 import { createRichReplies } from "@/server/agent/rich-replies.ts";
 import { createRunStore } from "@/server/agent/run-store.ts";
@@ -39,6 +41,7 @@ import { createInstructions } from "@/server/instructions/service.ts";
 import { createInstructionStore } from "@/server/instructions/store.ts";
 import { createCipher } from "@/server/kernel/cipher.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
+import { createBusFeed } from "@/server/db/feed.ts";
 import { createEventBus } from "@/server/kernel/event-bus.ts";
 import { createHooks } from "@/server/kernel/hooks.ts";
 import { createLogger } from "@/server/kernel/logger.ts";
@@ -74,6 +77,7 @@ import { createThreadReadStore } from "@/server/threads/read-store.ts";
 import { createThreads } from "@/server/threads/service.ts";
 import { createCommands } from "@/server/threads/commands.ts";
 import { createThreadStore } from "@/server/threads/store.ts";
+import { createTranscripts } from "@/server/threads/transcripts.ts";
 import { createTitles } from "@/server/threads/titles.ts";
 import { type ModelPair, replyCandidates } from "@/shared/models.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
@@ -139,9 +143,11 @@ export function setup(
     operatorEmails = [] as string[],
     // Toolsets of Mage's own beside the usual ones, for tests of tools that need one.
     toolsets = [] as Toolset[],
+    // A database file another workspace shares, as a second server instance would.
+    database = ":memory:",
   } = {},
 ) {
-  const db = openDatabase(":memory:");
+  const db = openDatabase(database);
   const logger = createLogger({ write() {} });
   const secret = "test-secret-that-is-long-enough-1234567890";
   const hooks = createHooks();
@@ -243,7 +249,7 @@ export function setup(
   });
   const toolSettings = createToolSettingStore(db);
   const toolPolicyStore = createToolPolicyStore(db);
-  const bus = createEventBus();
+  const bus = createEventBus(createBusFeed(db, ulid()));
   // Subscriptions still open.
   const listening = { count: 0 };
   const countingBus: typeof bus = {
@@ -305,10 +311,20 @@ export function setup(
     settings: settingStore,
     logger,
   });
+  const transcripts = createTranscripts(threadStore, bus, hooks);
+  const notifier = createNotifier({
+    transcripts,
+    runs: runStore,
+    log,
+    bus: countingBus,
+    mayStart: (threadId) => subagents.mayStart(threadId),
+  });
   const subagentStore = createSubagentStore(db);
+  const watches = createWatchStore(db);
   const subagents = createSubagents({
     subagents: subagentStore,
     threads: threadStore,
+    transcripts,
     runs: runStore,
     log,
     bus: countingBus,
@@ -319,11 +335,14 @@ export function setup(
     taskHandover: () => tasks.handover,
     modelsIn: () =>
       Promise.resolve(org.models.map((ref) => ({ ref, reasoning: !org.plain.includes(ref) }))),
+    notifier,
+    watches,
   });
   const callStore = createCallStore(db);
   const calls = createCalls({
     calls: callStore,
     threads: threadStore,
+    transcripts,
     spaceStore,
     runs: runStore,
     log,
@@ -331,40 +350,42 @@ export function setup(
     logger,
     tools: () => tools,
     narrow: (thread, offered) => subagents.toolsOf(thread, offered),
-    mayStart: (threadId) => subagents.mayStart(threadId),
+    notifier,
   });
   const tasks = createTasks({
     tasks: createTaskStore(db),
     threads: threadStore,
+    transcripts,
     access,
     orgOf: (spaceId) => spaceStore.find(spaceId)?.orgId ?? null,
     subagents,
-    runs: runStore,
     log,
     bus: countingBus,
+    notifier,
+    watches,
   });
-  // A test sets the clock and runs ticks itself, as one more instance may with `triggersFor`.
+  // A test sets the clock and runs ticks itself, as one more instance would with `triggersFor`.
   const clock = { now: new Date() };
   const triggerStore = createTriggerStore(
     db,
     createCipher({ version: 1, key: Buffer.alloc(32, 7) }),
   );
-  const triggersFor = (instanceId: string, leaseMs?: number) =>
+  const triggersFor = () =>
     createTriggers({
       baseUrl,
+      transact,
       triggers: triggerStore,
       threads: threadStore,
+      transcripts,
       access,
       subagents,
-      runs: runStore,
       log,
       bus: countingBus,
       logger,
-      instanceId,
-      ...(leaseMs && { leaseMs }),
+      notifier,
       now: () => clock.now,
     });
-  const triggers = triggersFor("test");
+  const triggers = triggersFor();
   const artifacts = createArtifacts({
     store: createArtifactStore(db),
     threads: threadStore,
@@ -382,6 +403,7 @@ export function setup(
       createRichReplies(),
       createSystemTools({
         threads: threadStore,
+        transcripts,
         spaceStore,
         guests: guestStore,
         models: {
@@ -420,6 +442,10 @@ export function setup(
     policies: toolPolicyStore,
     directory,
     access,
+    callModel: (call) =>
+      call.background
+        ? (runStore.find(callStore.find(call.id)?.runId ?? "")?.model ?? null)
+        : (runStore.find(call.runId)?.model ?? null),
   });
 
   const model = scriptedModel();
@@ -435,12 +461,14 @@ export function setup(
     access,
     guests: guestStore,
     threads: threadStore,
+    transcripts,
     reads: createThreadReadStore(db),
     runs: runStore,
     deltas: deltaStore,
     models,
     log,
     bus: countingBus,
+    notifier,
     tools,
     subagents,
     background: callStore,
@@ -470,6 +498,7 @@ export function setup(
     return createRunWorker({
       runs: runStore,
       threads: threadStore,
+      transcripts,
       spaceStore,
       access,
       deltas: deltaStore,
@@ -489,7 +518,6 @@ export function setup(
       narrow: (thread, offered) => subagents.toolsOf(thread, offered),
       before: (thread) => subagents.before(thread),
       ended: (run) => subagents.ended(run),
-      toolRan: (run, toolId) => subagents.toolRan(run, toolId),
       adopt: (call) => calls.adopt(call),
       logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
       runsIn: (space) => spaces.runsIn(space),
@@ -537,7 +565,7 @@ export function setup(
     tools: createToolDecisions({
       tools,
       access,
-      threads: threadStore,
+      transcripts,
       spaceStore,
       runs: runStore,
       spaces,
@@ -550,7 +578,7 @@ export function setup(
         proceed: (threadId, callId, allow) => calls.proceed(threadId, callId, allow),
         room: (threadId) => calls.room(threadId),
         move: (threadId, callId) => worker.moveToBackground(threadId, callId),
-        detach: (threadId, call, model, append) => calls.detach(threadId, call, model, append),
+        detach: (threadId, call, append) => calls.detach(threadId, call, append),
         cancel: (threadId, callId) => calls.cancel(threadId, callId),
       },
     }),
@@ -698,6 +726,7 @@ export function setup(
     triggers,
     triggersFor,
     triggerStore,
+    callStore,
     clock,
     mcp,
     mcpNetwork,

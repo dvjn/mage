@@ -1,9 +1,9 @@
-import { and, asc, count, eq, inArray, isNotNull, isNull, max } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, max } from "drizzle-orm";
 
 import type { Db } from "@/server/db/db.ts";
 import { user } from "@/server/orgs/schema.ts";
 
-import { threadTask, threadTaskWatch } from "./schema.ts";
+import { threadTask } from "./schema.ts";
 import type { TaskAssignee } from "@/shared/tasks.ts";
 
 import type { TaskRecord, TaskStore } from "./tasks.ts";
@@ -66,28 +66,6 @@ export function createTaskStore(db: Db): TaskStore {
     remove(ids) {
       if (ids.length === 0) return;
       db.delete(threadTask).where(inArray(threadTask.id, ids)).run();
-    },
-
-    addWatch(watch) {
-      db.insert(threadTaskWatch).values(watch).run();
-    },
-
-    watchesIn(ownerId) {
-      return db.select().from(threadTaskWatch).where(eq(threadTaskWatch.ownerId, ownerId)).all();
-    },
-
-    watchCount(threadId) {
-      return (
-        db
-          .select({ total: count() })
-          .from(threadTaskWatch)
-          .where(eq(threadTaskWatch.threadId, threadId))
-          .get()?.total ?? 0
-      );
-    },
-
-    endWatch(id) {
-      db.delete(threadTaskWatch).where(eq(threadTaskWatch.id, id)).run();
     },
 
     userName(userId) {

@@ -11,19 +11,19 @@ import type { GuestStore } from "@/server/guests/service.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Models, OpenModel } from "@/server/models/service.ts";
 import type { SpaceStore } from "@/server/spaces/service.ts";
-import { eventSummary } from "@/server/threads/log.ts";
 import type { ThreadStore } from "@/server/threads/service.ts";
+import type { Transcripts } from "@/server/threads/transcripts.ts";
 import { effortSchema } from "@/shared/threads/thread.ts";
-import { transcriptOf } from "@/shared/transcript.ts";
 
 import { askTool } from "./ask.ts";
-import { compact as compactThread } from "./compaction.ts";
+import { compact as compactThread, wholeWhereRead } from "./compaction.ts";
 import type { Toolset, ToolSpec } from "./tools.ts";
 import { personLabel } from "@/shared/people.ts";
 import { parseModelRef } from "@/shared/model-ref.ts";
 
 export interface SystemToolsOptions {
-  threads: Pick<ThreadStore, "find" | "update" | "eventsAfter">;
+  threads: Pick<ThreadStore, "find" | "update">;
+  transcripts: Pick<Transcripts, "of" | "whole">;
   spaceStore: Pick<SpaceStore, "find">;
   guests: Pick<GuestStore, "reachedIn">;
   models: Pick<Models, "replyModel" | "requireModel" | "resolveModels">;
@@ -60,7 +60,7 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
         ? await models.replyModel(space, { model: thread.model, effort: thread.effort })
         : null;
       const writers = new Set<string>();
-      for (const row of transcriptOf(threads.eventsAfter(thread.id, 0).map(eventSummary)).rows) {
+      for (const row of options.transcripts.of(thread.id).transcript().rows) {
         if (row.kind === "human" && !row.guest) writers.add(personLabel(row.author));
       }
       return {
@@ -178,7 +178,10 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
       if (!ctx.model) return { ok: false, error: "No model replies in this thread." };
       const done = await compactThread({
         threadId: ctx.threadId,
-        rows: transcriptOf(threads.eventsAfter(ctx.threadId, 0).map(eventSummary)).rows,
+        rows: wholeWhereRead(
+          options.transcripts.of(ctx.threadId).transcript().rows,
+          options.transcripts.whole,
+        ),
         model: await open(ctx.orgId, ctx.model),
         ...(ctx.threadRequest && { request: ctx.threadRequest() }),
         ...(focus && { focus }),

@@ -92,6 +92,17 @@ export function keptFrom(rows: readonly TranscriptRow[]) {
   return index === -1 ? rows.length : index;
 }
 
+// The rows with those the agent reads word for word made whole by `whole`, which reads the results
+// kept apart from the log back into the rows it is given; those before the latest compaction's cut
+// are left as they are.
+export function wholeWhereRead<Row extends TranscriptRow>(
+  rows: readonly Row[],
+  whole: (rows: readonly Row[]) => readonly Row[],
+): readonly Row[] {
+  const from = keptFrom(rows);
+  return from === 0 ? whole(rows) : [...rows.slice(0, from), ...whole(rows.slice(from))];
+}
+
 // What the agent reads of the thread: the summary of its latest compaction, if any, and the rows
 // after that compaction's cut, compactions and requests for them left out.
 export function readOf(rows: readonly TranscriptRow[]) {
