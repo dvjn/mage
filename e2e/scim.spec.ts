@@ -1,6 +1,6 @@
 import { type Browser, expect, type Page, test } from "@playwright/test";
 
-import { JOURNEY_SCIM_TOKEN, scimClient } from "./scim-client.ts";
+import { JOURNEY_SCIM_TOKEN, scimClient } from "../mock/directory.ts";
 
 // Sign-ups are rate limited per client address; each person counts as their own client.
 let client = 60;
@@ -21,14 +21,16 @@ function transcript(page: Page) {
   return page.getByRole("log", { name: "Events" });
 }
 
-// Signs in at the stand-in provider as the person with `email`.
+// Signs in at the stand-in provider as the person with `email`, named in the page's address as
+// picking them from its list would.
 async function continueWithIdp(page: Page, name: string, email: string) {
   await page.goto("/login");
   await page.getByRole("button", { name: "Continue with Test IdP" }).click();
-  await expect(page.getByRole("heading", { name: "Test IdP" })).toBeVisible();
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Name").fill(name);
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in as" })).toBeVisible();
+  const picked = new URL(page.url());
+  picked.searchParams.set("login_as", email);
+  picked.searchParams.set("name", name);
+  await page.goto(picked.toString());
   await expect(page).toHaveURL(/\/s\/[^/]+$/);
 }
 
@@ -172,7 +174,7 @@ test("a thread and an artifact are shared with a directory group, as View and as
   await expect(share).toBeHidden();
   await send(
     page,
-    `/tool artifact.publish ${JSON.stringify({
+    `^tool artifact.publish ${JSON.stringify({
       html: "<title>Loom chart</title><h1>Looms</h1>",
       description: "Looms by year",
       icon: "chart",

@@ -1,6 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 
-import { MCP_BEARER_TOKEN } from "./mcp-server.ts";
+import { MCP_BEARER_TOKEN } from "../mock/mcp.ts";
 import { mcpServer } from "./servers.ts";
 
 // Sign-ups are rate limited per client address; each person counts as their own client, in every
@@ -54,8 +54,8 @@ test("the menu opens on a slash, filters as one types, and sends the skill picke
   page,
 }) => {
   await signUp(page);
-  // The stand-in model says back what follows a /say line.
-  await addSkill(page, "pirate", "Talk like a pirate", "/say\nArr, $ARGUMENTS!");
+  // The stand-in model says back what follows a ^say line.
+  await addSkill(page, "pirate", "Talk like a pirate", "^say\nArr, $ARGUMENTS!");
   await addSkill(page, "haiku", "Write a haiku", "Write three lines.");
   await startThread(page);
 
@@ -124,7 +124,7 @@ test("a command typed in a new thread is picked from the menu and starts the thr
   page,
 }) => {
   await signUp(page);
-  await addSkill(page, "pirate", "Talk like a pirate", "/say\nArr, $ARGUMENTS!");
+  await addSkill(page, "pirate", "Talk like a pirate", "^say\nArr, $ARGUMENTS!");
 
   await box(page).fill("/pi");
   const menu = page.getByRole("listbox", { name: "Commands" });

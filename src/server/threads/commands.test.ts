@@ -6,7 +6,7 @@ import { MCP_ORIGIN } from "@/server/testing/workspace.ts";
 import { commandOf, type ThreadCommand } from "@/shared/threads/commands.ts";
 import type { ThreadDetail } from "@/shared/threads/detail.ts";
 
-import { MCP_BEARER_TOKEN, mcpStandIn, NOTES_GUIDE } from "../../../e2e/mcp-server.ts";
+import { MCP_BEARER_TOKEN, mcpStandIn, NOTES_GUIDE } from "../../../mock/mcp.ts";
 import { skillText } from "./commands.ts";
 
 const greet = {
@@ -266,15 +266,12 @@ describe("thread commands", () => {
     start();
     const res = await send(ada, "/deploy now", { name: "deploy", args: "now" });
     expect(res.status).toBe(400);
-    await post(ada, "/tool thread.info {}");
+    await post(ada, "/tmp is full");
     const call = await model.next();
-    expect(call.texts).toEqual(["user: [Ada Lovelace] /tool thread.info {}"]);
+    expect(call.texts).toEqual(["user: [Ada Lovelace] /tmp is full"]);
     call.reply("Done.");
     await worker.idle();
-    expect(transcript()).toEqual([
-      "Ada Lovelace: /tool thread.info {}",
-      "Agent (completed): Done.",
-    ]);
+    expect(transcript()).toEqual(["Ada Lovelace: /tmp is full", "Agent (completed): Done."]);
   });
 
   it("can't be edited while it waits, only removed", async () => {

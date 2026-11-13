@@ -1,4 +1,4 @@
-// A stand-in MCP server for the browser journeys and the tests, as people run their own: a notes
+// A stand-in MCP server, as people run their own: a notes
 // server whose tools are open at /mcp, behind headers at /headers/mcp, behind OAuth at /oauth/mcp,
 // and over the older HTTP+SSE transport at /sse. At /people/mcp each person brings their own
 // bearer token, person-<name>, and echo says the text back as that name. Its OAuth comes from its
@@ -16,8 +16,6 @@
 // image.
 
 import { createHash, randomBytes } from "node:crypto";
-
-import { serve } from "@hono/node-server";
 
 // What /headers/mcp takes: this bearer token, or this key in X-Api-Key.
 export const MCP_BEARER_TOKEN = "mcp-journey-token";
@@ -146,7 +144,7 @@ function greeting(args: Record<string, unknown>) {
         role: "user",
         content: {
           type: "text",
-          text: `/say\nHello, ${text(args.name)}${tone ? `, ${tone}` : ""}!`,
+          text: `^say\nHello, ${text(args.name)}${tone ? `, ${tone}` : ""}!`,
         },
       },
       {
@@ -598,9 +596,4 @@ export function mcpStandIn(options: McpStandInOptions) {
         return new Response("Not found", { status: 404 });
     }
   };
-}
-
-if (import.meta.main) {
-  const port = Number(process.env.PORT ?? "4791");
-  serve({ fetch: mcpStandIn({ origin: `http://localhost:${port}` }), port });
 }

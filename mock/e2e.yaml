@@ -1,0 +1,31 @@
+# The stand-ins the browser journeys run against, on the ports e2e/servers.ts names.
+
+identity:
+  port: 4794
+  title: Test IdP
+  # Each journey signs in someone of its own.
+  anyone: true
+  clients:
+    - id: ${OIDC_CLIENT_ID}
+      secret: ${OIDC_CLIENT_SECRET}
+      redirect: ^http://localhost:4796/api/auth/callback/oidc$
+
+models:
+  port: 4792
+  lists:
+    # A server people run, such as Ollama or vLLM: one model Meta's, one no one can tell the maker of.
+    /v1:
+      - { id: llama-3.3-70b-instruct, owner: meta }
+      - { id: lab-tune-7b, owner: lab }
+    /openai/v1:
+      - { id: gpt-5-echo }
+    /anthropic/v1:
+      - { id: claude-echo-5, name: Claude Echo 5 }
+    /google/v1beta:
+      - { id: gemini-echo }
+
+mcp:
+  - port: 4791
+
+git:
+  port: 4790

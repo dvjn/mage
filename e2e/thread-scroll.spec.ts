@@ -96,7 +96,7 @@ test("a reply streaming into a long thread stays in view, unless the reader scro
 
   const lines = Array.from({ length: 12 }, (_, i) => `Line ${i + 1} of the reply.`);
   const box = page.getByLabel("Message", { exact: true });
-  await box.fill(`/say\n${lines.join("\n\n")}`);
+  await box.fill(`^say\n${lines.join("\n\n")}`);
   await box.press("Enter");
   const reply = transcript(page).getByRole("article", { name: "Message from Agent" });
   await expect(reply).toContainText("Line 12 of the reply.");
@@ -109,7 +109,7 @@ test("a reply streaming into a long thread stays in view, unless the reader scro
   await expect(page.getByRole("button", { name: "Scroll to end" })).toBeVisible();
   await expect(reply.getByText("Line 12 of the reply.")).not.toBeInViewport();
   const at = await distanceFromEnd(page);
-  await box.fill("/say\nAnother reply.");
+  await box.fill("^say\nAnother reply.");
   await box.press("Enter");
   await expect(reply.last()).toContainText("Another reply.");
   expect(await distanceFromEnd(page)).toBeGreaterThan(at);
@@ -137,7 +137,7 @@ test("an unread thread opens where the reader stopped, and sticks to the end onc
   await page.getByRole("button", { name: "Scroll to end" }).click();
   await expect(note(page, 40)).toBeInViewport();
   const box = page.getByLabel("Message", { exact: true });
-  await box.fill("/say\nCaught up.");
+  await box.fill("^say\nCaught up.");
   await box.press("Enter");
   const reply = transcript(page).getByRole("article", { name: "Message from Agent" });
   await expect(reply.getByText("Caught up.")).toBeInViewport();
@@ -234,7 +234,7 @@ test("coming back while the reader's own reply streams opens at the end and foll
   await page.goto(`/t/${thread}`);
   await expectOpenAtEnd(page, 30);
   const box = page.getByLabel("Message", { exact: true });
-  await box.fill(`/say\n${LONG_REPLY}`);
+  await box.fill(`^say\n${LONG_REPLY}`);
   await box.press("Enter");
   await expect(box).toHaveValue("");
   // Away before the reply starts, back while it streams.
@@ -340,7 +340,7 @@ test("a row changes live at the end while the thread's earlier pages are read", 
   await readToStart(page);
 
   const box = page.getByLabel("Message", { exact: true });
-  await box.fill("/say\nFresh at the end.");
+  await box.fill("^say\nFresh at the end.");
   await box.press("Enter");
   const reply = transcript(page).getByRole("article", { name: "Message from Agent" });
   await expect(reply).toContainText("Fresh at the end.");

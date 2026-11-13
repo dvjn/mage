@@ -62,7 +62,7 @@ day = Select("Day", ["Monday", "Tuesday"])
 book = Button("Book", @ToAssistant("Book a review"))
 more = Button("Show March", @ToAssistant("Show March in detail"))`;
 
-const SAY = `/say\nHere are the numbers.\n\n\`\`\`ui\n${LAYOUT}\n\`\`\`\n\nThat is all.`;
+const SAY = `^say\nHere are the numbers.\n\n\`\`\`ui\n${LAYOUT}\n\`\`\`\n\nThat is all.`;
 
 test("a layout in a reply draws as it streams, and its buttons post as whoever clicks", async ({
   page,
@@ -104,7 +104,7 @@ test("a layout in a reply draws as it streams, and its buttons post as whoever c
 
 test("a layout that cannot be drawn shows its source", async ({ page }) => {
   await signUp(page, "Ada Lovelace");
-  await write(page, "/say\nHere:\n\n```ui\n<div>not a layout</div>\n```");
+  await write(page, "^say\nHere:\n\n```ui\n<div>not a layout</div>\n```");
   const layout = replies(page).first().locator("[data-slot=reply-ui]");
   await expect(layout).toHaveAttribute("data-drawn", "false");
   await expect(layout).toHaveText("<div>not a layout</div>");
@@ -114,7 +114,7 @@ test("the agent is always told of rich replies, and settings show them always on
   page,
 }) => {
   await signUp(page, "Ada Lovelace");
-  await write(page, "/prompt");
+  await write(page, "^prompt");
   await expect(replies(page).first()).toContainText("Rich replies:");
 
   await page.goto("/org/tools");

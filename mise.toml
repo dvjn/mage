@@ -11,8 +11,8 @@ LOG_FORMAT = "pretty"
 [vars]
 # Extra arguments for the dev server.
 dev_args = ""
-# Where the browser and the dev server reach the dev identity provider.
-sso_url = "http://localhost:9000"
+# Where the browser and the dev server reach the mock's identity provider.
+sso_url = "http://localhost:4800"
 # Where the browser loads artifacts from: an origin per artifact, a subdomain of localhost the dev
 # server answers on its own port.
 artifact_url = "http://*.localhost:4783"
@@ -26,24 +26,43 @@ run = ["pnpm install", "pnpm exec playwright install chromium"]
 [tasks.dev]
 description = "Run the app with hot reload"
 depends = ["deps:ready"]
-run = "pnpm dev {{vars.dev_args}}"
+run = [{ tasks = ["dev:app", "dev:mock"] }]
 
-[tasks.dev.env]
+[tasks."dev:app"]
+description = "Run the app with hot reload"
+hide = true
+# The app reads the identity provider's discovery once, as it starts.
+run = """
+set -eu
+until curl -fs -o /dev/null "$OIDC_ISSUER/.well-known/openid-configuration"; do sleep 1; done
+exec pnpm dev {{vars.dev_args}}
+"""
+
+[tasks."dev:app".env]
 _.file = "configs/.dev.env"
 ARTIFACT_PORT = "{{vars.artifact_port}}"
 ARTIFACT_ORIGIN = "{{vars.artifact_url}}"
-OIDC_ISSUER = "{{vars.sso_url}}/application/o/mage/"
+OIDC_ISSUER = "{{vars.sso_url}}"
 # Jaeger takes traces only.
 OTEL_EXPORTER_OTLP_ENDPOINT = "http://localhost:4318"
 OTEL_METRICS_EXPORTER = "none"
 OTEL_LOGS_EXPORTER = "none"
+
+[tasks."dev:mock"]
+description = "Run the stand-ins for the systems the app talks to"
+hide = true
+run = "node --watch-path=mock mock/main.ts mock/dev.yaml"
+
+[tasks."dev:mock".env]
+_.file = "configs/.dev.env"
+SSO_URL = "{{vars.sso_url}}"
 
 [tasks."deps:compose"]
 description = "Compose command for the dev dependencies"
 hide = true
 run = """
 set -eu
-exec $(command -v podman || echo docker) compose --env-file configs/.dev.env -f deps.dev.yaml "$@"
+exec $(command -v podman || echo docker) compose -f deps.dev.yaml "$@"
 """
 
 [tasks."deps:up"]
@@ -56,7 +75,7 @@ description = "Wait until the dev dependencies answer"
 hide = true
 run = """
 set -eu
-until curl -fs -o /dev/null http://localhost:9000/application/o/mage/.well-known/openid-configuration; do
+until curl -fs -o /dev/null http://localhost:16686; do
   echo "Waiting for the dev dependencies; start them with: mise run deps:up" >&2
   sleep 3
 done
@@ -65,10 +84,6 @@ done
 [tasks."deps:down"]
 description = "Stop the dev dependencies"
 run = "mise run deps:compose down"
-
-[tasks."deps:reset"]
-description = "Stop the dev dependencies and delete their data"
-run = "mise run deps:compose down --volumes"
 
 [tasks.build]
 description = "Build for production"

@@ -101,7 +101,7 @@ test("a server with personal credentials runs each call with its approver's own 
   const grace = await someoneElse(browser, testInfo.parallelIndex);
   joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
   await grace.goto(`/s/${spaceId}`);
-  await write(grace, '/tool mcp.people.echo {"text":"hello"}');
+  await write(grace, '^tool mcp.people.echo {"text":"hello"}');
   await expect(grace).toHaveURL(/\/t\/[^/]+$/);
   await approval(grace).getByRole("button", { name: "Allow", exact: true }).click();
   await connectWith(grace, "person-grace");
@@ -121,7 +121,7 @@ test("a server with personal credentials runs each call with its approver's own 
   await expect(transcript(page)).toContainText("I have read 2 messages");
   const alan = await someoneElse(browser, testInfo.parallelIndex);
   joinSpaceOf(adaEmail, await signUp(alan, "Alan Turing"), "messager");
-  await write(grace, '/tool mcp.people.echo {"text":"again"}');
+  await write(grace, '^tool mcp.people.echo {"text":"again"}');
   await alan.goto(thread);
   await expect(approval(alan)).toContainText("Echo");
   await approval(alan).getByRole("button", { name: "Allow", exact: true }).click();
@@ -136,7 +136,7 @@ test("a server with personal credentials runs each call with its approver's own 
 
   // Grace allows her next call for now: her later calls run with her login until someone else
   // writes.
-  await write(grace, '/tool mcp.people.echo {"text":"three"}');
+  await write(grace, '^tool mcp.people.echo {"text":"three"}');
   await approval(grace).getByRole("button", { name: "Allow for now" }).click();
   const third = await outputOf(
     grace,
@@ -145,7 +145,7 @@ test("a server with personal credentials runs each call with its approver's own 
   );
   await expect(third).toContainText("grace: three");
   await expect(transcript(grace)).toContainText("I have read 4 messages");
-  await write(grace, '/tool mcp.people.echo {"text":"four"}');
+  await write(grace, '^tool mcp.people.echo {"text":"four"}');
   await expect(transcript(grace)).toContainText("I have read 5 messages");
   const fourth = await outputOf(
     grace,
@@ -153,7 +153,7 @@ test("a server with personal credentials runs each call with its approver's own 
     /^People › Echo · Ran · allowed for now by Grace Hopper · as Grace Hopper$/,
   );
   await expect(fourth).toContainText("grace: four");
-  await write(alan, '/tool mcp.people.echo {"text":"five"}');
+  await write(alan, '^tool mcp.people.echo {"text":"five"}');
   await expect(approval(alan)).toContainText("Echo");
   await expect(approval(alan).getByRole("button", { name: "Allow for now" })).toBeVisible();
 

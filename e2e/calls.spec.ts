@@ -34,7 +34,7 @@ test("a call started in the background shows as a tool row that ends done, and t
   await signUp(page);
   await write(
     page,
-    `/tool jobs.start ${JSON.stringify({ tool: "thread.rename", input: { title: "Looms" } })}`,
+    `^tool jobs.start ${JSON.stringify({ tool: "thread.rename", input: { title: "Looms" } })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Looms");

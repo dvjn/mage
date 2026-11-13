@@ -1,59 +1,10 @@
-# Authentik as the dev server's OpenID Connect provider and SCIM directory, with Postgres, and
 # Jaeger keeping the dev server's traces in memory.
-# deps/authentik/mage.yaml sets up the Mage application, two groups and nine people.
-name: mage-sso
-
-x-authentik: &authentik
-  image: ghcr.io/goauthentik/server:2026.8.3
-  environment:
-    AUTHENTIK_SECRET_KEY: mage-development-authentik-secret-key
-    AUTHENTIK_BOOTSTRAP_EMAIL: admin@example.com
-    AUTHENTIK_BOOTSTRAP_PASSWORD: ${DEV_SSO_PASSWORD:?}
-    AUTHENTIK_POSTGRESQL__HOST: postgres
-    AUTHENTIK_POSTGRESQL__NAME: authentik
-    AUTHENTIK_POSTGRESQL__USER: authentik
-    AUTHENTIK_POSTGRESQL__PASSWORD: authentik
-    MAGE_BASE_URL: ${BASE_URL:?}
-    MAGE_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?}
-    MAGE_SCIM_TOKEN: ${SCIM_TOKEN:?}
-    MAGE_USER_PASSWORD: ${DEV_SSO_PASSWORD:?}
-  volumes:
-    - ./deps/authentik:/blueprints/custom:ro,Z
-  shm_size: 512m
-  depends_on:
-    postgres:
-      condition: service_healthy
+name: mage-dev
 
 services:
-  postgres:
-    image: docker.io/library/postgres:16.14-alpine
-    environment:
-      POSTGRES_DB: authentik
-      POSTGRES_USER: authentik
-      POSTGRES_PASSWORD: authentik
-    volumes:
-      - authentik-db:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -q -d authentik -U authentik"]
-      interval: 2s
-      retries: 30
-
-  server:
-    <<: *authentik
-    command: server
-    ports:
-      - "9000:9000"
-
-  worker:
-    <<: *authentik
-    command: worker
-
   # Its UI on 16686, and OTLP over HTTP on 4318.
   jaeger:
     image: docker.io/jaegertracing/jaeger:2.22.0
     ports:
       - "16686:16686"
       - "4318:4318"
-
-volumes:
-  authentik-db:

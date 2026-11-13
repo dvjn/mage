@@ -31,7 +31,7 @@ async function write(page: Page, text: string) {
 async function addTasks(page: Page, ...titles: string[]) {
   await write(
     page,
-    `/tool thread.add_tasks ${JSON.stringify({ tasks: titles.map((title) => ({ title })) })}`,
+    `^tool thread.add_tasks ${JSON.stringify({ tasks: titles.map((title) => ({ title })) })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const strip = page
@@ -51,7 +51,7 @@ test("tasks the agent adds show in a list above the composer, and a person cycle
   await signUp(page);
   await write(
     page,
-    `/tool thread.add_tasks ${JSON.stringify({ tasks: [{ title: "Read the spec" }, { title: "Write it" }] })}`,
+    `^tool thread.add_tasks ${JSON.stringify({ tasks: [{ title: "Read the spec" }, { title: "Write it" }] })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const tasks = page

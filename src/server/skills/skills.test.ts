@@ -20,7 +20,7 @@ import { GIT_ORIGIN, gitFixtures, setup } from "@/server/testing/workspace.ts";
 import { createZipReader, type ArchiveError } from "./zip.ts";
 import { type Skill, type SkillSource, effectiveSkills, type SpaceSkills } from "./service.ts";
 import { discoverSkills, readSkillFile } from "./discovery.ts";
-import { commitTo, createRepo, GIT_TOKEN } from "../../../e2e/git-server.ts";
+import { commitTo, createRepo, GIT_TOKEN } from "../../../mock/git.ts";
 
 const BUILTIN = ["charts", "diagrams", "page-design"];
 

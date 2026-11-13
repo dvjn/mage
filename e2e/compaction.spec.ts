@@ -73,10 +73,10 @@ test("/compact shows where it compacted with its summary, and the agent goes on 
   await expect(divider).toContainText("I have read 3 messages,");
 
   await idle(page);
-  await write(page, "/prompt");
+  await write(page, "^prompt");
   await expect(replies(page).last()).toContainText(HEADING, PROMPT_SAID);
   await idle(page);
-  // Hello is in the summary now; the agent reads Second, /prompt and this.
+  // Hello is in the summary now; the agent reads Second, ^prompt and this.
   await write(page, "Again");
   await expect(replies(page).last()).toContainText("I have read 3 messages,");
 });
@@ -87,13 +87,13 @@ test("the agent compacts the thread with its tool and goes on from the summary",
   await signUp(page);
   await twoExchanges(page);
 
-  await write(page, "/tool thread.compact {}");
+  await write(page, "^tool thread.compact {}");
   const divider = page.getByRole("group", { name: "Compaction" });
   await expect(divider.getByRole("button", { name: "Compacted by the agent" })).toBeVisible();
   await expect(replies(page).last()).toContainText("Tool thread.compact said: ok");
 
   await idle(page);
-  await write(page, "/prompt");
+  await write(page, "^prompt");
   await expect(replies(page).last()).toContainText(HEADING, PROMPT_SAID);
   await idle(page);
   await write(page, "Again");

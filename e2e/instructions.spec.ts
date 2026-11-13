@@ -54,7 +54,7 @@ test("instructions from the org and the space are in the agent's prompt", async 
   await expect(page.getByText("Saved", { exact: true })).toBeVisible();
 
   await page.goto(`/s/${spaceId}/new`);
-  await write(page, "/prompt");
+  await write(page, "^prompt");
   const reply = transcript(page).getByRole("article", { name: "Message from Agent" });
   await expect(reply).toContainText("Always answer in British spelling.");
   await expect(reply).toContainText("Cite the ledger entry id.");

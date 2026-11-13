@@ -1,29 +1,23 @@
 // Browser journeys against the production build with a fresh database and the stand-in model, which
-// production refuses. It is served twice on the one database: with passwords, and signing in only
-// through a stand-in OpenID Connect provider, as an instance that later turned one on. The identity
-// provider and directory journeys run against the second; they provision people and groups over
-// SCIM themselves, as a directory would. A stand-in OpenAI-compatible server lists models for the
-// journeys that connect one, a stand-in MCP server those that add one, and a stand-in git host
-// those that add skills.
+// production refuses. It is served three times on the one database: with passwords; signing in only
+// through the stand-in identity provider, as an instance that later turned one on; and with its
+// real model providers, for the journeys that reach the stand-in model over their wire protocols.
+// The identity provider and directory journeys run against the second; they provision people and
+// groups over SCIM themselves, as a directory would. The stand-ins the journeys reach, from the
+// mock's e2e config, are an identity provider, a model provider, an MCP server and a git host.
 
 import { rmSync } from "node:fs";
 
 import { defineConfig, devices } from "@playwright/test";
 
 import { databasePath, dataDir } from "./e2e/database.ts";
-import { JOURNEY_SCIM_TOKEN } from "./e2e/scim-client.ts";
-import {
-  artifactOrigin,
-  gitServer,
-  issuer,
-  mcpServer,
-  modelServer,
-  passwordServer,
-  ssoServer,
-} from "./e2e/servers.ts";
+import { JOURNEY_SCIM_TOKEN } from "./mock/directory.ts";
+import { artifactOrigin, issuer, passwordServer, ssoServer, wireServer } from "./e2e/servers.ts";
 
 // The journeys that sign in through the identity provider.
 const ssoJourneys = ["**/oidc.spec.ts", "**/scim.spec.ts"];
+// The journeys that reach the stand-in model through Mage's real providers.
+const wireJourneys = ["**/model-wire.spec.ts"];
 const oidcClient = { id: "mage", secret: "mage-browser-journeys-oidc-secret" };
 
 const serverEnv = {
@@ -49,41 +43,28 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   projects: [
-    { name: "chromium", use: { ...devices["Desktop Chrome"] }, testIgnore: ssoJourneys },
+    {
+      name: "chromium",
+      use: { ...devices["Desktop Chrome"] },
+      testIgnore: [...ssoJourneys, ...wireJourneys],
+    },
     {
       name: "sso",
       use: { ...devices["Desktop Chrome"], baseURL: ssoServer },
       testMatch: ssoJourneys,
     },
+    {
+      name: "wire",
+      use: { ...devices["Desktop Chrome"], baseURL: wireServer },
+      testMatch: wireJourneys,
+    },
   ],
   webServer: [
     {
-      command: "node e2e/model-server.ts",
-      url: `${modelServer}/v1/models`,
+      command: "node mock/main.ts mock/e2e.yaml",
+      url: `${issuer}/_mock/health`,
       reuseExistingServer: false,
-      env: { PORT: new URL(modelServer).port },
-    },
-    {
-      command: "node e2e/mcp-server.ts",
-      url: `${mcpServer}/.well-known/oauth-authorization-server`,
-      reuseExistingServer: false,
-      env: { PORT: new URL(mcpServer).port },
-    },
-    {
-      command: "node e2e/git-server.ts",
-      url: `${gitServer}/acme/single.git/info/refs?service=git-upload-pack`,
-      reuseExistingServer: false,
-      env: { PORT: new URL(gitServer).port },
-    },
-    {
-      command: "node e2e/oidc-issuer.ts",
-      url: `${issuer}/.well-known/openid-configuration`,
-      reuseExistingServer: false,
-      env: {
-        PORT: new URL(issuer).port,
-        CLIENT_ID: oidcClient.id,
-        CLIENT_SECRET: oidcClient.secret,
-      },
+      env: { OIDC_CLIENT_ID: oidcClient.id, OIDC_CLIENT_SECRET: oidcClient.secret },
     },
     {
       command: "pnpm build && node --enable-source-maps dist/server/main.js",
@@ -110,6 +91,17 @@ export default defineConfig({
         OIDC_CLIENT_SECRET: oidcClient.secret,
         OIDC_NAME: "Test IdP",
         SCIM_TOKEN: JOURNEY_SCIM_TOKEN,
+      },
+    },
+    {
+      command: "node --enable-source-maps dist/server/main.js",
+      url: `${wireServer}/api/health`,
+      reuseExistingServer: false,
+      env: {
+        ...serverEnv,
+        MODEL_GATEWAY: "providers",
+        PORT: new URL(wireServer).port,
+        BASE_URL: wireServer,
       },
     },
   ],

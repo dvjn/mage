@@ -31,7 +31,7 @@ import {
   mcpStandIn,
   NOTES_GUIDE,
   NOTES_INSTRUCTIONS,
-} from "../../../e2e/mcp-server.ts";
+} from "../../../mock/mcp.ts";
 import { contentsOf, RESOURCE_TEXT_MAX, textLike } from "./resources.ts";
 import {
   keptInstructions,

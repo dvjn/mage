@@ -103,7 +103,7 @@ async function inviteLink(page: Page) {
 
 test("the agent renames a thread at once when the owner alone asked", async ({ page }) => {
   await signUp(page, "Ada Lovelace");
-  await startThread(page, '/tool thread.rename {"title":"Engines"}');
+  await startThread(page, '^tool thread.rename {"title":"Engines"}');
 
   await expect(line(page, /^Thread › Rename · Ran$/)).toBeVisible();
   await expect(replies(page).last()).toHaveText(/Tool thread.rename said: ok/);
@@ -129,9 +129,9 @@ test("a turn's calls fold into one line that opens on them", async ({ page }) =>
     page,
     [
       "Think it over",
-      '/tool thread.rename {"title":"Gears"}',
-      '/tool thread.rename {"title":"Levers"}',
-      '/tool thread.rename {"title":"Engines"}',
+      '^tool thread.rename {"title":"Gears"}',
+      '^tool thread.rename {"title":"Levers"}',
+      '^tool thread.rename {"title":"Engines"}',
     ].join("\n"),
   );
 
@@ -219,7 +219,7 @@ test("a tool that needs approval asks every time, and a guest may decide it", as
   await fillSignUp(guest, "Hedy Lamarr");
   await expect(guest).toHaveURL(/\/t\/[^/]+$/);
 
-  await write(page, '/tool thread.rename {"title":"Research"}');
+  await write(page, '^tool thread.rename {"title":"Research"}');
   await expect(card(page)).toContainText("Rename");
   await expect(card(page)).not.toContainText("The agent wants to use");
   await expect(card(page)).toContainText("Asks each time");
@@ -234,7 +234,7 @@ test("a tool that needs approval asks every time, and a guest may decide it", as
   await expect(page.locator("[data-slot=breadcrumb]")).toContainText("Research");
   await expect(replies(page).last()).toHaveText(/Tool thread.rename said: ok/);
 
-  await write(page, '/tool thread.rename {"title":"Archive"}');
+  await write(page, '^tool thread.rename {"title":"Archive"}');
   await expect(card(page)).toContainText("Archive");
   await card(page).getByRole("button", { name: "Deny" }).click();
   await expect(line(page, /^Thread › Rename · Denied · by Ada Lovelace/)).toBeVisible();
@@ -256,7 +256,7 @@ test("a viewer sees the card paused while a messager decides it", async ({
   joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
   const alan = await someoneElse(browser, testInfo.parallelIndex);
   joinSpaceOf(adaEmail, await signUp(alan, "Alan Turing"), "viewer");
-  await write(page, '/tool thread.rename {"title":"Looms"}');
+  await write(page, '^tool thread.rename {"title":"Looms"}');
 
   await alan.goto(page.url());
   await showApprovals(alan);
@@ -296,7 +296,7 @@ test("on a phone the card's buttons stack, Allow first and Deny last", async ({
   const revoked = await page.request.delete(`/api/v1/threads/${threadId}/guests/${me.user.id}`);
   expect(revoked.ok()).toBe(true);
 
-  await write(page, '/tool thread.rename {"title":"Pistons"}');
+  await write(page, '^tool thread.rename {"title":"Pistons"}');
   const allow = card(page).getByRole("button", { name: "Allow", exact: true });
   const forNow = card(page).getByRole("button", { name: "Allow for now" });
   const deny = card(page).getByRole("button", { name: "Deny" });
@@ -319,7 +319,7 @@ test("a tool the space turned off is not offered, and the agent says it cannot u
   const spaceId = spaceIdOf(page);
   await setInSpace(page, spaceId, "Rename", "Off");
 
-  await startThread(page, '/tool thread.rename {"title":"Research"}');
+  await startThread(page, '^tool thread.rename {"title":"Research"}');
   await expect(replies(page)).toHaveText(/I cannot use thread.rename here\./);
   await expect(card(page)).toHaveCount(0);
 });
@@ -450,7 +450,7 @@ test("a policy's people use a tool directly, and only its approvers approve the 
   await choose(page, "Ada runs");
 
   await page.goto(`/s/${spaceId}`);
-  await startThread(page, '/tool thread.rename {"title":"Mine"}');
+  await startThread(page, '^tool thread.rename {"title":"Mine"}');
   await expect(line(page, /^Thread › Rename · Ran$/)).toBeVisible();
   await expect(replies(page).last()).toHaveText(/Tool thread.rename said: ok/);
 
@@ -459,7 +459,7 @@ test("a policy's people use a tool directly, and only its approvers approve the 
   joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
   await grace.goto(page.url());
   await expect(line(grace, /^Thread › Rename · Ran$/)).toBeVisible();
-  await write(grace, '/tool thread.rename {"title":"Hers"}');
+  await write(grace, '^tool thread.rename {"title":"Hers"}');
   await showApprovals(grace);
   await expect(card(grace)).toContainText("Rename");
   await expect(card(grace).getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
@@ -492,7 +492,7 @@ test("independent approval needs someone other than the author of the latest mes
   await expect(page.getByRole("listitem", { name: "Reviewed" })).toContainText("1 tool");
 
   await page.goto(`/s/${spaceId}`);
-  await startThread(page, '/tool thread.rename {"title":"Reviewed"}');
+  await startThread(page, '^tool thread.rename {"title":"Reviewed"}');
   await showApprovals(page);
   await expect(card(page)).toContainText("Needs review");
   await expect(card(page).getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
@@ -514,7 +514,7 @@ test("changing independent approval to sign-off updates a pending approval for t
   await makePolicy(page, { name: "Independent review", independent: true });
   await makePolicy(page);
   await setInSpace(page, spaceId, "Rename", "Independent review");
-  await startThread(page, '/tool thread.rename {"title":"Engines"}');
+  await startThread(page, '^tool thread.rename {"title":"Engines"}');
   const threadUrl = page.url();
   await showApprovals(page);
   await expect(card(page)).toContainText("Needs review");
@@ -555,7 +555,7 @@ test("built-in toolset switches preserve policies and obey the org switch", asyn
   await choose(page, "Independent review");
   await expect(picker(rename, "Rename")).toContainText("Independent review");
   await page.goto(`/s/${spaceId}`);
-  await startThread(page, '/tool thread.rename {"title":"Unavailable"}');
+  await startThread(page, '^tool thread.rename {"title":"Unavailable"}');
   await expect(replies(page).last()).toContainText("I cannot use thread.rename here.");
   await openTools(page, "/org/tools");
   const global = page.getByRole("switch", { name: "Thread: on", exact: true });

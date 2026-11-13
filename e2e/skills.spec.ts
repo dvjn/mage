@@ -69,13 +69,13 @@ test("a repository added from a pasted command, a skill switched on, and loaded 
   await preview.getByRole("button", { name: "Close" }).first().click();
 
   await page.goto(`/s/${spaceId}/new`);
-  await write(page, '/tool skills.load {"name":"haiku"}');
+  await write(page, '^tool skills.load {"name":"haiku"}');
   await expect(
     transcript(page).getByRole("button", { name: /^Skills › Loaded haiku · Ran/ }),
   ).toBeVisible();
   await expect(transcript(page)).toContainText("Write three lines");
 
-  await write(page, '/tool skills.load {"name":"release-notes"}');
+  await write(page, '^tool skills.load {"name":"release-notes"}');
   await expect(transcript(page)).toContainText("No skill named release-notes is on here");
 
   // With skills in the org, tool settings show the Skills toolset always on.

@@ -174,7 +174,7 @@ test("a guest opens what the agent published in the thread, until a member turns
 }, testInfo) => {
   await signUp(page, "Ada Lovelace");
   await page.getByLabel("Message", { exact: true }).fill(
-    `/tool artifact.publish ${JSON.stringify({
+    `^tool artifact.publish ${JSON.stringify({
       html: "<title>Sales chart</title><h1>Sales</h1>",
       description: "Sales by month",
       icon: "chart",
@@ -216,7 +216,7 @@ test("a member gives a thread's guests access from the artifact's card", async (
 }, testInfo) => {
   await signUp(page, "Ada Lovelace");
   await page.getByLabel("Message", { exact: true }).fill(
-    `/tool artifact.publish ${JSON.stringify({
+    `^tool artifact.publish ${JSON.stringify({
       html: "<title>Sales chart</title><h1>Sales</h1>",
       description: "Sales by month",
       icon: "chart",

@@ -447,7 +447,7 @@ test("an artifact is shared with a member outside its space, by name, and taken 
   await expect(page).toHaveURL(/\/s\/[^/]+$/);
   await send(
     page,
-    `/tool artifact.publish ${JSON.stringify({
+    `^tool artifact.publish ${JSON.stringify({
       html: "<title>Loom chart</title><h1>Looms</h1>",
       description: "Looms by year",
       icon: "chart",
@@ -575,7 +575,7 @@ test("a person given Edit on an artifact changes its sharing", async ({
   await loomThread(page);
   await send(
     page,
-    `/tool artifact.publish ${JSON.stringify({
+    `^tool artifact.publish ${JSON.stringify({
       html: "<title>Loom chart</title><h1>Looms</h1>",
       description: "Looms by year",
       icon: "chart",

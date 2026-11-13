@@ -1,6 +1,10 @@
 // A stand-in SCIM directory: it provisions people and groups into Mage the way an identity provider
 // pushes them, with a bearer token, creating people and groups, adding them to groups and taking
-// them out, turning people off and on again, and deleting them.
+// them out, turning people off and on again, and deleting them. Given a directory of its own, it
+// pushes all of it, finding each person by user name and each group by name, so pushing again
+// changes only what changed.
+
+import { subjectOf } from "./identity.ts";
 
 // The token the browser journeys' server takes from its directory.
 export const JOURNEY_SCIM_TOKEN = "mage-browser-journeys-scim-token-0123456789";
@@ -22,6 +26,15 @@ export interface ScimPerson {
   email: string;
   // The person's id at the directory; the email by default.
   externalId?: string;
+  // What they sign in to the directory with; the email by default.
+  userName?: string;
+}
+
+export interface DirectoryGroup {
+  name: string;
+  email?: string;
+  // Its people, by user name.
+  members: string[];
 }
 
 export function scimClient(options: ScimClientOptions) {
@@ -48,19 +61,58 @@ export function scimClient(options: ScimClientOptions) {
 
   const members = (ids: string[]) => ids.map((value) => ({ value }));
 
+  const userOf = (person: ScimPerson) => ({
+    schemas: [USER],
+    externalId: person.externalId ?? person.email,
+    userName: person.userName ?? person.email,
+    displayName: person.name,
+    name: { formatted: person.name },
+    emails: [{ value: person.email, primary: true, type: "work" }],
+    active: true,
+  });
+
+  const groupOf = (name: string, memberIds: string[], email?: string) => ({
+    schemas: [GROUP],
+    externalId: name,
+    displayName: name,
+    members: members(memberIds),
+    ...(email && { emails: [{ value: email, type: "work", primary: true }] }),
+  });
+
+  // The id of the one resource the filter finds, if any.
+  async function find(path: string, filter: string) {
+    const found = (await request("GET", `${path}?filter=${encodeURIComponent(filter)}`)) as {
+      Resources?: { id: string }[];
+    } | null;
+    return found?.Resources?.[0]?.id ?? null;
+  }
+
   return {
     // Provisions the person; resolves to their id at Mage's SCIM service.
     async createUser(person: ScimPerson) {
-      const created = await request("POST", "/Users", {
-        schemas: [USER],
-        externalId: person.externalId ?? person.email,
-        userName: person.email,
-        displayName: person.name,
-        name: { formatted: person.name },
-        emails: [{ value: person.email, primary: true, type: "work" }],
-        active: true,
-      });
+      const created = await request("POST", "/Users", userOf(person));
       return created?.id as string;
+    },
+
+    // Provisions the person, or replaces what Mage has for the one with their user name.
+    async putUser(person: ScimPerson) {
+      const id = await find(
+        "/Users",
+        `userName eq ${JSON.stringify(person.userName ?? person.email)}`,
+      );
+      const saved = id
+        ? await request("PUT", `/Users/${id}`, userOf(person))
+        : await request("POST", "/Users", userOf(person));
+      return saved?.id as string;
+    },
+
+    // Provisions the group with these people, or replaces the one with its name.
+    async putGroup(name: string, memberIds: string[], email?: string) {
+      const id = await find("/Groups", `displayName eq ${JSON.stringify(name)}`);
+      const saved = id
+        ? await request("PUT", `/Groups/${id}`, groupOf(name, memberIds, email))
+        : await request("POST", "/Groups", groupOf(name, memberIds, email));
+      return saved?.id as string;
     },
 
     setActive(id: string, active: boolean) {
@@ -73,13 +125,7 @@ export function scimClient(options: ScimClientOptions) {
 
     // Provisions the group with the people in it; resolves to its id at Mage's SCIM service.
     async createGroup(name: string, memberIds: string[] = [], email?: string) {
-      const created = await request("POST", "/Groups", {
-        schemas: [GROUP],
-        externalId: name,
-        displayName: name,
-        members: members(memberIds),
-        ...(email && { emails: [{ value: email, type: "work", primary: true }] }),
-      });
+      const created = await request("POST", "/Groups", groupOf(name, memberIds, email));
       return created?.id as string;
     },
 
@@ -112,3 +158,23 @@ export function scimClient(options: ScimClientOptions) {
 }
 
 export type ScimClient = ReturnType<typeof scimClient>;
+
+// Pushes the whole directory: each person, known to Mage by the subject they sign in with, then
+// each group with its people.
+export async function pushDirectory(
+  client: ScimClient,
+  people: (ScimPerson & { userName: string })[],
+  groups: DirectoryGroup[],
+) {
+  const ids = new Map<string, string>();
+  for (const person of people) {
+    ids.set(
+      person.userName,
+      await client.putUser({ ...person, externalId: person.externalId ?? subjectOf(person.email) }),
+    );
+  }
+  for (const group of groups) {
+    const memberIds = group.members.flatMap((userName) => ids.get(userName) ?? []);
+    await client.putGroup(group.name, memberIds, group.email);
+  }
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { mcpStandIn } from "../../../e2e/mcp-server.ts";
+import { mcpStandIn } from "../../../mock/mcp.ts";
 import {
   createMcpClient,
   mcpClientDocument,

@@ -34,7 +34,7 @@ test("a schedule the agent sets is a tool row and a card in the tray, where a pe
   await signUp(page);
   await write(
     page,
-    `/tool triggers.schedule ${JSON.stringify({ name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Write it" })}`,
+    `^tool triggers.schedule ${JSON.stringify({ name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Write it" })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const call = page.getByRole("button", { name: /^Triggers › Schedule · Ran/ });
@@ -75,7 +75,7 @@ test("a kind of the tray opens inline on a phone, capped at half the screen", as
   await signUp(page);
   await write(
     page,
-    `/tool triggers.schedule ${JSON.stringify({ name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Write it" })}`,
+    `^tool triggers.schedule ${JSON.stringify({ name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Write it" })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await page
@@ -100,7 +100,7 @@ test("a wake-up timer goes off and tells the thread", async ({ page }) => {
   await signUp(page);
   await write(
     page,
-    `/tool triggers.wake_at ${JSON.stringify({ in_seconds: 1, note: "Look again" })}`,
+    `^tool triggers.wake_at ${JSON.stringify({ in_seconds: 1, note: "Look again" })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   // The two servers of these journeys share a database, so the other may be the one that fires it;
@@ -117,17 +117,17 @@ test("tasks and a schedule share the strip, one kind open at a time, closed by E
   await signUp(page);
   await write(
     page,
-    `/tool triggers.schedule ${JSON.stringify({ name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Write it" })}`,
+    `^tool triggers.schedule ${JSON.stringify({ name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Write it" })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await write(
     page,
-    `/tool thread.add_tasks ${JSON.stringify({ tasks: [{ title: "One" }, { title: "Two" }] })}`,
+    `^tool thread.add_tasks ${JSON.stringify({ tasks: [{ title: "One" }, { title: "Two" }] })}`,
   );
   const strip = page.getByRole("toolbar", { name: "Context" });
   await expect(strip.getByRole("button", { name: "Tasks" })).toContainText("0/2");
   // The strip is a row above the composer; the last message stays clear of it.
-  const last = page.getByText("/tool thread.add_tasks").last();
+  const last = page.getByText("^tool thread.add_tasks").last();
   const [message, bar] = await Promise.all([last.boundingBox(), strip.boundingBox()]);
   expect(message!.y + message!.height).toBeLessThanOrEqual(bar!.y);
   // Opening and closing a kind leaves what is typed in the composer.
@@ -146,7 +146,7 @@ test("tasks and a schedule share the strip, one kind open at a time, closed by E
   // A click elsewhere closes it.
   await strip.getByRole("button", { name: "Tasks" }).click();
   await expect(page.getByTestId("task-list")).toBeVisible();
-  await page.getByText("/tool thread.add_tasks").last().click();
+  await page.getByText("^tool thread.add_tasks").last().click();
   await expect(page.getByTestId("tray-cards")).toHaveCount(0);
   await expect(page.getByRole("textbox", { name: "Message", exact: true })).toHaveValue("a draft");
 });

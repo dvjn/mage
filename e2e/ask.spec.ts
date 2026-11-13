@@ -54,7 +54,7 @@ async function write(page: Page, text: string) {
   await expect(box).toHaveValue("");
 }
 
-const ASK = `/tool thread.ask ${JSON.stringify({
+const ASK = `^tool thread.ask ${JSON.stringify({
   questions: [
     {
       question: "Which quarter?",

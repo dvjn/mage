@@ -285,6 +285,6 @@ export default defineConfig({
   },
   test: {
     root: here,
-    include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
+    include: ["src/**/*.test.ts", "scripts/**/*.test.ts", "mock/**/*.test.ts"],
   },
 });

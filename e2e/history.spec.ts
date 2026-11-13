@@ -186,7 +186,7 @@ test("restoring from a message makes a new current branch, the old one a version
 test("restoring past calls that changed something asks first and lists them", async ({ page }) => {
   await signUp(page);
   await exchange(page, "First", 1);
-  await write(page, '/tool thread.rename {"title":"Renamed"}');
+  await write(page, '^tool thread.rename {"title":"Renamed"}');
   await expect(replies(page).last()).toContainText("Tool thread.rename said: ok");
   await idle(page);
 

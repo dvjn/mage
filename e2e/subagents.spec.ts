@@ -45,7 +45,7 @@ async function idle(page: Page) {
 
 // A line asking the stand-in model to call the tool with the input.
 function call(toolId: string, input: object) {
-  return `/tool ${toolId} ${JSON.stringify(input)}`;
+  return `^tool ${toolId} ${JSON.stringify(input)}`;
 }
 
 // A thread named Queue library, whose agent then starts the subagents.

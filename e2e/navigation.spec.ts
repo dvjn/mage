@@ -36,13 +36,13 @@ test("a press on a cached thread's link shows its last message at once, even on 
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page).toHaveURL(/\/s\/[^/]+$/);
 
-  await write(page, '/tool thread.rename {"title":"First thread"}');
+  await write(page, '^tool thread.rename {"title":"First thread"}');
   for (let i = 0; i < 6; i++) await write(page, `first ${i}`);
   await page
     .getByRole("button", { name: /new thread/i })
     .first()
     .click();
-  await write(page, '/tool thread.rename {"title":"Second thread"}');
+  await write(page, '^tool thread.rename {"title":"Second thread"}');
   await write(page, "second only");
 
   // Both are read now; the second is the one to come back to.

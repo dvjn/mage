@@ -1,0 +1,61 @@
+# The stand-ins the dev server talks to. The identity provider is where the dev server's
+# OIDC_ISSUER points; MCP servers, git repositories and model providers are added in the app at the
+# addresses below.
+
+# Every interface, so a proxy in front of the machine reaches them too.
+host: 0.0.0.0
+
+# Who signs in, picked from a list with no password, and who the directory pushes to the dev server.
+# Ada and Grace have password accounts from before sign-in went through the identity provider; it
+# reaches them by email.
+people:
+  - { userName: admin, name: Admin, email: admin@example.com }
+  - { userName: alice, name: Alice Example, email: alice@example.com }
+  - { userName: bob, name: Bob Example, email: bob@example.com }
+  - { userName: carol, name: Carol Example, email: carol@example.com }
+  - { userName: dave, name: Dave Example, email: dave@example.com }
+  - { userName: erin, name: Erin Example, email: erin@example.com }
+  - { userName: frank, name: Frank Example, email: frank@example.com }
+  - { userName: heidi, name: Heidi Example, email: heidi@example.com }
+  - { userName: ada, name: Ada Lovelace, email: demo@mage.test }
+  - { userName: grace, name: Grace Hopper, email: grace@mage.test }
+
+# Its address is the sso_url mise var.
+identity:
+  port: 4800
+  issuer: ${SSO_URL}
+  title: ${OIDC_NAME}
+  clients:
+    - id: ${OIDC_CLIENT_ID}
+      secret: ${OIDC_CLIENT_SECRET}
+      redirect: ^https?://[^/]+/api/auth/callback/oidc$
+
+directory:
+  mage: http://localhost:4783
+  token: ${SCIM_TOKEN}
+  groups:
+    - { name: Engineering, email: engineering@example.com, members: [alice, carol, dave, heidi] }
+    - { name: Design, email: design@example.com, members: [bob, erin, frank, heidi] }
+
+# A provider at http://localhost:4801 under each prefix: /v1 as a server people run, and /openai/v1,
+# /anthropic/v1 and /google/v1beta as a key's proxy base URL. It takes any key.
+models:
+  port: 4801
+  lists:
+    /v1:
+      - { id: echo, owner: stand-in }
+    /openai/v1:
+      - { id: gpt-5-echo }
+    /anthropic/v1:
+      - { id: claude-echo-5, name: Claude Echo 5 }
+    /google/v1beta:
+      - { id: gemini-echo }
+
+# Notes tools at http://localhost:4802/mcp, and behind headers, OAuth and the older SSE transport.
+mcp:
+  - port: 4802
+    origin: ${MCP_URL:-http://localhost:4802}
+
+# Skills repositories at http://localhost:4803, such as acme/agent-skills.git.
+git:
+  port: 4803

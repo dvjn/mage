@@ -1,4 +1,4 @@
-// A stand-in git host for the browser journeys and the tests, as people's skills repositories live
+// A stand-in git host, as people's skills repositories live
 // on one: bare repositories in a folder of its own, served over smart HTTP by git itself. Those
 // under private/ answer only with the token below. It starts with a few repositories of skills:
 // acme/agent-skills with skills in skills/ and .claude/skills/, acme/single with one at its root,
@@ -8,8 +8,6 @@ import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-
-import { serve } from "@hono/node-server";
 
 export const GIT_TOKEN = "git-journey-token";
 
@@ -172,17 +170,4 @@ export function gitStandIn(root: string) {
     }
     return new Response(all.subarray(split + 4), { status, headers });
   };
-}
-
-if (import.meta.main) {
-  const port = Number(process.env.PORT ?? "4790");
-  const root = createFixtures();
-  // Its repositories go with it.
-  for (const signal of ["SIGINT", "SIGTERM"] as const) {
-    process.once(signal, () => {
-      rmSync(root, { recursive: true, force: true });
-      process.exit(0);
-    });
-  }
-  serve({ fetch: gitStandIn(root), port });
 }

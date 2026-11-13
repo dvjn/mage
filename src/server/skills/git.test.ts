@@ -3,13 +3,7 @@ import { rmSync } from "node:fs";
 import { afterAll, describe, expect, it } from "vite-plus/test";
 
 import { GitError, createGitReader } from "./git.ts";
-import {
-  commitTo,
-  createFixtures,
-  createRepo,
-  GIT_TOKEN,
-  gitStandIn,
-} from "../../../e2e/git-server.ts";
+import { commitTo, createFixtures, createRepo, GIT_TOKEN, gitStandIn } from "../../../mock/git.ts";
 
 const ORIGIN = "http://git.test";
 const root = createFixtures();

@@ -1,11 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 
-import {
-  MCP_API_KEY,
-  MCP_BEARER_TOKEN,
-  MODERN_REVISION,
-  NOTES_INSTRUCTIONS,
-} from "./mcp-server.ts";
+import { MCP_API_KEY, MCP_BEARER_TOKEN, MODERN_REVISION, NOTES_INSTRUCTIONS } from "../mock/mcp.ts";
 import { mcpServer } from "./servers.ts";
 
 // Sign-ups are rate limited per client address; each person counts as their own client, in every
@@ -119,7 +114,7 @@ test("an org's header-authorized MCP server lists its tools, and a call that ask
   await expect(notes.getByRole("listitem", { name: "Echo" })).toBeVisible();
 
   await page.goto(`/s/${spaceId}`);
-  await write(page, `/tool mcp.notes.add_note {"title":"Engines","body":"They compute"}`);
+  await write(page, `^tool mcp.notes.add_note {"title":"Engines","body":"They compute"}`);
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const card = page.getByRole("region", { name: "Approvals" }).getByTestId("tray-card");
   await expect(card).toContainText("Notes");
@@ -137,7 +132,7 @@ test("an org's header-authorized MCP server lists its tools, and a call that ask
   await expect(output).toContainText("Words");
 
   // A call that was allowed and then failed still says who allowed it.
-  await write(page, `/tool mcp.notes.delete_note {"id":"missing"}`);
+  await write(page, `^tool mcp.notes.delete_note {"id":"missing"}`);
   await expect(card).toContainText("Delete note");
   await card.getByRole("button", { name: "Allow", exact: true }).click();
   await expect(
@@ -160,7 +155,7 @@ test("an MCP server's instructions show on its page, and reach the agent's promp
   await expect(instructions).toBeVisible();
 
   await page.goto(`/s/${spaceId}`);
-  await write(page, "/prompt");
+  await write(page, "^prompt");
   const reply = transcript(page).getByRole("article", { name: "Message from Agent" });
   await expect(reply).toContainText("From Notes (mcp__notes__*):");
   await expect(reply).toContainText(NOTES_INSTRUCTIONS);
@@ -220,13 +215,13 @@ test("a space's own MCP server is used in that space's threads alone", async ({ 
   await expect(page.getByRole("region", { name: "Lab notes" })).toHaveCount(0);
 
   await page.goto(`/s/${lab}`);
-  await write(page, `/tool mcp.lab-notes.echo {"text":"hello lab"}`);
+  await write(page, `^tool mcp.lab-notes.echo {"text":"hello lab"}`);
   await expect(
     transcript(page).getByRole("button", { name: /^Lab notes › Echo · Ran/ }),
   ).toBeVisible();
 
   await page.goto(`/s/${own}`);
-  await write(page, `/tool mcp.lab-notes.echo {"text":"hello"}`);
+  await write(page, `^tool mcp.lab-notes.echo {"text":"hello"}`);
   await expect(transcript(page)).toContainText(`I cannot use mcp.lab-notes.echo here.`);
 });
 
@@ -309,7 +304,7 @@ test("a space turns one of the org's MCP servers off for itself alone", async ({
   await expect(inSpace).not.toBeChecked();
 
   await page.goto(`/s/${own}`);
-  await write(page, `/tool mcp.notes.echo {"text":"hello"}`);
+  await write(page, `^tool mcp.notes.echo {"text":"hello"}`);
   await expect(transcript(page)).toContainText(`I cannot use mcp.notes.echo here.`);
 
   await page.goto("/org/tools");
@@ -342,14 +337,14 @@ test("the agent lists a server's resources and reads one", async ({ page }) => {
   await expect(page.getByText("Connected").first()).toBeVisible();
 
   await page.goto(`/s/${spaceId}`);
-  await write(page, "/tool mcp_servers.list_resources {}");
+  await write(page, "^tool mcp_servers.list_resources {}");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await expect(
     transcript(page).getByRole("button", { name: /^MCP › List resources · Ran/ }),
   ).toBeVisible();
   await expect(transcript(page)).toContainText("notes://guide");
 
-  await write(page, '/tool mcp_servers.read_resource {"server":"notes","uri":"notes://guide"}');
+  await write(page, '^tool mcp_servers.read_resource {"server":"notes","uri":"notes://guide"}');
   await expect(
     transcript(page).getByRole("button", { name: /^MCP › Read resource · Ran/ }),
   ).toBeVisible();
@@ -369,7 +364,7 @@ test("the agent searches for a server's tool, turns it on and runs it", async ({
   await expect(own).toBeDisabled();
 
   await page.goto(`/s/${spaceId}`);
-  await write(page, '/tool tools.search {"query":"echo"}\n/tool mcp.notes.echo {"text":"found"}');
+  await write(page, '^tool tools.search {"query":"echo"}\n^tool mcp.notes.echo {"text":"found"}');
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   // Left out at first, the tool is searched for, turned on, then called.
   await expect(transcript(page)).toContainText("I cannot use mcp.notes.echo here.");
@@ -394,7 +389,7 @@ test("a call's large output is left out of the thread, and read once its line op
 
   await page.goto(`/s/${spaceId}`);
   const text = "engine".repeat(4000);
-  await write(page, `/tool mcp.notes.echo {"text":"${text}"}`);
+  await write(page, `^tool mcp.notes.echo {"text":"${text}"}`);
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const line = transcript(page).getByRole("button", { name: /^Notes › Echo · Ran/ });
   await expect(line).toBeVisible();
@@ -429,7 +424,7 @@ test("a call to a server's tool keeps its name once the server is removed", asyn
   await expect(page.getByText("Connected").first()).toBeVisible();
 
   await page.goto(`/s/${spaceId}`);
-  await write(page, '/tool tools.search {"query":"echo"}\n/tool mcp.notes.echo {"text":"found"}');
+  await write(page, '^tool tools.search {"query":"echo"}\n^tool mcp.notes.echo {"text":"found"}');
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const line = transcript(page).getByRole("button", { name: /^Notes › Echo · Ran/ });
   await expect(line).toBeVisible();

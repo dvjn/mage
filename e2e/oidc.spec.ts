@@ -9,14 +9,16 @@ function uniqueEmail() {
   return `${crypto.randomUUID()}@example.com`;
 }
 
-// Signs in at the stand-in provider as the person with `email`.
+// Signs in at the stand-in provider as the person with `email`, named in the page's address as
+// picking them from its list would.
 async function continueWithIdp(page: Page, name: string, email: string) {
   await page.goto("/login");
   await page.getByRole("button", { name: "Continue with Test IdP" }).click();
-  await expect(page.getByRole("heading", { name: "Test IdP" })).toBeVisible();
-  await page.getByLabel("Email").fill(email);
-  await page.getByLabel("Name").fill(name);
-  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in as" })).toBeVisible();
+  const picked = new URL(page.url());
+  picked.searchParams.set("login_as", email);
+  picked.searchParams.set("name", name);
+  await page.goto(picked.toString());
   await expect(page).toHaveURL(inASpace);
 }
 

@@ -126,7 +126,7 @@ test("a failed run needs the person until they open it, and a run elsewhere spin
   await grace.getByRole("button", { name: "Stop" }).click();
   await expect(sidebarRow(page, "Card reader")).not.toHaveAttribute("data-status", "working");
 
-  await write(grace, "/fail The provider is over its limit.");
+  await write(grace, "^fail The provider is over its limit.");
   await expect(sidebarRow(page, "Card reader")).toHaveAttribute("data-status", "failed");
   await expect(needsYou(page)).toContainText("Card reader");
   await expect(
@@ -176,7 +176,7 @@ test("a viewer sees the agent paused while a messager's call waits for approval"
   await alan.goto(page.url());
 
   await openThread(grace, threadUrl, "Looms");
-  await write(grace, '/tool thread.rename {"title":"Weaving"}');
+  await write(grace, '^tool thread.rename {"title":"Weaving"}');
 
   await expect(sidebarRow(page, "Looms")).toHaveAttribute("data-status", "waiting");
   await expect(needsYou(page).getByRole("img", { name: /^Waiting for you/ })).toBeVisible();

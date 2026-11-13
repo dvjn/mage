@@ -31,7 +31,7 @@ async function write(page: Page, text: string) {
 }
 
 function call(toolId: string, input: object) {
-  return `/tool ${toolId} ${JSON.stringify(input)}`;
+  return `^tool ${toolId} ${JSON.stringify(input)}`;
 }
 
 const PAGE = (heading: string) =>
@@ -184,7 +184,7 @@ test("a card shows under the reply, a reply can place one, and the header lists 
   await page.goBack();
   await write(
     page,
-    `/say\nHere it is.\n\n\`\`\`ui\nroot = Stack([card, gone])\ncard = Artifact("${id}")\ngone = Artifact("missing")\n\`\`\``,
+    `^say\nHere it is.\n\n\`\`\`ui\nroot = Stack([card, gone])\ncard = Artifact("${id}")\ngone = Artifact("missing")\n\`\`\``,
   );
   const reply = page.getByRole("article", { name: "Message from Agent" }).last();
   await expect(reply.getByTestId("artifact-card")).toContainText("Sales chart");

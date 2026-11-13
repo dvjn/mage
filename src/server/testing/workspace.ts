@@ -82,9 +82,9 @@ import { createTitles } from "@/server/threads/titles.ts";
 import { type ModelPair, replyCandidates } from "@/shared/models.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
 
-import { createFixtures, gitStandIn } from "../../../e2e/git-server.ts";
-import { mcpStandIn } from "../../../e2e/mcp-server.ts";
-import { scimClient } from "../../../e2e/scim-client.ts";
+import { createFixtures, gitStandIn } from "../../../mock/git.ts";
+import { mcpStandIn } from "../../../mock/mcp.ts";
+import { scimClient } from "../../../mock/directory.ts";
 import { scriptedModel } from "./scripted-model.ts";
 
 // Never called by these tests.

@@ -19,6 +19,7 @@
   "include": [
     "src",
     "e2e",
+    "mock",
     "scripts",
     "vite.config.ts",
     "drizzle.config.ts",

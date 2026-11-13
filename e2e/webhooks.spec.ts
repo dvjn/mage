@@ -35,7 +35,7 @@ test("a webhook is a tool row and a card in the tray, takes a post, and a person
   await signUp(page);
   await write(
     page,
-    `/tool triggers.add_webhook ${JSON.stringify({ name: "Deploys", note: "Check the deploy" })}`,
+    `^tool triggers.add_webhook ${JSON.stringify({ name: "Deploys", note: "Check the deploy" })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await page
@@ -102,7 +102,7 @@ test("each delivery is its own notification that expands to its payload", async 
   await signUp(page);
   await write(
     page,
-    `/tool triggers.add_webhook ${JSON.stringify({ name: "Deploys", note: "Look" })}`,
+    `^tool triggers.add_webhook ${JSON.stringify({ name: "Deploys", note: "Look" })}`,
   );
   await page
     .getByRole("region", { name: "Approvals" })
@@ -139,7 +139,7 @@ test("a webhook's deliveries are listed a page at a time", async ({ page }) => {
   await signUp(page);
   await write(
     page,
-    `/tool triggers.add_webhook ${JSON.stringify({ name: "Deploys", note: "Look" })}`,
+    `^tool triggers.add_webhook ${JSON.stringify({ name: "Deploys", note: "Look" })}`,
   );
   await page
     .getByRole("region", { name: "Approvals" })
