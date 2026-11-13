@@ -1,6 +1,6 @@
 import { type Browser, expect, type Page, test } from "@playwright/test";
 
-import { joinSpaceOf } from "./database.ts";
+import { joinSpaceOf } from "./seed.ts";
 
 // Sign-ups are rate limited per client address; each journey counts as its own client, in every
 // worker running this file.
@@ -163,7 +163,7 @@ test("two people in one thread see each other's messages, steers and stops live"
 }, testInfo) => {
   const adaEmail = await signUp(page, "Ada Lovelace");
   const grace = await someoneElse(browser, testInfo.parallelIndex, "Grace Hopper");
-  joinSpaceOf(adaEmail, grace.email, "messager");
+  await joinSpaceOf(adaEmail, grace.email, "messager");
   await startThread(page, "Tell me slowly");
   await grace.page.goto(page.url());
 
@@ -184,10 +184,77 @@ test("two people in one thread see each other's messages, steers and stops live"
   await grace.page.context().close();
 });
 
+test("a waiting message is reworded, queued instead and taken back before the agent reads it", async ({
+  page,
+}) => {
+  await signUp(page, "Ada Lovelace");
+  await startThread(page, "Tell me very slowly");
+  await expect(replies(page).first()).toContainText("I have read 1 message");
+
+  await write(page, "Mention looms");
+  await page.getByLabel("Message", { exact: true }).press("Enter");
+  const waiting = page.getByRole("list", { name: "Waiting messages" }).getByRole("listitem");
+  await expect(waiting).toHaveCount(1);
+  await expect(waiting.first()).toContainText("steers this reply");
+
+  await waiting.first().getByRole("button", { name: "Edit" }).click();
+  await waiting.first().getByLabel("Edit waiting message").fill("Mention levers");
+  await waiting.first().getByRole("button", { name: "Save" }).click();
+  await expect(waiting.first()).toContainText("Mention levers");
+  await waiting.first().getByRole("button", { name: "Queue instead" }).click();
+  await expect(waiting.first()).toContainText("queued for the next reply");
+
+  await write(page, "Never mind this one");
+  await page.getByLabel("Message", { exact: true }).press("Alt+Enter");
+  await expect(waiting).toHaveCount(2);
+  await waiting.nth(1).getByRole("button", { name: "Remove" }).click();
+  await expect(waiting).toHaveCount(1);
+
+  // The reply is cut short; what still waits starts the next one.
+  await page.getByRole("button", { name: "Stop" }).click();
+  await expect(replies(page).nth(1)).toContainText("I have read 2 messages");
+  await expect(transcript(page)).toContainText("Mention levers");
+  await expect(transcript(page)).not.toContainText("Mention looms");
+  await expect(transcript(page)).not.toContainText("Never mind this one");
+  await expect(waiting).toHaveCount(0);
+});
+
+test("one person stops the agent while a call waits for another's approval", async ({
+  page,
+  browser,
+}, testInfo) => {
+  const adaEmail = await signUp(page, "Ada Lovelace");
+  const grace = await someoneElse(browser, testInfo.parallelIndex, "Grace Hopper");
+  await joinSpaceOf(adaEmail, grace.email, "messager");
+  await startThread(
+    page,
+    '^tool triggers.add_webhook {"name":"Deploys","note":"Check the deploy"}',
+  );
+  await grace.page.goto(page.url());
+
+  // Both may decide it, and both see it wait.
+  const approvals = (of: Page) =>
+    of.getByRole("region", { name: "Approvals" }).getByTestId("tray-card");
+  await expect(approvals(page)).toContainText("Deploys");
+  await expect(approvals(grace.page)).toContainText("Deploys");
+
+  await grace.page.getByRole("button", { name: "Stop" }).click();
+  await expect(transcript(page)).toContainText("Grace Hopper stopped the agent");
+  await expect(approvals(page)).toHaveCount(0);
+  await expect(approvals(grace.page)).toHaveCount(0);
+  await expect(agentWriting(page)).toBeHidden();
+
+  // The call will not run, and the thread goes on.
+  await write(page, "And now?");
+  await page.getByLabel("Message", { exact: true }).press("Enter");
+  await expect(replies(page).last()).toContainText("I have read 2 messages");
+  await grace.page.context().close();
+});
+
 test("a viewer reads the thread but cannot write in it", async ({ page, browser }, testInfo) => {
   const adaEmail = await signUp(page, "Ada Lovelace");
   const alan = await someoneElse(browser, testInfo.parallelIndex, "Alan Turing");
-  joinSpaceOf(adaEmail, alan.email, "viewer");
+  await joinSpaceOf(adaEmail, alan.email, "viewer");
   const spaceUrl = new URL(page.url()).pathname;
   await startThread(page, "How do engines compute?");
   await alan.page.goto(page.url());

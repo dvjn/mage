@@ -1,0 +1,224 @@
+{
+  "rows": [
+    {
+      "kind": "human",
+      "id": "e1",
+      "seq": 3,
+      "author": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:01.000Z",
+      "text": "Start",
+      "quiet": false,
+      "turn": null
+    },
+    {
+      "kind": "agent",
+      "id": "m1",
+      "seq": 4,
+      "runId": "r1",
+      "model": "anthropic/claude-test",
+      "startedAt": "2026-01-01T00:00:04.000Z",
+      "text": "",
+      "reasoning": "",
+      "thoughtMs": null,
+      "status": "completed",
+      "usage": null,
+      "retried": false,
+      "turn": null
+    },
+    {
+      "kind": "tool",
+      "id": "c-ready",
+      "seq": 6,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {},
+      "risk": "normal",
+      "waits": false,
+      "requestedAt": "2026-01-01T00:00:06.000Z",
+      "state": "pending",
+      "decision": null,
+      "output": null,
+      "ms": null,
+      "turn": {
+        "continued": false,
+        "model": "anthropic/claude-test"
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-waiting",
+      "seq": 7,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "files.delete",
+      "title": "Delete",
+      "toolset": "Files",
+      "input": {
+        "path": "/tmp/x"
+      },
+      "risk": "ask",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:07.000Z",
+      "state": "pending",
+      "decision": null,
+      "output": null,
+      "ms": null,
+      "turn": {
+        "continued": true,
+        "model": "anthropic/claude-test"
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "j-waiting",
+      "seq": 8,
+      "runId": "j-waiting",
+      "messageId": "j-waiting",
+      "toolId": "files.delete",
+      "background": true,
+      "input": {
+        "path": "/tmp/y"
+      },
+      "risk": "ask",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:08.000Z",
+      "state": "pending",
+      "decision": null,
+      "output": null,
+      "ms": null,
+      "turn": {
+        "continued": true,
+        "model": "anthropic/claude-test"
+      }
+    },
+    {
+      "kind": "agent",
+      "id": "m2",
+      "seq": 9,
+      "runId": "r1",
+      "model": "anthropic/claude-test",
+      "startedAt": "2026-01-01T00:00:09.000Z",
+      "text": "",
+      "reasoning": "",
+      "thoughtMs": null,
+      "status": "streaming",
+      "usage": null,
+      "retried": false,
+      "turn": {
+        "continued": true,
+        "model": "anthropic/claude-test"
+      }
+    },
+    {
+      "kind": "relay",
+      "id": "e14",
+      "seq": 14,
+      "postedAt": "2026-01-01T00:00:14.000Z",
+      "type": "change",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "text": "A task was added.",
+      "steeredBy": [],
+      "silent": true,
+      "turn": null
+    }
+  ],
+  "pending": [
+    {
+      "id": "e10",
+      "seq": 10,
+      "author": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:10.000Z",
+      "text": "Steer it",
+      "mode": "steer"
+    },
+    {
+      "id": "e11",
+      "seq": 11,
+      "author": {
+        "kind": "user",
+        "userId": "grace",
+        "name": "Grace Hopper",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:11.000Z",
+      "text": "Queue it",
+      "mode": "queue"
+    },
+    {
+      "id": "e12",
+      "seq": 12,
+      "author": {
+        "kind": "user",
+        "userId": "grace",
+        "name": "Grace Hopper",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:12.000Z",
+      "text": "Interrupt it",
+      "guest": true,
+      "mode": "interrupt"
+    }
+  ],
+  "inbox": [
+    {
+      "id": "e13",
+      "seq": 13,
+      "postedAt": "2026-01-01T00:00:13.000Z",
+      "type": "call.ended",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "text": "A call finished.",
+      "steeredBy": [],
+      "call": {
+        "threadId": "thread",
+        "callId": "j-1"
+      }
+    },
+    {
+      "id": "e14",
+      "seq": 14,
+      "postedAt": "2026-01-01T00:00:14.000Z",
+      "type": "change",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "text": "A task was added.",
+      "steeredBy": [],
+      "silent": true
+    }
+  ],
+  "run": {
+    "id": "r1",
+    "startedBy": "Ada Lovelace",
+    "reason": null,
+    "createdAt": "2026-01-01T00:00:02.000Z",
+    "waitingOn": "c-waiting",
+    "compacting": false
+  },
+  "usage": {
+    "inputTokens": 0,
+    "outputTokens": 0
+  }
+}

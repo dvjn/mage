@@ -1,0 +1,91 @@
+{
+  "rows": [
+    {
+      "kind": "fork",
+      "id": "e1",
+      "seq": 1,
+      "by": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:01.000Z",
+      "from": {
+        "threadId": "origin",
+        "rowId": "row-9",
+        "title": "Where it came from"
+      },
+      "turn": null
+    },
+    {
+      "kind": "human",
+      "id": "e2",
+      "seq": 4,
+      "author": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:02.000Z",
+      "text": "First",
+      "quiet": false,
+      "turn": null
+    },
+    {
+      "kind": "agent",
+      "id": "r1-m1",
+      "seq": 5,
+      "runId": "r1",
+      "model": "anthropic/claude-test",
+      "startedAt": "2026-01-01T00:00:05.000Z",
+      "text": "First answer.",
+      "reasoning": "",
+      "thoughtMs": null,
+      "status": "completed",
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 30
+      },
+      "retried": false,
+      "turn": {
+        "continued": false,
+        "model": "anthropic/claude-test"
+      }
+    },
+    {
+      "kind": "restore",
+      "id": "e36",
+      "seq": 36,
+      "by": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:36.000Z",
+      "turn": null
+    },
+    {
+      "kind": "fork",
+      "id": "e37",
+      "seq": 37,
+      "by": null,
+      "postedAt": "2026-01-01T00:00:37.000Z",
+      "from": {
+        "threadId": "other",
+        "title": "Summarised elsewhere"
+      },
+      "summary": true,
+      "turn": null
+    }
+  ],
+  "pending": [],
+  "inbox": [],
+  "run": null,
+  "usage": {
+    "inputTokens": 5360,
+    "outputTokens": 490
+  }
+}

@@ -1,0 +1,1611 @@
+{
+  "owner": {
+    "access": {
+      "via": "space",
+      "role": "owner"
+    },
+    "can": {
+      "post": true,
+      "arrange": true,
+      "share": true,
+      "move": true,
+      "delete": true
+    },
+    "rows": [
+      {
+        "kind": "relay",
+        "id": "e1",
+        "seq": 4,
+        "postedAt": "2026-01-01T00:00:01.000Z",
+        "type": "message",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "to": "Researcher",
+        "text": "Research the topic.",
+        "task": {
+          "instructions": "Be brief."
+        },
+        "order": 0,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e2",
+        "seq": 4,
+        "postedAt": "2026-01-01T00:00:02.000Z",
+        "type": "message",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "to": "Researcher",
+        "text": "Any progress?",
+        "order": 1,
+        "turn": null
+      },
+      {
+        "kind": "agent",
+        "id": "m1",
+        "seq": 6,
+        "runId": "r1",
+        "model": null,
+        "startedAt": "2026-01-01T00:00:05.000Z",
+        "text": "",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": null,
+        "retried": false,
+        "order": 2,
+        "turn": null,
+        "can": [
+          "retry",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "tool",
+        "id": "c-parked",
+        "seq": 10,
+        "runId": "r1",
+        "messageId": "m1",
+        "toolId": "mcp.github.search",
+        "input": {
+          "query": "mage"
+        },
+        "risk": "ask",
+        "waits": true,
+        "requestedAt": "2026-01-01T00:00:07.000Z",
+        "state": "ran",
+        "decision": {
+          "allow": true,
+          "scope": "for_now",
+          "by": {
+            "kind": "user",
+            "userId": "ada",
+            "name": "Ada Lovelace",
+            "former": false
+          },
+          "seq": 8
+        },
+        "output": {
+          "ok": true,
+          "value": []
+        },
+        "ms": 12,
+        "ranAs": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "order": 3,
+        "turn": {
+          "continued": false,
+          "model": null
+        },
+        "title": "mcp.github.search",
+        "toolset": null
+      },
+      {
+        "kind": "tool",
+        "id": "c-blocked",
+        "seq": 13,
+        "runId": "r1",
+        "messageId": "m1",
+        "toolId": "mcp.github.search",
+        "input": {
+          "query": "mage"
+        },
+        "risk": "ask",
+        "waits": true,
+        "requestedAt": "2026-01-01T00:00:11.000Z",
+        "state": "stopped",
+        "decision": null,
+        "output": null,
+        "ms": null,
+        "order": 4,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "title": "mcp.github.search",
+        "toolset": null
+      },
+      {
+        "kind": "tool",
+        "id": "c-moved",
+        "seq": 15,
+        "runId": "r1",
+        "messageId": "m1",
+        "toolId": "web.fetch",
+        "input": {
+          "url": "https://example.com/slow"
+        },
+        "risk": "normal",
+        "waits": false,
+        "requestedAt": "2026-01-01T00:00:14.000Z",
+        "state": "ran",
+        "decision": null,
+        "output": {
+          "ok": true,
+          "value": {
+            "movedToBackground": true,
+            "callId": "c-moved"
+          }
+        },
+        "ms": 1500,
+        "order": 5,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "title": "web.fetch",
+        "toolset": null
+      },
+      {
+        "kind": "notice",
+        "id": "e17",
+        "seq": 19,
+        "subagents": [
+          {
+            "threadId": "child-2",
+            "name": "Writer",
+            "state": "failed",
+            "last": ""
+          },
+          {
+            "threadId": "child-1",
+            "name": "Researcher",
+            "state": "stopped",
+            "last": "Cut."
+          }
+        ],
+        "order": 6,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e30",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:30.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Ada Lovelace renamed a task.",
+        "silent": true,
+        "taken": 34,
+        "order": 7,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e20",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:20.000Z",
+        "type": "agent.ended",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher ended its run.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "last": "All sources read.",
+        "order": 8,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e21",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:21.000Z",
+        "type": "agent.ended",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher ended its run.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "order": 9,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e22",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:22.000Z",
+        "type": "agent.failed",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher failed: overloaded",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "error": "overloaded",
+        "last": "Reading.",
+        "order": 10,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e23",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:23.000Z",
+        "type": "agent.failed",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Something else went wrong",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "order": 11,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e24",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:24.000Z",
+        "type": "agent.stopped",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher was stopped.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "order": 12,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e25",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:25.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "All idle: Researcher, Writer",
+        "when": "all_idle",
+        "order": 13,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e26",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:26.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Idle: Writer",
+        "when": "any_idle",
+        "order": 14,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e27",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:27.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "The subagents are idle.",
+        "order": 15,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e28",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:28.000Z",
+        "type": "trigger.fired",
+        "from": {
+          "threadId": "thread",
+          "name": "Daily digest",
+          "main": true
+        },
+        "text": "Daily digest: write today's digest.",
+        "order": 16,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e29",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:29.000Z",
+        "type": "webhook.received",
+        "from": {
+          "threadId": "thread",
+          "name": "Deploys",
+          "main": true
+        },
+        "text": "Deploys was posted to.\n\nContent-Type: text/plain\n\nok",
+        "order": 17,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e31",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:31.000Z",
+        "type": "task.changed",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Ada Lovelace marked \"Draft\" done.",
+        "order": 18,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e32",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:32.000Z",
+        "type": "call.ended",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "The call finished.",
+        "order": 19,
+        "turn": null,
+        "sentBy": {
+          "threadId": "thread",
+          "rowId": "c-moved",
+          "title": "web.fetch",
+          "toolset": null,
+          "thread": "old-shapes"
+        },
+        "ran": {
+          "kind": "tool",
+          "id": "c-moved",
+          "seq": 14,
+          "runId": "r1",
+          "messageId": "m1",
+          "toolId": "web.fetch",
+          "input": {
+            "url": "https://example.com/slow"
+          },
+          "risk": "normal",
+          "waits": false,
+          "requestedAt": "2026-01-01T00:00:14.000Z",
+          "state": "ran",
+          "decision": null,
+          "output": {
+            "ok": true,
+            "value": {
+              "movedToBackground": true,
+              "callId": "c-moved"
+            }
+          },
+          "ms": 1500,
+          "title": "web.fetch",
+          "toolset": null
+        }
+      },
+      {
+        "kind": "failure",
+        "id": "e35",
+        "seq": 35,
+        "runId": "r2",
+        "error": "",
+        "failure": "no_model",
+        "order": 20,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e37",
+        "seq": 37,
+        "runId": "f1",
+        "error": "",
+        "failure": "gone",
+        "order": 21,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e39",
+        "seq": 39,
+        "runId": "f2",
+        "error": "",
+        "order": 22,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e41",
+        "seq": 41,
+        "runId": "f3",
+        "error": "",
+        "failure": "interrupted",
+        "order": 23,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e43",
+        "seq": 43,
+        "runId": "f4",
+        "error": "",
+        "failure": "gave_up",
+        "order": 24,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e45",
+        "seq": 45,
+        "runId": "f5",
+        "error": "overloaded",
+        "failure": "model_error",
+        "order": 25,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e47",
+        "seq": 47,
+        "runId": "f6",
+        "error": "Something nobody expected",
+        "order": 26,
+        "turn": null,
+        "canRetry": true
+      }
+    ],
+    "waiting": [],
+    "run": null,
+    "before": null,
+    "newFrom": "e1",
+    "earlierUnread": 0,
+    "pages": []
+  },
+  "messager": {
+    "access": {
+      "via": "space",
+      "role": "messager"
+    },
+    "can": {
+      "post": true,
+      "arrange": true,
+      "share": true,
+      "move": false,
+      "delete": false
+    },
+    "rows": [
+      {
+        "kind": "relay",
+        "id": "e1",
+        "seq": 4,
+        "postedAt": "2026-01-01T00:00:01.000Z",
+        "type": "message",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "to": "Researcher",
+        "text": "Research the topic.",
+        "task": {
+          "instructions": "Be brief."
+        },
+        "order": 0,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e2",
+        "seq": 4,
+        "postedAt": "2026-01-01T00:00:02.000Z",
+        "type": "message",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "to": "Researcher",
+        "text": "Any progress?",
+        "order": 1,
+        "turn": null
+      },
+      {
+        "kind": "agent",
+        "id": "m1",
+        "seq": 6,
+        "runId": "r1",
+        "model": null,
+        "startedAt": "2026-01-01T00:00:05.000Z",
+        "text": "",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": null,
+        "retried": false,
+        "order": 2,
+        "turn": null,
+        "can": [
+          "retry",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "tool",
+        "id": "c-parked",
+        "seq": 10,
+        "runId": "r1",
+        "messageId": "m1",
+        "toolId": "mcp.github.search",
+        "input": {
+          "query": "mage"
+        },
+        "risk": "ask",
+        "waits": true,
+        "requestedAt": "2026-01-01T00:00:07.000Z",
+        "state": "ran",
+        "decision": {
+          "allow": true,
+          "scope": "for_now",
+          "by": {
+            "kind": "user",
+            "userId": "ada",
+            "name": "Ada Lovelace",
+            "former": false
+          },
+          "seq": 8
+        },
+        "output": {
+          "ok": true,
+          "value": []
+        },
+        "ms": 12,
+        "ranAs": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "order": 3,
+        "turn": {
+          "continued": false,
+          "model": null
+        },
+        "title": "mcp.github.search",
+        "toolset": null
+      },
+      {
+        "kind": "tool",
+        "id": "c-blocked",
+        "seq": 13,
+        "runId": "r1",
+        "messageId": "m1",
+        "toolId": "mcp.github.search",
+        "input": {
+          "query": "mage"
+        },
+        "risk": "ask",
+        "waits": true,
+        "requestedAt": "2026-01-01T00:00:11.000Z",
+        "state": "stopped",
+        "decision": null,
+        "output": null,
+        "ms": null,
+        "order": 4,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "title": "mcp.github.search",
+        "toolset": null
+      },
+      {
+        "kind": "tool",
+        "id": "c-moved",
+        "seq": 15,
+        "runId": "r1",
+        "messageId": "m1",
+        "toolId": "web.fetch",
+        "input": {
+          "url": "https://example.com/slow"
+        },
+        "risk": "normal",
+        "waits": false,
+        "requestedAt": "2026-01-01T00:00:14.000Z",
+        "state": "ran",
+        "decision": null,
+        "output": {
+          "ok": true,
+          "value": {
+            "movedToBackground": true,
+            "callId": "c-moved"
+          }
+        },
+        "ms": 1500,
+        "order": 5,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "title": "web.fetch",
+        "toolset": null
+      },
+      {
+        "kind": "notice",
+        "id": "e17",
+        "seq": 19,
+        "subagents": [
+          {
+            "threadId": "child-2",
+            "name": "Writer",
+            "state": "failed",
+            "last": ""
+          },
+          {
+            "threadId": "child-1",
+            "name": "Researcher",
+            "state": "stopped",
+            "last": "Cut."
+          }
+        ],
+        "order": 6,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e30",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:30.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Ada Lovelace renamed a task.",
+        "silent": true,
+        "taken": 34,
+        "order": 7,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e20",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:20.000Z",
+        "type": "agent.ended",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher ended its run.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "last": "All sources read.",
+        "order": 8,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e21",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:21.000Z",
+        "type": "agent.ended",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher ended its run.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "order": 9,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e22",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:22.000Z",
+        "type": "agent.failed",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher failed: overloaded",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "error": "overloaded",
+        "last": "Reading.",
+        "order": 10,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e23",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:23.000Z",
+        "type": "agent.failed",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Something else went wrong",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "order": 11,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e24",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:24.000Z",
+        "type": "agent.stopped",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher was stopped.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "order": 12,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e25",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:25.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "All idle: Researcher, Writer",
+        "when": "all_idle",
+        "order": 13,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e26",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:26.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Idle: Writer",
+        "when": "any_idle",
+        "order": 14,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e27",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:27.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "The subagents are idle.",
+        "order": 15,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e28",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:28.000Z",
+        "type": "trigger.fired",
+        "from": {
+          "threadId": "thread",
+          "name": "Daily digest",
+          "main": true
+        },
+        "text": "Daily digest: write today's digest.",
+        "order": 16,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e29",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:29.000Z",
+        "type": "webhook.received",
+        "from": {
+          "threadId": "thread",
+          "name": "Deploys",
+          "main": true
+        },
+        "text": "Deploys was posted to.\n\nContent-Type: text/plain\n\nok",
+        "order": 17,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e31",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:31.000Z",
+        "type": "task.changed",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Ada Lovelace marked \"Draft\" done.",
+        "order": 18,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e32",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:32.000Z",
+        "type": "call.ended",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "The call finished.",
+        "order": 19,
+        "turn": null,
+        "sentBy": {
+          "threadId": "thread",
+          "rowId": "c-moved",
+          "title": "web.fetch",
+          "toolset": null,
+          "thread": "old-shapes"
+        },
+        "ran": {
+          "kind": "tool",
+          "id": "c-moved",
+          "seq": 14,
+          "runId": "r1",
+          "messageId": "m1",
+          "toolId": "web.fetch",
+          "input": {
+            "url": "https://example.com/slow"
+          },
+          "risk": "normal",
+          "waits": false,
+          "requestedAt": "2026-01-01T00:00:14.000Z",
+          "state": "ran",
+          "decision": null,
+          "output": {
+            "ok": true,
+            "value": {
+              "movedToBackground": true,
+              "callId": "c-moved"
+            }
+          },
+          "ms": 1500,
+          "title": "web.fetch",
+          "toolset": null
+        }
+      },
+      {
+        "kind": "failure",
+        "id": "e35",
+        "seq": 35,
+        "runId": "r2",
+        "error": "",
+        "failure": "no_model",
+        "order": 20,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e37",
+        "seq": 37,
+        "runId": "f1",
+        "error": "",
+        "failure": "gone",
+        "order": 21,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e39",
+        "seq": 39,
+        "runId": "f2",
+        "error": "",
+        "order": 22,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e41",
+        "seq": 41,
+        "runId": "f3",
+        "error": "",
+        "failure": "interrupted",
+        "order": 23,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e43",
+        "seq": 43,
+        "runId": "f4",
+        "error": "",
+        "failure": "gave_up",
+        "order": 24,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e45",
+        "seq": 45,
+        "runId": "f5",
+        "error": "overloaded",
+        "failure": "model_error",
+        "order": 25,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e47",
+        "seq": 47,
+        "runId": "f6",
+        "error": "Something nobody expected",
+        "order": 26,
+        "turn": null,
+        "canRetry": true
+      }
+    ],
+    "waiting": [],
+    "run": null,
+    "before": null,
+    "newFrom": "e1",
+    "earlierUnread": 0,
+    "pages": []
+  },
+  "viewer": {
+    "access": {
+      "via": "space",
+      "role": "viewer"
+    },
+    "can": {
+      "post": false,
+      "arrange": false,
+      "share": false,
+      "move": false,
+      "delete": false
+    },
+    "rows": [
+      {
+        "kind": "relay",
+        "id": "e1",
+        "seq": 4,
+        "postedAt": "2026-01-01T00:00:01.000Z",
+        "type": "message",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "to": "Researcher",
+        "text": "Research the topic.",
+        "task": {
+          "instructions": "Be brief."
+        },
+        "order": 0,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e2",
+        "seq": 4,
+        "postedAt": "2026-01-01T00:00:02.000Z",
+        "type": "message",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "to": "Researcher",
+        "text": "Any progress?",
+        "order": 1,
+        "turn": null
+      },
+      {
+        "kind": "agent",
+        "id": "m1",
+        "seq": 6,
+        "runId": "r1",
+        "model": null,
+        "startedAt": "2026-01-01T00:00:05.000Z",
+        "text": "",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": null,
+        "retried": false,
+        "order": 2,
+        "turn": null
+      },
+      {
+        "kind": "tool",
+        "id": "c-parked",
+        "seq": 10,
+        "runId": "r1",
+        "messageId": "m1",
+        "toolId": "mcp.github.search",
+        "input": {
+          "query": "mage"
+        },
+        "risk": "ask",
+        "waits": true,
+        "requestedAt": "2026-01-01T00:00:07.000Z",
+        "state": "ran",
+        "decision": {
+          "allow": true,
+          "scope": "for_now",
+          "by": {
+            "kind": "user",
+            "userId": "ada",
+            "name": "Ada Lovelace",
+            "former": false
+          },
+          "seq": 8
+        },
+        "output": {
+          "ok": true,
+          "value": []
+        },
+        "ms": 12,
+        "ranAs": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "order": 3,
+        "turn": {
+          "continued": false,
+          "model": null
+        },
+        "title": "mcp.github.search",
+        "toolset": null
+      },
+      {
+        "kind": "tool",
+        "id": "c-blocked",
+        "seq": 13,
+        "runId": "r1",
+        "messageId": "m1",
+        "toolId": "mcp.github.search",
+        "input": {
+          "query": "mage"
+        },
+        "risk": "ask",
+        "waits": true,
+        "requestedAt": "2026-01-01T00:00:11.000Z",
+        "state": "stopped",
+        "decision": null,
+        "output": null,
+        "ms": null,
+        "order": 4,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "title": "mcp.github.search",
+        "toolset": null
+      },
+      {
+        "kind": "tool",
+        "id": "c-moved",
+        "seq": 15,
+        "runId": "r1",
+        "messageId": "m1",
+        "toolId": "web.fetch",
+        "input": {
+          "url": "https://example.com/slow"
+        },
+        "risk": "normal",
+        "waits": false,
+        "requestedAt": "2026-01-01T00:00:14.000Z",
+        "state": "ran",
+        "decision": null,
+        "output": {
+          "ok": true,
+          "value": {
+            "movedToBackground": true,
+            "callId": "c-moved"
+          }
+        },
+        "ms": 1500,
+        "order": 5,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "title": "web.fetch",
+        "toolset": null
+      },
+      {
+        "kind": "notice",
+        "id": "e17",
+        "seq": 19,
+        "subagents": [
+          {
+            "threadId": "child-2",
+            "name": "Writer",
+            "state": "failed",
+            "last": ""
+          },
+          {
+            "threadId": "child-1",
+            "name": "Researcher",
+            "state": "stopped",
+            "last": "Cut."
+          }
+        ],
+        "order": 6,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e30",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:30.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Ada Lovelace renamed a task.",
+        "silent": true,
+        "taken": 34,
+        "order": 7,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e20",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:20.000Z",
+        "type": "agent.ended",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher ended its run.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "last": "All sources read.",
+        "order": 8,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e21",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:21.000Z",
+        "type": "agent.ended",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher ended its run.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "order": 9,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e22",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:22.000Z",
+        "type": "agent.failed",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher failed: overloaded",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "error": "overloaded",
+        "last": "Reading.",
+        "order": 10,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e23",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:23.000Z",
+        "type": "agent.failed",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Something else went wrong",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "order": 11,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e24",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:24.000Z",
+        "type": "agent.stopped",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher was stopped.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "order": 12,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e25",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:25.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "All idle: Researcher, Writer",
+        "when": "all_idle",
+        "order": 13,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e26",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:26.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Idle: Writer",
+        "when": "any_idle",
+        "order": 14,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e27",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:27.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "The subagents are idle.",
+        "order": 15,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e28",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:28.000Z",
+        "type": "trigger.fired",
+        "from": {
+          "threadId": "thread",
+          "name": "Daily digest",
+          "main": true
+        },
+        "text": "Daily digest: write today's digest.",
+        "order": 16,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e29",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:29.000Z",
+        "type": "webhook.received",
+        "from": {
+          "threadId": "thread",
+          "name": "Deploys",
+          "main": true
+        },
+        "text": "Deploys was posted to.\n\nContent-Type: text/plain\n\nok",
+        "order": 17,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e31",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:31.000Z",
+        "type": "task.changed",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Ada Lovelace marked \"Draft\" done.",
+        "order": 18,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e32",
+        "seq": 34,
+        "postedAt": "2026-01-01T00:00:32.000Z",
+        "type": "call.ended",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "The call finished.",
+        "order": 19,
+        "turn": null,
+        "sentBy": {
+          "threadId": "thread",
+          "rowId": "c-moved",
+          "title": "web.fetch",
+          "toolset": null,
+          "thread": "old-shapes"
+        },
+        "ran": {
+          "kind": "tool",
+          "id": "c-moved",
+          "seq": 14,
+          "runId": "r1",
+          "messageId": "m1",
+          "toolId": "web.fetch",
+          "input": {
+            "url": "https://example.com/slow"
+          },
+          "risk": "normal",
+          "waits": false,
+          "requestedAt": "2026-01-01T00:00:14.000Z",
+          "state": "ran",
+          "decision": null,
+          "output": {
+            "ok": true,
+            "value": {
+              "movedToBackground": true,
+              "callId": "c-moved"
+            }
+          },
+          "ms": 1500,
+          "title": "web.fetch",
+          "toolset": null
+        }
+      },
+      {
+        "kind": "failure",
+        "id": "e35",
+        "seq": 35,
+        "runId": "r2",
+        "error": "",
+        "failure": "no_model",
+        "order": 20,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e37",
+        "seq": 37,
+        "runId": "f1",
+        "error": "",
+        "failure": "gone",
+        "order": 21,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e39",
+        "seq": 39,
+        "runId": "f2",
+        "error": "",
+        "order": 22,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e41",
+        "seq": 41,
+        "runId": "f3",
+        "error": "",
+        "failure": "interrupted",
+        "order": 23,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e43",
+        "seq": 43,
+        "runId": "f4",
+        "error": "",
+        "failure": "gave_up",
+        "order": 24,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e45",
+        "seq": 45,
+        "runId": "f5",
+        "error": "overloaded",
+        "failure": "model_error",
+        "order": 25,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "failure",
+        "id": "e47",
+        "seq": 47,
+        "runId": "f6",
+        "error": "Something nobody expected",
+        "order": 26,
+        "turn": null,
+        "canRetry": false
+      }
+    ],
+    "waiting": [],
+    "run": null,
+    "before": null,
+    "newFrom": "e1",
+    "earlierUnread": 0,
+    "pages": []
+  }
+}

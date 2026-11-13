@@ -1,6 +1,6 @@
 import { type Browser, expect, type Page, test } from "@playwright/test";
 
-import { joinSpaceOf } from "./database.ts";
+import { joinSpaceOf } from "./seed.ts";
 import { mcpServer } from "./servers.ts";
 
 // Sign-ups are rate limited per client address; each person counts as their own client, in every
@@ -99,7 +99,7 @@ test("a server with personal credentials runs each call with its approver's own 
 
   // Grace, alone in her thread with no connection, is asked to approve, and connects as she does.
   const grace = await someoneElse(browser, testInfo.parallelIndex);
-  joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
+  await joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
   await grace.goto(`/s/${spaceId}`);
   await write(grace, '^tool mcp.people.echo {"text":"hello"}');
   await expect(grace).toHaveURL(/\/t\/[^/]+$/);
@@ -120,7 +120,7 @@ test("a server with personal credentials runs each call with its approver's own 
   await write(page, "Hello all");
   await expect(transcript(page)).toContainText("I have read 2 messages");
   const alan = await someoneElse(browser, testInfo.parallelIndex);
-  joinSpaceOf(adaEmail, await signUp(alan, "Alan Turing"), "messager");
+  await joinSpaceOf(adaEmail, await signUp(alan, "Alan Turing"), "messager");
   await write(grace, '^tool mcp.people.echo {"text":"again"}');
   await alan.goto(thread);
   await expect(approval(alan)).toContainText("Echo");

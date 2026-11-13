@@ -107,8 +107,14 @@ test("a wake-up timer goes off and tells the thread", async ({ page }) => {
   // its news reaches this page on a reload.
   await expect(async () => {
     await page.reload();
-    await expect(page.getByText("Wake-up fired")).toBeVisible({ timeout: 2_000 });
+    await expect(
+      page.getByRole("article", { name: "Notification" }).getByText("Wake-up"),
+    ).toBeVisible({ timeout: 2_000 });
   }).toPass({ timeout: 30_000 });
+  // The agent reads the note and answers it.
+  await expect(page.getByRole("article", { name: "Message from Agent" }).last()).toContainText(
+    "I have read 2 messages",
+  );
 });
 
 test("tasks and a schedule share the strip, one kind open at a time, closed by Escape", async ({
@@ -134,7 +140,9 @@ test("tasks and a schedule share the strip, one kind open at a time, closed by E
   await page.getByRole("textbox", { name: "Message", exact: true }).fill("a draft");
   const resting = await strip.boundingBox();
   await strip.getByRole("button", { name: "Tasks" }).click();
-  await expect(page.getByTestId("task-list").getByText("Two")).toBeVisible();
+  await expect(
+    page.getByTestId("task-list").getByRole("textbox", { name: "Task title" }).nth(1),
+  ).toHaveValue("Two");
   // The panel grows upward; the strip stays where it was, above the input.
   expect((await strip.boundingBox())!.y).toBe(resting!.y);
   await strip.getByRole("button", { name: "Schedules" }).click();

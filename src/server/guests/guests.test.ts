@@ -204,7 +204,8 @@ describe("thread access", () => {
 
     await api("DELETE", `/threads/${thread.id}/guests/${hedy.userId}`, ada.cookie);
     let frame = await stream.next();
-    while (frame.comment === "heartbeat") frame = await stream.next();
+    // Opened behind the log, the stream sent the thread itself after its rows.
+    while (frame.comment === "heartbeat" || frame.event === "thread") frame = await stream.next();
     expect(frame.event).toBe("access-ended");
     await expect(stream.next()).rejects.toThrow("stream ended");
     expect(listening.count).toBe(0);

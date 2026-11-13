@@ -1,0 +1,681 @@
+{
+  "rows": [
+    {
+      "kind": "relay",
+      "id": "e1",
+      "seq": 15,
+      "postedAt": "2026-01-01T00:00:01.000Z",
+      "type": "message",
+      "from": {
+        "threadId": "child-1",
+        "name": "Researcher",
+        "main": false
+      },
+      "actor": {
+        "kind": "agent",
+        "threadId": "child-1",
+        "name": "Researcher",
+        "main": false
+      },
+      "to": "Main thread",
+      "text": "Here is what I found.",
+      "steeredBy": [
+        {
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "via": []
+        },
+        {
+          "userId": "grace",
+          "name": "Grace Hopper",
+          "via": [
+            "Researcher"
+          ]
+        }
+      ],
+      "call": {
+        "threadId": "child-1",
+        "callId": "send-1"
+      },
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e2",
+      "seq": 15,
+      "postedAt": "2026-01-01T00:00:02.000Z",
+      "type": "message",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "actor": {
+        "kind": "agent",
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "to": "Researcher",
+      "text": "Research the topic.",
+      "steeredBy": [
+        {
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "via": []
+        }
+      ],
+      "task": {
+        "instructions": "Be brief.",
+        "fork": {
+          "callId": "start-1",
+          "seq": 12
+        }
+      },
+      "call": {
+        "threadId": "thread",
+        "callId": "start-1"
+      },
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e3",
+      "seq": 15,
+      "postedAt": "2026-01-01T00:00:03.000Z",
+      "type": "agent.ended",
+      "from": {
+        "threadId": "child-1",
+        "name": "Researcher",
+        "main": false
+      },
+      "actor": {
+        "kind": "agent",
+        "threadId": "child-1",
+        "name": "Researcher",
+        "main": false
+      },
+      "text": "Researcher ended its run.",
+      "steeredBy": [],
+      "subagents": [
+        {
+          "threadId": "child-1",
+          "name": "Researcher"
+        }
+      ],
+      "last": "All sources read.",
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e4",
+      "seq": 15,
+      "postedAt": "2026-01-01T00:00:04.000Z",
+      "type": "agent.failed",
+      "from": {
+        "threadId": "child-1",
+        "name": "Researcher",
+        "main": false
+      },
+      "text": "Researcher failed.",
+      "steeredBy": [],
+      "subagents": [
+        {
+          "threadId": "child-1",
+          "name": "Researcher"
+        }
+      ],
+      "error": "The model failed: overloaded",
+      "last": "Reading the third source.",
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e5",
+      "seq": 15,
+      "postedAt": "2026-01-01T00:00:05.000Z",
+      "type": "agent.stopped",
+      "from": {
+        "threadId": "child-2",
+        "name": "Writer",
+        "main": false
+      },
+      "text": "Writer was stopped.",
+      "steeredBy": [
+        {
+          "userId": "grace",
+          "name": "Grace Hopper",
+          "via": [
+            "Researcher"
+          ]
+        }
+      ],
+      "subagents": [
+        {
+          "threadId": "child-2",
+          "name": "Writer"
+        }
+      ],
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e6",
+      "seq": 15,
+      "postedAt": "2026-01-01T00:00:06.000Z",
+      "type": "agent.idle",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "text": "All idle: Researcher, Writer",
+      "steeredBy": [],
+      "subagents": [
+        {
+          "threadId": "child-1",
+          "name": "Researcher"
+        },
+        {
+          "threadId": "child-2",
+          "name": "Writer"
+        }
+      ],
+      "when": "all_idle",
+      "call": {
+        "threadId": "thread",
+        "callId": "watch-1"
+      },
+      "callIds": [
+        "watch-2",
+        "watch-3"
+      ],
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e7",
+      "seq": 15,
+      "postedAt": "2026-01-01T00:00:07.000Z",
+      "type": "agent.idle",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "text": "Idle: Writer",
+      "steeredBy": [],
+      "subagents": [
+        {
+          "threadId": "child-2",
+          "name": "Writer"
+        }
+      ],
+      "when": "any_idle",
+      "call": {
+        "threadId": "thread",
+        "callId": "watch-4"
+      },
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e8",
+      "seq": 15,
+      "postedAt": "2026-01-01T00:00:08.000Z",
+      "type": "call.ended",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "actor": {
+        "kind": "source",
+        "label": "Fetch",
+        "type": "job"
+      },
+      "text": "The call finished.",
+      "steeredBy": [
+        {
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "via": []
+        }
+      ],
+      "call": {
+        "threadId": "thread",
+        "callId": "j-1"
+      },
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e9",
+      "seq": 15,
+      "postedAt": "2026-01-01T00:00:09.000Z",
+      "type": "task.changed",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "actor": {
+        "kind": "person",
+        "userId": "ada",
+        "name": "Ada Lovelace"
+      },
+      "text": "Ada Lovelace marked \"Draft\" done.",
+      "steeredBy": [
+        {
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "via": []
+        }
+      ],
+      "tray": "tasks",
+      "change": {
+        "subject": {
+          "kind": "task",
+          "name": "Draft"
+        },
+        "action": "status",
+        "from": "doing",
+        "to": "done"
+      },
+      "rowId": "task-1",
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e10",
+      "seq": 15,
+      "postedAt": "2026-01-01T00:00:10.000Z",
+      "type": "trigger.fired",
+      "from": {
+        "threadId": "thread",
+        "name": "Daily digest",
+        "main": true
+      },
+      "actor": {
+        "kind": "source",
+        "label": "Daily digest",
+        "type": "schedule"
+      },
+      "text": "Daily digest: write today's digest.",
+      "steeredBy": [
+        {
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "via": []
+        }
+      ],
+      "schedule": "Every day at 09:00",
+      "call": {
+        "threadId": "thread",
+        "callId": "schedule-1"
+      },
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e11",
+      "seq": 15,
+      "postedAt": "2026-01-01T00:00:11.000Z",
+      "type": "trigger.fired",
+      "from": {
+        "threadId": "thread",
+        "name": "Wake-up",
+        "main": true
+      },
+      "actor": {
+        "kind": "source",
+        "label": "Wake-up",
+        "type": "wakeup"
+      },
+      "text": "Wake-up: check the build.",
+      "steeredBy": [],
+      "call": {
+        "threadId": "thread",
+        "callId": "wake-1"
+      },
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e12",
+      "seq": 15,
+      "postedAt": "2026-01-01T00:00:12.000Z",
+      "type": "webhook.received",
+      "from": {
+        "threadId": "thread",
+        "name": "Deploys",
+        "main": true
+      },
+      "actor": {
+        "kind": "source",
+        "label": "Deploys",
+        "type": "webhook"
+      },
+      "text": "Deploys was posted to.\n\nContent-Type: application/json\n\n{\"ok\":true}",
+      "steeredBy": [],
+      "delivery": {
+        "contentType": "application/json",
+        "bytes": 11,
+        "signed": true
+      },
+      "call": {
+        "threadId": "thread",
+        "callId": "hook-1"
+      },
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e13",
+      "seq": 15,
+      "postedAt": "2026-01-01T00:00:13.000Z",
+      "type": "webhook.received",
+      "from": {
+        "threadId": "thread",
+        "name": "Deploys",
+        "main": true
+      },
+      "text": "Deploys was posted to.",
+      "steeredBy": [],
+      "delivery": {
+        "contentType": null,
+        "bytes": 0,
+        "signed": false
+      },
+      "turn": null
+    },
+    {
+      "kind": "agent",
+      "id": "m1",
+      "seq": 16,
+      "runId": "r1",
+      "model": "anthropic/claude-test",
+      "startedAt": "2026-01-01T00:00:16.000Z",
+      "text": "All noted.",
+      "reasoning": "",
+      "thoughtMs": null,
+      "status": "completed",
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 30
+      },
+      "retried": false,
+      "turn": {
+        "continued": false,
+        "model": "anthropic/claude-test"
+      }
+    },
+    {
+      "kind": "relay",
+      "id": "e19",
+      "seq": 19,
+      "postedAt": "2026-01-01T00:00:19.000Z",
+      "type": "change",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "actor": {
+        "kind": "person",
+        "userId": "ada",
+        "name": "Ada Lovelace"
+      },
+      "text": "Ada Lovelace paused Daily digest.",
+      "steeredBy": [
+        {
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "via": []
+        }
+      ],
+      "tray": "triggers",
+      "change": {
+        "subject": {
+          "kind": "schedule",
+          "name": "Daily digest"
+        },
+        "action": "pause"
+      },
+      "silent": true,
+      "taken": 25,
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e20",
+      "seq": 20,
+      "postedAt": "2026-01-01T00:00:20.000Z",
+      "type": "change",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "actor": {
+        "kind": "person",
+        "userId": "grace",
+        "name": "Grace Hopper"
+      },
+      "text": "Grace Hopper turned signatures on for Deploys.",
+      "steeredBy": [],
+      "tray": "webhooks",
+      "change": {
+        "subject": {
+          "kind": "webhook",
+          "name": "Deploys"
+        },
+        "action": "signature",
+        "to": "on"
+      },
+      "silent": true,
+      "taken": 25,
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e21",
+      "seq": 21,
+      "postedAt": "2026-01-01T00:00:21.000Z",
+      "type": "change",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "actor": {
+        "kind": "person",
+        "userId": "ada",
+        "name": "Ada Lovelace"
+      },
+      "text": "Ada Lovelace changed the model.",
+      "steeredBy": [],
+      "change": {
+        "subject": {
+          "kind": "thread",
+          "name": "Greetings"
+        },
+        "action": "model",
+        "from": "anthropic/claude-test",
+        "to": "openai/gpt-test"
+      },
+      "silent": true,
+      "taken": 25,
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e22",
+      "seq": 22,
+      "postedAt": "2026-01-01T00:00:22.000Z",
+      "type": "change",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "actor": {
+        "kind": "source",
+        "label": "Mage",
+        "type": "system"
+      },
+      "text": "The thread was renamed.",
+      "steeredBy": [],
+      "change": {
+        "subject": {
+          "kind": "thread",
+          "name": "Greetings"
+        },
+        "action": "rename",
+        "from": "Hi",
+        "to": "Greetings"
+      },
+      "silent": true,
+      "turn": null
+    },
+    {
+      "kind": "human",
+      "id": "e23",
+      "seq": 25,
+      "author": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:23.000Z",
+      "text": "Anything new?",
+      "quiet": false,
+      "turn": null
+    },
+    {
+      "kind": "agent",
+      "id": "m2",
+      "seq": 26,
+      "runId": "r2",
+      "model": "anthropic/claude-test",
+      "startedAt": "2026-01-01T00:00:26.000Z",
+      "text": "A few changes.",
+      "reasoning": "",
+      "thoughtMs": null,
+      "status": "completed",
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 30
+      },
+      "retried": false,
+      "turn": {
+        "continued": false,
+        "model": "anthropic/claude-test"
+      }
+    },
+    {
+      "kind": "limit",
+      "id": "e29",
+      "seq": 29,
+      "limit": 20,
+      "call": {
+        "threadId": "child-1",
+        "callId": "send-9"
+      },
+      "turn": null
+    },
+    {
+      "kind": "limit",
+      "id": "e30",
+      "seq": 30,
+      "limit": 20,
+      "turn": null
+    },
+    {
+      "kind": "relay",
+      "id": "e32",
+      "seq": 32,
+      "postedAt": "2026-01-01T00:00:32.000Z",
+      "type": "change",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "text": "A task was archived.",
+      "steeredBy": [],
+      "tray": "tasks",
+      "silent": true,
+      "turn": null
+    }
+  ],
+  "pending": [],
+  "inbox": [
+    {
+      "id": "e22",
+      "seq": 22,
+      "postedAt": "2026-01-01T00:00:22.000Z",
+      "type": "change",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "actor": {
+        "kind": "source",
+        "label": "Mage",
+        "type": "system"
+      },
+      "text": "The thread was renamed.",
+      "steeredBy": [],
+      "change": {
+        "subject": {
+          "kind": "thread",
+          "name": "Greetings"
+        },
+        "action": "rename",
+        "from": "Hi",
+        "to": "Greetings"
+      },
+      "silent": true
+    },
+    {
+      "id": "e31",
+      "seq": 31,
+      "postedAt": "2026-01-01T00:00:31.000Z",
+      "type": "call.ended",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "text": "Another call finished.",
+      "steeredBy": [],
+      "call": {
+        "threadId": "thread",
+        "callId": "j-2"
+      }
+    },
+    {
+      "id": "e32",
+      "seq": 32,
+      "postedAt": "2026-01-01T00:00:32.000Z",
+      "type": "change",
+      "from": {
+        "threadId": "thread",
+        "name": "Main thread",
+        "main": true
+      },
+      "text": "A task was archived.",
+      "steeredBy": [],
+      "tray": "tasks",
+      "silent": true
+    }
+  ],
+  "run": null,
+  "usage": {
+    "inputTokens": 240,
+    "outputTokens": 60
+  }
+}

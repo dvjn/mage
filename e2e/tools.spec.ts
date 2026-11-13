@@ -1,6 +1,6 @@
 import { type Browser, expect, type Page, test } from "@playwright/test";
 
-import { joinSpaceOf } from "./database.ts";
+import { joinSpaceOf } from "./seed.ts";
 
 // Sign-ups are rate limited per client address; each person counts as their own client, in every
 // worker running this file.
@@ -253,9 +253,9 @@ test("a viewer sees the card paused while a messager decides it", async ({
   await expect(replies(page)).toHaveText(/I have read 1 message/);
 
   const grace = await someoneElse(browser, testInfo.parallelIndex);
-  joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
+  await joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
   const alan = await someoneElse(browser, testInfo.parallelIndex);
-  joinSpaceOf(adaEmail, await signUp(alan, "Alan Turing"), "viewer");
+  await joinSpaceOf(adaEmail, await signUp(alan, "Alan Turing"), "viewer");
   await write(page, '^tool thread.rename {"title":"Looms"}');
 
   await alan.goto(page.url());
@@ -456,7 +456,7 @@ test("a policy's people use a tool directly, and only its approvers approve the 
 
   // Grace may message here but is not named: her call waits, and only Ada may approve it.
   const grace = await someoneElse(browser, testInfo.parallelIndex);
-  joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
+  await joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
   await grace.goto(page.url());
   await expect(line(grace, /^Thread › Rename · Ran$/)).toBeVisible();
   await write(grace, '^tool thread.rename {"title":"Hers"}');
@@ -498,7 +498,7 @@ test("independent approval needs someone other than the author of the latest mes
   await expect(card(page).getByRole("button", { name: "Allow", exact: true })).toBeDisabled();
   await expect(card(page).getByRole("button", { name: "Allow for now" })).toHaveCount(0);
   const reviewer = await someoneElse(browser, testInfo.parallelIndex);
-  joinSpaceOf(adaEmail, await signUp(reviewer, "Grace Hopper"), "messager");
+  await joinSpaceOf(adaEmail, await signUp(reviewer, "Grace Hopper"), "messager");
   await reviewer.goto(page.url());
   await expect(card(reviewer).getByRole("button", { name: "Allow", exact: true })).toBeEnabled();
   await card(reviewer).getByRole("button", { name: "Allow", exact: true }).click();

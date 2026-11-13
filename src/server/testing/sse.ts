@@ -19,9 +19,11 @@ export async function openStream(
   });
   const frames = framesOf(res);
 
-  // The next rows sent, skipping heartbeats.
+  // The next rows sent, skipping heartbeats and the thread itself, which is sent as the stream
+  // opens behind the log.
   async function nextRows() {
-    const frame = await frames.nextItem();
+    let frame = await frames.nextItem();
+    while (frame.event === "thread") frame = await frames.nextItem();
     const update = JSON.parse(frame.data!) as RowsUpdate;
     return { ...update, sseId: frame.id, sseEvent: frame.event };
   }

@@ -141,8 +141,16 @@ export default defineConfig({
       injectClientScript: false,
     }),
   ],
-  // Migrations and the vendored marks are written by tools, as they write them.
-  fmt: { ignorePatterns: ["src/server/db/migrations/**", "src/web/icons/marks.ts"] },
+  // Migrations, the vendored marks, the contract snapshot and what the thread fixtures fold into
+  // are written by tools, as they write them.
+  fmt: {
+    ignorePatterns: [
+      "src/server/db/migrations/**",
+      "src/web/icons/marks.ts",
+      "src/shared/contract.snapshot.json",
+      "src/shared/fixtures/golden/**",
+    ],
+  },
   lint: {
     options: {
       typeAware: true,

@@ -95,7 +95,8 @@ describe("live thread events", () => {
     await stream.nextRows();
     db.run(sql`delete from space_member where subject_id = ${grace.userId}`);
     let frame = await stream.next();
-    while (frame.comment === "heartbeat") frame = await stream.next();
+    // Opened behind the log, the stream sent the thread itself after its rows.
+    while (frame.comment === "heartbeat" || frame.event === "thread") frame = await stream.next();
 
     expect(frame.event).toBe("access-ended");
     await expect(stream.next()).rejects.toThrow("stream ended");
@@ -108,6 +109,8 @@ describe("live thread events", () => {
     const stream = await openStream(app, ada.cookie, thread.id);
     const inbox = await openInbox(app, ada.cookie);
     await Promise.all([stream.nextRows(), inbox.next()]);
+    // Opened behind the log, the stream sends the thread itself after its rows.
+    expect((await stream.nextItem()).event).toBe("thread");
     shutdown.abort();
 
     await expect(stream.nextItem()).rejects.toThrow("stream ended");

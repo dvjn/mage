@@ -9,7 +9,7 @@ import { rmSync } from "node:fs";
 
 import { eq } from "drizzle-orm";
 import { ulid } from "ulid";
-import { expect } from "vite-plus/test";
+import { afterEach, expect } from "vite-plus/test";
 
 import { createCallStore } from "@/server/agent/call-store.ts";
 import { createLive } from "@/server/agent/live.ts";
@@ -36,7 +36,7 @@ import { createArtifacts } from "@/server/artifacts/service.ts";
 import { createArtifactStore } from "@/server/artifacts/store.ts";
 import { createToolDecisions, createTools, type Toolset } from "@/server/agent/tools.ts";
 import { createApp } from "@/server/app.ts";
-import { createTransact, openDatabase } from "@/server/db/db.ts";
+import { createTransact, type Db, openDatabase } from "@/server/db/db.ts";
 import { createGuests } from "@/server/guests/service.ts";
 import { createGuestStore } from "@/server/guests/store.ts";
 import { createInstructions } from "@/server/instructions/service.ts";
@@ -87,6 +87,8 @@ import type { Effort } from "@/shared/threads/thread.ts";
 import { createFixtures, gitStandIn } from "../../../mock/git.ts";
 import { mcpStandIn } from "../../../mock/mcp.ts";
 import { scimClient } from "../../../mock/directory.ts";
+import { invariants } from "./invariants.ts";
+import { createSeed, joinSpace, seedRoutes } from "./seed.ts";
 import { scriptedModel } from "./scripted-model.ts";
 
 // Never called by these tests.
@@ -137,6 +139,18 @@ export type ThreadBody = {
   model: string | null;
 };
 
+// The databases of the workspaces the test under way set up, checked as it ends, once their
+// workers have stopped.
+const opened = new Set<Db>();
+const working = new Set<{ stop(): Promise<void> }>();
+afterEach(async () => {
+  await Promise.all([...working].map((worker) => worker.stop()));
+  working.clear();
+  const broken = [...opened].flatMap((db) => invariants(db));
+  opened.clear();
+  expect(broken).toEqual([]);
+});
+
 export function setup(
   workerOptions: Partial<RunWorkerOptions> = {},
   {
@@ -147,9 +161,12 @@ export function setup(
     toolsets = [] as Toolset[],
     // A database file another workspace shares, as a second server instance would.
     database = ":memory:",
+    // Whether the app has the routes tests arrange data through.
+    testRoutes = true,
   } = {},
 ) {
   const db = openDatabase(database);
+  opened.add(db);
   const logger = createLogger({ write() {} });
   const secret = "test-secret-that-is-long-enough-1234567890";
   const hooks = createHooks();
@@ -266,6 +283,7 @@ export function setup(
     hooks,
   });
   const guestStore = createGuestStore(db);
+  const readStore = createThreadReadStore(db);
   const access = createThreadAccess({
     spaces,
     threads: threadStore,
@@ -498,7 +516,7 @@ export function setup(
     guests: guestStore,
     threads: threadStore,
     transcripts,
-    reads: createThreadReadStore(db),
+    reads: readStore,
     runs: runStore,
     deltas: deltaStore,
     models,
@@ -532,7 +550,7 @@ export function setup(
   const logLines: object[] = [];
   // A worker as a server process would start it, sharing this app's stores.
   function makeWorker(options: Partial<RunWorkerOptions> = {}) {
-    return createRunWorker({
+    const made = createRunWorker({
       runs: runStore,
       threads: threadStore,
       transcripts,
@@ -563,6 +581,8 @@ export function setup(
       ...workerOptions,
       ...options,
     });
+    working.add(made);
+    return made;
   }
   const worker = makeWorker();
   const orgs = createOrgs({
@@ -637,6 +657,11 @@ export function setup(
     pingDatabase: () => Promise.resolve(true),
     heartbeatMs: 20,
     shutdown: shutdown.signal,
+    ...(testRoutes && {
+      testRoutes: seedRoutes(
+        createSeed({ db, threads: threadStore, guests: guestStore, reads: readStore, log }),
+      ),
+    }),
   });
 
   async function signUp(name: string, email: string) {
@@ -664,23 +689,7 @@ export function setup(
   function join<T extends { userId: string }>(user: T, spaceId: string, role: SpaceRole) {
     const space = spaceStore.find(spaceId);
     if (!space) throw new Error("no space");
-    db.insert(schema.member)
-      .values({
-        id: ulid(),
-        organizationId: space.orgId,
-        userId: user.userId,
-        role: "member",
-        directRole: "member",
-        createdAt: new Date(),
-      })
-      .run();
-    db.update(schema.session)
-      .set({ activeOrganizationId: space.orgId })
-      .where(eq(schema.session.userId, user.userId))
-      .run();
-    db.insert(schema.spaceMember)
-      .values({ spaceId, subjectKind: "user", subjectId: user.userId, role, source: "direct" })
-      .run();
+    joinSpace(db, user.userId, space, role);
     return { ...user, orgId: space.orgId, role: "member" as OrgRole };
   }
 

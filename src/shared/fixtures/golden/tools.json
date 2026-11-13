@@ -1,0 +1,766 @@
+{
+  "rows": [
+    {
+      "kind": "human",
+      "id": "e1",
+      "seq": 3,
+      "author": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:01.000Z",
+      "text": "Use your tools",
+      "quiet": false,
+      "turn": null
+    },
+    {
+      "kind": "agent",
+      "id": "m1",
+      "seq": 4,
+      "runId": "r1",
+      "model": "anthropic/claude-test",
+      "startedAt": "2026-01-01T00:00:04.000Z",
+      "text": "",
+      "reasoning": "",
+      "thoughtMs": null,
+      "status": "completed",
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 30
+      },
+      "retried": false,
+      "turn": null
+    },
+    {
+      "kind": "tool",
+      "id": "c-auto",
+      "seq": 6,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "normal",
+      "waits": false,
+      "requestedAt": "2026-01-01T00:00:06.000Z",
+      "state": "ran",
+      "decision": null,
+      "output": {
+        "ok": true,
+        "value": {
+          "status": 200
+        }
+      },
+      "ms": 42,
+      "turn": {
+        "continued": false,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-unnamed",
+      "seq": 8,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "normal",
+      "waits": false,
+      "requestedAt": "2026-01-01T00:00:08.000Z",
+      "state": "failed",
+      "decision": null,
+      "output": {
+        "ok": false,
+        "error": "404"
+      },
+      "ms": 7,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-silent",
+      "seq": 10,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "normal",
+      "waits": false,
+      "requestedAt": "2026-01-01T00:00:10.000Z",
+      "state": "failed",
+      "decision": null,
+      "output": {
+        "ok": false,
+        "error": "The tool failed."
+      },
+      "ms": 0,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-once",
+      "seq": 12,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "ask",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:12.000Z",
+      "state": "ran",
+      "decision": {
+        "allow": true,
+        "scope": "once",
+        "by": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "seq": 13
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "status": 200
+        }
+      },
+      "ms": 42,
+      "ranAs": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-standing",
+      "seq": 15,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "ask",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:15.000Z",
+      "state": "ran",
+      "decision": {
+        "allow": true,
+        "scope": "for_now",
+        "by": {
+          "kind": "user",
+          "userId": "grace",
+          "name": "Grace Hopper",
+          "former": false
+        },
+        "seq": 16
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "status": 200
+        }
+      },
+      "ms": 42,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-stood",
+      "seq": 18,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "ask",
+      "waits": false,
+      "requestedAt": "2026-01-01T00:00:18.000Z",
+      "state": "ran",
+      "decision": {
+        "allow": true,
+        "scope": "for_now",
+        "by": {
+          "kind": "user",
+          "userId": "grace",
+          "name": "Grace Hopper",
+          "former": false
+        },
+        "seq": 16
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "status": 200
+        }
+      },
+      "ms": 42,
+      "standingOn": "c-standing",
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-agent",
+      "seq": 20,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "ask",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:20.000Z",
+      "state": "ran",
+      "decision": null,
+      "output": {
+        "ok": true,
+        "value": null
+      },
+      "ms": 42,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-denied",
+      "seq": 23,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "ask",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:23.000Z",
+      "state": "denied",
+      "decision": {
+        "allow": false,
+        "scope": "once",
+        "by": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "seq": 24
+      },
+      "output": null,
+      "ms": null,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-stale",
+      "seq": 25,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "ask",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:25.000Z",
+      "state": "stale",
+      "decision": null,
+      "output": null,
+      "ms": null,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-stopped",
+      "seq": 27,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "ask",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:27.000Z",
+      "state": "stopped",
+      "decision": null,
+      "output": null,
+      "ms": null,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-skipped",
+      "seq": 29,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "ask",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:29.000Z",
+      "state": "skipped",
+      "decision": {
+        "allow": false,
+        "scope": "once",
+        "by": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "seq": 30
+      },
+      "output": null,
+      "ms": null,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-lapsed",
+      "seq": 31,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "ask",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:31.000Z",
+      "state": "stale",
+      "decision": {
+        "allow": true,
+        "scope": "once",
+        "by": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "seq": 32
+      },
+      "output": null,
+      "ms": null,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-ask",
+      "seq": 34,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "ask.questions",
+      "title": "Ask",
+      "toolset": "Questions",
+      "input": {
+        "questions": [
+          {
+            "question": "Which one?",
+            "options": [
+              "One",
+              "Two"
+            ]
+          }
+        ]
+      },
+      "risk": "normal",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:34.000Z",
+      "state": "ran",
+      "decision": {
+        "allow": true,
+        "scope": "once",
+        "by": {
+          "kind": "user",
+          "userId": "grace",
+          "name": "Grace Hopper",
+          "former": false
+        },
+        "seq": 35
+      },
+      "output": {
+        "ok": true,
+        "value": {
+          "answers": {
+            "Which one?": "Two"
+          }
+        }
+      },
+      "ms": 42,
+      "answers": {
+        "Which one?": "Two"
+      },
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-large",
+      "seq": 38,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "normal",
+      "waits": false,
+      "requestedAt": "2026-01-01T00:00:38.000Z",
+      "state": "ran",
+      "decision": null,
+      "output": {
+        "ok": true,
+        "value": null,
+        "large": {
+          "id": "e39",
+          "size": 48000
+        }
+      },
+      "ms": 42,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "c-review",
+      "seq": 40,
+      "runId": "r1",
+      "messageId": "m1",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com"
+      },
+      "risk": "review",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:40.000Z",
+      "state": "stopped",
+      "decision": null,
+      "output": null,
+      "ms": null,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "j-ran",
+      "seq": 45,
+      "runId": "j-ran",
+      "messageId": "j-ran",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "background": true,
+      "input": {
+        "url": "https://example.com/slow"
+      },
+      "risk": "normal",
+      "waits": false,
+      "requestedAt": "2026-01-01T00:00:45.000Z",
+      "state": "ran",
+      "decision": null,
+      "output": {
+        "ok": true,
+        "value": "page"
+      },
+      "ms": 9000,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "j-failed",
+      "seq": 47,
+      "runId": "j-failed",
+      "messageId": "j-failed",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "background": true,
+      "input": {
+        "url": "https://example.com/slow"
+      },
+      "risk": "normal",
+      "waits": false,
+      "requestedAt": "2026-01-01T00:00:47.000Z",
+      "state": "failed",
+      "decision": null,
+      "output": {
+        "ok": false,
+        "error": "timed out"
+      },
+      "ms": 5,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "j-cancelled",
+      "seq": 49,
+      "runId": "j-cancelled",
+      "messageId": "j-cancelled",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "background": true,
+      "input": {
+        "url": "https://example.com/slow"
+      },
+      "risk": "normal",
+      "waits": false,
+      "requestedAt": "2026-01-01T00:00:49.000Z",
+      "state": "stopped",
+      "decision": null,
+      "output": null,
+      "ms": null,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "j-approved",
+      "seq": 51,
+      "runId": "j-approved",
+      "messageId": "j-approved",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "background": true,
+      "input": {
+        "url": "https://example.com/slow"
+      },
+      "risk": "ask",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:51.000Z",
+      "state": "ran",
+      "decision": {
+        "allow": true,
+        "scope": "once",
+        "by": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "seq": 52
+      },
+      "output": {
+        "ok": true,
+        "value": "page"
+      },
+      "ms": 30,
+      "ranAs": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "j-denied",
+      "seq": 54,
+      "runId": "j-denied",
+      "messageId": "j-denied",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "background": true,
+      "input": {
+        "url": "https://example.com/slow"
+      },
+      "risk": "ask",
+      "waits": true,
+      "requestedAt": "2026-01-01T00:00:54.000Z",
+      "state": "denied",
+      "decision": {
+        "allow": false,
+        "scope": "once",
+        "by": {
+          "kind": "user",
+          "userId": "grace",
+          "name": "Grace Hopper",
+          "former": false
+        },
+        "seq": 55
+      },
+      "output": null,
+      "ms": null,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "agent",
+      "id": "m2",
+      "seq": 57,
+      "runId": "r2",
+      "model": "anthropic/claude-test",
+      "startedAt": "2026-01-01T00:00:57.000Z",
+      "text": "",
+      "reasoning": "",
+      "thoughtMs": null,
+      "status": "completed",
+      "usage": null,
+      "retried": false,
+      "turn": null
+    },
+    {
+      "kind": "tool",
+      "id": "c-moved",
+      "seq": 59,
+      "runId": "r2",
+      "messageId": "m2",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com/slow"
+      },
+      "risk": "normal",
+      "waits": false,
+      "requestedAt": "2026-01-01T00:00:59.000Z",
+      "state": "ran",
+      "decision": null,
+      "output": {
+        "ok": true,
+        "value": {
+          "movedToBackground": true,
+          "callId": "j-moved"
+        }
+      },
+      "ms": 2000,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    },
+    {
+      "kind": "tool",
+      "id": "j-moved",
+      "seq": 60,
+      "runId": "j-moved",
+      "messageId": "j-moved",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "background": true,
+      "input": {
+        "url": "https://example.com/slow"
+      },
+      "risk": "normal",
+      "waits": false,
+      "requestedAt": "2026-01-01T00:01:00.000Z",
+      "state": "ran",
+      "decision": null,
+      "output": {
+        "ok": true,
+        "value": "page"
+      },
+      "ms": 60000,
+      "turn": {
+        "continued": true,
+        "model": null
+      }
+    }
+  ],
+  "pending": [],
+  "inbox": [],
+  "run": null,
+  "usage": {
+    "inputTokens": 120,
+    "outputTokens": 30
+  }
+}

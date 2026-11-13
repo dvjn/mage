@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { ASK_TOOL } from "@/shared/ask.ts";
 import type { AgentRow, RelayRow, ShownRow, ToolRow } from "@/shared/threads/rows.ts";
 import { agentTurnOf, type TranscriptRow } from "@/shared/transcript.ts";
 import {
@@ -100,6 +101,8 @@ function notice(id: string): ShownRow {
 
 const thought = (id: string) => step(id, { reasoning: "Thinking it over" });
 const reply = (id: string) => step(id, { text: "Done" });
+// A call that waits for answers, which shows as a card; one that waits for a decision is a line.
+const asking = (id: string) => call(id, { state: "pending", waits: true, toolId: ASK_TOOL });
 // A step that only called tools, which shows as nothing.
 const silent = (id: string) => step(id, { turn: null });
 
@@ -158,15 +161,24 @@ describe("transcriptEntries", () => {
     ]);
   });
 
-  it("splits runs at calls that wait as cards", () => {
+  it("splits runs at calls that wait for answers, which show as cards", () => {
     const rows = [
       call("c1", { turn: turn(false) }),
       call("c2"),
-      call("w1", { state: "pending", waits: true }),
+      asking("w1"),
       call("c3"),
       call("c4"),
     ];
     expect(shape(rows)).toEqual([["calls:c1", ["c1", "c2"]], ["w1"], ["calls:c3", ["c3", "c4"]]]);
+  });
+
+  it("folds a call that waits for a decision with the others", () => {
+    const rows = [
+      call("c1", { turn: turn(false) }),
+      call("w1", { state: "pending", waits: true }),
+      call("c2"),
+    ];
+    expect(shape(rows)).toEqual([["calls:c1", ["c1", "w1", "c2"]]]);
   });
 
   it("leaves a single call as its line", () => {
@@ -205,7 +217,7 @@ describe("transcriptEntries", () => {
 
   it("shows a subagent's waiting call as its card after the entry that started the subagent", () => {
     const subagent = { threadId: "subagent1", name: "Researcher", state: "working" as const };
-    const waiting = call("w1", { state: "pending", waits: true });
+    const waiting = asking("w1");
     const rows = [
       call("c1", { turn: turn(false), toolId: "subagents.start", subagent, subagentCall: waiting }),
       call("c2"),
@@ -414,15 +426,15 @@ describe("transcriptTurns", () => {
       thought("t1"),
       reply("r1"),
       call("c2"),
-      call("w1", { state: "pending", waits: true }),
+      asking("w1"),
       call("c3"),
     ];
     expect(turns(rows)).toEqual([
       [
         "agent",
         [["lines", ["c1", "t1"]], ["row"], ["lines", ["c2"]], ["row"], ["lines", ["c3"]]],
-        // The last step wrote text, so it shows its own actions.
-        undefined,
+        // The turn ends on a call, so its actions act on the step before it.
+        "r1",
       ],
     ]);
   });
@@ -468,7 +480,7 @@ describe("transcriptTurns", () => {
     );
     expect(entries.map((entry) => entry.kind === "row" && entry.endsTurn)).toEqual([
       undefined,
-      false,
+      undefined,
       true,
     ]);
   });

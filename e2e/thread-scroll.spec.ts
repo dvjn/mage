@@ -1,6 +1,6 @@
 import { type Browser, expect, type Page, test } from "@playwright/test";
 
-import { addNotesThread, addThreads, joinSpaceOf } from "./database.ts";
+import { addNotesThread, addThreads, joinSpaceOf } from "./seed.ts";
 
 // Sign-ups are rate limited per client address; each journey counts as its own client, in every
 // worker running this file.
@@ -67,8 +67,8 @@ test("a long thread opens at its newest message, from a link and from another th
   page,
 }) => {
   const email = await signUp(page, "Ada Lovelace");
-  addThreads(email, 1, { prefix: "Short" });
-  const long = addNotesThread(email, "Long notes", 40);
+  await addThreads(email, 1, { prefix: "Short" });
+  const long = await addNotesThread(email, "Long notes", 40);
 
   await page.goto(`/t/${long}`);
   await expectOpenAtEnd(page);
@@ -90,7 +90,7 @@ test("a reply streaming into a long thread stays in view, unless the reader scro
   page,
 }) => {
   const email = await signUp(page, "Ada Lovelace");
-  const long = addNotesThread(email, "Long notes", 40);
+  const long = await addNotesThread(email, "Long notes", 40);
   await page.goto(`/t/${long}`);
   await expectOpenAtEnd(page);
 
@@ -123,8 +123,8 @@ test("an unread thread opens where the reader stopped, and sticks to the end onc
 }, testInfo) => {
   const email = await signUp(page, "Ada Lovelace");
   const grace = await someoneElse(browser, testInfo.parallelIndex, "Grace Hopper");
-  addThreads(email, 1, { prefix: "Short" });
-  const thread = addNotesThread(email, "Catching up", 30, { email: grace.email, count: 10 });
+  await addThreads(email, 1, { prefix: "Short" });
+  const thread = await addNotesThread(email, "Catching up", 30, { email: grace.email, count: 10 });
 
   await page.goto(`/t/${thread}`);
   await expect(note(page, 31)).toBeInViewport();
@@ -192,9 +192,9 @@ test("coming back while a reply streams opens at what is new, and follows only f
 }, testInfo) => {
   const email = await signUp(page, "Ada Lovelace");
   const grace = await someoneElse(browser, testInfo.parallelIndex, "Grace Hopper");
-  const org = joinSpaceOf(email, grace.email, "messager");
-  addThreads(email, 1, { prefix: "Short" });
-  const thread = addNotesThread(email, "Catching up", 30);
+  const org = await joinSpaceOf(email, grace.email, "messager");
+  await addThreads(email, 1, { prefix: "Short" });
+  const thread = await addNotesThread(email, "Catching up", 30);
   await page.goto(`/t/${thread}`);
   await expectOpenAtEnd(page, 30);
   await sidebar(page)
@@ -229,8 +229,8 @@ test("coming back while the reader's own reply streams opens at the end and foll
   page,
 }) => {
   const email = await signUp(page, "Ada Lovelace");
-  addThreads(email, 1, { prefix: "Short" });
-  const thread = addNotesThread(email, "Catching up", 30);
+  await addThreads(email, 1, { prefix: "Short" });
+  const thread = await addNotesThread(email, "Catching up", 30);
   await page.goto(`/t/${thread}`);
   await expectOpenAtEnd(page, 30);
   const box = page.getByLabel("Message", { exact: true });
@@ -274,7 +274,7 @@ test("a thread of hundreds of rows opens at its end, and reads earlier rows as t
   page,
 }) => {
   const email = await signUp(page, "Ada Lovelace");
-  const long = addNotesThread(email, "Long notes", 320);
+  const long = await addNotesThread(email, "Long notes", 320);
   // The first page of earlier rows waits until the view is measured.
   let held: (() => Promise<void>) | undefined;
   await page.route(
@@ -311,7 +311,7 @@ test("a thread with many unread rows opens at its end, with the earlier unread o
 }, testInfo) => {
   const email = await signUp(page, "Ada Lovelace");
   const grace = await someoneElse(browser, testInfo.parallelIndex, "Grace Hopper");
-  const thread = addNotesThread(email, "Catching up", 30, { email: grace.email, count: 250 });
+  const thread = await addNotesThread(email, "Catching up", 30, { email: grace.email, count: 250 });
 
   // The pages scrolling up asks for wait, so the press is what reads.
   await page.route(
@@ -334,7 +334,7 @@ test("a row changes live at the end while the thread's earlier pages are read", 
   page,
 }) => {
   const email = await signUp(page, "Ada Lovelace");
-  const long = addNotesThread(email, "Long notes", 250);
+  const long = await addNotesThread(email, "Long notes", 250);
   await page.goto(`/t/${long}`);
   await expect(note(page, 250)).toBeInViewport();
   await readToStart(page);

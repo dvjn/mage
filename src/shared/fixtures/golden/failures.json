@@ -1,0 +1,158 @@
+{
+  "rows": [
+    {
+      "kind": "human",
+      "id": "e1",
+      "seq": 3,
+      "author": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:01.000Z",
+      "text": "Go",
+      "quiet": false,
+      "turn": null
+    },
+    {
+      "kind": "agent",
+      "id": "m1",
+      "seq": 4,
+      "runId": "r1",
+      "model": "anthropic/claude-test",
+      "startedAt": "2026-01-01T00:00:04.000Z",
+      "text": "Half a rep",
+      "reasoning": "",
+      "thoughtMs": null,
+      "status": "failed",
+      "usage": null,
+      "retried": true,
+      "turn": {
+        "continued": false,
+        "model": "anthropic/claude-test"
+      }
+    },
+    {
+      "kind": "failure",
+      "id": "e6",
+      "seq": 6,
+      "runId": "r1",
+      "error": "The server stopped while the agent was replying.",
+      "failure": "interrupted",
+      "turn": null
+    },
+    {
+      "kind": "failure",
+      "id": "e8",
+      "seq": 8,
+      "runId": "r2",
+      "error": "Rate limit reached",
+      "failure": "limit",
+      "connection": "codex",
+      "detail": "You have hit your usage limit.",
+      "resetsAt": "2026-01-01T05:00:00.000Z",
+      "turn": null
+    },
+    {
+      "kind": "failure",
+      "id": "e10",
+      "seq": 10,
+      "runId": "r3",
+      "error": "Sign in again",
+      "failure": "auth",
+      "connection": "claude",
+      "turn": null
+    },
+    {
+      "kind": "failure",
+      "id": "e12",
+      "seq": 12,
+      "runId": "k0",
+      "error": "",
+      "failure": "model",
+      "turn": null
+    },
+    {
+      "kind": "failure",
+      "id": "e14",
+      "seq": 14,
+      "runId": "k1",
+      "error": "",
+      "failure": "network",
+      "turn": null
+    },
+    {
+      "kind": "failure",
+      "id": "e16",
+      "seq": 16,
+      "runId": "k2",
+      "error": "",
+      "failure": "no_model",
+      "turn": null
+    },
+    {
+      "kind": "failure",
+      "id": "e18",
+      "seq": 18,
+      "runId": "k3",
+      "error": "",
+      "failure": "gone",
+      "turn": null
+    },
+    {
+      "kind": "failure",
+      "id": "e20",
+      "seq": 20,
+      "runId": "k4",
+      "error": "overloaded",
+      "failure": "model_error",
+      "turn": null
+    },
+    {
+      "kind": "failure",
+      "id": "e22",
+      "seq": 22,
+      "runId": "k5",
+      "error": "",
+      "failure": "gave_up",
+      "turn": null
+    },
+    {
+      "kind": "failure",
+      "id": "e24",
+      "seq": 24,
+      "runId": "r4",
+      "error": "",
+      "turn": null
+    },
+    {
+      "kind": "agent",
+      "id": "m5",
+      "seq": 26,
+      "runId": "r5",
+      "model": "anthropic/claude-test",
+      "startedAt": "2026-01-01T00:00:26.000Z",
+      "text": "Done at last.",
+      "reasoning": "",
+      "thoughtMs": null,
+      "status": "completed",
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 30
+      },
+      "retried": false,
+      "turn": {
+        "continued": false,
+        "model": "anthropic/claude-test"
+      }
+    }
+  ],
+  "pending": [],
+  "inbox": [],
+  "run": null,
+  "usage": {
+    "inputTokens": 120,
+    "outputTokens": 30
+  }
+}

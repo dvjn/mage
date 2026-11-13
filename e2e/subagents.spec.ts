@@ -39,8 +39,12 @@ function sidebarRow(page: Page, title: string) {
     .filter({ hasText: title });
 }
 
+// Waits for the agent to have nothing left to do. What a subagent does comes back to its starter as
+// further runs, one after another, which together take longer than one reply.
 async function idle(page: Page) {
-  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Send", exact: true })).toBeVisible({
+    timeout: 15_000,
+  });
 }
 
 // A line asking the stand-in model to call the tool with the input.
@@ -498,7 +502,7 @@ test("a subagent's thread has its own activity tray, and its starter's card coun
   await expect(titles).toHaveCount(3);
   await shown.getByRole("button", { name: "Mine" }).click();
   await expect(titles).toHaveCount(2);
-  await shown.getByRole("button", { name: "Status: todo. Set to doing" }).click();
+  await shown.getByRole("button", { name: "Status: todo. Set to doing" }).first().click();
   await shown.getByRole("button", { name: "Status: doing. Set to done" }).click();
   await expect(tasksButton).toContainText("1/2");
 

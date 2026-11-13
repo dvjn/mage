@@ -8,7 +8,13 @@ import { ThreadAgentContext } from "@/web/threads/transcript/agent";
 import { RowFocusContext } from "@/web/threads/transcript/row-focus";
 import { AgentReply } from "@/web/threads/transcript/agent-reply";
 
-function render(overrides: Partial<AgentRow> = {}, subagent = false, highlighted = false) {
+// `endsTurn` is what the transcript's layout marks on the reply that ends a finished turn.
+function render(
+  overrides: Partial<AgentRow> = {},
+  subagent = false,
+  highlighted = false,
+  endsTurn = false,
+) {
   const row: AgentRow = {
     kind: "agent",
     id: "thought",
@@ -47,7 +53,7 @@ function render(overrides: Partial<AgentRow> = {}, subagent = false, highlighted
             createElement(AgentReply, {
               row,
               continued: row.turn?.continued ?? false,
-              endsTurn: false,
+              endsTurn,
             }),
           ),
         ),
@@ -86,15 +92,16 @@ describe("an agent turn's reply layout", () => {
     }
   });
 
-  it("keeps message actions with the answer", () => {
-    const html = render({ text: "Here is the answer." });
+  it("keeps message actions with the answer that ends the turn", () => {
+    expect(render({ text: "Here is the answer." })).not.toContain('aria-label="Message actions"');
+    const html = render({ text: "Here is the answer." }, false, false, true);
     expect(html).toContain('aria-label="Message actions"');
     expect(html).toContain('aria-label="Copy"');
     expect(html).toContain('role="toolbar"');
   });
 
   it("keeps actions on a failed reply even if it only thought", () => {
-    expect(render({ status: "failed", text: "Partial answer" })).toContain(
+    expect(render({ status: "failed", text: "Partial answer" }, false, false, true)).toContain(
       'aria-label="Message actions"',
     );
   });

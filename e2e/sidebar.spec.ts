@@ -1,6 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 
-import { joinSpaceOf } from "./database.ts";
+import { joinSpaceOf } from "./seed.ts";
 
 // Sign-ups are rate limited per client address; each journey counts as its own client, in every
 // worker running this file.
@@ -68,7 +68,7 @@ test("a viewer sees no write actions, and a failed delete says why in its dialog
   });
   const alan = await context.newPage();
   const alanEmail = await signUp(alan, "Alan Turing");
-  joinSpaceOf(adaEmail, alanEmail, "viewer");
+  await joinSpaceOf(adaEmail, alanEmail, "viewer");
   await alan.goto(threadUrl);
   await expect(sidebar(alan).getByRole("link", { name: "How do engines compute?" })).toBeVisible();
   const switcher = alan.getByRole("button", { name: "Switch space" });

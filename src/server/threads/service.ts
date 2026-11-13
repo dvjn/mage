@@ -275,6 +275,8 @@ export interface ThreadStore {
     rootThreadId?: string;
     title?: string;
     titleSource?: TitleSource;
+    // When it was made and last active, for one arranged at a time of its own; now when not given.
+    at?: Date;
   }): Thread;
   find(id: string): Thread | null;
   // Most recently active first.
@@ -2548,7 +2550,7 @@ export function createThreads(options: ThreadsOptions) {
     // the rows each new event changes and each piece as it is stored, each exactly once. With the rows go the waiting messages and the
     // run, and any row whose parts that are the reader's changed while the row did not, as when
     // someone else writes and a call can no longer be allowed for now. The thread itself is
-    // delivered again once it is renamed, moved or set to another model. Listening starts before
+    // delivered as the stream opens after events the reader has not seen, and again once it is renamed, moved or set to another model. Listening starts before
     // the stored ones are read, so none falls between the two. Returns the function that stops it.
     follow(
       principal: Principal,
@@ -2693,6 +2695,9 @@ export function createThreads(options: ThreadsOptions) {
         if (thread && thread.currentBranchId !== branch) sendRows();
         if (!thread || placeOf(thread) === place) return;
         place = placeOf(thread);
+        sendHead(thread);
+      });
+      function sendHead(thread: Thread) {
         const via = access.of(principal, thread);
         if (!via) return;
         void headOf(principal, thread, via).then(
@@ -2701,7 +2706,7 @@ export function createThreads(options: ThreadsOptions) {
           },
           () => {},
         );
-      });
+      }
       // The thread's task list, told again whenever it differs from what was last told.
       let toldTasks = "";
       function sendTasks(first = false) {
@@ -2746,6 +2751,9 @@ export function createThreads(options: ThreadsOptions) {
         if (change.tasks && !stopped && change.threadId === tasks?.ownerOf(id)) sendTasks();
       });
       sendTasks(true);
+      // The thread may have been renamed or set to another model since the reader's page read it,
+      // which no later change would tell them; each of those leaves an event.
+      if (first.lastEventSeq > after) sendHead(first);
       sendRows();
       for (const delta of deltas.inThread(id)) send({ kind: "delta", delta });
       for (const chunk of printed?.inThread(id) ?? []) sendOutput(chunk);

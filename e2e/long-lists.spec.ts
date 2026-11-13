@@ -1,6 +1,6 @@
 import { type Browser, expect, type Page, test } from "@playwright/test";
 
-import { addThreads, shareThreads } from "./database.ts";
+import { addThreads, shareThreads } from "./seed.ts";
 
 // Sign-ups are rate limited per client address; each journey counts as its own client, in every
 // worker running this file.
@@ -65,7 +65,7 @@ test("the sidebar lists the newest few threads, the search lists them all, and t
   page,
 }) => {
   const email = await signUp(page, "Ada Lovelace");
-  addThreads(email, 31, { prefix: "Loom" });
+  await addThreads(email, 31, { prefix: "Loom" });
   await page.reload();
   await expect(sidebar(page).getByRole("link", { name: /^Loom \d+ / })).toHaveCount(4);
   await sidebar(page).getByRole("button", { name: "27 more threads" }).click();
@@ -88,9 +88,9 @@ test("shared threads: the sidebar lists the newest few, and the page filters by 
   browser,
 }, testInfo) => {
   const host = await signUp(page, "Ada Lovelace");
-  addThreads(host, 31, { prefix: "Engine" });
+  await addThreads(host, 31, { prefix: "Engine" });
   const guest = await someoneElse(browser, testInfo.parallelIndex, "Grace Hopper");
-  shareThreads(host, guest.email);
+  await shareThreads(host, guest.email);
   await guest.page.goto("/shared");
   const shared = sidebar(guest.page).getByRole("link", { name: /^Engine \d+/ });
   await expect(shared).toHaveCount(4);
@@ -119,7 +119,7 @@ test("shared threads: the sidebar lists the newest few, and the page filters by 
 
 test("the share sheet filters its people once there are more than 8 rows", async ({ page }) => {
   const email = await signUp(page, "Ada Lovelace");
-  addThreads(email, 1, { prefix: "Engine" });
+  await addThreads(email, 1, { prefix: "Engine" });
   await page.reload();
   await sidebar(page).getByRole("link", { name: "Engine 1" }).click();
   await expect(page).toHaveURL(/\/t\/[^/]+$/);

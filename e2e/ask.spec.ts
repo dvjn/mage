@@ -1,6 +1,6 @@
 import { type Browser, expect, type Page, test } from "@playwright/test";
 
-import { joinSpaceOf } from "./database.ts";
+import { joinSpaceOf } from "./seed.ts";
 
 // Sign-ups are rate limited per client address; each person counts as their own client, in every
 // worker running this file.
@@ -89,9 +89,9 @@ test("the agent asks, a viewer waits and a messager answers in options and their
   );
 
   const grace = await someoneElse(browser, testInfo.parallelIndex);
-  joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
+  await joinSpaceOf(adaEmail, await signUp(grace, "Grace Hopper"), "messager");
   const alan = await someoneElse(browser, testInfo.parallelIndex);
-  joinSpaceOf(adaEmail, await signUp(alan, "Alan Turing"), "viewer");
+  await joinSpaceOf(adaEmail, await signUp(alan, "Alan Turing"), "viewer");
 
   await alan.goto(page.url());
   await expect(questions(alan)).toContainText("Paused");

@@ -1,0 +1,214 @@
+{
+  "rows": [
+    {
+      "kind": "human",
+      "id": "e1",
+      "seq": 3,
+      "author": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:01.000Z",
+      "text": "Hello",
+      "quiet": false,
+      "turn": null
+    },
+    {
+      "kind": "agent",
+      "id": "m1",
+      "seq": 4,
+      "runId": "r1",
+      "model": "anthropic/claude-test",
+      "effort": "high",
+      "startedAt": "2026-01-01T00:00:04.000Z",
+      "text": "Hello, Ada.",
+      "reasoning": "They said hello.",
+      "thoughtMs": 1200,
+      "status": "completed",
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 30,
+        "cacheReadTokens": 40,
+        "cacheWriteTokens": 10,
+        "cost": {
+          "usd": 0.0021,
+          "source": "provider"
+        }
+      },
+      "retried": false,
+      "turn": {
+        "continued": false,
+        "model": "anthropic/claude-test"
+      }
+    },
+    {
+      "kind": "human",
+      "id": "e9",
+      "seq": 9,
+      "author": {
+        "kind": "user",
+        "userId": "grace",
+        "name": "Grace Hopper",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:09.000Z",
+      "text": "// an aside between people",
+      "quiet": true,
+      "turn": null
+    },
+    {
+      "kind": "human",
+      "id": "e10",
+      "seq": 18,
+      "author": {
+        "kind": "user",
+        "userId": "grace",
+        "name": "Grace Hopper",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:10.000Z",
+      "text": "May I ask something else?",
+      "guest": true,
+      "quiet": false,
+      "turn": null
+    },
+    {
+      "kind": "agent",
+      "id": "m2",
+      "seq": 19,
+      "runId": "r2",
+      "model": null,
+      "startedAt": "2026-01-01T00:00:19.000Z",
+      "text": "Of course, what",
+      "reasoning": "",
+      "thoughtMs": null,
+      "status": "interrupted",
+      "usage": null,
+      "retried": false,
+      "turn": {
+        "continued": false,
+        "model": null
+      }
+    },
+    {
+      "kind": "stop",
+      "id": "e21",
+      "seq": 21,
+      "runId": "r2",
+      "by": "Ada Lovelace",
+      "turn": null
+    },
+    {
+      "kind": "human",
+      "id": "e22",
+      "seq": 24,
+      "author": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:22.000Z",
+      "text": "Stop, do this instead",
+      "quiet": false,
+      "turn": null
+    },
+    {
+      "kind": "agent",
+      "id": "m3",
+      "seq": 25,
+      "runId": "r3",
+      "model": "openai/gpt-test",
+      "effort": "low",
+      "startedAt": "2026-01-01T00:00:25.000Z",
+      "text": "",
+      "reasoning": "Thought only.",
+      "thoughtMs": null,
+      "status": "completed",
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 30
+      },
+      "retried": false,
+      "turn": {
+        "continued": false,
+        "model": "openai/gpt-test"
+      }
+    },
+    {
+      "kind": "human",
+      "id": "e28",
+      "seq": 30,
+      "author": {
+        "kind": "user",
+        "userId": "gone",
+        "name": null,
+        "former": true
+      },
+      "postedAt": "2026-01-01T00:00:28.000Z",
+      "text": "From an account now gone",
+      "quiet": false,
+      "turn": null
+    },
+    {
+      "kind": "agent",
+      "id": "r4-m1",
+      "seq": 31,
+      "runId": "r4",
+      "model": "anthropic/claude-test",
+      "startedAt": "2026-01-01T00:00:31.000Z",
+      "text": "Noted.",
+      "reasoning": "",
+      "thoughtMs": null,
+      "status": "completed",
+      "usage": {
+        "inputTokens": 120,
+        "outputTokens": 30
+      },
+      "retried": false,
+      "turn": {
+        "continued": false,
+        "model": "anthropic/claude-test"
+      }
+    },
+    {
+      "kind": "human",
+      "id": "e34",
+      "seq": 36,
+      "author": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:34.000Z",
+      "text": "Again",
+      "quiet": false,
+      "turn": null
+    },
+    {
+      "kind": "stop",
+      "id": "e37",
+      "seq": 37,
+      "runId": "r5",
+      "by": null,
+      "turn": null
+    }
+  ],
+  "pending": [],
+  "inbox": [],
+  "run": null,
+  "usage": {
+    "inputTokens": 380,
+    "outputTokens": 94,
+    "cost": {
+      "usd": 0.0021,
+      "source": "provider",
+      "partial": true
+    },
+    "cacheReadTokens": 40,
+    "cacheWriteTokens": 10
+  }
+}

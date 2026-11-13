@@ -1,0 +1,1608 @@
+{
+  "owner": {
+    "access": {
+      "via": "space",
+      "role": "owner"
+    },
+    "can": {
+      "post": true,
+      "arrange": true,
+      "share": true,
+      "move": true,
+      "delete": true
+    },
+    "rows": [
+      {
+        "kind": "relay",
+        "id": "e1",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:01.000Z",
+        "type": "message",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "actor": {
+          "kind": "agent",
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "to": "Main thread",
+        "text": "Here is what I found.",
+        "order": 0,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e2",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:02.000Z",
+        "type": "message",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "agent",
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "to": "Researcher",
+        "text": "Research the topic.",
+        "task": {
+          "instructions": "Be brief.",
+          "fork": {
+            "callId": "start-1",
+            "seq": 12
+          }
+        },
+        "order": 1,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e3",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:03.000Z",
+        "type": "agent.ended",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "actor": {
+          "kind": "agent",
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher ended its run.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "last": "All sources read.",
+        "order": 2,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e4",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:04.000Z",
+        "type": "agent.failed",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher failed.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "error": "The model failed: overloaded",
+        "last": "Reading the third source.",
+        "order": 3,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e5",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:05.000Z",
+        "type": "agent.stopped",
+        "from": {
+          "threadId": "child-2",
+          "name": "Writer",
+          "main": false
+        },
+        "text": "Writer was stopped.",
+        "subagents": [
+          {
+            "threadId": "child-2",
+            "name": "Writer"
+          }
+        ],
+        "order": 4,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e6",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:06.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "All idle: Researcher, Writer",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          },
+          {
+            "threadId": "child-2",
+            "name": "Writer"
+          }
+        ],
+        "when": "all_idle",
+        "callIds": [
+          "watch-2",
+          "watch-3"
+        ],
+        "order": 5,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e7",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:07.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Idle: Writer",
+        "subagents": [
+          {
+            "threadId": "child-2",
+            "name": "Writer"
+          }
+        ],
+        "when": "any_idle",
+        "order": 6,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e8",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:08.000Z",
+        "type": "call.ended",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Fetch",
+          "type": "job"
+        },
+        "text": "The call finished.",
+        "order": 7,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e9",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:09.000Z",
+        "type": "task.changed",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "person",
+          "userId": "ada",
+          "name": "Ada Lovelace"
+        },
+        "text": "Ada Lovelace marked \"Draft\" done.",
+        "tray": "tasks",
+        "change": {
+          "subject": {
+            "kind": "task",
+            "name": "Draft"
+          },
+          "action": "status",
+          "from": "doing",
+          "to": "done"
+        },
+        "order": 8,
+        "turn": null,
+        "source": {
+          "threadId": "thread",
+          "rowId": "task-1"
+        }
+      },
+      {
+        "kind": "relay",
+        "id": "e10",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:10.000Z",
+        "type": "trigger.fired",
+        "from": {
+          "threadId": "thread",
+          "name": "Daily digest",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Daily digest",
+          "type": "schedule"
+        },
+        "text": "Daily digest: write today's digest.",
+        "schedule": "Every day at 09:00",
+        "order": 9,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e11",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:11.000Z",
+        "type": "trigger.fired",
+        "from": {
+          "threadId": "thread",
+          "name": "Wake-up",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Wake-up",
+          "type": "wakeup"
+        },
+        "text": "Wake-up: check the build.",
+        "order": 10,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e12",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:12.000Z",
+        "type": "webhook.received",
+        "from": {
+          "threadId": "thread",
+          "name": "Deploys",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Deploys",
+          "type": "webhook"
+        },
+        "text": "Deploys was posted to.\n\nContent-Type: application/json\n\n{\"ok\":true}",
+        "delivery": {
+          "contentType": "application/json",
+          "bytes": 11,
+          "signed": true
+        },
+        "order": 11,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e13",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:13.000Z",
+        "type": "webhook.received",
+        "from": {
+          "threadId": "thread",
+          "name": "Deploys",
+          "main": true
+        },
+        "text": "Deploys was posted to.",
+        "delivery": {
+          "contentType": null,
+          "bytes": 0,
+          "signed": false
+        },
+        "order": 12,
+        "turn": null
+      },
+      {
+        "kind": "agent",
+        "id": "m1",
+        "seq": 17,
+        "runId": "r1",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:16.000Z",
+        "text": "All noted.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 13,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        },
+        "can": [
+          "retry",
+          "restore",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "relay",
+        "id": "e19",
+        "seq": 25,
+        "postedAt": "2026-01-01T00:00:19.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "person",
+          "userId": "ada",
+          "name": "Ada Lovelace"
+        },
+        "text": "Ada Lovelace paused Daily digest.",
+        "tray": "triggers",
+        "change": {
+          "subject": {
+            "kind": "schedule",
+            "name": "Daily digest"
+          },
+          "action": "pause"
+        },
+        "silent": true,
+        "taken": 25,
+        "order": 14,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e20",
+        "seq": 25,
+        "postedAt": "2026-01-01T00:00:20.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "person",
+          "userId": "grace",
+          "name": "Grace Hopper"
+        },
+        "text": "Grace Hopper turned signatures on for Deploys.",
+        "tray": "webhooks",
+        "change": {
+          "subject": {
+            "kind": "webhook",
+            "name": "Deploys"
+          },
+          "action": "signature",
+          "to": "on"
+        },
+        "silent": true,
+        "taken": 25,
+        "order": 15,
+        "turn": null
+      },
+      {
+        "kind": "unknown",
+        "id": "e21",
+        "seq": 21,
+        "type": "notification",
+        "order": 16,
+        "turn": null
+      },
+      {
+        "kind": "unknown",
+        "id": "e22",
+        "seq": 22,
+        "type": "notification",
+        "order": 17,
+        "turn": null
+      },
+      {
+        "kind": "human",
+        "id": "e23",
+        "seq": 25,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:23.000Z",
+        "text": "Anything new?",
+        "quiet": false,
+        "order": 18,
+        "turn": null,
+        "can": [
+          "edit",
+          "restore",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "agent",
+        "id": "m2",
+        "seq": 27,
+        "runId": "r2",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:26.000Z",
+        "text": "A few changes.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 19,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        },
+        "can": [
+          "retry",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "limit",
+        "id": "e29",
+        "seq": 29,
+        "limit": 20,
+        "order": 20,
+        "turn": null
+      },
+      {
+        "kind": "limit",
+        "id": "e30",
+        "seq": 30,
+        "limit": 20,
+        "order": 21,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e32",
+        "seq": 32,
+        "postedAt": "2026-01-01T00:00:32.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "A task was archived.",
+        "tray": "tasks",
+        "silent": true,
+        "order": 22,
+        "turn": null
+      }
+    ],
+    "waiting": [
+      {
+        "kind": "relay",
+        "id": "e31",
+        "seq": 31,
+        "postedAt": "2026-01-01T00:00:31.000Z",
+        "type": "call.ended",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Another call finished.",
+        "order": 23,
+        "turn": null,
+        "waiting": {
+          "can": []
+        }
+      }
+    ],
+    "run": null,
+    "before": null,
+    "newFrom": "e1",
+    "earlierUnread": 0,
+    "pages": []
+  },
+  "messager": {
+    "access": {
+      "via": "space",
+      "role": "messager"
+    },
+    "can": {
+      "post": true,
+      "arrange": true,
+      "share": true,
+      "move": false,
+      "delete": false
+    },
+    "rows": [
+      {
+        "kind": "relay",
+        "id": "e1",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:01.000Z",
+        "type": "message",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "actor": {
+          "kind": "agent",
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "to": "Main thread",
+        "text": "Here is what I found.",
+        "order": 0,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e2",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:02.000Z",
+        "type": "message",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "agent",
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "to": "Researcher",
+        "text": "Research the topic.",
+        "task": {
+          "instructions": "Be brief.",
+          "fork": {
+            "callId": "start-1",
+            "seq": 12
+          }
+        },
+        "order": 1,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e3",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:03.000Z",
+        "type": "agent.ended",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "actor": {
+          "kind": "agent",
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher ended its run.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "last": "All sources read.",
+        "order": 2,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e4",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:04.000Z",
+        "type": "agent.failed",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher failed.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "error": "The model failed: overloaded",
+        "last": "Reading the third source.",
+        "order": 3,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e5",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:05.000Z",
+        "type": "agent.stopped",
+        "from": {
+          "threadId": "child-2",
+          "name": "Writer",
+          "main": false
+        },
+        "text": "Writer was stopped.",
+        "subagents": [
+          {
+            "threadId": "child-2",
+            "name": "Writer"
+          }
+        ],
+        "order": 4,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e6",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:06.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "All idle: Researcher, Writer",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          },
+          {
+            "threadId": "child-2",
+            "name": "Writer"
+          }
+        ],
+        "when": "all_idle",
+        "callIds": [
+          "watch-2",
+          "watch-3"
+        ],
+        "order": 5,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e7",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:07.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Idle: Writer",
+        "subagents": [
+          {
+            "threadId": "child-2",
+            "name": "Writer"
+          }
+        ],
+        "when": "any_idle",
+        "order": 6,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e8",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:08.000Z",
+        "type": "call.ended",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Fetch",
+          "type": "job"
+        },
+        "text": "The call finished.",
+        "order": 7,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e9",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:09.000Z",
+        "type": "task.changed",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "person",
+          "userId": "ada",
+          "name": "Ada Lovelace"
+        },
+        "text": "Ada Lovelace marked \"Draft\" done.",
+        "tray": "tasks",
+        "change": {
+          "subject": {
+            "kind": "task",
+            "name": "Draft"
+          },
+          "action": "status",
+          "from": "doing",
+          "to": "done"
+        },
+        "order": 8,
+        "turn": null,
+        "source": {
+          "threadId": "thread",
+          "rowId": "task-1"
+        }
+      },
+      {
+        "kind": "relay",
+        "id": "e10",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:10.000Z",
+        "type": "trigger.fired",
+        "from": {
+          "threadId": "thread",
+          "name": "Daily digest",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Daily digest",
+          "type": "schedule"
+        },
+        "text": "Daily digest: write today's digest.",
+        "schedule": "Every day at 09:00",
+        "order": 9,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e11",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:11.000Z",
+        "type": "trigger.fired",
+        "from": {
+          "threadId": "thread",
+          "name": "Wake-up",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Wake-up",
+          "type": "wakeup"
+        },
+        "text": "Wake-up: check the build.",
+        "order": 10,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e12",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:12.000Z",
+        "type": "webhook.received",
+        "from": {
+          "threadId": "thread",
+          "name": "Deploys",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Deploys",
+          "type": "webhook"
+        },
+        "text": "Deploys was posted to.\n\nContent-Type: application/json\n\n{\"ok\":true}",
+        "delivery": {
+          "contentType": "application/json",
+          "bytes": 11,
+          "signed": true
+        },
+        "order": 11,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e13",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:13.000Z",
+        "type": "webhook.received",
+        "from": {
+          "threadId": "thread",
+          "name": "Deploys",
+          "main": true
+        },
+        "text": "Deploys was posted to.",
+        "delivery": {
+          "contentType": null,
+          "bytes": 0,
+          "signed": false
+        },
+        "order": 12,
+        "turn": null
+      },
+      {
+        "kind": "agent",
+        "id": "m1",
+        "seq": 17,
+        "runId": "r1",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:16.000Z",
+        "text": "All noted.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 13,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        },
+        "can": [
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "relay",
+        "id": "e19",
+        "seq": 25,
+        "postedAt": "2026-01-01T00:00:19.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "person",
+          "userId": "ada",
+          "name": "Ada Lovelace"
+        },
+        "text": "Ada Lovelace paused Daily digest.",
+        "tray": "triggers",
+        "change": {
+          "subject": {
+            "kind": "schedule",
+            "name": "Daily digest"
+          },
+          "action": "pause"
+        },
+        "silent": true,
+        "taken": 25,
+        "order": 14,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e20",
+        "seq": 25,
+        "postedAt": "2026-01-01T00:00:20.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "person",
+          "userId": "grace",
+          "name": "Grace Hopper"
+        },
+        "text": "Grace Hopper turned signatures on for Deploys.",
+        "tray": "webhooks",
+        "change": {
+          "subject": {
+            "kind": "webhook",
+            "name": "Deploys"
+          },
+          "action": "signature",
+          "to": "on"
+        },
+        "silent": true,
+        "taken": 25,
+        "order": 15,
+        "turn": null
+      },
+      {
+        "kind": "unknown",
+        "id": "e21",
+        "seq": 21,
+        "type": "notification",
+        "order": 16,
+        "turn": null
+      },
+      {
+        "kind": "unknown",
+        "id": "e22",
+        "seq": 22,
+        "type": "notification",
+        "order": 17,
+        "turn": null
+      },
+      {
+        "kind": "human",
+        "id": "e23",
+        "seq": 25,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:23.000Z",
+        "text": "Anything new?",
+        "quiet": false,
+        "order": 18,
+        "turn": null,
+        "can": [
+          "restore",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "agent",
+        "id": "m2",
+        "seq": 27,
+        "runId": "r2",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:26.000Z",
+        "text": "A few changes.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 19,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        },
+        "can": [
+          "retry",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "limit",
+        "id": "e29",
+        "seq": 29,
+        "limit": 20,
+        "order": 20,
+        "turn": null
+      },
+      {
+        "kind": "limit",
+        "id": "e30",
+        "seq": 30,
+        "limit": 20,
+        "order": 21,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e32",
+        "seq": 32,
+        "postedAt": "2026-01-01T00:00:32.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "A task was archived.",
+        "tray": "tasks",
+        "silent": true,
+        "order": 22,
+        "turn": null
+      }
+    ],
+    "waiting": [
+      {
+        "kind": "relay",
+        "id": "e31",
+        "seq": 31,
+        "postedAt": "2026-01-01T00:00:31.000Z",
+        "type": "call.ended",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Another call finished.",
+        "order": 23,
+        "turn": null,
+        "waiting": {
+          "can": []
+        }
+      }
+    ],
+    "run": null,
+    "before": null,
+    "newFrom": "e1",
+    "earlierUnread": 0,
+    "pages": []
+  },
+  "viewer": {
+    "access": {
+      "via": "space",
+      "role": "viewer"
+    },
+    "can": {
+      "post": false,
+      "arrange": false,
+      "share": false,
+      "move": false,
+      "delete": false
+    },
+    "rows": [
+      {
+        "kind": "relay",
+        "id": "e1",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:01.000Z",
+        "type": "message",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "actor": {
+          "kind": "agent",
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "to": "Main thread",
+        "text": "Here is what I found.",
+        "order": 0,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e2",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:02.000Z",
+        "type": "message",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "agent",
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "to": "Researcher",
+        "text": "Research the topic.",
+        "task": {
+          "instructions": "Be brief.",
+          "fork": {
+            "callId": "start-1",
+            "seq": 12
+          }
+        },
+        "order": 1,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e3",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:03.000Z",
+        "type": "agent.ended",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "actor": {
+          "kind": "agent",
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher ended its run.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "last": "All sources read.",
+        "order": 2,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e4",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:04.000Z",
+        "type": "agent.failed",
+        "from": {
+          "threadId": "child-1",
+          "name": "Researcher",
+          "main": false
+        },
+        "text": "Researcher failed.",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          }
+        ],
+        "error": "The model failed: overloaded",
+        "last": "Reading the third source.",
+        "order": 3,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e5",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:05.000Z",
+        "type": "agent.stopped",
+        "from": {
+          "threadId": "child-2",
+          "name": "Writer",
+          "main": false
+        },
+        "text": "Writer was stopped.",
+        "subagents": [
+          {
+            "threadId": "child-2",
+            "name": "Writer"
+          }
+        ],
+        "order": 4,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e6",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:06.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "All idle: Researcher, Writer",
+        "subagents": [
+          {
+            "threadId": "child-1",
+            "name": "Researcher"
+          },
+          {
+            "threadId": "child-2",
+            "name": "Writer"
+          }
+        ],
+        "when": "all_idle",
+        "callIds": [
+          "watch-2",
+          "watch-3"
+        ],
+        "order": 5,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e7",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:07.000Z",
+        "type": "agent.idle",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Idle: Writer",
+        "subagents": [
+          {
+            "threadId": "child-2",
+            "name": "Writer"
+          }
+        ],
+        "when": "any_idle",
+        "order": 6,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e8",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:08.000Z",
+        "type": "call.ended",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Fetch",
+          "type": "job"
+        },
+        "text": "The call finished.",
+        "order": 7,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e9",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:09.000Z",
+        "type": "task.changed",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "person",
+          "userId": "ada",
+          "name": "Ada Lovelace"
+        },
+        "text": "Ada Lovelace marked \"Draft\" done.",
+        "tray": "tasks",
+        "change": {
+          "subject": {
+            "kind": "task",
+            "name": "Draft"
+          },
+          "action": "status",
+          "from": "doing",
+          "to": "done"
+        },
+        "order": 8,
+        "turn": null,
+        "source": {
+          "threadId": "thread",
+          "rowId": "task-1"
+        }
+      },
+      {
+        "kind": "relay",
+        "id": "e10",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:10.000Z",
+        "type": "trigger.fired",
+        "from": {
+          "threadId": "thread",
+          "name": "Daily digest",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Daily digest",
+          "type": "schedule"
+        },
+        "text": "Daily digest: write today's digest.",
+        "schedule": "Every day at 09:00",
+        "order": 9,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e11",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:11.000Z",
+        "type": "trigger.fired",
+        "from": {
+          "threadId": "thread",
+          "name": "Wake-up",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Wake-up",
+          "type": "wakeup"
+        },
+        "text": "Wake-up: check the build.",
+        "order": 10,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e12",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:12.000Z",
+        "type": "webhook.received",
+        "from": {
+          "threadId": "thread",
+          "name": "Deploys",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Deploys",
+          "type": "webhook"
+        },
+        "text": "Deploys was posted to.\n\nContent-Type: application/json\n\n{\"ok\":true}",
+        "delivery": {
+          "contentType": "application/json",
+          "bytes": 11,
+          "signed": true
+        },
+        "order": 11,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e13",
+        "seq": 15,
+        "postedAt": "2026-01-01T00:00:13.000Z",
+        "type": "webhook.received",
+        "from": {
+          "threadId": "thread",
+          "name": "Deploys",
+          "main": true
+        },
+        "text": "Deploys was posted to.",
+        "delivery": {
+          "contentType": null,
+          "bytes": 0,
+          "signed": false
+        },
+        "order": 12,
+        "turn": null
+      },
+      {
+        "kind": "agent",
+        "id": "m1",
+        "seq": 17,
+        "runId": "r1",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:16.000Z",
+        "text": "All noted.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 13,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        }
+      },
+      {
+        "kind": "relay",
+        "id": "e19",
+        "seq": 25,
+        "postedAt": "2026-01-01T00:00:19.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "person",
+          "userId": "ada",
+          "name": "Ada Lovelace"
+        },
+        "text": "Ada Lovelace paused Daily digest.",
+        "tray": "triggers",
+        "change": {
+          "subject": {
+            "kind": "schedule",
+            "name": "Daily digest"
+          },
+          "action": "pause"
+        },
+        "silent": true,
+        "taken": 25,
+        "order": 14,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e20",
+        "seq": 25,
+        "postedAt": "2026-01-01T00:00:20.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "person",
+          "userId": "grace",
+          "name": "Grace Hopper"
+        },
+        "text": "Grace Hopper turned signatures on for Deploys.",
+        "tray": "webhooks",
+        "change": {
+          "subject": {
+            "kind": "webhook",
+            "name": "Deploys"
+          },
+          "action": "signature",
+          "to": "on"
+        },
+        "silent": true,
+        "taken": 25,
+        "order": 15,
+        "turn": null
+      },
+      {
+        "kind": "unknown",
+        "id": "e21",
+        "seq": 21,
+        "type": "notification",
+        "order": 16,
+        "turn": null
+      },
+      {
+        "kind": "unknown",
+        "id": "e22",
+        "seq": 22,
+        "type": "notification",
+        "order": 17,
+        "turn": null
+      },
+      {
+        "kind": "human",
+        "id": "e23",
+        "seq": 25,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:23.000Z",
+        "text": "Anything new?",
+        "quiet": false,
+        "order": 18,
+        "turn": null
+      },
+      {
+        "kind": "agent",
+        "id": "m2",
+        "seq": 27,
+        "runId": "r2",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:26.000Z",
+        "text": "A few changes.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 19,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        }
+      },
+      {
+        "kind": "limit",
+        "id": "e29",
+        "seq": 29,
+        "limit": 20,
+        "order": 20,
+        "turn": null
+      },
+      {
+        "kind": "limit",
+        "id": "e30",
+        "seq": 30,
+        "limit": 20,
+        "order": 21,
+        "turn": null
+      },
+      {
+        "kind": "relay",
+        "id": "e32",
+        "seq": 32,
+        "postedAt": "2026-01-01T00:00:32.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "A task was archived.",
+        "tray": "tasks",
+        "silent": true,
+        "order": 22,
+        "turn": null
+      }
+    ],
+    "waiting": [
+      {
+        "kind": "relay",
+        "id": "e31",
+        "seq": 31,
+        "postedAt": "2026-01-01T00:00:31.000Z",
+        "type": "call.ended",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "text": "Another call finished.",
+        "order": 23,
+        "turn": null,
+        "waiting": {
+          "can": []
+        }
+      }
+    ],
+    "run": null,
+    "before": null,
+    "newFrom": "e1",
+    "earlierUnread": 0,
+    "pages": []
+  }
+}

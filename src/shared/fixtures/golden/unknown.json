@@ -1,0 +1,40 @@
+{
+  "rows": [
+    {
+      "kind": "human",
+      "id": "e1",
+      "seq": 1,
+      "author": {
+        "kind": "user",
+        "userId": "ada",
+        "name": "Ada Lovelace",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:01.000Z",
+      "text": "Before",
+      "quiet": true,
+      "turn": null
+    },
+    {
+      "kind": "unknown",
+      "id": "e2",
+      "seq": 2,
+      "type": "something.new",
+      "turn": null
+    },
+    {
+      "kind": "unknown",
+      "id": "e3",
+      "seq": 3,
+      "type": "tool.ran",
+      "turn": null
+    }
+  ],
+  "pending": [],
+  "inbox": [],
+  "run": null,
+  "usage": {
+    "inputTokens": 0,
+    "outputTokens": 0
+  }
+}

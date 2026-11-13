@@ -1451,6 +1451,8 @@ describe("gallery", () => {
     );
     if (!made.ok) throw new Error(made.error);
     const secondId = made.value.id as string;
+    // A change in the millisecond of the second's publish would tie with it.
+    await new Promise((resolve) => setTimeout(resolve, 2));
     await t.json(
       await t.api("PUT", `/artifacts/${mine}/sharing`, t.ada.cookie, { sharing: "org" }),
     );

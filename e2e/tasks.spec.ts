@@ -71,7 +71,8 @@ test("tasks the agent adds show in a list above the composer, and a person cycle
   await list.getByRole("button", { name: "Status: doing. Set to done" }).click();
   await expect(tasks).toContainText("1/2");
   await expect(list.getByRole("button", { name: "Status: done. Set to todo" })).toHaveCount(1);
-  await expect(list.getByTitle("Added by Agent")).toHaveCount(2);
+  // What the agent adds is the agent's to do.
+  await expect(list.getByRole("combobox", { name: "Assignee: Agent" })).toHaveCount(2);
   await list.getByRole("button", { name: "Status: done. Set to todo" }).click();
   await expect(tasks).toContainText("0/2");
 });

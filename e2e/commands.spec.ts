@@ -1,7 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 
 import { MCP_BEARER_TOKEN } from "../mock/mcp.ts";
-import { mcpServer } from "./servers.ts";
+import { mcpServer, passwordServer } from "./servers.ts";
 
 // Sign-ups are rate limited per client address; each person counts as their own client, in every
 // worker running this file.
@@ -47,6 +47,19 @@ async function startThread(page: Page) {
 
 async function addSkill(page: Page, name: string, description: string, body: string) {
   const res = await page.request.post("/api/v1/org/skills", { data: { name, description, body } });
+  expect(res.ok()).toBe(true);
+}
+
+// Signs up without opening the app, so what is arranged next is there when it first loads.
+async function signUpUnseen(page: Page) {
+  const res = await page.request.post("/api/auth/sign-up/email", {
+    headers: { Origin: passwordServer },
+    data: {
+      name: "Ada Lovelace",
+      email: `${crypto.randomUUID()}@example.com`,
+      password: "correct horse battery",
+    },
+  });
   expect(res.ok()).toBe(true);
 }
 
@@ -123,8 +136,11 @@ test("an MCP server's prompt runs with the arguments given and its text reaches 
 test("a command typed in a new thread is picked from the menu and starts the thread as it", async ({
   page,
 }) => {
-  await signUp(page);
+  // A draft reads its space's commands as it opens, and keeps them a while.
+  await signUpUnseen(page);
   await addSkill(page, "pirate", "Talk like a pirate", "^say\nArr, $ARGUMENTS!");
+  await page.goto("/");
+  await expect(page).toHaveURL(/\/s\/[^/]+$/);
 
   await box(page).fill("/pi");
   const menu = page.getByRole("listbox", { name: "Commands" });

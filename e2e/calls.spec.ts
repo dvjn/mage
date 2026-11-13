@@ -28,7 +28,7 @@ async function write(page: Page, text: string) {
   await expect(box).toHaveValue("");
 }
 
-test("a call started in the background shows as a tool row that ends done, and tells the agent", async ({
+test("a call started in the background folds with the call that started it, and tells the agent when it is done", async ({
   page,
 }) => {
   await signUp(page);
@@ -38,8 +38,13 @@ test("a call started in the background shows as a tool row that ends done, and t
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Looms");
-  await expect(page.getByRole("button", { name: /Jobs.* · Done/ })).toBeVisible();
-  await expect(page.getByText(/Background call .* finished/)).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "2 tool calls · Background jobs, Thread" }),
+  ).toBeVisible();
+  // The agent is told, in a card that shows the call as its tool does.
+  const told = page.getByRole("article", { name: "Notification" });
+  await expect(told).toContainText("Rename");
+  await expect(told).toContainText("Done");
   // Its notification is the end of it: an ended job is not in the tray.
   await expect(page.getByRole("toolbar", { name: "Context" })).toHaveCount(0);
 });

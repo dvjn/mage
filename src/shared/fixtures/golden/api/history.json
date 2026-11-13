@@ -1,0 +1,953 @@
+{
+  "owner": {
+    "access": {
+      "via": "space",
+      "role": "owner"
+    },
+    "can": {
+      "post": true,
+      "arrange": true,
+      "share": true,
+      "move": true,
+      "delete": true
+    },
+    "rows": [
+      {
+        "kind": "fork",
+        "id": "e1",
+        "seq": 1,
+        "by": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:01.000Z",
+        "from": {
+          "threadId": "origin",
+          "rowId": "row-9",
+          "title": "Where it came from"
+        },
+        "order": 0,
+        "turn": null,
+        "linked": false
+      },
+      {
+        "kind": "human",
+        "id": "e2",
+        "seq": 4,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:02.000Z",
+        "text": "First",
+        "quiet": false,
+        "order": 1,
+        "turn": null,
+        "can": [
+          "edit",
+          "restore",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "agent",
+        "id": "r1-m1",
+        "seq": 6,
+        "runId": "r1",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:05.000Z",
+        "text": "First answer.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 2,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        },
+        "can": [
+          "retry",
+          "restore",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "human",
+        "id": "e8",
+        "seq": 10,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:08.000Z",
+        "text": "Second",
+        "quiet": false,
+        "order": 3,
+        "turn": null,
+        "can": [
+          "edit",
+          "restore",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "agent",
+        "id": "r2-m1",
+        "seq": 12,
+        "runId": "r2",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:11.000Z",
+        "text": "Second answer.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 4,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        },
+        "can": [
+          "retry",
+          "restore",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "agent",
+        "id": "m3",
+        "seq": 22,
+        "runId": "r3",
+        "model": "openai/gpt-test",
+        "startedAt": "2026-01-01T00:00:16.000Z",
+        "text": "",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "interrupted",
+        "usage": null,
+        "retried": false,
+        "order": 5,
+        "turn": {
+          "continued": true,
+          "model": "openai/gpt-test"
+        },
+        "can": [
+          "retry",
+          "restore",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "tool",
+        "id": "c-open",
+        "seq": 22,
+        "runId": "r3",
+        "messageId": "m3",
+        "toolId": "web.fetch",
+        "input": {},
+        "risk": "ask",
+        "waits": true,
+        "requestedAt": "2026-01-01T00:00:19.000Z",
+        "state": "stopped",
+        "decision": null,
+        "output": null,
+        "ms": null,
+        "order": 6,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "title": "web.fetch",
+        "toolset": null
+      },
+      {
+        "kind": "tool",
+        "id": "c-allowed",
+        "seq": 22,
+        "runId": "r3",
+        "messageId": "m3",
+        "toolId": "web.fetch",
+        "input": {},
+        "risk": "ask",
+        "waits": true,
+        "requestedAt": "2026-01-01T00:00:20.000Z",
+        "state": "stopped",
+        "decision": {
+          "allow": true,
+          "scope": "once",
+          "by": {
+            "kind": "user",
+            "userId": "ada",
+            "name": "Ada Lovelace",
+            "former": false
+          },
+          "seq": 21
+        },
+        "output": null,
+        "ms": null,
+        "order": 7,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "title": "web.fetch",
+        "toolset": null
+      },
+      {
+        "kind": "human",
+        "id": "e17",
+        "seq": 24,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:17.000Z",
+        "text": "Keep me",
+        "quiet": false,
+        "order": 8,
+        "turn": null,
+        "can": [
+          "edit",
+          "restore",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "agent",
+        "id": "m4",
+        "seq": 26,
+        "runId": "r4",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:25.000Z",
+        "text": "Kept and answered.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 9,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        },
+        "can": [
+          "retry",
+          "restore",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "compaction",
+        "id": "e28",
+        "seq": 28,
+        "by": null,
+        "summary": "They greeted each other.",
+        "firstKeptSeq": 8,
+        "tokensBefore": 90000,
+        "tokensAfter": null,
+        "order": 10,
+        "turn": null
+      },
+      {
+        "kind": "human",
+        "id": "e29",
+        "seq": 31,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:29.000Z",
+        "text": "/compact keep the plan",
+        "quiet": false,
+        "order": 11,
+        "turn": null,
+        "can": [
+          "fork",
+          "aside"
+        ],
+        "command": {
+          "name": "compact",
+          "args": "keep the plan"
+        }
+      },
+      {
+        "kind": "failure",
+        "id": "e32",
+        "seq": 32,
+        "runId": "r5",
+        "error": "",
+        "failure": "network",
+        "order": 12,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "compaction",
+        "id": "e34",
+        "seq": 34,
+        "by": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "summary": "The plan, kept.",
+        "firstKeptSeq": 20,
+        "focus": "keep the plan",
+        "tokensBefore": 120000,
+        "tokensAfter": 4000,
+        "order": 13,
+        "turn": null
+      }
+    ],
+    "waiting": [],
+    "run": null,
+    "before": null,
+    "newFrom": "e1",
+    "earlierUnread": 0,
+    "pages": []
+  },
+  "messager": {
+    "access": {
+      "via": "space",
+      "role": "messager"
+    },
+    "can": {
+      "post": true,
+      "arrange": true,
+      "share": true,
+      "move": false,
+      "delete": false
+    },
+    "rows": [
+      {
+        "kind": "fork",
+        "id": "e1",
+        "seq": 1,
+        "by": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:01.000Z",
+        "from": {
+          "threadId": "origin",
+          "rowId": "row-9",
+          "title": "Where it came from"
+        },
+        "order": 0,
+        "turn": null,
+        "linked": false
+      },
+      {
+        "kind": "human",
+        "id": "e2",
+        "seq": 4,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:02.000Z",
+        "text": "First",
+        "quiet": false,
+        "order": 1,
+        "turn": null,
+        "can": [
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "agent",
+        "id": "r1-m1",
+        "seq": 6,
+        "runId": "r1",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:05.000Z",
+        "text": "First answer.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 2,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        },
+        "can": [
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "human",
+        "id": "e8",
+        "seq": 10,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:08.000Z",
+        "text": "Second",
+        "quiet": false,
+        "order": 3,
+        "turn": null,
+        "can": [
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "agent",
+        "id": "r2-m1",
+        "seq": 12,
+        "runId": "r2",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:11.000Z",
+        "text": "Second answer.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 4,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        },
+        "can": [
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "agent",
+        "id": "m3",
+        "seq": 22,
+        "runId": "r3",
+        "model": "openai/gpt-test",
+        "startedAt": "2026-01-01T00:00:16.000Z",
+        "text": "",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "interrupted",
+        "usage": null,
+        "retried": false,
+        "order": 5,
+        "turn": {
+          "continued": true,
+          "model": "openai/gpt-test"
+        },
+        "can": [
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "tool",
+        "id": "c-open",
+        "seq": 22,
+        "runId": "r3",
+        "messageId": "m3",
+        "toolId": "web.fetch",
+        "input": {},
+        "risk": "ask",
+        "waits": true,
+        "requestedAt": "2026-01-01T00:00:19.000Z",
+        "state": "stopped",
+        "decision": null,
+        "output": null,
+        "ms": null,
+        "order": 6,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "title": "web.fetch",
+        "toolset": null
+      },
+      {
+        "kind": "tool",
+        "id": "c-allowed",
+        "seq": 22,
+        "runId": "r3",
+        "messageId": "m3",
+        "toolId": "web.fetch",
+        "input": {},
+        "risk": "ask",
+        "waits": true,
+        "requestedAt": "2026-01-01T00:00:20.000Z",
+        "state": "stopped",
+        "decision": {
+          "allow": true,
+          "scope": "once",
+          "by": {
+            "kind": "user",
+            "userId": "ada",
+            "name": "Ada Lovelace",
+            "former": false
+          },
+          "seq": 21
+        },
+        "output": null,
+        "ms": null,
+        "order": 7,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "title": "web.fetch",
+        "toolset": null
+      },
+      {
+        "kind": "human",
+        "id": "e17",
+        "seq": 24,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:17.000Z",
+        "text": "Keep me",
+        "quiet": false,
+        "order": 8,
+        "turn": null,
+        "can": [
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "agent",
+        "id": "m4",
+        "seq": 26,
+        "runId": "r4",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:25.000Z",
+        "text": "Kept and answered.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 9,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        },
+        "can": [
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "compaction",
+        "id": "e28",
+        "seq": 28,
+        "by": null,
+        "summary": "They greeted each other.",
+        "firstKeptSeq": 8,
+        "tokensBefore": 90000,
+        "tokensAfter": null,
+        "order": 10,
+        "turn": null
+      },
+      {
+        "kind": "human",
+        "id": "e29",
+        "seq": 31,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:29.000Z",
+        "text": "/compact keep the plan",
+        "quiet": false,
+        "order": 11,
+        "turn": null,
+        "can": [
+          "fork",
+          "aside"
+        ],
+        "command": {
+          "name": "compact",
+          "args": "keep the plan"
+        }
+      },
+      {
+        "kind": "failure",
+        "id": "e32",
+        "seq": 32,
+        "runId": "r5",
+        "error": "",
+        "failure": "network",
+        "order": 12,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "compaction",
+        "id": "e34",
+        "seq": 34,
+        "by": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "summary": "The plan, kept.",
+        "firstKeptSeq": 20,
+        "focus": "keep the plan",
+        "tokensBefore": 120000,
+        "tokensAfter": 4000,
+        "order": 13,
+        "turn": null
+      }
+    ],
+    "waiting": [],
+    "run": null,
+    "before": null,
+    "newFrom": "e1",
+    "earlierUnread": 0,
+    "pages": []
+  },
+  "viewer": {
+    "access": {
+      "via": "space",
+      "role": "viewer"
+    },
+    "can": {
+      "post": false,
+      "arrange": false,
+      "share": false,
+      "move": false,
+      "delete": false
+    },
+    "rows": [
+      {
+        "kind": "fork",
+        "id": "e1",
+        "seq": 1,
+        "by": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:01.000Z",
+        "from": {
+          "threadId": "origin",
+          "rowId": "row-9",
+          "title": "Where it came from"
+        },
+        "order": 0,
+        "turn": null,
+        "linked": false
+      },
+      {
+        "kind": "human",
+        "id": "e2",
+        "seq": 4,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:02.000Z",
+        "text": "First",
+        "quiet": false,
+        "order": 1,
+        "turn": null
+      },
+      {
+        "kind": "agent",
+        "id": "r1-m1",
+        "seq": 6,
+        "runId": "r1",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:05.000Z",
+        "text": "First answer.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 2,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        }
+      },
+      {
+        "kind": "human",
+        "id": "e8",
+        "seq": 10,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:08.000Z",
+        "text": "Second",
+        "quiet": false,
+        "order": 3,
+        "turn": null
+      },
+      {
+        "kind": "agent",
+        "id": "r2-m1",
+        "seq": 12,
+        "runId": "r2",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:11.000Z",
+        "text": "Second answer.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 4,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        }
+      },
+      {
+        "kind": "agent",
+        "id": "m3",
+        "seq": 22,
+        "runId": "r3",
+        "model": "openai/gpt-test",
+        "startedAt": "2026-01-01T00:00:16.000Z",
+        "text": "",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "interrupted",
+        "usage": null,
+        "retried": false,
+        "order": 5,
+        "turn": {
+          "continued": true,
+          "model": "openai/gpt-test"
+        }
+      },
+      {
+        "kind": "tool",
+        "id": "c-open",
+        "seq": 22,
+        "runId": "r3",
+        "messageId": "m3",
+        "toolId": "web.fetch",
+        "input": {},
+        "risk": "ask",
+        "waits": true,
+        "requestedAt": "2026-01-01T00:00:19.000Z",
+        "state": "stopped",
+        "decision": null,
+        "output": null,
+        "ms": null,
+        "order": 6,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "title": "web.fetch",
+        "toolset": null
+      },
+      {
+        "kind": "tool",
+        "id": "c-allowed",
+        "seq": 22,
+        "runId": "r3",
+        "messageId": "m3",
+        "toolId": "web.fetch",
+        "input": {},
+        "risk": "ask",
+        "waits": true,
+        "requestedAt": "2026-01-01T00:00:20.000Z",
+        "state": "stopped",
+        "decision": {
+          "allow": true,
+          "scope": "once",
+          "by": {
+            "kind": "user",
+            "userId": "ada",
+            "name": "Ada Lovelace",
+            "former": false
+          },
+          "seq": 21
+        },
+        "output": null,
+        "ms": null,
+        "order": 7,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "title": "web.fetch",
+        "toolset": null
+      },
+      {
+        "kind": "human",
+        "id": "e17",
+        "seq": 24,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:17.000Z",
+        "text": "Keep me",
+        "quiet": false,
+        "order": 8,
+        "turn": null
+      },
+      {
+        "kind": "agent",
+        "id": "m4",
+        "seq": 26,
+        "runId": "r4",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:00:25.000Z",
+        "text": "Kept and answered.",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": {
+          "inputTokens": 120,
+          "outputTokens": 30
+        },
+        "retried": false,
+        "order": 9,
+        "turn": {
+          "continued": false,
+          "model": "anthropic/claude-test"
+        }
+      },
+      {
+        "kind": "compaction",
+        "id": "e28",
+        "seq": 28,
+        "by": null,
+        "summary": "They greeted each other.",
+        "firstKeptSeq": 8,
+        "tokensBefore": 90000,
+        "tokensAfter": null,
+        "order": 10,
+        "turn": null
+      },
+      {
+        "kind": "human",
+        "id": "e29",
+        "seq": 31,
+        "author": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "postedAt": "2026-01-01T00:00:29.000Z",
+        "text": "/compact keep the plan",
+        "quiet": false,
+        "order": 11,
+        "turn": null,
+        "command": {
+          "name": "compact",
+          "args": "keep the plan"
+        }
+      },
+      {
+        "kind": "failure",
+        "id": "e32",
+        "seq": 32,
+        "runId": "r5",
+        "error": "",
+        "failure": "network",
+        "order": 12,
+        "turn": null,
+        "canRetry": false
+      },
+      {
+        "kind": "compaction",
+        "id": "e34",
+        "seq": 34,
+        "by": {
+          "kind": "user",
+          "userId": "ada",
+          "name": "Ada Lovelace",
+          "former": false
+        },
+        "summary": "The plan, kept.",
+        "firstKeptSeq": 20,
+        "focus": "keep the plan",
+        "tokensBefore": 120000,
+        "tokensAfter": 4000,
+        "order": 13,
+        "turn": null
+      }
+    ],
+    "waiting": [],
+    "run": null,
+    "before": null,
+    "newFrom": "e1",
+    "earlierUnread": 0,
+    "pages": []
+  }
+}

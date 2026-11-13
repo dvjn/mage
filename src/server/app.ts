@@ -94,6 +94,8 @@ export interface AppOptions {
   webRoot?: string;
   // Where the web client's spans go; unset while tracing is off.
   traceRelay?: TraceRelay;
+  // Routes that arrange data for tests, under /api/test; unset unless the server is run for them.
+  testRoutes?: Hono;
 }
 
 export type App = Hono<{ Variables: RequestIdVariables }>;
@@ -213,6 +215,7 @@ export function createApp(options: AppOptions): App {
   app.on(["GET", "POST"], "/api/auth/*", (c) => options.handleAuth(c.req.raw));
   // A SCIM directory also replaces, patches and deletes what it provisioned.
   app.on(["PUT", "PATCH", "DELETE"], "/api/auth/scim/v2/*", (c) => options.handleAuth(c.req.raw));
+  if (options.testRoutes) app.route("/api/test", options.testRoutes);
   app.all("/api/*", (c) => c.json({ error: "not found" }, 404));
 
   if (options.webRoot) {

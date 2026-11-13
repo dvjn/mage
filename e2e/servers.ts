@@ -3,6 +3,15 @@
 // that identity provider, a model provider, an MCP server with its own authorization server, and a
 // git host of skills repositories. The mock's e2e config gives it the same ports.
 
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+// Where the journeys' servers keep the database two of them share.
+export const dataDir = path.join(tmpdir(), "mage-e2e");
+export const databasePath = path.join(dataDir, "mage.db");
+// The server with real model providers keeps one of its own.
+export const wireDatabasePath = path.join(dataDir, "wire.db");
+
 export const passwordServer = "http://localhost:4793";
 export const ssoServer = "http://localhost:4796";
 export const wireServer = "http://localhost:4797";

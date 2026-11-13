@@ -72,7 +72,11 @@ test("a webhook is a tool row and a card in the tray, takes a post, and a person
   await expect(dialog.getByTestId("pager")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByText("Webhook delivered · Deploys").first()).toBeVisible();
+  // Each post is told to the agent in a card of its own.
+  const told = page.getByRole("article", { name: "Notification" });
+  await expect(told).toHaveCount(2);
+  await expect(told.first()).toContainText("Deploys");
+  await expect(told.first()).toContainText("Delivered");
 
   await card.getByRole("button", { name: "Signature: off" }).click();
   await expect(page.getByText("X-Hub-Signature-256")).toBeVisible();

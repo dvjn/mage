@@ -87,14 +87,20 @@ describe("streamed replies", () => {
     await until(() => stored().length === 2);
 
     const stream = await openStream(app, ada.cookie, thread.id, { after: 0 });
-    const frames = [];
+    const frames: Awaited<ReturnType<typeof stream.nextItem>>[] = [];
+    // The next frame that is not the thread itself, which a stream opened behind the log sends too.
+    const take = async () => {
+      let frame = await stream.nextItem();
+      while (frame.event === "thread") frame = await stream.nextItem();
+      frames.push(frame);
+    };
     // The rows so far, then the stored pieces.
-    for (let i = 0; i < 2; i += 1) frames.push(await stream.nextItem());
+    for (let i = 0; i < 2; i += 1) await take();
     call.delta(" levers");
-    frames.push(await stream.nextItem());
+    await take();
     call.endStep();
     call.end();
-    frames.push(await stream.nextItem());
+    await take();
     await worker.idle();
     await stream.close();
 

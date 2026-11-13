@@ -27,12 +27,17 @@ import {
 } from "@/shared/threads/history.ts";
 import { rowsQuerySchema } from "@/shared/threads/rows.ts";
 import { threadSearchSchema } from "@/shared/threads/search.ts";
+import type { STREAMS } from "@/shared/streams.ts";
 
 import type { Asking, ThreadFollowItem, Threads } from "./service.ts";
 
 // A followed thread's item as the message the stream sends. Every kind is handled, so a new one
 // fails to compile until it is.
-export function feedMessage(item: ThreadFollowItem) {
+export function feedMessage(item: ThreadFollowItem): {
+  id?: string;
+  event: keyof typeof STREAMS.thread.events;
+  data: string;
+} {
   switch (item.kind) {
     case "rows":
       return {

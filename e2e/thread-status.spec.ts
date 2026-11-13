@@ -1,6 +1,6 @@
 import { type Browser, expect, type Page, test } from "@playwright/test";
 
-import { joinSpaceOf } from "./database.ts";
+import { joinSpaceOf } from "./seed.ts";
 
 // Sign-ups are rate limited per client address; each person counts as their own client, in every
 // worker running this file.
@@ -85,7 +85,7 @@ test("opening a thread clears what is new for that person only", async ({
   const threadUrl = await startThread(page, "// Engines");
   const grace = await someoneElse(browser, testInfo.parallelIndex);
   const graceEmail = await signUp(grace, "Grace Hopper");
-  joinSpaceOf(adaEmail, graceEmail, "messager");
+  await joinSpaceOf(adaEmail, graceEmail, "messager");
 
   await grace.goto(page.url());
   await expect(sidebarRow(grace, "Engines")).toHaveAttribute("data-status", "unread");
@@ -115,7 +115,7 @@ test("a failed run needs the person until they open it, and a run elsewhere spin
   const threadUrl = await startThread(page, "// Card reader");
   const grace = await someoneElse(browser, testInfo.parallelIndex);
   const graceEmail = await signUp(grace, "Grace Hopper");
-  joinSpaceOf(adaEmail, graceEmail, "messager");
+  await joinSpaceOf(adaEmail, graceEmail, "messager");
   await openThread(grace, threadUrl, "Card reader");
 
   await write(grace, "Count the cards very slowly");
@@ -171,10 +171,10 @@ test("a viewer sees the agent paused while a messager's call waits for approval"
   const threadUrl = await startThread(page, "// Looms");
   const grace = await someoneElse(browser, testInfo.parallelIndex);
   const graceEmail = await signUp(grace, "Grace Hopper");
-  joinSpaceOf(adaEmail, graceEmail, "messager");
+  await joinSpaceOf(adaEmail, graceEmail, "messager");
   const alan = await someoneElse(browser, testInfo.parallelIndex);
   const alanEmail = await signUp(alan, "Alan Turing");
-  joinSpaceOf(adaEmail, alanEmail, "viewer");
+  await joinSpaceOf(adaEmail, alanEmail, "viewer");
   await alan.goto(page.url());
 
   await openThread(grace, threadUrl, "Looms");

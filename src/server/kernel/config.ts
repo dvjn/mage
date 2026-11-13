@@ -17,6 +17,8 @@ export interface Config {
   webRoot: string;
   // Replies come from a stand-in model instead of providers; only for the browser journeys.
   fakeModels: boolean;
+  // The server is run for tests, which arrange its data through routes of their own.
+  testing: boolean;
   // Who may create team orgs: every account, or only the operators.
   teamOrgs: "everyone" | "operator";
   // The accounts that run this server, by lower-cased email.
@@ -168,6 +170,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     artifactPort,
     webRoot: env.WEB_ROOT ?? "dist/web",
     fakeModels: gateway === "fake",
+    testing: env.NODE_ENV === "test",
     teamOrgs,
     operatorEmails,
     oidc,

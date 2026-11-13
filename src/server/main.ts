@@ -161,6 +161,7 @@ const spaces = createSpaces({
   hooks,
 });
 const guestStore = createGuestStore(db);
+const readStore = createThreadReadStore(db);
 const access = createThreadAccess({
   spaces,
   threads: threadStore,
@@ -413,7 +414,7 @@ const app = createApp({
     guests: guestStore,
     threads: threadStore,
     transcripts,
-    reads: createThreadReadStore(db),
+    reads: readStore,
     runs: runStore,
     deltas,
     models,
@@ -483,6 +484,13 @@ const app = createApp({
   logger,
   signInOptions: { oidc: config.oidc && { name: config.oidc.name } },
   pingDatabase: () => pingDatabase(db),
+  ...(config.testing && {
+    testRoutes: await import("@/server/testing/seed.ts").then(({ createSeed, seedRoutes }) =>
+      seedRoutes(
+        createSeed({ db, threads: threadStore, guests: guestStore, reads: readStore, log }),
+      ),
+    ),
+  }),
   webRoot: import.meta.main ? config.webRoot : undefined,
   shutdown: shutdown.signal,
   ...(config.tracing && {

@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { RelayRow } from "@/shared/threads/rows.ts";
+import { Toaster } from "@/web/shell/toaster";
 import { RelayMessages } from "@/web/threads/transcript/relay-message";
 import { SubagentNotice } from "@/web/threads/transcript/subagent-notice";
 
@@ -40,7 +41,8 @@ const within = (element: ReactElement) =>
     createElement(
       QueryClientProvider,
       { client: new QueryClient({ defaultOptions: { queries: { enabled: false } } }) },
-      element,
+      // A tool's card reports a failed connection as a toast.
+      createElement(Toaster, null, element),
     ),
   );
 

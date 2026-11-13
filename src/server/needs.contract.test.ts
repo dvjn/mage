@@ -1,0 +1,214 @@
+// What waits on whom, as its clients meet it. A call that waits for a person shows in three
+// places today: on its row in the thread, in the thread's activity tray, and as the thread's
+// status in its space's list. These tests say what each place shows each reader, side by side, for
+// a call of the thread's own run, of a job, and of a subagent.
+
+import { describe, it } from "vite-plus/test";
+
+import { eventually, expect, type Person, type World, world } from "@/server/testing/contract.ts";
+
+// The three places, for one reader: the waiting rows of the thread with what the reader may do
+// from each, the tray's items that want someone, and the thread's status in its list.
+async function surfaces(w: World, who: Person) {
+  const detail = await w.detail(who);
+  const rows = detail.rows.flatMap((row) => {
+    if (row.kind !== "tool") return [];
+    const own =
+      row.state === "pending" && row.waits
+        ? [{ row: row.toolId, actions: row.actions ?? null, canAnswer: row.canAnswer ?? null }]
+        : [];
+    const below = row.subagentCall
+      ? [
+          {
+            subagent: row.subagent?.name,
+            needs: row.subagent?.needs ?? null,
+            row: row.subagentCall.toolId,
+            actions: row.subagentCall.actions ?? null,
+          },
+        ]
+      : [];
+    return [...own, ...below];
+  });
+  const tray = (await w.activity(who))
+    .filter((item) => item.attention || item.work.subagent?.needs)
+    .map((item) => ({
+      kind: item.work.kind,
+      status: item.work.status,
+      attention: item.attention ?? null,
+      canDecide: item.work.canDecide ?? null,
+      needs: item.work.subagent?.needs ?? null,
+    }));
+  const listed = await w.listed(who);
+  return {
+    run: detail.run?.waiting ?? null,
+    rows,
+    tray,
+    list: { status: listed.status, canApprove: listed.activity.canApprove },
+  };
+}
+
+describe("a call of the thread's own run that waits for a decision", () => {
+  it("needs those who may decide it, and shows the rest that the agent is paused", async () => {
+    const w = await world();
+    await w.post(w.ada, "Do the guarded thing");
+    await w.asks(w.threadId, ["probe.guarded", { label: "a" }]);
+    await eventually(
+      () => w.shown(),
+      (shown) => shown.run === "decision",
+    );
+
+    for (const who of [w.ada, w.grace]) {
+      expect(await surfaces(w, who)).toEqual({
+        run: "decision",
+        rows: [{ row: "probe.guarded", actions: ["allow", "deny"], canAnswer: null }],
+        tray: [
+          {
+            kind: "approval",
+            status: "pending",
+            attention: "approval",
+            canDecide: true,
+            needs: null,
+          },
+        ],
+        list: { status: "waiting", canApprove: true },
+      });
+    }
+    expect(await surfaces(w, w.alan)).toEqual({
+      run: "decision",
+      rows: [{ row: "probe.guarded", actions: [], canAnswer: null }],
+      // The tray lists a decision only for those who may make it.
+      tray: [],
+      list: { status: "paused", canApprove: false },
+    });
+  });
+});
+
+describe("a call of the thread's own run that waits for answers", () => {
+  it("needs those who may answer", async () => {
+    const w = await world();
+    await w.post(w.ada, "Ask me");
+    await w.asks(w.threadId, [
+      "thread.ask",
+      {
+        questions: [
+          { question: "Which one?", header: "Pick", options: [{ label: "One" }, { label: "Two" }] },
+        ],
+      },
+    ]);
+    await eventually(
+      () => w.shown(),
+      (shown) => shown.run === "answer",
+    );
+    expect(await surfaces(w, w.grace)).toEqual({
+      run: "answer",
+      rows: [{ row: "thread.ask", actions: null, canAnswer: true }],
+      tray: [],
+      list: { status: "waiting", canApprove: true },
+    });
+    expect(await surfaces(w, w.alan)).toEqual({
+      run: "answer",
+      rows: [{ row: "thread.ask", actions: null, canAnswer: false }],
+      tray: [],
+      list: { status: "paused", canApprove: false },
+    });
+  });
+});
+
+describe("a job that waits for a decision", () => {
+  it("needs those who may decide it, with no run waiting", async () => {
+    const w = await world();
+    await w.post(w.ada, "Start a guarded job");
+    await w.asks(w.threadId, ["jobs.start", { tool: "probe.guarded", input: { label: "a" } }]);
+    await w.answers(w.threadId, "Asked for.");
+    await w.settled();
+
+    expect(await surfaces(w, w.ada)).toEqual({
+      run: null,
+      rows: [{ row: "probe.guarded", actions: ["allow", "deny"], canAnswer: null }],
+      // The tray lists the decision and the job it is for.
+      tray: [
+        {
+          kind: "approval",
+          status: "pending",
+          attention: "approval",
+          canDecide: true,
+          needs: null,
+        },
+        { kind: "call", status: "pending", attention: "approval", canDecide: true, needs: null },
+      ],
+      list: { status: "waiting", canApprove: true },
+    });
+    // To someone who may not decide, a waiting job is not the agent paused: the thread reads as
+    // any other with something new.
+    expect(await surfaces(w, w.alan)).toEqual({
+      run: null,
+      rows: [{ row: "probe.guarded", actions: [], canAnswer: null }],
+      tray: [],
+      list: { status: "unread", canApprove: false },
+    });
+  });
+});
+
+describe("a subagent's call that waits for a decision", () => {
+  it("needs those who may decide it from the thread that started the subagent too", async () => {
+    const w = await world();
+    await w.post(w.ada, "Get help");
+    await w.asks(w.threadId, ["subagents.start", { name: "Researcher", task: "Look into it" }]);
+    await w.answers(w.threadId, "Started one.");
+    const child = await eventually(
+      () => w.subagentNamed("Researcher").catch(() => null),
+      (found) => found !== null,
+    );
+    const { ids } = await w.asks(child!, ["probe.guarded", { label: "a" }]);
+    await eventually(
+      () => w.shown(w.ada, child!),
+      (shown) => shown.run === "decision",
+    );
+    await w.settled();
+
+    expect(await surfaces(w, w.ada)).toEqual({
+      run: null,
+      rows: [
+        {
+          subagent: "Researcher",
+          needs: "approval",
+          row: "probe.guarded",
+          actions: ["allow", "deny"],
+        },
+      ],
+      tray: [
+        {
+          kind: "subagent",
+          status: "pending",
+          attention: "approval",
+          canDecide: true,
+          needs: "approval",
+        },
+      ],
+      // The list's status takes the subagent's in; what it says of approving is of the thread's
+      // own run alone.
+      list: { status: "waiting", canApprove: false },
+    });
+    expect(await surfaces(w, w.alan)).toEqual({
+      run: null,
+      rows: [{ subagent: "Researcher", needs: "approval", row: "probe.guarded", actions: [] }],
+      tray: [
+        {
+          kind: "subagent",
+          status: "pending",
+          attention: null,
+          canDecide: false,
+          needs: "approval",
+        },
+      ],
+      list: { status: "paused", canApprove: false },
+    });
+
+    // Decided from the subagent's own thread, where the call is.
+    expect(await w.decide(w.grace, ids[0]!, true, "once", child!)).toBe(200);
+    await w.answers(child!, "Looked.");
+    await w.answers(w.threadId, "It is done.");
+    await w.settled();
+    expect((await surfaces(w, w.ada)).rows).toEqual([]);
+  });
+});

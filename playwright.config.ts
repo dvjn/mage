@@ -1,18 +1,27 @@
 // Browser journeys against the production build with a fresh database and the stand-in model, which
-// production refuses. It is served three times on the one database: with passwords; signing in only
-// through the stand-in identity provider, as an instance that later turned one on; and with its
-// real model providers, for the journeys that reach the stand-in model over their wire protocols.
-// The identity provider and directory journeys run against the second; they provision people and
-// groups over SCIM themselves, as a directory would. The stand-ins the journeys reach, from the
-// mock's e2e config, are an identity provider, a model provider, an MCP server and a git host.
+// production refuses. It is served three times: with passwords; on the same database, signing in
+// only through the stand-in identity provider, as an instance that later turned one on; and, on a
+// database of its own, with its real model providers, for the journeys that reach the stand-in
+// model over their wire protocols. The identity provider and directory journeys run against the
+// second; they provision people and groups over SCIM themselves, as a directory would. The
+// stand-ins the journeys reach, from the mock's e2e config, are an identity provider, a model
+// provider, an MCP server and a git host.
 
 import { rmSync } from "node:fs";
 
 import { defineConfig, devices } from "@playwright/test";
 
-import { databasePath, dataDir } from "./e2e/database.ts";
 import { JOURNEY_SCIM_TOKEN } from "./mock/directory.ts";
-import { artifactOrigin, issuer, passwordServer, ssoServer, wireServer } from "./e2e/servers.ts";
+import {
+  artifactOrigin,
+  databasePath,
+  dataDir,
+  issuer,
+  passwordServer,
+  ssoServer,
+  wireDatabasePath,
+  wireServer,
+} from "./e2e/servers.ts";
 
 // The journeys that sign in through the identity provider.
 const ssoJourneys = ["**/oidc.spec.ts", "**/scim.spec.ts"];
@@ -35,6 +44,7 @@ if (!process.env.TEST_WORKER_INDEX) {
 
 export default defineConfig({
   testDir: "e2e",
+  globalTeardown: "./e2e/teardown.ts",
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
@@ -99,6 +109,8 @@ export default defineConfig({
       reuseExistingServer: false,
       env: {
         ...serverEnv,
+        // Its worker would take the other servers' runs and fail them for want of a model.
+        DATABASE_PATH: wireDatabasePath,
         MODEL_GATEWAY: "providers",
         PORT: new URL(wireServer).port,
         BASE_URL: wireServer,

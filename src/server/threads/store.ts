@@ -148,13 +148,18 @@ export function createThreadStore(db: Db): ThreadStore {
 
     // Its root branch takes its id. The thread names the branch before the branch is there, so
     // that link is checked when the transaction ends rather than as the thread is written.
-    create(input) {
+    create({ at, ...input }) {
       const id = ulid();
       return db.transaction(() => {
         db.$client.pragma("defer_foreign_keys = ON");
         const created = db
           .insert(thread)
-          .values({ id, ...input, currentBranchId: id })
+          .values({
+            id,
+            ...input,
+            currentBranchId: id,
+            ...(at && { createdAt: at, updatedAt: at }),
+          })
           .returning(columns)
           .get();
         db.insert(threadBranch)

@@ -466,6 +466,9 @@ export function ThreadPage() {
     }
     setFocused(key);
     toggleRows([target, relayRunKey(target), lineKey(target)], true);
+    // An agent's message starts open, and is kept here only once the reader closes it.
+    const reached = rows.find((row) => row.id === target);
+    if (reached?.kind === "relay" && reached.type === "message") toggleRows([target], false);
     highlightedAt.current = Date.now();
     setAcknowledged(undefined);
     setLit(target);
