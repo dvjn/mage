@@ -9,6 +9,7 @@ import { expect } from "vite-plus/test";
 import * as z from "zod";
 
 import type { LiveReporter } from "@/server/agent/live.ts";
+import * as schema from "@/server/schema.ts";
 import type { ToolSpec } from "@/server/agent/tools.ts";
 import type { BackgroundItem } from "@/shared/calls.ts";
 import { STREAMS } from "@/shared/streams.ts";
@@ -21,6 +22,7 @@ import { agentThread } from "./agent-thread.ts";
 import { expireLeases } from "./database.ts";
 import type { Call } from "./scripted-model.ts";
 import { openStream } from "./sse.ts";
+import { setup } from "./workspace.ts";
 
 export type Person = { cookie: string; userId: string; orgId: string };
 
@@ -94,9 +96,12 @@ export async function eventually<T>(read: () => T | Promise<T>, holds: (value: T
   }
 }
 
-export async function world(options: Parameters<typeof agentThread>[0] = {}) {
+export async function world(
+  options: Parameters<typeof agentThread>[0] = {},
+  harness: Omit<NonNullable<Parameters<typeof agentThread>[1]>, "toolsets"> = {},
+) {
   const tool = probe();
-  const base = await agentThread(options, { toolsets: [tool.toolset] });
+  const base = await agentThread(options, { ...harness, toolsets: [tool.toolset] });
   const { model, api, worker } = base;
   const ada: Person = base.ada;
   const grace: Person = base.grace;
@@ -143,6 +148,26 @@ export async function world(options: Parameters<typeof agentThread>[0] = {}) {
     // Signs someone else up, outside the thread's space.
     async signUp(name: string, email: string): Promise<Person> {
       return base.signUp(name, email);
+    },
+
+    // Signs someone up into the thread's org without a place in its space, and has Ada add them
+    // to the thread as a guest.
+    async guest(name: string, email: string): Promise<Person> {
+      const person = await base.signUp(name, email);
+      await base.db.insert(schema.member).values({
+        id: crypto.randomUUID(),
+        organizationId: ada.orgId,
+        userId: person.userId,
+        role: "member",
+        directRole: "member",
+        createdAt: new Date(),
+      });
+      const res = await api("POST", `/threads/${thread}/guests`, ada.cookie, {
+        userId: person.userId,
+        accessFor: "never",
+      });
+      if (res.status !== 200) throw new Error(`no guest: ${res.status} ${await res.text()}`);
+      return { ...person, orgId: ada.orgId };
     },
 
     // Takes the person's place in the thread's space away, as nothing in the app does yet for a
@@ -233,6 +258,12 @@ export async function world(options: Parameters<typeof agentThread>[0] = {}) {
       );
     },
 
+    // Whether the thread's agent has a call to the model the test has not taken yet.
+    waitsForModel: (threadId = thread) =>
+      model.calls.some(
+        (candidate) => !taken.has(candidate) && candidate.request.sessionId === threadId,
+      ),
+
     // How many calls the model has been made in the thread.
     modelCalls: (threadId = thread) =>
       model.calls.filter((call) => call.request.sessionId === threadId).length,
@@ -244,10 +275,15 @@ export async function world(options: Parameters<typeof agentThread>[0] = {}) {
 
     tool,
 
+    // What the call printed so far, as is kept of it for those watching.
+    async printed(callId: string) {
+      return (await base.live.tail(callId))?.text ?? "";
+    },
+
     // Moves the clock on and fires what came due, answering how many fired.
     async later(ms: number) {
       base.clock.now = new Date(base.clock.now.getTime() + ms);
-      return Promise.resolve(await base.triggers.tick());
+      return Promise.resolve(await base.schedules.tick());
     },
 
     // Posts to a webhook's address as an outside service would, signed when a secret is given.
@@ -318,11 +354,95 @@ export async function world(options: Parameters<typeof agentThread>[0] = {}) {
       return found.threadId;
     },
 
+    // Has the org's provider offer one more model.
+    offers(ref: string) {
+      base.org.models.push(ref);
+    },
+
+    // Another server instance on the same database, as a second process would be, reached over
+    // HTTP. It runs nothing itself; the two hear each other from then on.
+    async elsewhere() {
+      await base.sync.start();
+      const other = setup({}, { database: base.database, toolsets: [tool.toolset] });
+      await other.sync.start();
+      return {
+        async act(who: Person, method: string, path: string, body?: object, threadId = thread) {
+          return (await other.api(method, `/threads/${threadId}${path}`, who.cookie, body)).status;
+        },
+      };
+    },
+
+    // A thread in Grace's own space in a team org Ada owns, where the org's settings can archive
+    // the space and Grace can put it in trash. Each request names the team org.
+    async teamThread() {
+      const { orgId } = await json<{ orgId: string }>(
+        await api("POST", "/orgs", ada.cookie, { name: "Analytical Engines" }),
+      );
+      const owner: Person = { ...ada, orgId };
+      const member: Person = { ...grace, orgId };
+      const as = (who: Person, method: string, path: string, body?: object) =>
+        api(method, path, who.cookie, body, orgId);
+      const { url } = await json<{ url: string }>(
+        await as(owner, "POST", "/org/invites", { email: "grace@example.com", role: "member" }),
+      );
+      await json(
+        await api("POST", "/org-invites/accept", grace.cookie, { token: url.split("/join/")[1] }),
+      );
+      const allow = async (memberSpaces: boolean) =>
+        (await as(owner, "PATCH", "/org/settings", { memberSpaces })).status;
+      await allow(true);
+      const space = await json<{ id: string }>(await as(member, "POST", "/spaces/mine"));
+      const made = await json<{ id: string }>(
+        await as(member, "POST", `/spaces/${space.id}/threads`, {}),
+      );
+      const threadId = made.id;
+      return {
+        threadId,
+        ada: owner,
+        grace: member,
+        async post(text: string) {
+          return (await as(member, "POST", `/threads/${threadId}/messages`, { text })).status;
+        },
+        async decide(callId: string, allowed: boolean) {
+          const path = `/threads/${threadId}/tools/${callId}/decision`;
+          return (await as(member, "POST", path, { allow: allowed, scope: "once" })).status;
+        },
+        async shown() {
+          const detail = await json<ThreadDetail>(await as(member, "GET", `/threads/${threadId}`));
+          return {
+            rows: detail.rows.map(rowWords),
+            run: detail.run ? (detail.run.waiting ?? "running") : null,
+          };
+        },
+        // The thread's status for Grace, as its page asks for it.
+        async status() {
+          return (await as(member, "GET", `/threads/${threadId}`)).status;
+        },
+        // Ada turns members' own spaces off, which archives the space.
+        archive: async () => allow(false),
+        trash: async () => (await as(member, "DELETE", `/spaces/${space.id}`)).status,
+        restore: async () => (await as(member, "POST", `/spaces/trash/${space.id}/restore`)).status,
+        deleteOrg: async () => (await as(owner, "DELETE", "/org")).status,
+      };
+    },
+
     // Has the server find the jobs a stopped server left running, as it does once their holder
     // has been gone long enough.
     async crashJobs() {
-      await expireLeases(base.db, "background_call");
+      await expireLeases(base.db, "call");
       await Promise.resolve(await base.calls.recover());
+    },
+
+    // Does the work with no worker running, as while every instance is busy elsewhere, then
+    // starts one again.
+    async whileStopped(work: () => Promise<void>) {
+      await current.stop();
+      try {
+        await work();
+      } finally {
+        current = base.makeWorker();
+        await Promise.resolve(await base.start(current));
+      }
     },
 
     // Stops the server's worker as a crash would, mid-run, and brings up another that recovers

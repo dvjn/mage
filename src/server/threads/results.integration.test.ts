@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import * as z from "zod";
 
-import { wholeWhereRead } from "@/server/agent/compaction.ts";
+import { wholeWhereRead } from "@/server/execution/compaction.ts";
 import type { ToolSpec } from "@/server/agent/tools.ts";
 import * as schema from "@/server/schema.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
@@ -164,7 +164,8 @@ describe("a large tool result", () => {
     first.end();
     (await t.model.next()).reply("Started.");
     await t.worker.idle();
-    const [record] = (await t.db.execute<{ id: string }>("select id from background_call")).rows;
+    const [record] = (await t.db.execute<{ id: string }>("select id from call where background"))
+      .rows;
 
     // Its end wakes the agent, which then checks on it.
     finish({ ok: true, value: { text: "é".repeat(BIG) } });

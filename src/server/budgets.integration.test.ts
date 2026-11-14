@@ -7,7 +7,7 @@ import { createRunTraces } from "@/server/kernel/tracing.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { queries } from "@/server/testing/tracing.ts";
 
-const MAX = { detail: 46, rows: 13, threadList: 60, tray: 49, run: 157 };
+const MAX = { detail: 46, rows: 13, threadList: 60, tray: 49, run: 129 };
 
 // Ada's space with twenty threads, and a thread of fifty notes.
 async function arranged() {

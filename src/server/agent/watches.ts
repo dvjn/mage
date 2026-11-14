@@ -68,6 +68,17 @@ export function createWatchStore(db: Db) {
       );
     },
 
+    // Every open watch of the kind, oldest first.
+    async open(kind: WatchKind): Promise<Watch[]> {
+      return withSubjects(
+        await db
+          .select()
+          .from(threadWatch)
+          .where(eq(threadWatch.kind, kind))
+          .orderBy(threadWatch.createdAt, threadWatch.id),
+      );
+    },
+
     // The watches the thread's agent set of the kind.
     async setIn(threadId: string, kind: WatchKind): Promise<Watch[]> {
       return withSubjects(

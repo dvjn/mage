@@ -120,7 +120,7 @@
         "kind": "tool",
         "id": "j-waiting",
         "seq": 9,
-        "runId": "j-waiting",
+        "runId": "r1",
         "messageId": "j-waiting",
         "toolId": "files.delete",
         "input": {
@@ -140,6 +140,12 @@
         },
         "title": "files.delete",
         "toolset": null,
+        "background": {
+          "kind": "call",
+          "status": "pending",
+          "startedAt": "2026-01-01T00:00:08.000Z",
+          "canCancel": true
+        },
         "steering": [
           {
             "name": "Ada Lovelace",
@@ -402,7 +408,7 @@
         "kind": "tool",
         "id": "j-waiting",
         "seq": 9,
-        "runId": "j-waiting",
+        "runId": "r1",
         "messageId": "j-waiting",
         "toolId": "files.delete",
         "input": {
@@ -422,6 +428,12 @@
         },
         "title": "files.delete",
         "toolset": null,
+        "background": {
+          "kind": "call",
+          "status": "pending",
+          "startedAt": "2026-01-01T00:00:08.000Z",
+          "canCancel": true
+        },
         "steering": [
           {
             "name": "Ada Lovelace",
@@ -671,7 +683,7 @@
         "kind": "tool",
         "id": "j-waiting",
         "seq": 9,
-        "runId": "j-waiting",
+        "runId": "r1",
         "messageId": "j-waiting",
         "toolId": "files.delete",
         "input": {
@@ -691,6 +703,12 @@
         },
         "title": "files.delete",
         "toolset": null,
+        "background": {
+          "kind": "call",
+          "status": "pending",
+          "startedAt": "2026-01-01T00:00:08.000Z",
+          "canCancel": false
+        },
         "steering": [
           {
             "name": "Ada Lovelace",

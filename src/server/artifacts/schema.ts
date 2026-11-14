@@ -1,12 +1,19 @@
 // Tables of the pages the agent publishes in a space, their versions and files, which threads used
 // them, who they are shared with, and whether orgs and spaces let them be made public.
 
-import { sql } from "drizzle-orm";
-import { pgTable, text, integer, check, index, primaryKey, boolean } from "drizzle-orm/pg-core";
+import {
+  pgTable,
+  text,
+  integer,
+  index,
+  primaryKey,
+  boolean,
+  foreignKey,
+} from "drizzle-orm/pg-core";
 
 import { at, bytes, NOW } from "@/server/db/columns.ts";
 
-import { backgroundCall, run } from "@/server/agent/schema.ts";
+import { call } from "@/server/calls/schema.ts";
 import { scimGroup, user } from "@/server/orgs/schema.ts";
 import { scopeColumns, scopeIndexes } from "@/server/spaces/scope.ts";
 import { space } from "@/server/spaces/schema.ts";
@@ -59,21 +66,16 @@ export const artifactVersion = pgTable(
     icon: text("icon").notNull(),
     // The thread whose agent published it, while that thread exists.
     threadId: text("thread_id").references(() => thread.id, { onDelete: "set null" }),
-    // What published it, while that exists: a run, or a call started in the background, which
-    // runs under no run; and the call's id in the thread's log.
-    runId: text("run_id").references(() => run.id, { onDelete: "set null" }),
-    backgroundCallId: text("background_call_id").references(() => backgroundCall.id, {
-      onDelete: "set null",
-    }),
+    // The call that published it, while that exists.
     callId: text("call_id"),
     createdAt: at("created_at").default(NOW).notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.artifactId, table.version] }),
-    check(
-      "artifact_version_origin_check",
-      sql`${table.runId} is null or ${table.backgroundCallId} is null`,
-    ),
+    foreignKey({
+      columns: [table.threadId, table.callId],
+      foreignColumns: [call.threadId, call.id],
+    }).onDelete("set null"),
   ],
 );
 

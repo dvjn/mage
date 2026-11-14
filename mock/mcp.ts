@@ -683,6 +683,10 @@ export function mcpStandIn(options: McpStandInOptions) {
         accessTokens.clear();
         refreshTokens.clear();
         return json({ ok: true });
+      // Every access token runs out; refresh tokens still renew them.
+      case "/control/expire":
+        accessTokens.clear();
+        return json({ ok: true });
       case "/control/revoke-person":
         revokedPeople.add(url.searchParams.get("name") ?? "");
         return json({ ok: true });

@@ -52,8 +52,8 @@ export function statused(
              exists (select 1 from subagent c
                        join run hr on hr.thread_id = c.thread_id and hr.status = 'waiting'
                       where c.parent_thread_id = t.id) as subagent_waiting,
-             exists (select 1 from background_call bc
-                      where bc.thread_id = t.id and bc.status = 'pending') as job_waiting
+             exists (select 1 from call c
+                      where c.thread_id = t.id and c.background and c.status = 'waiting') as job_waiting
              ${columns}
         ${from}
         left join thread_read tr on tr.user_id = ${reader} and tr.thread_id = t.id

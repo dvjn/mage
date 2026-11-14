@@ -3,7 +3,7 @@ import { and, asc, eq, inArray, isNotNull, isNull, max } from "drizzle-orm";
 import type { Db } from "@/server/db/db.ts";
 import { user } from "@/server/orgs/schema.ts";
 
-import { threadTask } from "./schema.ts";
+import { taskShare, threadTask } from "./schema.ts";
 import type { TaskAssignee } from "@/shared/tasks.ts";
 
 import type { TaskRecord, TaskStore } from "./tasks.ts";
@@ -20,6 +20,22 @@ function whole(row: typeof threadTask.$inferSelect): TaskRecord {
 
 export function createTaskStore(db: Db): TaskStore {
   return {
+    async sharedWith(threadId) {
+      return (
+        (
+          await db
+            .select({ owner: taskShare.ownerThreadId })
+            .from(taskShare)
+            .where(eq(taskShare.threadId, threadId))
+            .limit(1)
+        )[0]?.owner ?? null
+      );
+    },
+
+    async share(threadId, ownerThreadId) {
+      await db.insert(taskShare).values({ threadId, ownerThreadId }).onConflictDoNothing();
+    },
+
     async inThread(threadId, archived = false): Promise<TaskRecord[]> {
       return (
         await db

@@ -8,26 +8,28 @@ import { ulid } from "ulid";
 import type { ArtifactPreviewer } from "@/server/artifacts/preview.ts";
 import { createArtifacts } from "@/server/artifacts/service.ts";
 import { createArtifactStore } from "@/server/artifacts/store.ts";
-import { createCallStore } from "@/server/agent/call-store.ts";
 import { createLive } from "@/server/agent/live.ts";
 import { createLiveStore } from "@/server/agent/live-store.ts";
-import { createCalls } from "@/server/agent/calls.ts";
-import { createNotifier } from "@/server/agent/notifications.ts";
+import { type Calls, createCalls } from "@/server/calls/calls.ts";
+import { createCallStore } from "@/server/calls/store.ts";
+import { createQueue, type Queue } from "@/server/queue/queue.ts";
+import { createQueueStore } from "@/server/queue/store.ts";
 import { createTasks } from "@/server/agent/tasks.ts";
 import { createTaskStore } from "@/server/agent/task-store.ts";
-import { createTriggerStore } from "@/server/agent/trigger-store.ts";
-import { createTriggers } from "@/server/agent/triggers.ts";
 import { createSubagentStore } from "@/server/agent/subagent-store.ts";
 import { createSubagents } from "@/server/agent/subagents.ts";
+import { createOAuthAttempts } from "@/server/oauth/attempts.ts";
 import { createWatchStore } from "@/server/agent/watches.ts";
 import { createRichReplies } from "@/server/agent/rich-replies.ts";
-import { createRunStore } from "@/server/agent/run-store.ts";
-import { createRunWorker, type RunWorkerOptions } from "@/server/agent/runs.ts";
+import { createRunStore } from "@/server/execution/store.ts";
+import { createExecution, type Execution } from "@/server/execution/execution.ts";
+import type { RunWorkerOptions } from "@/server/execution/worker.ts";
 import { createSystemTools } from "@/server/agent/system-tools.ts";
 import { createToolPolicies } from "@/server/agent/tool-policies.ts";
 import { createToolPolicyStore } from "@/server/agent/tool-policy-store.ts";
 import { createMcpTools, createToolSearch } from "@/server/agent/tool-search.ts";
 import { createToolSettingStore } from "@/server/agent/tool-setting-store.ts";
+import { createThreadToolStore } from "@/server/agent/thread-tool-store.ts";
 import { createToolDecisions, createTools, type Toolset } from "@/server/agent/tools.ts";
 import { type Db, pingDatabase } from "@/server/db/db.ts";
 import { createGuests } from "@/server/guests/service.ts";
@@ -37,7 +39,7 @@ import { createInstructionStore } from "@/server/instructions/store.ts";
 import type { Cipher } from "@/server/kernel/cipher.ts";
 import type { Config } from "@/server/kernel/config.ts";
 import { createHooks } from "@/server/kernel/hooks.ts";
-import { createSync, type Listen } from "@/server/sync/sync.ts";
+import { type AfterCommit, createSync, type Listen } from "@/server/sync/sync.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { TraceRelay } from "@/server/kernel/trace-relay.ts";
 import type { RunTraces } from "@/server/kernel/tracing.ts";
@@ -82,7 +84,13 @@ import { createTitles, type TitlesOptions } from "@/server/threads/titles.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
 
+import { createSchedules } from "@/server/schedules/schedules.ts";
+import { createScheduleStore } from "@/server/schedules/store.ts";
+import { createWebhookStore } from "@/server/webhooks/store.ts";
+import { createWebhooks } from "@/server/webhooks/webhooks.ts";
+
 import { createApp } from "./app.ts";
+import { createTriggers } from "./triggers.ts";
 
 // What the routes tests arrange data through are made from.
 export interface SeedDeps {
@@ -91,6 +99,8 @@ export interface SeedDeps {
   guests: ReturnType<typeof createGuestStore>;
   reads: ReturnType<typeof createThreadReadStore>;
   log: ThreadLog;
+  queue: Pick<Queue, "fromLog">;
+  calls: Pick<Calls, "fromLog">;
 }
 
 export interface ComposeDeps {
@@ -129,8 +139,10 @@ export interface ComposeDeps {
     // Names this server instance among those sharing the database.
     instanceId?: string;
     now?: () => Date;
-    worker?: Partial<RunWorkerOptions>;
+    worker?: Partial<Omit<RunWorkerOptions, "calls" | "queue">>;
     toolsets?: Toolset[];
+    // What live output's steps that wait on a commit go through, for tests that hold them back.
+    liveAfterCommit?: (afterCommit: AfterCommit) => AfterCommit;
     heartbeatMs?: number;
     pingDatabase?: () => Promise<boolean>;
     testRoutes?: (deps: SeedDeps) => Hono;
@@ -147,7 +159,7 @@ export function compose(deps: ComposeDeps) {
     logger,
     instanceId: options.instanceId,
   });
-  const { db, transact } = sync;
+  const { db, transact, instanceId } = sync;
   // What reaches across the network, which no transaction may wait on.
   const fetch = sync.outside("fetch", deps.fetch);
   const mcpFetch = sync.outside("MCP fetch", ports.mcpFetch ?? deps.fetch);
@@ -175,18 +187,19 @@ export function compose(deps: ComposeDeps) {
     trustedOrigins: config.authTrustedOrigins,
     oidc: config.oidc,
     // The directory's changes settle the orgs the person is in, or could be through a group.
-    scim: config.scimToken
-      ? {
-          token: config.scimToken,
-          changed: (userId, active) => orgs.directoryChanged(userId, active),
-        }
-      : null,
+    scim: config.scimToken ? { token: config.scimToken } : null,
   });
 
   const connectionStore = createConnectionStore(db);
+  // Sign-ins under way, for MCP servers and model providers alike.
+  const attempts = createOAuthAttempts({ db, cipher });
   const connections =
     ports.connections ??
     createConnections({
+      attempts,
+      instanceId,
+      ticker: sync.ticker,
+      transact,
       connections: connectionStore,
       credentials: createCredentialStore(db, cipher),
       providers: {
@@ -218,7 +231,6 @@ export function compose(deps: ComposeDeps) {
   }
   const runStore = createRunStore(db);
   const deltaStore = createDeltaStore(db);
-  const { instanceId } = sync;
   const bus = sync.signals;
   const log = createThreadLog({ threads: threadStore, bus, transact, ordered: sync.ordered });
   const spaces = createSpaces({
@@ -241,8 +253,18 @@ export function compose(deps: ComposeDeps) {
   });
   const toolSettings = createToolSettingStore(db);
   const toolPolicyStore = createToolPolicyStore(db);
+  // The tools each system registers below, in the order of the model's tools.
+  const tools = createTools({
+    settings: toolSettings,
+    policies: toolPolicyStore,
+    directory,
+    access,
+    threadTools: createThreadToolStore(db),
+  });
   const mcpServerStore = createMcpServerStore(db);
   const mcp = createMcpServers({
+    attempts,
+    instanceId,
     servers: mcpServerStore,
     credentials: createMcpCredentialStore(db, cipher),
     client: createMcpClient({
@@ -267,92 +289,68 @@ export function compose(deps: ComposeDeps) {
   });
   // Threads' transcripts, folded once for the agent and the people reading them.
   const transcripts = createTranscripts(threadStore, bus, hooks, sync.inTransaction);
-  // Whether a notified thread's agent may start is the subagents' call, for every notifier.
-  const notifier = createNotifier({
-    transcripts,
-    runs: runStore,
+  // Every input to a thread's agent goes in through the queue; execution decides in the same write
+  // what it starts.
+  const queue = createQueue({
+    inTransaction: sync.inTransaction,
+    store: createQueueStore(db),
     log,
+    transcripts,
+    threads: threadStore,
+    spaceStore,
+    access,
     bus,
-    mayStart: async (threadId) => subagents.mayStart(threadId),
   });
   const watches = createWatchStore(db);
-  const subagentStore = createSubagentStore(db);
-  const subagents = createSubagents({
-    subagents: subagentStore,
-    threads: threadStore,
-    transcripts,
-    runs: runStore,
-    log,
-    bus,
-    choosesModels: async (spaceId) => {
-      const space = await spaceStore.find(spaceId);
-      return !!space && (await tools.optionOn(space, SUBAGENTS_TOOLSET, CHOOSE_MODELS));
-    },
-    taskHandover: () => tasks.handover,
-    modelsIn: async (orgId) => (await models.resolveModels(orgId)).models,
-    notifier,
-    watches,
-  });
   const agentNameOf = async (spaceId: string) => {
     const space = await spaceStore.find(spaceId);
     return space ? await agentNameIn(settingStore, space) : DEFAULT_AGENT_NAME;
   };
-  const callStore = createCallStore(db);
   const live = createLive({
     store: createLiveStore(db),
     bus,
     transact,
+    afterCommit: options.liveAfterCommit?.(sync.afterCommit) ?? sync.afterCommit,
     ordered: sync.ordered,
   });
+  const callStore = createCallStore(db);
   const calls = createCalls({
-    live,
-    calls: callStore,
+    store: callStore,
     threads: threadStore,
-    transcripts,
     spaceStore,
-    runs: runStore,
     log,
     bus,
+    queue,
     logger,
-    tools: () => tools,
-    narrow: async (thread, offered) => subagents.toolsOf(thread, offered),
-    notifier,
+    afterCommit: sync.afterCommit,
+    tools,
+    live,
     instanceId,
     keeper: sync.keeper,
+    transact,
+    claimDue: sync.claimDue,
   });
-  const tasks = createTasks({
-    tasks: createTaskStore(db),
-    threads: threadStore,
-    transcripts,
-    access,
-    orgOf: async (spaceId) => (await spaceStore.find(spaceId))?.orgId ?? null,
-    subagents,
-    log,
-    bus,
-    agentNameIn: agentNameOf,
-    notifier,
-    watches,
-  });
-  const triggerStore = createTriggerStore(db, cipher);
+  const scheduleStore = createScheduleStore(db);
   // Timers and schedules, as one more instance on the database would tick them.
-  const makeTriggers = () =>
-    createTriggers({
-      baseUrl: config.baseUrl,
-      transact,
-      sync,
-      triggers: triggerStore,
-      threads: threadStore,
-      transcripts,
-      access,
-      subagents,
-      log,
+  const makeSchedules = () =>
+    createSchedules({
+      store: scheduleStore,
+      queue,
       bus,
+      sync,
       logger,
-      agentNameIn: agentNameOf,
-      notifier,
       ...(options.now && { now: options.now }),
     });
-  const triggers = makeTriggers();
+  const schedules = makeSchedules();
+  const webhooks = createWebhooks({
+    store: createWebhookStore(db, cipher),
+    queue,
+    bus,
+    transact,
+    baseUrl: config.baseUrl,
+    ...(options.now && { now: options.now }),
+  });
+  const triggers = createTriggers({ schedules, webhooks, access });
   // Previews need a browser, which servers without one go without.
   const artifacts = createArtifacts({
     store: createArtifactStore(db),
@@ -371,99 +369,147 @@ export function compose(deps: ComposeDeps) {
   // Whether the space uses any MCP server, which Mage's own MCP tools need.
   const usesServers = async (space: { id: string; orgId: string }) =>
     (await mcp.toolsetsInSpace(space)).length > 0;
-  const tools = createTools({
-    toolsets: [
-      createRichReplies(),
-      createSystemTools({
-        threads: threadStore,
-        transcripts,
-        spaceStore,
-        guests: guestStore,
-        models,
-        // The model that replies, opened as the worker opens it.
-        open: (orgId, ref) => runModels.open(orgId, ref),
-      }),
-      skills.toolset(),
-      createMcpTools(
-        [
-          createToolSearch(usesServers),
-          // A server's resources follow its tools: listed only while one of them is on in the
-          // space.
-          ...mcp.resourceTools(async (space) => {
-            const rules = await tools.rulesIn(space);
-            return (toolId) => !rules(toolId).off;
-          }),
-        ],
-        mcp.hasServers,
-        usesServers,
-      ),
-      subagents.toolset(),
-      calls.toolset(),
-      tasks.toolset(),
-      triggers.toolset(),
-      artifacts.toolset(),
-      ...(options.toolsets ?? []),
-    ],
-    scoped: {
-      inSpace: async (space) => mcp.toolsetsInSpace(space),
-      forOrgSettings: async (orgId) => mcp.toolsetsForOrgSettings(orgId),
-      forSpaceSettings: async (space) => mcp.toolsetsForSpaceSettings(space),
-      named: async (toolId) => mcp.named(toolId),
-    },
-    settings: toolSettings,
-    policies: toolPolicyStore,
-    directory,
-    access,
-    modelRef: async (orgId, ref) => models.canonicalRef(orgId, ref),
-    callModel: async (call) =>
-      call.background
-        ? ((await runStore.find((await callStore.find(call.id))?.runId ?? ""))?.model ?? null)
-        : ((await runStore.find(call.runId))?.model ?? null),
-  });
 
   const runModels = opened(
     "model",
     ports.runModels ?? (config.fakeModels ? fakeRunModels(models) : models),
   );
-  // A worker as a server process starts it, sharing these stores; one more than this instance's
-  // stands for another instance's, under a name of its own.
-  function makeWorker(more: Partial<RunWorkerOptions> = {}, instance = ulid()) {
-    return createRunWorker({
-      runs: runStore,
+  // The agent's runs: started, stopped and ended in one place, offered and told what the other
+  // systems contribute, and held back where the subagents' limits say.
+  const execution: Execution = createExecution({
+    runs: runStore,
+    calls,
+    queue,
+    threads: threadStore,
+    transcripts,
+    spaceStore,
+    deltas: deltaStore,
+    log,
+    bus,
+    transact,
+    afterCommit: sync.afterCommit,
+    instanceId,
+    sync,
+    models: runModels,
+    tools,
+    logger,
+    traces: deps.traces,
+    runsIn: async (space) => spaces.runsIn(space),
+    hooks,
+    ...(options.worker && { overrides: options.worker }),
+  });
+  const subagentStore = createSubagentStore(db);
+  const subagents = createSubagents({
+    subagents: subagentStore,
+    threads: threadStore,
+    access,
+    modelRef: async (orgId, ref) => models.canonicalRef(orgId, ref),
+    transcripts,
+    runs: runStore,
+    log,
+    bus,
+    choosesModels: async (spaceId) => {
+      const space = await spaceStore.find(spaceId);
+      return !!space && (await tools.optionOn(space, SUBAGENTS_TOOLSET, CHOOSE_MODELS));
+    },
+    calls,
+    ticker: sync.ticker,
+    modelsIn: async (orgId) => (await models.resolveModels(orgId)).models,
+    queue,
+    stop: async (target, by, opts) => execution.stop(target, by, opts),
+    watches,
+  });
+  const tasks = createTasks({
+    tasks: createTaskStore(db),
+    threads: threadStore,
+    transcripts,
+    access,
+    orgOf: async (spaceId) => (await spaceStore.find(spaceId))?.orgId ?? null,
+    subagents,
+    log,
+    bus,
+    agentNameIn: agentNameOf,
+    queue,
+    watches,
+  });
+  // A subagent started with tasks is given them, and shares its starter's list.
+  subagents.extend(tasks.extension);
+  // Mage's own toolsets, in the order of the model's tools, then what orgs and spaces add.
+  tools.register(createRichReplies());
+  tools.register(
+    createSystemTools({
       threads: threadStore,
       transcripts,
       spaceStore,
-      access,
-      deltas: deltaStore,
-      log,
-      bus,
-      transact,
-      afterCommit: sync.afterCommit,
-      instanceId: instance,
-      sync,
-      models: runModels,
-      tools,
-      guidance: async (space, offered, thread, now) => ({
-        ...(await instructions.textsFor(space)),
-        mcpServers: await mcp.instructionsIn(space, offered),
-        skills: await skills.listFor(space, offered),
-        agentName: await agentNameIn(settingStore, space),
-        ...(await subagents.guidance(thread, await tools.guidanceIn(space, now))),
-      }),
-      narrow: async (thread, offered) => subagents.toolsOf(thread, offered),
-      before: async (thread) => subagents.before(thread),
-      ended: async (run) => subagents.ended(run),
-      adopt: async (call) => calls.adopt(call),
-      live,
-      logger,
-      traces: deps.traces,
-      runsIn: async (space) => spaces.runsIn(space),
-      hooks,
-      ...options.worker,
-      ...more,
-    });
-  }
-  const worker = makeWorker({}, instanceId);
+      guests: guestStore,
+      models,
+      // The model that replies, opened as the worker opens it.
+      open: (orgId, ref) => runModels.open(orgId, ref),
+    }),
+  );
+  tools.register(skills.toolset());
+  tools.register(
+    createMcpTools(
+      [
+        createToolSearch(usesServers),
+        // A server's resources follow its tools: listed only while one of them is on in the
+        // space.
+        ...mcp.resourceTools(async (space) => {
+          const rules = await tools.rulesIn(space);
+          return (toolId) => !rules(toolId).off;
+        }),
+      ],
+      mcp.hasServers,
+      usesServers,
+    ),
+  );
+  tools.register(subagents.toolset());
+  tools.register(calls.toolset());
+  tools.register(tasks.toolset());
+  tools.register(triggers.toolset());
+  tools.register(artifacts.toolset());
+  for (const toolset of options.toolsets ?? []) tools.register(toolset);
+  tools.register({
+    inSpace: async (space) => mcp.toolsetsInSpace(space),
+    forOrgSettings: async (orgId) => mcp.toolsetsForOrgSettings(orgId),
+    forSpaceSettings: async (space) => mcp.toolsetsForSpaceSettings(space),
+    named: async (toolId) => mcp.named(toolId),
+  });
+  // A subagent is offered all but what only its starter has.
+  tools.narrow(async (thread, offered) => subagents.toolsOf(thread, offered));
+  // A job's card shows on whichever call it is.
+  tools.presenter(async (reader, rows) => calls.present(reader, rows));
+  // What each system tells the thread's agent, in this order; subagents last, as they change what
+  // the toolsets say for a subagent.
+  execution.contribute({ guidance: async (space) => instructions.textsFor(space) });
+  execution.contribute({
+    guidance: async (space, offered) => ({
+      mcpServers: await mcp.instructionsIn(space, offered),
+    }),
+  });
+  execution.contribute({
+    guidance: async (space, offered) => ({ skills: await skills.listFor(space, offered) }),
+  });
+  execution.contribute({
+    guidance: async (space) => ({ agentName: await agentNameIn(settingStore, space) }),
+  });
+  execution.contribute({
+    guidance: async (space, _offered, _thread, now) => ({
+      toolsets: await tools.guidanceIn(space, now),
+    }),
+  });
+  execution.contribute({
+    guidance: async (_space, _offered, thread, _now, so) =>
+      subagents.guidance(thread, so.toolsets ?? []),
+    before: async (thread) => subagents.before(thread),
+  });
+  execution.gate(async (threadId) => subagents.mayStart(threadId));
+  execution.onEnded(async (run, next) => subagents.ended(run, next));
+  execution.onEndKept(async (run) => subagents.endKept(run));
+  const { worker } = execution;
+  // A worker as another server process starts it, sharing these stores, under a name of its own.
+  const makeWorker = (more: Partial<RunWorkerOptions> = {}, instance = ulid()) =>
+    execution.makeWorker(more, instance);
 
   const orgs = createOrgs({
     directory,
@@ -471,7 +517,6 @@ export function compose(deps: ComposeDeps) {
     spaces,
     spaceStore,
     threads: threadStore,
-    runs: runStore,
     settings: settingStore,
     hooks,
     baseUrl: config.baseUrl,
@@ -490,16 +535,16 @@ export function compose(deps: ComposeDeps) {
     transcripts,
     reads: readStore,
     runs: runStore,
+    execution,
     deltas: deltaStore,
     models,
     log,
     bus,
-    notifier,
+    queue,
     tools,
     subagents,
-    background: callStore,
+    calls,
     live,
-    triggers,
     tasks,
     commands: createCommands({ skills, prompts: mcp }),
     ask: (threadId, branchId, rowId) => worker.requestAt(threadId, branchId, rowId),
@@ -520,29 +565,18 @@ export function compose(deps: ComposeDeps) {
     models,
     spaces,
     threads,
+    queue,
+    access,
     tasks,
     triggers,
     orgs,
     groups: createGroups({ directory }),
+    calls,
     tools: createToolDecisions({
       tools,
-      access,
-      transcripts,
-      spaceStore,
-      runs: runStore,
       spaces,
       settings: toolSettings,
       policies: toolPolicyStore,
-      log,
-      bus,
-      background: {
-        find: async (callId) => calls.find(callId),
-        proceed: async (threadId, callId, allow) => calls.proceed(threadId, callId, allow),
-        room: async (threadId) => calls.room(threadId),
-        move: async (threadId, callId) => worker.moveToBackground(threadId, callId),
-        detach: async (threadId, call, append) => calls.detach(threadId, call, append),
-        cancel: async (threadId, callId) => calls.cancel(threadId, callId),
-      },
     }),
     toolPolicies: createToolPolicies({
       policies: toolPolicyStore,
@@ -576,6 +610,8 @@ export function compose(deps: ComposeDeps) {
         guests: guestStore,
         reads: readStore,
         log,
+        queue,
+        calls,
       }),
     }),
     webRoot: deps.webRoot,
@@ -625,10 +661,15 @@ export function compose(deps: ComposeDeps) {
     subagents,
     subagentStore,
     tasks,
+    queue,
     calls,
+    execution,
+    transcripts,
     triggers,
-    makeTriggers,
-    triggerStore,
+    schedules,
+    makeSchedules,
+    scheduleStore,
+    webhooks,
     callStore,
     live,
     mcp,
@@ -651,14 +692,19 @@ export function compose(deps: ComposeDeps) {
       await calls.start();
       await worker.start();
       // Timers and schedules that came due while the server was down fire first.
-      await triggers.start();
+      await schedules.start();
+      await subagents.start();
+      // Device sign-ins are asked about on every instance, whoever reads where they stand.
+      await connections.start();
       await sweep.start();
     },
 
     // Stops the background work and lets runs and background calls go, for recovery here or
     // elsewhere.
     async stop() {
-      await triggers.stop();
+      await schedules.stop();
+      await subagents.stop();
+      await connections.stop();
       await Promise.all([calls.stop(), worker.stop()]);
       await sync.stop();
     },

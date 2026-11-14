@@ -15,6 +15,13 @@ export interface Lease {
   epoch: number;
 }
 
+// Thrown by a write whose lease no longer holds.
+export class LeaseLost extends Error {
+  constructor(what: string) {
+    super(`lease on ${what} lost`);
+  }
+}
+
 // The columns a leased table declares.
 export function leaseColumns() {
   return {

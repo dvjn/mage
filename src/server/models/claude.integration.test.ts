@@ -1,7 +1,8 @@
+import { createOAuthAttempts } from "@/server/oauth/attempts.ts";
 import { createHash } from "node:crypto";
 
 import type { Tasks } from "@/server/agent/tasks.ts";
-import type { Triggers } from "@/server/agent/triggers.ts";
+import type { Triggers } from "@/server/triggers.ts";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -76,6 +77,12 @@ function setup() {
     },
     logger,
     now: () => clock.now,
+    attempts: createOAuthAttempts({
+      db,
+      cipher: createCipher({ version: 1, key: Buffer.alloc(32, 9) }),
+    }),
+    instanceId: "test",
+    transact: async (work) => work(),
   });
   const app = createApp({
     handleAuth: auth.handler,
@@ -237,6 +244,17 @@ describe("Claude sign-in", () => {
       accountId: "acct-123",
       email: "ada@claude.example",
     });
+  });
+
+  it("exchanges a code pasted twice at once only once", async () => {
+    const { requests, signUp, start, finish } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const { attemptId } = await start(cookie);
+    const statuses = await Promise.all(
+      [1, 2].map(async () => (await finish(cookie, attemptId, `the-code#${attemptId}`)).status),
+    );
+    expect(statuses.toSorted((a, b) => a - b)).toEqual([200, 404]);
+    expect(requests).toHaveLength(1);
   });
 
   it("refuses a code from another sign-in, and one tried already", async () => {

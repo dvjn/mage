@@ -1,3 +1,4 @@
+import { type SQL, sql } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
 import { agentThread } from "@/server/testing/agent-thread.ts";
@@ -7,7 +8,7 @@ import { eventSummary } from "@/server/threads/log.ts";
 import type { TaskList } from "@/shared/tasks.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
-import { NOTIFICATIONS_HEADING } from "./context.ts";
+import { NOTIFICATIONS_HEADING } from "@/server/execution/context.ts";
 
 async function taskThread() {
   const workspace = await agentThread();
@@ -73,6 +74,17 @@ async function taskThread() {
   }
 
   return { ...workspace, calls, answer, tasksOf, rowsOf, until, subagentNamed, worker };
+}
+
+// Whether the subagent works on its starter's list.
+async function sharing(
+  t: { db: { execute: (query: SQL) => Promise<{ rows: unknown[] }> } },
+  threadId: string,
+) {
+  return (
+    (await t.db.execute(sql`select 1 from task_share where thread_id = ${threadId}`)).rows.length >
+    0
+  );
 }
 
 describe("tasks", () => {
@@ -270,7 +282,7 @@ describe("tasks", () => {
     );
     await t.until(async () => (await t.subagentStore.ofParents([t.thread.id])).length === 1);
     const scout = await t.subagentNamed("Scout");
-    expect((await t.subagentStore.find(scout))!.shareTasks).toBe(false);
+    expect(await sharing(t, scout)).toBe(false);
     await t.answer(t.thread.id);
     await t.answer(scout, "Ready.");
     // Its report wakes the starter.
@@ -282,7 +294,7 @@ describe("tasks", () => {
     await t.post(t.ada, "Hand it over");
     await t.calls(t.thread.id, ["thread.update_task", { id: part!.id, assignee: "Scout" }]);
     await t.answer(t.thread.id);
-    expect((await t.subagentStore.find(scout))!.shareTasks).toBe(true);
+    expect(await sharing(t, scout)).toBe(true);
     // The idle subagent wakes on the task and sees the starter's list.
     const woken = await t.answer(scout, "On it.");
     expect(woken.texts.join("\n")).toContain(`gave you task "Part"`);
@@ -316,6 +328,31 @@ describe("tasks", () => {
     expect((await t.tasksOf(t.thread.id)).shared).toBeUndefined();
   });
 
+  // The start and the tasks it gives are one write, so the notice of the tasks given is there when
+  // the subagent's first run begins.
+  it("given at start are read by the subagent's first run, with its task", async () => {
+    const t = await taskThread();
+    await t.start();
+    await t.post(t.ada, "Split it");
+    await t.calls(t.thread.id, ["thread.add_tasks", { tasks: [{ title: "Part" }] }]);
+    await t.answer(t.thread.id);
+    const [part] = (await t.tasksOf(t.thread.id)).tasks;
+    await t.post(t.ada, "Go");
+    await t.calls(t.thread.id, [
+      "subagents.start",
+      { name: "Scout", task: "Do the part", tasks: [part!.id] },
+    ]);
+    await t.answer(t.thread.id);
+    const scout = await t.subagentNamed("Scout");
+    const first = await t.answer(scout, "On it.");
+    expect(first.texts.join("\n")).toContain("Do the part");
+    expect(first.texts.join("\n")).toContain(`gave you task "Part"`);
+    await t.answer(t.thread.id, "Noted.");
+    await t.worker.idle();
+    const runs = await t.db.execute(sql`select id from run where thread_id = ${scout}`);
+    expect(runs.rows).toHaveLength(1);
+  });
+
   it("are given to a subagent at start by id, which shares the list", async () => {
     const t = await taskThread();
     await t.start();
@@ -333,7 +370,7 @@ describe("tasks", () => {
     const result = await t.answer(t.thread.id);
     expect(result.texts.join("\n")).toContain("No task nope");
     const scout = await t.subagentNamed("Scout");
-    expect((await t.subagentStore.find(scout))!.shareTasks).toBe(true);
+    expect(await sharing(t, scout)).toBe(true);
     expect((await t.subagentStore.ofParents([t.thread.id])).map((one) => one.name)).toEqual([
       "Scout",
     ]);

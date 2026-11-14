@@ -302,10 +302,10 @@ function tools() {
   l.add("tool.ran", { runId: "r1", callId: "c-missing", ok: true, value: 1, ms: 1 });
   l.add("run.completed", { runId: "r1" });
 
-  // Jobs: calls started in the background, which go under their own id as their run.
-  const job = (callId: string, extra: object = {}) =>
+  // Jobs: calls started in the background, under the run that asked for them.
+  const job = (callId: string, extra: object = {}, runId = "r1") =>
     l.add("tool.requested", {
-      runId: callId,
+      runId,
       callId,
       messageId: callId,
       toolId: "web.fetch",
@@ -318,21 +318,21 @@ function tools() {
       ...extra,
     });
   job("j-ran");
-  l.add("tool.ran", { runId: "j-ran", callId: "j-ran", ok: true, value: "page", ms: 9000 });
+  l.add("tool.ran", { runId: "r1", callId: "j-ran", ok: true, value: "page", ms: 9000 });
   job("j-failed");
   l.add("tool.ran", {
-    runId: "j-failed",
+    runId: "r1",
     callId: "j-failed",
     ok: false,
     error: "timed out",
     ms: 5,
   });
   job("j-cancelled");
-  l.add("tool.denied", { runId: "j-cancelled", callId: "j-cancelled", reason: "stopped" });
+  l.add("tool.denied", { runId: "r1", callId: "j-cancelled", reason: "stopped" });
   job("j-approved", { risk: "ask", waits: true });
-  l.add("tool.approved", { runId: "j-approved", callId: "j-approved", scope: "once" }, ADA);
+  l.add("tool.approved", { runId: "r1", callId: "j-approved", scope: "once" }, ADA);
   l.add("tool.ran", {
-    runId: "j-approved",
+    runId: "r1",
     callId: "j-approved",
     ok: true,
     value: "page",
@@ -340,7 +340,7 @@ function tools() {
     ranAs: "ada",
   });
   job("j-denied", { risk: "ask", waits: true });
-  l.add("tool.denied", { runId: "j-denied", callId: "j-denied", reason: "denied" }, GRACE);
+  l.add("tool.denied", { runId: "r1", callId: "j-denied", reason: "denied" }, GRACE);
   // A call moved to the background while it ran: its own row answers the run at once, and the
   // job carries on under a row of its own.
   l.add("run.created", { runId: "r2", reason: "queued_input", continuesRunId: "r1" }, ADA);
@@ -357,7 +357,7 @@ function tools() {
     title: "Fetch",
     toolset: "Web",
   });
-  job("j-moved");
+  job("j-moved", {}, "r2");
   l.add("tool.ran", {
     runId: "r2",
     callId: "c-moved",
@@ -366,7 +366,7 @@ function tools() {
     ms: 2000,
   });
   l.add("run.completed", { runId: "r2" });
-  l.add("tool.ran", { runId: "j-moved", callId: "j-moved", ok: true, value: "page", ms: 60_000 });
+  l.add("tool.ran", { runId: "r2", callId: "j-moved", ok: true, value: "page", ms: 60_000 });
   return l.events;
 }
 
@@ -716,7 +716,7 @@ function open() {
     toolset: "Files",
   });
   l.add("tool.requested", {
-    runId: "j-waiting",
+    runId: "r1",
     callId: "j-waiting",
     messageId: "j-waiting",
     toolId: "files.delete",

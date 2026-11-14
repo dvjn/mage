@@ -4,7 +4,8 @@
 
 import { describe, it } from "vite-plus/test";
 
-import { eventually, expect, world } from "@/server/testing/contract.ts";
+import { eventually, expect, rowWords, world } from "@/server/testing/contract.ts";
+import type { ThreadDetail } from "@/shared/threads/detail.ts";
 
 // When a run starts: what arrives, by where the thread's agent stands. People's messages and
 // notices differ on purpose: a limit holds back a start on a notice, never one on a person's
@@ -183,6 +184,66 @@ describe("a subagent past its starter's running limit", () => {
       "user: [Notifications] From agents and tools, not from a person.\n\n[Agent of Get help] Task H4",
     ]);
   });
+
+  // Started on a person's message past the limit, then sent a message by its starter's agent.
+  async function pastTheLimit() {
+    const crowd = await crowded();
+    const { w, threads, started } = crowd;
+    await w.post(w.ada, "Start now", "steer", threads[4]!);
+    await eventually(started, (now) => now[4] === true);
+    return { ...crowd, h4: await w.next(threads[4]!) };
+  }
+
+  // The model is next asked with the notice: the run takes it in at its step boundary, so this
+  // arrangement never leaves it for a next run.
+  it("starts its next run on a notice at once when its run ends, though past the limit", async () => {
+    const { w, threads, started, h4 } = await pastTheLimit();
+    await w.post(w.ada, "Tell H4");
+    await w.asks(w.threadId, ["subagents.send", { to: "H4", text: "One more thing" }]);
+    await w.answers(w.threadId, "Told.");
+    await eventually(
+      () => w.shown(w.ada, threads[4]!),
+      (shown) => shown.waiting.length === 1,
+    );
+
+    h4.reply("Done.");
+    const next = await w.next(threads[4]!);
+    expect(next.texts.at(-1)).toBe(
+      "user: [Notifications] From agents and tools, not from a person.\n\n[Agent of Get help] One more thing",
+    );
+    expect(started()).toEqual([true, true, true, true, true, false]);
+  });
+
+  it("starts its next run on a person's queued message at once when its run ends", async () => {
+    const { w, threads, started, h4 } = await pastTheLimit();
+    expect((await w.post(w.grace, "Then this", "queue", threads[4]!)).status).toBe(202);
+    h4.reply("Done.");
+    const next = await w.next(threads[4]!);
+    expect(next.texts.at(-1)).toBe("user: [Grace Hopper] Then this");
+    expect(started()).toEqual([true, true, true, true, true, false]);
+  });
+
+  it("holds back what else it is told while it waits, and starts on all of it, oldest first", async () => {
+    const { w, threads, started } = await crowded();
+    await w.post(w.ada, "Tell H5");
+    await w.asks(w.threadId, ["subagents.send", { to: "H5", text: "Also this" }]);
+    await w.answers(w.threadId, "Told.");
+    await eventually(
+      () => w.shown(w.ada, threads[5]!),
+      (shown) => shown.waiting.length === 2,
+    );
+    expect(started()[5]).toBe(false);
+
+    // Two places free: H4 takes the first, H5 the second.
+    await w.answers(threads[0]!, "Done.");
+    await eventually(started, (now) => now[4] === true);
+    await w.answers(threads[1]!, "Done.");
+    await eventually(started, (now) => now[5] === true);
+    const call = await w.next(threads[5]!);
+    expect(call.texts.slice(1)).toEqual([
+      "user: [Notifications] From agents and tools, not from a person.\n\n[Agent of Get help] Task H5\n\n[Agent of Get help] Also this",
+    ]);
+  });
 });
 
 describe("stopping", () => {
@@ -240,6 +301,168 @@ describe("stopping", () => {
     expect(next.texts.at(-1)).toBe("user: [Grace Hopper] Afterwards");
     await w.settled();
   });
+
+  it("ends the run of the branch left when its author edits the message, and answers the edit", async () => {
+    const w = await world();
+    await w.post(w.ada, "Go");
+    const old = await w.next(w.threadId);
+    old.startStep();
+    old.delta("Working on");
+    await old.drained();
+    const before = await w.detail();
+    const message = before.rows[0]!;
+    expect(
+      await w.act(w.ada, "POST", "/history", { action: "edit", rowId: message.id, text: "Went" }),
+    ).toBe(200);
+    const edited = await w.answers(w.threadId, "Gone.");
+    expect(edited.texts).toEqual(["user: [Ada Lovelace] Went"]);
+    await w.settled();
+    expect(old.signal.aborted).toBe(true);
+    expect((await w.shown()).rows).toEqual(["Ada Lovelace: Went", "agent (completed): Gone."]);
+    const left = await w.json<ThreadDetail>(
+      await w.api("GET", `/threads/${w.threadId}?branch=${before.branch.id}`, w.ada.cookie),
+    );
+    expect(left.rows.map(rowWords)).toEqual([
+      "Ada Lovelace: Go",
+      "agent (interrupted): Working on",
+      "stopped by Ada Lovelace",
+    ]);
+  });
+
+  it("ends a run that waits on a person when a reply before it is written again", async () => {
+    const w = await world();
+    await w.post(w.ada, "Hello");
+    await w.answers(w.threadId, "Hi.");
+    await w.settled();
+    const before = await w.detail();
+    const reply = before.rows.at(-1)!;
+    await w.post(w.ada, "Do the guarded thing");
+    const { ids } = await w.asks(w.threadId, ["probe.guarded", { label: "a" }]);
+    await eventually(
+      () => w.shown(),
+      (shown) => shown.run === "decision",
+    );
+    expect(await w.act(w.ada, "POST", "/history", { action: "retry", rowId: reply.id })).toBe(200);
+    const again = await w.answers(w.threadId, "Hi again.");
+    expect(again.texts).toEqual(["user: [Ada Lovelace] Hello"]);
+    await w.settled();
+    const left = await w.json<ThreadDetail>(
+      await w.api("GET", `/threads/${w.threadId}?branch=${before.branch.id}`, w.ada.cookie),
+    );
+    expect(left.rows.map(rowWords).slice(2)).toEqual([
+      "Ada Lovelace: Do the guarded thing",
+      "agent (completed): On it.",
+      "probe.guarded stopped",
+      "stopped by Ada Lovelace",
+    ]);
+    // The call is on a branch no longer current, where nothing is decided.
+    expect(await w.decide(w.ada, ids[0]!, true)).toBe(404);
+    expect(w.tool.running("a")).toBe(false);
+  });
+
+  it("ends the run, naming nobody, when its space is archived or put in trash", async () => {
+    for (const leave of ["archive", "trash"] as const) {
+      const w = await world();
+      const team = await w.teamThread();
+      expect(await team.post("Go")).toBe(202);
+      const call = await w.next(team.threadId);
+      call.startStep();
+      call.delta("Working on");
+      await call.drained();
+      expect(await team[leave]()).toBe(200);
+      await w.settled();
+      expect(call.signal.aborted).toBe(true);
+      if (leave === "trash") expect(await team.restore()).toBe(200);
+      expect(await team.shown()).toEqual({
+        rows: ["Grace Hopper: Go", "agent (interrupted): Working on", "stopped by null"],
+        run: null,
+      });
+    }
+  });
+
+  it("ends a run that waits on a person when its space is put in trash, and the call will not run", async () => {
+    const w = await world();
+    const team = await w.teamThread();
+    expect(await team.post("Do the guarded thing")).toBe(202);
+    const { ids } = await w.asks(team.threadId, ["probe.guarded", { label: "a" }]);
+    await eventually(
+      () => team.shown(),
+      (shown) => shown.run === "decision",
+    );
+    expect(await team.trash()).toBe(200);
+    await w.settled();
+    expect(await team.restore()).toBe(200);
+    expect(await team.shown()).toEqual({
+      rows: [
+        "Grace Hopper: Do the guarded thing",
+        "agent (completed): On it.",
+        "probe.guarded stopped",
+        "stopped by null",
+      ],
+      run: null,
+    });
+    expect(await team.decide(ids[0]!, true)).toBe(409);
+  });
+
+  it("drops a waiting message of someone who lost their place, and the run goes on", async () => {
+    const w = await world();
+    await w.post(w.ada, "Go");
+    const call = await w.next(w.threadId);
+    call.startStep();
+    await call.drained();
+    await w.post(w.grace, "From Grace", "queue");
+    await w.post(w.ada, "From Ada", "queue");
+    expect((await w.shown()).waiting).toHaveLength(2);
+    await w.loses(w.grace);
+    expect(call.signal.aborted).toBe(false);
+
+    call.delta("Done.");
+    call.endStep();
+    call.end();
+    const next = await w.answers(w.threadId, "And done.");
+    expect(next.texts.at(-1)).toBe("user: [Ada Lovelace] From Ada");
+    await w.settled();
+    expect(await w.shown()).toEqual({
+      rows: [
+        "Ada Lovelace: Go",
+        "agent (completed): Done.",
+        "Ada Lovelace: From Ada",
+        "agent (completed): And done.",
+      ],
+      waiting: [],
+      run: null,
+    });
+  });
+
+  // Deleting the org stops its runs as any stop does: a model call under way is cut at once.
+  it("deletes the org's threads with a run under way", async () => {
+    const w = await world();
+    const team = await w.teamThread();
+    expect(await team.post("Go")).toBe(202);
+    const call = await w.next(team.threadId);
+    call.startStep();
+    await call.drained();
+    expect(await team.deleteOrg()).toBe(200);
+    expect(await team.status()).toBe(404);
+    await eventually(
+      () => call.signal.aborted,
+      (aborted) => aborted,
+    );
+  });
+
+  // As above, for a run that waits on a person, which is queued again for a worker to end.
+  it("deletes the org's threads with a run that waits on a person", async () => {
+    const w = await world();
+    const team = await w.teamThread();
+    expect(await team.post("Do the guarded thing")).toBe(202);
+    await w.asks(team.threadId, ["probe.guarded", { label: "a" }]);
+    await eventually(
+      () => team.shown(),
+      (shown) => shown.run === "decision",
+    );
+    expect(await team.deleteOrg()).toBe(200);
+    expect(await team.status()).toBe(404);
+  });
 });
 
 describe("trying again", () => {
@@ -282,6 +505,346 @@ describe("trying again", () => {
     const detail = await w.detail();
     expect((await w.shown()).rows).toEqual(["Ada Lovelace: Go", "agent (completed): Second try."]);
     expect(detail.rows.at(-1)?.versions).toMatchObject({ at: 1 });
+  });
+
+  it("reads a quiet notice that came after a failed run at the first step of its retry", async () => {
+    const w = await world();
+    const schedule = await w.schedule("Daily", "0 9 * * *", "Report");
+    await w.post(w.ada, "Go");
+    (await w.next(w.threadId)).fail("boom");
+    await w.settled();
+    const failure = (await w.detail()).rows.at(-1)!;
+    const runId = failure.kind === "failure" ? failure.runId : "";
+    expect(await w.act(w.ada, "POST", `/triggers/${schedule.id}/pause`)).toBe(200);
+    await w.settled();
+    expect(w.modelCalls()).toBe(3);
+
+    const res = await w.api("POST", `/threads/${w.threadId}/retry`, w.ada.cookie, { runId });
+    expect(await w.json(res, 202)).toMatchObject({
+      type: "run.created",
+      data: { reason: "retry" },
+    });
+    const again = await w.answers(w.threadId, "This time.");
+    expect(again.texts.slice(-2)).toEqual([
+      "user: [Ada Lovelace] Go",
+      expect.stringMatching(/^user: \[Notifications\] .*paused/s),
+    ]);
+    await w.settled();
+  });
+
+  it("runs a stopped run's input again, when a person asks", async () => {
+    const w = await world();
+    await w.post(w.ada, "Go");
+    const call = await w.next(w.threadId);
+    call.startStep();
+    await call.drained();
+    expect(await w.act(w.ada, "POST", "/stop")).toBe(202);
+    await w.settled();
+    const stop = (await w.detail()).rows.at(-1)!;
+    const runId = stop.kind === "stop" ? stop.runId : "";
+    expect(await w.act(w.ada, "POST", "/retry", { runId })).toBe(202);
+    const again = await w.answers(w.threadId, "This time.");
+    expect(again.texts).toEqual(["user: [Ada Lovelace] Go"]);
+    await w.settled();
+  });
+
+  it("is refused while a run is under way, and for a run that is not the last", async () => {
+    const w = await world();
+    await w.post(w.ada, "Go");
+    (await w.next(w.threadId)).fail("boom");
+    await w.settled();
+    const failure = (await w.detail()).rows.at(-1)!;
+    const failed = failure.kind === "failure" ? failure.runId : "";
+
+    await w.post(w.ada, "Again");
+    const call = await w.next(w.threadId);
+    call.startStep();
+    await call.drained();
+    const running = (await w.detail()).run!.id;
+    expect(await w.act(w.ada, "POST", "/retry", { runId: running })).toBe(409);
+    call.reply("Done.");
+    await w.settled();
+    expect(await w.act(w.ada, "POST", "/retry", { runId: failed })).toBe(409);
+  });
+
+  it("takes in the edited message with those taken in beside it", async () => {
+    const w = await world();
+    await w.post(w.ada, "Go");
+    const first = await w.next(w.threadId);
+    first.step("Working.");
+    await first.drained();
+    await w.post(w.ada, "One");
+    await w.post(w.grace, "Two");
+    first.end();
+    await w.answers(w.threadId, "Both read.");
+    await w.settled();
+    const one = (await w.detail()).rows.find((row) => row.kind === "human" && row.text === "One")!;
+
+    expect(
+      await w.act(w.ada, "POST", "/history", {
+        action: "edit",
+        rowId: one.id,
+        text: "One, edited",
+      }),
+    ).toBe(200);
+    const again = await w.answers(w.threadId, "Read again.");
+    expect(again.texts.slice(-2)).toEqual([
+      "user: [Grace Hopper] Two",
+      "user: [Ada Lovelace] One, edited",
+    ]);
+    await w.settled();
+    expect((await w.shown()).rows.slice(-3)).toEqual([
+      "Grace Hopper: Two",
+      "Ada Lovelace: One, edited",
+      "agent (completed): Read again.",
+    ]);
+  });
+
+  it("leaves a person's message behind when a reply is written again, and tells again a notice whose webhook came before", async () => {
+    const w = await world();
+    const hook = await w.webhook("Deploys", "Check the deploy");
+    await w.post(w.ada, "Hello");
+    await w.answers(w.threadId, "Hi.");
+    await w.settled();
+    const reply = (await w.detail()).rows.at(-1)!;
+    await w.post(w.ada, "Go on");
+    const call = await w.next(w.threadId);
+    call.startStep();
+    await call.drained();
+    await w.post(w.grace, "While you work");
+    expect(await w.hook(hook.url, "one")).toBe(200);
+    expect((await w.shown()).waiting).toHaveLength(2);
+
+    expect(await w.act(w.ada, "POST", "/history", { action: "retry", rowId: reply.id })).toBe(200);
+    const again = await w.next(w.threadId);
+    again.startStep();
+    expect(await w.boundary(again)).toEqual([]);
+    again.delta("Hi again.");
+    again.endStep();
+    again.end();
+    expect(again.texts.slice(-2)).toEqual([
+      "user: [Ada Lovelace] Hello",
+      expect.stringContaining('Webhook "Deploys" was posted to: Check the deploy'),
+    ]);
+    await w.settled();
+    expect(await w.shown()).toMatchObject({
+      rows: expect.arrayContaining(["agent (completed): Hi again."]),
+      waiting: [],
+      run: null,
+    });
+    expect(w.modelCalls()).toBe(5);
+  });
+
+  it("leaves a notice behind when what sent it was made after the reply written again", async () => {
+    const w = await world();
+    await w.post(w.ada, "Hello");
+    await w.answers(w.threadId, "Hi.");
+    await w.settled();
+    const reply = (await w.detail()).rows.at(-1)!;
+    const hook = await w.webhook("Deploys", "Check the deploy");
+    await w.post(w.ada, "Go on");
+    const call = await w.next(w.threadId);
+    call.startStep();
+    await call.drained();
+    await w.post(w.grace, "While you work");
+    expect(await w.hook(hook.url, "one")).toBe(200);
+    expect((await w.shown()).waiting).toHaveLength(2);
+
+    expect(
+      await w.act(w.ada, "POST", "/history", { action: "retry", rowId: reply.id, confirm: true }),
+    ).toBe(200);
+    expect((await w.shown()).waiting).toEqual([]);
+    const again = await w.answers(w.threadId, "Hi again.");
+    expect(again.texts).toEqual(["user: [Ada Lovelace] Hello"]);
+    await w.settled();
+    expect((await w.shown()).waiting).toEqual([]);
+  });
+
+  it("tells again a person's quiet change when a reply is written again", async () => {
+    const w = await world();
+    const schedule = await w.schedule("Daily", "0 9 * * *", "Report");
+    await w.post(w.ada, "Hello");
+    await w.answers(w.threadId, "Hi.");
+    await w.settled();
+    const reply = (await w.detail()).rows.at(-1)!;
+    await w.post(w.ada, "Go on");
+    const call = await w.next(w.threadId);
+    call.startStep();
+    await call.drained();
+    expect(await w.act(w.ada, "POST", `/triggers/${schedule.id}/pause`)).toBe(200);
+    expect((await w.shown()).rows.at(-1)).toMatch(/^change: /);
+
+    expect(await w.act(w.ada, "POST", "/history", { action: "retry", rowId: reply.id })).toBe(200);
+    expect((await w.shown()).rows.filter((row) => row.startsWith("change: "))).toHaveLength(1);
+    const again = await w.answers(w.threadId, "Hi again.");
+    expect(again.texts.slice(-2)).toEqual([
+      "user: [Ada Lovelace] Hello",
+      expect.stringMatching(/^user: \[Notifications\] .*paused/s),
+    ]);
+    await w.settled();
+  });
+
+  it("tells again a person's change, and leaves behind a notice whose webhook came after", async () => {
+    const w = await world();
+    const schedule = await w.schedule("Daily", "0 9 * * *", "Report");
+    await w.post(w.ada, "Hello");
+    await w.answers(w.threadId, "Hi.");
+    await w.settled();
+    const reply = (await w.detail()).rows.at(-1)!;
+    const hook = await w.webhook("Deploys", "Check the deploy");
+    await w.post(w.ada, "Go on");
+    const call = await w.next(w.threadId);
+    call.startStep();
+    await call.drained();
+    expect(await w.hook(hook.url, "one")).toBe(200);
+    expect(await w.act(w.ada, "POST", `/triggers/${schedule.id}/pause`)).toBe(200);
+
+    expect(
+      await w.act(w.ada, "POST", "/history", { action: "retry", rowId: reply.id, confirm: true }),
+    ).toBe(200);
+    const shown = await w.shown();
+    expect(shown.waiting).toEqual([]);
+    expect(shown.rows.filter((row) => row.startsWith("change: "))).toHaveLength(1);
+    const again = await w.answers(w.threadId, "Hi again.");
+    expect(again.texts.at(-1)).toMatch(/^user: \[Notifications\] .*paused/s);
+    expect(again.texts.join("\n")).not.toContain("Deploys");
+    await w.settled();
+  });
+
+  it("tells again a subagent's report when the conversation is restored to after its start, which starts the agent", async () => {
+    const w = await world();
+    await w.post(w.ada, "Start");
+    await w.asks(w.threadId, ["subagents.start", { name: "Researcher", task: "Look into it" }]);
+    await w.answers(w.threadId, "Started.");
+    const child = await w.subagentNamed("Researcher");
+    await w.post(w.ada, "Hello");
+    await w.answers(w.threadId, "Hi.");
+    await eventually(
+      () => w.shown(),
+      (shown) => shown.run === null,
+    );
+    const reply = (await w.detail()).rows.at(-1)!;
+    await w.post(w.ada, "Go on");
+    const call = await w.next(w.threadId);
+    call.startStep();
+    await call.drained();
+    await w.asks(child, ["subagents.send", { to: "agent", text: "Found it" }]);
+    await w.answers(child, "Reported.");
+    await eventually(
+      () => w.shown(),
+      (shown) => shown.waiting.length === 1,
+    );
+    const calls = w.modelCalls();
+
+    expect(await w.act(w.ada, "POST", "/history", { action: "restore", rowId: reply.id })).toBe(
+      200,
+    );
+    const told = await w.answers(w.threadId, "Read it.");
+    expect(told.texts.at(-1)).toContain("Found it");
+    await w.settled();
+    expect(await w.shown()).toMatchObject({ waiting: [], run: null });
+    expect(w.modelCalls()).toBe(calls + 1);
+  });
+
+  // The notice the new branch reads waits there, though the branch left took it in.
+  it("restores to a reply before the step boundary that took a notice in", async () => {
+    const w = await world();
+    const hook = await w.webhook("Deploys", "Check the deploy");
+    await w.post(w.ada, "Go");
+    const first = await w.next(w.threadId);
+    first.step("Working.");
+    await first.drained();
+    expect(await w.hook(hook.url, "one")).toBe(200);
+    expect(await w.boundary(first)).toEqual([expect.stringContaining("[Notifications]")]);
+    first.reply("Done.");
+    await w.settled();
+    const working = (await w.detail()).rows.find(
+      (row) => row.kind === "agent" && row.text === "Working.",
+    )!;
+    expect(await w.act(w.ada, "POST", "/history", { action: "restore", rowId: working.id })).toBe(
+      200,
+    );
+    // It wakes the agent on the new branch, which reads it.
+    const told = await w.answers(w.threadId, "Read again.");
+    expect(told.texts.at(-1)).toContain('Webhook "Deploys" was posted to');
+    await w.settled();
+  });
+
+  // No arrangement leaves two messages waiting as a run starts, so they are always
+  // taken in by two events.
+  it("keeps only what was taken in by the same event when the first of two messages is edited", async () => {
+    const w = await world();
+    await w.whileStopped(async () => {
+      await w.post(w.ada, "One");
+      await w.post(w.ada, "Two");
+    });
+    const first = await w.answers(w.threadId, "Both read.");
+    expect(first.texts).toEqual(["user: [Ada Lovelace] One", "user: [Ada Lovelace] Two"]);
+    await w.settled();
+    const one = (await w.detail()).rows.find((row) => row.kind === "human" && row.text === "One")!;
+    expect(
+      await w.act(w.ada, "POST", "/history", {
+        action: "edit",
+        rowId: one.id,
+        text: "One, edited",
+      }),
+    ).toBe(200);
+    const again = await w.answers(w.threadId, "Read again.");
+    expect(again.texts).toEqual(["user: [Ada Lovelace] One, edited"]);
+    await w.settled();
+  });
+
+  it("restores the conversation to an earlier row without starting a run", async () => {
+    const w = await world();
+    await w.post(w.ada, "Hello");
+    await w.answers(w.threadId, "Hi.");
+    await w.settled();
+    await w.post(w.ada, "More");
+    await w.answers(w.threadId, "Sure.");
+    await w.settled();
+    const before = await w.detail();
+    const res = await w.api("POST", `/threads/${w.threadId}/history`, w.ada.cookie, {
+      action: "restore",
+      rowId: before.rows[1]!.id,
+    });
+    const { branchId } = await w.json<{ branchId: string }>(res);
+    await w.settled();
+    expect(branchId).not.toBe(before.branch.id);
+    expect((await w.detail()).branch).toEqual({ id: branchId, current: true });
+    expect(w.modelCalls()).toBe(2);
+    expect((await w.shown()).run).toBeNull();
+  });
+
+  it("writes a reply again with another model, while retrying a failed run keeps the thread's", async () => {
+    const w = await world();
+    w.offers("codex/gpt-small");
+    await w.post(w.ada, "Hello");
+    await w.answers(w.threadId, "Hi.");
+    await w.settled();
+    const reply = (await w.detail()).rows.at(-1)!;
+    expect(
+      await w.act(w.ada, "POST", "/history", {
+        action: "retry",
+        rowId: reply.id,
+        with: { model: "codex/gpt-small" },
+      }),
+    ).toBe(200);
+    await w.answers(w.threadId, "Hi, smaller.");
+    await w.settled();
+    expect((await w.detail()).rows.at(-1)).toMatchObject({
+      kind: "agent",
+      model: "codex/gpt-small",
+    });
+
+    await w.post(w.ada, "Go");
+    (await w.next(w.threadId)).fail("boom");
+    await w.settled();
+    const failure = (await w.detail()).rows.at(-1)!;
+    const runId = failure.kind === "failure" ? failure.runId : "";
+    expect(await w.act(w.ada, "POST", "/retry", { runId })).toBe(202);
+    await w.answers(w.threadId, "This time.");
+    await w.settled();
+    expect((await w.detail()).rows.at(-1)).toMatchObject({ kind: "agent", model: "codex/gpt-big" });
   });
 });
 

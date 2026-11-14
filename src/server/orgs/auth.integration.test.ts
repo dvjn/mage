@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { Tasks } from "@/server/agent/tasks.ts";
-import type { Triggers } from "@/server/agent/triggers.ts";
+import type { Triggers } from "@/server/triggers.ts";
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
 import { createApp } from "@/server/app.ts";

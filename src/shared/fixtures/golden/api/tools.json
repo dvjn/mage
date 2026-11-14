@@ -569,7 +569,7 @@
         "kind": "tool",
         "id": "j-ran",
         "seq": 58,
-        "runId": "j-ran",
+        "runId": "r1",
         "messageId": "j-ran",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -591,13 +591,20 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "done",
+          "startedAt": "2026-01-01T00:00:45.000Z",
+          "endedAt": "2026-01-01T00:00:46.000Z",
+          "canCancel": false
         }
       },
       {
         "kind": "tool",
         "id": "j-failed",
         "seq": 58,
-        "runId": "j-failed",
+        "runId": "r1",
         "messageId": "j-failed",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -619,13 +626,20 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "failed",
+          "startedAt": "2026-01-01T00:00:47.000Z",
+          "endedAt": "2026-01-01T00:00:48.000Z",
+          "canCancel": false
         }
       },
       {
         "kind": "tool",
         "id": "j-cancelled",
         "seq": 58,
-        "runId": "j-cancelled",
+        "runId": "r1",
         "messageId": "j-cancelled",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -644,13 +658,20 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "cancelled",
+          "startedAt": "2026-01-01T00:00:49.000Z",
+          "endedAt": "2026-01-01T00:00:50.000Z",
+          "canCancel": false
         }
       },
       {
         "kind": "tool",
         "id": "j-approved",
         "seq": 58,
-        "runId": "j-approved",
+        "runId": "r1",
         "messageId": "j-approved",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -688,13 +709,20 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "done",
+          "startedAt": "2026-01-01T00:00:51.000Z",
+          "endedAt": "2026-01-01T00:00:53.000Z",
+          "canCancel": false
         }
       },
       {
         "kind": "tool",
         "id": "j-denied",
         "seq": 58,
-        "runId": "j-denied",
+        "runId": "r1",
         "messageId": "j-denied",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -723,6 +751,13 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "cancelled",
+          "startedAt": "2026-01-01T00:00:54.000Z",
+          "endedAt": "2026-01-01T00:00:55.000Z",
+          "canCancel": false
         }
       },
       {
@@ -781,7 +816,7 @@
         "kind": "tool",
         "id": "j-moved",
         "seq": 63,
-        "runId": "j-moved",
+        "runId": "r2",
         "messageId": "j-moved",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -803,6 +838,13 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "done",
+          "startedAt": "2026-01-01T00:01:00.000Z",
+          "endedAt": "2026-01-01T00:01:03.000Z",
+          "canCancel": false
         }
       }
     ],
@@ -1382,7 +1424,7 @@
         "kind": "tool",
         "id": "j-ran",
         "seq": 58,
-        "runId": "j-ran",
+        "runId": "r1",
         "messageId": "j-ran",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -1404,13 +1446,20 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "done",
+          "startedAt": "2026-01-01T00:00:45.000Z",
+          "endedAt": "2026-01-01T00:00:46.000Z",
+          "canCancel": false
         }
       },
       {
         "kind": "tool",
         "id": "j-failed",
         "seq": 58,
-        "runId": "j-failed",
+        "runId": "r1",
         "messageId": "j-failed",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -1432,13 +1481,20 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "failed",
+          "startedAt": "2026-01-01T00:00:47.000Z",
+          "endedAt": "2026-01-01T00:00:48.000Z",
+          "canCancel": false
         }
       },
       {
         "kind": "tool",
         "id": "j-cancelled",
         "seq": 58,
-        "runId": "j-cancelled",
+        "runId": "r1",
         "messageId": "j-cancelled",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -1457,13 +1513,20 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "cancelled",
+          "startedAt": "2026-01-01T00:00:49.000Z",
+          "endedAt": "2026-01-01T00:00:50.000Z",
+          "canCancel": false
         }
       },
       {
         "kind": "tool",
         "id": "j-approved",
         "seq": 58,
-        "runId": "j-approved",
+        "runId": "r1",
         "messageId": "j-approved",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -1501,13 +1564,20 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "done",
+          "startedAt": "2026-01-01T00:00:51.000Z",
+          "endedAt": "2026-01-01T00:00:53.000Z",
+          "canCancel": false
         }
       },
       {
         "kind": "tool",
         "id": "j-denied",
         "seq": 58,
-        "runId": "j-denied",
+        "runId": "r1",
         "messageId": "j-denied",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -1536,6 +1606,13 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "cancelled",
+          "startedAt": "2026-01-01T00:00:54.000Z",
+          "endedAt": "2026-01-01T00:00:55.000Z",
+          "canCancel": false
         }
       },
       {
@@ -1594,7 +1671,7 @@
         "kind": "tool",
         "id": "j-moved",
         "seq": 63,
-        "runId": "j-moved",
+        "runId": "r2",
         "messageId": "j-moved",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -1616,6 +1693,13 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "done",
+          "startedAt": "2026-01-01T00:01:00.000Z",
+          "endedAt": "2026-01-01T00:01:03.000Z",
+          "canCancel": false
         }
       }
     ],
@@ -2184,7 +2268,7 @@
         "kind": "tool",
         "id": "j-ran",
         "seq": 58,
-        "runId": "j-ran",
+        "runId": "r1",
         "messageId": "j-ran",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -2206,13 +2290,20 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "done",
+          "startedAt": "2026-01-01T00:00:45.000Z",
+          "endedAt": "2026-01-01T00:00:46.000Z",
+          "canCancel": false
         }
       },
       {
         "kind": "tool",
         "id": "j-failed",
         "seq": 58,
-        "runId": "j-failed",
+        "runId": "r1",
         "messageId": "j-failed",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -2234,13 +2325,20 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "failed",
+          "startedAt": "2026-01-01T00:00:47.000Z",
+          "endedAt": "2026-01-01T00:00:48.000Z",
+          "canCancel": false
         }
       },
       {
         "kind": "tool",
         "id": "j-cancelled",
         "seq": 58,
-        "runId": "j-cancelled",
+        "runId": "r1",
         "messageId": "j-cancelled",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -2259,13 +2357,20 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "cancelled",
+          "startedAt": "2026-01-01T00:00:49.000Z",
+          "endedAt": "2026-01-01T00:00:50.000Z",
+          "canCancel": false
         }
       },
       {
         "kind": "tool",
         "id": "j-approved",
         "seq": 58,
-        "runId": "j-approved",
+        "runId": "r1",
         "messageId": "j-approved",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -2303,13 +2408,20 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "done",
+          "startedAt": "2026-01-01T00:00:51.000Z",
+          "endedAt": "2026-01-01T00:00:53.000Z",
+          "canCancel": false
         }
       },
       {
         "kind": "tool",
         "id": "j-denied",
         "seq": 58,
-        "runId": "j-denied",
+        "runId": "r1",
         "messageId": "j-denied",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -2338,6 +2450,13 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "cancelled",
+          "startedAt": "2026-01-01T00:00:54.000Z",
+          "endedAt": "2026-01-01T00:00:55.000Z",
+          "canCancel": false
         }
       },
       {
@@ -2391,7 +2510,7 @@
         "kind": "tool",
         "id": "j-moved",
         "seq": 63,
-        "runId": "j-moved",
+        "runId": "r2",
         "messageId": "j-moved",
         "toolId": "web.fetch",
         "title": "Fetch",
@@ -2413,6 +2532,13 @@
         "turn": {
           "continued": true,
           "model": null
+        },
+        "background": {
+          "kind": "call",
+          "status": "done",
+          "startedAt": "2026-01-01T00:01:00.000Z",
+          "endedAt": "2026-01-01T00:01:03.000Z",
+          "canCancel": false
         }
       }
     ],

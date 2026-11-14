@@ -1,13 +1,13 @@
 import { eq } from "drizzle-orm";
 import type { Tasks } from "@/server/agent/tasks.ts";
-import type { Triggers } from "@/server/agent/triggers.ts";
+import type { Triggers } from "@/server/triggers.ts";
 import { UnsecuredJWT } from "jose";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
 import { createApp } from "@/server/app.ts";
-import { openStoreDatabase } from "@/server/testing/database.ts";
+import { expireLeases, openStoreDatabase } from "@/server/testing/database.ts";
 import type { Guests } from "@/server/guests/service.ts";
 import type { Instructions } from "@/server/instructions/service.ts";
 import { createCipher } from "@/server/kernel/cipher.ts";
@@ -25,6 +25,7 @@ import type { Spaces } from "@/server/spaces/service.ts";
 import type { Threads } from "@/server/threads/service.ts";
 
 import { createConnectionStore } from "./connection-store.ts";
+import { createOAuthAttempts } from "@/server/oauth/attempts.ts";
 import { createCredentialStore } from "./credential-store.ts";
 import { createConnections } from "./connections.ts";
 import type { Models } from "./service.ts";
@@ -57,10 +58,8 @@ function setup() {
   const logger = createLogger({ write() {} });
   const secret = "test-secret-that-is-long-enough-1234567890";
   const auth = createAuth({ db, logger, secret, baseUrl, trustedOrigins: [] });
-  const credentials = createCredentialStore(
-    db,
-    createCipher({ version: 1, key: Buffer.alloc(32, 7) }),
-  );
+  const cipher = createCipher({ version: 1, key: Buffer.alloc(32, 7) });
+  const credentials = createCredentialStore(db, cipher);
   const clock = { now: new Date("2026-10-21T10:00:00Z") };
   const requests: { url: string; body: Record<string, string> }[] = [];
   const openai = {
@@ -75,7 +74,7 @@ function setup() {
     serial: 0,
   };
   const sleeps: number[] = [];
-  // When set, sleeps last until the sign-in is cancelled.
+  // When set, the test asks nothing of the provider: the sign-in stays pending.
   const waits = { hold: false };
 
   async function answer(url: string, body: Record<string, string>): Promise<Reply> {
@@ -127,16 +126,9 @@ function setup() {
     },
     logger,
     now: () => clock.now,
-    sleep: (ms, signal) => {
-      sleeps.push(ms);
-      if (waits.hold) {
-        return new Promise((_, reject) => {
-          signal.addEventListener("abort", () => reject(new Error("aborted")));
-        });
-      }
-      clock.now = new Date(clock.now.getTime() + ms);
-      return Promise.resolve();
-    },
+    attempts: createOAuthAttempts({ db, cipher }),
+    instanceId: "test",
+    transact: async (work) => work(),
   });
   const app = createApp({
     handleAuth: auth.handler,
@@ -205,15 +197,25 @@ function setup() {
     return result.connection as { id: string };
   }
 
-  // The attempt once the server has stopped waiting on it.
+  // The attempt once nothing waits on it any more: the provider asked as the pass asks it, the
+  // clock moved on to each next ask, and each wait kept.
   async function settled(cookie: string, id: string) {
-    for (let i = 0; i < 100; i += 1) {
+    for (let i = 0; i < 1000; i += 1) {
+      await connections.askDevices();
       const body = (await (await attempt(cookie, id)).json()) as {
         status: string;
         connection?: { id: string };
       };
       if (body.status !== "pending") return body;
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      const [row] = await db
+        .select({ next: schema.oauthAttempt.nextPollAt })
+        .from(schema.oauthAttempt)
+        .where(eq(schema.oauthAttempt.state, id));
+      const wait = (row?.next?.getTime() ?? 0) - clock.now.getTime();
+      if (wait > 0) {
+        sleeps.push(wait);
+        clock.now = new Date(clock.now.getTime() + wait);
+      }
     }
     throw new Error("sign-in still pending");
   }
@@ -233,6 +235,20 @@ function setup() {
     waits,
     credentials,
     connections,
+    // The same connections as another instance on the database sees them.
+    elsewhere: createConnections({
+      connections: createConnectionStore(db),
+      credentials,
+      providers: {
+        codex: { label: "Codex", oauth: codex },
+        claude: { label: "Claude", oauth: createClaudeOAuth(fakeFetch as typeof fetch) },
+      },
+      logger,
+      now: () => clock.now,
+      attempts: createOAuthAttempts({ db, cipher }),
+      instanceId: "elsewhere",
+      transact: async (work) => work(),
+    }),
     signUp,
     api,
     connect,
@@ -422,6 +438,52 @@ describe("device code sign-in", () => {
   });
 });
 
+describe("device code sign-in on many instances", () => {
+  const polls = (requests: { url: string }[]) =>
+    requests.filter((request) => request.url === deviceTokenUrl).length;
+
+  it("is approved with nobody reading where it stands, asked once by two instances at once", async () => {
+    const { db, requests, openai, connections, elsewhere, signUp, startDevice } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    openai.polls = [
+      { status: 200, body: { authorization_code: "device-code", code_verifier: "their-verifier" } },
+    ];
+    await startDevice(cookie);
+    await Promise.all([connections.askDevices(), elsewhere.askDevices()]);
+    expect(polls(requests)).toBe(1);
+    expect(await db.select().from(schema.connection)).toHaveLength(1);
+  });
+
+  it("is asked by another instance once the one asking stops mid-ask and its hold runs out", async () => {
+    const { db, requests, connections, elsewhere, signUp, startDevice, clock } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const { attemptId } = await startDevice(cookie);
+    // Held by an instance that went away before it asked.
+    const attempts = createOAuthAttempts({
+      db,
+      cipher: createCipher({ version: 1, key: Buffer.alloc(32, 7) }),
+    });
+    expect(await attempts.hold(attemptId, clock.now, "gone", 60_000)).not.toBeNull();
+    await elsewhere.askDevices();
+    expect(polls(requests)).toBe(0);
+    await db
+      .update(schema.oauthAttempt)
+      .set({ leaseExpiresAt: new Date(0) })
+      .where(eq(schema.oauthAttempt.state, attemptId));
+    await connections.askDevices();
+    expect(polls(requests)).toBe(1);
+  });
+
+  it("is asked nothing more once cancelled", async () => {
+    const { requests, connections, signUp, startDevice, api } = setup();
+    const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
+    const { attemptId } = await startDevice(cookie);
+    await api("POST", `/connections/codex/attempts/${attemptId}/cancel`, cookie);
+    await connections.askDevices();
+    expect(polls(requests)).toBe(0);
+  });
+});
+
 describe("fresh tokens", () => {
   async function connected() {
     const context = setup();
@@ -482,6 +544,70 @@ describe("fresh tokens", () => {
     expect(requests).toHaveLength(1);
     await connections.withFreshToken(orgId, id, async (t) => t);
     expect(requests).toHaveLength(1);
+  });
+
+  it("is renewed by one instance when two renew at once, and both use the new token", async () => {
+    const { connections, elsewhere, openai, clock, requests, id, orgId } = await connected();
+    clock.now = new Date("2026-10-21T12:00:00Z");
+    let release = () => {};
+    openai.refreshGate = new Promise((resolve) => {
+      release = resolve;
+    });
+
+    const both = Promise.all([
+      connections.withFreshToken(orgId, id, async (t) => t.access),
+      elsewhere.withFreshToken(orgId, id, async (t) => t.access),
+    ]);
+    release();
+
+    expect(await both).toEqual([accessToken(2), accessToken(2)]);
+    expect(requests).toHaveLength(1);
+  });
+
+  it("is renewed by another instance once the one renewing stops and its lease runs out", async () => {
+    const { db, connections, credentials, clock, requests, id, orgId } = await connected();
+    clock.now = new Date("2026-10-21T12:00:00Z");
+    // Held by an instance that went away before it asked.
+    expect(await credentials.lease(id, "gone", 60_000)).not.toBeNull();
+
+    const renewed = connections.withFreshToken(orgId, id, async (t) => t.access);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(requests).toEqual([]);
+    await expireLeases(db, "credential");
+
+    expect(await renewed).toBe(accessToken(2));
+    expect(requests).toHaveLength(1);
+  });
+
+  it("keeps a renewal whose lease ran out while it asked, when nobody renewed since", async () => {
+    const { db, connections, credentials, openai, clock, requests, id, orgId } = await connected();
+    clock.now = new Date("2026-10-21T12:00:00Z");
+    let release = () => {};
+    openai.refreshGate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const renewed = connections.withFreshToken(orgId, id, async (t) => t.access);
+    while (requests.length === 0) await new Promise((resolve) => setTimeout(resolve, 10));
+    // Its lease ran out and another instance took it, then let it go without renewing.
+    await expireLeases(db, "credential");
+    const other = await credentials.lease(id, "other", 60_000);
+    await credentials.release(id, other!);
+    release();
+
+    expect(await renewed).toBe(accessToken(2));
+    expect(await credentials.get(id)).toMatchObject({ refresh: "secret-refresh-2" });
+  });
+
+  it("is not renewed again after a refusal once another token is stored", async () => {
+    const { connections, requests, id, orgId } = await connected();
+
+    const token = await connections.withFreshToken(orgId, id, async (t) => t.access, {
+      force: true,
+      refused: "a token renewed since",
+    });
+
+    expect(token).toBe(accessToken(1));
+    expect(requests).toEqual([]);
   });
 
   it("reports a renewal OpenAI refuses and keeps the old credential", async () => {

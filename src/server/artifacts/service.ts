@@ -100,20 +100,15 @@ export interface NewAsset {
   data: Buffer;
 }
 
-// What published a version: the run, or the call started in the background, and the call's id in
-// the thread's log.
+// What published a version: the call, by its id in the thread.
 interface Publisher {
-  runId: string | null;
-  backgroundCallId: string | null;
   callId: string | null;
 }
 
 type NewVersion = VersionFields & { html: string } & Publisher;
 
 function publisherOf(ctx: ToolContext): Publisher {
-  return ctx.background
-    ? { runId: null, backgroundCallId: ctx.callId, callId: ctx.callId }
-    : { runId: ctx.runId, backgroundCallId: null, callId: ctx.callId };
+  return { callId: ctx.callId };
 }
 
 export interface ArtifactStore {

@@ -21,6 +21,9 @@ import {
   anyThreadEventSchema,
 } from "@/shared/threads/events.ts";
 
+import type { Calls } from "@/server/calls/calls.ts";
+import type { Queue } from "@/server/queue/queue.ts";
+
 import { invariants } from "./invariants.ts";
 
 export interface SeedOptions {
@@ -29,6 +32,9 @@ export interface SeedOptions {
   guests: Pick<GuestStore, "grant">;
   reads: Pick<ThreadReadStore, "mark">;
   log: ThreadLog;
+  // Fill the rows of the inputs and the calls in a log copied in.
+  queue: Pick<Queue, "fromLog">;
+  calls: Pick<Calls, "fromLog">;
 }
 
 export type Seed = ReturnType<typeof createSeed>;
@@ -80,7 +86,7 @@ function renamed(value: unknown, names: ReadonlyMap<string, string>, ids = false
   return value;
 }
 
-export function createSeed({ db, threads, guests, reads, log }: SeedOptions) {
+export function createSeed({ db, threads, guests, reads, log, queue, calls }: SeedOptions) {
   // When the last thread added here was made; each one added after it is newer by a time of its
   // own, so lists sorted by it come out the same every time.
   let lastAdded = 0;
@@ -196,6 +202,7 @@ export function createSeed({ db, threads, guests, reads, log }: SeedOptions) {
           });
         }
       });
+      await queue.fromLog(thread.id);
       await reads.mark(home.userId, thread.id, input.count, new Date());
       return { threadId: thread.id };
     },
@@ -235,6 +242,8 @@ export function createSeed({ db, threads, guests, reads, log }: SeedOptions) {
           names.set(event.id, stored.id);
           ids[event.id] = stored.id;
         }
+        await queue.fromLog(thread.id);
+        await calls.fromLog(thread.id);
       });
       return { threadId: thread.id, ids };
     },

@@ -216,7 +216,10 @@ export function transcriptTurns(
   let step: AgentRow | undefined;
   for (const row of rows) {
     if (row.kind === "agent") step = row;
-    else if (row.kind === "tool" && step?.runId === row.runId) stepOf.set(row.id, step);
+    // A job is no step's, though the run that asked for it is named on it.
+    else if (row.kind === "tool" && !row.background && step?.runId === row.runId) {
+      stepOf.set(row.id, step);
+    }
   }
   const groups: { kind: TranscriptTurn["kind"]; entries: TranscriptEntry[] }[] = [];
   for (const entry of transcriptEntries(rows)) {

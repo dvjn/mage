@@ -7,6 +7,7 @@ import type { ToolRisk } from "@/shared/threads/events.ts";
 import { EDITORS, TOOL_OFF, WIRE_NAME_MAX, wireToolName } from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
+import type { Thread } from "@/server/threads/service.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
 import type { ThreadFollowItem } from "@/server/threads/service.ts";
 
@@ -1286,7 +1287,7 @@ describe("built-in toolset switches", () => {
     // What is always on stays.
     const fixed = ["thread.ask"];
     const offered = async (spaceId: string) =>
-      (await toolRegistry.offered({ id: spaceId, orgId: ada.orgId }))
+      (await toolRegistry.offered({ id: spaceId, orgId: ada.orgId }, { id: "t" } as Thread))
         .map((spec) => spec.name)
         .filter((id) => id.startsWith("thread."));
     expect(await offered(space.id)).toEqual(fixed);
@@ -1601,7 +1602,7 @@ describe("thread lists", () => {
 });
 
 describe("Mage's own toolsets", () => {
-  const unused = {} as Omit<Parameters<typeof createTools>[0], "toolsets">;
+  const unused = {} as Parameters<typeof createTools>[0];
   const toolset = (id: string, names: string[]): Toolset => ({
     id,
     title: id,
@@ -1615,32 +1616,30 @@ describe("Mage's own toolsets", () => {
     })),
   });
 
+  // A registry with the toolsets registered in turn.
+  function registered(...sets: Toolset[]) {
+    const made = createTools(unused);
+    for (const one of sets) made.register(one);
+    return made;
+  }
+
   it("each keep a name of their own, which their tools' names start with", () => {
+    expect(() => registered(toolset("resource", ["resource.list"]))).not.toThrow();
     expect(() =>
-      createTools({ ...unused, toolsets: [toolset("resource", ["resource.list"])] }),
-    ).not.toThrow();
-    expect(() =>
-      createTools({
-        ...unused,
-        toolsets: [toolset("resource", ["resource.list"]), toolset("resource", [])],
-      }),
+      registered(toolset("resource", ["resource.list"]), toolset("resource", [])),
     ).toThrow("Two of Mage's own toolsets are named resource");
-    expect(() =>
-      createTools({ ...unused, toolsets: [toolset("files", ["resource.read"])] }),
-    ).toThrow("resource.read is outside its toolset's names");
-    expect(() => createTools({ ...unused, toolsets: [toolset("mcp", [])] })).toThrow();
+    expect(() => registered(toolset("files", ["resource.read"]))).toThrow(
+      "resource.read is outside its toolset's names",
+    );
+    expect(() => registered(toolset("mcp", []))).toThrow();
   });
 
   it("leave mcp.* to MCP servers", () => {
-    expect(() =>
-      createTools({ ...unused, toolsets: [toolset("mcp_servers", ["mcp_servers.search_tools"])] }),
-    ).not.toThrow();
-    expect(() =>
-      createTools({ ...unused, toolsets: [toolset("mcp.notes", ["mcp.notes.search"])] }),
-    ).toThrow("mcp.notes is outside its toolset's names");
-    expect(() =>
-      createTools({ ...unused, toolsets: [toolset("mcp._", ["mcp._.search"])] }),
-    ).toThrow();
+    expect(() => registered(toolset("mcp_servers", ["mcp_servers.search_tools"]))).not.toThrow();
+    expect(() => registered(toolset("mcp.notes", ["mcp.notes.search"]))).toThrow(
+      "mcp.notes is outside its toolset's names",
+    );
+    expect(() => registered(toolset("mcp._", ["mcp._.search"]))).toThrow();
   });
 
   it("keep their MCP tools' names on the wire, apart from every server's, and map them back", () => {

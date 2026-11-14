@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { instructionsFor } from "@/server/agent/context.ts";
+import { instructionsFor } from "@/server/execution/context.ts";
 import type { Instructions, SpaceInstructions } from "@/shared/instructions.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { setup } from "@/server/testing/workspace.ts";

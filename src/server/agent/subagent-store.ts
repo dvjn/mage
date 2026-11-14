@@ -1,4 +1,4 @@
-import { asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull } from "drizzle-orm";
 
 import type { Db } from "@/server/db/db.ts";
 
@@ -27,12 +27,28 @@ export function createSubagentStore(db: Db): SubagentStore {
         .orderBy(asc(subagent.createdAt), asc(subagent.threadId));
     },
 
-    async setShareTasks(threadId) {
-      await db.update(subagent).set({ shareTasks: true }).where(eq(subagent.threadId, threadId));
+    async archive(threadId, at) {
+      return (
+        (
+          await db
+            .update(subagent)
+            .set({ archivedAt: at })
+            .where(and(eq(subagent.threadId, threadId), isNull(subagent.archivedAt)))
+            .returning()
+        )[0] ?? null
+      );
     },
 
-    async setArchived(threadId, at) {
-      await db.update(subagent).set({ archivedAt: at }).where(eq(subagent.threadId, threadId));
+    async unarchive(threadId) {
+      return (
+        (
+          await db
+            .update(subagent)
+            .set({ archivedAt: null })
+            .where(and(eq(subagent.threadId, threadId), isNotNull(subagent.archivedAt)))
+            .returning()
+        )[0] ?? null
+      );
     },
   };
 }

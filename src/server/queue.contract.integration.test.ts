@@ -132,6 +132,79 @@ describe("a message to a busy agent", () => {
     ]);
   });
 
+  it("that interrupts is taken in by the next run with what was queued, in the order sent", async () => {
+    const w = await world();
+    await w.post(w.ada, "Go");
+    const first = await w.next(w.threadId);
+    first.step("Working.");
+    await first.drained();
+    await w.post(w.ada, "Then that", "queue");
+    await w.post(w.grace, "Stop, do this", "interrupt");
+    const second = await w.answers(w.threadId, "Doing that.");
+    expect(second.texts.slice(-2)).toEqual([
+      "user: [Ada Lovelace] Then that",
+      "user: [Grace Hopper] Stop, do this",
+    ]);
+    await w.settled();
+    expect((await w.shown()).rows.slice(-3)).toEqual([
+      "Ada Lovelace: Then that",
+      "Grace Hopper: Stop, do this",
+      "agent (completed): Doing that.",
+    ]);
+  });
+
+  it("that starts a held subagent is taken in with what it was told, in one admission", async () => {
+    const w = await world();
+    await w.post(w.ada, "Get help");
+    const names = ["H0", "H1", "H2", "H3", "H4"];
+    await w.asks(
+      w.threadId,
+      ...names.map((name): [string, unknown] => [
+        "subagents.start",
+        { name, task: `Task ${name}` },
+      ]),
+    );
+    await w.answers(w.threadId, "Started them.");
+    const held = await w.subagentNamed("H4");
+    await eventually(
+      () => w.shown(w.ada, held),
+      (shown) => shown.waiting.length === 1 && shown.run === null,
+    );
+    expect((await w.post(w.ada, "Start now", "steer", held)).status).toBe(202);
+    const call = await w.next(held);
+    call.reply("Started.");
+    await eventually(
+      () => w.shown(w.ada, held),
+      (shown) => shown.rows.includes("agent (completed): Started."),
+    );
+    const rows = (await w.detail(w.ada, held)).rows;
+    const message = rows.find((row) => row.kind === "human")!;
+    const task = rows.find((row) => row.kind === "relay")!;
+    expect(message.seq).toBe(task.seq);
+  });
+
+  it("asking to compact waits for a run of its own while others are taken in", async () => {
+    const w = await world();
+    await w.post(w.ada, "Go");
+    const first = await w.next(w.threadId);
+    first.step("Working.");
+    await first.drained();
+    await w.post(w.ada, "Then that", "queue");
+    const res = await w.api("POST", `/threads/${w.threadId}/messages`, w.ada.cookie, {
+      text: "/compact",
+      mode: "queue",
+      command: { name: "compact", args: "" },
+    });
+    expect(res.status).toBe(202);
+    first.end();
+    const second = await w.answers(w.threadId, "And that.");
+    expect(second.texts.at(-1)).toBe("user: [Ada Lovelace] Then that");
+    expect(second.request.answerOnly).toBeFalsy();
+    const summarising = await w.answers(w.threadId, "A summary.");
+    expect(summarising.request).toMatchObject({ answerOnly: true });
+    await w.settled();
+  });
+
   it("can be reworded, switched between steering and queueing, and taken back by its author", async () => {
     const w = await world();
     await w.post(w.ada, "Go");

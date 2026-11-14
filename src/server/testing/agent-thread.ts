@@ -66,8 +66,10 @@ export async function agentThread(
       }>("select id, status, reason, attempt from run order by id")
     ).rows;
   }
+  // Starts the worker, and the keeper of jobs, which starts those approved.
   async function start(worker = workspace.worker) {
     await worker.start();
+    await workspace.calls.start();
     onTestFinished(() => worker.stop());
   }
   async function pending() {

@@ -26,7 +26,7 @@ import { randomBytes } from "node:crypto";
 
 import * as z from "zod";
 
-import type { McpServerGuidance } from "@/server/agent/context.ts";
+import type { McpServerGuidance } from "@/server/execution/context.ts";
 import type {
   AnyToolSpec,
   ToolContext,
@@ -38,9 +38,11 @@ import type {
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
+import type { OAuthAttempts } from "@/server/oauth/attempts.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { OrgSettingStore } from "@/server/orgs/service.ts";
 import type { Space, Spaces } from "@/server/spaces/service.ts";
+import type { Lease } from "@/server/sync/lease.ts";
 import {
   contentText,
   type McpContentPart,
@@ -211,6 +213,19 @@ export interface McpCredentialStore {
   // Whether the secrets worked when last used; null when there are none.
   status(serverId: string, holder: McpHolder): Promise<McpCredentialStatus | null>;
   setStatus(serverId: string, holder: McpHolder, status: McpCredentialStatus): Promise<void>;
+  // Holds the secrets for one token renewal, if nobody else does; null when someone does or there
+  // are none.
+  lease(serverId: string, holder: McpHolder, owner: string, ms: number): Promise<Lease | null>;
+  // Stores the secrets and lets them go; false when the lease no longer held.
+  putHeld(serverId: string, holder: McpHolder, lease: Lease, secrets: McpSecrets): Promise<boolean>;
+  release(serverId: string, holder: McpHolder, lease: Lease): Promise<void>;
+  // Stores the secrets when what is stored passes `holds`, in one locked read and write.
+  putIf(
+    serverId: string,
+    holder: McpHolder,
+    holds: (stored: McpSecrets) => boolean,
+    secrets: McpSecrets,
+  ): Promise<boolean>;
   // The servers the person keeps their own secrets for, and since when.
   ofUser(
     userId: string,
@@ -218,6 +233,8 @@ export interface McpCredentialStore {
 }
 
 export interface McpServersOptions {
+  // Where sign-ins under way are kept, so any instance finishes them.
+  attempts: OAuthAttempts;
   servers: McpServerStore;
   credentials: McpCredentialStore;
   client: McpClient;
@@ -227,12 +244,17 @@ export interface McpServersOptions {
   // Where the service hears that people left an org, to forget their own secrets there.
   hooks?: Hooks;
   now?: () => Date;
+  // Names this instance in the leases it takes to renew tokens.
+  instanceId: string;
 }
 
 export type McpServers = ReturnType<typeof createMcpServers>;
 
 // How long an authorization begun in the browser may take.
 const AUTHORIZE_TTL_MS = 10 * 60 * 1000;
+
+// How long an instance may take to renew a server's tokens before another may.
+const RENEW_LEASE_MS = 30_000;
 
 const SHARED: McpHolder = { kind: "shared" };
 
@@ -336,7 +358,26 @@ export function createMcpServers(options: McpServersOptions) {
       for (const userId of left) await credentials.delete(server.id, own(userId));
     }
   });
-  const pending = new Map<string, Pending>();
+  const { attempts } = options;
+
+  // Keeps a sign-in that sends the browser to the authorization server, until it comes back.
+  async function keep(state: string, attempt: Pending, orgId: string) {
+    await attempts.begin({
+      state,
+      kind: "mcp",
+      flow: "redirect",
+      subjectId: attempt.serverId,
+      holder: JSON.stringify(attempt.holder),
+      orgId,
+      userId: attempt.userId,
+      secrets: {
+        ...(attempt.verifier.value && { verifier: attempt.verifier.value }),
+        ...(attempt.returnTo && { returnTo: attempt.returnTo }),
+      },
+      expiresAt: new Date(attempt.expiresAt),
+      now: now(),
+    });
+  }
 
   // The slugs a server of the org, or of one of its spaces, may not take: those of every server
   // some space has beside it. The org's are in every space, so they clash with any space's.
@@ -372,6 +413,22 @@ export function createMcpServers(options: McpServersOptions) {
       async save(state) {
         const secrets = (await credentials.get(serverId, holder)) ?? {};
         await credentials.put(serverId, holder, { ...secrets, oauth: state });
+      },
+      renewal: {
+        lease: () => credentials.lease(serverId, holder, options.instanceId, RENEW_LEASE_MS),
+        async saveHeld(lease, state) {
+          const secrets = (await credentials.get(serverId, holder)) ?? {};
+          return credentials.putHeld(serverId, holder, lease, { ...secrets, oauth: state });
+        },
+        release: (lease) => credentials.release(serverId, holder, lease),
+        saveIfSpent: (spent, state) =>
+          credentials.putIf(
+            serverId,
+            holder,
+            (stored) => stored.oauth?.tokens?.refresh_token === spent,
+            // Its other secrets as they are stored; only the OAuth state is the renewal's.
+            { oauth: state },
+          ),
       },
     };
   }
@@ -1016,17 +1073,11 @@ export function createMcpServers(options: McpServersOptions) {
       throw new ServiceError(502, err.message);
     }
     if (url) {
-      pending.set(state, attempt);
+      await keep(state, attempt, principal.orgId);
       return { status: "redirect" as const, url };
     }
     await credentials.setStatus(server.id, holder, "ok");
     return { status: "connected" as const };
-  }
-
-  function forgetExpired() {
-    for (const [key, attempt] of pending) {
-      if (attempt.expiresAt <= now().getTime()) pending.delete(key);
-    }
   }
 
   // The servers the space uses that offer prompts, by their short names.
@@ -1155,7 +1206,6 @@ export function createMcpServers(options: McpServersOptions) {
       if (server.authKind !== "oauth") {
         throw new ServiceError(400, "This server is not authorized by OAuth");
       }
-      forgetExpired();
       return authorizeOwn(principal, server, returnTo);
     },
 
@@ -1261,7 +1311,6 @@ export function createMcpServers(options: McpServersOptions) {
       if (server.authKind !== "oauth") {
         throw new ServiceError(400, "This server is not authorized by OAuth");
       }
-      forgetExpired();
       const state = randomBytes(24).toString("base64url");
       const attempt: Pending = {
         serverId: id,
@@ -1279,7 +1328,7 @@ export function createMcpServers(options: McpServersOptions) {
         throw new ServiceError(502, err.message);
       }
       if (url) {
-        pending.set(state, attempt);
+        await keep(state, attempt, principal.orgId);
         return { status: "redirect" as const, url };
       }
       return { status: "authorized" as const, server: await summary(await refreshed(server)) };
@@ -1292,11 +1341,26 @@ export function createMcpServers(options: McpServersOptions) {
       userId: string | null,
       query: { state?: string; code?: string; iss?: string; error?: string },
     ): Promise<{ server: McpServer | null; error: string | null; returnTo?: string }> {
-      const attempt = query.state ? pending.get(query.state) : undefined;
-      if (!attempt || attempt.expiresAt <= now().getTime() || attempt.userId !== userId) {
+      const found = query.state
+        ? await attempts.find<{ verifier?: string; returnTo?: string }>(query.state)
+        : null;
+      // Taken once, before the authorization server is asked, so a callback handled twice
+      // exchanges once.
+      if (
+        found?.kind !== "mcp" ||
+        found.status !== "pending" ||
+        found.expiresAt.getTime() <= now().getTime() ||
+        found.userId !== userId ||
+        !(await attempts.complete(found.state))
+      ) {
         return { server: null, error: "This authorization expired. Try again." };
       }
-      pending.delete(query.state!);
+      const attempt = {
+        serverId: found.subjectId,
+        holder: JSON.parse(found.holder) as McpHolder,
+        verifier: { ...(found.secrets.verifier && { value: found.secrets.verifier }) },
+        ...(found.secrets.returnTo && { returnTo: found.secrets.returnTo }),
+      };
       const server = await servers.find(attempt.serverId);
       if (!server) return { server: null, error: "MCP server not found" };
       if (attempt.holder.kind === "user") {

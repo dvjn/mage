@@ -5,11 +5,14 @@
 // secrets. Those not signed in to can be changed later, a secret left blank keeping the stored one.
 
 import { randomBytes } from "node:crypto";
-import { setTimeout as delay } from "node:timers/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 
 import * as z from "zod";
 
 import type { Logger } from "@/server/kernel/logger.ts";
+import type { OAuthAttempts } from "@/server/oauth/attempts.ts";
+import type { Sync, Transact } from "@/server/sync/sync.ts";
+import type { Lease } from "@/server/sync/lease.ts";
 import type { ProxyInput, ProxySummary } from "@/shared/connections.ts";
 import type { AuthKind, HostId } from "@/shared/hosts.ts";
 
@@ -67,6 +70,18 @@ export interface CredentialStore {
   // Null when the connection has none; throws when the stored value fails authentication.
   get(connectionId: string): Promise<Credential | null>;
   delete(connectionId: string): Promise<void>;
+  // Holds the credential for one renewal, if nobody else does; null when someone does or there is
+  // none.
+  lease(connectionId: string, owner: string, ms: number): Promise<Lease | null>;
+  // Stores the renewed credential and lets it go; false when the lease no longer held.
+  putHeld(connectionId: string, lease: Lease, credential: Credential): Promise<boolean>;
+  release(connectionId: string, lease: Lease): Promise<void>;
+  // Stores the credential when what is stored passes `holds`, in one locked read and write.
+  putIf(
+    connectionId: string,
+    holds: (stored: Credential) => boolean,
+    credential: Credential,
+  ): Promise<boolean>;
 }
 
 // The hosts signed in to with a subscription: by a device code, or by pasting back a code.
@@ -104,8 +119,14 @@ export interface ConnectionsOptions {
   providers: AccountProviders;
   logger: Logger;
   now?: () => Date;
-  // Waits between device code polls; rejects when the signal aborts.
-  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+  // Where sign-ins under way are kept, so any instance finishes them.
+  attempts: OAuthAttempts;
+  // Names this instance in the leases it takes on device sign-ins it asks about.
+  instanceId: string;
+  // Runs the pass that asks providers about device sign-ins, on every instance.
+  ticker?: Sync["ticker"];
+  // Makes a connection and finishes the sign-in that made it in one write.
+  transact: Transact;
 }
 
 export type Connections = ReturnType<typeof createConnections>;
@@ -138,8 +159,6 @@ export interface FreshToken {
 
 const DEVICE_TTL_MS = 15 * 60 * 1000;
 const CODE_TTL_MS = 15 * 60 * 1000;
-// How long a finished device sign-in stays readable.
-const DEVICE_KEEP_MS = 5 * 60 * 1000;
 const MIN_POLL_MS = 1000;
 const SLOW_DOWN_MS = 5000;
 // Tokens this close to expiring are renewed before use.
@@ -172,24 +191,21 @@ const anyCredentialSchema = z.looseObject({ proxy: proxySchema.optional() });
 
 type AccountCredential = z.infer<typeof credentialSchema>;
 
-interface DeviceAttempt {
-  id: string;
-  kind: DeviceKind;
-  orgId: string;
-  userId: string;
-  expiresAt: Date;
-  controller: AbortController;
-  result: AttemptStatus;
+// A sign-in waiting for the code its authorization shows; its state is its id.
+// What a device sign-in keeps sealed while it waits: the provider's code and how long to wait
+// between asks.
+interface DeviceSecrets {
+  code: DeviceCode;
+  intervalMs: number;
 }
 
-// A sign-in waiting for the code its authorization shows; its state is its id.
-interface CodeAttempt {
-  kind: CodeKind;
-  orgId: string;
-  userId: string;
-  codeVerifier: string;
-  expiresAt: Date;
-}
+// How long one ask about a device sign-in holds it, and how often instances look for asks due.
+const DEVICE_LEASE_MS = 30_000;
+const DEVICE_PASS_MS = 1000;
+// How long an instance may take to renew a connection's tokens before another may, and how often one
+// waiting on it looks again.
+const RENEW_LEASE_MS = 30_000;
+const RENEW_WAIT_MS = 100;
 
 function randomValue() {
   return randomBytes(32).toString("base64url");
@@ -253,12 +269,8 @@ export function secretHint(name: string, value: string) {
 }
 
 export function createConnections(options: ConnectionsOptions) {
-  const { connections, credentials, providers, logger } = options;
+  const { connections, credentials, providers, logger, attempts } = options;
   const now = options.now ?? (() => new Date());
-  const sleep =
-    options.sleep ?? ((ms: number, signal: AbortSignal) => delay(ms, undefined, { signal }));
-  const deviceAttempts = new Map<string, DeviceAttempt>();
-  const codeAttempts = new Map<string, CodeAttempt>();
   const refreshing = new Map<string, Promise<AccountCredential>>();
 
   async function rejectIfConnected(kind: AccountKind, orgId: string) {
@@ -314,73 +326,123 @@ export function createConnections(options: ConnectionsOptions) {
     );
   }
 
-  function deleteExpiredCodes() {
-    for (const [state, attempt] of codeAttempts) {
-      if (attempt.expiresAt <= now()) codeAttempts.delete(state);
+  // The person's sign-in of the kind and flow, or null when it is not theirs.
+  async function mine<Secrets>(
+    kind: AccountKind,
+    flow: "device" | "code",
+    owner: Owner,
+    id: string,
+  ) {
+    const attempt = await attempts.find<Secrets>(id);
+    const ours =
+      attempt?.kind === "model" &&
+      attempt.flow === flow &&
+      attempt.subjectId === kind &&
+      attempt.orgId === owner.orgId &&
+      attempt.userId === owner.userId;
+    return ours ? attempt : null;
+  }
+
+  // Drops the person's earlier sign-ins of the kind and flow still under way.
+  async function dropEarlier(kind: AccountKind, flow: "device" | "code", owner: Owner) {
+    for (const earlier of await attempts.pendingOf("model", kind, owner.orgId, owner.userId)) {
+      if (earlier.flow === flow) await attempts.fail(earlier.state, "Sign-in cancelled.");
     }
   }
 
-  async function pollUntilApproved(attempt: DeviceAttempt, oauth: DeviceOAuth, code: DeviceCode) {
-    const { signal } = attempt.controller;
-    let intervalMs = Math.max(MIN_POLL_MS, code.intervalSeconds * 1000);
+  // Asks the provider once about each device sign-in whose ask has come, held for that ask: the
+  // ask itself outside any transaction, what follows under the hold. Approved, the connection is
+  // made and the sign-in finished in one write; still waiting, it is asked again after its
+  // interval, longer when the provider says to slow down; past its time, it runs out.
+  async function askDevices() {
+    for (const state of await attempts.due(now(), 20)) {
+      const held = await attempts.hold(state, now(), options.instanceId, DEVICE_LEASE_MS);
+      if (!held) continue;
+      const { attempt, lease } = held;
+      const kind = attempt.subjectId as DeviceKind;
+      const secrets = attempt.secrets as DeviceSecrets;
+      const { oauth } = providers[kind];
+      try {
+        const result = await oauth.pollDevice(secrets.code);
+        if (result.status === "approved") {
+          const tokens = await oauth.exchangeDevice(result);
+          const owner = { orgId: attempt.orgId, userId: attempt.userId };
+          await options.transact(async () => {
+            const connection = await save(kind, owner, tokens);
+            if (!(await attempts.completeHeld(lease, connection.id))) {
+              throw new ConnectionError(409, "Sign-in cancelled.");
+            }
+          });
+          continue;
+        }
+        const intervalMs =
+          result.status === "slow_down" ? secrets.intervalMs + SLOW_DOWN_MS : secrets.intervalMs;
+        const remainingMs = attempt.expiresAt.getTime() - now().getTime();
+        if (remainingMs <= 0) {
+          await attempts.failHeld(lease, "The code expired. Start again.", true);
+          continue;
+        }
+        await attempts.polled(
+          lease,
+          new Date(now().getTime() + Math.min(intervalMs, remainingMs)),
+          {
+            ...secrets,
+            intervalMs,
+          },
+        );
+      } catch (err) {
+        const error = err instanceof ConnectionError ? err : rejected(kind, err);
+        await attempts.failHeld(lease, error.message);
+      }
+    }
+  }
+  const devicePass = options.ticker?.("device-sign-ins", askDevices, DEVICE_PASS_MS);
+
+  // Renews the connection's tokens when they are about to expire, or always when forced. One
+  // instance renews at a time, under the credential's lease: the holder reads the credential again
+  // and uses it when someone renewed meanwhile, else asks the provider outside any transaction and
+  // stores what it gets under the lease. An instance without the lease waits for it to be let go
+  // or run out, and uses what was stored.
+  async function renew(connectionId: string, kind: AccountKind, force: boolean, refused?: string) {
+    const seen = credentialSchema.parse(await credentials.get(connectionId));
+    const fresh = (c: AccountCredential) => c.expires - REFRESH_SKEW_MS > now().getTime();
+    if (!force && fresh(seen)) return seen;
+    // Renewed since the provider refused the token it was given.
+    if (refused !== undefined && seen.access !== refused) return seen;
     for (;;) {
-      const result = await oauth.pollDevice(code, signal);
-      if (result.status === "approved") return result;
-      if (result.status === "slow_down") intervalMs += SLOW_DOWN_MS;
-      const remainingMs = attempt.expiresAt.getTime() - now().getTime();
-      if (remainingMs <= 0) throw new ConnectionError(400, "The code expired. Start again.");
-      await sleep(Math.min(intervalMs, remainingMs), signal);
+      const lease = await credentials.lease(connectionId, options.instanceId, RENEW_LEASE_MS);
+      const saved = await savedCredential(connectionId);
+      if (saved.access !== seen.access || saved.refresh !== seen.refresh) {
+        if (lease) await credentials.release(connectionId, lease);
+        return saved;
+      }
+      if (!lease) {
+        await sleep(RENEW_WAIT_MS);
+        continue;
+      }
+      let tokens: OAuthTokens;
+      try {
+        tokens = await providers[kind].oauth.refresh(saved.refresh);
+      } catch (err) {
+        await credentials.release(connectionId, lease);
+        logger.warn({ err, kind }, "account token refresh failed");
+        throw new ConnectionError(
+          502,
+          `${providers[kind].label} sign-in could not be renewed. Connect again.`,
+        );
+      }
+      // Read again, for a proxy changed while renewing; gone when disconnected meanwhile.
+      const next = credentialOf(tokens, await savedCredential(connectionId));
+      // The lease ran out meanwhile: the refresh token is spent all the same, so what it got is
+      // kept unless someone stored a renewal of their own since.
+      if (
+        !(await credentials.putHeld(connectionId, lease, next)) &&
+        !(await credentials.putIf(connectionId, (stored) => stored.refresh === saved.refresh, next))
+      ) {
+        return savedCredential(connectionId);
+      }
+      return next;
     }
-  }
-
-  async function runDevice(attempt: DeviceAttempt, oauth: DeviceOAuth, code: DeviceCode) {
-    try {
-      const approval = await pollUntilApproved(attempt, oauth, code);
-      const tokens = await oauth.exchangeDevice(approval, attempt.controller.signal);
-      if (attempt.result.status !== "pending") return;
-      attempt.result = {
-        status: "connected",
-        connection: await save(attempt.kind, attempt, tokens),
-      };
-    } catch (err) {
-      if (attempt.result.status !== "pending") return;
-      const error = err instanceof ConnectionError ? err : rejected(attempt.kind, err);
-      attempt.result = { status: "failed", error: error.message };
-    }
-  }
-
-  function cancelDevice(attempt: DeviceAttempt) {
-    if (attempt.result.status === "pending") {
-      attempt.result = { status: "failed", error: "Sign-in cancelled." };
-    }
-    attempt.controller.abort();
-  }
-
-  function findDevice(kind: DeviceKind, owner: Owner, id: string) {
-    const attempt = deviceAttempts.get(id);
-    if (!attempt) return null;
-    const ours = attempt.kind === kind && attempt.orgId === owner.orgId;
-    return ours && attempt.userId === owner.userId ? attempt : null;
-  }
-
-  // Renews the connection's tokens when they are about to expire, or always when forced.
-  async function renew(connectionId: string, kind: AccountKind, force: boolean) {
-    const saved = credentialSchema.parse(await credentials.get(connectionId));
-    if (!force && saved.expires - REFRESH_SKEW_MS > now().getTime()) return saved;
-    let tokens: OAuthTokens;
-    try {
-      tokens = await providers[kind].oauth.refresh(saved.refresh);
-    } catch (err) {
-      logger.warn({ err, kind }, "account token refresh failed");
-      throw new ConnectionError(
-        502,
-        `${providers[kind].label} sign-in could not be renewed. Connect again.`,
-      );
-    }
-    // Read again, for a proxy changed while renewing; gone when disconnected meanwhile.
-    const next = credentialOf(tokens, await savedCredential(connectionId));
-    await credentials.put(connectionId, next);
-    return next;
   }
 
   return {
@@ -476,23 +538,15 @@ export function createConnections(options: ConnectionsOptions) {
       await connections.delete(id);
     },
 
-    // Starts a device code sign-in that the server waits on until it is approved or expires.
+    // Starts a device code sign-in, which instances ask the provider about until it is approved
+    // or expires, whether or not anyone reads where it stands. The user's earlier one is dropped.
     async startDevice(kind: DeviceKind, owner: Owner) {
       const { oauth } = providers[kind];
       await rejectIfConnected(kind, owner.orgId);
-      for (const attempt of deviceAttempts.values()) {
-        if (attempt.expiresAt.getTime() + DEVICE_KEEP_MS <= now().getTime()) {
-          cancelDevice(attempt);
-          deviceAttempts.delete(attempt.id);
-        } else if (findDevice(kind, owner, attempt.id)) {
-          cancelDevice(attempt);
-        }
-      }
-
-      const controller = new AbortController();
+      await dropEarlier(kind, "device", owner);
       let code: DeviceCode;
       try {
-        code = await oauth.startDevice(controller.signal);
+        code = await oauth.startDevice();
       } catch (err) {
         logger.warn({ err, kind }, "device code request failed");
         throw new ConnectionError(
@@ -500,51 +554,69 @@ export function createConnections(options: ConnectionsOptions) {
           `Could not get a code from ${providers[kind].label}. Try again.`,
         );
       }
-      const attempt: DeviceAttempt = {
-        id: randomValue(),
-        kind,
+      const state = randomValue();
+      const secrets: DeviceSecrets = {
+        code,
+        intervalMs: Math.max(MIN_POLL_MS, code.intervalSeconds * 1000),
+      };
+      await attempts.begin({
+        state,
+        kind: "model",
+        flow: "device",
+        subjectId: kind,
+        holder: owner.userId,
         ...owner,
+        secrets,
         expiresAt: new Date(now().getTime() + DEVICE_TTL_MS),
-        controller,
-        result: { status: "pending" },
-      };
-      deviceAttempts.set(attempt.id, attempt);
-      void runDevice(attempt, oauth, code);
-      return {
-        attemptId: attempt.id,
-        verificationUrl: code.verificationUrl,
-        userCode: code.userCode,
-      };
+        nextPollAt: now(),
+        now: now(),
+      });
+      void devicePass?.now();
+      return { attemptId: state, verificationUrl: code.verificationUrl, userCode: code.userCode };
     },
 
-    attempt(kind: DeviceKind, owner: Owner, id: string): AttemptStatus {
-      const attempt = findDevice(kind, owner, id);
+    // Where the person's device sign-in stands, as its row says.
+    async attempt(kind: DeviceKind, owner: Owner, id: string): Promise<AttemptStatus> {
+      const attempt = await mine(kind, "device", owner, id);
       if (!attempt) throw new ConnectionError(404, "Sign-in not found");
-      return attempt.result;
+      if (attempt.status === "pending") return { status: "pending" };
+      if (attempt.status === "completed") {
+        const connection = attempt.resultId
+          ? await connections.find(owner.orgId, attempt.resultId)
+          : null;
+        if (connection) return { status: "connected", connection };
+      }
+      return { status: "failed", error: attempt.error ?? "Sign-in cancelled." };
     },
 
     // Stops a device code sign-in.
-    cancel(kind: DeviceKind, owner: Owner, id: string) {
-      const attempt = findDevice(kind, owner, id);
+    async cancel(kind: DeviceKind, owner: Owner, id: string) {
+      const attempt = await mine(kind, "device", owner, id);
       if (!attempt) throw new ConnectionError(404, "Sign-in not found");
-      cancelDevice(attempt);
+      await attempts.fail(id, "Sign-in cancelled.");
     },
+
+    // Asks the providers about device sign-ins whose ask has come, as the pass does.
+    askDevices,
+    start: async () => devicePass?.start(),
+    stop: async () => devicePass?.stop(),
 
     // Starts a sign-in whose authorization ends on a page showing a code to paste back. The
     // user's earlier one is dropped.
     async startAuthorization(kind: CodeKind, owner: Owner) {
       await rejectIfConnected(kind, owner.orgId);
-      deleteExpiredCodes();
-      for (const [state, attempt] of codeAttempts) {
-        const ours = attempt.kind === kind && attempt.orgId === owner.orgId;
-        if (ours && attempt.userId === owner.userId) codeAttempts.delete(state);
-      }
+      await dropEarlier(kind, "code", owner);
       const { state, codeVerifier, authorizeUrl } = providers[kind].oauth.authorize();
-      codeAttempts.set(state, {
-        kind,
+      await attempts.begin({
+        state,
+        kind: "model",
+        flow: "code",
+        subjectId: kind,
+        holder: owner.userId,
         ...owner,
-        codeVerifier,
+        secrets: { codeVerifier },
         expiresAt: new Date(now().getTime() + CODE_TTL_MS),
+        now: now(),
       });
       return { attemptId: state, authorizeUrl };
     },
@@ -560,22 +632,28 @@ export function createConnections(options: ConnectionsOptions) {
       if (pasted.state && pasted.state !== id) {
         throw new ConnectionError(400, "This is from a different sign-in. Start again.");
       }
-      const attempt = codeAttempts.get(id);
-      const ours = attempt?.kind === kind && attempt.orgId === owner.orgId;
-      if (!attempt || !ours || attempt.userId !== owner.userId) {
+      const attempt = await mine<{ codeVerifier: string }>(kind, "code", owner, id);
+      if (!attempt || attempt.status !== "pending") {
         throw new ConnectionError(404, "Sign-in not found. Start again.");
       }
       if (!pasted.error && !pasted.code) throw new ConnectionError(400, "Paste the code");
-      codeAttempts.delete(id);
       if (attempt.expiresAt <= now()) {
+        await attempts.fail(id, "The sign-in expired.");
         throw new ConnectionError(400, "The sign-in expired. Start again.");
       }
-      if (pasted.error) throw new ConnectionError(400, "The sign-in was declined. Start again.");
+      if (pasted.error) {
+        await attempts.fail(id, "The sign-in was declined.");
+        throw new ConnectionError(400, "The sign-in was declined. Start again.");
+      }
+      // Tried once: a second try finds it finished, before the provider is asked.
+      if (!(await attempts.complete(id))) {
+        throw new ConnectionError(404, "Sign-in not found. Start again.");
+      }
       let tokens: OAuthTokens;
       try {
         tokens = await providers[kind].oauth.exchange({
           code: pasted.code ?? "",
-          codeVerifier: attempt.codeVerifier,
+          codeVerifier: attempt.secrets.codeVerifier,
           state: id,
         });
       } catch (err) {
@@ -585,13 +663,14 @@ export function createConnections(options: ConnectionsOptions) {
     },
 
     // Runs `use` with the connection's access token, renewing it first when it is about to
-    // expire, or whatever its expiry when `force` is set, as after the provider refused it.
-    // Renewals of one connection run one at a time, so a rotated refresh token is used once.
+    // expire, or whatever its expiry when `force` is set, as after the provider refused it;
+    // `refused`, the token it refused, is not renewed again once another is stored.
+    // Callers in this process share one renewal of a connection; instances take turns by lease.
     async withFreshToken<T>(
       orgId: string,
       connectionId: string,
       use: (token: FreshToken) => Promise<T>,
-      { force = false } = {},
+      { force = false, refused }: { force?: boolean; refused?: string } = {},
     ): Promise<T> {
       const connection = await connections.find(orgId, connectionId);
       if (!connection) throw new ConnectionError(404, "Connection not found");
@@ -610,7 +689,9 @@ export function createConnections(options: ConnectionsOptions) {
       const kind = connection.host as AccountKind;
       let pending = refreshing.get(connectionId);
       if (!pending) {
-        pending = renew(connectionId, kind, force).finally(() => refreshing.delete(connectionId));
+        pending = renew(connectionId, kind, force, refused).finally(() =>
+          refreshing.delete(connectionId),
+        );
         refreshing.set(connectionId, pending);
       }
       const credential = await pending;

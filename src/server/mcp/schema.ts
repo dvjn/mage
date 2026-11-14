@@ -1,6 +1,7 @@
 import { pgTable, text, integer, index, primaryKey, boolean, json } from "drizzle-orm/pg-core";
 
 import { at, bytes, NOW } from "@/server/db/columns.ts";
+import { leaseColumns } from "@/server/sync/lease.ts";
 
 import { space } from "@/server/spaces/schema.ts";
 import { user, organization } from "@/server/orgs/schema.ts";
@@ -84,6 +85,8 @@ export const mcpCredential = pgTable(
       .default(NOW)
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
+    // Held by the instance renewing the tokens, so a rotating refresh token is spent once.
+    ...leaseColumns(),
   },
   (table) => [primaryKey({ columns: [table.serverId, table.holderKind, table.holderId] })],
 );

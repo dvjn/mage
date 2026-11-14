@@ -9,7 +9,10 @@
 // entered; else, where the server takes them and Mage is served over HTTPS, the address of Mage's
 // client metadata document; else one the server registers. Whether an address answers as an MCP
 // server is asked with a first initialize request of its own, and any JSON-RPC answer to it
-// counts, even a refusal from a server that speaks only a later revision.
+// counts, even a refusal from a server that speaks only a later revision. Where instances share the
+// OAuth state, one renews its tokens at a time.
+
+import { setTimeout as sleep } from "node:timers/promises";
 
 import {
   auth,
@@ -28,6 +31,7 @@ import {
   UnauthorizedError,
 } from "@modelcontextprotocol/client";
 
+import type { Lease } from "@/server/sync/lease.ts";
 import type { McpTransport } from "@/shared/mcp.ts";
 import type { ToolDefinition } from "@/shared/tools.ts";
 
@@ -43,6 +47,15 @@ export type McpAuth =
 export interface McpOAuthStore {
   load(): Promise<McpOAuthState>;
   save(state: McpOAuthState): Promise<void>;
+  // Turns at renewing the tokens, where other instances share the state: `lease` holds it for one
+  // renewal (null while another holds it), `saveHeld` saves under the lease and lets it go.
+  renewal?: {
+    lease(): Promise<Lease | null>;
+    saveHeld(lease: Lease, state: McpOAuthState): Promise<boolean>;
+    release(lease: Lease): Promise<void>;
+    // Saves the state while the stored refresh token is still `spent`, in one locked read and write.
+    saveIfSpent(spent: string, state: McpOAuthState): Promise<boolean>;
+  };
 }
 
 export interface McpTarget {
@@ -234,6 +247,83 @@ interface Flow {
   verifier: { value?: string };
   // Where the flow wants the person sent.
   redirect?: URL;
+  // The lease a renewal posted under, until its tokens are saved; whether a renewal was answered
+  // with tokens already stored, so there is nothing to save; the access token last refused.
+  lease?: Lease;
+  spent?: string;
+  answered?: boolean;
+  refused?: string;
+}
+
+// How often a renewal waiting on another instance's looks again.
+const RENEW_WAIT_MS = 100;
+
+// The refresh token a request spends, when it is a refresh: a form POST of
+// grant_type=refresh_token to the token endpoint in the stored metadata, as OAuth fixes it.
+async function refreshIn(url: string | URL, init: RequestInit | undefined, oauth: McpOAuthStore) {
+  if (init?.method?.toUpperCase() !== "POST") return null;
+  const type = new Headers(init.headers).get("content-type") ?? "";
+  if (!type.startsWith("application/x-www-form-urlencoded")) return null;
+  const body = init.body;
+  const form =
+    body instanceof URLSearchParams
+      ? body
+      : typeof body === "string"
+        ? new URLSearchParams(body)
+        : null;
+  const spent = form?.get("grant_type") === "refresh_token" ? form.get("refresh_token") : null;
+  if (!spent) return null;
+  const metadata = (await oauth.load()).discovery?.authorizationServerMetadata as
+    | { token_endpoint?: string }
+    | undefined;
+  const endpoint = metadata?.token_endpoint;
+  return endpoint && new URL(endpoint).href === new URL(url).href ? spent : null;
+}
+
+// A fetch that takes turns with other instances at renewing the tokens: the SDK renews inside its
+// transport's handling of a 401 and inside `auth()`, with no hook around it, but posts the refresh
+// through the fetch it is given. A refresh waits for the state's lease. Holding it, when the
+// stored tokens were renewed since (their refresh token is not the one being spent, or their
+// access token is not the one the server last refused), it answers with them and posts nothing;
+// else it posts, and the provider's `saveTokens` stores the answer under the lease and lets it go.
+function renewingInTurn(fetch: FetchLike, oauth: McpOAuthStore, flow: Flow): FetchLike {
+  const renewal = oauth.renewal;
+  if (!renewal) return fetch;
+  return async (url, init) => {
+    const spent = await refreshIn(url, init, oauth);
+    if (!spent) {
+      const res = await fetch(url, init);
+      const bearer = new Headers(init?.headers).get("authorization")?.replace(/^bearer\s+/i, "");
+      if (res.status === 401 && bearer) flow.refused = bearer;
+      return res;
+    }
+    for (;;) {
+      const lease = await renewal.lease();
+      const stored = (await oauth.load()).tokens;
+      if (
+        stored &&
+        (stored.refresh_token !== spent ||
+          (flow.refused !== undefined && stored.access_token !== flow.refused))
+      ) {
+        if (lease) await renewal.release(lease);
+        flow.answered = true;
+        return Response.json(stored);
+      }
+      if (!lease) {
+        await sleep(RENEW_WAIT_MS);
+        continue;
+      }
+      try {
+        const res = await fetch(url, init);
+        if (res.ok) Object.assign(flow, { lease, spent });
+        else await renewal.release(lease);
+        return res;
+      } catch (err) {
+        await renewal.release(lease);
+        throw err;
+      }
+    }
+  };
 }
 
 // An OAuth client for the server, its state read and saved through the store.
@@ -274,7 +364,22 @@ function providerOf(oauth: McpOAuthStore, client: McpOAuthClient, flow: Flow): O
         else delete state.document;
       }),
     tokens: async () => (await oauth.load()).tokens as never,
-    saveTokens: async (tokens) => update((state) => (state.tokens = { ...tokens })),
+    // Tokens a renewal was answered with from the store are there already; renewed ones are
+    // saved under the renewal's lease.
+    async saveTokens(tokens) {
+      const { lease, spent, answered } = flow;
+      Object.assign(flow, { lease: undefined, spent: undefined, answered: false });
+      if (answered) return;
+      if (!lease || !spent || !oauth.renewal) {
+        return update((state) => (state.tokens = { ...tokens }));
+      }
+      const next = { ...(await oauth.load()), tokens: { ...tokens } };
+      // The lease ran out meanwhile: the refresh token is spent all the same, so the new tokens
+      // are kept unless someone stored a renewal of their own since.
+      if (!(await oauth.renewal.saveHeld(lease, next))) {
+        await oauth.renewal.saveIfSpent(spent, next);
+      }
+    },
     discoveryState: async () => (await oauth.load()).discovery as never,
     saveDiscoveryState: async (discovery) =>
       update((state) => (state.discovery = { ...discovery })),
@@ -451,11 +556,15 @@ export function createMcpClient(options: McpClientOptions): McpClient {
   const document = mcpClientDocument(oauthClient);
 
   function transportOf(kind: McpTransport, url: string, auth: McpAuth) {
+    const flow: Flow = { verifier: {} };
     const common = {
-      fetch: auth.kind === "headers" ? withHeaders(fetch, url, auth.headers) : fetch,
-      ...(auth.kind === "oauth" && {
-        authProvider: providerOf(auth.state, oauthClient, { verifier: {} }),
-      }),
+      fetch:
+        auth.kind === "headers"
+          ? withHeaders(fetch, url, auth.headers)
+          : auth.kind === "oauth"
+            ? renewingInTurn(fetch, auth.state, flow)
+            : fetch,
+      ...(auth.kind === "oauth" && { authProvider: providerOf(auth.state, oauthClient, flow) }),
     };
     return kind === "sse"
       ? new SSEClientTransport(new URL(url), common)
@@ -668,7 +777,7 @@ export function createMcpClient(options: McpClientOptions): McpClient {
       try {
         const result = await auth(providerOf(oauth, oauthClient, flow), {
           serverUrl: url,
-          fetchFn: fetch,
+          fetchFn: renewingInTurn(fetch, oauth, flow),
         });
         return result === "REDIRECT" && flow.redirect ? flow.redirect.href : null;
       } catch (err) {

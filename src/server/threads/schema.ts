@@ -112,6 +112,11 @@ export const threadBranch = pgTable(
       onDelete: "cascade",
     }),
     forkSeq: integer("fork_seq"),
+    // For one restored from a row: where that row's words end in its parent's log, as the event
+    // that made it and their order there. What the parent read after it, up to `forkSeq`, its
+    // agent never reads, but answers to the calls it keeps.
+    readSeq: integer("read_seq"),
+    readOrd: integer("read_ord"),
     kind: text("kind", { enum: ["root", "retry", "edit", "restore"] }).notNull(),
     rowId: text("row_id"),
     groupRowId: text("group_row_id"),

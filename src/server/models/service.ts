@@ -367,18 +367,22 @@ export function createModels(options: ModelsOptions) {
     request: ModelRequest,
     signal: AbortSignal,
   ): AsyncIterable<ModelEvent> {
-    const token = (force: boolean) =>
-      tokens.withFreshToken(orgId, connectionId, (fresh) => Promise.resolve(fresh), { force });
+    const token = (force: boolean, refused?: string) =>
+      tokens.withFreshToken(orgId, connectionId, (fresh) => Promise.resolve(fresh), {
+        force,
+        refused,
+      });
     let begun = false;
+    const first = await token(false);
     try {
-      for await (const event of gateway.stream(await token(false), request, signal)) {
+      for await (const event of gateway.stream(first, request, signal)) {
         begun = true;
         yield event;
       }
     } catch (err) {
       if (begun || !(err instanceof ModelError) || err.kind !== "auth" || signal.aborted) throw err;
       logger.info({ connectionId }, "token refused; renewing it");
-      yield* gateway.stream(await token(true), request, signal);
+      yield* gateway.stream(await token(true, first.access), request, signal);
     }
   }
 

@@ -380,5 +380,13 @@ export function useTriggerActions(threadId: string) {
           json: { secret },
         }),
       ),
+    // Rejects with the server's refusal, for the dialog it was set in to show.
+    deliveryHeader: async (triggerId: string, header: string | null) => {
+      const res = await apiClient.v1.threads[":id"].triggers[":triggerId"]["delivery-header"].$put({
+        ...trigger(triggerId),
+        json: { header },
+      });
+      if (!res.ok) throw new Error(await errorOf(res));
+    },
   };
 }

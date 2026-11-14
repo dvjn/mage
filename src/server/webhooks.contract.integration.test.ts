@@ -58,22 +58,20 @@ describe("a webhook", () => {
     expect(await w.hook(`${hook.url}x`, "{}")).toBe(404);
   });
 
-  // Today a sender's retry of one delivery is two notices. It is expected to become one, told
-  // apart by the delivery id the sender gives; this case then changes.
-  it("tells the agent of the same delivery twice when it is posted twice", async () => {
+  it("tells the agent of the same delivery once when it is posted twice", async () => {
     const w = await world();
     const hook = await w.webhook("Deploys", "Check the deploy");
     const delivery = { headers: { "X-GitHub-Delivery": "d-1" } };
-    for (const _ of [1, 2]) {
-      expect(await w.hook(hook.url, '{"ref":"main"}', delivery)).toBe(200);
-      await w.answers(w.threadId, "Checked.");
-      await w.settled();
-    }
-    expect(await hooks(w)).toMatchObject([{ fired: 2 }]);
-    expect((await w.history(w.ada, hook.id)).total).toBe(2);
+    expect(await w.hook(hook.url, '{"ref":"main"}', delivery)).toBe(200);
+    await w.answers(w.threadId, "Checked.");
+    await w.settled();
+    expect(await w.hook(hook.url, '{"ref":"main"}', delivery)).toBe(200);
+    await w.settled();
+    expect(await hooks(w)).toMatchObject([{ fired: 1 }]);
+    expect((await w.history(w.ada, hook.id)).total).toBe(1);
     expect(
       (await w.shown()).rows.filter((row) => row.startsWith("webhook.received: ")),
-    ).toHaveLength(2);
+    ).toHaveLength(1);
   });
 
   it("with a signing secret takes only posts signed with it", async () => {
@@ -118,5 +116,84 @@ describe("a webhook", () => {
     expect(await w.hook(hook.url, "{}")).toBe(404);
     await w.settled();
     expect(w.modelCalls()).toBe(calls + 1);
+  });
+});
+
+describe("a webhook's posts", () => {
+  it("are each told when their delivery ids differ, or when they give none", async () => {
+    const w = await world();
+    const hook = await w.webhook("Deploys", "Check the deploy");
+    for (const headers of [
+      { "X-GitHub-Delivery": "d-1" },
+      { "X-GitHub-Delivery": "d-2" },
+      {},
+      {},
+    ] as Record<string, string>[]) {
+      expect(await w.hook(hook.url, "{}", { headers })).toBe(200);
+      await w.answers(w.threadId, "Checked.");
+      await w.settled();
+    }
+    expect(await hooks(w)).toMatchObject([{ fired: 4 }]);
+    expect((await w.history(w.ada, hook.id)).total).toBe(4);
+  });
+
+  it("to a paused webhook are refused and leave its card as it was", async () => {
+    const w = await world();
+    const hook = await w.webhook("Deploys", "Check the deploy");
+    expect(await w.hook(hook.url, "{}")).toBe(200);
+    await w.answers(w.threadId, "Checked.");
+    await w.settled();
+    const card = async () => (await w.activity()).find((item) => item.work.webhook)!.work.webhook!;
+    const before = await card();
+    expect(await w.act(w.ada, "POST", `/triggers/${hook.id}/pause`)).toBe(200);
+    expect(await w.hook(hook.url, "{}")).toBe(409);
+    expect(await card()).toMatchObject({ fired: before.fired, lastFiredAt: before.lastFiredAt });
+  });
+
+  it("show on its card as how many it took and when the last came, together", async () => {
+    const w = await world();
+    const hook = await w.webhook("Deploys", "Check the deploy");
+    const card = async () => (await w.activity()).find((item) => item.work.webhook)!.work.webhook!;
+    expect(await card()).toMatchObject({ fired: 0 });
+    expect((await card()).lastFiredAt).toBeUndefined();
+    expect(await w.hook(hook.url, "{}")).toBe(200);
+    const after = await card();
+    expect(after.fired).toBe(1);
+    expect(after.lastFiredAt).toEqual(expect.any(String));
+    await w.answers(w.threadId, "Checked.");
+    await w.settled();
+  });
+});
+
+describe("a webhook's delivery header", () => {
+  it("is set by those who may post, and posts are then told apart by it alone", async () => {
+    const w = await world();
+    const hook = await w.webhook("Deploys", "Check the deploy");
+    const path = `/triggers/${hook.id}/delivery-header`;
+    expect(await w.act(w.alan, "PUT", path, { header: "X-Request-Id" })).toBe(403);
+    expect(await w.act(w.ada, "PUT", path, { header: "not a header" })).toBe(400);
+    expect(await w.act(w.ada, "PUT", path, { header: "X-Request-Id" })).toBe(200);
+    const card = async () => (await w.activity()).find((item) => item.work.webhook)!.work.webhook!;
+    expect(await card()).toMatchObject({ deliveryHeader: "X-Request-Id" });
+    // The agent reads of it quietly.
+    expect((await w.shown()).rows.at(-1)).toMatch(/^change: .*delivery header/);
+
+    // Its own header counts, and the usual ones no longer do.
+    const post = async (headers: Record<string, string>, told: boolean) => {
+      expect(await w.hook(hook.url, "{}", { headers })).toBe(200);
+      if (told) await w.answers(w.threadId, "Checked.");
+      await w.settled();
+    };
+    await post({ "X-Request-Id": "r-1", "X-GitHub-Delivery": "d-1" }, true);
+    await post({ "X-Request-Id": "r-1", "X-GitHub-Delivery": "d-2" }, false);
+    await post({ "X-Request-Id": "r-2", "X-GitHub-Delivery": "d-2" }, true);
+    expect(await card()).toMatchObject({ fired: 2 });
+
+    // Cleared, the usual ones count again.
+    expect(await w.act(w.ada, "PUT", path, { header: null })).toBe(200);
+    expect((await card()).deliveryHeader).toBeUndefined();
+    await post({ "X-GitHub-Delivery": "d-9" }, true);
+    await post({ "X-GitHub-Delivery": "d-9" }, false);
+    expect(await card()).toMatchObject({ fired: 3 });
   });
 });

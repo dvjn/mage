@@ -293,12 +293,15 @@ export function modelRoutes(options: {
       .post("/v1/connections/codex/device", async (c) => {
         return c.json(await connections.startDevice("codex", signedIn(c.var.principal)), 200);
       })
-      .get("/v1/connections/codex/attempts/:id", (c) => {
+      .get("/v1/connections/codex/attempts/:id", async (c) => {
         const owner = signedIn(c.var.principal);
-        return c.json(attemptSummary(connections.attempt("codex", owner, c.req.param("id"))), 200);
+        return c.json(
+          attemptSummary(await connections.attempt("codex", owner, c.req.param("id"))),
+          200,
+        );
       })
-      .post("/v1/connections/codex/attempts/:id/cancel", (c) => {
-        connections.cancel("codex", signedIn(c.var.principal), c.req.param("id"));
+      .post("/v1/connections/codex/attempts/:id/cancel", async (c) => {
+        await connections.cancel("codex", signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
       })
       .post("/v1/connections/claude/authorization", async (c) => {

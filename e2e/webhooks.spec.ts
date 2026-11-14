@@ -172,3 +172,39 @@ test("a webhook's deliveries are listed a page at a time", async ({ page }) => {
   await dialog.getByRole("button", { name: "Newer" }).click();
   await expect(history.getByRole("listitem")).toHaveCount(10);
 });
+
+test("a webhook takes a delivery once by the id header set on its card", async ({ page }) => {
+  await signUp(page);
+  await write(
+    page,
+    `^tool triggers.add_webhook ${JSON.stringify({ name: "Deploys", note: "Look" })}`,
+  );
+  await page
+    .getByRole("region", { name: "Approvals" })
+    .getByRole("button", { name: "Allow", exact: true })
+    .click();
+  await page
+    .getByRole("toolbar", { name: "Context" })
+    .getByRole("button", { name: "Webhooks" })
+    .click();
+  const card = page.getByTestId("tray-card").filter({ hasText: "Deploys" });
+  await card.getByRole("button", { name: "Copy URL" }).click();
+  const url = await page.evaluate(() => navigator.clipboard.readText());
+
+  await card.getByRole("button", { name: "Delivery id header" }).click();
+  await page
+    .getByRole("dialog", { name: "Delivery id header" })
+    .getByLabel("Header", { exact: true })
+    .fill("X-Request-Id");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Delivery id header" })).toHaveCount(0);
+
+  for (const _ of [1, 2]) {
+    const res = await page.request.post(url, { data: {}, headers: { "X-Request-Id": "r-1" } });
+    expect(res.status()).toBe(200);
+  }
+  await expect(card.getByRole("button", { name: "History, 1 delivery" })).toBeVisible();
+  await expect(
+    page.getByRole("article", { name: "Notification" }).filter({ hasText: "Delivered" }),
+  ).toHaveCount(1);
+});

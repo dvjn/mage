@@ -11,13 +11,12 @@ import {
   json,
 } from "drizzle-orm/pg-core";
 
-import { at, bytes, NOW } from "@/server/db/columns.ts";
+import { at, NOW } from "@/server/db/columns.ts";
 
 import { leaseColumns } from "@/server/sync/lease.ts";
 import { machine } from "@/server/sync/machine.ts";
-import type { LiveProgress, Steering } from "@/shared/threads/events.ts";
+import type { LiveProgress } from "@/shared/threads/events.ts";
 import type { TaskActor, TaskAssignee, TaskStatus } from "@/shared/tasks.ts";
-import type { TriggerKind, TriggerStatus } from "@/shared/triggers.ts";
 import { POLICY_COLORS } from "@/shared/tools.ts";
 import { user, organization } from "@/server/orgs/schema.ts";
 import { thread, threadBranch } from "@/server/threads/schema.ts";
@@ -146,6 +145,8 @@ export const run = pgTable(
     attempt: integer("attempt").default(1).notNull(),
     cancelRequestedAt: at("cancel_requested_at"),
     cancelRequestedBy: text("cancel_requested_by"),
+    // Asked to stop with the run that started its thread, whose agent is not told of it.
+    cancelSilent: boolean("cancel_silent").default(false).notNull(),
     ...leaseColumns(),
     inputTokens: integer("input_tokens").default(0).notNull(),
     outputTokens: integer("output_tokens").default(0).notNull(),
@@ -194,38 +195,13 @@ export const subagent = pgTable(
       .notNull()
       .references(() => thread.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
+    // The call in its starter's thread that started it.
+    callId: text("call_id"),
     instructions: text("instructions"),
-    // Whether it reads and updates its starter's task list in place of keeping its own.
-    shareTasks: boolean("share_tasks").notNull().default(false),
     archivedAt: at("archived_at"),
     createdAt: at("created_at").default(NOW).notNull(),
   },
   (table) => [index("subagent_parent_idx").on(table.parentThreadId, table.createdAt)],
-);
-
-// A tool call that runs in the background: the thread it belongs to, the run that started it, the
-// tool and its input, where it stands, and what it gave back or why it failed once it ended.
-export const backgroundCall = pgTable(
-  "background_call",
-  {
-    id: text("id").primaryKey(),
-    threadId: text("thread_id")
-      .notNull()
-      .references(() => thread.id, { onDelete: "cascade" }),
-    runId: text("run_id")
-      .notNull()
-      .references(() => run.id, { onDelete: "cascade" }),
-    toolId: text("tool_id").notNull(),
-    input: json("input").$type<unknown>(),
-    status: text("status", {
-      enum: ["pending", "running", "done", "failed", "cancelled", "interrupted"],
-    }).notNull(),
-    // The instance running it, while it runs.
-    ...leaseColumns(),
-    createdAt: at("created_at").default(NOW).notNull(),
-    endedAt: at("ended_at"),
-  },
-  (table) => [index("background_call_thread_idx").on(table.threadId, table.createdAt)],
 );
 
 // What a running tool call has printed so far, kept while it runs for whoever watches it, on any
@@ -282,6 +258,17 @@ export const threadTask = pgTable(
   (table) => [index("thread_task_thread_idx").on(table.threadId, table.position)],
 );
 
+// A thread whose agent works on another thread's task list in place of keeping its own: a
+// subagent on its starter's.
+export const taskShare = pgTable("task_share", {
+  threadId: text("thread_id")
+    .primaryKey()
+    .references(() => thread.id, { onDelete: "cascade" }),
+  ownerThreadId: text("owner_thread_id")
+    .notNull()
+    .references(() => thread.id, { onDelete: "cascade" }),
+});
+
 // An agent waiting to be told once about subjects: tasks of a list, until one is done or on any
 // change, or subagents, until all or any of them are idle. `owner_id` is whose they are: the
 // thread that owns the list, or the one that started the subagents. It ends once it has told.
@@ -317,44 +304,4 @@ export const threadWatchSubject = pgTable(
     subjectId: text("subject_id").notNull(),
   },
   (table) => [primaryKey({ columns: [table.watchId, table.subjectId] })],
-);
-
-// What wakes a thread's agent later: a wake-up timer (once), a schedule (cron) or a webhook, with
-// when it next goes off and what it tells the agent.
-export const threadTrigger = pgTable(
-  "thread_trigger",
-  {
-    id: text("id").primaryKey(),
-    threadId: text("thread_id")
-      .notNull()
-      .references(() => thread.id, { onDelete: "cascade" }),
-    kind: text("kind", { enum: ["once", "cron", "webhook"] })
-      .$type<TriggerKind>()
-      .notNull(),
-    name: text("name").notNull(),
-    cron: text("cron"),
-    timezone: text("timezone"),
-    // The note or prompt the agent is told when it fires.
-    prompt: text("prompt").notNull(),
-    // Whose words steered the call that set it, and the name the agent set it by.
-    steeredBy: json("steered_by").$type<Steering[]>().notNull(),
-    // What the agent that set it went by, as a label: it names no user.
-    createdByLabel: text("created_by_label").notNull(),
-    status: text("status", { enum: ["active", "paused", "done", "deleted"] })
-      .$type<TriggerStatus>()
-      .notNull(),
-    nextRunAt: at("next_run_at"),
-    lastFiredAt: at("last_fired_at"),
-    // A webhook's unguessable address token, and its signing secret sealed by the cipher, when a
-    // person set one.
-    hookToken: text("hook_token"),
-    secretKeyVersion: integer("secret_key_version"),
-    secret: bytes("secret"),
-    createdAt: at("created_at").default(NOW).notNull(),
-  },
-  (table) => [
-    uniqueIndex("thread_trigger_hook_token_idx").on(table.hookToken),
-    index("thread_trigger_thread_idx").on(table.threadId, table.createdAt),
-    index("thread_trigger_due_idx").on(table.status, table.nextRunAt),
-  ],
 );

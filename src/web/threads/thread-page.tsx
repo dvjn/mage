@@ -391,6 +391,7 @@ export function ThreadPage() {
       resume: (id: string) => triggers.resume(id).catch(() => {}),
       remove: (id: string) => triggers.remove(id).catch(() => {}),
       secret: (id: string, secret: string | null) => triggers.secret(id, secret).catch(() => {}),
+      deliveryHeader: (id: string, header: string | null) => triggers.deliveryHeader(id, header),
     },
   };
 

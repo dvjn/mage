@@ -6,6 +6,8 @@ import { validator } from "hono/validator";
 
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
+import type { ThreadAccess } from "@/server/access/access.ts";
+import type { Queue } from "@/server/queue/queue.ts";
 import { type ApiEnv, signedIn, jsonBody, queryOf } from "@/server/http.ts";
 import { backgroundSeenSchema } from "@/shared/calls.ts";
 import { pageParams } from "@/shared/paging.ts";
@@ -175,11 +177,13 @@ const eventCursor = validator("query", (value: { after?: string }, c) => {
 
 export function threadRoutes(options: {
   threads: Threads;
+  access?: Pick<ThreadAccess, "require">;
+  queue?: Pick<Queue, "change" | "withdraw">;
   logger?: Logger;
   heartbeatMs?: number;
   shutdown?: AbortSignal;
 }) {
-  const { threads } = options;
+  const { threads, access, queue } = options;
   return new Hono<ApiEnv>()
     .get("/v1/spaces/:id/threads", async (c) => {
       return c.json(await threads.list(signedIn(c.var.principal), c.req.param("id")), 200);
@@ -403,15 +407,15 @@ export function threadRoutes(options: {
     })
     .patch("/v1/threads/:id/messages/:messageId", pendingChange, async (c) => {
       const { id, messageId } = c.req.param();
-      const change = c.req.valid("json");
-      return c.json(
-        await threads.changeMessage(signedIn(c.var.principal), id, messageId, change),
-        200,
-      );
+      const { text, mode } = c.req.valid("json");
+      const reader = await access!.require(signedIn(c.var.principal), id, "post");
+      const change = { ...(text !== undefined && { text }), ...(mode && { delivery: mode }) };
+      return c.json(await queue!.change(reader, messageId, change), 200);
     })
     .delete("/v1/threads/:id/messages/:messageId", async (c) => {
       const { id, messageId } = c.req.param();
-      return c.json(await threads.withdrawMessage(signedIn(c.var.principal), id, messageId), 200);
+      const reader = await access!.require(signedIn(c.var.principal), id, "post");
+      return c.json(await queue!.withdraw(reader, messageId), 200);
     })
     .post("/v1/threads/:id/stop", async (c) => {
       await threads.stop(signedIn(c.var.principal), c.req.param("id"));

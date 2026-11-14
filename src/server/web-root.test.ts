@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import type { Tasks } from "@/server/agent/tasks.ts";
-import type { Triggers } from "@/server/agent/triggers.ts";
+import type { Triggers } from "@/server/triggers.ts";
 import { tmpdir } from "node:os";
 import path from "node:path";
 

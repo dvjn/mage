@@ -44,7 +44,7 @@ export function createSync(deps: {
       );
     },
   });
-  const { db, transact, afterCommit, inTransaction, ordered, outside } = transactor;
+  const { db, transact, afterCommit, inTransaction, ordered, holds, outside } = transactor;
   const signals = createSignals({
     instanceId,
     logger: deps.logger,
@@ -99,6 +99,7 @@ export function createSync(deps: {
     afterCommit,
     inTransaction,
     ordered,
+    holds,
     outside,
     signals,
     stats,

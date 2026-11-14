@@ -24,12 +24,6 @@ export interface ActivityChange {
   gone?: { spaceId: string };
 }
 
-// A call a person asked to move to the background, for whichever instance runs it.
-export interface MoveCall {
-  threadId: string;
-  callId: string;
-}
-
 // What a thread's followers are told: an event appended, a reply's pieces stored below `upto`, or
 // a running call's output stored; each read from where it is kept.
 export type ThreadHint =
@@ -71,9 +65,6 @@ export interface Signals {
   // Says people left an org, so what names them may read differently.
   peopleLeft(): void;
   onPeopleLeft(listener: () => void): () => void;
-  // Asks whichever instance runs the call to move it to the background.
-  moveCall(move: MoveCall): void;
-  onMoveCall(listener: (move: MoveCall) => void): () => void;
   // Says what happened to an artifact.
   artifactChanged(hint: ArtifactHint): void;
   // Calls `listener` with each hint about the artifact until unsubscribed.
@@ -91,7 +82,6 @@ const MAX_BYTES = 7000;
 const WAKE = "wake";
 const ACTIVITY = "activity";
 const PEOPLE = "people";
-const MOVE = "move";
 const GAP = "gap";
 const ARTIFACT = "artifact:";
 
@@ -196,10 +186,6 @@ export function createSignals(options: SignalsOptions) {
       send(PEOPLE, null);
     },
     onPeopleLeft: (listener: () => void) => on(PEOPLE, listener),
-    moveCall(move: MoveCall) {
-      send(MOVE, move);
-    },
-    onMoveCall: (listener: (move: MoveCall) => void) => on(MOVE, listener),
     artifactChanged(hint: ArtifactHint) {
       send(`${ARTIFACT}${hint.artifactId}`, hint);
     },

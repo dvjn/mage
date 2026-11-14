@@ -34,6 +34,7 @@ async function space() {
       actor: { kind: "user", userId },
       data: { parts: [{ type: "text", text }], quiet: true, mode: "steer" },
     });
+    await workspace.queue.fromLog(threadId);
     clock += 1000;
     await workspace.db.execute(
       sql`update thread set updated_at = ${new Date(clock)} where id = ${threadId}`,
@@ -169,11 +170,31 @@ describe("a space's threads listed in the database", () => {
   });
 
   it("lists a run waiting on a decision as one that may need the reader", async () => {
-    const { ada, thread, titles, runStore, db } = await space();
+    const { ada, thread, titles, runStore, callStore, log, db } = await space();
     await thread("Idle");
     const asking = await thread("Asking");
     const run = await runStore.create({ threadId: asking, triggerSeq: 0, createdBy: ada.userId });
     await db.execute(sql`update run set status = 'waiting' where id = ${run.id}`);
+    // What it waits on.
+    await log.write(asking, async (append) => {
+      const call = { runId: run.id, callId: "ask", toolId: "probe.guarded", input: {} };
+      const data = { ...call, messageId: "", risk: "ask" as const, waits: true };
+      const requested = await append({ type: "tool.requested", actor: { kind: "agent" }, data });
+      await callStore.insert([
+        {
+          threadId: asking,
+          id: "ask",
+          branchId: run.branchId,
+          seq: requested.seq,
+          runId: run.id,
+          toolId: call.toolId,
+          risk: "ask",
+          status: "waiting",
+          waitsFor: "decision",
+          background: false,
+        },
+      ]);
+    });
 
     expect((await titles(ada.userId, { show: "maybe-needs-you" })).titles).toEqual(["Asking"]);
     expect((await titles(ada.userId, { show: "unread" })).titles).toEqual([]);

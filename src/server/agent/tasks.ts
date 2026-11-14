@@ -31,9 +31,12 @@ import {
 } from "@/shared/tasks.ts";
 import type { Change, NotificationActor, Steering } from "@/shared/threads/events.ts";
 
-import { type Notifier, silentChange } from "./notifications.ts";
+import type { Notification } from "@/server/queue/notices.ts";
+import { silentChange } from "@/server/queue/notices.ts";
+import type { Queue } from "@/server/queue/queue.ts";
 import { WATCH_LIMIT, type Watch, type WatchStore } from "./watches.ts";
-import { steeringIn, type Subagents } from "./subagents.ts";
+import { steeringIn } from "@/server/calls/influence.ts";
+import type { Subagents } from "./subagents.ts";
 import type { Toolset, ToolSpec } from "./tools.ts";
 import { filterAsync } from "@/server/kernel/async.ts";
 
@@ -52,6 +55,10 @@ export interface TaskRecord {
 }
 
 export interface TaskStore {
+  // The thread whose list the thread works on in place of its own, if any.
+  sharedWith(threadId: string): Promise<string | null>;
+  // Has the thread work on the owner's list from now on.
+  share(threadId: string, ownerThreadId: string): Promise<void>;
   // The thread's tasks in order: the ones on the list, or with archived set the ones archived.
   inThread(threadId: string, archived?: boolean): Promise<TaskRecord[]>;
   find(id: string): Promise<TaskRecord | null>;
@@ -78,12 +85,12 @@ export interface TasksOptions {
   access: Pick<ThreadAccess, "require" | "can">;
   // The org a space belongs to, for who may post.
   orgOf: (spaceId: string) => Promise<string | null>;
-  subagents: Pick<Subagents, "find" | "mayStart" | "ofParents" | "shareTasks">;
+  subagents: Pick<Subagents, "find" | "mayStart" | "ofParents">;
   log: ThreadLog;
   bus: Signals;
   // What the agent of the space's threads goes by.
   agentNameIn?: (spaceId: string) => Promise<string>;
-  notifier: Notifier;
+  queue: Pick<Queue, "enqueue">;
   // Agents waiting on tasks, as on subagents.
   watches: Pick<WatchStore, "add" | "on" | "count" | "end">;
   now?: () => Date;
@@ -115,12 +122,20 @@ export function createTasks(options: TasksOptions) {
   const { tasks, threads, subagents, bus } = options;
   const now = options.now ?? (() => new Date());
   const agentNameIn = options.agentNameIn ?? (() => DEFAULT_AGENT_NAME);
-  const { notifier, watches } = options;
+  const { queue, watches } = options;
+
+  // Tells the thread's agent of a change to a task list: as the person who made it, or as the list.
+  async function notify(threadId: string, notice: Notification) {
+    const origin =
+      notice.actor?.kind === "person"
+        ? undefined
+        : { kind: "task" as const, id: notice.source.threadId };
+    await queue.enqueue(threadId, { kind: "notice", notice }, { ...(origin && { origin }) });
+  }
 
   // The thread whose list the thread works on: its starter's for a subagent started to share it.
   async function ownerOf(threadId: string) {
-    const subagent = await subagents.find(threadId);
-    return subagent?.shareTasks ? subagent.parentThreadId : threadId;
+    return (await tasks.sharedWith(threadId)) ?? threadId;
   }
 
   // The owner's subagents that are not retired.
@@ -580,7 +595,7 @@ export function createTasks(options: TasksOptions) {
     }
     for (const threadId of reached) {
       if (threadId === by.threadId || !(await threads.find(threadId))) continue;
-      await notifier.send(threadId, {
+      await notify(threadId, {
         kind: "task.changed",
         source: { threadId: ownerId, name: "Tasks", main: true },
         actor: await actorOf(by),
@@ -616,7 +631,7 @@ export function createTasks(options: TasksOptions) {
     for (const threadId of quiet) {
       if (told.has(threadId) || threadId === by.threadId || !(await threads.find(threadId)))
         continue;
-      await notifier.send(
+      await notify(
         threadId,
         silentChange(threadId, by.name, text, "tasks", await actorOf(by), change),
       );
@@ -658,9 +673,9 @@ export function createTasks(options: TasksOptions) {
   ) {
     const { assignee } = record;
     if (assignee?.kind !== "subagent") return;
-    await subagents.shareTasks(assignee.threadId);
+    await tasks.share(assignee.threadId, ownerId);
     if (assignee.threadId === byThread || !(await threads.find(assignee.threadId))) return;
-    await notifier.send(assignee.threadId, {
+    await notify(assignee.threadId, {
       kind: "task.changed",
       source: { threadId: ownerId, name: "Tasks", main: true },
       actor: {
@@ -766,7 +781,7 @@ export function createTasks(options: TasksOptions) {
     }
     for (const threadId of reached) {
       if (threadId === by.threadId || !(await threads.find(threadId))) continue;
-      await notifier.send(threadId, {
+      await notify(threadId, {
         kind: "task.changed",
         source: { threadId: ownerId, name: "Tasks", main: true },
         actor: await actorOf(by),
@@ -853,8 +868,9 @@ export function createTasks(options: TasksOptions) {
     // The thread whose list the thread works on.
     ownerOf,
 
-    // Giving the starter's tasks to a subagent it starts.
-    handover: {
+    // What a subagent's start does with the starter's list: checks and gives the tasks it names,
+    // and has it work on the list when it was given tasks or asked to share it.
+    extension: {
       async check(ownerId: string, taskIds: string[]) {
         const missing = await filterAsync(
           taskIds,
@@ -862,7 +878,13 @@ export function createTasks(options: TasksOptions) {
         );
         return missing.length > 0 ? `No task ${missing.join(", ")}. Add tasks first.` : null;
       },
-      async give(ownerId: string, taskIds: string[], subagent: { threadId: string; name: string }) {
+      async started(
+        subagent: { threadId: string; parentThreadId: string; name: string },
+        input: { tasks?: string[]; shareTasks: boolean },
+      ) {
+        const ownerId = subagent.parentThreadId;
+        if (input.shareTasks || input.tasks) await tasks.share(subagent.threadId, ownerId);
+        const taskIds = input.tasks ?? [];
         const by = await agentActor(ownerId, (await threads.find(ownerId))?.spaceId ?? "");
         for (const id of taskIds) {
           const record = await tasks.find(id);
@@ -872,10 +894,12 @@ export function createTasks(options: TasksOptions) {
             updatedBy: by,
             updatedAt: now(),
           });
-          await subagents.shareTasks(subagent.threadId);
           await giveToSubagent(ownerId, next ?? record, by.name, ownerId);
         }
         if (taskIds.length > 0) changed(ownerId);
+      },
+      async framing(threadId: string) {
+        return (await tasks.sharedWith(threadId)) ? { sharesTasks: true as const } : {};
       },
     },
 
@@ -929,7 +953,7 @@ export function createTasks(options: TasksOptions) {
         updatedAt: now(),
       });
       changed(ownerId);
-      if (next?.assignee?.kind === "subagent") await subagents.shareTasks(next.assignee.threadId);
+      if (next?.assignee?.kind === "subagent") await tasks.share(next.assignee.threadId, ownerId);
       await announce(
         ownerId,
         { name: who.name, userId: who.userId, people: [who] },

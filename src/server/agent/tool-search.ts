@@ -281,6 +281,7 @@ export function createToolSearch(
     name: TOOL_SEARCH,
     modelName: "tools.search",
     title: "Search tools",
+    deferral: "search",
     annotations: { readOnlyHint: true },
     description:
       "Turn on MCP tools left out of your tools: query matches name, server and description; select takes exact names; server lists one server's tools. Tools turned on are callable from your next step, for the rest of this thread.",

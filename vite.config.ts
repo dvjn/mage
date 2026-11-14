@@ -10,6 +10,16 @@ import { defineConfig } from "vite-plus";
 const here = import.meta.dirname;
 
 // Code reaches another folder by its @/ path, so the import boundaries below see every crossing.
+// A feature reaches another through its service: only the entry point wires stores, and only the
+// app mounts routes.
+const storeOfAnother = {
+  regex: "^@/server/[^/]+/([^/]+-)?store\\.ts$",
+  message: "Use the feature's service; only the entry point wires stores.",
+};
+const routesOfAnother = {
+  regex: "^@/server/[^/]+/routes\\.ts$",
+  message: "Only the app mounts a feature's routes.",
+};
 const outOfFolder = { regex: "^\\.\\./", message: "Import another folder's code by its @/ path." };
 const webCode = { regex: "^@/web/", message: "Only the web client imports web code." };
 
@@ -81,6 +91,31 @@ const sharedPartFiles = [
   "src/web/components/more-menu.tsx",
   "src/web/components/page-states.tsx",
 ];
+
+// The rule for what wakes the agent later, of one kind, the other kind named.
+function timedOrPosted(own: string, other: string) {
+  return {
+    files: [`src/server/${own}/**`],
+    excludeFiles: ["**/*.test.ts"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          patterns: [
+            outOfFolder,
+            webCode,
+            storeOfAnother,
+            routesOfAnother,
+            {
+              regex: `^@/server/(${other}|execution)/|^@/server/threads/(?!schema\\.ts$)|^@/server/agent/(?!tools\\.ts$)`,
+              message: `The ${own} import neither the ${other}, threads, runs nor the agent but its tools' registry.`,
+            },
+          ],
+        },
+      ] as ["error", { patterns: Pattern[] }],
+    },
+  };
+}
 
 export default defineConfig({
   root: path.join(here, "src/web"),
@@ -264,16 +299,70 @@ export default defineConfig({
           "no-restricted-imports": [
             "error",
             {
+              patterns: [outOfFolder, webCode, storeOfAnother, routesOfAnother],
+            },
+          ],
+        },
+      },
+      {
+        // The conversation engine in layers: the queue knows neither calls nor runs, calls know
+        // the queue and not runs, and runs stand on both.
+        files: ["src/server/queue/**"],
+        excludeFiles: ["**/*.test.ts"],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              patterns: [
+                outOfFolder,
+                webCode,
+                storeOfAnother,
+                routesOfAnother,
+                {
+                  regex: "^@/server/(calls|execution)/",
+                  message: "The queue imports neither calls nor execution.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        files: ["src/server/calls/**"],
+        excludeFiles: ["**/*.test.ts"],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              patterns: [
+                outOfFolder,
+                webCode,
+                storeOfAnother,
+                routesOfAnother,
+                { regex: "^@/server/execution/", message: "Calls do not import execution." },
+              ],
+            },
+          ],
+        },
+      },
+      // Schedules and webhooks stand on the queue, access and sync: neither knows the other, a
+      // thread's log, its runs or its agent but for the tools' registry.
+      timedOrPosted("schedules", "webhooks"),
+      timedOrPosted("webhooks", "schedules"),
+      {
+        // Sign-ins under way stand on the database, the kernel and sync alone.
+        files: ["src/server/oauth/**"],
+        excludeFiles: ["**/*.test.ts"],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
               patterns: [
                 outOfFolder,
                 webCode,
                 {
-                  regex: "^@/server/[^/]+/([^/]+-)?store\\.ts$",
-                  message: "Use the feature's service; only the entry point wires stores.",
-                },
-                {
-                  regex: "^@/server/[^/]+/routes\\.ts$",
-                  message: "Only the app mounts a feature's routes.",
+                  regex: "^@/server/(?!db/|kernel/|sync/|oauth/)",
+                  message: "Sign-ins import the database, the kernel and sync alone.",
                 },
               ],
             },
@@ -299,6 +388,11 @@ export default defineConfig({
             },
           ],
         },
+      },
+      {
+        // Systems are made in the order they depend on one another: nothing reads one made later.
+        files: ["src/server/compose.ts"],
+        rules: { "no-use-before-define": ["error", { variables: true, functions: false }] },
       },
       {
         // The platform knows no feature.

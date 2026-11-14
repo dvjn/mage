@@ -1,0 +1,1 @@
+ALTER TABLE "run" ADD COLUMN "cancel_silent" boolean DEFAULT false NOT NULL;

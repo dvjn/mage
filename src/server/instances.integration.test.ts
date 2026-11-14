@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { agentThread } from "@/server/testing/agent-thread.ts";
@@ -37,7 +38,7 @@ describe("several server instances on one database", () => {
 
   it("fire a due trigger once, whichever instance ticks", async () => {
     const { a, b } = await twoInstances();
-    await a.triggerStore.create({
+    await a.scheduleStore.create({
       id: "trigger-1",
       threadId: a.thread.id,
       kind: "once",
@@ -45,40 +46,63 @@ describe("several server instances on one database", () => {
       cron: null,
       timezone: null,
       prompt: "Carry on",
-      steeredBy: [],
-      createdByLabel: "Agent",
-      status: "active",
+      influence: [],
+      callId: null,
       nextRunAt: new Date(Date.now() - 1000),
     });
     a.clock.now = new Date();
     b.clock.now = new Date();
-    expect((await b.triggers.tick()) + (await a.triggers.tick())).toBe(1);
-    expect((await a.triggers.tick()) + (await b.triggers.tick())).toBe(0);
+    expect((await b.schedules.tick()) + (await a.schedules.tick())).toBe(1);
+    expect((await a.schedules.tick()) + (await b.schedules.tick())).toBe(0);
     expect((await a.events()).filter((event) => event.type === "notification")).toHaveLength(1);
+    const keyed = await a.db.execute<{ key: string }>(
+      sql`select key from thread_input where key like 'schedule:trigger-1:%'`,
+    );
+    expect(keyed.rows).toHaveLength(1);
   });
 
   it("interrupt a background call left by a dead instance once, telling its thread once", async () => {
     const { a, b } = await twoInstances();
     const run = await a.runStore.create({ threadId: a.thread.id, triggerSeq: 1, createdBy: null });
-    await a.callStore.create(
-      {
-        id: "call-1",
-        threadId: a.thread.id,
-        runId: run.id,
-        toolId: "probe.wait",
-        input: {},
-        status: "running",
-      },
-      { owner: "dead", leaseMs: 60_000 },
-    );
+    await a.log.write(a.thread.id, async (append) => {
+      const requested = await append({
+        type: "tool.requested",
+        actor: { kind: "agent" },
+        data: {
+          runId: run.id,
+          callId: "call-1",
+          messageId: "",
+          toolId: "probe.wait",
+          input: {},
+          risk: "normal",
+          waits: false,
+          background: true,
+        },
+      });
+      await a.callStore.insert([
+        {
+          threadId: a.thread.id,
+          id: "call-1",
+          branchId: run.branchId,
+          seq: requested.seq,
+          runId: run.id,
+          toolId: "probe.wait",
+          risk: "normal",
+          status: "running",
+          waitsFor: null,
+          background: true,
+          lease: { owner: "dead", leaseMs: 60_000 },
+        },
+      ]);
+    });
     await a.calls.recover();
     await b.calls.recover();
-    expect((await a.callStore.find("call-1"))?.status).toBe("running");
+    expect((await a.callStore.find(a.thread.id, "call-1"))?.status).toBe("running");
 
-    await expireLeases(a.db, "background_call");
+    await expireLeases(a.db, "call");
     await a.calls.recover();
     await b.calls.recover();
-    expect((await a.callStore.find("call-1"))?.status).toBe("interrupted");
+    expect((await a.callStore.find(a.thread.id, "call-1"))?.status).toBe("interrupted");
     const told = (await a.events()).filter(
       (event) => event.type === "notification" && event.data.kind === "call.ended",
     );
@@ -128,7 +152,7 @@ describe("several server instances on one database", () => {
       }
     }
     const watching = await openStream(b.app, a.ada.cookie, a.thread.id);
-    const call = a.live.open(a.thread.id, "call-1", () => true);
+    const call = a.live.open(a.thread.id, "call-1", async () => "call-1");
     call.output("one\n");
     expect(await nextOutput(watching)).toEqual({
       callId: "call-1",
@@ -284,7 +308,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("several server instances on one
   it("fire each of many due schedules once, with two instances ticking at once", async () => {
     const { a, b } = await twoInstances();
     for (let index = 0; index < 20; index += 1) {
-      await a.triggerStore.create({
+      await a.scheduleStore.create({
         id: `trigger-${index}`,
         threadId: a.thread.id,
         kind: "once",
@@ -292,15 +316,14 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("several server instances on one
         cron: null,
         timezone: null,
         prompt: `Carry on ${index}`,
-        steeredBy: [],
-        createdByLabel: "Agent",
-        status: "active",
+        influence: [],
+        callId: null,
         nextRunAt: new Date(Date.now() - 1000),
       });
     }
     a.clock.now = new Date();
     b.clock.now = new Date();
-    const [byA, byB] = await Promise.all([a.triggers.tick(), b.triggers.tick()]);
+    const [byA, byB] = await Promise.all([a.schedules.tick(), b.schedules.tick()]);
     expect(byA + byB).toBe(20);
     expect((await a.events()).filter((event) => event.type === "notification")).toHaveLength(20);
   });

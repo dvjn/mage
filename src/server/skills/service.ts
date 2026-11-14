@@ -17,7 +17,7 @@ import type { Logger } from "@/server/kernel/logger.ts";
 import type { OrgSettingStore } from "@/server/orgs/service.ts";
 import type { Space, Spaces } from "@/server/spaces/service.ts";
 import type { AnyToolSpec, Toolset, ToolSpec } from "@/server/agent/tools.ts";
-import type { Guidance } from "@/server/agent/context.ts";
+import type { Guidance } from "@/server/execution/context.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import {
   LOAD_SKILL,
@@ -878,6 +878,13 @@ export function createSkills(options: SkillsOptions) {
         fixed: true,
         // Every org has the built-in skills, so settings always show it.
         listedIn: () => true,
+        // A call that loads a skill names the skill.
+        present: async () => (row) => {
+          const named = (row.input as { name?: unknown } | null)?.name;
+          return row.toolId === LOAD_SKILL && typeof named === "string"
+            ? { names: { skill: named } }
+            : undefined;
+        },
       };
     },
   };

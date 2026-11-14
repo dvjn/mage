@@ -4,7 +4,10 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { modelToolNames } from "@/server/agent/tools.ts";
 import * as schema from "@/server/schema.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
+import type { Thread } from "@/server/threads/service.ts";
+import type { ToolRow } from "@/shared/transcript.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
+import { expireLeases } from "@/server/testing/database.ts";
 import { MCP_ORIGIN, setup } from "@/server/testing/workspace.ts";
 import {
   MCP_INSTRUCTIONS_MAX,
@@ -365,6 +368,105 @@ describe("OAuth", () => {
     });
   });
 
+  it("finishes on another instance an authorization begun on one, and only once", async () => {
+    const workspace = await orgWithServers();
+    const { body } = await workspace.add({
+      name: "Notes",
+      url: `${MCP_ORIGIN}/oauth/mcp`,
+      auth: { kind: "oauth", clientId: null, clientSecret: null },
+    });
+    const other = setup({}, { database: workspace.database });
+    // The authorization server is one, whichever instance reaches it.
+    other.mcpNetwork.handle = workspace.mcpNetwork.handle;
+    const res = await workspace.api(
+      "POST",
+      `/mcp-servers/${body.id}/authorize`,
+      workspace.ada.cookie,
+    );
+    const started = (await res.json()) as { status: string; url: string };
+    const page = await workspace.mcpNetwork.handle(new Request(started.url));
+    const back = new URL(page.headers.get("location")!);
+    const callback = async () =>
+      other.app.request(`${back.pathname}${back.search}`, {
+        headers: { Cookie: workspace.ada.cookie },
+      });
+    expect((await callback()).headers.get("location")).toBe(`/org/tools/mcp/${body.id}`);
+    // Handled again, it finds the authorization finished, and exchanges nothing.
+    expect((await callback()).headers.get("location")).toBe("/org/tools");
+    const shown = await workspace.api("GET", `/mcp-servers/${body.id}`, workspace.ada.cookie);
+    expect(await shown.json()).toMatchObject({ status: "ok", auth: { authorized: true } });
+  });
+
+  describe("renewing tokens on many instances", () => {
+    // A server authorized through one instance, another on the same database and authorization
+    // server, and the refresh tokens spent at its token endpoint. With `refusals`, a refresh is
+    // answered only once that many requests were refused for an expired token, so renewals overlap.
+    async function shared(refusals = 0) {
+      const workspace = await orgWithServers();
+      const { body } = await workspace.add({
+        name: "Notes",
+        url: `${MCP_ORIGIN}/oauth/mcp`,
+        auth: { kind: "oauth", clientId: null, clientSecret: null },
+      });
+      await authorizeInBrowser(workspace, body.id);
+      const other = setup({}, { database: workspace.database });
+      const handle = workspace.mcpNetwork.handle;
+      const spent: string[] = [];
+      let refused = 0;
+      let enough = () => {};
+      const overlapping = new Promise<void>((resolve) => {
+        enough = resolve;
+      });
+      const counting = async (req: Request) => {
+        if (new URL(req.url).pathname === "/token") {
+          const form = new URLSearchParams(await req.clone().text());
+          if (form.get("grant_type") === "refresh_token") {
+            spent.push(form.get("refresh_token")!);
+            if (refusals > 0) await overlapping;
+          }
+        }
+        const res = await handle(req);
+        if (res.status === 401 && (refused += 1) >= refusals) enough();
+        return res;
+      };
+      workspace.mcpNetwork.handle = counting;
+      other.mcpNetwork.handle = counting;
+      await handle(new Request(`${MCP_ORIGIN}/control/expire`, { method: "POST" }));
+      const refresh = (on: typeof workspace | typeof other) =>
+        on.api("POST", `/mcp-servers/${body.id}/refresh`, workspace.ada.cookie);
+      return { workspace, other, id: body.id, spent, refresh };
+    }
+
+    it("spends a rotating refresh token once when two renew at once, and both use the new one", async () => {
+      const { workspace, other, spent, refresh } = await shared(2);
+
+      const answers = await Promise.all([refresh(workspace), refresh(other)]);
+
+      expect(spent).toHaveLength(1);
+      for (const answer of answers) {
+        expect(await answer.json()).toMatchObject({ status: "ok", error: null, toolCount: 3 });
+      }
+    });
+
+    it("is renewed by another instance once the one renewing stops and its lease runs out", async () => {
+      const { workspace, other, spent, refresh } = await shared();
+      const db = workspace.database.db;
+      // Held by an instance that went away before it asked.
+      await db.update(schema.mcpCredential).set({
+        leaseOwner: "gone",
+        leaseExpiresAt: new Date(Date.now() + 60_000),
+      });
+
+      const renewed = refresh(other);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(spent).toEqual([]);
+      await expireLeases(db, "mcp_credential");
+
+      expect(await (await renewed).json()).toMatchObject({ status: "ok", error: null });
+      expect(spent).toHaveLength(1);
+    });
+  });
+
   it("registers Mage, authorizes it with PKCE for the server, and keeps the tokens sealed", async () => {
     const workspace = await orgWithServers();
     const { add, db } = workspace;
@@ -663,7 +765,11 @@ describe("turning an MCP server off", () => {
     expect(
       (await spaceTools(space.id)).find((t) => t.id === toolset)?.tools.find((t) => t.id === echo),
     ).toMatchObject({ orgPolicy: asks, policy: TOOL_OFF });
-    expect((await tools.offered(space)).some((t) => t.name.startsWith(`${toolset}/`))).toBe(false);
+    expect(
+      (await tools.offered(space, { id: "t" } as Thread)).some((t) =>
+        t.name.startsWith(`${toolset}/`),
+      ),
+    ).toBe(false);
 
     const on = await setEverywhere(true);
     expect(await on.json()).toMatchObject({
@@ -677,7 +783,9 @@ describe("turning an MCP server off", () => {
     );
     expect((await setHere(true)).status).toBe(200);
     expect((await tools.definitions(space)).some((t) => t.name === echo)).toBe(true);
-    expect((await tools.offered(space)).some((t) => t.name === echo)).toBe(false);
+    expect((await tools.offered(space, { id: "t" } as Thread)).some((t) => t.name === echo)).toBe(
+      false,
+    );
     expect(
       (await spaceTools(space.id)).find((t) => t.id === toolset)?.tools.find((t) => t.id === echo),
     ).toMatchObject({ orgPolicy: asks, policy: TOOL_OFF });
@@ -2079,9 +2187,16 @@ describe("what a tool call is called", () => {
   });
 
   it("for a call recorded without names is what the model knows it by, else its own name", async () => {
-    const { ada, api, server, tools, space, id } = await mcpThread();
-    const call = async (toolId: string, input: unknown = {}, state: "ran" | "pending" = "ran") =>
-      tools.namesIn({ id: space.id, orgId: ada.orgId })({ toolId, input, state });
+    const { ada, api, server, tools, space, id, access, thread } = await mcpThread();
+    const reader = await access.require(ada, thread.id);
+    // What the call's row shows it as: its names, and what its toolset's presenter adds.
+    const call = async (toolId: string, input: unknown = {}, state: "ran" | "pending" = "ran") => {
+      const row = { id: "c", toolId, input, state } as ToolRow;
+      return {
+        ...(await tools.namesIn({ id: space.id, orgId: ada.orgId })(row)),
+        ...(await tools.present(reader, [row]))(row).names,
+      };
+    };
 
     expect(await call(id("delete_note"))).toEqual({ title: "Delete note", toolset: "Notes" });
     expect(await call(id("gone"))).toEqual({ title: "mcp.notes.gone", toolset: null });

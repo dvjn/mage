@@ -212,3 +212,90 @@ describe("a subagent's call that waits for a decision", () => {
     expect((await surfaces(w, w.ada)).rows).toEqual([]);
   });
 });
+
+// N2
+describe("a subagent's call that waits for answers", () => {
+  it("shows from the thread that started the subagent as needing an answer", async () => {
+    const w = await world();
+    await w.post(w.ada, "Get help");
+    await w.asks(w.threadId, ["subagents.start", { name: "Researcher", task: "Look into it" }]);
+    await w.answers(w.threadId, "Started one.");
+    const child = await eventually(
+      () => w.subagentNamed("Researcher").catch(() => null),
+      (found) => found !== null,
+    );
+    await w.asks(child!, [
+      "thread.ask",
+      {
+        questions: [
+          { question: "Which one?", header: "Pick", options: [{ label: "One" }, { label: "Two" }] },
+        ],
+      },
+    ]);
+    await eventually(
+      () => w.shown(w.ada, child!),
+      (shown) => shown.run === "answer",
+    );
+    await w.settled();
+    expect(await surfaces(w, w.ada)).toEqual({
+      run: null,
+      rows: [{ subagent: "Researcher", needs: "answer", row: "thread.ask", actions: null }],
+      tray: [
+        {
+          kind: "subagent",
+          status: "pending",
+          attention: "approval",
+          canDecide: true,
+          needs: "answer",
+        },
+      ],
+      list: { status: "waiting", canApprove: false },
+    });
+    expect(await surfaces(w, w.alan)).toEqual({
+      run: null,
+      rows: [{ subagent: "Researcher", needs: "answer", row: "thread.ask", actions: null }],
+      tray: [
+        {
+          kind: "subagent",
+          status: "pending",
+          attention: null,
+          canDecide: false,
+          needs: "answer",
+        },
+      ],
+      list: { status: "paused", canApprove: false },
+    });
+  });
+});
+
+describe("a subagent's job that waits for a decision", () => {
+  it("shows from the thread that started the subagent in its list status alone", async () => {
+    const w = await world();
+    await w.post(w.ada, "Get help");
+    await w.asks(w.threadId, ["subagents.start", { name: "Researcher", task: "Look into it" }]);
+    await w.answers(w.threadId, "Started one.");
+    const child = await eventually(
+      () => w.subagentNamed("Researcher").catch(() => null),
+      (found) => found !== null,
+    );
+    await w.asks(child!, ["jobs.start", { tool: "probe.guarded", input: { label: "a" } }]);
+    await w.answers(child!, "Asked for.");
+    // The agent that started it is told it went idle.
+    await w.answers(w.threadId, "Noted.");
+    await w.settled();
+
+    // Only the list's status takes it in; the rows and the tray show nothing of it.
+    expect(await surfaces(w, w.ada)).toEqual({
+      run: null,
+      rows: [],
+      tray: [],
+      list: { status: "waiting", canApprove: false },
+    });
+    expect(await surfaces(w, w.alan)).toEqual({
+      run: null,
+      rows: [],
+      tray: [],
+      list: { status: "unread", canApprove: false },
+    });
+  });
+});

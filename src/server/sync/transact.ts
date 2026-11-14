@@ -169,6 +169,9 @@ export function createTransactor(root: Db, options: TransactorOptions) {
     // Runs the work outside whatever transaction its caller is in, as work that outlives it must.
     detached: <T>(work: () => T): T => units.exit(work),
 
+    // Whether the transaction under way holds the lock of the scope's row.
+    holds: (scope: string, id: string) => current()?.held.get(scope)?.includes(id) ?? false,
+
     // Takes the locks of the scope's rows by `lock`, in id order, leaving out those the
     // transaction holds already. One asked for below a row it holds is out of order: two
     // transactions doing so in turn can deadlock, which running again only papers over.

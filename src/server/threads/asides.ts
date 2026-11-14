@@ -6,7 +6,7 @@
 import { asc, eq, inArray, and } from "drizzle-orm";
 import { ulid } from "ulid";
 
-import type { ThreadRequest } from "@/server/agent/compaction.ts";
+import type { ThreadRequest } from "@/server/execution/compaction.ts";
 import type { Db } from "@/server/db/db.ts";
 import { user } from "@/server/orgs/schema.ts";
 import type { ModelMessage, ModelRequest } from "@/server/models/gateway.ts";

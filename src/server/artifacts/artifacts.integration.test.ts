@@ -84,6 +84,39 @@ async function team({
     status: "running",
     triggerSeq: 0,
   });
+  // The call they are, asked for in each thread the tests call them from: the run's, or a job.
+  const calling = async (threadId: string, id = "call", background = false) => {
+    if (await workspace.callStore.find(threadId, id)) return;
+    await workspace.log.write(threadId, async (append) => {
+      const branchId = (await workspace.threadStore.find(threadId))!.currentBranchId;
+      const requested = await append({
+        type: "tool.requested",
+        actor: { kind: "agent" },
+        data: {
+          runId: "run",
+          callId: id,
+          messageId: "",
+          toolId: ARTIFACT_TOOLS.publish,
+          input: {},
+          risk: "normal",
+          waits: false,
+          ...(background && { background: true }),
+        },
+      });
+      await workspace.db.insert(schema.call).values({
+        threadId,
+        id,
+        branchId,
+        seq: requested.seq,
+        runId: "run",
+        toolId: ARTIFACT_TOOLS.publish,
+        risk: "normal",
+        status: "running",
+        background,
+      });
+    });
+  };
+  await calling(thread.id);
   const ctx = (threadId = thread.id, spaceId = space.id): ToolContext =>
     ({
       threadId,
@@ -94,7 +127,7 @@ async function team({
       actor: { kind: "agent" },
       model: null,
       runAs: null,
-      write: async (work) => work(async () => {}),
+      write: async (work) => work(async () => ({ seq: 0 })),
     }) as ToolContext;
   async function call(
     name: string,
@@ -104,6 +137,7 @@ async function team({
     within: Partial<ToolContext> = {},
   ) {
     const spec = specs.get(name)!;
+    await calling(threadId ?? thread.id);
     const parsed = spec.input.safeParse(input);
     if (!parsed.success) return { ok: false as const, error: parsed.error.message };
     return (await spec.run(parsed.data, { ...ctx(threadId, spaceId), ...within })) as
@@ -139,6 +173,7 @@ async function team({
     carol,
     space,
     thread,
+    calling,
     call,
     publish,
     json,
@@ -169,12 +204,10 @@ describe("publishing and updating", () => {
     expect(list.map((artifact) => artifact.id)).toEqual([id]);
   });
 
-  it("records the run that published a version, or the background call that did", async () => {
-    const { db, thread, call, publish } = await team();
+  it("records the call that published a version, a run's or a job's", async () => {
+    const { db, call, publish, thread, calling } = await team();
+    await calling(thread.id, "job", true);
     const id = await publish();
-    await db
-      .insert(schema.backgroundCall)
-      .values({ id: "job", threadId: thread.id, runId: "run", toolId: "x", status: "running" });
     const updated = await call(
       ARTIFACT_TOOLS.update,
       { id, html: PAGE.replace("Sales", "Costs") },
@@ -187,22 +220,18 @@ describe("publishing and updating", () => {
       await db
         .select({
           version: schema.artifactVersion.version,
-          runId: schema.artifactVersion.runId,
-          backgroundCallId: schema.artifactVersion.backgroundCallId,
+          threadId: schema.artifactVersion.threadId,
           callId: schema.artifactVersion.callId,
         })
         .from(schema.artifactVersion)
         .orderBy(schema.artifactVersion.version);
     expect(await made()).toEqual([
-      { version: 1, runId: "run", backgroundCallId: null, callId: "call" },
-      { version: 2, runId: null, backgroundCallId: "job", callId: "job" },
+      { version: 1, threadId: thread.id, callId: "call" },
+      { version: 2, threadId: thread.id, callId: "job" },
     ]);
-    // The versions outlive what published them.
-    await db.delete(schema.run);
-    expect(await made()).toEqual([
-      { version: 1, runId: null, backgroundCallId: null, callId: "call" },
-      { version: 2, runId: null, backgroundCallId: null, callId: "job" },
-    ]);
+    // The versions outlive what published them, gone with its thread.
+    await db.delete(schema.thread).where(eq(schema.thread.id, thread.id));
+    expect((await made()).map((version) => version.threadId)).toEqual([null, null]);
   });
 
   it("makes a version of an update, from the whole page or from edits, with a label", async () => {

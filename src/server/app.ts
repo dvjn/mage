@@ -11,11 +11,9 @@ import { requestId, type RequestIdVariables } from "hono/request-id";
 import { artifactRoutes } from "@/server/artifacts/routes.ts";
 import type { Artifacts } from "@/server/artifacts/service.ts";
 import { toolRoutes } from "@/server/agent/routes.ts";
-import { hookRoutes } from "@/server/agent/hook-routes.ts";
 import { taskRoutes } from "@/server/agent/task-routes.ts";
 import type { Tasks } from "@/server/agent/tasks.ts";
-import { triggerRoutes } from "@/server/agent/trigger-routes.ts";
-import type { Triggers } from "@/server/agent/triggers.ts";
+import { hookRoutes, triggerRoutes, type Triggers } from "@/server/triggers.ts";
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
 import type { ToolDecisions } from "@/server/agent/tools.ts";
 import { guestRoutes } from "@/server/guests/routes.ts";
@@ -43,6 +41,10 @@ import type { Threads } from "@/server/threads/service.ts";
 import { ORG_NOT_FOUND, ORG_NOT_FOUND_CODE } from "@/shared/orgs.ts";
 import type { SignInOptions } from "@/shared/sign-in.ts";
 
+import type { ThreadAccess } from "@/server/access/access.ts";
+import type { Queue } from "@/server/queue/queue.ts";
+import type { Calls } from "@/server/calls/calls.ts";
+
 import type { ApiEnv } from "./http.ts";
 
 export interface AppOptions {
@@ -58,6 +60,12 @@ export interface AppOptions {
   spaces: Spaces;
   // Threads in those spaces and the ones shared with the user, and their events.
   threads: Threads;
+  // Who may do what in a thread, and people's messages waiting for its agent; apps that serve no
+  // threads go without.
+  access?: Pick<ThreadAccess, "require">;
+  queue?: Pick<Queue, "change" | "withdraw">;
+  // People's decisions on the agent's tool calls, and moving and stopping them.
+  calls?: Pick<Calls, "decide" | "answer" | "toJob" | "cancel">;
   // Invite links to threads and the guests they let in.
   guests: Guests;
   // Decisions on the agent's tool calls, and what orgs and spaces set their tools to.

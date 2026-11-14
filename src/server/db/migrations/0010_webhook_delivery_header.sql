@@ -1,0 +1,1 @@
+ALTER TABLE "webhook" ADD COLUMN "delivery_header" text;

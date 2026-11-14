@@ -1,4 +1,5 @@
-import { describe, expect, it, onTestFinished } from "vite-plus/test";
+import { sql } from "drizzle-orm";
+import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
@@ -6,10 +7,13 @@ import { eventSummary } from "@/server/threads/log.ts";
 import type { BackgroundItem } from "@/shared/calls.ts";
 import type { ThreadListItem } from "@/shared/threads/list.ts";
 import type { ShownRow } from "@/shared/threads/rows.ts";
-import { transcriptOf } from "@/shared/transcript.ts";
+import { type ToolRow, transcriptOf } from "@/shared/transcript.ts";
 
-import { NOTIFICATIONS_HEADING } from "./context.ts";
+import { NOTIFICATIONS_HEADING } from "@/server/execution/context.ts";
 import { LIVE_LIMIT, MESSAGE_LIMIT, RUNNING_LIMIT } from "./subagents.ts";
+import type { ToolSpec } from "./tools.ts";
+import { steeringIn } from "@/server/calls/influence.ts";
+import * as z from "zod";
 
 // The notifications the model is given together, and that as the call's texts show it.
 function notifications(...lines: string[]) {
@@ -22,8 +26,11 @@ function notified(...lines: string[]) {
 
 // A thread whose agent starts subagents, with the model's calls taken by the thread they are made
 // in.
-async function subagentThread(options: Parameters<typeof agentThread>[0] = {}) {
-  const workspace = await agentThread(options);
+async function subagentThread(
+  options: Parameters<typeof agentThread>[0] = {},
+  harness: Parameters<typeof agentThread>[1] = {},
+) {
+  const workspace = await agentThread(options, harness);
   const { model, threadStore, subagentStore, thread, api } = workspace;
   const taken = new Set<Call>();
   let callCount = 0;
@@ -726,11 +733,11 @@ describe("subagents", () => {
   it("fire a watch whose subagents settled before the checks at their run ends, once", async () => {
     // The checks at the subagents' run ends are held back, to stand for run ends that came while
     // the watch was being set.
-    let live: { ended: (run: never) => Promise<void> } | null = null;
+    let live: { endKept: (run: never) => Promise<void> } | null = null;
     const heldEnds: unknown[] = [];
     const workspace = await subagentThread({
-      ended: async (run) => {
-        if (live) await live.ended(run as never);
+      endKept: async (run) => {
+        if (live) await live.endKept(run as never);
         else heldEnds.push(run);
       },
     });
@@ -754,11 +761,11 @@ describe("subagents", () => {
     const idleLines = async () =>
       lines(await rowsOf(thread.id)).filter((line) => line.startsWith("agent.idle"));
     expect(await idleLines()).toEqual([]);
-    live = { ended: async (run) => workspace.subagents.ended(run) };
-    for (const run of heldEnds) await live.ended(run as never);
+    live = { endKept: async (run) => workspace.subagents.endKept(run) };
+    for (const run of heldEnds) await live.endKept(run as never);
     await workspace.worker.idle();
     expect(await idleLines()).toEqual(["agent.idle: All idle: A, B"]);
-    for (const run of heldEnds) await live.ended(run as never);
+    for (const run of heldEnds) await live.endKept(run as never);
     await workspace.worker.idle();
     quiet();
     expect(await idleLines()).toHaveLength(1);
@@ -1365,9 +1372,16 @@ describe("subagents", () => {
   });
 
   it("show calls made under their tools' former ids as theirs", async () => {
-    const { tools, space, ada } = await subagentThread();
-    const named = async (toolId: string, input: unknown = {}) =>
-      tools.namesIn({ id: space.id, orgId: ada.orgId })({ toolId, input, state: "ran" });
+    const { tools, space, ada, access, thread } = await subagentThread();
+    const reader = await access.require(ada, thread.id);
+    // What the call's row shows it as: its names, and what its toolset's presenter adds.
+    const named = async (toolId: string, input: unknown = {}) => {
+      const row = { id: "c", toolId, input, state: "ran" } as ToolRow;
+      return {
+        ...(await tools.namesIn({ id: space.id, orgId: ada.orgId })(row)),
+        ...(await tools.present(reader, [row]))(row).names,
+      };
+    };
     expect(await named("helpers.start", { name: "Scout" })).toEqual({
       title: "Start",
       subagentName: "Scout",
@@ -1521,5 +1535,176 @@ describe("subagents", () => {
     await post(ada, "Once more");
     await startAll({ name: "Here", task: "Work", model: "codex/gpt-mini" });
     expect(await subagentThreadOf("Here")).toMatchObject({ model: parent.model });
+  });
+});
+
+describe("a subagent's calls", () => {
+  it("run with whose words its agent read, and are offered no tool only its starter has", async () => {
+    const seen: unknown[] = [];
+    const see: ToolSpec<Record<string, never>> = {
+      name: "seeing.see",
+      title: "See",
+      description: "Says whose words it runs with.",
+      input: z.object({}).strict() as z.ZodType<Record<string, never>>,
+      risk: () => "normal",
+      run: (_input, ctx) => {
+        seen.push(ctx.influence);
+        return Promise.resolve({ ok: true, value: null });
+      },
+    };
+    const toolset = { id: "seeing", title: "Seeing", source: "builtin" as const, tools: [see] };
+    const workspace = await subagentThread({}, { toolsets: [toolset] });
+    const { grace, post, thread, start, calls, answer, keepAnswering, rowsOf, subagentNamed } =
+      workspace;
+    const { until } = workspace;
+    await start();
+    await post(grace, "Research queues");
+    await calls(thread.id, ["subagents.start", { name: "Researcher", task: "Compare queues" }]);
+    await answer(thread.id, "Started.");
+    const subagentId = await subagentNamed("Researcher");
+    const first = await calls(
+      subagentId,
+      ["seeing.see", {}],
+      ["subagents.start", { name: "Deeper", task: "Dig" }],
+    );
+    expect(first.request.tools?.map((tool) => tool.id)).not.toContain("subagents.start");
+    await until(() => seen.length === 1);
+    expect(seen[0]).toEqual(steeringIn(await rowsOf(subagentId)));
+    const failed = (await rowsOf(subagentId)).find(
+      (row): row is ToolRow => row.kind === "tool" && row.toolId === "subagents.start",
+    );
+    expect(failed?.output).toEqual({ ok: false, error: "No tool is named subagents.start here." });
+    keepAnswering(thread.id);
+    await answer(subagentId, "Looked.");
+    await workspace.worker.idle();
+  });
+});
+
+describe("a subagent under its starter's lock", () => {
+  it("is not started by a notice told in a write that holds only its own thread; the pass starts it", async () => {
+    const workspace = await subagentThread();
+    const { ada, post, thread, start, calls, answer, subagentNamed, until, log, queue } = workspace;
+    await start();
+    await post(ada, "Go");
+    await calls(thread.id, ["subagents.start", { name: "Scout", task: "Wait" }]);
+    await answer(thread.id, "Started.");
+    const scout = await subagentNamed("Scout");
+    await answer(scout, "Waiting.");
+    workspace.keepAnswering(thread.id);
+    await workspace.worker.idle();
+    const runsOf = async () =>
+      (
+        await workspace.db.execute<{ id: string }>(
+          sql`select id from run where thread_id = ${scout} order by id`,
+        )
+      ).rows.length;
+    const before = await runsOf();
+    await log.write(scout, async () => {
+      await queue.enqueue(scout, {
+        kind: "notice",
+        notice: {
+          kind: "agent.idle",
+          source: { threadId: thread.id, name: "Agent", main: true },
+          text: "Look again",
+          people: [],
+        },
+      });
+      // Nothing started inside the write.
+      expect(await runsOf()).toBe(before);
+    });
+    await answer(scout, "Looked.");
+    await until(async () => (await runsOf()) === before + 1);
+    await workspace.worker.idle();
+  });
+
+  it("is retired, and brought back, once however many ask at once", async () => {
+    const workspace = await subagentThread();
+    const { ada, post, thread, start, calls, answer, subagentNamed, api } = workspace;
+    await start();
+    await post(ada, "Go");
+    await calls(thread.id, ["subagents.start", { name: "Scout", task: "Wait" }]);
+    await answer(thread.id, "Started.");
+    const scout = await subagentNamed("Scout");
+    await answer(scout, "Waiting.");
+    workspace.keepAnswering(thread.id);
+    await workspace.worker.idle();
+    await workspace.subagentStore.archive(scout, new Date());
+    expect(await workspace.subagentStore.archive(scout, new Date())).toBeNull();
+    const statuses = await Promise.all(
+      [1, 2].map(async () => (await api("POST", `/threads/${scout}/unarchive`, ada.cookie)).status),
+    );
+    expect(statuses.toSorted((a, b) => a - b)).toEqual([200, 409]);
+    expect((await workspace.subagentStore.find(scout))?.archivedAt).toBeNull();
+  });
+});
+
+describe("watches on subagents", () => {
+  it("whose check was missed fire on the next pass, once however many passes run", async () => {
+    const workspace = await subagentThread();
+    const { ada, post, thread, start, calls, answer, subagentNamed, rowsOf } = workspace;
+    await start();
+    await post(ada, "Go");
+    await calls(thread.id, ["subagents.start", { name: "Scout", task: "Work" }]);
+    await answer(thread.id, "Started.");
+    const scout = await subagentNamed("Scout");
+    await answer(scout, "Done.");
+    workspace.keepAnswering(thread.id);
+    await workspace.worker.idle();
+    // Set while the subagent is idle, by a check no end of a run will make.
+    await workspace.db.execute(
+      sql`insert into thread_watch (id, thread_id, owner_id, kind, until, call_id)
+          values ('w-missed', ${thread.id}, ${thread.id}, 'subagents', 'all_idle', null)`,
+    );
+    await workspace.db.execute(
+      sql`insert into thread_watch_subject (watch_id, subject_id) values ('w-missed', ${scout})`,
+    );
+    const fired = await Promise.all([
+      workspace.subagents.checkWatches(),
+      workspace.subagents.checkWatches(),
+    ]);
+    expect(fired.reduce((sum, one) => sum + one, 0)).toBe(1);
+    expect(await workspace.subagents.checkWatches()).toBe(0);
+    await workspace.worker.idle();
+    const idle = (await rowsOf(thread.id)).filter(
+      (row) => row.kind === "relay" && row.type === "agent.idle",
+    );
+    expect(idle).toHaveLength(1);
+  });
+});
+
+describe("a subagent's needs", () => {
+  it("come from the calls that wait, with no transcript read", async () => {
+    const toolset = {
+      id: "held",
+      title: "Held",
+      source: "builtin" as const,
+      tools: [
+        {
+          name: "held.ask",
+          title: "Ask",
+          description: "Needs approval.",
+          input: z.object({}).strict(),
+          risk: () => "ask" as const,
+          run: async () => ({ ok: true as const, value: null }),
+        } satisfies ToolSpec<Record<string, never>>,
+      ],
+    };
+    const workspace = await subagentThread({}, { toolsets: [toolset] });
+    const { ada, post, thread, start, calls, answer, subagentNamed, until } = workspace;
+    await start();
+    await post(ada, "Go");
+    await calls(thread.id, ["subagents.start", { name: "Scout", task: "Ask" }]);
+    await answer(thread.id, "Started.");
+    const scout = await subagentNamed("Scout");
+    await calls(scout, ["held.ask", {}]);
+    await until(async () => (await workspace.subagents.summaryOf(scout))?.needs === "approval");
+    const of = vi.spyOn(workspace.transcripts, "of");
+    const [found] = await workspace.subagents.ofParents([thread.id]);
+    expect(found?.summary).toMatchObject({ state: "working", needs: "approval" });
+    expect(of).not.toHaveBeenCalled();
+    of.mockRestore();
+    await workspace.api("POST", `/threads/${scout}/stop`, ada.cookie);
+    workspace.keepAnswering(thread.id);
+    await workspace.worker.idle();
   });
 });

@@ -1,9 +1,10 @@
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
 import { ulid } from "ulid";
 
 import type { ToolDefinition } from "@/shared/tools.ts";
 import type { Cipher } from "@/server/kernel/cipher.ts";
 import type { Db } from "@/server/db/db.ts";
+import { leasesOn } from "@/server/sync/lease.ts";
 
 import type { McpPrompt } from "./client.ts";
 import type {
@@ -166,6 +167,8 @@ function contextOf(serverId: string, holder: McpHolder) {
   return `mcp:${serverId}:${holderKind}:${holderId}`;
 }
 
+const leases = leasesOn(mcpCredential);
+
 export function createMcpCredentialStore(db: Db, cipher: Cipher): McpCredentialStore {
   function where(serverId: string, holder: McpHolder) {
     const { holderKind, holderId } = holderKey(holder);
@@ -174,6 +177,10 @@ export function createMcpCredentialStore(db: Db, cipher: Cipher): McpCredentialS
       eq(mcpCredential.holderKind, holderKind),
       eq(mcpCredential.holderId, holderId),
     );
+  }
+
+  function sealed(serverId: string, holder: McpHolder, secrets: McpSecrets) {
+    return cipher.seal(Buffer.from(JSON.stringify(secrets)), contextOf(serverId, holder));
   }
 
   return {
@@ -190,10 +197,7 @@ export function createMcpCredentialStore(db: Db, cipher: Cipher): McpCredentialS
     },
 
     async put(serverId, holder, secrets) {
-      const { keyVersion, data } = cipher.seal(
-        Buffer.from(JSON.stringify(secrets)),
-        contextOf(serverId, holder),
-      );
+      const { keyVersion, data } = sealed(serverId, holder, secrets);
       await db
         .insert(mcpCredential)
         .values({ serverId, ...holderKey(holder), keyVersion, sealed: data })
@@ -205,6 +209,54 @@ export function createMcpCredentialStore(db: Db, cipher: Cipher): McpCredentialS
 
     async delete(serverId, holder) {
       await db.delete(mcpCredential).where(where(serverId, holder));
+    },
+
+    async lease(serverId, holder, owner, ms) {
+      const [row] = await db
+        .update(mcpCredential)
+        // Taking the lease changes nothing people see about the secrets.
+        .set({ ...leases.take(owner, ms), updatedAt: sql`${mcpCredential.updatedAt}` })
+        .where(and(where(serverId, holder), leases.expired()))
+        .returning({ epoch: mcpCredential.leaseEpoch });
+      return row ? { owner, epoch: row.epoch } : null;
+    },
+
+    async putHeld(serverId, holder, lease, secrets) {
+      const { keyVersion, data } = sealed(serverId, holder, secrets);
+      const rows = await db
+        .update(mcpCredential)
+        .set({ keyVersion, sealed: data, status: "ok", ...leases.release(), updatedAt: new Date() })
+        .where(and(where(serverId, holder), leases.held(lease)))
+        .returning({ serverId: mcpCredential.serverId });
+      return rows.length > 0;
+    },
+
+    async putIf(serverId, holder, holds, secrets) {
+      return db.transaction(async (tx) => {
+        const [row] = await tx
+          .select({ keyVersion: mcpCredential.keyVersion, data: mcpCredential.sealed })
+          .from(mcpCredential)
+          .where(where(serverId, holder))
+          .for("update");
+        if (!row) return false;
+        const stored = JSON.parse(
+          cipher.open(row, contextOf(serverId, holder)).toString(),
+        ) as McpSecrets;
+        if (!holds(stored)) return false;
+        const { keyVersion, data } = sealed(serverId, holder, { ...stored, ...secrets });
+        await tx
+          .update(mcpCredential)
+          .set({ keyVersion, sealed: data, status: "ok", updatedAt: new Date() })
+          .where(where(serverId, holder));
+        return true;
+      });
+    },
+
+    async release(serverId, holder, lease) {
+      await db
+        .update(mcpCredential)
+        .set({ ...leases.release(), updatedAt: sql`${mcpCredential.updatedAt}` })
+        .where(and(where(serverId, holder), leases.held(lease)));
     },
 
     async deletePeople(serverId) {

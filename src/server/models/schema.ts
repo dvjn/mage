@@ -10,6 +10,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { at, bytes, NOW } from "@/server/db/columns.ts";
+import { leaseColumns } from "@/server/sync/lease.ts";
 
 import { AUTH_KINDS } from "@/shared/hosts.ts";
 import { user, organization } from "@/server/orgs/schema.ts";
@@ -76,4 +77,6 @@ export const credential = pgTable("credential", {
     .default(NOW)
     .$onUpdate(() => /* @__PURE__ */ new Date())
     .notNull(),
+  // Held by the instance renewing the tokens, so a rotating refresh token is spent once.
+  ...leaseColumns(),
 });

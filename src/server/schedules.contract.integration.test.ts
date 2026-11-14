@@ -111,3 +111,129 @@ describe("a schedule", () => {
     expect((await w.shown()).rows.filter((row) => row.startsWith("change: "))).toHaveLength(3);
   });
 });
+
+describe("a timer or schedule over its life", () => {
+  // SC1
+  it("fires at the next tick when a paused timer is resumed after its time has passed", async () => {
+    const w = await world();
+    const timer = await w.wakeUp(600, "Check the build");
+    expect(await w.act(w.ada, "POST", `/triggers/${timer.id}/pause`)).toBe(200);
+    expect(await w.later(20 * MINUTE)).toBe(0);
+    expect(await w.act(w.ada, "POST", `/triggers/${timer.id}/resume`)).toBe(200);
+    expect(await w.later(0)).toBe(1);
+    await w.answers(w.threadId, "Checked.");
+    await w.settled();
+    expect(await w.later(HOUR)).toBe(0);
+  });
+
+  // SC2
+  it("refuses to pause, resume or delete a timer that has gone off, and finds no deleted one", async () => {
+    const w = await world();
+    const timer = await w.wakeUp(60, "Check the build");
+    expect(await w.later(2 * MINUTE)).toBe(1);
+    await w.answers(w.threadId, "Checked.");
+    await w.settled();
+    for (const [method, path] of [
+      ["POST", "/pause"],
+      ["POST", "/resume"],
+      ["DELETE", ""],
+    ] as const) {
+      const res = await w.api(
+        method,
+        `/threads/${w.threadId}/triggers/${timer.id}${path}`,
+        w.ada.cookie,
+      );
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ error: "This timer has gone off" });
+    }
+    const other = await w.wakeUp(600, "Later");
+    expect(await w.act(w.ada, "DELETE", `/triggers/${other.id}`)).toBe(200);
+    expect(await w.act(w.ada, "DELETE", `/triggers/${other.id}`)).toBe(404);
+  });
+
+  // SC3
+  it("lists what it fired a page at a time, newest first", async () => {
+    const w = await world();
+    const schedule = await w.schedule("Digest", "0 * * * *", "Write the digest");
+    for (let fired = 0; fired < 12; fired += 1) {
+      expect(await w.later(HOUR)).toBe(1);
+      await w.answers(w.threadId, "Written.");
+      await w.settled();
+    }
+    const page = async (offset: number) =>
+      w.json<{ total: number; offset: number; entries: { id: string; at: string }[] }>(
+        await w.api(
+          "GET",
+          `/threads/${w.threadId}/triggers/${schedule.id}/history?offset=${offset}`,
+          w.ada.cookie,
+        ),
+      );
+    const first = await page(0);
+    const second = await page(10);
+    expect(first).toMatchObject({ total: 12, offset: 0 });
+    expect(first.entries).toHaveLength(10);
+    expect(second).toMatchObject({ total: 12, offset: 10 });
+    expect(second.entries).toHaveLength(2);
+    const ats = [...first.entries, ...second.entries].map((entry) => entry.at);
+    expect(ats).toEqual(ats.toSorted().toReversed());
+    expect(new Set([...first.entries, ...second.entries].map((entry) => entry.id)).size).toBe(12);
+  });
+
+  // SC4
+  it("keeps what it fired when its thread is forked", async () => {
+    const w = await world();
+    const schedule = await w.schedule("Digest", "0 * * * *", "Write the digest");
+    expect(await w.later(HOUR)).toBe(1);
+    await w.answers(w.threadId, "Written.");
+    await w.settled();
+    const before = await w.history(w.ada, schedule.id);
+    const last = (await w.detail()).rows.at(-1)!;
+    const forked = await w.json<{ id: string }>(
+      await w.api("POST", `/threads/${w.threadId}/fork`, w.ada.cookie, { rowId: last.id }),
+    );
+    expect(forked.id).not.toBe(w.threadId);
+    await w.settled();
+    expect(await w.history(w.ada, schedule.id)).toEqual(before);
+    expect(await scheduled(w)).toMatchObject([{ fired: 1 }]);
+  });
+
+  // SC5
+  it("is refused past the thread's limit, counting every kind, and by a name a webhook has", async () => {
+    const w = await world();
+    await w.post(w.ada, "Set twenty");
+    await w.asks(
+      w.threadId,
+      ...Array.from({ length: 20 }, (_, index): [string, unknown] => [
+        "triggers.wake_at",
+        { in_seconds: 600 + index, note: `Timer ${index}` },
+      ]),
+    );
+    await w.answers(w.threadId, "Set.");
+    await w.settled();
+    await w.post(w.ada, "One more");
+    await w.asks(w.threadId, [
+      "triggers.schedule",
+      { name: "More", cron: "0 * * * *", prompt: "x" },
+    ]);
+    const told = await w.answers(w.threadId, "Refused.");
+    expect(told.texts.at(-1)).toBe(
+      'result triggers.schedule: {"ok":false,"error":"This thread has 20 triggers. Delete some with triggers.delete first."}',
+    );
+    await w.settled();
+  });
+
+  it("is refused by a name a live webhook has, whatever the case", async () => {
+    const w = await world();
+    await w.webhook("Deploys", "Check the deploy");
+    await w.post(w.ada, "Schedule it");
+    await w.asks(w.threadId, [
+      "triggers.schedule",
+      { name: "deploys", cron: "0 * * * *", prompt: "x" },
+    ]);
+    const told = await w.answers(w.threadId, "Refused.");
+    expect(told.texts.at(-1)).toBe(
+      'result triggers.schedule: {"ok":false,"error":"A webhook named Deploys already exists here; pick another name."}',
+    );
+    await w.settled();
+  });
+});

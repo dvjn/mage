@@ -7,6 +7,7 @@
 import { Link } from "@tanstack/react-router";
 import {
   CornerUpLeftIcon,
+  FingerprintPatternIcon,
   HandIcon,
   HistoryIcon,
   LinkIcon,
@@ -173,10 +174,12 @@ function IconAction({
   );
 }
 
-// A webhook's own buttons: copy its URL, and require a signature, or change or remove the secret.
+// A webhook's own buttons: copy its URL, require a signature or change or remove the secret, and
+// name the header its deliveries carry their id in.
 function WebhookControls({ item }: { item: BackgroundItem }) {
   const actions = useBackgroundActions()?.schedule;
   const [open, setOpen] = useState(false);
+  const [naming, setNaming] = useState(false);
   const webhook = item.work.webhook!;
   if (!actions || !webhook.canChange) return null;
   return (
@@ -228,6 +231,32 @@ function WebhookControls({ item }: { item: BackgroundItem }) {
           actions.secret(webhook.id, value.trim()).then(
             () => undefined,
             () => "Could not save",
+          )
+        }
+      />
+      <IconAction
+        label="Delivery id header"
+        tooltip={
+          webhook.deliveryHeader ? `Delivery id · ${webhook.deliveryHeader}` : "Delivery id header"
+        }
+        icon={<FingerprintPatternIcon />}
+        className="text-muted-foreground"
+        onClick={() => setNaming(true)}
+      />
+      <NameDialog
+        open={naming}
+        onOpenChange={setNaming}
+        title="Delivery id header"
+        action="Save"
+        label="Header"
+        maxLength={100}
+        required={false}
+        initialName={webhook.deliveryHeader ?? ""}
+        hint="Empty uses the usual headers."
+        onSubmit={(value) =>
+          actions.deliveryHeader(webhook.id, value.trim() || null).then(
+            () => undefined,
+            (err: unknown) => (err instanceof Error && err.message) || "Could not save",
           )
         }
       />

@@ -1,7 +1,7 @@
 import { zipSync } from "fflate";
 import { describe, expect, it } from "vite-plus/test";
 
-import { instructionsFor } from "@/server/agent/context.ts";
+import { instructionsFor } from "@/server/execution/context.ts";
 import {
   LOAD_SKILL,
   type OrgSkillList,

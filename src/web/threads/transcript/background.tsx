@@ -24,6 +24,8 @@ export interface BackgroundActions {
     remove: (id: string) => Promise<void>;
     // Sets a webhook's signing secret, or clears it with null.
     secret: (id: string, secret: string | null) => Promise<void>;
+    // Names the header a webhook's deliveries carry their id in, or clears it with null.
+    deliveryHeader: (id: string, header: string | null) => Promise<void>;
   };
 }
 

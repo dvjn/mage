@@ -191,6 +191,27 @@ export function createThreadStore(db: Db): ThreadStore {
       return event ?? null;
     },
 
+    async lastRan(threadId, callId) {
+      const [event] = await eventsWhere(
+        and(
+          eq(threadEvent.threadId, threadId),
+          eq(threadEvent.type, "tool.ran"),
+          sql`${threadEvent.data}->>'callId' = ${callId}`,
+          ofCurrent,
+        ),
+        "desc",
+        1,
+      );
+      return event ?? null;
+    },
+
+    async eventsAt(threadId, seqs) {
+      if (seqs.length === 0) return [];
+      return await eventsWhere(
+        and(eq(threadEvent.threadId, threadId), inArray(threadEvent.seq, [...seqs])),
+      );
+    },
+
     async sources(branchId) {
       return await db
         .select({
@@ -219,6 +240,7 @@ export function createThreadStore(db: Db): ThreadStore {
           })),
           { branchId: id, sourceBranchId: id },
         ]);
+        if (input.kind === "restore") await db.execute(restoredPlace(sql`b.id = ${id}`));
       });
       return (await branchOf(id))!;
     },
@@ -568,4 +590,44 @@ export function createThreadStore(db: Db): ThreadStore {
       );
     },
   };
+}
+
+// Where the row each restore branch picked by `branches` (as `b`) was restored from ends in its
+// parent's log, as the thread's fold placed it: a person's message, or a notice that wakes the
+// agent, where the run that took it in did, after what came before it there; any other row where
+// the event that made it is, with all of that event's words. The migration that added the place
+// runs the same statement over every restore branch.
+export function restoredPlace(branches: SQL | string) {
+  const where = typeof branches === "string" ? sql.raw(branches) : branches;
+  return sql`
+    update thread_branch b set (read_seq, read_ord) = (
+      select p.seq, p.ord from (
+        select a.seq, i.n * 1000 + case when m.type = 'notification' then 999 else 0 end as ord
+          from thread_event m
+          join thread_event a on a.thread_id = m.thread_id and a.type = 'message.admitted'
+                             and a.seq <= b.fork_seq
+          cross join lateral json_array_elements_text(a.data->'messageIds')
+               with ordinality as i(id, n)
+         where m.id = b.row_id and i.id = m.id
+           and coalesce((m.data->>'quiet')::boolean, false) = false
+           and coalesce((m.data->>'wake')::boolean, true)
+           and exists (select 1 from thread_branch_source s
+                        where s.branch_id = b.id and s.source_branch_id = a.branch_id
+                          and (s.until_seq is null or a.seq <= s.until_seq))
+        union all
+        select e.seq, 2147483647
+          from thread_event e
+         where e.thread_id = b.thread_id and e.seq <= b.fork_seq
+           and (e.id = b.row_id
+                or (e.type = 'tool.requested' and e.data->>'callId' = b.row_id)
+                or (e.type = 'message.started' and e.data->>'messageId' = b.row_id))
+           and not (e.type = 'message' and coalesce((e.data->>'quiet')::boolean, false) = false)
+           and not (e.type = 'notification' and coalesce((e.data->>'wake')::boolean, true))
+           and exists (select 1 from thread_branch_source s
+                        where s.branch_id = b.id and s.source_branch_id = e.branch_id
+                          and (s.until_seq is null or e.seq <= s.until_seq))
+      ) p
+      order by p.seq desc
+      limit 1)
+     where b.kind = 'restore' and ${where}`;
 }

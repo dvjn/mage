@@ -37,11 +37,13 @@ import {
   summarise,
   type ThreadRequest,
   tokensOf,
-} from "@/server/agent/compaction.ts";
-import { type Subagents, steeringIn, steeringParts } from "@/server/agent/subagents.ts";
-import { type Run, type RunStore, startRun } from "@/server/agent/runs.ts";
-import { type Notifier, silentChange } from "@/server/agent/notifications.ts";
-import type { Tools } from "@/server/agent/tools.ts";
+} from "@/server/execution/compaction.ts";
+import type { Subagents } from "@/server/agent/subagents.ts";
+import { steeringIn, steeringParts } from "@/server/calls/influence.ts";
+import type { Execution, Run, RunReads } from "@/server/execution/execution.ts";
+import { silentChange } from "@/server/queue/notices.ts";
+import type { Queue, QueuedInput } from "@/server/queue/queue.ts";
+import type { CallPresentation, Tools } from "@/server/agent/tools.ts";
 import type { GuestStore, GuestThread } from "@/server/guests/service.ts";
 
 import { ServiceError } from "@/server/kernel/errors.ts";
@@ -60,18 +62,15 @@ import type {
   ThreadAccess,
   ThreadAction,
 } from "@/server/access/access.ts";
-import { ASK_TOOL } from "@/shared/ask.ts";
 import type { SharedThread } from "@/shared/guests.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
-import { SEND_SUBAGENT_MESSAGE, START_SUBAGENT } from "@/shared/subagents.ts";
 import type { Page, PageParams } from "@/shared/paging.ts";
 import { plainText } from "@/shared/plain-text.ts";
 import { statusOf, type ThreadShow, type ThreadStatus } from "@/shared/thread-status.ts";
 import { BTW, COMPACT, type CommandInput, type ThreadCommand } from "@/shared/threads/commands.ts";
 import type { ThreadCan, ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
-import { callWork, type CallStore } from "@/server/agent/calls.ts";
+import type { Calls, WaitingCall } from "@/server/calls/calls.ts";
 import type { Tasks } from "@/server/agent/tasks.ts";
-import type { Triggers } from "@/server/agent/triggers.ts";
 import type { Live } from "@/server/agent/live.ts";
 import { type BackgroundList, type TrayKind, trayKindOf } from "@/shared/calls.ts";
 import { attentionOf, liveFor, subagentStatus, underway } from "./tray.ts";
@@ -84,7 +83,6 @@ import type {
 } from "@/shared/threads/history.ts";
 import {
   type BranchKind,
-  type Cause,
   type Delivery,
   QUIET_PREFIX,
   type DeltaBatch,
@@ -103,7 +101,6 @@ import {
   type ShownModel,
 } from "@/shared/threads/list.ts";
 import {
-  type CallEffect,
   ROWS_PAGE,
   type RowsPage,
   type RowsUpdate,
@@ -115,11 +112,10 @@ import {
 } from "@/shared/threads/rows.ts";
 import type { ThreadSearchResult } from "@/shared/threads/search.ts";
 import { type Effort, UNTITLED, type ThreadSummary } from "@/shared/threads/thread.ts";
-import { toolIdNow } from "@/shared/tools.ts";
-import { ADD_WEBHOOK, SCHEDULE, WAKE_AT } from "@/shared/triggers.ts";
 import type {
   LimitRow,
   PendingMessage,
+  RelayMessage,
   RelayRow,
   SentCommand,
   ToolRow as TranscriptToolRow,
@@ -127,7 +123,6 @@ import type {
   TranscriptFold,
   TranscriptRow,
 } from "@/shared/transcript.ts";
-import { waking } from "@/shared/transcript.ts";
 
 import { type AsideStore, asideRequest } from "./asides.ts";
 import type { Commands } from "./commands.ts";
@@ -349,6 +344,10 @@ export interface ThreadStore {
   eventsOfType(threadId: string, type: StoredEvent["type"]): Promise<StoredEvent[]>;
   // The thread's event with the seq, in whichever branch.
   eventAt(threadId: string, seq: number): Promise<StoredEvent | null>;
+  // The thread's events at the seqs, oldest first.
+  eventsAt(threadId: string, seqs: readonly number[]): Promise<StoredEvent[]>;
+  // The latest result recorded for the call on the thread's current branch.
+  lastRan(threadId: string, callId: string): Promise<StoredEvent | null>;
   // The thread's branches, oldest first.
   branches(threadId: string): Promise<Branch[]>;
   branch(id: string): Promise<Branch | null>;
@@ -399,18 +398,9 @@ export interface ThreadsOptions {
   threads: ThreadStore;
   // How far each person has seen each thread.
   reads: ThreadReadStore;
-  runs: Pick<
-    RunStore,
-    | "active"
-    | "activeOn"
-    | "activeIn"
-    | "activeInSpace"
-    | "create"
-    | "latest"
-    | "requestCancel"
-    | "requestCancelOn"
-    | "resume"
-  >;
+  runs: Pick<RunReads, "active" | "activeOn" | "activeIn" | "activeInSpace" | "latest">;
+  // Where runs are stopped, tried again and started on a branch just made.
+  execution: Pick<Execution, "stop" | "retry" | "rewrite">;
   deltas: Pick<DeltaStore, "inThread" | "from">;
   models: Pick<
     Models,
@@ -418,8 +408,8 @@ export interface ThreadsOptions {
   >;
   log: ThreadLog;
   bus: Signals;
-  // Tells the thread's agent what people change, without waking it.
-  notifier: Pick<Notifier, "send">;
+  // Where people's messages go in, and what tells the thread's agent what people change.
+  queue: Pick<Queue, "enqueue" | "waiting" | "fromLog" | "admission">;
   // Threads' transcripts, shared with the agent so a thread's fold is kept once.
   transcripts: Transcripts;
   // Names threads after their first message, when given.
@@ -432,7 +422,7 @@ export interface ThreadsOptions {
   // The agent's tools, for each reader's level for them.
   tools: Pick<
     Tools,
-    "shownTo" | "callState" | "asks" | "definitions" | "connectionFor" | "namesIn"
+    "shownTo" | "asks" | "movable" | "definitions" | "connectionFor" | "namesIn" | "present"
   >;
   // The subagents threads' agents start, when given.
   subagents?: Pick<
@@ -441,12 +431,11 @@ export interface ThreadsOptions {
   >;
   // The thread's task list, when given.
   tasks?: Pick<Tasks, "listFor" | "ownerOf">;
-  // The background calls tools start or people move there, when given.
-  background?: Pick<CallStore, "find" | "open">;
+  // The tool calls and the jobs tools start or people move there, when given.
+  calls?: Pick<Calls, "find" | "waitingOn" | "fromLog">;
   // What the thread's running calls have printed so far, when kept.
   live?: Pick<Live, "inThread" | "tail">;
   // The timers and schedules the agent set, for their cards, when given.
-  triggers?: Pick<Triggers, "workFor">;
   // The thread's model, opened, and what its next call would send were the branch to end at the
   // row, or at its last; for asking from outside its runs. Side questions are not answered, and
   // threads are not started from summaries, without it.
@@ -491,10 +480,16 @@ interface Reader {
   agentName: string;
   // What each tool call is called where it shows.
   names: ReturnType<Tools["namesIn"]>;
+  // What each call of the branch shows the reader beyond its row, read once for them all.
+  present(row: TranscriptToolRow): Promise<CallPresentation>;
+  // The thread's calls that wait for a person, by id, with whether the reader may act on each.
+  waitingCalls(): Promise<Map<string, WaitingCall>>;
   // Other threads' transcripts read for this reader's rows, each read once.
   folds: Map<string, TranscriptFold>;
   // The branch read, what they may do from its rows and which of them have versions.
   history: ReaderHistory;
+  // What waits for the thread's agent on its current branch, read once when first asked.
+  waiting(): Promise<QueuedInput[]>;
 }
 
 interface ReaderHistory {
@@ -502,16 +497,6 @@ interface ReaderHistory {
   abilities: Abilities;
   versions: Map<string, RowVersions>;
 }
-
-// The subagent tools whose calls act on one subagent.
-const SUBAGENT_ACTIONS = new Set([
-  START_SUBAGENT,
-  "subagents.stop",
-  "subagents.archive",
-  "subagents.unarchive",
-]);
-
-const causeKey = (call: Cause) => `${call.threadId}:${call.callId}`;
 
 // The parts of a row that are the reader's, which can change while the row itself does not.
 function readerPartsOf(row: ShownRow) {
@@ -537,39 +522,21 @@ function shownCommand(command: SentCommand | undefined) {
   return command && { command: { name: command.name, args: command.args } };
 }
 
-// The id of the background call the row stands for: one started or moved there, which has a row of
-// its own.
-function backgroundId(row: Transcript["rows"][number]) {
-  return row.kind === "tool" && row.background ? row.id : null;
-}
-
-// The id of the timer, schedule or webhook a call set.
-function scheduleId(row: Transcript["rows"][number]) {
-  if (row.kind !== "tool" || !row.output?.ok) return null;
-  const tool = toolIdNow(row.toolId);
-  if (tool !== WAKE_AT && tool !== SCHEDULE && tool !== ADD_WEBHOOK) return null;
-  const id = (row.output.value as { id?: unknown } | null)?.id;
-  return typeof id === "string" ? id : null;
-}
-
-// The id of the subagent the call started, for one that started a subagent.
-function startedSubagent(row: Transcript["rows"][number]) {
-  if (row.kind !== "tool" || toolIdNow(row.toolId) !== START_SUBAGENT || !row.output?.ok)
-    return null;
-  const id = (row.output.value as { id?: unknown } | null)?.id;
-  return typeof id === "string" ? id : null;
+// The tool rows among the rows.
+function toolRowsOf(rows: readonly TranscriptRow[]) {
+  return rows.filter((row): row is TranscriptToolRow => row.kind === "tool");
 }
 
 // The rows whose reader's parts can change while they do not: the calls waiting for a decision or
-// for answers, those that started a subagent, which show where it stands, and a last row from which
+// for answers, those whose presentation may change with no new event, and a last row from which
 // a failed or stopped run is tried again.
-function liveIndexes({ rows }: Transcript) {
+async function liveIndexes({ rows }: Transcript, reader: Reader) {
   const live = new Set<number>();
-  rows.forEach((row, index) => {
-    if (row.kind === "tool" && row.state === "pending" && row.waits) live.add(index);
-    if (startedSubagent(row)) live.add(index);
-    if (row.kind === "tool" && (backgroundId(row) || scheduleId(row))) live.add(index);
-  });
+  for (const [index, row] of rows.entries()) {
+    if (row.kind !== "tool") continue;
+    if (row.state === "pending" && row.waits) live.add(index);
+    else if ((await reader.present(row)).live) live.add(index);
+  }
   const last = rows.at(-1);
   if (last?.kind === "failure" || last?.kind === "stop") live.add(rows.length - 1);
   return live;
@@ -577,17 +544,14 @@ function liveIndexes({ rows }: Transcript) {
 
 // The run under way, whether it waits for answers to the agent's questions or for a decision, and
 // its trace while it is traced.
-function shownRun(
-  { run, rows }: Transcript,
+async function shownRun(
+  { run }: Transcript,
+  threadId: string,
   traceOf: (runId: string) => string | undefined,
-): ShownRun | null {
+  waitsFor: (threadId: string, callId: string) => Promise<"decision" | "answer" | null>,
+): Promise<ShownRun | null> {
   if (!run) return null;
-  const call = run.waitingOn ? rows.find((row) => row.id === run.waitingOn) : undefined;
-  const waiting = !call
-    ? null
-    : call.kind === "tool" && call.toolId === ASK_TOOL
-      ? "answer"
-      : "decision";
+  const waiting = run.waitingOn ? ((await waitsFor(threadId, run.waitingOn)) ?? "decision") : null;
   const trace = traceOf(run.id);
   return {
     id: run.id,
@@ -776,55 +740,31 @@ export function createThreads(options: ThreadsOptions) {
     reads,
     commands,
     subagents,
-    background,
-    triggers,
+    calls,
     tasks,
     live: printed,
   } = options;
   const now = options.now ?? (() => new Date());
   const runTrace = options.runTrace ?? (() => undefined);
   const { transcripts } = options;
-  const quietly = options.notifier;
-
-  // Asks the thread's active run to stop, queueing it again when it waits for a decision so that a
-  // worker ends it; null when there is none.
-  async function stopRun(threadId: string, userId: string) {
-    const run = await runs.requestCancel(threadId, userId, new Date());
-    if (run?.status === "waiting") await runs.resume(run.id);
-    return run;
-  }
+  const { queue } = options;
 
   // The thread's active run as its list shows it, and whether the reader may decide on a call that
-  // waits: the one its run waits for, or a background call that waits while the run goes on or has
-  // ended. A call the reader may decide shows the thread as waiting for them, over its working.
-  async function runActivity(userId: string, thread: Thread, run: Run | undefined) {
-    const own = await ownActivity(userId, thread, run);
+  // waits: the one its run waits for, or a job that waits while the run goes on or has ended,
+  // given the thread's calls that wait. A call the reader may decide shows the thread as waiting
+  // for them, over its working.
+  function runActivity(run: Run | undefined, waiting: readonly WaitingCall[]) {
+    const own = ownActivity(run, waiting);
     if (own.canApprove) return own;
-    const job = await decidableJob(userId, thread);
+    const job = waiting.find((one) => one.call.background && one.canAct);
     if (!job) return own;
     return {
-      run: { status: "waiting" as const, since: job.requestedAt, toolId: job.toolId },
+      run: { status: "waiting" as const, since: job.row.requestedAt, toolId: job.row.toolId },
       canApprove: true,
     };
   }
 
-  // A background call of the thread that waits for approval which the reader may give.
-  async function decidableJob(userId: string, thread: Thread) {
-    const pending = ((await background?.open(thread.id)) ?? []).filter(
-      (call) => call.status === "pending",
-    );
-    if (pending.length === 0) return null;
-    const space = await spaceStore.find(thread.spaceId);
-    if (!space) return null;
-    const { rows } = (await transcripts.of(thread.id)).transcript();
-    for (const row of rows) {
-      if (row.kind !== "tool" || !pending.some((call) => call.id === row.id)) continue;
-      if ((await tools.callState(userId, row, rows, thread, space)).canAct) return row;
-    }
-    return null;
-  }
-
-  async function ownActivity(userId: string, thread: Thread, run: Run | undefined) {
+  function ownActivity(run: Run | undefined, waiting: readonly WaitingCall[]) {
     if (!run) return { run: null, canApprove: false };
     const since = (run.startedAt ?? run.createdAt).toISOString();
     if (run.status !== "waiting") {
@@ -836,34 +776,34 @@ export function createThreads(options: ThreadsOptions) {
         canApprove: false,
       };
     }
-    const waiting = await waitingCallIn(thread, userId);
+    const call = runWaitsOn(run, waiting);
     return {
       run: {
         status: "waiting" as const,
-        since: waiting?.call.requestedAt ?? since,
-        ...(waiting && { toolId: waiting.call.toolId }),
+        since: call?.row.requestedAt ?? since,
+        ...(call && { toolId: call.row.toolId }),
       },
-      canApprove: waiting?.canAct ?? false,
+      canApprove: call?.canAct ?? false,
     };
   }
 
-  // The call the thread's run waits on, and whether the person may decide or answer it.
-  async function waitingCallIn(thread: Thread, userId: string) {
-    const { rows, run } = (await transcripts.of(thread.id)).transcript();
-    const call = rows.find((row) => row.kind === "tool" && row.id === run?.waitingOn);
-    const space = await spaceStore.find(thread.spaceId);
-    if (call?.kind !== "tool" || !space) return null;
-    return { call, canAct: (await tools.callState(userId, call, rows, thread, space)).canAct };
+  // The call the run waits on, of the calls that wait: its first.
+  function runWaitsOn(run: Pick<Run, "id">, waiting: readonly WaitingCall[]) {
+    return waiting.find((one) => !one.call.background && one.call.runId === run.id) ?? null;
   }
 
-  // The work a row's call stands for, as its card and the tray show it: the background call it
-  // started or moved to, or the timer, schedule or webhook it set; null for any other row.
-  async function workOfRow(row: TranscriptRow, threadId: string, canPost: boolean) {
-    const kept = backgroundId(row) ? await background?.find(row.id) : null;
-    if (kept) return { kept, work: callWork(kept, canPost) };
-    const scheduled = scheduleId(row);
-    const work = scheduled ? await triggers?.workFor(scheduled, threadId, canPost) : null;
-    return work ? { kept: null, work } : null;
+  // The calls of the threads that wait for a person, by thread, in the order they were asked for.
+  async function waitingIn(userId: string, threadIds: readonly string[]) {
+    const found = (await calls?.waitingOn({ userId }, threadIds)) ?? [];
+    return Map.groupBy(
+      found.toSorted((a, b) => a.row.seq - b.row.seq),
+      (one) => one.call.threadId,
+    );
+  }
+
+  // What a waiting call waits for, by its row.
+  async function callWaitsFor(threadId: string, callId: string) {
+    return (await calls?.find(threadId, callId))?.waitsFor ?? null;
   }
 
   // The model each thread's row shows, its own or the default it follows; reads each space and
@@ -940,6 +880,7 @@ export function createThreads(options: ThreadsOptions) {
     const writers = await threads.writers(ids);
     const seen = await reads.seen(userId, ids);
     const runOf = new Map(active.map((run) => [run.threadId, run]));
+    const waiting = await waitingIn(userId, ids);
     const under = nested ? await subagentsUnder(userId, list) : new Map<string, ListedSubagent[]>();
     return await Promise.all(
       list.map(async (thread) => {
@@ -948,7 +889,7 @@ export function createThreads(options: ThreadsOptions) {
           ? { ...facts.get(thread.id), notable: null }
           : facts.get(thread.id);
         const activity: ThreadActivity = {
-          ...(await runActivity(userId, thread, runOf.get(thread.id))),
+          ...runActivity(runOf.get(thread.id), waiting.get(thread.id) ?? []),
           lastNotableSeq: fact?.notable?.seq ?? 0,
           lastNotableBy: fact?.notable?.by ?? null,
           failed: fact?.failed ?? null,
@@ -1004,15 +945,6 @@ export function createThreads(options: ThreadsOptions) {
   // Whether the thread is a retired subagent's, which nobody posts in.
   async function retired(thread: Thread) {
     return !!thread.parentThreadId && !!(await subagents?.find(thread.id))?.archivedAt;
-  }
-
-  // Asks the runs under way in the branches to stop, queueing again those that wait for a decision
-  // so that a worker ends them.
-  async function stopBranches(branchIds: readonly string[], userId: string) {
-    for (const branchId of branchIds) {
-      const run = await runs.requestCancelOn(branchId, userId, now());
-      if (run?.status === "waiting") await runs.resume(run.id);
-    }
   }
 
   // The reader's own side question in the thread.
@@ -1116,7 +1048,6 @@ export function createThreads(options: ThreadsOptions) {
   async function backgroundOf(principal: Principal, threadId: string): Promise<BackgroundList> {
     const thread = await visible(principal, threadId);
     const space = await spaceStore.find(thread.spaceId);
-    const canPost = (await canIn(principal, thread)).post;
     const names = tools.namesIn(space);
     const items: BackgroundList["items"] = [];
     const at = now();
@@ -1128,39 +1059,42 @@ export function createThreads(options: ThreadsOptions) {
       items.push({ ...item, ...(attention && { attention }) });
     };
     const { rows } = (await transcripts.of(thread.id)).transcript();
+    const present = await tools.present(await access.reader(principal, thread), toolRowsOf(rows));
+    const waiting = new Map(
+      ((await calls?.waitingOn({ userId: principal.userId }, [thread.id])) ?? []).map((one) => [
+        one.call.id,
+        one,
+      ]),
+    );
     for (const [index, row] of rows.entries()) {
       if (row.kind !== "tool") continue;
-      const state = space
-        ? await tools.callState(principal.userId, row, rows, thread, space)
-        : null;
+      const waits = waiting.get(row.id);
       // A call waiting for a decision, whoever may make it; the others see it wait.
-      if (state?.waitsFor === "decision") {
+      if (waits?.waitsFor === "decision") {
         add({
           rowId: row.id,
           title: (await names(row)).title,
           work: {
             kind: "approval",
             status: "pending",
-            canDecide: state.canAct,
+            canDecide: waits.canAct,
             startedAt: row.requestedAt,
             canCancel: false,
           },
         });
       }
-      const shown = await workOfRow(row, thread.id, canPost);
-      if (shown?.kept) {
+      const work = present(row).work;
+      if (work?.kind === "call") {
         // Whose words the agent had read when it asked for the call.
         const steering = steeringIn(rows.slice(0, index));
         const by = [...new Set(steering.map((one) => one.name))].join(", ");
-        const { work } = shown;
         add({
           rowId: row.id,
           title: (await names(row)).title,
-          work: { ...work, ...(work.status === "pending" && { canDecide: !!state?.canAct }) },
+          work: { ...work, ...(work.status === "pending" && { canDecide: !!waits?.canAct }) },
           ...(by && { by }),
         });
-      } else if (shown && underway(shown.work)) {
-        const { work } = shown;
+      } else if (work && underway(work)) {
         add({
           rowId: row.id,
           title: work.schedule?.name ?? work.webhook?.name ?? (await names(row)).title,
@@ -1178,7 +1112,8 @@ export function createThreads(options: ThreadsOptions) {
         (task) => task.assignee?.kind === "subagent" && task.assignee.threadId === record.threadId,
       );
       // What it waits on asks only the readers who may decide or answer it.
-      const waiting = needs ? await waitingCallIn(child, principal.userId) : null;
+      const childRun = needs ? (await waitingIn(principal.userId, [child.id])).get(child.id) : null;
+      const waiting = childRun?.find((one) => !one.call.background) ?? null;
       const waitingRow = waiting?.call.id;
       add({
         rowId: record.threadId,
@@ -1240,11 +1175,16 @@ export function createThreads(options: ThreadsOptions) {
     branchId = thread.currentBranchId,
     rows?: readonly TranscriptRow[],
     given?: AccessReader,
+    // The current branch's transcript, when the caller has read it.
+    current?: Pick<Transcript, "pending" | "inbox">,
   ): Promise<Reader> {
     const read = given ?? (await access.reader(principal, thread));
     const { space } = read;
     const can = await canIn(principal, thread, read);
     const viewed = rows ?? (await transcripts.of(thread.id, branchId)).transcript().rows;
+    let waiting: Promise<QueuedInput[]> | undefined;
+    let presented: Promise<(row: TranscriptToolRow) => CallPresentation> | undefined;
+    let waitingCalls: Promise<Map<string, WaitingCall>> | undefined;
     return {
       principal,
       userId: principal.userId,
@@ -1253,8 +1193,18 @@ export function createThreads(options: ThreadsOptions) {
       can,
       agentName: space && read.settings ? agentNameFrom(space, read.settings) : DEFAULT_AGENT_NAME,
       names: tools.namesIn(space),
+      present: async (row) =>
+        (presented ??= tools.present(read, toolRowsOf(viewed))).then((present) => present(row)),
+      waitingCalls: async () =>
+        (waitingCalls ??= (async () =>
+          new Map(
+            ((await calls?.waitingOn({ userId: principal.userId }, [thread.id])) ?? []).map(
+              (one) => [one.call.id, one],
+            ),
+          ))()),
       folds: new Map(),
       history: await historyOf(principal, thread, read, can, branchId, viewed),
+      waiting: () => (waiting ??= queue.waiting(thread.id, undefined, current)),
     };
   }
 
@@ -1351,11 +1301,11 @@ export function createThreads(options: ThreadsOptions) {
       return { ...row, ...place, linked: await readable(reader.principal, row.from.threadId) };
     }
     if (row.kind === "tool") {
-      const started = startedSubagent(row);
-      const subagent = started ? await subagents?.summaryOf(started) : null;
+      const shownBy = await reader.present(row);
+      const { subagent } = shownBy;
       const subagentCall =
-        subagent?.needs && (await waitingIn(subagent.threadId, reader.principal));
-      const effects = await effectsOf(row, reader);
+        subagent?.needs && (await subagentWaitsOn(subagent.threadId, reader.principal));
+      const effects = shownBy.effects ?? [];
       // A call its run is running, or that waits for a decision in it, may move to the background,
       // for whoever can post here.
       const running = row.state === "allowed" || (row.state === "pending" && !row.waits);
@@ -1366,23 +1316,23 @@ export function createThreads(options: ThreadsOptions) {
         transcript.run?.id === row.runId &&
         reader.can.post &&
         !!space &&
-        !(await tools.asks(row, space)) &&
-        !row.toolId.startsWith("calls.");
-      // The call's card, where it runs in the background or set a timer, schedule or webhook.
-      const shown = await workOfRow(row, thread.id, reader.can.post);
+        (await tools.movable(row, space));
       const { background: _flag, ...plain } = row;
       const call = {
         ...plain,
         ...place,
         ...(await reader.names(row)),
+        ...shownBy.names,
         ...(movable && { canBackground: true }),
-        ...(shown && { background: shown.work }),
+        // The call's card, where it runs in the background or set a timer, schedule or webhook.
+        ...(shownBy.work && { background: shownBy.work }),
         ...(subagent && { subagent }),
         ...(subagentCall && { subagentCall }),
         ...(effects.length > 0 && { effects }),
       };
-      const state = space && (await tools.callState(userId, row, transcript.rows, thread, space));
-      if (!state?.waitsFor || !space || !current) return call;
+      const state =
+        row.state === "pending" && row.waits ? (await reader.waitingCalls()).get(row.id) : null;
+      if (!state || !space || !current) return call;
       const may = state.canAct;
       // Where other agents' messages steered the call, whose words they carried.
       const steering =
@@ -1406,7 +1356,8 @@ export function createThreads(options: ThreadsOptions) {
     }
     if (row.kind === "failure" || row.kind === "stop") {
       const last = index === transcript.rows.length - 1;
-      const idle = !transcript.run && transcript.pending.length === 0;
+      const idle =
+        !transcript.run && !(await reader.waiting()).some((input) => input.kind === "message");
       return { ...row, ...place, canRetry: current && last && idle && reader.can.post };
     }
     if (row.kind === "human") {
@@ -1462,10 +1413,16 @@ export function createThreads(options: ThreadsOptions) {
   // back; a notification is nobody's to change. The fold keeps people's messages and other
   // agents' notifications apart; a new kind of input is one more branch here.
   async function shownWaiting(transcript: Transcript, reader: Reader): Promise<WaitingRow[]> {
-    const inputs = [
-      ...transcript.pending.map((message) => ({ seq: message.seq, message })),
-      ...waking(transcript.inbox).map((relay) => ({ seq: relay.seq, relay })),
-    ].toSorted((a, b) => a.seq - b.seq);
+    const inputs = (await reader.waiting()).flatMap(
+      (
+        input,
+      ): ({ seq: number; message: PendingMessage } | { seq: number; relay: RelayMessage })[] =>
+        input.message
+          ? [{ seq: input.seq, message: input.message }]
+          : input.notice && input.wake
+            ? [{ seq: input.seq, relay: input.notice }]
+            : [],
+    );
     return await Promise.all(
       inputs.map(async (input, index): Promise<WaitingRow> => {
         const place = { order: transcript.rows.length + index, seq: input.seq, turn: null };
@@ -1493,56 +1450,6 @@ export function createThreads(options: ThreadsOptions) {
           waiting: { mode, can },
         };
       }),
-    );
-  }
-
-  // The messages subagent calls sent to each thread, by the call, as far as its log was read; each
-  // read takes in only what was added since.
-  const sentTo = new Map<string, { last: number; byCall: Map<string, string[]> }>();
-  async function messagesSentBy(threadId: string, call: Cause) {
-    const known = sentTo.get(threadId) ?? { last: 0, byCall: new Map<string, string[]>() };
-    for (const event of await threads.eventsAfter(threadId, known.last)) {
-      known.last = event.seq;
-      const sent =
-        event.type === "notification" && event.data.source.callId
-          ? { threadId: event.data.source.threadId, callId: event.data.source.callId }
-          : undefined;
-      if (!sent) continue;
-      const key = causeKey(sent);
-      known.byCall.set(key, [...(known.byCall.get(key) ?? []), event.id]);
-    }
-    sentTo.set(threadId, known);
-    return known.byCall.get(causeKey(call)) ?? [];
-  }
-
-  // Where the reader's thread's subagent call had its effect, in the threads they may read: the
-  // task a start gave, each message a send delivered, and the thread a stop or archive acted on.
-  async function effectsOf(row: TranscriptToolRow, reader: Reader): Promise<CallEffect[]> {
-    if (!subagents || !row.output?.ok) return [];
-    const tool = toolIdNow(row.toolId);
-    const value = (row.output.value ?? {}) as { id?: unknown; name?: unknown; sent?: unknown };
-    const call = { threadId: reader.thread.id, callId: row.id };
-    const effects: CallEffect[] = [];
-    if (SUBAGENT_ACTIONS.has(tool) && typeof value.id === "string") {
-      const name = typeof value.name === "string" ? value.name : "";
-      if (tool !== START_SUBAGENT) effects.push({ kind: "thread", threadId: value.id, name });
-      for (const rowId of tool === START_SUBAGENT ? await messagesSentBy(value.id, call) : []) {
-        effects.push({ kind: "task", threadId: value.id, rowId, name });
-      }
-    } else if (tool === SEND_SUBAGENT_MESSAGE && Array.isArray(value.sent)) {
-      const reach = await subagents.reach(reader.thread.id);
-      const { agentName } = reader;
-      for (const label of value.sent) {
-        for (const to of reach.filter((one) => one.name === label)) {
-          for (const rowId of await messagesSentBy(to.threadId, call)) {
-            const name = to.main ? agentName : to.name;
-            effects.push({ kind: "message", threadId: to.threadId, rowId, name });
-          }
-        }
-      }
-    }
-    return await filterAsync(effects, async (effect) =>
-      readable(reader.principal, effect.threadId),
     );
   }
 
@@ -1581,7 +1488,7 @@ export function createThreads(options: ThreadsOptions) {
   }
 
   // The call the subagent's run waits on, as the reader sees it in the subagent's thread.
-  async function waitingIn(threadId: string, principal: Principal) {
+  async function subagentWaitsOn(threadId: string, principal: Principal) {
     const thread = await threads.find(threadId);
     if (!thread) return null;
     const fold = await transcripts.of(threadId);
@@ -1692,61 +1599,28 @@ export function createThreads(options: ThreadsOptions) {
     if (await retired(thread)) throw new ServiceError(409, "This subagent is archived");
     const quiet = !command && text.startsWith(QUIET_PREFIX);
     let first = false;
-    const { events } = await log.write(thread.id, async (append) => {
+    const { result: event } = await log.write(thread.id, async () => {
       first = (await threads.find(thread.id))?.title === null;
-      const message = await append(
+      const { event } = await queue.enqueue(
+        thread.id,
         {
-          type: "message",
-          actor: { kind: "user", userId: principal.userId },
-          data: {
-            parts: [{ type: "text", text }],
-            quiet,
-            mode,
-            ...(guest && { guest }),
-            ...(command && { command }),
-          },
+          kind: "message",
+          by: principal.userId,
+          text,
+          delivery: mode,
+          quiet,
+          ...(guest && { guest }),
+          ...(command && { command }),
         },
         // Names the thread when nothing has yet.
-        titleFrom(text),
+        { origin: { kind: "person", id: principal.userId }, title: titleFrom(text) },
       );
       // The author has seen what they answered.
-      await reads.mark(principal.userId, thread.id, message.seq, now());
-      if (quiet) return;
-      if (!(await runs.active(thread.id))) {
-        await startRun(
-          runs,
-          append,
-          { threadId: thread.id, triggerSeq: message.seq, createdBy: principal.userId },
-          [message.id],
-        );
-      } else if (mode === "interrupt") {
-        await stopRun(thread.id, principal.userId);
-      }
+      await reads.mark(principal.userId, thread.id, event.seq, now());
+      return event;
     });
-    if (!quiet) bus.wake(thread.id);
     if (first) void titles?.name(principal.orgId, thread.id, text);
-    return events[0]!;
-  }
-
-  // Appends the author's change to one of their messages the agent has not taken in yet.
-  async function changePending(
-    principal: Principal,
-    id: string,
-    messageId: string,
-    change: (append: Append, message: PendingMessage) => Promise<unknown>,
-  ) {
-    const thread = await visible(principal, id, "post");
-    const { events } = await log.write(thread.id, async (append) => {
-      const pending = (await transcripts.of(thread.id)).transcript().pending;
-      const message = pending.find((m) => m.id === messageId);
-      if (!message) throw new ServiceError(409, "The agent has already taken this message in");
-      if (message.author.userId !== principal.userId) {
-        throw new ServiceError(403, "Only its author can change a message");
-      }
-      await change(append, message);
-    });
-    bus.wake(thread.id);
-    return events[0]!;
+    return event;
   }
 
   // The space's threads, each with who has written in it.
@@ -1973,7 +1847,14 @@ export function createThreads(options: ThreadsOptions) {
       const current = branch === latest.currentBranchId;
       const fold = await transcripts.of(id, branch);
       const transcript = fold.transcript();
-      const reader = await readerOf(principal, latest, branch, transcript.rows, read);
+      const reader = await readerOf(
+        principal,
+        latest,
+        branch,
+        transcript.rows,
+        read,
+        current ? transcript : undefined,
+      );
       const seen = (await reads.seen(principal.userId, [id])).get(id) ?? 0;
       // A subagent's thread has nothing new in it, and opens at its newest.
       const from =
@@ -1993,7 +1874,7 @@ export function createThreads(options: ThreadsOptions) {
         newFrom: from === -1 ? null : transcript.rows[from]!.id,
         earlierUnread: unreadBefore(transcript, from, start, principal.userId),
         waiting: current ? await shownWaiting(transcript, reader) : [],
-        run: shownRun(transcript, runTrace),
+        run: await shownRun(transcript, thread.id, runTrace, callWaitsFor),
       };
     },
 
@@ -2113,16 +1994,20 @@ export function createThreads(options: ThreadsOptions) {
         });
       }
       for (const { text, change } of did)
-        await quietly.send(
+        await queue.enqueue(
           id,
-          silentChange(
-            id,
-            who,
-            text,
-            undefined,
-            { kind: "person", userId: principal.userId, name: who },
-            change,
-          ),
+          {
+            kind: "notice",
+            notice: silentChange(
+              id,
+              who,
+              text,
+              undefined,
+              { kind: "person", userId: principal.userId, name: who },
+              change,
+            ),
+          },
+          { origin: { kind: "person", id: principal.userId } },
         );
       return threadSummary(updated);
     },
@@ -2278,50 +2163,16 @@ export function createThreads(options: ThreadsOptions) {
 
     postCommand,
 
-    // Changes the text of a waiting message, or whether it steers or waits for the next run.
-    async changeMessage(
-      principal: Principal,
-      id: string,
-      messageId: string,
-      change: { text?: string; mode?: "steer" | "queue" },
-    ) {
-      return changePending(principal, id, messageId, async (append, message) => {
-        if (change.text !== undefined && message.command) {
-          throw new ServiceError(409, "A command can't be edited; remove it and send it again");
-        }
-        await append({
-          type: "message.changed",
-          actor: { kind: "user", userId: principal.userId },
-          data: {
-            messageId,
-            ...(change.text !== undefined && { parts: [{ type: "text", text: change.text }] }),
-            ...(change.mode && { mode: change.mode }),
-          },
-        });
-      });
-    },
-
-    // Takes back a waiting message.
-    async withdrawMessage(principal: Principal, id: string, messageId: string) {
-      return changePending(principal, id, messageId, async (append) =>
-        append({
-          type: "message.withdrawn",
-          actor: { kind: "user", userId: principal.userId },
-          data: { messageId },
-        }),
-      );
-    },
-
     // Asks the run under way to stop, and those of the subagents the agent started; the agent keeps
     // what it has written.
     async stop(principal: Principal, id: string) {
       const thread = await visible(principal, id, "post");
-      const own = !!(await stopRun(thread.id, principal.userId));
+      const own =
+        (await options.execution.stop({ threadId: thread.id }, principal.userId)).length > 0;
       const theirs = (await subagents?.stopAll(thread.id, principal.userId)) ?? false;
       if (!own && !theirs) {
         throw new ServiceError(409, "The agent is not replying");
       }
-      bus.wake(thread.id);
       bus.activity({ threadId: thread.id });
     },
 
@@ -2335,24 +2186,8 @@ export function createThreads(options: ThreadsOptions) {
     // Starts a run that tries the thread's last run again, when it failed or was stopped and
     // nothing has run since.
     async retry(principal: Principal, id: string, runId: string) {
-      const thread = await visible(principal, id, "post");
-      const { events } = await log.write(thread.id, async (append) => {
-        if (await runs.active(thread.id))
-          throw new ServiceError(409, "The agent is already replying");
-        const last = await runs.latest(thread.id);
-        if (last?.id !== runId || (last.status !== "failed" && last.status !== "cancelled")) {
-          throw new ServiceError(409, "Only the last reply can be tried again");
-        }
-        await startRun(runs, append, {
-          threadId: thread.id,
-          triggerSeq: last.triggerSeq,
-          createdBy: principal.userId,
-          continuesRunId: last.id,
-          reason: "retry",
-        });
-      });
-      bus.wake(thread.id);
-      return events[0]!;
+      const reader = await access.require(principal, id, "post");
+      return (await options.execution.retry(reader, runId)).event;
     },
 
     // Writes a reply again, with the thread's model or another; sends the reader's own message
@@ -2429,40 +2264,39 @@ export function createThreads(options: ThreadsOptions) {
             },
           });
           await threads.setCurrent(id, made.id);
-          await stopBranches([before], principal.userId);
-          let trigger = forkSeq;
-          let admit = keep.map((message) => message.id);
+          await queue.admission.branched(id, made.id, before);
+          await options.execution.stop({ branchId: before }, principal.userId);
+          let edited: QueuedInput | null = null;
           if (action.action === "edit") {
             const quiet = row.kind === "human" && row.quiet;
-            const message = await into({
-              type: "message",
-              actor,
-              data: {
-                parts: [{ type: "text", text: action.text }],
+            // The run below takes the message in, so it starts nothing itself.
+            const { event, input } = await queue.enqueue(
+              id,
+              {
+                kind: "message",
+                by: principal.userId,
+                text: action.text,
+                delivery: "steer",
                 quiet,
-                mode: "steer",
                 ...(guest && { guest }),
               },
-            });
-            if (quiet) return made.id;
-            trigger = message.seq;
-            admit = [...admit, message.id];
+              {
+                origin: { kind: "person", id: principal.userId },
+                branchId: made.id,
+                quietly: true,
+              },
+            );
+            if (!input) return made.id;
+            edited = { ...input, seq: event.seq };
           }
           if (restore) return made.id;
-          await startRun(
-            runs,
-            into,
-            {
-              threadId: id,
-              branchId: made.id,
-              triggerSeq: trigger,
-              createdBy: principal.userId,
-              reason: "rewrite",
-              askedModel: asked?.model ?? null,
-              askedEffort: asked?.effort ?? null,
-            },
-            admit,
-          );
+          await options.execution.rewrite(id, made.id, {
+            by: principal.userId,
+            triggerSeq: forkSeq,
+            keep: keep.map((message) => message.id),
+            message: edited,
+            asked: asked ? { model: asked.model, effort: asked.effort ?? null } : null,
+          });
           return made.id;
         })
       ).result;
@@ -2514,6 +2348,8 @@ export function createThreads(options: ThreadsOptions) {
           actor,
           data: { threadId: id, rowId: input.rowId, title: thread.title ?? UNTITLED },
         });
+        await queue.fromLog(forked.id);
+        await calls?.fromLog(forked.id);
       });
       return threadSummary((await threads.find(forked.id)) ?? forked);
     },
@@ -2692,8 +2528,15 @@ export function createThreads(options: ThreadsOptions) {
         if (!thread) return;
         const fold = await transcripts.of(id);
         const transcript = fold.transcript();
-        const reader = await readerOf(principal, thread, thread.currentBranchId, transcript.rows);
-        const run = shownRun(transcript, runTrace);
+        const reader = await readerOf(
+          principal,
+          thread,
+          thread.currentBranchId,
+          transcript.rows,
+          undefined,
+          transcript,
+        );
+        const run = await shownRun(transcript, thread.id, runTrace, callWaitsFor);
         const waiting = await shownWaiting(transcript, reader);
         // Another branch made current starts afresh from its newest rows.
         if (thread.currentBranchId !== branch) {
@@ -2721,7 +2564,7 @@ export function createThreads(options: ThreadsOptions) {
           });
           return;
         }
-        const live = liveIndexes(transcript);
+        const live = await liveIndexes(transcript, reader);
         const rows: ShownRow[] = [];
         for (const [index, row] of transcript.rows.entries()) {
           const changed = fold.changedAt(index) > last;

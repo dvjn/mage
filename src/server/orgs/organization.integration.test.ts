@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import type { Tasks } from "@/server/agent/tasks.ts";
-import type { Triggers } from "@/server/agent/triggers.ts";
+import type { Triggers } from "@/server/triggers.ts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";

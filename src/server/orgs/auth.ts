@@ -34,7 +34,7 @@ export interface AuthOptions {
   oidc?: { issuer: string; clientId: string; clientSecret: string } | null;
   // The bearer token a SCIM directory provisions with, and what to tell when the directory changed
   // a person or the groups they are in; `active` is false once it turned them off or deleted them.
-  scim?: { token: string; changed: (userId: string, active: boolean) => Promise<void> } | null;
+  scim?: { token: string } | null;
   hooks?: Hooks;
 }
 
@@ -42,6 +42,8 @@ declare module "@/server/kernel/hooks.ts" {
   interface HookEvents {
     // Someone new has an account and their personal org; their session acts in it once this ends.
     "person.signedUp": { userId: string; orgId: string };
+    // The directory changed someone: what orgs they are in, or could be through a group, follows.
+    "directory.changed": { userId: string; active: boolean };
   }
 }
 
@@ -233,7 +235,7 @@ export function createAuth(options: AuthOptions) {
                   if (!active) {
                     await db.delete(schema.session).where(eq(schema.session.userId, userId));
                   }
-                  await directory.changed(userId, active);
+                  await options.hooks?.run("directory.changed", { userId, active });
                 },
               },
             }),

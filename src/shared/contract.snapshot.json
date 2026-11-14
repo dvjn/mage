@@ -207,6 +207,7 @@
     "PUT /api/v1/threads/:id/invites/:inviteId/role",
     "PUT /api/v1/threads/:id/org-access",
     "PUT /api/v1/threads/:id/read",
+    "PUT /api/v1/threads/:id/triggers/:triggerId/delivery-header",
     "PUT /api/v1/threads/:id/triggers/:triggerId/secret"
   ],
   "streams": {
@@ -13831,6 +13832,26 @@
         "policy"
       ]
     },
+    "triggers.ts#hookDeliveryHeaderInputSchema": {
+      "$id": "triggers.ts#hookDeliveryHeaderInputSchema",
+      "type": "object",
+      "properties": {
+        "header": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "header"
+      ]
+    },
     "triggers.ts#hookSecretInputSchema": {
       "$id": "triggers.ts#hookSecretInputSchema",
       "type": "object",
@@ -13993,6 +14014,9 @@
         },
         "signed": {
           "type": "boolean"
+        },
+        "deliveryHeader": {
+          "type": "string"
         },
         "lastFiredAt": {
           "type": "string"

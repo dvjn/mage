@@ -151,7 +151,8 @@ export interface ToolRow {
     | { ok: false; error: string }
     | null;
   ms: number | null;
-  // A call started in the background, which belongs to no reply and no run.
+  // A job: a call started in the background, which belongs to no reply; `runId` names the run that
+  // asked for it, which neither waits for it nor stops it.
   background?: true;
   // Whose own login it ran with, for a tool that uses one.
   ranAs?: Person;
@@ -836,7 +837,8 @@ export function createFold(from?: FoldState): TranscriptFold {
         run.compacting = compacting.has(runId);
         run.waitingOn =
           [...calls.values()].find(
-            (call) => call.runId === runId && call.waits && call.state === "pending",
+            (call) =>
+              call.runId === runId && !call.background && call.waits && call.state === "pending",
           )?.id ?? null;
       }
       return { rows, pending: [...pending.values()], inbox: [...inbox.values()], run, usage };

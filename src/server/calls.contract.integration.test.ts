@@ -124,6 +124,49 @@ describe("a call that needs approval", () => {
   });
 });
 
+describe("calls that wait together", () => {
+  it("keep the run waiting until each is decided", async () => {
+    const w = await world();
+    await w.post(w.ada, "Do both");
+    const { ids } = await w.asks(
+      w.threadId,
+      ["probe.guarded", { label: "a" }],
+      ["probe.guarded", { label: "b" }],
+    );
+    await waits(w, "decision");
+    expect(await w.decide(w.ada, ids[0]!, true)).toBe(200);
+    await w.settled();
+    expect((await w.shown()).run).toBe("decision");
+    expect(w.modelCalls()).toBe(1);
+
+    expect(await w.decide(w.ada, ids[1]!, false)).toBe(200);
+    const told = await w.answers(w.threadId);
+    expect(told.texts.filter((text) => text.startsWith("result "))).toEqual([
+      'result probe.guarded: {"ok":true,"value":{"did":"a"}}',
+      'result probe.guarded: {"ok":false,"error":"This action was not approved."}',
+    ]);
+    await w.settled();
+  });
+});
+
+describe("a call under way when the run is stopped", () => {
+  it("is aborted, and the model is not asked again", async () => {
+    const w = await world();
+    await w.post(w.ada, "Start and wait");
+    const { ids } = await w.asks(w.threadId, ["probe.wait", { label: "a" }]);
+    await eventually(
+      () => w.tool.running("a"),
+      (running) => running,
+    );
+    expect(await w.act(w.ada, "POST", "/stop")).toBe(202);
+    await w.settled();
+    expect(w.tool.aborted).toEqual(["a"]);
+    // The tool answers that it was aborted, so its row reads failed rather than stopped.
+    expect(await callRow(w, ids[0]!)).toMatchObject({ state: "failed" });
+    expect(w.modelCalls()).toBe(1);
+  });
+});
+
 describe("a call steered by someone who may not run its tool", () => {
   // Grace asks, then loses her place in the space before the agent acts on her words.
   async function steered() {
@@ -326,6 +369,42 @@ describe("a job", () => {
     w.tool.finish("a", "done");
     await w.answers(w.threadId, "Noted.");
     await w.settled();
+  });
+
+  it("is what a running call becomes when a person moves it there through another instance", async () => {
+    const w = await world();
+    const other = await w.elsewhere();
+    await w.post(w.ada, "Start and wait");
+    const { ids } = await w.asks(w.threadId, ["probe.wait", { label: "a" }]);
+    await eventually(
+      () => w.tool.running("a"),
+      (running) => running,
+    );
+    expect(await other.act(w.grace, "POST", `/tools/${ids[0]}/background`)).toBe(200);
+    const moved = await w.answers(w.threadId, "Carrying on.");
+    expect(lastResult(moved.texts)).toMatch(/"movedToBackground":true/);
+    await w.settled();
+    expect((await w.activity())[0]).toMatchObject({ work: { kind: "call", status: "running" } });
+
+    w.tool.finish("a", { answer: 42 });
+    const told = await w.answers(w.threadId, "Noted.");
+    expect(told.texts.at(-1)).toContain('(Wait) finished\n\nResult:\n\n{"answer":42}');
+    await w.settled();
+  });
+
+  it("that waits for approval is cancelled once, and the agent is not told", async () => {
+    const w = await world();
+    await w.post(w.ada, "Start a guarded job");
+    await w.asks(w.threadId, ["jobs.start", { tool: "probe.guarded", input: { label: "a" } }]);
+    await w.answers(w.threadId, "Asked for.");
+    await w.settled();
+    const job = (await w.activity()).find((item) => item.work.kind === "call")!;
+    expect(job.work.status).toBe("pending");
+    expect(await w.act(w.grace, "POST", `/tools/${job.rowId}/cancel`)).toBe(200);
+    expect(await w.act(w.grace, "POST", `/tools/${job.rowId}/cancel`)).toBe(409);
+    await w.settled();
+    expect(w.modelCalls()).toBe(2);
+    expect((await w.shown()).rows).toContain("probe.guarded stopped [cancelled]");
   });
 
   it("left running by a server that stopped is interrupted, and the agent is told", async () => {

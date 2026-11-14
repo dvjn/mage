@@ -1,6 +1,7 @@
+import { createOAuthAttempts } from "@/server/oauth/attempts.ts";
 import { eq } from "drizzle-orm";
 import type { Tasks } from "@/server/agent/tasks.ts";
-import type { Triggers } from "@/server/agent/triggers.ts";
+import type { Triggers } from "@/server/triggers.ts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
@@ -214,6 +215,12 @@ function setup(usage?: ModelUsage) {
     },
     logger,
     now: () => clock.now,
+    attempts: createOAuthAttempts({
+      db,
+      cipher: createCipher({ version: 1, key: Buffer.alloc(32, 9) }),
+    }),
+    instanceId: "test",
+    transact: async (work) => work(),
   });
   const models = createModels({
     connections: connectionStore,

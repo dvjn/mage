@@ -80,7 +80,7 @@
       "kind": "tool",
       "id": "j-waiting",
       "seq": 8,
-      "runId": "j-waiting",
+      "runId": "r1",
       "messageId": "j-waiting",
       "toolId": "files.delete",
       "background": true,

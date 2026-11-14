@@ -8,7 +8,6 @@
 
 import { createHash, randomBytes } from "node:crypto";
 
-import type { RunStore } from "@/server/agent/runs.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { SpaceStore, Spaces } from "@/server/spaces/service.ts";
@@ -101,8 +100,6 @@ export interface OrgsOptions {
   spaces: Pick<Spaces, "list">;
   spaceStore: Pick<SpaceStore, "create" | "find">;
   threads: Pick<ThreadStore, "find">;
-  // The agent's runs, stopped in an org being deleted.
-  runs: Pick<RunStore, "activeThreadIds" | "requestCancel">;
   settings: Pick<OrgSettingStore, "get" | "setTeamSettings" | "setAgentName">;
   hooks?: Hooks;
   // Where the app is served; invite links lead there.
@@ -120,6 +117,8 @@ declare module "@/server/kernel/hooks.ts" {
     // The org's members were settled: some joined or came back, some left, or someone's role
     // changed, so people may have lost a role in its spaces.
     "org.membersSettled": { orgId: string; joined: string[]; left: string[] };
+    // The org is about to be deleted with everything in it; `by` is whoever deletes it.
+    "org.deleting": { orgId: string; by: string };
   }
 }
 
@@ -147,7 +146,7 @@ export function maskEmail(email: string) {
 }
 
 export function createOrgs(options: OrgsOptions) {
-  const { directory, invites, spaces, spaceStore, threads, runs, settings, baseUrl } = options;
+  const { directory, invites, spaces, spaceStore, threads, settings, baseUrl } = options;
   const now = options.now ?? (() => new Date());
 
   function canCreate(email: string) {
@@ -250,7 +249,7 @@ export function createOrgs(options: OrgsOptions) {
     expired: "This invite link has expired",
   };
 
-  return {
+  const orgs = {
     // The orgs the person is in, and whether they may create a team org.
     async list(account: Account): Promise<OrgList> {
       return {
@@ -541,18 +540,13 @@ export function createOrgs(options: OrgsOptions) {
       await directory.renameOrg(principal.orgId, name);
     },
 
-    // Stops the agent in the org's threads, then deletes the org with everything in it.
+    // Has the agent stopped in the org's threads, then deletes the org with everything in it.
     async delete(principal: Principal) {
       if ((await directory.org(principal.orgId))?.kind !== "team") {
         throw new ServiceError(403, "A personal organization cannot be deleted");
       }
       await requireOwner(principal);
-      for (const threadId of new Set(await runs.activeThreadIds())) {
-        const thread = await threads.find(threadId);
-        if (thread && (await spaceStore.find(thread.spaceId))?.orgId === principal.orgId) {
-          await runs.requestCancel(threadId, principal.userId, now());
-        }
-      }
+      await options.hooks?.run("org.deleting", { orgId: principal.orgId, by: principal.userId });
       await directory.deleteOrg(principal.orgId);
     },
 
@@ -583,4 +577,9 @@ export function createOrgs(options: OrgsOptions) {
       return teamSettings(principal);
     },
   };
+  // The directory's changes settle the orgs the person is in, or could be through a group.
+  options.hooks?.on("directory.changed", async ({ userId, active }) =>
+    orgs.directoryChanged(userId, active),
+  );
+  return orgs;
 }

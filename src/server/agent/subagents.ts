@@ -17,16 +17,21 @@
 // when every person behind it could have made it.
 
 import { ulid } from "ulid";
+
+import type { Reader, ThreadAccess } from "@/server/access/access.ts";
+import { agentNameFrom } from "@/server/spaces/service.ts";
+import type { CallEffect } from "@/shared/threads/rows.ts";
+import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import * as z from "zod";
 
-import { failureSentence } from "@/server/agent/failure-text.ts";
+import { failureSentence } from "@/server/execution/failure-text.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Signals } from "@/server/sync/signals.ts";
+import type { Sync } from "@/server/sync/sync.ts";
 import type { ModelMessage } from "@/server/models/gateway.ts";
 import type { ThreadLog } from "@/server/threads/log.ts";
 import type { Thread, ThreadStore } from "@/server/threads/service.ts";
 import type { Transcripts } from "@/server/threads/transcripts.ts";
-import { ASK_TOOL } from "@/shared/ask.ts";
 import {
   AGENT,
   CHOOSE_MODELS,
@@ -46,54 +51,56 @@ import type {
 } from "@/shared/threads/events.ts";
 import { type Effort, effortSchema, UNTITLED } from "@/shared/threads/thread.ts";
 import { toolIdNow } from "@/shared/tools.ts";
-import { type AgentRow, type Transcript, type TranscriptRow, waking } from "@/shared/transcript.ts";
+import type { QueuedInput } from "@/server/queue/queue.ts";
+import type { AgentRow, RelayRow, ToolRow, TranscriptRow } from "@/shared/transcript.ts";
 
-import { wholeWhereRead } from "./compaction.ts";
-import { contextOf, framingMessage, type ToolsetGuidance } from "./context.ts";
-import type { Notification, Notifier } from "./notifications.ts";
+import { wholeWhereRead } from "@/server/execution/compaction.ts";
+import { contextOf, framingMessage, type ToolsetGuidance } from "@/server/execution/context.ts";
+import type { Notification } from "@/server/queue/notices.ts";
+import type { Queue } from "@/server/queue/queue.ts";
 import { WATCH_LIMIT, type Watch, type WatchStore } from "./watches.ts";
-import type { Run, RunStore } from "./runs.ts";
-import type { AnyToolSpec, ToolContext, Toolset, ToolSpec } from "./tools.ts";
-import { personLabel } from "@/shared/people.ts";
+import type { Run, RunReads, StopTarget } from "@/server/execution/execution.ts";
+import type { AnyToolSpec, CallPresentation, ToolContext, Toolset, ToolSpec } from "./tools.ts";
+import { AGENT_NAME, steeringIn } from "@/server/calls/influence.ts";
 import { filterAsync, mapAsync } from "@/server/kernel/async.ts";
 
 export interface SubagentRecord {
   threadId: string;
   parentThreadId: string;
   name: string;
+  // The call in its starter's thread that started it.
+  callId: string | null;
   instructions: string | null;
-  // Whether it works on its starter's task list.
-  shareTasks: boolean;
   archivedAt: Date | null;
   createdAt: Date;
 }
 
 export interface SubagentStore {
   create(
-    subagent: Pick<SubagentRecord, "threadId" | "parentThreadId" | "name"> & {
+    subagent: Pick<SubagentRecord, "threadId" | "parentThreadId" | "name" | "callId"> & {
       instructions?: string | null;
-      shareTasks?: boolean;
     },
   ): Promise<SubagentRecord>;
   find(threadId: string): Promise<SubagentRecord | null>;
   // The subagents the threads' agents started, retired ones among them, oldest first.
   ofParents(parentThreadIds: string[]): Promise<SubagentRecord[]>;
-  // Retires the subagent, or with null brings it back.
-  setArchived(threadId: string, at: Date | null): Promise<void>;
-  // Lets the subagent work on its starter's task list.
-  setShareTasks(threadId: string): Promise<void>;
+  // Retires the subagent; null when it was retired already.
+  archive(threadId: string, at: Date): Promise<SubagentRecord | null>;
+  // Brings a retired subagent back; null when it was not retired.
+  unarchive(threadId: string): Promise<SubagentRecord | null>;
 }
 
-// What starting a subagent with tasks asks of the starter's task list.
-export interface TaskHandover {
+// What another system adds to a subagent's start: whether the tasks a start names may be given,
+// what follows once it is made, and what its framing says of it.
+export interface SubagentExtension {
   // The reason the tasks cannot be given, or null when they can.
-  check(ownerId: string, taskIds: string[]): Promise<string | null>;
-  // Gives the tasks to the subagent and tells it.
-  give(
-    ownerId: string,
-    taskIds: string[],
-    subagent: { threadId: string; name: string },
+  check(parentId: string, taskIds: string[]): Promise<string | null>;
+  // Inside the write that makes it.
+  started(
+    subagent: SubagentRecord,
+    input: { tasks?: string[]; shareTasks: boolean },
   ): Promise<void>;
+  framing(threadId: string): Promise<{ sharesTasks?: true }>;
 }
 
 // How many of a thread's subagents run at once; the rest wait their turn.
@@ -102,9 +109,9 @@ export const RUNNING_LIMIT = 4;
 export const LIVE_LIMIT = 12;
 // How many messages a thread's subagents send each other in all.
 export const MESSAGE_LIMIT = 30;
-// What stands for the agent of a thread where its words carried on into a subagent's thread; it
-// shows as the name that agent goes by. No subagent may be labelled so.
-export const AGENT_NAME = "Agent";
+// What stands for the agent of a thread where its words carried on into a subagent's thread; no
+// subagent may be labelled so.
+export { AGENT_NAME };
 
 // What the agent of a thread that can start subagents is told about them.
 export const SUBAGENTS_GUIDANCE = [
@@ -114,9 +121,16 @@ export const SUBAGENTS_GUIDANCE = [
 
 export interface SubagentsOptions {
   subagents: SubagentStore;
-  threads: Pick<ThreadStore, "create" | "find" | "eventsOfType">;
+  threads: Pick<ThreadStore, "create" | "find" | "eventsOfType" | "eventsAfter">;
+  // Whether a person may read a thread, for where a subagent call had its effect.
+  access: Pick<ThreadAccess, "can">;
+  // The ref a model is stored under, given that or the alias the agent knows it by.
+  modelRef?: (orgId: string, ref: string) => Promise<string>;
   transcripts: Pick<Transcripts, "of" | "whole">;
-  runs: Pick<RunStore, "active" | "activeIn" | "latest" | "requestCancel" | "resume">;
+  runs: Pick<RunReads, "active" | "activeIn" | "latest">;
+  // Asks the runs under way there to stop; a silent stop is not told to the starter.
+  stop: (target: StopTarget, by: string | null, opts?: { silent?: boolean }) => Promise<Run[]>;
+
   log: ThreadLog;
   bus: Signals;
   // Whether the agent may choose the models of the subagents it starts in the space, and the
@@ -125,18 +139,36 @@ export interface SubagentsOptions {
   modelsIn?: (
     orgId: string,
   ) => Promise<{ ref: string; alias?: string; name?: string; reasoning?: boolean }[]>;
-  // The starter's task list, for subagents started with tasks.
-  taskHandover?: () => TaskHandover;
-  // Its own `mayStart` decides whether a notified thread's agent starts.
-  notifier: Notifier;
+  // The calls of the threads that wait for a person.
+  calls: {
+    waitingIn(threadIds: readonly string[]): Promise<(WaitingRow & { threadId: string })[]>;
+  };
+  // Runs a pass on every instance as time goes on.
+  ticker?: Sync["ticker"];
+  // Where notices to threads' agents go in, and where the inputs waiting for them stand. Its own
+  // `mayStart` decides whether a notified thread's agent starts.
+  queue: Pick<Queue, "enqueue" | "waiting" | "wakes">;
   // Agents waiting on subagents, as on tasks.
-  watches: Pick<WatchStore, "add" | "on" | "setIn" | "count" | "end">;
+  watches: Pick<WatchStore, "add" | "on" | "setIn" | "count" | "end" | "open">;
   now?: () => Date;
 }
 
 export type Subagents = ReturnType<typeof createSubagents>;
 
 const WATCH_SUBAGENTS = "subagents.watch";
+
+// How often every open watch on subagents is looked at again.
+const WATCH_PASS_MS = 30_000;
+
+// The subagent tools whose calls act on one subagent.
+const SUBAGENT_ACTIONS = new Set([
+  START_SUBAGENT,
+  "subagents.stop",
+  "subagents.archive",
+  "subagents.unarchive",
+]);
+
+const causeKey = (call: Cause) => `${call.threadId}:${call.callId}`;
 const UNARCHIVE_SUBAGENT = "subagents.unarchive";
 
 // The tools only the agent that started subagents has.
@@ -147,59 +179,30 @@ const STARTER_ONLY = new Set([
   UNARCHIVE_SUBAGENT,
 ]);
 
-// Everyone whose words the thread's agent read, each with the agents their words came through:
-// those who wrote in the thread or answered its questions, and those who steered the messages
-// other agents sent it. Each person and way once.
-export function steeringIn(rows: readonly TranscriptRow[]): Steering[] {
-  const steering = new Map<string, Steering>();
-  const add = (entry: Steering) => {
-    const key = JSON.stringify([entry.userId, entry.via]);
-    if (!steering.has(key)) steering.set(key, entry);
-  };
-  for (const row of rows) {
-    if (row.kind === "human")
-      add({ userId: row.author.userId, name: personLabel(row.author), via: [] });
-    else if (row.kind === "relay") row.steeredBy.forEach(add);
-    else if (row.kind === "tool" && row.answers && row.decision) {
-      add({ userId: row.decision.by.userId, name: personLabel(row.decision.by), via: [] });
-    }
-  }
-  return [...steering.values()];
-}
-
-// Everyone whose words steered the thread's agent, named `self`, each person once by the shortest
-// way their words came: the agents it passed through, ending in `self`. The agent that started
-// subagents shows as `agentName`. Null when no one did.
-export function steeringParts(
-  rows: readonly TranscriptRow[],
-  self: string,
-  agentName = AGENT_NAME,
-): { name: string; via: string[] }[] | null {
-  const shortest = new Map<string, Steering>();
-  for (const entry of steeringIn(rows)) {
-    const known = shortest.get(entry.userId);
-    if (!known || entry.via.length < known.via.length) shortest.set(entry.userId, entry);
-  }
-  const parts = [...shortest.values()].map((entry) => ({
-    name: entry.name,
-    via:
-      entry.via.length > 0
-        ? [...entry.via.map((via) => (via === AGENT_NAME ? agentName : via)), self]
-        : [],
-  }));
-  return parts.length > 0 ? parts : null;
-}
-
 // What a subagent waits on in its thread, if anything: a decision on a call, or answers.
-function needsOf({ run, rows }: Transcript): SubagentNeeds | undefined {
-  if (!run?.waitingOn) return undefined;
-  const call = rows.find((row) => row.id === run.waitingOn);
-  return call?.kind === "tool" && call.toolId === ASK_TOOL ? "answer" : "approval";
+function needsOf(run: Run | null, waiting: readonly WaitingRow[]): SubagentNeeds | undefined {
+  if (run?.status !== "waiting") return undefined;
+  const call = waiting
+    .filter((one) => !one.background && one.runId === run.id)
+    .toSorted((a, b) => a.seq - b.seq)[0];
+  if (!call) return undefined;
+  return call.waitsFor === "answer" ? "answer" : "approval";
+}
+
+// A call that waits for a person, as the subagent's state reads it.
+interface WaitingRow {
+  runId: string;
+  seq: number;
+  background: boolean;
+  waitsFor: "decision" | "answer" | null;
 }
 
 // How many messages the subagents took in, or have waiting, from one another.
-function receivedFromSubagents({ rows, inbox }: Transcript) {
-  return [...rows, ...inbox].filter(
+function receivedFromSubagents(rows: readonly TranscriptRow[], waiting: readonly QueuedInput[]) {
+  const notices = waiting.flatMap((input): Pick<RelayRow, "type" | "from">[] =>
+    input.notice ? [input.notice] : [],
+  );
+  return [...rows, ...notices].filter(
     (message) =>
       "from" in message && "type" in message && message.type === "message" && !message.from.main,
   ).length;
@@ -217,7 +220,9 @@ function lastSaid(rows: readonly TranscriptRow[]) {
 // Whether the run sent the agent that started the subagent anything.
 function reported(rows: readonly TranscriptRow[], runId: string) {
   return rows.some((row) => {
-    if (row.kind !== "tool" || row.runId !== runId || !row.output?.ok) return false;
+    if (row.kind !== "tool" || row.runId !== runId || row.background || !row.output?.ok) {
+      return false;
+    }
     if (toolIdNow(row.toolId) !== SEND_SUBAGENT_MESSAGE) return false;
     const sent = (row.output.value as { sent?: unknown } | null)?.sent;
     return Array.isArray(sent) && sent.includes(AGENT);
@@ -252,9 +257,6 @@ const nameSchema = z.string().trim().min(1).max(80);
 export function createSubagents(options: SubagentsOptions) {
   const { subagents, threads, runs, log, bus } = options;
   const now = options.now ?? (() => new Date());
-  // The subagents a person stopped along with the thread that started them, whose starter is not
-  // told of it, so that stopping a thread does not wake it again.
-  const stoppedWithStarter = new Set<string>();
 
   async function transcript(threadId: string) {
     return (await options.transcripts.of(threadId)).transcript();
@@ -266,20 +268,123 @@ export function createSubagents(options: SubagentsOptions) {
     return thread;
   }
 
+  // The messages subagent calls sent to each thread, by the call, as far as its log was read; each
+  // read takes in only what was added since.
+  const sentTo = new Map<string, { last: number; byCall: Map<string, string[]> }>();
+  async function messagesSentBy(threadId: string, call: Cause) {
+    const known = sentTo.get(threadId) ?? { last: 0, byCall: new Map<string, string[]>() };
+    for (const event of await threads.eventsAfter(threadId, known.last)) {
+      known.last = event.seq;
+      const sent =
+        event.type === "notification" && event.data.source.callId
+          ? { threadId: event.data.source.threadId, callId: event.data.source.callId }
+          : undefined;
+      if (!sent) continue;
+      const key = causeKey(sent);
+      known.byCall.set(key, [...(known.byCall.get(key) ?? []), event.id]);
+    }
+    sentTo.set(threadId, known);
+    return known.byCall.get(causeKey(call)) ?? [];
+  }
+
+  // Where the reader's thread's subagent call had its effect, in the threads they may read: the
+  // task a start gave, each message a send delivered, and the thread a stop or archive acted on.
+  async function effectsOf(row: ToolRow, reader: Reader): Promise<CallEffect[]> {
+    if (!row.output?.ok) return [];
+    const tool = toolIdNow(row.toolId);
+    const value = (row.output.value ?? {}) as { id?: unknown; name?: unknown; sent?: unknown };
+    const call = { threadId: reader.thread.id, callId: row.id };
+    const effects: CallEffect[] = [];
+    if (SUBAGENT_ACTIONS.has(tool) && typeof value.id === "string") {
+      const name = typeof value.name === "string" ? value.name : "";
+      if (tool !== START_SUBAGENT) effects.push({ kind: "thread", threadId: value.id, name });
+      for (const rowId of tool === START_SUBAGENT ? await messagesSentBy(value.id, call) : []) {
+        effects.push({ kind: "task", threadId: value.id, rowId, name });
+      }
+    } else if (tool === SEND_SUBAGENT_MESSAGE && Array.isArray(value.sent)) {
+      const reach = await reachOf(reader.thread.id);
+      const agentName =
+        reader.space && reader.settings
+          ? agentNameFrom(reader.space, reader.settings)
+          : DEFAULT_AGENT_NAME;
+      for (const label of value.sent) {
+        for (const to of reach.filter((one) => one.name === label)) {
+          for (const rowId of await messagesSentBy(to.threadId, call)) {
+            const name = to.main ? agentName : to.name;
+            effects.push({ kind: "message", threadId: to.threadId, rowId, name });
+          }
+        }
+      }
+    }
+    return await filterAsync(effects, async (effect) => {
+      const thread = await threads.find(effect.threadId);
+      return !!thread && (await options.access.can(reader.principal, thread, "read"));
+    });
+  }
+
+  // The threads the thread's agent sends messages to, retired subagents' among them, each with
+  // the label it was sent by: for the agent that started subagents, theirs; for a subagent, its
+  // starter's, as agent, and the others started with it.
+  async function reachOf(threadId: string) {
+    const me = await subagents.find(threadId);
+    const parentId = me?.parentThreadId ?? threadId;
+    const others = (await subagents.ofParents([parentId]))
+      .filter((subagent) => subagent.threadId !== threadId)
+      .map((subagent) => ({ threadId: subagent.threadId, name: subagent.name, main: false }));
+    return me ? [{ threadId: parentId, name: AGENT, main: true }, ...others] : others;
+  }
+
+  // What a subagent call shows the reader: a start names the subagent and the model it was given,
+  // with where it stands now; each call, where it had its effect.
+  async function present(reader: Reader, rows: readonly ToolRow[]) {
+    const shown = new Map<string, CallPresentation>();
+    for (const row of rows) {
+      const tool = toolIdNow(row.toolId);
+      if (!SUBAGENT_ACTIONS.has(tool) && tool !== SEND_SUBAGENT_MESSAGE) continue;
+      const presentation: CallPresentation = {};
+      const named = (row.input as { name?: unknown } | null)?.name;
+      if (tool === START_SUBAGENT && typeof named === "string") {
+        // The model as it was given back, an alias since aliases came in, read as its ref.
+        const given = row.output?.ok && (row.output.value as { model?: unknown } | null)?.model;
+        const model =
+          typeof given === "string" && reader.space
+            ? ((await options.modelRef?.(reader.space.orgId, given)) ?? given)
+            : given;
+        presentation.names = {
+          subagentName: named,
+          ...(typeof model === "string" && { model }),
+        };
+      }
+      const id = (row.output?.ok && (row.output.value as { id?: unknown } | null)?.id) || null;
+      if (tool === START_SUBAGENT && typeof id === "string") {
+        const subagent = await subagents.find(id);
+        if (subagent) presentation.subagent = await summaryOf(subagent);
+        presentation.live = true;
+      }
+      const effects = await effectsOf(row, reader);
+      if (effects.length > 0) presentation.effects = effects;
+      shown.set(row.id, presentation);
+    }
+    return (row: ToolRow) => shown.get(row.id);
+  }
+
   async function live(parentThreadId: string) {
     return (await subagents.ofParents([parentThreadId])).filter((subagent) => !subagent.archivedAt);
   }
 
   // Where the subagent stands now.
-  async function summaryOf(subagent: SubagentRecord, given?: Transcript): Promise<SubagentSummary> {
-    const read = given ?? (await transcript(subagent.threadId));
+  async function summaryOf(subagent: SubagentRecord): Promise<SubagentSummary> {
     const base = { threadId: subagent.threadId, name: subagent.name };
     if (subagent.archivedAt) return { ...base, state: "archived" };
-    if (await runs.active(subagent.threadId)) {
-      const needs = needsOf(read);
+    const active = await runs.active(subagent.threadId);
+    if (active) {
+      const needs =
+        active.status === "waiting"
+          ? needsOf(active, await options.calls.waitingIn([subagent.threadId]))
+          : undefined;
       return { ...base, state: "working", ...(needs && { needs }) };
     }
-    if (waking(read.inbox).length > 0) return { ...base, state: "queued" };
+    if (await queue.wakes(subagent.threadId)) return { ...base, state: "queued" };
     const state: SubagentState =
       (await runs.latest(subagent.threadId))?.status === "cancelled" ? "stopped" : "idle";
     return { ...base, state };
@@ -295,7 +400,18 @@ export function createSubagents(options: SubagentsOptions) {
     return (await runs.activeIn(siblings)).length < RUNNING_LIMIT;
   }
 
-  const { notifier, watches } = options;
+  const { queue, watches } = options;
+  // What another system adds to a start, once it has said.
+  let extension: SubagentExtension | null = null;
+
+  // Tells the thread's agent, as the call that made what sends it, where there is one.
+  async function notify(threadId: string, notice: Notification, source?: string | null) {
+    await queue.enqueue(
+      threadId,
+      { kind: "notice", notice },
+      source ? { source: { callId: source } } : {},
+    );
+  }
 
   // Sends another agent's message to the thread, with the call that sent it.
   async function deliver(
@@ -307,27 +423,29 @@ export function createSubagents(options: SubagentsOptions) {
       steeredBy: Steering[];
       task?: SubagentTask;
       call: Cause;
+      // The call in the receiving thread that made the sender, for a subagent's to its starter.
+      source?: string | null;
     },
   ) {
-    const { text, from, to, steeredBy, task, call } = message;
-    await notifier.send(threadId, {
-      kind: "message",
-      source: { ...from, callId: call.callId },
-      text,
-      people: steeredBy,
-      to,
-      ...(task && { task }),
-    });
-  }
-
-  // Wakes the starter's subagents that wait for a place to run, oldest first, while places are
-  // free.
-  async function fillPlaces(parentThreadId: string) {
-    for (const subagent of await live(parentThreadId)) {
-      if (await runs.active(subagent.threadId)) continue;
-      if (waking((await transcript(subagent.threadId)).inbox).length === 0) continue;
-      await notifier.wake(subagent.threadId);
-    }
+    const { text, from, to, steeredBy, task, call, source } = message;
+    await queue.enqueue(
+      threadId,
+      {
+        kind: "notice",
+        notice: {
+          kind: "message",
+          source: { ...from, callId: call.callId },
+          text,
+          people: steeredBy,
+          to,
+          ...(task && { task }),
+        },
+      },
+      {
+        origin: { kind: "subagent", id: from.threadId },
+        ...(source && { source: { callId: source } }),
+      },
+    );
   }
 
   // The subagent as the source of a notification its starter is sent, with the row it came of.
@@ -438,28 +556,66 @@ export function createSubagents(options: SubagentsOptions) {
     };
   }
 
-  // Fires the watches on the starter's subagents that now hold, its own and its subagents', each
-  // once. Those of one thread holding together with the same words are one notice, which lists the
-  // calls it answers.
-  async function checkWatches(parentThreadId: string) {
-    const notices = new Map<string, NonNullable<Awaited<ReturnType<typeof noticeFor>>>>();
-    for (const watch of await watches.on(parentThreadId, "subagents")) {
+  // Fires the watches on subagents that now hold, each once: those on the starter's subagents, or
+  // with none named every open one. Those of one thread holding together with the same words are
+  // one notice, which lists the calls it answers, told in a write of that thread that ends them,
+  // so a watch whose check was missed fires on the next pass and never twice.
+  async function checkWatches(parentThreadId?: string) {
+    const open = parentThreadId
+      ? await watches.on(parentThreadId, "subagents")
+      : await watches.open("subagents");
+    const groups = new Map<
+      string,
+      { threadId: string; notice: NonNullable<Awaited<ReturnType<typeof noticeFor>>>; of: Watch[] }
+    >();
+    for (const watch of open) {
       const notice = await noticeFor(watch);
-      if (!notice || !(await watches.end(watch.id))) continue;
+      if (!notice) continue;
       const key = JSON.stringify([watch.threadId, notice.text]);
-      const first = notices.get(key);
-      if (!first) notices.set(key, notice);
-      else if (watch.callId) first.source.callIds = [...(first.source.callIds ?? []), watch.callId];
+      const group = groups.get(key);
+      if (group) group.of.push(watch);
+      else groups.set(key, { threadId: watch.threadId, notice, of: [watch] });
     }
-    for (const [key, notice] of notices) await notifier.send(JSON.parse(key)[0] as string, notice);
+    let fired = 0;
+    for (const { threadId, notice, of } of groups.values()) {
+      await log.write(threadId, async () => {
+        const ended = await filterAsync(of, async (watch) => watches.end(watch.id));
+        if (ended.length === 0) return;
+        const calls = ended.flatMap((watch) => (watch.callId ? [watch.callId] : []));
+        const { callId: _callId, callIds: _callIds, ...source } = notice.source;
+        await queue.enqueue(
+          threadId,
+          {
+            kind: "notice",
+            notice: {
+              ...notice,
+              source: {
+                ...source,
+                ...(calls[0] && { callId: calls[0] }),
+                ...(calls.length > 1 && { callIds: calls.slice(1) }),
+              },
+            },
+          },
+          { key: `watch:${ended[0]!.id}`, ...(calls[0] && { source: { callId: calls[0] } }) },
+        );
+        fired += 1;
+      });
+    }
+    return fired;
   }
+  // Every open watch looked at again as time goes on, for a check an instance missed.
+  const watchPass = options.ticker?.("subagent-watches", async () => checkWatches(), WATCH_PASS_MS);
 
   // Refuses messages between the starter's subagents past the limit, telling its agent the first
   // time one is refused, and by which call.
   async function limitBetween(parentThreadId: string, sending: number, call: Cause) {
     let sent = 0;
     for (const subagent of await subagents.ofParents([parentThreadId])) {
-      sent += receivedFromSubagents(await transcript(subagent.threadId));
+      const read = await transcript(subagent.threadId);
+      sent += receivedFromSubagents(
+        read.rows,
+        await queue.waiting(subagent.threadId, undefined, read),
+      );
     }
     if (sent + sending <= MESSAGE_LIMIT) return;
     const told = (await threads.eventsOfType(parentThreadId, "subagent.limited")).length > 0;
@@ -477,12 +633,10 @@ export function createSubagents(options: SubagentsOptions) {
     );
   }
 
-  // Asks the subagent's run to stop, as the person, or as its starter's agent with null.
-  async function stopRun(threadId: string, userId: string | null) {
-    const run = await runs.requestCancel(threadId, userId, now());
-    if (run?.status === "waiting") await runs.resume(run.id);
-    if (run) bus.wake(threadId);
-    return run;
+  // Asks the subagent's run to stop, as the person, or as its starter's agent with null; a person
+  // stopping the thread that started it stops it silently, so its starter is not woken again.
+  async function stopRun(threadId: string, userId: string | null, silent = false) {
+    return (await options.stop({ threadId }, userId, { silent }))[0] ?? null;
   }
 
   // The sender of the thread's agent's messages, and what its people's ways read once they pass
@@ -527,7 +681,7 @@ export function createSubagents(options: SubagentsOptions) {
   // What listing tells of a subagent: where it stands, what it said last and its latest calls.
   async function detailOf(subagent: SubagentRecord) {
     const read = await transcript(subagent.threadId);
-    const summary = await summaryOf(subagent, read);
+    const summary = await summaryOf(subagent);
     const steps = read.rows
       .filter((row) => row.kind === "tool")
       .slice(-5)
@@ -584,6 +738,16 @@ export function createSubagents(options: SubagentsOptions) {
       shown?: { alias?: string; name?: string };
     } | null,
   ) {
+    // Checked and made in one write of the starter's thread, so two starts at once count each
+    // other.
+    return ctx.write(async () => startHeld(input, ctx, model));
+  }
+
+  async function startHeld(
+    input: StartInput,
+    ctx: ToolContext,
+    model: Parameters<typeof startOne>[2],
+  ) {
     const parent = await threadOf(ctx.threadId);
     if (await subagents.find(parent.id)) throw new ToolRefusal("Subagents cannot start subagents.");
     const others = await live(parent.id);
@@ -598,9 +762,8 @@ export function createSubagents(options: SubagentsOptions) {
     if (others.some((subagent) => sameName(subagent.name, input.name))) {
       throw new ToolRefusal(`A subagent is already labelled ${input.name}.`);
     }
-    const handover = input.tasks ? options.taskHandover?.() : undefined;
-    if (input.tasks && handover) {
-      const refusal = await handover.check(parent.id, input.tasks);
+    if (input.tasks && extension) {
+      const refusal = await extension.check(parent.id, input.tasks);
       if (refusal) throw new ToolRefusal(refusal);
     }
     const thread = await threads.create({
@@ -616,8 +779,8 @@ export function createSubagents(options: SubagentsOptions) {
       threadId: thread.id,
       parentThreadId: parent.id,
       name: input.name,
+      callId: ctx.callId,
       instructions: input.instructions ?? null,
-      shareTasks: (input.share_tasks ?? false) || !!input.tasks,
     });
     const { from, via } = await senderOf(parent);
     await deliver(thread.id, {
@@ -631,9 +794,10 @@ export function createSubagents(options: SubagentsOptions) {
       },
       call: { threadId: parent.id, callId: ctx.callId },
     });
-    if (input.tasks && handover) {
-      await handover.give(parent.id, input.tasks, subagent);
-    }
+    await extension?.started(subagent, {
+      ...(input.tasks && { tasks: input.tasks }),
+      shareTasks: input.share_tasks ?? false,
+    });
     bus.activity({ threadId: parent.id });
     return {
       id: thread.id,
@@ -717,7 +881,16 @@ export function createSubagents(options: SubagentsOptions) {
           const siblings =
             others.length > 0 ? await pick(me.parentThreadId, others, me.threadId) : [];
           if (siblings.length > 0) await limitBetween(me.parentThreadId, siblings.length, call);
-          if (toAgent) await deliver(me.parentThreadId, { text, from, to: AGENT, steeredBy, call });
+          if (toAgent) {
+            await deliver(me.parentThreadId, {
+              text,
+              from,
+              to: AGENT,
+              steeredBy,
+              call,
+              source: me.callId,
+            });
+          }
           for (const sibling of siblings) {
             await deliver(sibling.threadId, { text, from, to: sibling.name, steeredBy, call });
           }
@@ -844,8 +1017,13 @@ export function createSubagents(options: SubagentsOptions) {
     run({ subagent }, ctx) {
       return refusing(async () => {
         const [found] = await pick(ctx.threadId, [subagent]);
-        await stopRun(found!.threadId, null);
-        await subagents.setArchived(found!.threadId, now());
+        await ctx.write(async () => {
+          await stopRun(found!.threadId, null);
+          // Archived meanwhile: nothing is stopped or changed.
+          if (!(await subagents.archive(found!.threadId, now()))) {
+            throw new ToolRefusal(`${found!.name} is archived already.`);
+          }
+        });
         bus.activity({ threadId: found!.threadId });
         await checkWatches(ctx.threadId);
         return { id: found!.threadId, name: found!.name, state: "archived" };
@@ -863,20 +1041,25 @@ export function createSubagents(options: SubagentsOptions) {
     risk: () => "normal",
     run({ subagent: label }, ctx) {
       return refusing(async () => {
-        const all = await subagents.ofParents([ctx.threadId]);
-        const found = all.findLast((one) => known(one, label));
-        if (!found) throw new ToolRefusal(`No subagent is labelled ${label}.`);
-        if (!found.archivedAt) throw new ToolRefusal(`${found.name} is not archived.`);
-        const others = await live(ctx.threadId);
-        if (others.length >= LIVE_LIMIT) {
-          throw new ToolRefusal(
-            `This thread already has ${LIVE_LIMIT} subagents. Archive some you no longer need.`,
-          );
-        }
-        if (others.some((other) => sameName(other.name, found.name))) {
-          throw new ToolRefusal(`Another subagent is labelled ${found.name}.`);
-        }
-        await subagents.setArchived(found.threadId, null);
+        const found = await ctx.write(async () => {
+          const all = await subagents.ofParents([ctx.threadId]);
+          const found = all.findLast((one) => known(one, label));
+          if (!found) throw new ToolRefusal(`No subagent is labelled ${label}.`);
+          if (!found.archivedAt) throw new ToolRefusal(`${found.name} is not archived.`);
+          const others = await live(ctx.threadId);
+          if (others.length >= LIVE_LIMIT) {
+            throw new ToolRefusal(
+              `This thread already has ${LIVE_LIMIT} subagents. Archive some you no longer need.`,
+            );
+          }
+          if (others.some((other) => sameName(other.name, found.name))) {
+            throw new ToolRefusal(`Another subagent is labelled ${found.name}.`);
+          }
+          if (!(await subagents.unarchive(found.threadId))) {
+            throw new ToolRefusal(`${found.name} is not archived.`);
+          }
+          return found;
+        });
         bus.activity({ threadId: found.threadId });
         return {
           id: found.threadId,
@@ -897,6 +1080,7 @@ export function createSubagents(options: SubagentsOptions) {
         guidance: SUBAGENTS_GUIDANCE,
         options: [{ id: CHOOSE_MODELS, title: "Let the agent choose subagents' models" }],
         tools: [start, send, list, watch, stop, archive, unarchive],
+        present,
       };
     },
 
@@ -906,23 +1090,16 @@ export function createSubagents(options: SubagentsOptions) {
     // one past its starter's limit of running ones.
     mayStart,
 
-    // Lets the subagent work on its starter's task list, if it does not already.
-    async shareTasks(threadId: string) {
-      const subagent = await subagents.find(threadId);
-      if (subagent && !subagent.shareTasks) await subagents.setShareTasks(threadId);
+    // What another system adds to a start: the tasks it gives, and what the framing says.
+    extend(more: SubagentExtension) {
+      extension = more;
     },
 
     // The threads the thread's agent sends messages to, retired subagents' among them, each with
     // the label it was sent by: for the agent that started subagents, theirs; for a subagent, its
     // starter's, as agent, and the others started with it.
-    async reach(threadId: string): Promise<{ threadId: string; name: string; main: boolean }[]> {
-      const me = await subagents.find(threadId);
-      const parentId = me?.parentThreadId ?? threadId;
-      const others = (await subagents.ofParents([parentId]))
-        .filter((subagent) => subagent.threadId !== threadId)
-        .map((subagent) => ({ threadId: subagent.threadId, name: subagent.name, main: false }));
-      return me ? [{ threadId: parentId, name: AGENT, main: true }, ...others] : others;
-    },
+    reach: async (threadId: string): Promise<{ threadId: string; name: string; main: boolean }[]> =>
+      reachOf(threadId),
 
     async summaryOf(threadId: string) {
       const subagent = await subagents.find(threadId);
@@ -972,7 +1149,7 @@ export function createSubagents(options: SubagentsOptions) {
         name: subagent.name,
         parent: task?.from.name ?? (await threads.find(subagent.parentThreadId))?.title ?? UNTITLED,
         ...(subagent.instructions && { instructions: subagent.instructions }),
-        ...(subagent.shareTasks && { sharesTasks: true }),
+        ...(await extension?.framing(subagent.threadId)),
       });
       const fork = task?.task?.fork;
       if (!fork) return [framing];
@@ -987,44 +1164,60 @@ export function createSubagents(options: SubagentsOptions) {
     },
 
     // Once a subagent's run ends with nothing more to do, tells its starter's agent if it failed,
-    // was stopped or ended without reporting, lets the next subagent waiting for a place run, and
-    // fires the watches that now hold.
-    async ended(run: Run) {
+    // was stopped or ended without reporting, in the write that ends it. A subagent waiting for a
+    // place starts on the worker's next pass.
+    async ended(run: Run, next: Run | null) {
       const subagent = await subagents.find(run.threadId);
       if (!subagent) return;
-      const quiet = run.status === "cancelled" && stoppedWithStarter.delete(subagent.threadId);
-      if (!(await runs.active(subagent.threadId)) && !subagent.archivedAt && !quiet) {
+      const quiet = run.status === "cancelled" && run.cancelSilent;
+      if (!next && !subagent.archivedAt && !quiet) {
         const notice = await endNotice(subagent, run);
-        if (notice) await notifier.send(subagent.parentThreadId, notice);
+        if (notice) await notify(subagent.parentThreadId, notice, subagent.callId);
       }
-      await fillPlaces(subagent.parentThreadId);
-      await checkWatches(subagent.parentThreadId);
+    },
+
+    // Fires the watches that hold: on the starter's subagents, or every open one.
+    checkWatches,
+
+    // The pass over open watches, on every instance.
+    start: async () => watchPass?.start(),
+    stop: async () => watchPass?.stop(),
+
+    // Fires the watches on a subagent's starter that hold once its run's end is kept.
+    async endKept(run: Run) {
+      const subagent = await subagents.find(run.threadId);
+      if (subagent) await checkWatches(subagent.parentThreadId);
     },
 
     // Asks every running subagent of the thread's agent to stop, as the person; whether any was.
     async stopAll(parentThreadId: string, userId: string) {
       let any = false;
       for (const subagent of await live(parentThreadId)) {
-        if (!(await stopRun(subagent.threadId, userId))) continue;
-        stoppedWithStarter.add(subagent.threadId);
-        any = true;
+        if (await stopRun(subagent.threadId, userId, true)) any = true;
       }
       return any;
     },
 
     // Brings a retired subagent back.
     async unarchive(threadId: string) {
-      const subagent = await subagents.find(threadId);
-      if (!subagent?.archivedAt) throw new ServiceError(409, "This subagent is not archived");
-      if ((await live(subagent.parentThreadId)).length >= LIVE_LIMIT) {
-        throw new ServiceError(409, `The thread already has ${LIVE_LIMIT} subagents`);
-      }
-      if (
-        (await live(subagent.parentThreadId)).some((other) => sameName(other.name, subagent.name))
-      ) {
-        throw new ServiceError(409, `Another subagent is named ${subagent.name}`);
-      }
-      await subagents.setArchived(threadId, null);
+      const found = await subagents.find(threadId);
+      if (!found?.archivedAt) throw new ServiceError(409, "This subagent is not archived");
+      // Checked and changed in one write of its starter's thread, as a start is.
+      const { result: subagent } = await log.write(found.parentThreadId, async () => {
+        const subagent = await subagents.find(threadId);
+        if (!subagent?.archivedAt) throw new ServiceError(409, "This subagent is not archived");
+        const others = await live(subagent.parentThreadId);
+        if (others.length >= LIVE_LIMIT) {
+          throw new ServiceError(409, `The thread already has ${LIVE_LIMIT} subagents`);
+        }
+        if (others.some((other) => sameName(other.name, subagent.name))) {
+          throw new ServiceError(409, `Another subagent is named ${subagent.name}`);
+        }
+        if (!(await subagents.unarchive(threadId))) {
+          throw new ServiceError(409, "This subagent is not archived");
+        }
+        return subagent;
+      });
       bus.activity({ threadId });
       bus.activity({ threadId: subagent.parentThreadId });
     },

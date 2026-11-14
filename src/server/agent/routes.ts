@@ -9,6 +9,9 @@ import {
   toolsetEnabledChangeSchema,
 } from "@/shared/tools.ts";
 
+import type { ThreadAccess } from "@/server/access/access.ts";
+import type { Calls } from "@/server/calls/calls.ts";
+
 import type { ToolPolicies } from "./tool-policies.ts";
 import type { ToolDecisions } from "./tools.ts";
 
@@ -25,28 +28,37 @@ const toolPolicyInput = checkedBody(toolPolicyInputSchema);
 
 const toolsetEnabledChange = jsonBody(toolsetEnabledChangeSchema, "enabled is true or false");
 
-export function toolRoutes(options: { tools: ToolDecisions; toolPolicies: ToolPolicies }) {
+export function toolRoutes(options: {
+  tools: ToolDecisions;
+  toolPolicies: ToolPolicies;
+  // Who may act in a thread, and its calls; apps that serve no threads go without.
+  access?: Pick<ThreadAccess, "require">;
+  calls?: Pick<Calls, "decide" | "answer" | "toJob" | "cancel">;
+}) {
   const { tools, toolPolicies } = options;
+  const calls = () => options.calls!;
+  const readerOf = async (c: { var: ApiEnv["Variables"] }, id: string) =>
+    options.access!.require(signedIn(c.var.principal), id, "post");
   return new Hono<ApiEnv>()
     .post("/v1/threads/:id/tools/:callId/decision", toolDecision, async (c) => {
       const { id, callId } = c.req.param();
       const decision = c.req.valid("json");
-      await tools.decide(signedIn(c.var.principal), id, callId, decision);
+      await calls().decide(await readerOf(c, id), callId, decision);
       return c.json({ ok: true }, 200);
     })
     .post("/v1/threads/:id/tools/:callId/background", async (c) => {
       const { id, callId } = c.req.param();
-      await tools.moveToBackground(signedIn(c.var.principal), id, callId);
+      await calls().toJob(await readerOf(c, id), callId);
       return c.json({ ok: true }, 200);
     })
     .post("/v1/threads/:id/tools/:callId/cancel", async (c) => {
       const { id, callId } = c.req.param();
-      await tools.cancelBackground(signedIn(c.var.principal), id, callId);
+      await calls().cancel(await readerOf(c, id), callId);
       return c.json({ ok: true }, 200);
     })
     .post("/v1/threads/:id/tools/:callId/answer", toolAnswer, async (c) => {
       const { id, callId } = c.req.param();
-      await tools.answer(signedIn(c.var.principal), id, callId, c.req.valid("json").answers);
+      await calls().answer(await readerOf(c, id), callId, c.req.valid("json").answers);
       return c.json({ ok: true }, 200);
     })
     .get("/v1/org/tools", async (c) => {

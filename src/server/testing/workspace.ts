@@ -7,10 +7,11 @@
 
 import { rmSync } from "node:fs";
 
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterEach, expect } from "vite-plus/test";
 
-import type { RunWorkerOptions } from "@/server/agent/runs.ts";
+import type { RunWorkerOptions } from "@/server/execution/worker.ts";
+import type { AfterCommit } from "@/server/sync/sync.ts";
 import type { Toolset } from "@/server/agent/tools.ts";
 import { compose, type Systems } from "@/server/compose.ts";
 import { createCipher } from "@/server/kernel/cipher.ts";
@@ -26,6 +27,8 @@ import {
 } from "@/server/models/service.ts";
 import type { OrgRole } from "@/server/orgs/directory.ts";
 import * as schema from "@/server/schema.ts";
+import { eventSummary } from "@/server/threads/log.ts";
+import { transcriptOf } from "@/shared/transcript.ts";
 import type { Space, SpaceRole } from "@/server/spaces/service.ts";
 import { type ModelPair, replyCandidates } from "@/shared/models.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
@@ -35,11 +38,16 @@ import { mcpStandIn } from "../../../mock/mcp.ts";
 import { scimClient } from "../../../mock/directory.ts";
 import { openTestDatabase, type TestDatabase } from "./database.ts";
 import { invariants } from "./invariants.ts";
+import { wordsIn } from "@/server/agent/tool-authority.ts";
+import { steeringIn, steeringOf } from "@/server/calls/influence.ts";
 import { createSeed, joinSpace, seedRoutes } from "./seed.ts";
 import { scriptedModel } from "./scripted-model.ts";
 
-// Never called by these tests.
-const unusedConnections = {} as Connections;
+// Never called by these tests, but started and stopped with the server.
+const unusedConnections = {
+  start: async () => {},
+  stop: async () => {},
+} as unknown as Connections;
 const unusedModels = {} as Models;
 
 const baseUrl = "http://localhost:4783";
@@ -100,6 +108,9 @@ afterEach(async () => {
   await Promise.all(all.map(async ({ sync }) => sync.stop()));
   const broken = (await Promise.all(all.map(async ({ db }) => invariants(db)))).flat();
   expect(broken).toEqual([]);
+  // What waits for each thread's agent by its rows is what its log says waits.
+  const disagree = (await Promise.all(all.map(async (systems) => rowsAgainstLogs(systems)))).flat();
+  expect(disagree).toEqual([]);
   const { outOfOrder, insideCalls } = all.reduce(
     (sum, { sync }) => ({
       outOfOrder: sum.outOfOrder + sync.stats.outOfOrder,
@@ -110,6 +121,92 @@ afterEach(async () => {
   expect({ outOfOrder, insideCalls }).toEqual({ outOfOrder: 0, insideCalls: 0 });
 });
 
+// A step that fails the transaction it runs in, the first time only, as a deadlock does: the
+// transaction is run again from its start.
+export function deadlockOnce() {
+  let thrown = false;
+  return () => {
+    if (thrown) return;
+    thrown = true;
+    throw Object.assign(new Error("deadlock, for the test"), { code: "40P01" });
+  };
+}
+
+// What the rule reads of words, as one string per thread to compare: each person's words by seq,
+// and who wrote last at each seq.
+function wordsKey(words: readonly { seq: number; userId: string }[]) {
+  const last = new Map<number, string>();
+  for (const word of words) last.set(word.seq, word.userId);
+  return JSON.stringify({
+    words: [...new Set(words.map((word) => `${word.seq} ${word.userId}`))].toSorted(),
+    last: [...last],
+  });
+}
+
+// The threads whose rows of inputs say something else waits than their logs do, whose words by
+// rows are not those their folds read, or whose calls' rows disagree with their logs.
+async function rowsAgainstLogs({ db, queue, threadStore }: Systems) {
+  const ids = (await db.execute<{ id: string }>(sql`select id from thread order by id`)).rows;
+  const disagree: { threadId: string; rows: string[]; log: string[] }[] = [];
+  for (const { id } of ids) {
+    const {
+      pending,
+      inbox,
+      rows: folded,
+    } = transcriptOf((await threadStore.eventsAfter(id, 0)).map(eventSummary));
+    const log = [...pending, ...inbox].map((input) => input.id).toSorted();
+    const rows = (await queue.waiting(id)).map((input) => input.id).toSorted();
+    if (JSON.stringify(rows) !== JSON.stringify(log)) disagree.push({ threadId: id, rows, log });
+    const words = await queue.words(id);
+    const byRows = [wordsKey(words), JSON.stringify(steeringOf(words))];
+    const byFold = [wordsKey(wordsIn(folded)), JSON.stringify(steeringIn(folded))];
+    if (JSON.stringify(byRows) !== JSON.stringify(byFold)) {
+      disagree.push({ threadId: id, rows: byRows, log: byFold });
+    }
+  }
+  // Each call stands as its row in its branch's log says: open and not waiting while ready or
+  // running, waiting for a person while it waits, and ended alike once it ended.
+  const calls = (
+    await db.execute<{ thread_id: string; id: string; branch_id: string; status: string }>(
+      sql`select thread_id, id, branch_id, status from call order by thread_id, branch_id`,
+    )
+  ).rows;
+  const folds = new Map<string, ReturnType<typeof transcriptOf>>();
+  for (const call of calls) {
+    const at = `${call.thread_id} ${call.branch_id}`;
+    let fold = folds.get(at);
+    if (!fold) {
+      fold = transcriptOf(
+        (await threadStore.eventsAfter(call.thread_id, 0, call.branch_id)).map(eventSummary),
+      );
+      folds.set(at, fold);
+    }
+    const row = fold.rows.find((one) => one.kind === "tool" && one.id === call.id);
+    const state =
+      row?.kind !== "tool"
+        ? "missing"
+        : row.state === "allowed" || (row.state === "pending" && !row.waits)
+          ? "open"
+          : row.state === "pending"
+            ? "waiting"
+            : "ended";
+    const expected =
+      call.status === "ready" || call.status === "running"
+        ? "open"
+        : call.status === "waiting"
+          ? "waiting"
+          : "ended";
+    if (state !== expected) {
+      disagree.push({
+        threadId: call.thread_id,
+        rows: [`${call.id} ${call.status}`],
+        log: [state],
+      });
+    }
+  }
+  return disagree;
+}
+
 export function setup(
   workerOptions: Partial<RunWorkerOptions> = {},
   {
@@ -118,6 +215,9 @@ export function setup(
     operatorEmails = [] as string[],
     // Toolsets of Mage's own beside the usual ones, for tests of tools that need one.
     toolsets = [] as Toolset[],
+    // Stands between what live output waits on a commit for and the commit, for tests that hold
+    // it back.
+    liveAfterCommit = undefined as ((afterCommit: AfterCommit) => AfterCommit) | undefined,
     // A database another workspace shares, as a second server instance would: its `database`.
     database = undefined as TestDatabase | undefined,
     // Whether the app has the routes tests arrange data through.
@@ -282,6 +382,7 @@ export function setup(
     options: {
       now: () => clock.now,
       toolsets,
+      ...(liveAfterCommit && { liveAfterCommit }),
       heartbeatMs: 20,
       pingDatabase: () => Promise.resolve(true),
       worker: {
@@ -393,7 +494,7 @@ export function setup(
     titleModel,
     titledWith,
     makeWorker,
-    triggersFor: systems.makeTriggers,
+    schedulesFor: systems.makeSchedules,
     logLines,
     listening,
     clock,

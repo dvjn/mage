@@ -22,6 +22,7 @@ async function asides(count: number) {
       });
     }
   });
+  await workspace.queue.fromLog(thread.id);
   async function detail(who: { cookie: string }) {
     return (await (
       await workspace.api("GET", `/threads/${thread.id}`, who.cookie)

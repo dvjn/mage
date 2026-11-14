@@ -16,7 +16,7 @@ import type { Transcripts } from "@/server/threads/transcripts.ts";
 import { effortSchema } from "@/shared/threads/thread.ts";
 
 import { askTool } from "./ask.ts";
-import { compact as compactThread, wholeWhereRead } from "./compaction.ts";
+import { compact as compactThread, wholeWhereRead } from "@/server/execution/compaction.ts";
 import type { Toolset, ToolSpec } from "./tools.ts";
 import { personLabel } from "@/shared/people.ts";
 import { parseModelRef } from "@/shared/model-ref.ts";

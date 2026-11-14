@@ -21,6 +21,7 @@ async function setup() {
   );
   await db.execute(sql`set session_replication_role = default`);
   // What a follower is sent: on each hint, what is kept of the call, past what it was sent before.
+  // A hint is heard once the write that published it commits, as the real signals deliver it.
   const sent: LiveChunk[] = [];
   const told = new Map<string, number>();
   let reading: Promise<void> = Promise.resolve();
@@ -28,21 +29,24 @@ async function setup() {
   const made = createLive({
     store: createLiveStore(db),
     transact: sync.transact,
+    afterCommit: sync.afterCommit,
     ordered: sync.ordered,
     bus: {
       publish: (_threadId: string, hint: ThreadHint) => {
         if (hint.kind !== "live") return;
-        reading = reading.then(async () => {
-          const chunk = await made.tail(hint.callId);
-          if (!chunk) return;
-          const known = Math.max(0, (told.get(chunk.callId) ?? 0) - chunk.offset);
-          const text = chunk.text.slice(known);
-          if (!text && !chunk.progress) return;
-          told.set(
-            chunk.callId,
-            Math.max(told.get(chunk.callId) ?? 0, chunk.offset + chunk.text.length),
-          );
-          sent.push({ ...chunk, offset: chunk.offset + known, text });
+        sync.afterCommit(() => {
+          reading = reading.then(async () => {
+            const chunk = await made.tail(hint.callId);
+            if (!chunk) return;
+            const known = Math.max(0, (told.get(chunk.callId) ?? 0) - chunk.offset);
+            const text = chunk.text.slice(known);
+            if (!text && !chunk.progress) return;
+            told.set(
+              chunk.callId,
+              Math.max(told.get(chunk.callId) ?? 0, chunk.offset + chunk.text.length),
+            );
+            sent.push({ ...chunk, offset: chunk.offset + known, text });
+          });
         });
       },
     },
@@ -58,8 +62,11 @@ async function setup() {
       await reading;
     },
   };
-  const open = (threadId: string, callId: string) => live.open(threadId, callId, () => holding.now);
-  return { db, live, sent, holding, open };
+  // The id each call is stored under while it is held here: its own, or the one it moved to.
+  const ids = new Map<string, string>();
+  const open = (threadId: string, callId: string) =>
+    live.open(threadId, callId, async () => (holding.now ? (ids.get(callId) ?? callId) : null));
+  return { db, live, sent, holding, open, ids };
 }
 
 // Moves the clock on, and waits for what the timers it set off store.
@@ -110,7 +117,12 @@ describe("live output", () => {
     await advance(live, LIVE_FLUSH_MS);
     call.output("c".repeat(10));
     await live.settled();
-    expect(sent.at(-1)).toMatchObject({ offset: LIVE_CHARS, from: 10 });
+    // A follower may read two pieces stored close together at once: what it was sent ends at the
+    // end of all that was printed, kept from where the cut falls.
+    const last = sent.at(-1)!;
+    expect(last.offset + last.text.length).toBe(LIVE_CHARS + 10);
+    expect(last.from).toBe(10);
+    expect(last.text.endsWith("c".repeat(10))).toBe(true);
     const [tail] = await live.inThread("t");
     expect(tail).toMatchObject({ callId: "c", offset: 10, from: 10 });
     expect(tail!.text).toHaveLength(LIVE_CHARS);
@@ -188,11 +200,12 @@ describe("live output", () => {
   });
 
   it("keeps what a call printed when it goes on under another id", async () => {
-    const { live, sent, open } = await setup();
+    const { live, sent, open, ids } = await setup();
     const call = open("t", "run-call");
     call.output("one\n");
     await live.settled();
-    await live.move("run-call", "job", () => true);
+    await live.move("run-call", "job");
+    ids.set("run-call", "job");
     await live.moved("t", "job");
     expect(sent.at(-1)).toEqual({ callId: "job", offset: 0, text: "one\n", from: 0 });
     await advance(live, LIVE_FLUSH_MS);
@@ -201,6 +214,27 @@ describe("live output", () => {
     expect(sent.at(-1)).toEqual({ callId: "job", offset: 4, text: "two\n", from: 0 });
     expect(await live.of("run-call")).toBeNull();
     expect(await live.of("job")).toEqual({ text: "one\ntwo\n" });
+  });
+
+  it("drops a piece stored after the call it went on as ended, and forgets its reporter", async () => {
+    const { live, sent, open, ids, holding } = await setup();
+    const call = open("t", "run-call");
+    call.output("one\n");
+    await live.settled();
+    await live.move("run-call", "job");
+    ids.set("run-call", "job");
+    // The job ended elsewhere: nothing here holds it any more.
+    holding.now = false;
+    await live.end("job");
+    await advance(live, LIVE_FLUSH_MS);
+    call.output("two\n");
+    await live.settled();
+    holding.now = true;
+    await advance(live, LIVE_FLUSH_MS);
+    call.output("three\n");
+    await live.settled();
+    expect(sent).toHaveLength(1);
+    expect(await live.of("job")).toBeNull();
   });
 
   it("gives each thread its own calls", async () => {

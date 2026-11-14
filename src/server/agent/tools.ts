@@ -12,20 +12,15 @@ import { createHash } from "node:crypto";
 import * as z from "zod";
 
 import { ServiceError } from "@/server/kernel/errors.ts";
-import type { Signals } from "@/server/sync/signals.ts";
 import type { ModelTool } from "@/server/models/gateway.ts";
 import type { Directory } from "@/server/orgs/directory.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
-import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
-import type { ThreadAccess } from "@/server/access/access.ts";
-import type { Append, ThreadLog } from "@/server/threads/log.ts";
+import type { Space, Spaces } from "@/server/spaces/service.ts";
+import type { Reader, ThreadAccess } from "@/server/access/access.ts";
 import type { Thread, NewEvent } from "@/server/threads/service.ts";
-import type { Transcripts } from "@/server/threads/transcripts.ts";
-import { type AskAnswers, askInputSchema, answersProblem } from "@/shared/ask.ts";
+import type { AskAnswers } from "@/shared/ask.ts";
 import { mcpToolOf } from "@/shared/mcp.ts";
-import { START_SUBAGENT } from "@/shared/subagents.ts";
-import { LOAD_SKILL } from "@/shared/skills.ts";
-import type { ToolRisk, ToolScope } from "@/shared/threads/events.ts";
+import type { Steering, ToolRisk, ToolScope } from "@/shared/threads/events.ts";
 import {
   toolIdNow,
   TOOL_OFF,
@@ -41,12 +36,15 @@ import {
   type ToolLevel,
   type ToolsetSource,
 } from "@/shared/tools.ts";
-import type { ToolRow, TranscriptRow } from "@/shared/transcript.ts";
+import type { ToolRow } from "@/shared/transcript.ts";
+import type { BackgroundWork } from "@/shared/calls.ts";
+import type { SubagentSummary } from "@/shared/subagents.ts";
+import type { CallEffect, ShownRow } from "@/shared/threads/rows.ts";
 
-import type { ThreadRequest } from "./compaction.ts";
+import type { ThreadRequest } from "@/server/execution/compaction.ts";
 import type { LiveReporter } from "./live.ts";
-import type { ToolsetGuidance } from "./context.ts";
-import type { RunStore } from "./runs.ts";
+import type { ThreadToolStore } from "./thread-tool-store.ts";
+import type { ToolsetGuidance } from "@/server/execution/context.ts";
 import {
   type Approval,
   canPostIn,
@@ -55,7 +53,6 @@ import {
   type Decision,
   holds,
   type Influence,
-  latestAuthor,
   mayAnswer,
   mayApprove,
   NOBODY,
@@ -67,8 +64,8 @@ import {
   riskOf as riskUnder,
   stillPosts,
   type ToolRule,
-  wordsIn,
 } from "./tool-authority.ts";
+import type { Word } from "@/server/queue/queue.ts";
 
 export type { ToolLevel };
 
@@ -108,6 +105,9 @@ export interface ToolContext {
   runAs: string | null;
   // Who approved this very call on its approval card, when someone did.
   approvedBy?: string;
+  // Everyone whose words the model had read when it asked for the call, with the agents their
+  // words came through.
+  influence: Steering[];
   // What was answered, for a tool that waits for answers.
   answers?: AskAnswers;
   // The MCP tools the run leaves out of the model's requests, those turned on among them, and a
@@ -125,7 +125,7 @@ export interface ToolContext {
   // watching the call; the model is not given it.
   live?: LiveReporter;
   write<T>(
-    work: (append: (event: NewEvent, title?: string) => Promise<unknown>) => Promise<T>,
+    work: (append: (event: NewEvent, title?: string) => Promise<{ seq: number }>) => Promise<T>,
   ): Promise<T>;
 }
 
@@ -150,9 +150,14 @@ export interface ToolSpec<I = unknown> {
   fixed?: boolean;
   // Whether a space has any use for it now; always, when not given. Tools may share one.
   usefulIn?: (space: { id: string; orgId: string }) => boolean | Promise<boolean>;
+  // False for a tool whose calls never move to the background, as those that start, check and stop
+  // jobs; a tool that waits for an answer never moves either.
+  movable?: false;
   // A tool whose every call waits for someone in the thread to answer it before it runs; who may
   // answer follows its rules as approving does, and an answer counts as its writer's words.
   waitsFor?: "answer";
+  // The tool that searches the tools a run leaves out of its requests, which it is given.
+  deferral?: "search";
   // For a tool whose calls run with the own login of the person they run as: each person's
   // connection a call with this input would go with, or null for a call that goes with shared
   // credentials, as when the input names a server whose credentials are shared. Such a call runs
@@ -196,7 +201,24 @@ export interface Toolset {
   // For a fixed one, whether the org's settings, or a space's, show it: where it may be offered.
   // Always, when not given.
   listedIn?(scope: { orgId: string; spaceId: string | null }): boolean | Promise<boolean>;
+  // What its calls among the rows show the reader beyond their names: asked once for a page.
+  present?(reader: Reader, rows: readonly ToolRow[]): Promise<Presenter>;
 }
+
+// What a call shows the reader beyond what its row holds: what it is called where that says more,
+// the card of the work it stands for, the subagent it started with what that waits on, and where
+// it had its effect. `live` says these may change with no new event.
+export interface CallPresentation {
+  names?: Partial<CallNames>;
+  work?: BackgroundWork | null;
+  effects?: CallEffect[];
+  subagent?: SubagentSummary;
+  subagentCall?: ShownRow;
+  live?: boolean;
+}
+
+// What one page's calls show, by row.
+export type Presenter = (row: ToolRow) => CallPresentation | undefined;
 
 // What a space has of tools at one moment: its toolsets, and what applies to each tool.
 export interface SpaceTools {
@@ -424,18 +446,12 @@ export interface ModelNames {
 }
 
 export interface ToolsOptions {
-  // Mage's own.
-  toolsets: Toolset[];
-  // Those orgs and spaces add.
-  scoped?: ScopedToolsets;
   settings: ToolSettingStore;
   policies: Pick<ToolPolicyStore, "inOrg">;
   directory: Pick<Directory, "groupIdsOf">;
   access: Pick<ThreadAccess, "of">;
-  // The model a call is judged under: that of the run it waits in, or the background call's own.
-  callModel?: (call: ToolRow) => Promise<string | null>;
-  // The ref a model is stored under, given that or the alias the agent knows it by.
-  modelRef?: (orgId: string, ref: string) => Promise<string>;
+  // The tools each thread turned on by searching for them.
+  threadTools: ThreadToolStore;
 }
 
 export type Tools = ReturnType<typeof createTools>;
@@ -446,6 +462,33 @@ export interface CallState {
   waitsFor: "decision" | "answer" | null;
   canAct: boolean;
   risk: ToolRisk;
+}
+
+// A call as authority reads it: what it asks, how it waits, and the decision or answer given on it,
+// if any, by whom and where in the thread.
+export interface CallView {
+  id: string;
+  seq: number;
+  toolId: string;
+  input: unknown;
+  risk: ToolRisk;
+  state: ToolRow["state"];
+  waits: boolean;
+  answers?: AskAnswers;
+  decision: { allow: boolean; scope: ToolScope; by: { userId: string }; seq: number } | null;
+}
+
+// Who wrote the latest of the words, which are in the order the model read them.
+export function lastWriter(words: readonly Pick<Word, "userId">[]) {
+  return words.at(-1)?.userId ?? null;
+}
+
+// A vouch for now given on one of the branch's calls of a tool: the call, who gave it and where.
+export interface Vouch {
+  callId: string;
+  toolId: string;
+  by: string;
+  seq: number;
 }
 
 // What applies to one tool in a space: whether it is off there, and the one rule it is used under.
@@ -464,43 +507,39 @@ function ruleOf(policy: ToolPolicyRecord): Rule {
 }
 
 export function createTools(options: ToolsOptions) {
-  const { toolsets, settings, policies, directory, access } = options;
-  // Each of Mage's own toolsets has an id of its own, and its tools' names start with it, so no
-  // two of them can offer a tool by the same name. None is under mcp.*, which is MCP servers' own,
-  // so no server's tool can clash with its tools either.
-  for (const [index, toolset] of toolsets.entries()) {
-    if (toolsets.findIndex((other) => other.id === toolset.id) !== index) {
-      throw new Error(`Two of Mage's own toolsets are named ${toolset.id}`);
-    }
-    const stray = toolset.tools.find((spec) => !spec.name.startsWith(`${toolset.id}.`));
-    if (toolset.id.split(".")[0] === "mcp" || stray) {
-      throw new Error(`${stray?.name ?? toolset.id} is outside its toolset's names`);
-    }
-  }
-  const scoped = options.scoped ?? {
-    inSpace: () => [],
-    forOrgSettings: () => [],
-    forSpaceSettings: () => [],
-    named: () => null,
+  const { settings, policies, directory, access } = options;
+  // Mage's own toolsets, in the order they registered, which is the order of the model's tools.
+  const toolsets: Toolset[] = [];
+  // Those orgs and spaces add.
+  let scoped: ScopedToolsets = {
+    inSpace: async () => [],
+    forOrgSettings: async () => [],
+    forSpaceSettings: async () => [],
+    named: async () => null,
   };
+  const narrowers: ((thread: Thread, offered: AnyToolSpec[]) => Promise<AnyToolSpec[]>)[] = [];
+  const presenters: NonNullable<Toolset["present"]>[] = [];
 
   // The toolsets with the tools policies may be set on: those not fixed.
-  const settable = toolsets.flatMap((toolset) => {
-    const tools = toolset.tools.filter((spec) => !fixedIn(toolset, spec));
-    return tools.length > 0 ? [{ ...toolset, tools }] : [];
-  });
-  const fixedTools = new Set(
-    toolsets.flatMap((toolset) =>
-      toolset.tools.filter((spec) => fixedIn(toolset, spec)).map((spec) => spec.name),
-    ),
-  );
+  function settable() {
+    return toolsets.flatMap((toolset) => {
+      const tools = toolset.tools.filter((spec) => !fixedIn(toolset, spec));
+      return tools.length > 0 ? [{ ...toolset, tools }] : [];
+    });
+  }
+
+  function isFixed(toolId: string) {
+    return toolsets.some((toolset) =>
+      toolset.tools.some((spec) => spec.name === toolId && fixedIn(toolset, spec)),
+    );
+  }
 
   async function settingsInOrg(orgId: string) {
-    return [...settable, ...(await scoped.forOrgSettings(orgId))];
+    return [...settable(), ...(await scoped.forOrgSettings(orgId))];
   }
 
   async function settingsInSpace(space: Pick<Space, "id" | "orgId">) {
-    return [...settable, ...(await scoped.forSpaceSettings(space))];
+    return [...settable(), ...(await scoped.forSpaceSettings(space))];
   }
 
   // The toolsets settings show: Mage's own with their fixed tools, a fixed one only where it may be
@@ -585,7 +624,7 @@ export function createTools(options: ToolsOptions) {
       return ruleOf(policy);
     };
     return (toolId) => {
-      if (fixedTools.has(toolId)) return { off: false, rule: ruleFor([OPEN]) };
+      if (isFixed(toolId)) return { off: false, rule: ruleFor([OPEN]) };
       const fromOrg = orgTools.has(toolId);
       const inOrg = fromOrg ? org.get(toolId) : undefined;
       const inSpace = own.get(toolId);
@@ -603,10 +642,13 @@ export function createTools(options: ToolsOptions) {
     return { sets: await inSpace(space), rules: await rulesIn(space) };
   }
 
-  // The tools the space offers: those not off there.
-  async function offered(space: Pick<Space, "id" | "orgId">, now?: SpaceTools) {
+  // The tools the thread's agent may call: those its space offers, not off there, narrowed by
+  // whoever narrows them for the thread.
+  async function offered(space: Pick<Space, "id" | "orgId">, thread: Thread, now?: SpaceTools) {
     const { sets, rules } = now ?? (await toolsIn(space));
-    return specsOf(sets).filter((spec) => !rules(spec.name).off);
+    let specs = specsOf(sets).filter((spec) => !rules(spec.name).off);
+    for (const narrow of narrowers) specs = await narrow(thread, specs);
+    return specs;
   }
 
   // How much a call needs: as the tool says, raised where the tool's rules ask more.
@@ -634,7 +676,7 @@ export function createTools(options: ToolsOptions) {
 
   // A pending request keeps its history, but decisions follow the tool's current policy.
   async function riskForCall(
-    row: ToolRow,
+    row: Pick<ToolRow, "toolId" | "input" | "risk">,
     space: Pick<Space, "id" | "orgId">,
     model: string | null = null,
   ): Promise<ToolRisk> {
@@ -649,39 +691,42 @@ export function createTools(options: ToolsOptions) {
     return spec?.waitsFor === "answer";
   }
 
+  // Whether a call of the tool may move to the background: any but those that say not and those
+  // that ask, as far as the space knows the tool.
+  async function movable(row: Pick<ToolRow, "toolId">, space: Pick<Space, "id" | "orgId">) {
+    const spec = (await everyIn(space)).find((tool) => tool.name === row.toolId);
+    return spec?.movable !== false && spec?.waitsFor !== "answer";
+  }
+
   // Where the call stands for the person: whether it waits on people, for a decision or for
   // answers, and whether they may act on it now: approve or deny it, or answer or skip its
   // questions. Every screen and action asks this, so they agree.
   async function callState(
     userId: string,
-    row: ToolRow,
-    rows: readonly TranscriptRow[],
+    row: CallView,
+    words: readonly Word[],
     thread: Thread,
     space: Space,
+    model: string | null,
   ): Promise<CallState> {
-    const risk = await riskForCall(row, space, (await options.callModel?.(row)) ?? null);
+    const risk = await riskForCall(row, space, model);
     if (row.state !== "pending" || !row.waits) return { waitsFor: null, canAct: false, risk };
     const waitsFor = (await asks(row, space)) ? "answer" : "decision";
     const canAct = (waitsFor === "answer" ? mayAnswer : mayApprove)(
       await personIn(userId, thread, space),
       (await rulesIn(space))(row.toolId).rule,
       risk,
-      latestAuthor(rows),
+      lastWriter(words),
     );
     return { waitsFor, canAct, risk };
   }
 
   // The words the model read, messages and answers, each with whether its writer can post now and
   // whether they may use the tool directly under the rule.
-  async function influenceOf(
-    rows: readonly TranscriptRow[],
-    thread: Thread,
-    space: Space,
-    rule: ToolRule,
-  ) {
+  async function influenceOf(words: readonly Word[], thread: Thread, space: Space, rule: ToolRule) {
     const people = new Map<string, Person>();
     const influence: Influence[] = [];
-    for (const { seq, userId } of wordsIn(rows)) {
+    for (const { seq, userId } of words) {
       let person = people.get(userId);
       if (!person) {
         person = await personIn(userId, thread, space);
@@ -719,8 +764,8 @@ export function createTools(options: ToolsOptions) {
 
   // What each call is called where it shows: as its tool is called now; else as it was when the
   // call was asked for; else by what the model knows it by, where what added it is still there;
-  // else by its id, or for an MCP server's tool, its own name there. Loading a skill names the
-  // skill, and starting a subagent the subagent; a tool that says its input in a few words says it.
+  // else by its id, or for an MCP server's tool, its own name there; a tool that says its input in
+  // a few words says it.
   function namesIn(space: Pick<Space, "id" | "orgId"> | null) {
     let now: ((toolId: string) => ToolNames | null) | undefined;
     let said: Awaited<ReturnType<typeof summariesIn>> | undefined;
@@ -738,20 +783,7 @@ export function createTools(options: ToolsOptions) {
         };
       said ??= space ? await summariesIn(space) : async () => Promise.resolve(null);
       const summary = await said(row);
-      if (summary) return { ...names, summary };
-      const named = (row.input as { name?: unknown } | null)?.name;
-      if (row.toolId === LOAD_SKILL && typeof named === "string") return { ...names, skill: named };
-      // Starting a subagent also names it, and the model it was given.
-      if (toolIdNow(row.toolId) === START_SUBAGENT && typeof named === "string") {
-        // The model as it was given back, an alias since aliases came in, read as its ref.
-        const given = row.output?.ok && (row.output.value as { model?: unknown } | null)?.model;
-        const model =
-          typeof given === "string" && space
-            ? ((await options.modelRef?.(space.orgId, given)) ?? given)
-            : given;
-        return { ...names, subagentName: named, ...(typeof model === "string" && { model }) };
-      }
-      return names;
+      return summary ? { ...names, summary } : names;
     };
   }
 
@@ -775,6 +807,67 @@ export function createTools(options: ToolsOptions) {
   }
 
   return {
+    // Adds a toolset of Mage's own, after those before it, or what orgs and spaces add. Each of
+    // Mage's own has an id of its own, and its tools' names start with it, so no two of them can
+    // offer a tool by the same name. None is under mcp.*, which is MCP servers' own, so no
+    // server's tool can clash with its tools either.
+    register(toolset: Toolset | ScopedToolsets) {
+      if (!("id" in toolset)) {
+        scoped = toolset;
+        return;
+      }
+      if (toolsets.some((other) => other.id === toolset.id)) {
+        throw new Error(`Two of Mage's own toolsets are named ${toolset.id}`);
+      }
+      const stray = toolset.tools.find((spec) => !spec.name.startsWith(`${toolset.id}.`));
+      if (toolset.id.split(".")[0] === "mcp" || stray) {
+        throw new Error(`${stray?.name ?? toolset.id} is outside its toolset's names`);
+      }
+      toolsets.push(toolset);
+      if (toolset.present) presenters.push(toolset.present.bind(toolset));
+    },
+
+    // Narrows the tools a thread's agent may call, after those that narrow them before.
+    narrow(fn: (thread: Thread, offered: AnyToolSpec[]) => Promise<AnyToolSpec[]>) {
+      narrowers.push(fn);
+    },
+
+    // Adds what shows on calls of any tool, as a job does.
+    presenter(fn: NonNullable<Toolset["present"]>) {
+      presenters.push(fn);
+    },
+
+    // What the page's calls show the reader: each presenter asked once, what they say merged.
+    async present(reader: Reader, rows: readonly ToolRow[]) {
+      const each = await Promise.all(presenters.map(async (present) => present(reader, rows)));
+      return (row: ToolRow): CallPresentation => {
+        const merged: CallPresentation = {};
+        for (const one of each) {
+          const shown = one(row);
+          if (!shown) continue;
+          Object.assign(merged, shown, {
+            ...((merged.names || shown.names) && { names: { ...merged.names, ...shown.names } }),
+            ...((merged.live || shown.live) && { live: true }),
+          });
+        }
+        return merged;
+      };
+    },
+
+    // The name of the tool that searches the tools left out of a run's requests.
+    searchTool() {
+      return specsOf(toolsets).find((spec) => spec.deferral === "search")?.name ?? null;
+    },
+
+    // Turns tools on for the rest of the thread, by the call that searched for them; inside the
+    // write that records it.
+    async turnOn(threadId: string, callId: string, toolIds: readonly string[]) {
+      await options.threadTools.turnOn(threadId, callId, toolIds);
+    },
+
+    // The tools the thread turned on, in the order it did.
+    turnedOn: async (threadId: string) => options.threadTools.on(threadId),
+
     // The tool in the org's toolsets, or in the space's when one is given.
     async find(orgId: string, id: string, space?: Pick<Space, "id" | "orgId">) {
       const sets = space ? await settingsInSpace(space) : await settingsInOrg(orgId);
@@ -950,7 +1043,8 @@ export function createTools(options: ToolsOptions) {
     // Whether a call of the tool, with the risk the tool itself declares for it, runs now, on a
     // standing approval, or waits; for a tool whose calls run with a person's own login, as whom.
     async evaluate(
-      rows: readonly TranscriptRow[],
+      words: readonly Word[],
+      vouches: readonly Vouch[],
       thread: Thread,
       space: Space,
       toolId: string,
@@ -962,31 +1056,19 @@ export function createTools(options: ToolsOptions) {
       const connection = (await spec?.connection?.(input, space)) ?? null;
       // The vouches given for now themselves, not the calls that later ran on them.
       const standing: Approval[] = await Promise.all(
-        rows
-          .filter(
-            (row): row is ToolRow =>
-              row.kind === "tool" &&
-              row.toolId === toolId &&
-              !row.standingOn &&
-              row.decision?.scope === "for_now" &&
-              row.decision.allow,
-          )
-          .map(async (row) => ({
-            atSeq: row.decision!.seq,
-            by: row.decision!.by.userId,
-            eligible: mayApprove(
-              await personIn(row.decision!.by.userId, thread, space),
-              rule,
-              "normal",
-              null,
-            ),
-            callId: row.id,
+        vouches
+          .filter((vouch) => vouch.toolId === toolId)
+          .map(async (vouch) => ({
+            atSeq: vouch.seq,
+            by: vouch.by,
+            eligible: mayApprove(await personIn(vouch.by, thread, space), rule, "normal", null),
+            callId: vouch.callId,
           })),
       );
       return decide({
         declared,
         rule,
-        influence: await influenceOf(rows, thread, space, rule),
+        influence: await influenceOf(words, thread, space, rule),
         standing,
         ...(connection && {
           connected: async (userId: string) => (await connection(userId)).connected,
@@ -995,6 +1077,7 @@ export function createTools(options: ToolsOptions) {
     },
 
     asks,
+    movable,
 
     // The one place a tool runs: direct calls and background calls both go through it.
     run: (spec: AnyToolSpec, input: unknown, ctx: ToolContext) => spec.run(input, ctx),
@@ -1002,20 +1085,19 @@ export function createTools(options: ToolsOptions) {
     // Whether the answer given to the call still holds, just before it runs: its writer may still
     // use or approve the tool, as things stood when they answered, and everyone who wrote after
     // it can still post in the thread.
-    async answerHolds(row: ToolRow, rows: readonly TranscriptRow[], thread: Thread, space: Space) {
+    async answerHolds(row: CallView, words: readonly Word[], thread: Thread, space: Space) {
       if (!row.answers || !row.decision?.allow) return false;
       const { rule } = (await rulesIn(space))(row.toolId);
       const { by, seq: atSeq } = row.decision;
-      const before = rows.filter((other) => other.seq < atSeq && other.id !== row.id);
       const eligible = mayAnswer(
         await personIn(by.userId, thread, space),
         rule,
         await riskForCall(row, space),
-        latestAuthor(before),
+        lastWriter(words.filter((word) => word.seq < atSeq)),
       );
       return holds(
         { atSeq, by: by.userId, eligible },
-        await influenceOf(rows, thread, space, rule),
+        await influenceOf(words, thread, space, rule),
         stillPosts,
       );
     },
@@ -1024,8 +1106,8 @@ export function createTools(options: ToolsOptions) {
     // approve it under the tool's rule now, independently where that applies, and everyone who
     // wrote after it can still post in the thread.
     async approvalHolds(
-      row: ToolRow,
-      rows: readonly TranscriptRow[],
+      row: CallView,
+      words: readonly Word[],
       thread: Thread,
       space: Space,
       given?: ToolRisk,
@@ -1039,11 +1121,11 @@ export function createTools(options: ToolsOptions) {
         await personIn(by.userId, thread, space),
         rule,
         risk,
-        latestAuthor(rows),
+        lastWriter(words),
       );
       return holds(
         { atSeq, by: by.userId, eligible },
-        await influenceOf(rows, thread, space, rule),
+        await influenceOf(words, thread, space, rule),
         stillPosts,
       );
     },
@@ -1051,52 +1133,19 @@ export function createTools(options: ToolsOptions) {
 }
 
 export interface ToolDecisionsOptions {
-  tools: Pick<
-    Tools,
-    "find" | "callState" | "asks" | "connectionFor" | "toolsetsInOrg" | "toolsetsInSpace"
-  >;
-  access: Pick<ThreadAccess, "require">;
-  transcripts: Pick<Transcripts, "of">;
-  spaceStore: Pick<SpaceStore, "find">;
-  runs: Pick<RunStore, "find" | "resume">;
+  tools: Pick<Tools, "find" | "toolsetsInOrg" | "toolsetsInSpace">;
   spaces: Pick<Spaces, "require">;
   settings: ToolSettingStore;
   policies: Pick<ToolPolicyStore, "find">;
-  log: ThreadLog;
-  bus: Signals;
-  // The background calls: where one stands, that a decision settles one that waits, whether the
-  // thread has room for another, moving the call running now to the background, moving one that
-  // waits for a decision, and stopping one.
-  background?: {
-    find(callId: string): Promise<{ status: string } | null>;
-    proceed(threadId: string, callId: string, allow: boolean): Promise<void>;
-    room(threadId: string): Promise<boolean>;
-    move(threadId: string, callId: string): Promise<boolean>;
-    detach(
-      threadId: string,
-      call: {
-        id: string;
-        runId: string;
-        toolId: string;
-        input: unknown;
-        risk: ToolRisk;
-        title?: string;
-        toolset?: string;
-      },
-      append: Append,
-    ): Promise<string>;
-    cancel(threadId: string, callId: string): Promise<void>;
-  };
 }
 
 export type ToolDecisions = ReturnType<typeof createToolDecisions>;
 
 const OWNERS_ONLY = "Only the organization's owners can do this";
 
-// People's decisions on calls that wait, and what orgs and spaces set their tools to.
+// What orgs and spaces set their tools to.
 export function createToolDecisions(options: ToolDecisionsOptions) {
-  const { tools, access, spaceStore, runs, spaces, settings, policies, log, bus } = options;
-  const { background } = options;
+  const { tools, spaces, settings, policies } = options;
 
   async function known(orgId: string, toolId: string, space?: Space) {
     if (!(await tools.find(orgId, toolId, space))) throw new ServiceError(404, "Tool not found");
@@ -1139,184 +1188,6 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
   }
 
   return {
-    // Approves or denies a call waiting for a decision, and wakes its run. The first decision
-    // wins; a call whose run ended is no longer needed.
-    async decide(
-      principal: Principal,
-      threadId: string,
-      callId: string,
-      decision: { allow: boolean; scope: ToolScope },
-    ) {
-      const { thread } = await access.require(principal, threadId, "post");
-      const space = await spaceStore.find(thread.spaceId);
-      if (!space) throw new ServiceError(404, "Thread not found");
-      const { events, result } = await log.write(thread.id, async (append) => {
-        const rows = (await options.transcripts.of(thread.id)).transcript().rows;
-        const call = rows.find((row): row is ToolRow => row.kind === "tool" && row.id === callId);
-        if (!call) throw new ServiceError(404, "Tool call not found");
-        // A background call waits for its decision without a run.
-        const waiting = call.background ? await background?.find(call.id) : null;
-        const run = waiting ? null : await runs.find(call.runId);
-        const active = waiting
-          ? waiting.status === "pending"
-          : run && (run.status === "running" || run.status === "waiting");
-        if (!active || call.state === "stopped") throw new ServiceError(409, "No longer needed");
-        const state = await tools.callState(principal.userId, call, rows, thread, space);
-        if (state.waitsFor === "answer") {
-          throw new ServiceError(409, "This call waits for an answer");
-        }
-        if (state.waitsFor !== "decision") throw new ServiceError(409, "Already decided");
-        if (!state.canAct) {
-          const independent = state.risk === "review" && latestAuthor(rows) === principal.userId;
-          throw new ServiceError(
-            403,
-            independent
-              ? "Independent approval needs someone other than the author of the latest message"
-              : "Only this tool's approvers can decide",
-          );
-        }
-        if (decision.allow && decision.scope === "for_now" && state.risk !== "normal") {
-          throw new ServiceError(400, "This call can only be allowed once");
-        }
-        // A call allowed runs with its approver's own login, where its tool uses one.
-        const connection = await tools.connectionFor(
-          space,
-          call.toolId,
-          principal.userId,
-          call.input,
-        );
-        if (decision.allow && connection && !connection.connected) {
-          throw new ServiceError(409, `Connect to ${connection.title} first`);
-        }
-        const actor = { kind: "user" as const, userId: principal.userId };
-        if (decision.allow) {
-          await append({
-            type: "tool.approved",
-            actor,
-            data: { runId: call.runId, callId, scope: decision.scope },
-          });
-        } else {
-          await append({
-            type: "tool.denied",
-            actor,
-            data: { runId: call.runId, callId, reason: "denied" },
-          });
-        }
-        if (waiting) return { runId: call.runId, background: true };
-        await runs.resume(call.runId);
-        return { runId: call.runId, background: false };
-      });
-      bus.wake(thread.id);
-      if (result.background) await background?.proceed(thread.id, callId, decision.allow);
-      return { runId: result.runId, event: events[0]! };
-    },
-
-    // Moves the call running now in the thread's run to the background, or one that waits for a
-    // decision in it, so the run goes on.
-    async moveToBackground(principal: Principal, threadId: string, callId: string) {
-      const { thread } = await access.require(principal, threadId, "post");
-      const space = await spaceStore.find(thread.spaceId);
-      if (!space || !background) throw new ServiceError(404, "Thread not found");
-      const { result: resumed } = await log.write(thread.id, async (append) => {
-        const rows = (await options.transcripts.of(thread.id)).transcript().rows;
-        const call = rows.find((row): row is ToolRow => row.kind === "tool" && row.id === callId);
-        if (!call) throw new ServiceError(404, "Tool call not found");
-        if (call.state !== "pending" && call.state !== "allowed") {
-          throw new ServiceError(409, "This call is no longer running");
-        }
-        if (
-          call.background ||
-          (await tools.asks(call, space)) ||
-          call.toolId.startsWith("calls.")
-        ) {
-          throw new ServiceError(409, "This call cannot move to the background");
-        }
-        if (!(await background.room(thread.id))) {
-          throw new ServiceError(409, "This thread has too many background calls");
-        }
-        if (call.state === "pending" && call.waits) {
-          // Waiting in a run nobody holds: the call goes on as one of its own, and the run goes on.
-          const run = await runs.find(call.runId);
-          if (!run || run.status !== "waiting") throw new ServiceError(409, "No longer needed");
-          await background.detach(
-            thread.id,
-            {
-              id: call.id,
-              runId: call.runId,
-              toolId: call.toolId,
-              input: call.input,
-              risk: call.risk,
-              ...(call.title && { title: call.title }),
-              ...(call.toolset && { toolset: call.toolset }),
-            },
-            append,
-          );
-          await runs.resume(call.runId);
-          return true;
-        }
-        return false;
-      });
-      bus.wake(thread.id);
-      if (!resumed && !(await background.move(thread.id, callId))) {
-        throw new ServiceError(409, "This call is not running yet");
-      }
-    },
-
-    // Stops a background call that runs or waits for a decision, as a person asked.
-    async cancelBackground(principal: Principal, threadId: string, callId: string) {
-      const { thread } = await access.require(principal, threadId, "post");
-      if (!background) throw new ServiceError(404, "Thread not found");
-      await background.cancel(thread.id, callId);
-    },
-
-    // Answers the questions a call waits on, or with null skips them, and wakes its run. Anyone
-    // who may use or approve the tool may; the first answer wins.
-    async answer(
-      principal: Principal,
-      threadId: string,
-      callId: string,
-      answers: AskAnswers | null,
-    ) {
-      const { thread } = await access.require(principal, threadId, "post");
-      const space = await spaceStore.find(thread.spaceId);
-      if (!space) throw new ServiceError(404, "Thread not found");
-      const { events, result: runId } = await log.write(thread.id, async (append) => {
-        const rows = (await options.transcripts.of(thread.id)).transcript().rows;
-        const call = rows.find((row): row is ToolRow => row.kind === "tool" && row.id === callId);
-        if (!call) throw new ServiceError(404, "Tool call not found");
-        if (!(await tools.asks(call, space))) throw new ServiceError(409, "This call asks nothing");
-        const run = await runs.find(call.runId);
-        const active = run && (run.status === "running" || run.status === "waiting");
-        if (!active || call.state === "stopped") throw new ServiceError(409, "No longer needed");
-        const state = await tools.callState(principal.userId, call, rows, thread, space);
-        if (state.waitsFor !== "answer") throw new ServiceError(409, "Already answered");
-        if (!state.canAct) {
-          throw new ServiceError(403, "Only people who can use this tool here can answer");
-        }
-        const asked = askInputSchema.safeParse(call.input);
-        const problem = answers && asked.success && answersProblem(asked.data.questions, answers);
-        if (problem) throw new ServiceError(400, problem);
-        const actor = { kind: "user" as const, userId: principal.userId };
-        if (answers) {
-          await append({
-            type: "tool.answered",
-            actor,
-            data: { runId: call.runId, callId, answers },
-          });
-        } else {
-          await append({
-            type: "tool.denied",
-            actor,
-            data: { runId: call.runId, callId, reason: "skipped" },
-          });
-        }
-        await runs.resume(call.runId);
-        return call.runId;
-      });
-      bus.wake(thread.id);
-      return { runId, event: events[0]! };
-    },
-
     // The toolsets with what the org set each tool to.
     async orgTools(principal: Principal): Promise<ToolsetSetting[]> {
       const org = await settings.inOrg(principal.orgId);
