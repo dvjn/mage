@@ -56,15 +56,15 @@ const RULES: { rule: string; broken: ReturnType<typeof sql> }[] = [
       having count(*) > 1`,
   },
   {
-    // A run queued behind one that was stopped may be there a moment before it is stopped too;
-    // nothing checks the space as a run ends.
-    rule: "a run running in a space in trash has been asked to stop",
+    // Only a run still queued is let off: the one made as another ended, which nothing checks
+    // the space for until it is taken up.
+    rule: "a run running or waiting in a space in trash has been asked to stop",
     broken: sql`
       select r.id as run_id, r.thread_id, r.status
         from run r
         join thread t on t.id = r.thread_id
         join space s on s.id = t.space_id
-       where r.status = 'running'
+       where r.status in ('running', 'waiting')
          and s.trashed_at is not null
          and r.cancel_requested_at is null`,
   },
@@ -79,10 +79,10 @@ const RULES: { rule: string; broken: ReturnType<typeof sql> }[] = [
 ];
 
 // The rules the database breaks now; none when it is sound.
-export function invariants(db: Db): Violation[] {
+export async function invariants(db: Db): Promise<Violation[]> {
   const violations: Violation[] = [];
   for (const { rule, broken } of RULES) {
-    const rows = db.all(sql`${broken} limit 5`);
+    const rows = (await db.execute(sql`${broken} limit 5`)).rows;
     if (rows.length > 0) violations.push({ rule, rows });
   }
   return violations;

@@ -20,57 +20,62 @@ function whole(row: typeof threadTask.$inferSelect): TaskRecord {
 
 export function createTaskStore(db: Db): TaskStore {
   return {
-    inThread(threadId, archived = false): TaskRecord[] {
-      return db
-        .select()
-        .from(threadTask)
-        .where(
-          and(
-            eq(threadTask.threadId, threadId),
-            archived ? isNotNull(threadTask.archivedAt) : isNull(threadTask.archivedAt),
-          ),
-        )
-        .orderBy(asc(threadTask.position), asc(threadTask.id))
-        .all()
-        .map(whole);
+    async inThread(threadId, archived = false): Promise<TaskRecord[]> {
+      return (
+        await db
+          .select()
+          .from(threadTask)
+          .where(
+            and(
+              eq(threadTask.threadId, threadId),
+              archived ? isNotNull(threadTask.archivedAt) : isNull(threadTask.archivedAt),
+            ),
+          )
+          .orderBy(asc(threadTask.position), asc(threadTask.id))
+      ).map(whole);
     },
 
-    find(id) {
-      const row = db.select().from(threadTask).where(eq(threadTask.id, id)).get();
+    async find(id) {
+      const row = (await db.select().from(threadTask).where(eq(threadTask.id, id)).limit(1))[0];
       return row ? whole(row) : null;
     },
 
-    add(rows) {
+    async add(rows) {
       if (rows.length === 0) return [];
       // Each goes after the list's last.
       const threadId = rows[0]!.threadId;
       const last =
-        db
-          .select({ last: max(threadTask.position) })
-          .from(threadTask)
-          .where(eq(threadTask.threadId, threadId))
-          .get()?.last ?? -1;
-      return db
-        .insert(threadTask)
-        .values(rows.map((row, index) => ({ ...row, position: last + 1 + index })))
-        .returning()
-        .all()
-        .map(whole);
+        (
+          await db
+            .select({ last: max(threadTask.position) })
+            .from(threadTask)
+            .where(eq(threadTask.threadId, threadId))
+            .limit(1)
+        )[0]?.last ?? -1;
+      return (
+        await db
+          .insert(threadTask)
+          .values(rows.map((row, index) => ({ ...row, position: last + 1 + index })))
+          .returning()
+      ).map(whole);
     },
 
-    update(id, fields) {
-      const row = db.update(threadTask).set(fields).where(eq(threadTask.id, id)).returning().get();
+    async update(id, fields) {
+      const row = (
+        await db.update(threadTask).set(fields).where(eq(threadTask.id, id)).returning()
+      )[0];
       return row && whole(row);
     },
 
-    remove(ids) {
+    async remove(ids) {
       if (ids.length === 0) return;
-      db.delete(threadTask).where(inArray(threadTask.id, ids)).run();
+      await db.delete(threadTask).where(inArray(threadTask.id, ids));
     },
 
-    userName(userId) {
+    async userName(userId) {
       return (
-        db.select({ name: user.name }).from(user).where(eq(user.id, userId)).get()?.name ?? null
+        (await db.select({ name: user.name }).from(user).where(eq(user.id, userId)).limit(1))[0]
+          ?.name ?? null
       );
     },
   };

@@ -1,5 +1,5 @@
 // How a thread's rows lay out in its transcript, as structure for the markup to space: turns, each
-// a person's message, an incoming message or notice, an event, or the agent's turn; the agent's
+// a person's message, incoming messages or notifications, an event, or the agent's turn; the agent's
 // turn as blocks of reply text, cards and runs of lines, a line being a tool call's or the agent's
 // thinking; and the turn's actions after it where its last step shows none. Two or more of the
 // agent's calls in a row fold into one entry. A call that waits for a decision is a line like any
@@ -9,17 +9,10 @@
 
 import { ASK_TOOL } from "@/shared/ask.ts";
 import { artifactOf, type CalledArtifact, cardsAfterReply } from "@/web/artifacts/call-artifacts";
-import type {
-  AgentRow,
-  AgentTurn,
-  NoticeRow,
-  RelayRow,
-  ShownRow,
-  ToolRow,
-} from "@/shared/threads/rows.ts";
+import type { AgentRow, AgentTurn, RelayRow, ShownRow, ToolRow } from "@/shared/threads/rows.ts";
 
 // A row that shows on its own.
-export type OwnRow = Exclude<ShownRow, RelayRow | NoticeRow>;
+export type OwnRow = Exclude<ShownRow, RelayRow>;
 
 export type TranscriptEntry =
   | {
@@ -52,7 +45,6 @@ export type TranscriptEntry =
       key: string;
       rows: RelayRow[];
     }
-  | { kind: "notice"; key: string; row: NoticeRow }
   | {
       // The artifacts a turn published or updated, as cards after its last row.
       kind: "artifacts";
@@ -150,7 +142,7 @@ export function transcriptEntries(rows: readonly ShownRow[]): TranscriptEntry[] 
       if (
         (row.kind === "agent" || row.kind === "tool") &&
         row.turn?.continued &&
-        (before?.kind === "relay" || before?.kind === "notice")
+        before?.kind === "relay"
       )
         return { ...row, turn: { ...row.turn, continued: false } };
       return row;
@@ -171,11 +163,6 @@ export function transcriptEntries(rows: readonly ShownRow[]): TranscriptEntry[] 
         relays.push(later);
       entries.push({ kind: "relays", key: `relays:${row.id}`, rows: relays });
       i += relays.length;
-      continue;
-    }
-    if (row.kind === "notice") {
-      entries.push({ kind: "notice", key: row.id, row });
-      i++;
       continue;
     }
     if (!foldable(row)) {
@@ -241,7 +228,7 @@ export function transcriptTurns(
     }
     const kind = turn
       ? "agent"
-      : entry.kind === "relays" || entry.kind === "notice"
+      : entry.kind === "relays"
         ? "incoming"
         : entry.kind === "row" && entry.row.kind === "human"
           ? "human"

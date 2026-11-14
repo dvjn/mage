@@ -1,0 +1,1 @@
+DROP TABLE "bus_message" CASCADE;

@@ -41,8 +41,8 @@ export type McpAuth =
   | { kind: "oauth"; state: McpOAuthStore };
 
 export interface McpOAuthStore {
-  load(): McpOAuthState;
-  save(state: McpOAuthState): void;
+  load(): Promise<McpOAuthState>;
+  save(state: McpOAuthState): Promise<void>;
 }
 
 export interface McpTarget {
@@ -238,10 +238,10 @@ interface Flow {
 
 // An OAuth client for the server, its state read and saved through the store.
 function providerOf(oauth: McpOAuthStore, client: McpOAuthClient, flow: Flow): OAuthClientProvider {
-  const update = (change: (state: ReturnType<McpOAuthStore["load"]>) => void) => {
-    const state = oauth.load();
+  const update = async (change: (state: Awaited<ReturnType<McpOAuthStore["load"]>>) => void) => {
+    const state = await oauth.load();
     change(state);
-    oauth.save(state);
+    await oauth.save(state);
   };
   const documentUrl = documentUrlOf(client);
   return {
@@ -255,10 +255,10 @@ function providerOf(oauth: McpOAuthStore, client: McpOAuthClient, flow: Flow): O
     ...(flow.state && { state: () => flow.state! }),
     // A metadata document client is the document's address: one at another address, as when
     // Mage's base URL changed, is forgotten with the tokens issued to it, and a client chosen again.
-    clientInformation() {
-      const state = oauth.load();
+    async clientInformation() {
+      const state = await oauth.load();
       if (state.document && state.client?.client_id !== documentUrl) {
-        update((stale) => {
+        await update((stale) => {
           delete stale.client;
           delete stale.document;
           delete stale.tokens;
@@ -267,16 +267,17 @@ function providerOf(oauth: McpOAuthStore, client: McpOAuthClient, flow: Flow): O
       }
       return state.client as never;
     },
-    saveClientInformation: (info) =>
+    saveClientInformation: async (info) =>
       update((state) => {
         state.client = { ...info };
         if (!state.manual && documentUrl && info.client_id === documentUrl) state.document = true;
         else delete state.document;
       }),
-    tokens: () => oauth.load().tokens as never,
-    saveTokens: (tokens) => update((state) => (state.tokens = { ...tokens })),
-    discoveryState: () => oauth.load().discovery as never,
-    saveDiscoveryState: (discovery) => update((state) => (state.discovery = { ...discovery })),
+    tokens: async () => (await oauth.load()).tokens as never,
+    saveTokens: async (tokens) => update((state) => (state.tokens = { ...tokens })),
+    discoveryState: async () => (await oauth.load()).discovery as never,
+    saveDiscoveryState: async (discovery) =>
+      update((state) => (state.discovery = { ...discovery })),
     redirectToAuthorization(url) {
       flow.redirect = url;
     },
@@ -288,7 +289,7 @@ function providerOf(oauth: McpOAuthStore, client: McpOAuthClient, flow: Flow): O
       return flow.verifier.value;
     },
     // A client people entered is kept; any other is chosen again.
-    invalidateCredentials: (scope) =>
+    invalidateCredentials: async (scope) =>
       update((state) => {
         if (scope === "all" || scope === "tokens") delete state.tokens;
         if (scope === "all" || scope === "discovery") delete state.discovery;
@@ -599,7 +600,7 @@ export function createMcpClient(options: McpClientOptions): McpClient {
       return using(target, async (client) => {
         // The client is this call's alone, so whatever the server logs meanwhile is the call's.
         if (listener) {
-          client.setNotificationHandler("notifications/message", ({ params }) => {
+          client.setNotificationHandler("notifications/message", async ({ params }) => {
             const { data } = params;
             listener.log(typeof data === "string" ? data : JSON.stringify(data));
           });

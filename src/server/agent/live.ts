@@ -5,8 +5,8 @@
 // kept. The model is not given it; the call's result is the record of it, and what was kept goes
 // in the write that records the result.
 
-import type { Transact } from "@/server/db/db.ts";
-import type { EventBus } from "@/server/kernel/event-bus.ts";
+import type { Sync, Transact } from "@/server/sync/sync.ts";
+import type { Signals } from "@/server/sync/signals.ts";
 import type { LiveChunk, LiveProgress } from "@/shared/threads/events.ts";
 
 import type { LiveStore } from "./live-store.ts";
@@ -26,8 +26,9 @@ export interface LiveReporter {
 
 export interface LiveOptions {
   store: LiveStore;
-  bus: Pick<EventBus, "publish">;
+  bus: Pick<Signals, "publish">;
   transact: Transact;
+  ordered: Sync["ordered"];
   now?: () => number;
 }
 
@@ -38,7 +39,7 @@ interface Reporting {
   callId: string;
   threadId: string;
   // Whether this instance still carries the call out, read in the write that stores a piece.
-  holds: () => boolean;
+  holds: () => boolean | Promise<boolean>;
   // How many characters were printed in all, and what of them is not stored yet.
   total: number;
   unsent: string;
@@ -46,6 +47,8 @@ interface Reporting {
   changed: boolean;
   sentAt: number;
   timer?: ReturnType<typeof setTimeout>;
+  // The storing of its pieces, one after another, so they are kept and told in order.
+  storing: Promise<void>;
 }
 
 // The last characters of the text, up to the cap.
@@ -58,7 +61,7 @@ function keptFrom(total: number) {
   return Math.max(0, total - LIVE_CHARS);
 }
 
-export function createLive({ store, bus, transact, now = Date.now }: LiveOptions) {
+export function createLive({ store, bus, transact, ordered, now = Date.now }: LiveOptions) {
   // The calls reporting here, by their id now.
   const reporting = new Map<string, Reporting>();
 
@@ -68,38 +71,43 @@ export function createLive({ store, bus, transact, now = Date.now }: LiveOptions
     if (reporting.get(call.callId) === call) reporting.delete(call.callId);
   }
 
-  // Stores what is new, unless the call is no longer this instance's to carry out, and tells the
-  // thread's followers.
+  // Takes what is new and stores it, unless the call is no longer this instance's to carry out,
+  // after the pieces taken before it, then tells the thread's followers.
   function flush(call: Reporting) {
     clearTimeout(call.timer);
     call.timer = undefined;
-    if (!call.unsent && !call.changed) return;
+    if (!call.unsent && !call.changed) return call.storing;
     const piece = { offset: call.total - call.unsent.length, text: call.unsent };
-    const keepFrom = keptFrom(call.total);
+    const report = { total: call.total, keepFrom: keptFrom(call.total), progress: call.progress };
     call.unsent = "";
     call.changed = false;
     call.sentAt = now();
-    const stored = transact(() => {
-      if (!call.holds()) return false;
-      store.write(call.threadId, call.callId, {
-        total: call.total,
-        ...(call.progress && { progress: call.progress }),
+    const stored = call.storing.then(() => store1(call, piece, report));
+    // A piece that cannot be stored is lost to those watching; the next is tried all the same.
+    call.storing = stored.catch(() => {});
+    return stored;
+  }
+
+  async function store1(
+    call: Reporting,
+    piece: { offset: number; text: string },
+    { total, keepFrom, progress }: { total: number; keepFrom: number; progress?: LiveProgress },
+  ) {
+    // Inside a hold on the thread, so a piece is stored before the write that ends the call or not
+    // at all.
+    const stored = await transact(async () => {
+      await ordered("thread", [call.threadId], async ([id]) => store.lock(id!));
+      if (reporting.get(call.callId) !== call || !(await call.holds())) return false;
+      await store.write(call.threadId, call.callId, {
+        total,
+        ...(progress && { progress }),
         piece,
         keepFrom,
       });
+      bus.publish(call.threadId, { kind: "live", callId: call.callId });
       return true;
     });
-    if (!stored) {
-      forget(call);
-      return;
-    }
-    const chunk: LiveChunk = {
-      callId: call.callId,
-      ...piece,
-      from: keepFrom,
-      ...(call.progress && { progress: call.progress }),
-    };
-    bus.publish(call.threadId, { kind: "live", live: chunk });
+    if (!stored) forget(call);
   }
 
   // Stores what is new at once when the call has been quiet, or else once the least time between
@@ -108,28 +116,31 @@ export function createLive({ store, bus, transact, now = Date.now }: LiveOptions
     if (call.timer) return;
     const wait = call.sentAt + LIVE_FLUSH_MS - now();
     if (wait <= 0) {
-      flush(call);
+      void flush(call).catch(() => {});
       return;
     }
-    call.timer = setTimeout(() => flush(call), wait);
+    call.timer = setTimeout(() => void flush(call).catch(() => {}), wait);
     call.timer.unref?.();
   }
 
-  // Tells the thread's followers all that is kept of the call, as it now is.
-  function announce(threadId: string, callId: string) {
-    const tail = store.tail(callId, LIVE_CHARS);
-    if (!tail || (!tail.text && !tail.progress)) return;
-    const { from, text, progress } = tail;
-    bus.publish(threadId, {
-      kind: "live",
-      live: { callId, offset: from, text, from, ...(progress && { progress }) },
-    });
+  // All that is kept of what the call printed, as one piece, with its progress; none when it has
+  // neither.
+  async function tail(callId: string): Promise<LiveChunk | null> {
+    const kept = await store.tail(callId, LIVE_CHARS);
+    if (!kept || (!kept.text && !kept.progress)) return null;
+    const { from, text, progress } = kept;
+    return { callId, offset: from, text, from, ...(progress && { progress }) };
   }
 
   return {
     // What the call reports with until it ends, while `holds` says this instance carries it out.
     // Nothing is stored for a call that reports nothing.
-    open(threadId: string, callId: string, holds: () => boolean): LiveReporter {
+    // Resolves once every piece being stored is.
+    async settled() {
+      await Promise.all([...reporting.values()].map((call) => call.storing));
+    },
+
+    open(threadId: string, callId: string, holds: () => boolean | Promise<boolean>): LiveReporter {
       const call: Reporting = {
         callId,
         threadId,
@@ -138,6 +149,7 @@ export function createLive({ store, bus, transact, now = Date.now }: LiveOptions
         unsent: "",
         changed: false,
         sentAt: 0,
+        storing: Promise.resolve(),
       };
       reporting.set(callId, call);
       const mine = () => reporting.get(call.callId) === call;
@@ -160,8 +172,8 @@ export function createLive({ store, bus, transact, now = Date.now }: LiveOptions
     // Keeps what the call printed, and what it prints on, under the id it goes on with, as when it
     // is moved to the background, where it is carried out under `holds`. Inside the write that
     // moves it.
-    move(from: string, to: string, holds: () => boolean) {
-      store.move(from, to);
+    async move(from: string, to: string, holds: () => boolean | Promise<boolean>) {
+      await store.move(from, to);
       const call = reporting.get(from);
       if (call) {
         reporting.delete(from);
@@ -171,9 +183,11 @@ export function createLive({ store, bus, transact, now = Date.now }: LiveOptions
     },
 
     // Tells followers what was kept of a call that goes on under another id, once that is written.
-    moved(threadId: string, callId: string) {
-      announce(threadId, callId);
+    async moved(threadId: string, callId: string) {
+      if (await tail(callId)) bus.publish(threadId, { kind: "live", callId });
     },
+
+    tail,
 
     // Stops taking what the call reports here, where it ended without this instance.
     close(callId: string) {
@@ -183,20 +197,20 @@ export function createLive({ store, bus, transact, now = Date.now }: LiveOptions
 
     // Drops what the call printed: inside the write that records its result, so it never shows
     // alongside it.
-    end(callId: string) {
+    async end(callId: string) {
       const call = reporting.get(callId);
       if (call) forget(call);
-      store.remove(callId);
+      await store.remove(callId);
     },
 
     // The end of what a running call printed so far and its progress, for the agent to check.
-    of(callId: string) {
-      const tail = store.tail(callId, LIVE_CHARS);
+    async of(callId: string) {
+      const tail = await store.tail(callId, LIVE_CHARS);
       return tail && { text: tail.text, ...(tail.progress && { progress: tail.progress }) };
     },
 
     // What each of the thread's running calls printed so far, as one piece each.
-    inThread(threadId: string): LiveChunk[] {
+    async inThread(threadId: string): Promise<LiveChunk[]> {
       return store.inThread(threadId, LIVE_CHARS);
     },
   };

@@ -92,31 +92,31 @@ export interface Settled {
 }
 
 export interface Directory {
-  org(orgId: string): Org | null;
+  org(orgId: string): Promise<Org | null>;
   // The orgs the user belongs to with their role in each: their personal org first, then by name.
-  orgsOf(userId: string): (Org & { role: OrgRole; ownerName: string | null })[];
+  orgsOf(userId: string): Promise<(Org & { role: OrgRole; ownerName: string | null })[]>;
   // Makes a team org with the user as its owner.
   createTeamOrg(name: string, ownerId: string): Promise<Org>;
 
-  renameOrg(orgId: string, name: string): void;
+  renameOrg(orgId: string, name: string): Promise<void>;
   // Deletes the org with everything in it: its spaces and their threads, connections, settings,
   // group links, invites and members. Sessions that used it last forget it.
-  deleteOrg(orgId: string): void;
+  deleteOrg(orgId: string): Promise<void>;
 
-  user(id: string): DirectoryUser | null;
-  userByEmail(email: string): DirectoryUser | null;
+  user(id: string): Promise<DirectoryUser | null>;
+  userByEmail(email: string): Promise<DirectoryUser | null>;
 
   // The user's role in the org, or null when they are not in it.
-  roleIn(orgId: string, userId: string): OrgRole | null;
+  roleIn(orgId: string, userId: string): Promise<OrgRole | null>;
   // The org's members, oldest first.
-  members(orgId: string): OrgMember[];
+  members(orgId: string): Promise<OrgMember[]>;
   // A page of the org's members by name, matching the text in name or email, of the role and the one
   // user if given.
   memberPage(
     orgId: string,
     params: PageParams & { role?: OrgRole; userId?: string },
-  ): Page<MemberRow>;
-  member(orgId: string, userId: string): OrgMember | null;
+  ): Promise<Page<MemberRow>>;
+  member(orgId: string, userId: string): Promise<OrgMember | null>;
   // A page of the org's people: its invites not yet used at `invitesAt` first, by email, when asked
   // for, then its linked groups and its members with a role of their own, by name; someone in only
   // through groups is left to their groups' rows. Matching the text in name or email, of the role
@@ -128,46 +128,49 @@ export interface Directory {
       status?: "member" | "invited" | "group";
       invitesAt: Date | null;
     },
-  ): Page<PersonRow>;
+  ): Promise<Page<PersonRow>>;
   // Makes the user a member with the role as their own, and clears them as a former member.
   addMember(orgId: string, userId: string, role: OrgRole): Promise<void>;
   // Gives the user, or with null takes back, a role of their own in the org; settling the org then
   // works out their membership.
-  setDirectRole(orgId: string, userId: string, role: OrgRole | null): void;
+  setDirectRole(orgId: string, userId: string, role: OrgRole | null): Promise<void>;
   // How many members have owner as a role of their own.
-  directOwnerCount(orgId: string): number;
+  directOwnerCount(orgId: string): Promise<number>;
   // Brings the team org's members, or only those of the users, in line with their own roles and
   // their active linked groups': someone who gains a role becomes a member, someone who keeps one
   // gets the highest, and someone left with none is taken out of the org and the roles given to
   // them in its spaces, and kept as a former member.
-  settle(orgId: string, at: Date, userIds?: string[]): Settled;
+  settle(orgId: string, at: Date, userIds?: string[]): Promise<Settled>;
   // The team orgs the user is a member of or has a linked group in.
-  orgsToSettle(userId: string): string[];
+  orgsToSettle(userId: string): Promise<string[]>;
   // Takes back the user's own roles in team orgs, but not in one where they are the last who owns
   // it in their own right.
-  clearDirectRoles(userId: string): void;
+  clearDirectRoles(userId: string): Promise<void>;
   // The org's former members among the users.
-  formerMembers(orgId: string, userIds: string[]): string[];
+  formerMembers(orgId: string, userIds: string[]): Promise<string[]>;
 
   // A directory group, or null when there is none by the id.
-  group(id: string): Group | null;
+  group(id: string): Promise<Group | null>;
   // The role the group is linked to the org with, or null when it is not linked.
-  linkedRole(orgId: string, groupId: string): OrgRole | null;
+  linkedRole(orgId: string, groupId: string): Promise<OrgRole | null>;
   // A page of the groups linked to the org by name, or of those the user is active in, matching
   // the text in the name.
-  groupPage(orgId: string, params: PageParams & { userId?: string }): Page<LinkedGroupRow>;
+  groupPage(orgId: string, params: PageParams & { userId?: string }): Promise<Page<LinkedGroupRow>>;
   // A page of the group's active members by name, matching the text in name or email.
-  groupMemberPage(groupId: string, params: PageParams): Page<DirectoryUser>;
-  memberCount(groupId: string): number;
+  groupMemberPage(groupId: string, params: PageParams): Promise<Page<DirectoryUser>>;
+  memberCount(groupId: string): Promise<number>;
   // The ids of the groups linked to the org that the user is active in.
-  groupIdsOf(orgId: string, userId: string): string[];
+  groupIdsOf(orgId: string, userId: string): Promise<string[]>;
   // A page of the directory's active people by name, with their role in the org, matching the text
   // in name or email.
-  directoryPeoplePage(orgId: string, params: PageParams): Page<DirectoryPerson>;
+  directoryPeoplePage(orgId: string, params: PageParams): Promise<Page<DirectoryPerson>>;
   // A page of the directory's groups by name, with the role each is linked to the org with,
   // matching the text in the name.
-  directoryGroupPage(orgId: string, params: PageParams): Page<GroupRow & { role: OrgRole | null }>;
-  linkGroup(orgId: string, groupId: string, role: OrgRole): void;
+  directoryGroupPage(
+    orgId: string,
+    params: PageParams,
+  ): Promise<Page<GroupRow & { role: OrgRole | null }>>;
+  linkGroup(orgId: string, groupId: string, role: OrgRole): Promise<void>;
   // Unlinks the group, with the roles the org's spaces gave it.
-  unlinkGroup(orgId: string, groupId: string): void;
+  unlinkGroup(orgId: string, groupId: string): Promise<void>;
 }

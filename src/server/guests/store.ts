@@ -1,5 +1,5 @@
 import { and, asc, eq, gt, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
-import { alias } from "drizzle-orm/sqlite-core";
+import { alias } from "drizzle-orm/pg-core";
 import { ulid } from "ulid";
 
 import type { Db } from "@/server/db/db.ts";
@@ -83,7 +83,7 @@ function active(now: Date) {
 
 // A group's grant row `tg` that has not ended at `now`.
 function grantActive(now: Date) {
-  return sql`tg.revoked_at is null and (tg.access_until is null or tg.access_until > ${now.getTime()})`;
+  return sql`tg.revoked_at is null and (tg.access_until is null or tg.access_until > ${now})`;
 }
 
 // Whether the user has no role in space `s`: none given to them, to their directory groups or to
@@ -96,7 +96,7 @@ function lacksSpaceRole(userId: SQL) {
                          or (sm.subject_kind = 'group' and sm.subject_id in
                                (select gm.group_id from scim_group_member gm
                                   join scim_user su on su.id = gm.scim_user_id
-                                 where su.user_id = ${userId} and su.active = 1))))`;
+                                 where su.user_id = ${userId} and su.active = true))))`;
 }
 
 // The thread grants `tg` for the user through a group of theirs the thread's org still links, in
@@ -109,19 +109,19 @@ function groupGranted(userId: string, now: Date) {
     where ${grantActive(now)}
       and tg.group_id in (select gm.group_id from scim_group_member gm
                             join scim_user su on su.id = gm.scim_user_id
-                           where su.user_id = ${userId} and su.active = 1)
+                           where su.user_id = ${userId} and su.active = true)
       and ${lacksSpaceRole(sql`${userId}`)}`;
 }
 
 // The threads the user is a guest of, one way or another, and until when (null for never): their
 // own grants and their groups', the longer where both reach the thread.
 function guestOf(userId: string, now: Date) {
-  return sql`select thread_id, case when sum(access_until is null) > 0 then null
+  return sql`select thread_id, case when bool_or(access_until is null) then null
                                     else max(access_until) end as access_until
     from (select g.thread_id as thread_id, g.access_until as access_until
             from thread_guest g
            where g.user_id = ${userId} and g.revoked_at is null
-             and (g.access_until is null or g.access_until > ${now.getTime()})
+             and (g.access_until is null or g.access_until > ${now})
           union all
           select tg.thread_id, tg.access_until ${groupGranted(userId, now)})
     group by thread_id`;
@@ -139,7 +139,7 @@ function orgReached(userId: string, now: Date) {
     and not exists (select 1 from thread_guest g2
                      where g2.thread_id = t.id and g2.user_id = ${userId}
                        and g2.revoked_at is null
-                       and (g2.access_until is null or g2.access_until > ${now.getTime()}))
+                       and (g2.access_until is null or g2.access_until > ${now}))
     and t.id not in (select tg.thread_id ${groupGranted(userId, now)})`;
 }
 
@@ -161,82 +161,88 @@ interface SharedRow extends StatusedRow {
 
 export function createGuestStore(db: Db): GuestStore {
   return {
-    find(threadId, userId): ThreadGuest | null {
+    async find(threadId, userId): Promise<ThreadGuest | null> {
       return (
-        db
-          .select(guestColumns)
-          .from(threadGuest)
-          .where(and(eq(threadGuest.threadId, threadId), eq(threadGuest.userId, userId)))
-          .get() ?? null
+        (
+          await db
+            .select(guestColumns)
+            .from(threadGuest)
+            .where(and(eq(threadGuest.threadId, threadId), eq(threadGuest.userId, userId)))
+            .limit(1)
+        )[0] ?? null
       );
     },
 
-    grant({ threadId, userId, invitedBy, accessUntil, role = "message" }) {
+    async grant({ threadId, userId, invitedBy, accessUntil, role = "message" }) {
       const renewed = { invitedBy, accessUntil, role, revokedAt: null, revokedBy: null };
-      return db
-        .insert(threadGuest)
-        .values({ threadId, userId, ...renewed })
-        .onConflictDoUpdate({ target: [threadGuest.threadId, threadGuest.userId], set: renewed })
-        .returning(guestColumns)
-        .get();
-    },
-
-    setRole(threadId, userId, role) {
-      db.update(threadGuest)
-        .set({ role })
-        .where(and(eq(threadGuest.threadId, threadId), eq(threadGuest.userId, userId)))
-        .run();
-    },
-
-    findGroup(threadId, groupId): ThreadGroupGuest | null {
       return (
-        db
-          .select(groupColumns)
-          .from(threadGroupGuest)
-          .where(
-            and(eq(threadGroupGuest.threadId, threadId), eq(threadGroupGuest.groupId, groupId)),
-          )
-          .get() ?? null
+        await db
+          .insert(threadGuest)
+          .values({ threadId, userId, ...renewed })
+          .onConflictDoUpdate({ target: [threadGuest.threadId, threadGuest.userId], set: renewed })
+          .returning(guestColumns)
+      )[0]!;
+    },
+
+    async setRole(threadId, userId, role) {
+      await db
+        .update(threadGuest)
+        .set({ role })
+        .where(and(eq(threadGuest.threadId, threadId), eq(threadGuest.userId, userId)));
+    },
+
+    async findGroup(threadId, groupId): Promise<ThreadGroupGuest | null> {
+      return (
+        (
+          await db
+            .select(groupColumns)
+            .from(threadGroupGuest)
+            .where(
+              and(eq(threadGroupGuest.threadId, threadId), eq(threadGroupGuest.groupId, groupId)),
+            )
+            .limit(1)
+        )[0] ?? null
       );
     },
 
-    grantGroup({ threadId, groupId, invitedBy, accessUntil, role }) {
+    async grantGroup({ threadId, groupId, invitedBy, accessUntil, role }) {
       const renewed = { invitedBy, accessUntil, role, revokedAt: null, revokedBy: null };
-      return db
-        .insert(threadGroupGuest)
-        .values({ threadId, groupId, ...renewed })
-        .onConflictDoUpdate({
-          target: [threadGroupGuest.threadId, threadGroupGuest.groupId],
-          set: renewed,
-        })
-        .returning(groupColumns)
-        .get();
+      return (
+        await db
+          .insert(threadGroupGuest)
+          .values({ threadId, groupId, ...renewed })
+          .onConflictDoUpdate({
+            target: [threadGroupGuest.threadId, threadGroupGuest.groupId],
+            set: renewed,
+          })
+          .returning(groupColumns)
+      )[0]!;
     },
 
-    setGroupRole(threadId, groupId, role) {
-      db.update(threadGroupGuest)
+    async setGroupRole(threadId, groupId, role) {
+      await db
+        .update(threadGroupGuest)
         .set({ role })
-        .where(and(eq(threadGroupGuest.threadId, threadId), eq(threadGroupGuest.groupId, groupId)))
-        .run();
+        .where(and(eq(threadGroupGuest.threadId, threadId), eq(threadGroupGuest.groupId, groupId)));
     },
 
-    revokeGroup(threadId, groupId, by, at) {
-      db.update(threadGroupGuest)
+    async revokeGroup(threadId, groupId, by, at) {
+      await db
+        .update(threadGroupGuest)
         .set({ revokedAt: at, revokedBy: by })
-        .where(and(eq(threadGroupGuest.threadId, threadId), eq(threadGroupGuest.groupId, groupId)))
-        .run();
+        .where(and(eq(threadGroupGuest.threadId, threadId), eq(threadGroupGuest.groupId, groupId)));
     },
 
-    activeGroupsIn(threadId, now) {
+    async activeGroupsIn(threadId, now) {
       const inviter = alias(user, "inviter");
-      return db
+      return await db
         .select({
           ...groupColumns,
           name: scimGroup.displayName,
           invitedByName: inviter.name,
-          memberCount: sql<number>`(select count(distinct su.user_id) from scim_group_member gm
+          memberCount: sql<number>`(select count(distinct su.user_id)::int from scim_group_member gm
               join scim_user su on su.id = gm.scim_user_id
-             where gm.group_id = ${threadGroupGuest.groupId} and su.active = 1)`,
+             where gm.group_id = ${threadGroupGuest.groupId} and su.active = true)`,
         })
         .from(threadGroupGuest)
         .innerJoin(scimGroup, eq(scimGroup.id, threadGroupGuest.groupId))
@@ -248,28 +254,26 @@ export function createGuestStore(db: Db): GuestStore {
             or(isNull(threadGroupGuest.accessUntil), gt(threadGroupGuest.accessUntil, now)),
           ),
         )
-        .orderBy(asc(threadGroupGuest.createdAt), sql`${threadGroupGuest}.rowid`)
-        .all();
+        .orderBy(asc(threadGroupGuest.createdAt), asc(threadGroupGuest.groupId));
     },
 
-    groupRole(threadId, userId, now): ThreadRole | null {
-      const row = db.get<{ message: number | null }>(
-        sql`select max(tg.role = 'message') as message ${groupGranted(userId, now)}
+    async groupRole(threadId, userId, now): Promise<ThreadRole | null> {
+      const row = (
+        await db.execute<{ message: boolean | null }>(
+          sql`select bool_or(tg.role = 'message') as message ${groupGranted(userId, now)}
               and tg.thread_id = ${threadId}`,
-      );
-      return row?.message === null || row === undefined
-        ? null
-        : row.message === 1
-          ? "message"
-          : "view";
+        )
+      ).rows[0];
+      return row?.message === null || row === undefined ? null : row.message ? "message" : "view";
     },
 
-    reachedIn(threadId, now) {
-      const rows = db.all<{ userId: string; name: string; role: ThreadRole }>(
-        sql`select u.id as userId, u.name as name, g.role as role
-              from thread_guest g join user u on u.id = g.user_id
+    async reachedIn(threadId, now) {
+      const rows = (
+        await db.execute<{ userId: string; name: string; role: ThreadRole }>(
+          sql`select u.id as "userId", u.name as name, g.role as role
+              from thread_guest g join "user" u on u.id = g.user_id
              where g.thread_id = ${threadId} and g.revoked_at is null
-               and (g.access_until is null or g.access_until > ${now.getTime()})
+               and (g.access_until is null or g.access_until > ${now})
             union all
             select u.id, u.name, tg.role
               from thread_group_guest tg
@@ -278,11 +282,12 @@ export function createGuestStore(db: Db): GuestStore {
               join org_group og on og.organization_id = s.organization_id
                                and og.group_id = tg.group_id
               join scim_group_member gm on gm.group_id = tg.group_id
-              join scim_user su on su.id = gm.scim_user_id and su.active = 1
-              join user u on u.id = su.user_id
+              join scim_user su on su.id = gm.scim_user_id and su.active = true
+              join "user" u on u.id = su.user_id
              where tg.thread_id = ${threadId} and ${grantActive(now)}
                and ${lacksSpaceRole(sql`u.id`)}`,
-      );
+        )
+      ).rows;
       const found = new Map<string, { userId: string; name: string; role: ThreadRole }>();
       for (const row of rows) {
         const had = found.get(row.userId);
@@ -291,72 +296,73 @@ export function createGuestStore(db: Db): GuestStore {
       return [...found.values()];
     },
 
-    orgAccess(threadId) {
+    async orgAccess(threadId) {
       return (
-        db.select({ orgAccess: thread.orgAccess }).from(thread).where(eq(thread.id, threadId)).get()
-          ?.orgAccess ?? "none"
+        (
+          await db
+            .select({ orgAccess: thread.orgAccess })
+            .from(thread)
+            .where(eq(thread.id, threadId))
+            .limit(1)
+        )[0]?.orgAccess ?? "none"
       );
     },
 
-    setOrgAccess(threadId, orgAccess) {
-      db.update(thread).set({ orgAccess }).where(eq(thread.id, threadId)).run();
+    async setOrgAccess(threadId, orgAccess) {
+      await db.update(thread).set({ orgAccess }).where(eq(thread.id, threadId));
     },
 
-    revoke(threadId, userId, by, at) {
-      db.update(threadGuest)
+    async revoke(threadId, userId, by, at) {
+      await db
+        .update(threadGuest)
         .set({ revokedAt: at, revokedBy: by })
-        .where(and(eq(threadGuest.threadId, threadId), eq(threadGuest.userId, userId)))
-        .run();
+        .where(and(eq(threadGuest.threadId, threadId), eq(threadGuest.userId, userId)));
     },
 
-    activeIn(threadId, now) {
+    async activeIn(threadId, now) {
       const inviter = alias(user, "inviter");
-      return (
-        db
-          .select({ ...guestColumns, name: user.name, invitedByName: inviter.name })
-          .from(threadGuest)
-          .innerJoin(user, eq(user.id, threadGuest.userId))
-          .leftJoin(inviter, eq(inviter.id, threadGuest.invitedBy))
-          .where(and(eq(threadGuest.threadId, threadId), active(now)))
-          // Rows made in the same millisecond stay in the order they were made.
-          .orderBy(asc(threadGuest.createdAt), sql`${threadGuest}.rowid`)
-          .all()
-      );
+      return await db
+        .select({ ...guestColumns, name: user.name, invitedByName: inviter.name })
+        .from(threadGuest)
+        .innerJoin(user, eq(user.id, threadGuest.userId))
+        .leftJoin(inviter, eq(inviter.id, threadGuest.invitedBy))
+        .where(and(eq(threadGuest.threadId, threadId), active(now)))
+        .orderBy(asc(threadGuest.createdAt), asc(threadGuest.userId));
     },
 
-    threadsOf(userId, now) {
-      const viaOrg = db
-        .all<{ id: string }>(
+    async threadsOf(userId, now) {
+      const viaOrg = (
+        await db.execute<{ id: string }>(
           sql`select t.id as id from thread t join space s on s.id = t.space_id
                where ${orgReached(userId, now)}`,
         )
-        .map(({ id }) => id);
+      ).rows.map(({ id }) => id);
       const own = new Map(
-        db
-          .all<{ id: string; until: number | null }>(
+        (
+          await db.execute<{ id: string; until: number | null }>(
             sql`select thread_id as id, access_until as until from (${guestOf(userId, now)})`,
           )
-          .map(({ id, until }) => [id, until === null ? null : new Date(until)]),
+        ).rows.map(({ id, until }) => [id, until === null ? null : new Date(until)]),
       );
-      const rows = (ids: string[], until: (id: string) => Date | null) =>
+      const rows = async (ids: string[], until: (id: string) => Date | null) =>
         ids.length === 0
           ? []
-          : db
-              .select({
-                thread: threadColumns,
-                space: { name: space.name, kind: space.kind, primary: space.primary },
-                ownerName: creator.name,
-                orgName: organization.name,
-              })
-              .from(thread)
-              .innerJoin(space, eq(space.id, thread.spaceId))
-              .innerJoin(organization, eq(organization.id, space.organizationId))
-              .leftJoin(creator, eq(creator.id, space.createdBy))
-              .where(and(inArray(thread.id, ids), isNull(space.trashedAt)))
-              .all()
-              .map((row) => ({ ...row, accessUntil: until(row.thread.id) }));
-      return rows([...own.keys()], (id) => own.get(id) ?? null)
-        .concat(rows(viaOrg, () => null))
+          : (
+              await db
+                .select({
+                  thread: threadColumns,
+                  space: { name: space.name, kind: space.kind, primary: space.primary },
+                  ownerName: creator.name,
+                  orgName: organization.name,
+                })
+                .from(thread)
+                .innerJoin(space, eq(space.id, thread.spaceId))
+                .innerJoin(organization, eq(organization.id, space.organizationId))
+                .leftJoin(creator, eq(creator.id, space.createdBy))
+                .where(and(inArray(thread.id, ids), isNull(space.trashedAt)))
+            ).map((row) => ({ ...row, accessUntil: until(row.thread.id) }));
+      return (await rows([...own.keys()], (id) => own.get(id) ?? null))
+        .concat(await rows(viaOrg, () => null))
         .toSorted(
           (a, b) =>
             b.thread.updatedAt.getTime() - a.thread.updatedAt.getTime() ||
@@ -368,7 +374,7 @@ export function createGuestStore(db: Db): GuestStore {
         });
     },
 
-    sharedListed(userId, now, filter, window) {
+    async sharedListed(userId, now, filter, window) {
       const listed = statused(userId, {
         from: sql`from (${guestOf(userId, now)}
                         union all
@@ -378,22 +384,27 @@ export function createGuestStore(db: Db): GuestStore {
           join thread t on t.id = g.thread_id
           join space s on s.id = t.space_id
           join organization o on o.id = s.organization_id
-          left join user c on c.id = s.created_by`,
+          left join "user" c on c.id = s.created_by`,
         where: sql`s.trashed_at is null`,
         // Where the thread is as its list says: a person's own space alone, any other with its org.
         columns: sql`, s.name as space_name, s.kind as space_kind, s.is_primary as space_primary,
           c.name as owner_name, o.name as org_name, g.access_until as access_until,
-          case when s.kind = 'personal' and s.is_primary = 1
+          case when s.kind = 'personal' and s.is_primary = true
                then coalesce(c.name, o.name) || ${SPACE_SUFFIX}
                else s.name || ' · ' || o.name end as place`,
       });
       const keep = kept(filter, sql`coalesce(title, ${UNTITLED})`, sql`place`);
-      const rows = db.all<SharedRow>(
-        sql`${listed} select * from statused where ${keep} ${newestFirst} ${windowOf(window)}`,
-      );
+      const rows = (
+        await db.execute<SharedRow & Record<string, unknown>>(
+          sql`${listed} select * from statused where ${keep} ${newestFirst} ${windowOf(window)}`,
+        )
+      ).rows;
       const total = window
-        ? (db.get<{ n: number }>(sql`${listed} select count(*) as n from statused where ${keep}`)
-            ?.n ?? 0)
+        ? ((
+            await db.execute<{ n: number }>(
+              sql`${listed} select count(*)::int as n from statused where ${keep}`,
+            )
+          ).rows[0]?.n ?? 0)
         : rows.length;
       return {
         rows: rows.map((row) => {
@@ -411,73 +422,76 @@ export function createGuestStore(db: Db): GuestStore {
       };
     },
 
-    hostSpaceName(threadId) {
-      const row = db
-        .select({
-          name: space.name,
-          kind: space.kind,
-          primary: space.primary,
-          ownerName: creator.name,
-          orgName: organization.name,
-        })
-        .from(thread)
-        .innerJoin(space, eq(space.id, thread.spaceId))
-        .innerJoin(organization, eq(organization.id, space.organizationId))
-        .leftJoin(creator, eq(creator.id, space.createdBy))
-        .where(eq(thread.id, threadId))
-        .get();
+    async hostSpaceName(threadId) {
+      const row = (
+        await db
+          .select({
+            name: space.name,
+            kind: space.kind,
+            primary: space.primary,
+            ownerName: creator.name,
+            orgName: organization.name,
+          })
+          .from(thread)
+          .innerJoin(space, eq(space.id, thread.spaceId))
+          .innerJoin(organization, eq(organization.id, space.organizationId))
+          .leftJoin(creator, eq(creator.id, space.createdBy))
+          .where(eq(thread.id, threadId))
+          .limit(1)
+      )[0];
       return row ? spaceNameFor(row, row.ownerName ?? row.orgName) : null;
     },
 
-    setInviteRole(id, role) {
-      db.update(threadInvite).set({ role }).where(eq(threadInvite.id, id)).run();
+    async setInviteRole(id, role) {
+      await db.update(threadInvite).set({ role }).where(eq(threadInvite.id, id));
     },
 
-    createInvite(input) {
-      return db
-        .insert(threadInvite)
-        .values({ id: ulid(), ...input })
-        .returning(inviteColumns)
-        .get();
-    },
-
-    findInvite(id): ThreadInvite | null {
+    async createInvite(input) {
       return (
-        db.select(inviteColumns).from(threadInvite).where(eq(threadInvite.id, id)).get() ?? null
+        await db
+          .insert(threadInvite)
+          .values({ id: ulid(), ...input })
+          .returning(inviteColumns)
+      )[0]!;
+    },
+
+    async findInvite(id): Promise<ThreadInvite | null> {
+      return (
+        (
+          await db.select(inviteColumns).from(threadInvite).where(eq(threadInvite.id, id)).limit(1)
+        )[0] ?? null
       );
     },
 
-    findInviteByHash(tokenHash): ThreadInvite | null {
+    async findInviteByHash(tokenHash): Promise<ThreadInvite | null> {
       return (
-        db
-          .select(inviteColumns)
-          .from(threadInvite)
-          .where(eq(threadInvite.tokenHash, tokenHash))
-          .get() ?? null
+        (
+          await db
+            .select(inviteColumns)
+            .from(threadInvite)
+            .where(eq(threadInvite.tokenHash, tokenHash))
+            .limit(1)
+        )[0] ?? null
       );
     },
 
-    pendingInvites(threadId, now) {
-      return (
-        db
-          .select(inviteColumns)
-          .from(threadInvite)
-          .where(
-            and(
-              eq(threadInvite.threadId, threadId),
-              isNull(threadInvite.acceptedAt),
-              isNull(threadInvite.revokedAt),
-              gt(threadInvite.linkExpiresAt, now),
-            ),
-          )
-          // Links made in the same millisecond stay in the order they were made.
-          .orderBy(asc(threadInvite.createdAt), sql`${threadInvite}.rowid`)
-          .all()
-      );
+    async pendingInvites(threadId, now) {
+      return await db
+        .select(inviteColumns)
+        .from(threadInvite)
+        .where(
+          and(
+            eq(threadInvite.threadId, threadId),
+            isNull(threadInvite.acceptedAt),
+            isNull(threadInvite.revokedAt),
+            gt(threadInvite.linkExpiresAt, now),
+          ),
+        )
+        .orderBy(asc(threadInvite.createdAt), asc(threadInvite.id));
     },
 
-    markAccepted(id, userId, at) {
-      const stamped = db
+    async markAccepted(id, userId, at) {
+      const stamped = await db
         .update(threadInvite)
         .set({ acceptedBy: userId, acceptedAt: at })
         .where(
@@ -487,12 +501,12 @@ export function createGuestStore(db: Db): GuestStore {
             isNull(threadInvite.revokedAt),
           ),
         )
-        .run();
-      return stamped.changes === 1;
+        .returning({ id: threadInvite.id });
+      return stamped.length === 1;
     },
 
-    revokeInvite(id, at) {
-      db.update(threadInvite).set({ revokedAt: at }).where(eq(threadInvite.id, id)).run();
+    async revokeInvite(id, at) {
+      await db.update(threadInvite).set({ revokedAt: at }).where(eq(threadInvite.id, id));
     },
   };
 }

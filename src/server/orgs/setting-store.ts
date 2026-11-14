@@ -8,32 +8,34 @@ import type { OrgSettings, OrgSettingStore } from "./service.ts";
 import { orgSetting } from "./schema.ts";
 
 export function createOrgSettingStore(db: Db): OrgSettingStore {
-  function set(orgId: string, changes: Partial<OrgSettings>) {
-    db.insert(orgSetting)
+  async function set(orgId: string, changes: Partial<OrgSettings>) {
+    await db
+      .insert(orgSetting)
       .values({ organizationId: orgId, ...changes })
       .onConflictDoUpdate({
         target: orgSetting.organizationId,
         set: { ...changes, updatedAt: new Date() },
-      })
-      .run();
+      });
   }
 
   return {
-    get(orgId) {
-      const row = db
-        .select({
-          defaultModel: orgSetting.defaultModel,
-          titleModel: orgSetting.titleModel,
-          defaultEffort: orgSetting.defaultEffort,
-          spaceCreation: orgSetting.spaceCreation,
-          memberSpaces: orgSetting.memberSpaces,
-          spaceMcpServers: orgSetting.spaceMcpServers,
-          spaceSkills: orgSetting.spaceSkills,
-          agentName: orgSetting.agentName,
-        })
-        .from(orgSetting)
-        .where(eq(orgSetting.organizationId, orgId))
-        .get();
+    async get(orgId) {
+      const row = (
+        await db
+          .select({
+            defaultModel: orgSetting.defaultModel,
+            titleModel: orgSetting.titleModel,
+            defaultEffort: orgSetting.defaultEffort,
+            spaceCreation: orgSetting.spaceCreation,
+            memberSpaces: orgSetting.memberSpaces,
+            spaceMcpServers: orgSetting.spaceMcpServers,
+            spaceSkills: orgSetting.spaceSkills,
+            agentName: orgSetting.agentName,
+          })
+          .from(orgSetting)
+          .where(eq(orgSetting.organizationId, orgId))
+          .limit(1)
+      )[0];
       return {
         defaultModel: row?.defaultModel ?? null,
         titleModel: row?.titleModel ?? null,
@@ -46,32 +48,32 @@ export function createOrgSettingStore(db: Db): OrgSettingStore {
       };
     },
 
-    setDefaultModel(orgId, ref) {
-      set(orgId, { defaultModel: ref });
+    async setDefaultModel(orgId, ref) {
+      await set(orgId, { defaultModel: ref });
     },
 
-    setTitleModel(orgId, ref) {
-      set(orgId, { titleModel: ref });
+    async setTitleModel(orgId, ref) {
+      await set(orgId, { titleModel: ref });
     },
 
-    setDefaultEffort(orgId, effort) {
-      set(orgId, { defaultEffort: effort });
+    async setDefaultEffort(orgId, effort) {
+      await set(orgId, { defaultEffort: effort });
     },
 
-    setTeamSettings(orgId, changes) {
-      set(orgId, changes);
+    async setTeamSettings(orgId, changes) {
+      await set(orgId, changes);
     },
 
-    setSpaceMcpServers(orgId, allowed) {
-      set(orgId, { spaceMcpServers: allowed });
+    async setSpaceMcpServers(orgId, allowed) {
+      await set(orgId, { spaceMcpServers: allowed });
     },
 
-    setSpaceSkills(orgId, allowed) {
-      set(orgId, { spaceSkills: allowed });
+    async setSpaceSkills(orgId, allowed) {
+      await set(orgId, { spaceSkills: allowed });
     },
 
-    setAgentName(orgId, name) {
-      set(orgId, { agentName: name });
+    async setAgentName(orgId, name) {
+      await set(orgId, { agentName: name });
     },
   };
 }

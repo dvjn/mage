@@ -39,8 +39,8 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
   const { threads, spaceStore, guests, models, open } = options;
   const now = options.now ?? (() => new Date());
 
-  function threadOf(id: string) {
-    const thread = threads.find(id);
+  async function threadOf(id: string) {
+    const thread = await threads.find(id);
     if (!thread) throw new Error("the thread is gone");
     return thread;
   }
@@ -54,14 +54,14 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
     input: z.object({}).strict() as z.ZodType<Record<string, never>>,
     risk: () => "normal",
     async run(_input, ctx) {
-      const thread = threadOf(ctx.threadId);
-      const space = spaceStore.find(thread.spaceId);
-      const aliased = (ref: string | null) => ref && models.aliasOf(ctx.orgId, ref);
+      const thread = await threadOf(ctx.threadId);
+      const space = await spaceStore.find(thread.spaceId);
+      const aliased = async (ref: string | null) => ref && (await models.aliasOf(ctx.orgId, ref));
       const model = space
         ? await models.replyModel(space, { model: thread.model, effort: thread.effort })
         : null;
       const writers = new Set<string>();
-      for (const row of options.transcripts.of(thread.id).transcript().rows) {
+      for (const row of (await options.transcripts.of(thread.id)).transcript().rows) {
         if (row.kind === "human" && !row.guest) writers.add(personLabel(row.author));
       }
       return {
@@ -70,18 +70,19 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
           title: thread.title,
           model: {
             chosen: {
-              ref: aliased(thread.model ?? model?.chosen.ref ?? null),
+              ref: await aliased(thread.model ?? model?.chosen.ref ?? null),
               effort: thread.effort,
             },
             replying: model?.used
-              ? { ref: aliased(model.used.ref), name: model.used.name, effort: model.effort }
+              ? { ref: await aliased(model.used.ref), name: model.used.name, effort: model.effort }
               : null,
           },
           people: [
             ...[...writers].map((name) => ({ name, guest: false })),
-            ...guests
-              .reachedIn(thread.rootThreadId ?? thread.id, now())
-              .map((guest) => ({ name: guest.name, guest: true })),
+            ...(await guests.reachedIn(thread.rootThreadId ?? thread.id, now())).map((guest) => ({
+              name: guest.name,
+              guest: true,
+            })),
           ],
         },
       };
@@ -127,10 +128,10 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
       title: z.string().trim().min(1).max(200).meta({ title: "Title" }),
     }),
     risk: () => "normal",
-    run({ title }, ctx) {
-      ctx.write((append) => {
-        threads.update(ctx.threadId, { title, titleSource: "agent" });
-        append({ type: "thread.renamed", actor: ctx.actor, data: { title } });
+    async run({ title }, ctx) {
+      await ctx.write(async (append) => {
+        await threads.update(ctx.threadId, { title, titleSource: "agent" });
+        await append({ type: "thread.renamed", actor: ctx.actor, data: { title } });
       });
       return Promise.resolve({ ok: true, value: { title } });
     },
@@ -146,26 +147,26 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
       model: z.string().min(1).meta({ title: "Model", description: "A model ref" }),
       effort: effortSchema.nullable().meta({ title: "Effort" }),
     }),
-    risk: ({ model }, ctx) =>
+    risk: async ({ model }, ctx) =>
       ctx.model &&
-      parseModelRef(models.canonicalRef(ctx.orgId, model)).connectionId !==
+      parseModelRef(await models.canonicalRef(ctx.orgId, model)).connectionId !==
         parseModelRef(ctx.model).connectionId
         ? "ask"
         : "normal",
     // The model as people know it, its connection, and the effort.
-    summary({ model, effort }, space) {
-      const label = models.modelLabels(space.orgId)(model);
+    async summary({ model, effort }, space) {
+      const label = await (await models.modelLabels(space.orgId))(model);
       return label && [label, effort].filter(Boolean).join(" · ");
     },
     async run({ model, effort }, ctx) {
-      const ref = models.canonicalRef(ctx.orgId, model);
+      const ref = await models.canonicalRef(ctx.orgId, model);
       const { models: available, errors } = await models.resolveModels(ctx.orgId);
       const found = available.find((one) => one.ref === ref);
       if (!found) {
         const unreadable = errors.length > 0 ? " Some connections could not be read." : "";
         return { ok: false, error: `${model} is not a model this org can use.${unreadable}` };
       }
-      ctx.write(() => threads.update(ctx.threadId, { model: ref, effort }));
+      await ctx.write(async () => threads.update(ctx.threadId, { model: ref, effort }));
       return {
         ok: true,
         value: { model: found.alias, name: found.name, connection: found.connectionLabel, effort },
@@ -193,15 +194,15 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
       if (!ctx.model) return { ok: false, error: "No model replies in this thread." };
       const done = await compactThread({
         threadId: ctx.threadId,
-        rows: wholeWhereRead(
-          options.transcripts.of(ctx.threadId).transcript().rows,
+        rows: await wholeWhereRead(
+          (await options.transcripts.of(ctx.threadId)).transcript().rows,
           options.transcripts.whole,
         ),
         model: await open(ctx.orgId, ctx.model),
-        ...(ctx.threadRequest && { request: ctx.threadRequest() }),
+        ...(ctx.threadRequest && { request: await ctx.threadRequest() }),
         ...(focus && { focus }),
         actor: ctx.actor,
-        write: (work) => ctx.write(work),
+        write: async (work) => ctx.write(work),
         signal: AbortSignal.timeout(COMPACT_TIMEOUT_MS),
       });
       if (!done) return { ok: false, error: "There is nothing to compact yet." };

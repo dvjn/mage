@@ -7935,15 +7935,6 @@
         "via"
       ]
     },
-    "threads/events.ts#subagentEndSchema": {
-      "$id": "threads/events.ts#subagentEndSchema",
-      "type": "string",
-      "enum": [
-        "idle",
-        "stopped",
-        "failed"
-      ]
-    },
     "threads/events.ts#subagentTaskSchema": {
       "$id": "threads/events.ts#subagentTaskSchema",
       "type": "object",
@@ -8207,78 +8198,6 @@
             },
             "type": {
               "type": "string",
-              "const": "agent.message"
-            },
-            "data": {
-              "type": "object",
-              "properties": {
-                "parts": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "threads/events.ts#textPartSchema"
-                  }
-                },
-                "from": {
-                  "$ref": "threads/events.ts#senderSchema"
-                },
-                "to": {
-                  "type": "string"
-                },
-                "steeredBy": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "threads/events.ts#steeringSchema"
-                  }
-                },
-                "task": {
-                  "$ref": "threads/events.ts#subagentTaskSchema"
-                },
-                "call": {
-                  "$ref": "threads/events.ts#causeSchema"
-                }
-              },
-              "required": [
-                "parts",
-                "from",
-                "to",
-                "steeredBy"
-              ]
-            }
-          },
-          "required": [
-            "id",
-            "threadId",
-            "seq",
-            "actor",
-            "createdAt",
-            "type",
-            "data"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "threadId": {
-              "type": "string"
-            },
-            "seq": {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            },
-            "actor": {
-              "$ref": "threads/events.ts#actorSchema"
-            },
-            "createdAt": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-            },
-            "type": {
-              "type": "string",
               "const": "notification"
             },
             "data": {
@@ -8389,66 +8308,6 @@
                 "source",
                 "text",
                 "people"
-              ]
-            }
-          },
-          "required": [
-            "id",
-            "threadId",
-            "seq",
-            "actor",
-            "createdAt",
-            "type",
-            "data"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "threadId": {
-              "type": "string"
-            },
-            "seq": {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            },
-            "actor": {
-              "$ref": "threads/events.ts#actorSchema"
-            },
-            "createdAt": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-            },
-            "type": {
-              "type": "string",
-              "const": "subagent.ended"
-            },
-            "data": {
-              "type": "object",
-              "properties": {
-                "threadId": {
-                  "type": "string"
-                },
-                "name": {
-                  "type": "string"
-                },
-                "state": {
-                  "$ref": "threads/events.ts#subagentEndSchema"
-                },
-                "last": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "threadId",
-                "name",
-                "state",
-                "last"
               ]
             }
           },
@@ -9400,62 +9259,6 @@
                 "runId",
                 "callId",
                 "reason"
-              ]
-            }
-          },
-          "required": [
-            "id",
-            "threadId",
-            "seq",
-            "actor",
-            "createdAt",
-            "type",
-            "data"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "threadId": {
-              "type": "string"
-            },
-            "seq": {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            },
-            "actor": {
-              "$ref": "threads/events.ts#actorSchema"
-            },
-            "createdAt": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-            },
-            "type": {
-              "type": "string",
-              "const": "tool.blocked"
-            },
-            "data": {
-              "type": "object",
-              "properties": {
-                "runId": {
-                  "type": "string"
-                },
-                "callId": {
-                  "type": "string"
-                },
-                "userId": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "runId",
-                "callId",
-                "userId"
               ]
             }
           },
@@ -12403,81 +12206,6 @@
             "type",
             "from",
             "text"
-          ]
-        },
-        {
-          "type": "object",
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "order": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
-            },
-            "seq": {
-              "type": "integer",
-              "minimum": 0,
-              "maximum": 9007199254740991
-            },
-            "turn": {
-              "anyOf": [
-                {
-                  "$ref": "threads/rows.ts#agentTurnSchema"
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "can": {
-              "type": "array",
-              "items": {
-                "$ref": "threads/rows.ts#rowActionSchema"
-              }
-            },
-            "versions": {
-              "$ref": "threads/rows.ts#rowVersionsSchema"
-            },
-            "kind": {
-              "type": "string",
-              "const": "notice"
-            },
-            "subagents": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "properties": {
-                  "threadId": {
-                    "type": "string"
-                  },
-                  "name": {
-                    "type": "string"
-                  },
-                  "state": {
-                    "$ref": "threads/events.ts#subagentEndSchema"
-                  },
-                  "last": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "threadId",
-                  "name",
-                  "state",
-                  "last"
-                ]
-              }
-            }
-          },
-          "required": [
-            "id",
-            "order",
-            "seq",
-            "turn",
-            "kind",
-            "subagents"
           ]
         },
         {

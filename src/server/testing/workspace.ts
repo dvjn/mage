@@ -8,48 +8,15 @@
 import { rmSync } from "node:fs";
 
 import { eq } from "drizzle-orm";
-import { ulid } from "ulid";
 import { afterEach, expect } from "vite-plus/test";
 
-import { createCallStore } from "@/server/agent/call-store.ts";
-import { createLive } from "@/server/agent/live.ts";
-import { createLiveStore } from "@/server/agent/live-store.ts";
-import { createCalls } from "@/server/agent/calls.ts";
-import { createNotifier } from "@/server/agent/notifications.ts";
-import { createTasks } from "@/server/agent/tasks.ts";
-import { createTaskStore } from "@/server/agent/task-store.ts";
-import { createTriggerStore } from "@/server/agent/trigger-store.ts";
-import { createTriggers } from "@/server/agent/triggers.ts";
-import { createSubagentStore } from "@/server/agent/subagent-store.ts";
-import { createSubagents } from "@/server/agent/subagents.ts";
-import { createWatchStore } from "@/server/agent/watches.ts";
-import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
-import { createRichReplies } from "@/server/agent/rich-replies.ts";
-import { createRunStore } from "@/server/agent/run-store.ts";
-import { createRunWorker, type RunWorkerOptions } from "@/server/agent/runs.ts";
-import { createSystemTools } from "@/server/agent/system-tools.ts";
-import { createToolPolicies } from "@/server/agent/tool-policies.ts";
-import { createToolPolicyStore } from "@/server/agent/tool-policy-store.ts";
-import { createMcpTools, createToolSearch } from "@/server/agent/tool-search.ts";
-import { createToolSettingStore } from "@/server/agent/tool-setting-store.ts";
-import { createArtifacts } from "@/server/artifacts/service.ts";
-import { createArtifactStore } from "@/server/artifacts/store.ts";
-import { createToolDecisions, createTools, type Toolset } from "@/server/agent/tools.ts";
-import { createApp } from "@/server/app.ts";
-import { createTransact, type Db, openDatabase } from "@/server/db/db.ts";
-import { createGuests } from "@/server/guests/service.ts";
-import { createGuestStore } from "@/server/guests/store.ts";
-import { createInstructions } from "@/server/instructions/service.ts";
-import { createInstructionStore } from "@/server/instructions/store.ts";
+import type { RunWorkerOptions } from "@/server/agent/runs.ts";
+import type { Toolset } from "@/server/agent/tools.ts";
+import { compose, type Systems } from "@/server/compose.ts";
 import { createCipher } from "@/server/kernel/cipher.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
-import { createBusFeed } from "@/server/db/feed.ts";
-import { createEventBus } from "@/server/kernel/event-bus.ts";
-import { createHooks } from "@/server/kernel/hooks.ts";
+import type { RunTraces } from "@/server/kernel/tracing.ts";
 import { createLogger } from "@/server/kernel/logger.ts";
-import { createMcpClient, mcpOAuthClientAt } from "@/server/mcp/client.ts";
-import { createMcpServers } from "@/server/mcp/service.ts";
-import { createMcpCredentialStore, createMcpServerStore } from "@/server/mcp/store.ts";
 import type { Connections } from "@/server/models/connections.ts";
 import {
   defaultsOf,
@@ -57,36 +24,16 @@ import {
   type ModelList,
   pickReplyModel,
 } from "@/server/models/service.ts";
-import { createAuth, createIdentity } from "@/server/orgs/auth.ts";
-import { createDirectory } from "@/server/orgs/directory-store.ts";
 import type { OrgRole } from "@/server/orgs/directory.ts";
-import { createGroups } from "@/server/orgs/groups.ts";
-import { createOrgInviteStore } from "@/server/orgs/invite-store.ts";
-import { createOrgs } from "@/server/orgs/service.ts";
-import { createOrgSettingStore } from "@/server/orgs/setting-store.ts";
 import * as schema from "@/server/schema.ts";
-import { createGitReader } from "@/server/skills/git.ts";
-import { createSkills } from "@/server/skills/service.ts";
-import { createSkillStore } from "@/server/skills/store.ts";
-import { createZipReader } from "@/server/skills/zip.ts";
-import { agentNameIn, type Space, type SpaceRole, createSpaces } from "@/server/spaces/service.ts";
-import { createSpaceStore } from "@/server/spaces/store.ts";
-import { createThreadAccess } from "@/server/spaces/thread-access.ts";
-import { createDeltaStore } from "@/server/threads/delta-store.ts";
-import { createAsideStore } from "@/server/threads/asides.ts";
-import { createThreadLog } from "@/server/threads/log.ts";
-import { createThreadReadStore } from "@/server/threads/read-store.ts";
-import { createThreads } from "@/server/threads/service.ts";
-import { createCommands } from "@/server/threads/commands.ts";
-import { createThreadStore } from "@/server/threads/store.ts";
-import { createTranscripts } from "@/server/threads/transcripts.ts";
-import { createTitles } from "@/server/threads/titles.ts";
+import type { Space, SpaceRole } from "@/server/spaces/service.ts";
 import { type ModelPair, replyCandidates } from "@/shared/models.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
 
 import { createFixtures, gitStandIn } from "../../../mock/git.ts";
 import { mcpStandIn } from "../../../mock/mcp.ts";
 import { scimClient } from "../../../mock/directory.ts";
+import { openTestDatabase, type TestDatabase } from "./database.ts";
 import { invariants } from "./invariants.ts";
 import { createSeed, joinSpace, seedRoutes } from "./seed.ts";
 import { scriptedModel } from "./scripted-model.ts";
@@ -141,14 +88,26 @@ export type ThreadBody = {
 
 // The databases of the workspaces the test under way set up, checked as it ends, once their
 // workers have stopped.
-const opened = new Set<Db>();
+// Each workspace also counts locks taken out of order and calls across the network made inside a
+// transaction, of which a test may make none.
+const opened = new Set<Systems>();
 const working = new Set<{ stop(): Promise<void> }>();
 afterEach(async () => {
   await Promise.all([...working].map((worker) => worker.stop()));
   working.clear();
-  const broken = [...opened].flatMap((db) => invariants(db));
+  const all = [...opened];
   opened.clear();
+  await Promise.all(all.map(async ({ sync }) => sync.stop()));
+  const broken = (await Promise.all(all.map(async ({ db }) => invariants(db)))).flat();
   expect(broken).toEqual([]);
+  const { outOfOrder, insideCalls } = all.reduce(
+    (sum, { sync }) => ({
+      outOfOrder: sum.outOfOrder + sync.stats.outOfOrder,
+      insideCalls: sum.insideCalls + sync.stats.insideCalls,
+    }),
+    { outOfOrder: 0, insideCalls: 0 },
+  );
+  expect({ outOfOrder, insideCalls }).toEqual({ outOfOrder: 0, insideCalls: 0 });
 });
 
 export function setup(
@@ -159,31 +118,16 @@ export function setup(
     operatorEmails = [] as string[],
     // Toolsets of Mage's own beside the usual ones, for tests of tools that need one.
     toolsets = [] as Toolset[],
-    // A database file another workspace shares, as a second server instance would.
-    database = ":memory:",
+    // A database another workspace shares, as a second server instance would: its `database`.
+    database = undefined as TestDatabase | undefined,
     // Whether the app has the routes tests arrange data through.
     testRoutes = true,
+    // What ties runs' spans to what woke their threads; runs are not traced without it.
+    traces = undefined as RunTraces | undefined,
   } = {},
 ) {
-  const db = openDatabase(database);
-  opened.add(db);
+  const shared = database ?? openTestDatabase();
   const logger = createLogger({ write() {} });
-  const secret = "test-secret-that-is-long-enough-1234567890";
-  const hooks = createHooks();
-  const auth = createAuth({
-    db,
-    hooks,
-    logger,
-    secret,
-    baseUrl,
-    trustedOrigins: [],
-    scim: {
-      token: SCIM_TOKEN,
-      changed: (userId, active) => orgs.directoryChanged(userId, active),
-    },
-  });
-  const spaceStore = createSpaceStore(db);
-  const threadStore = createThreadStore(db);
   // The models the org can use, and its defaults.
   const org = {
     defaultModel: null as string | null,
@@ -200,19 +144,21 @@ export function setup(
   };
   const prefixOf = (ref: string) => ref.slice(0, ref.indexOf("/"));
   const idOf = (ref: string) => ref.slice(ref.indexOf("/") + 1);
-  const canonicalRef = (_orgId: string, ref: string) => {
+  const canonical = (ref: string) => {
     const prefix = Object.keys(org.slugs).find((one) => org.slugs[one] === prefixOf(ref));
     return prefix ? `${prefix}/${idOf(ref)}` : ref;
   };
-  const aliasOf = (_orgId: string, given: string) => {
-    const ref = canonicalRef("", given);
+  const alias = (given: string) => {
+    const ref = canonical(given);
     return `${org.slugs[prefixOf(ref)] ?? prefixOf(ref)}/${idOf(ref)}`;
   };
+  const canonicalRef = async (_orgId: string, ref: string) => canonical(ref);
+  const aliasOf = async (_orgId: string, given: string) => alias(given);
   // A ref's host by its prefix: the ChatGPT sign-in's, and an Anthropic key's, named `claude`.
   const throughOf = (ref: string) =>
     prefixOf(ref) === "codex" ? "ChatGPT" : prefixOf(ref) === "claude" ? "Anthropic" : null;
-  const modelLabels = () => (given: string) => {
-    const ref = canonicalRef("", given);
+  const modelLabels = async () => async (given: string) => {
+    const ref = canonical(given);
     return throughOf(ref) && `${idOf(ref)} · ${throughOf(ref)}`;
   };
   const models = {
@@ -225,7 +171,7 @@ export function setup(
         .map((ref) => ({
           id: ref.slice(ref.indexOf("/") + 1),
           ref,
-          alias: aliasOf("", ref),
+          alias: alias(ref),
           name: ref.slice(ref.indexOf("/") + 1),
           connectionId: ref.slice(0, ref.indexOf("/")),
           host: "codex",
@@ -233,12 +179,15 @@ export function setup(
           authKind: "oauth",
           connectionLabel: "ChatGPT",
           connectionName: null,
+          // Only a model said to take no effort says so.
+          ...(org.plain.includes(ref) && { reasoning: false }),
         })),
       errors: [],
       turnedOff: [],
     }),
-    defaultModel: () => org.defaultModel,
-    defaults: (space: Pick<Space, "defaultModel" | "defaultEffort">) => defaultsOf(space, org),
+    defaultModel: async () => org.defaultModel,
+    defaults: async (space: Pick<Space, "defaultModel" | "defaultEffort">) =>
+      defaultsOf(space, org),
     replyModel: (space: Pick<Space, "defaultModel" | "defaultEffort">, own: ModelPair) =>
       replyModel(space, own),
     availability: (_orgId: string, ref: string) =>
@@ -249,7 +198,7 @@ export function setup(
       }),
     // A ref's maker and host by its prefix: the ChatGPT sign-in's models are OpenAI's, and those
     // of an Anthropic key, named `claude`, Anthropic's.
-    shownModels: () => (ref: string) => {
+    shownModels: async () => (ref: string) => {
       const prefix = ref.slice(0, ref.indexOf("/"));
       const host = prefix === "codex" ? "codex" : prefix === "claude" ? "anthropic" : null;
       const maker = host && (host === "codex" ? "openai" : "anthropic");
@@ -272,45 +221,6 @@ export function setup(
       (ref) => models.availability("", ref),
     );
   }
-  const directory = createDirectory(db, auth);
-  const settingStore = createOrgSettingStore(db);
-  const spaces = createSpaces({
-    spaces: spaceStore,
-    threads: threadStore,
-    models,
-    directory,
-    settings: settingStore,
-    hooks,
-  });
-  const guestStore = createGuestStore(db);
-  const readStore = createThreadReadStore(db);
-  const access = createThreadAccess({
-    spaces,
-    threads: threadStore,
-    guests: guestStore,
-    directory,
-  });
-  const toolSettings = createToolSettingStore(db);
-  const toolPolicyStore = createToolPolicyStore(db);
-  const bus = createEventBus(createBusFeed(db, ulid()));
-  // Subscriptions still open.
-  const listening = { count: 0 };
-  const countingBus: typeof bus = {
-    ...bus,
-    publish: (threadId, event) => bus.publish(threadId, event),
-    subscribe(threadId, listener) {
-      listening.count += 1;
-      const unsubscribe = bus.subscribe(threadId, listener);
-      return () => {
-        listening.count -= 1;
-        unsubscribe();
-      };
-    },
-  };
-  const runStore = createRunStore(db);
-  const deltaStore = createDeltaStore(db);
-  const transact = createTransact(db);
-  const log = createThreadLog({ threads: threadStore, bus: countingBus, transact });
   // The stand-in MCP server, reached while it is up; anything else cannot be reached.
   const mcpNetwork = {
     up: true,
@@ -326,343 +236,77 @@ export function setup(
     mcpNetwork.requests.push(request.clone());
     return mcpNetwork.handle(request);
   };
-  const mcpServerStore = createMcpServerStore(db);
-  const mcp = createMcpServers({
-    servers: mcpServerStore,
-    credentials: createMcpCredentialStore(
-      db,
-      createCipher({ version: 1, key: Buffer.alloc(32, 7) }),
-    ),
-    client: createMcpClient({
-      fetch: mcpFetch,
-      oauth: mcpOAuthClientAt(baseUrl),
-      version: "test",
-    }),
-    spaces,
-    settings: settingStore,
-    logger,
-    hooks,
-  });
-  const cipher = createCipher({ version: 1, key: Buffer.alloc(32, 7) });
-  const skillStore = createSkillStore(db, cipher);
-  const instructions = createInstructions({ store: createInstructionStore(db), spaces });
-  const skills = createSkills({
-    skills: skillStore,
-    git: createGitReader({ fetch: gitFetch }),
-    archives: createZipReader(),
-    spaces,
-    settings: settingStore,
-    logger,
-  });
-  const transcripts = createTranscripts(threadStore, bus, hooks);
-  const notifier = createNotifier({
-    transcripts,
-    runs: runStore,
-    log,
-    bus: countingBus,
-    mayStart: (threadId) => subagents.mayStart(threadId),
-  });
-  const subagentStore = createSubagentStore(db);
-  const watches = createWatchStore(db);
-  const subagents = createSubagents({
-    subagents: subagentStore,
-    threads: threadStore,
-    transcripts,
-    runs: runStore,
-    log,
-    bus: countingBus,
-    choosesModels: (spaceId) => {
-      const space = spaceStore.find(spaceId);
-      return !!space && tools.optionOn(space, SUBAGENTS_TOOLSET, CHOOSE_MODELS);
-    },
-    taskHandover: () => tasks.handover,
-    modelsIn: () =>
-      Promise.resolve(
-        org.models.map((ref) => ({
-          ref,
-          alias: aliasOf("", ref),
-          reasoning: !org.plain.includes(ref),
-        })),
-      ),
-    notifier,
-    watches,
-  });
-  const callStore = createCallStore(db);
-  const live = createLive({ store: createLiveStore(db), bus: countingBus, transact });
-  const calls = createCalls({
-    live,
-    calls: callStore,
-    threads: threadStore,
-    transcripts,
-    spaceStore,
-    runs: runStore,
-    log,
-    bus: countingBus,
-    logger,
-    tools: () => tools,
-    narrow: (thread, offered) => subagents.toolsOf(thread, offered),
-    notifier,
-  });
-  const tasks = createTasks({
-    tasks: createTaskStore(db),
-    threads: threadStore,
-    transcripts,
-    access,
-    orgOf: (spaceId) => spaceStore.find(spaceId)?.orgId ?? null,
-    subagents,
-    log,
-    bus: countingBus,
-    notifier,
-    watches,
-  });
-  // A test sets the clock and runs ticks itself, as one more instance would with `triggersFor`.
-  const clock = { now: new Date() };
-  const triggerStore = createTriggerStore(
-    db,
-    createCipher({ version: 1, key: Buffer.alloc(32, 7) }),
-  );
-  const triggersFor = () =>
-    createTriggers({
-      baseUrl,
-      transact,
-      triggers: triggerStore,
-      threads: threadStore,
-      transcripts,
-      access,
-      subagents,
-      log,
-      bus: countingBus,
-      logger,
-      notifier,
-      now: () => clock.now,
-    });
-  const triggers = triggersFor();
-  const artifacts = createArtifacts({
-    store: createArtifactStore(db),
-    threads: threadStore,
-    spaceStore,
-    spaces,
-    access,
-    guests: guestStore,
-    directory,
-    appOrigin: baseUrl,
-    artifactOrigin: ARTIFACT_ORIGIN,
-    secret: "test-secret-that-is-long-enough-0123456789",
-  });
-  const tools = createTools({
-    toolsets: [
-      createRichReplies(),
-      createSystemTools({
-        threads: threadStore,
-        transcripts,
-        spaceStore,
-        guests: guestStore,
-        models: {
-          replyModel,
-          resolveModels: models.resolveModels,
-          canonicalRef,
-          aliasOf,
-          modelLabels,
-        },
-        open: () => model.open(),
-      }),
-      skills.toolset(),
-      createMcpTools(
-        [
-          createToolSearch((space) => mcp.toolsetsInSpace(space).length > 0),
-          // A server's resources follow its tools: listed only while one of them is on in the space.
-          ...mcp.resourceTools((space) => {
-            const rules = tools.rulesIn(space);
-            return (toolId) => !rules(toolId).off;
-          }),
-        ],
-        mcp.hasServers,
-      ),
-      subagents.toolset(),
-      calls.toolset(),
-      tasks.toolset(),
-      triggers.toolset(),
-      artifacts.toolset(),
-      ...toolsets,
-    ],
-    scoped: {
-      inSpace: (space) => mcp.toolsetsInSpace(space),
-      forOrgSettings: (orgId) => mcp.toolsetsForOrgSettings(orgId),
-      forSpaceSettings: (space) => mcp.toolsetsForSpaceSettings(space),
-      named: (toolId) => mcp.named(toolId),
-    },
-    settings: toolSettings,
-    policies: toolPolicyStore,
-    directory,
-    access,
-    modelRef: canonicalRef,
-    callModel: (call) =>
-      call.background
-        ? (runStore.find(callStore.find(call.id)?.runId ?? "")?.model ?? null)
-        : (runStore.find(call.runId)?.model ?? null),
-  });
-
   const model = scriptedModel();
   const titleModel = scriptedModel();
   // The model refs threads were named with.
   const titledWith: string[] = [];
-  const threads = createThreads({
-    agentNameIn: (space) => agentNameIn(settingStore, space),
-    ask: (threadId, branchId, rowId) => worker.requestAt(threadId, branchId, rowId),
-    asides: createAsideStore(db),
-    spaces,
-    spaceStore,
-    access,
-    guests: guestStore,
-    threads: threadStore,
-    transcripts,
-    reads: readStore,
-    runs: runStore,
-    deltas: deltaStore,
-    models,
-    log,
-    bus: countingBus,
-    notifier,
-    tools,
-    subagents,
-    background: callStore,
-    live,
-    triggers,
-    tasks,
-    commands: createCommands({ skills, prompts: mcp }),
-    ...(titles && {
-      titles: createTitles({
-        models: {
-          defaultModel: models.defaultModel,
-          chosenTitleModel: () => org.titleModel,
-          automaticTitleModel: () => Promise.resolve(org.automaticTitleModel),
-          open: (_orgId, ref) => {
-            titledWith.push(ref);
-            return titleModel.open();
-          },
-        },
-        threads: threadStore,
-        log,
-        logger,
-      }),
-    }),
-  });
   const logLines: object[] = [];
+  // A test sets the clock and runs ticks itself, as one more instance would with `triggersFor`.
+  const clock = { now: new Date() };
+  // Stands for the server stopping.
+  const shutdown = new AbortController();
+  const systems = compose({
+    database: shared,
+    config: {
+      baseUrl,
+      authSecret: "test-secret-that-is-long-enough-0123456789",
+      authTrustedOrigins: [],
+      oidc: null,
+      scimToken: SCIM_TOKEN,
+      artifactOrigin: ARTIFACT_ORIGIN,
+      teamOrgs,
+      operatorEmails,
+      fakeModels: false,
+    },
+    cipher: createCipher({ version: 1, key: Buffer.alloc(32, 7) }),
+    logger,
+    fetch: () => Promise.reject(new TypeError("fetch failed")),
+    shutdown: shutdown.signal,
+    ...(traces && { traces }),
+    ports: {
+      models: { ...unusedModels, ...models },
+      runModels: { open: () => model.open(), replyModel },
+      connections: unusedConnections,
+      mcpFetch: mcpFetch as typeof fetch,
+      gitFetch,
+      titleModels: titles && {
+        defaultModel: models.defaultModel,
+        chosenTitleModel: async () => org.titleModel,
+        automaticTitleModel: () => Promise.resolve(org.automaticTitleModel),
+        open: (_orgId, ref) => {
+          titledWith.push(ref);
+          return titleModel.open();
+        },
+      },
+    },
+    options: {
+      now: () => clock.now,
+      toolsets,
+      heartbeatMs: 20,
+      pingDatabase: () => Promise.resolve(true),
+      worker: {
+        flushMs: 1,
+        logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
+        ...workerOptions,
+      },
+      ...(testRoutes && { testRoutes: (deps) => seedRoutes(createSeed(deps)) }),
+    },
+  });
+  opened.add(systems);
+  const { app, spaceStore, db } = systems;
+  // Subscriptions still open.
+  const listening = {
+    get count() {
+      return systems.bus.subscriptions();
+    },
+  };
   // A worker as a server process would start it, sharing this app's stores.
   function makeWorker(options: Partial<RunWorkerOptions> = {}) {
-    const made = createRunWorker({
-      runs: runStore,
-      threads: threadStore,
-      transcripts,
-      spaceStore,
-      access,
-      deltas: deltaStore,
-      log,
-      bus: countingBus,
-      transact,
-      flushMs: 1,
-      models: { open: () => model.open(), replyModel },
-      tools,
-      guidance: (space, offered, thread) => ({
-        ...instructions.textsFor(space),
-        mcpServers: mcp.instructionsIn(space, offered),
-        skills: skills.listFor(space, offered),
-        agentName: agentNameIn(settingStore, space),
-        ...subagents.guidance(thread, tools.guidanceIn(space)),
-      }),
-      narrow: (thread, offered) => subagents.toolsOf(thread, offered),
-      before: (thread) => subagents.before(thread),
-      ended: (run) => subagents.ended(run),
-      adopt: (call) => calls.adopt(call),
-      live,
-      logger: createLogger({ write: (line: string) => void logLines.push(JSON.parse(line)) }),
-      runsIn: (space) => spaces.runsIn(space),
-      hooks,
-      ...workerOptions,
-      ...options,
-    });
+    const made = systems.makeWorker(options);
     working.add(made);
     return made;
   }
-  const worker = makeWorker();
-  const orgs = createOrgs({
-    directory,
-    invites: createOrgInviteStore(db),
-    spaces,
-    spaceStore,
-    threads: threadStore,
-    runs: runStore,
-    settings: settingStore,
-    hooks,
-    baseUrl,
-    teamOrgs,
-    operatorEmails,
-  });
-  // Stands for the server stopping.
-  const shutdown = new AbortController();
-  const app = createApp({
-    handleAuth: auth.handler,
-    identity: createIdentity(auth, db),
-    connections: unusedConnections,
-    models: { ...unusedModels, ...models },
-    spaces,
-    threads,
-    guests: createGuests({
-      access,
-      guests: guestStore,
-      directory,
-      threads: threadStore,
-      transact,
-      bus: countingBus,
-      baseUrl,
-    }),
-    tasks,
-    triggers,
-    orgs,
-    groups: createGroups({ directory }),
-    tools: createToolDecisions({
-      tools,
-      access,
-      transcripts,
-      spaceStore,
-      runs: runStore,
-      spaces,
-      settings: toolSettings,
-      policies: toolPolicyStore,
-      log,
-      bus: countingBus,
-      background: {
-        find: (callId) => calls.find(callId),
-        proceed: (threadId, callId, allow) => calls.proceed(threadId, callId, allow),
-        room: (threadId) => calls.room(threadId),
-        move: (threadId, callId) => worker.moveToBackground(threadId, callId),
-        detach: (threadId, call, append) => calls.detach(threadId, call, append),
-        cancel: (threadId, callId) => calls.cancel(threadId, callId),
-      },
-    }),
-    toolPolicies: createToolPolicies({
-      policies: toolPolicyStore,
-      settings: toolSettings,
-      tools,
-      spaceStore,
-      spaces,
-      directory,
-    }),
-    mcp,
-    instructions,
-    skills,
-    artifacts,
-    logger,
-    signInOptions: { oidc: null },
-    pingDatabase: () => Promise.resolve(true),
-    heartbeatMs: 20,
-    shutdown: shutdown.signal,
-    ...(testRoutes && {
-      testRoutes: seedRoutes(
-        createSeed({ db, threads: threadStore, guests: guestStore, reads: readStore, log }),
-      ),
-    }),
-  });
+  working.add(systems.worker);
 
   async function signUp(name: string, email: string) {
     const res = await app.request("/api/auth/sign-up/email", {
@@ -676,7 +320,9 @@ export function setup(
       .getSetCookie()
       .map((value) => value.split(";")[0])
       .join("; ");
-    const member = db.select().from(schema.member).where(eq(schema.member.userId, user.id)).get();
+    const member = (
+      await db.select().from(schema.member).where(eq(schema.member.userId, user.id)).limit(1)
+    )[0];
     return {
       userId: user.id,
       orgId: member?.organizationId as string,
@@ -686,10 +332,10 @@ export function setup(
   }
 
   // Makes the user a member of the space with the role, acting from then on in the space's org.
-  function join<T extends { userId: string }>(user: T, spaceId: string, role: SpaceRole) {
-    const space = spaceStore.find(spaceId);
+  async function join<T extends { userId: string }>(user: T, spaceId: string, role: SpaceRole) {
+    const space = await spaceStore.find(spaceId);
     if (!space) throw new Error("no space");
-    joinSpace(db, user.userId, space, role);
+    await joinSpace(db, user.userId, space, role);
     return { ...user, orgId: space.orgId, role: "member" as OrgRole };
   }
 
@@ -737,52 +383,21 @@ export function setup(
   });
 
   return {
-    db,
-    app,
-    hooks,
+    ...systems,
+    // The database itself, outside any transaction, for another workspace to share.
+    database: shared,
     shutdown,
     scim,
     org,
-    spaceStore,
-    threadStore,
-    runStore,
-    deltaStore,
-    transact,
-    log,
-    bus: countingBus,
     model,
     titleModel,
     titledWith,
-    worker,
     makeWorker,
+    triggersFor: systems.makeTriggers,
     logLines,
     listening,
-    spaces,
-    threads,
-    access,
-    directory,
-    settingStore,
-    guestStore,
-    toolSettings,
-    toolPolicyStore,
-    tools,
-    subagents,
-    subagentStore,
-    tasks,
-    calls,
-    triggers,
-    triggersFor,
-    triggerStore,
-    callStore,
-    live,
     clock,
-    mcp,
     mcpNetwork,
-    mcpServerStore,
-    instructions,
-    skills,
-    skillStore,
-    artifacts,
     signUp,
     join,
     api,

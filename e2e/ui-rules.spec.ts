@@ -50,7 +50,10 @@ function near(actual: number, expected: number, what: string) {
 async function sameHeight(row: Locator, rule: string) {
   // Skip what takes no room, such as an anchor or a hidden input.
   const children = row.locator("> *:not([aria-hidden])");
-  expect(await children.count(), `${rule}: a row of controls`).toBeGreaterThan(1);
+  // The row is there once the dialog that holds it has loaded.
+  await expect
+    .poll(async () => children.count(), { message: `${rule}: a row of controls` })
+    .toBeGreaterThan(1);
   const heights = await children.evaluateAll((all) =>
     all.map((one) => one.getBoundingClientRect().height).filter((height) => height > 4),
   );

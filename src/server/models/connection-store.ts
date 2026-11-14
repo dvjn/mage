@@ -32,46 +32,49 @@ function connectionOf(row: Row): Connection {
 
 export function createConnectionStore(db: Db): ConnectionStore {
   return {
-    create(input) {
+    async create(input) {
       const { orgId, label = null, settings = {}, ...rest } = input;
       return connectionOf(
-        db
-          .insert(connection)
-          .values({ id: ulid(), organizationId: orgId, label, settings, ...rest })
-          .returning(columns)
-          .get(),
+        (
+          await db
+            .insert(connection)
+            .values({ id: ulid(), organizationId: orgId, label, settings, ...rest })
+            .returning(columns)
+        )[0]!,
       );
     },
 
-    list(orgId) {
-      return db
-        .select(columns)
-        .from(connection)
-        .where(eq(connection.organizationId, orgId))
-        .orderBy(connection.id)
-        .all()
-        .map(connectionOf);
+    async list(orgId) {
+      return (
+        await db
+          .select(columns)
+          .from(connection)
+          .where(eq(connection.organizationId, orgId))
+          .orderBy(connection.id)
+      ).map(connectionOf);
     },
 
-    find(orgId, id): Connection | null {
-      const row = db
-        .select(columns)
-        .from(connection)
-        .where(and(eq(connection.id, id), eq(connection.organizationId, orgId)))
-        .get();
+    async find(orgId, id): Promise<Connection | null> {
+      const row = (
+        await db
+          .select(columns)
+          .from(connection)
+          .where(and(eq(connection.id, id), eq(connection.organizationId, orgId)))
+          .limit(1)
+      )[0];
       return row ? connectionOf(row) : null;
     },
 
-    update(id, changes) {
-      db.update(connection).set(changes).where(eq(connection.id, id)).run();
+    async update(id, changes) {
+      await db.update(connection).set(changes).where(eq(connection.id, id));
     },
 
-    setAutoEnableModels(id, on) {
-      db.update(connection).set({ autoEnableModels: on }).where(eq(connection.id, id)).run();
+    async setAutoEnableModels(id, on) {
+      await db.update(connection).set({ autoEnableModels: on }).where(eq(connection.id, id));
     },
 
-    delete(id) {
-      db.delete(connection).where(eq(connection.id, id)).run();
+    async delete(id) {
+      await db.delete(connection).where(eq(connection.id, id));
     },
   };
 }

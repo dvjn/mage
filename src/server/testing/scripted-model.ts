@@ -128,8 +128,8 @@ export class Call {
   }
 
   // What the step boundary adds to the conversation.
-  boundary() {
-    return this.request.beforeStep?.() ?? [];
+  async boundary() {
+    return (await this.request.beforeStep?.()) ?? [];
   }
 }
 

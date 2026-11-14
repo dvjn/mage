@@ -18,6 +18,7 @@ import type { ShownRow, WaitingRow } from "@/shared/threads/rows.ts";
 import type { TriggerHistory } from "@/shared/triggers.ts";
 
 import { agentThread } from "./agent-thread.ts";
+import { expireLeases } from "./database.ts";
 import type { Call } from "./scripted-model.ts";
 import { openStream } from "./sse.ts";
 
@@ -100,7 +101,7 @@ export async function world(options: Parameters<typeof agentThread>[0] = {}) {
   const ada: Person = base.ada;
   const grace: Person = base.grace;
   const alan: Person = base.alan;
-  base.start();
+  await base.start();
 
   const taken = new Set<Call>();
   let callCount = 0;
@@ -148,7 +149,7 @@ export async function world(options: Parameters<typeof agentThread>[0] = {}) {
     // person's own space.
     async loses(who: Person) {
       await Promise.resolve(
-        base.spaceStore.revoke(base.space.id, { kind: "user", id: who.userId }),
+        await base.spaceStore.revoke(base.space.id, { kind: "user", id: who.userId }),
       );
     },
 
@@ -227,7 +228,7 @@ export async function world(options: Parameters<typeof agentThread>[0] = {}) {
     // Brings the call to a step boundary, where the run takes in what steers it, answering what
     // that adds for the model to read.
     async boundary(call: Call) {
-      return (await Promise.resolve(call.boundary())).map(
+      return (await Promise.resolve(await call.boundary())).map(
         (message) => `${message.role}: ${"text" in message ? message.text : ""}`,
       );
     },
@@ -246,7 +247,7 @@ export async function world(options: Parameters<typeof agentThread>[0] = {}) {
     // Moves the clock on and fires what came due, answering how many fired.
     async later(ms: number) {
       base.clock.now = new Date(base.clock.now.getTime() + ms);
-      return Promise.resolve(base.triggers.tick());
+      return Promise.resolve(await base.triggers.tick());
     },
 
     // Posts to a webhook's address as an outside service would, signed when a secret is given.
@@ -320,7 +321,8 @@ export async function world(options: Parameters<typeof agentThread>[0] = {}) {
     // Has the server find the jobs a stopped server left running, as it does once their holder
     // has been gone long enough.
     async crashJobs() {
-      await Promise.resolve(base.calls.recover(new Date(Date.now() + 10 * MINUTE)));
+      await expireLeases(base.db, "background_call");
+      await Promise.resolve(await base.calls.recover());
     },
 
     // Stops the server's worker as a crash would, mid-run, and brings up another that recovers
@@ -328,8 +330,8 @@ export async function world(options: Parameters<typeof agentThread>[0] = {}) {
     async crash() {
       await current.stop();
       current = base.makeWorker();
-      await Promise.resolve(current.recover());
-      await Promise.resolve(base.start(current));
+      await Promise.resolve(await current.recover());
+      await Promise.resolve(await base.start(current));
     },
   };
 

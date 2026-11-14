@@ -6,7 +6,6 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import type { RelayRow } from "@/shared/threads/rows.ts";
 import { Toaster } from "@/web/shell/toaster";
 import { RelayMessages } from "@/web/threads/transcript/relay-message";
-import { SubagentNotice } from "@/web/threads/transcript/subagent-notice";
 
 vi.mock("@tanstack/react-router", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@tanstack/react-router")>()),
@@ -83,13 +82,6 @@ describe("top-level incoming activity", () => {
     expect(html).toContain('aria-label="Notification"');
     expect(html).toContain('data-slot="avatar"');
     expect(html).not.toContain("pl-9");
-    const notice = renderToStaticMarkup(
-      createElement(SubagentNotice, {
-        row: { kind: "notice", id: "notice", order: 2, seq: 3, turn: null, subagents: [] },
-      }),
-    );
-    expect(notice).not.toContain("pl-9");
-    expect(notice).toContain('data-slot="avatar"');
   });
 });
 

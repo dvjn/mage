@@ -1,25 +1,21 @@
-// Browser journeys against the production build with a fresh database and the stand-in model, which
-// production refuses. It is served three times: with passwords; on the same database, signing in
-// only through the stand-in identity provider, as an instance that later turned one on; and, on a
-// database of its own, with its real model providers, for the journeys that reach the stand-in
-// model over their wire protocols. The identity provider and directory journeys run against the
-// second; they provision people and groups over SCIM themselves, as a directory would. The
-// stand-ins the journeys reach, from the mock's e2e config, are an identity provider, a model
-// provider, an MCP server and a git host.
-
-import { rmSync } from "node:fs";
+// Browser journeys against the production build with a fresh Postgres, run in a container for
+// them, and the stand-in model, which production refuses. It is served three times: with
+// passwords; on the same database, signing in only through the stand-in identity provider, as an
+// instance that later turned one on; and, on a database of its own, with its real model
+// providers, for the journeys that reach the stand-in model over their wire protocols. The
+// identity provider and directory journeys run against the second; they provision people and
+// groups over SCIM themselves, as a directory would. The stand-ins the journeys reach, from the
+// mock's e2e config, are an identity provider, a model provider, an MCP server and a git host.
 
 import { defineConfig, devices } from "@playwright/test";
 
 import { JOURNEY_SCIM_TOKEN } from "./mock/directory.ts";
 import {
   artifactOrigin,
-  databasePath,
-  dataDir,
+  databases,
   issuer,
   passwordServer,
   ssoServer,
-  wireDatabasePath,
   wireServer,
 } from "./e2e/servers.ts";
 
@@ -34,13 +30,8 @@ const serverEnv = {
   MODEL_GATEWAY: "fake",
   AUTH_SECRET: "mage-browser-journeys-secret-0123456789",
   CREDENTIAL_KEY: "WFnQPvVJ7j8limmjR6tFVpYWlTRqy8Rf8i6UJnaIaQg=",
-  DATABASE_PATH: databasePath,
+  DATABASE_URL: databases.mage,
 };
-
-// Workers load this file too; only the runner, before the servers start, clears the data.
-if (!process.env.TEST_WORKER_INDEX) {
-  rmSync(dataDir, { recursive: true, force: true });
-}
 
 export default defineConfig({
   testDir: "e2e",
@@ -70,6 +61,12 @@ export default defineConfig({
     },
   ],
   webServer: [
+    {
+      command: "node e2e/postgres.ts",
+      wait: { stdout: /databases ready/ },
+      reuseExistingServer: false,
+      gracefulShutdown: { signal: "SIGTERM", timeout: 10_000 },
+    },
     {
       command: "node mock/main.ts mock/e2e.yaml",
       url: `${issuer}/_mock/health`,
@@ -109,8 +106,7 @@ export default defineConfig({
       reuseExistingServer: false,
       env: {
         ...serverEnv,
-        // Its worker would take the other servers' runs and fail them for want of a model.
-        DATABASE_PATH: wireDatabasePath,
+        DATABASE_URL: databases.mage_wire,
         MODEL_GATEWAY: "providers",
         PORT: new URL(wireServer).port,
         BASE_URL: wireServer,

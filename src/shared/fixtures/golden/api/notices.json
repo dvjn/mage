@@ -417,18 +417,63 @@
         "turn": null
       },
       {
-        "kind": "unknown",
+        "kind": "relay",
         "id": "e21",
-        "seq": 21,
-        "type": "notification",
+        "seq": 25,
+        "postedAt": "2026-01-01T00:00:21.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "person",
+          "userId": "ada",
+          "name": "Ada Lovelace"
+        },
+        "text": "Ada Lovelace changed the model.",
+        "change": {
+          "subject": {
+            "kind": "thread",
+            "name": "Greetings"
+          },
+          "action": "model",
+          "from": "anthropic/claude-test",
+          "to": "openai/gpt-test"
+        },
+        "silent": true,
+        "taken": 25,
         "order": 16,
         "turn": null
       },
       {
-        "kind": "unknown",
+        "kind": "relay",
         "id": "e22",
         "seq": 22,
-        "type": "notification",
+        "postedAt": "2026-01-01T00:00:22.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Mage",
+          "type": "system"
+        },
+        "text": "The thread was renamed.",
+        "change": {
+          "subject": {
+            "kind": "thread",
+            "name": "Greetings"
+          },
+          "action": "rename",
+          "from": "Hi",
+          "to": "Greetings"
+        },
+        "silent": true,
         "order": 17,
         "turn": null
       },
@@ -957,18 +1002,63 @@
         "turn": null
       },
       {
-        "kind": "unknown",
+        "kind": "relay",
         "id": "e21",
-        "seq": 21,
-        "type": "notification",
+        "seq": 25,
+        "postedAt": "2026-01-01T00:00:21.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "person",
+          "userId": "ada",
+          "name": "Ada Lovelace"
+        },
+        "text": "Ada Lovelace changed the model.",
+        "change": {
+          "subject": {
+            "kind": "thread",
+            "name": "Greetings"
+          },
+          "action": "model",
+          "from": "anthropic/claude-test",
+          "to": "openai/gpt-test"
+        },
+        "silent": true,
+        "taken": 25,
         "order": 16,
         "turn": null
       },
       {
-        "kind": "unknown",
+        "kind": "relay",
         "id": "e22",
         "seq": 22,
-        "type": "notification",
+        "postedAt": "2026-01-01T00:00:22.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Mage",
+          "type": "system"
+        },
+        "text": "The thread was renamed.",
+        "change": {
+          "subject": {
+            "kind": "thread",
+            "name": "Greetings"
+          },
+          "action": "rename",
+          "from": "Hi",
+          "to": "Greetings"
+        },
+        "silent": true,
         "order": 17,
         "turn": null
       },
@@ -1492,18 +1582,63 @@
         "turn": null
       },
       {
-        "kind": "unknown",
+        "kind": "relay",
         "id": "e21",
-        "seq": 21,
-        "type": "notification",
+        "seq": 25,
+        "postedAt": "2026-01-01T00:00:21.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "person",
+          "userId": "ada",
+          "name": "Ada Lovelace"
+        },
+        "text": "Ada Lovelace changed the model.",
+        "change": {
+          "subject": {
+            "kind": "thread",
+            "name": "Greetings"
+          },
+          "action": "model",
+          "from": "anthropic/claude-test",
+          "to": "openai/gpt-test"
+        },
+        "silent": true,
+        "taken": 25,
         "order": 16,
         "turn": null
       },
       {
-        "kind": "unknown",
+        "kind": "relay",
         "id": "e22",
         "seq": 22,
-        "type": "notification",
+        "postedAt": "2026-01-01T00:00:22.000Z",
+        "type": "change",
+        "from": {
+          "threadId": "thread",
+          "name": "Main thread",
+          "main": true
+        },
+        "actor": {
+          "kind": "source",
+          "label": "Mage",
+          "type": "system"
+        },
+        "text": "The thread was renamed.",
+        "change": {
+          "subject": {
+            "kind": "thread",
+            "name": "Greetings"
+          },
+          "action": "rename",
+          "from": "Hi",
+          "to": "Greetings"
+        },
+        "silent": true,
         "order": 17,
         "turn": null
       },

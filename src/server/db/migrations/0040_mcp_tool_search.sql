@@ -1,1 +1,0 @@
-ALTER TABLE `run` ADD `tools_on` text DEFAULT '[]' NOT NULL;

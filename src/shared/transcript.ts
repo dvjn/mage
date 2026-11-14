@@ -27,7 +27,6 @@ import {
   type NotificationActor,
   type NotificationKind,
   type NotificationParts,
-  type SubagentEnd,
   type SubagentTask,
   type ReplyPart,
   type ReplyStatus,
@@ -201,75 +200,6 @@ export interface CompactionRow {
 // from, and the people whose words it carries, who count as steering what the agent here does with
 // it; with the call or the row there it came of, where known. A message from another agent, the
 // first of them in a subagent's thread its task, also says whom it went to.
-// Notifications about a subagent written before they carried their parts said them in their
-// text, in the one fixed form they were written in.
-const LAST_MARK = "\n\nIts last message:\n\n";
-const IDLE_PREFIXES = { "All idle: ": "all_idle", "Idle: ": "any_idle" } as const;
-
-// A failure's raw message and kind. Failures stored before these were fields carry the sentence
-// they were worded with in `error`, in one of a few fixed forms.
-export function failureParts(data: { error: string; kind?: FailureKind }): {
-  error: string;
-  kind?: FailureKind;
-} {
-  if (data.kind) return { error: data.error, kind: data.kind };
-  const { error } = data;
-  if (error === "Pick a model for this thread.") return { error: "", kind: "no_model" };
-  if (error === "The thread is gone.") return { error: "", kind: "gone" };
-  if (error === "The agent could not reply.") return { error: "" };
-  if (error === "The server stopped while the agent was replying.") {
-    return { error: "", kind: "interrupted" };
-  }
-  if (/^The agent stopped \d+ times on this input and gave up\.$/.test(error)) {
-    return { error: "", kind: "gave_up" };
-  }
-  const prefix = "The model failed: ";
-  if (error.startsWith(prefix)) return { error: error.slice(prefix.length), kind: "model_error" };
-  return { error };
-}
-
-// A notification's text and parts: as written, or for an older one read back from its text. An
-// older idle notification names its subagents without their threads, which only the server knows.
-export function notificationParts(
-  data: {
-    kind: NotificationKind;
-    source: Sender;
-    text: string;
-  } & NotificationParts,
-): NotificationParts & { text: string } {
-  const { kind, source, text } = data;
-  if (
-    data.subagents ||
-    kind === "message" ||
-    kind === "call.ended" ||
-    kind === "task.changed" ||
-    kind === "trigger.fired" ||
-    kind === "webhook.received" ||
-    kind === "change"
-  )
-    return data;
-  if (kind === "agent.idle") {
-    const prefix = Object.keys(IDLE_PREFIXES).find((one) => text.startsWith(one)) as
-      | keyof typeof IDLE_PREFIXES
-      | undefined;
-    return prefix ? { text, when: IDLE_PREFIXES[prefix] } : { text };
-  }
-  const cut = text.indexOf(LAST_MARK);
-  const headline = cut >= 0 ? text.slice(0, cut) : text;
-  const last = cut >= 0 ? text.slice(cut + LAST_MARK.length) : undefined;
-  const failedAs = `${source.name} failed: `;
-  const error =
-    kind === "agent.failed" && headline.startsWith(failedAs)
-      ? headline.slice(failedAs.length)
-      : undefined;
-  return {
-    text: headline,
-    subagents: [{ threadId: source.threadId, name: source.name }],
-    ...(error !== undefined && { error }),
-    ...(last && { last }),
-  };
-}
-
 export interface RelayRow extends NotificationParts {
   kind: "relay";
   // The notification's id.
@@ -290,23 +220,6 @@ export interface RelayRow extends NotificationParts {
   // from `taken` on, the event that took it in, once it has.
   silent?: true;
   taken?: number;
-}
-
-// A subagent that ended a run, as the thread that started it is told.
-export interface SubagentEnded {
-  threadId: string;
-  name: string;
-  state: SubagentEnd;
-  last: string;
-}
-
-// Subagents that ended runs one after another, told together where the first was told, each
-// subagent once with its latest.
-export interface NoticeRow {
-  kind: "notice";
-  id: string;
-  seq: number;
-  subagents: SubagentEnded[];
 }
 
 // The thread's subagents sent each other as many messages as they may, with the call first
@@ -335,7 +248,6 @@ export type TranscriptRow =
   | StopRow
   | CompactionRow
   | RelayRow
-  | NoticeRow
   | LimitRow
   | ForkRow
   | RestoreRow
@@ -471,30 +383,54 @@ export interface TranscriptFold {
   turnAt(index: number): AgentTurn | null;
   // The index of the row with the id; -1 when there is none.
   indexOf(id: string): number;
+  // A fold of its own that starts where this one is, for events this one is not to take in.
+  fork(): TranscriptFold;
 }
 
-export function createFold(): TranscriptFold {
-  const rows: TranscriptRow[] = [];
-  const indexOf = new Map<string, number>();
+// All a fold holds, which a fork starts from a copy of.
+interface FoldState {
+  rows: TranscriptRow[];
+  indexOf: Map<string, number>;
   // By row index.
-  const changed: number[] = [];
-  const touchedAt: number[] = [];
-  const turns: (AgentTurn | null)[] = [];
-  const pending = new Map<string, PendingMessage>();
-  const inbox = new Map<string, RelayMessage>();
+  changed: number[];
+  touchedAt: number[];
+  turns: (AgentTurn | null)[];
+  pending: Map<string, PendingMessage>;
+  inbox: Map<string, RelayMessage>;
   // The silent notifications already shown, by id, until the agent takes them in.
-  const silentRows = new Map<string, RelayRow>();
-  const replies = new Map<string, AgentRow>();
-  const calls = new Map<string, ToolRow>();
-  let run: ActiveRun | null = null;
-  let last = 0;
-  const usage: Usage = { inputTokens: 0, outputTokens: 0 };
+  silentRows: Map<string, RelayRow>;
+  replies: Map<string, AgentRow>;
+  calls: Map<string, ToolRow>;
+  run: ActiveRun | null;
+  last: number;
+  usage: Usage;
   // Everyone who wrote or acted in the thread, by id, as events last named them.
-  const people = new Map<string, Person>();
-  // Approvals of calls older threads paused, kept for when they ran.
-  const parked = new Map<string, NonNullable<ToolRow["decision"]>>();
+  people: Map<string, Person>;
   // The runs that compact the thread: those that took in a message asking for it, and retries.
-  const compacting = new Set<string>();
+  compacting: Set<string>;
+}
+
+export function createFold(from?: FoldState): TranscriptFold {
+  const state: FoldState = from ?? {
+    rows: [],
+    indexOf: new Map(),
+    changed: [],
+    touchedAt: [],
+    turns: [],
+    pending: new Map(),
+    inbox: new Map(),
+    silentRows: new Map(),
+    replies: new Map(),
+    calls: new Map(),
+    run: null,
+    last: 0,
+    usage: { inputTokens: 0, outputTokens: 0 },
+    people: new Map(),
+    compacting: new Set(),
+  };
+  const { rows, indexOf, changed, touchedAt, turns, pending, inbox, silentRows } = state;
+  const { replies, calls, usage, people, compacting } = state;
+  let { run, last } = state;
   const personOf = (userId: string): Person =>
     people.get(userId) ?? { kind: "user", userId, name: null, former: true };
 
@@ -566,26 +502,9 @@ export function createFold(): TranscriptFold {
       case "message.dropped":
         pending.delete(event.data.messageId);
         break;
-      case "agent.message": {
-        const { parts, from, to, steeredBy, task, call } = event.data;
-        inbox.set(event.id, {
-          id: event.id,
-          seq: event.seq,
-          postedAt: event.createdAt,
-          type: "message",
-          from,
-          to,
-          text: textOf(parts),
-          steeredBy,
-          ...(task && { task }),
-          ...(call && { call }),
-        });
-        break;
-      }
       case "notification": {
         const { kind, source, people, to, task, actor } = event.data;
-        const { text, subagents, when, error, last, delivery, schedule, tray, change } =
-          notificationParts(event.data);
+        const { text, subagents, when, error, last, delivery, schedule, tray, change } = event.data;
         const { callId, callIds, rowId, ...from } = source;
         const silent = event.data.wake === false;
         const message: RelayMessage = {
@@ -617,20 +536,6 @@ export function createFold(): TranscriptFold {
           const shown: RelayRow = { kind: "relay", ...message };
           silentRows.set(event.id, shown);
           push(shown);
-        }
-        break;
-      }
-      case "subagent.ended": {
-        const ended = { ...event.data };
-        const last = rows.at(-1);
-        if (last?.kind === "notice") {
-          last.subagents = [
-            ...last.subagents.filter((subagent) => subagent.threadId !== ended.threadId),
-            ended,
-          ];
-          touch(last.id);
-        } else {
-          push({ kind: "notice", id: event.id, seq: event.seq, subagents: [ended] });
         }
         break;
       }
@@ -724,8 +629,7 @@ export function createFold(): TranscriptFold {
         };
         break;
       case "run.failed": {
-        const { runId, connection, detail, resetsAt } = event.data;
-        const { error, kind } = failureParts(event.data);
+        const { runId, error, kind, connection, detail, resetsAt } = event.data;
         push({
           kind: "failure",
           id: event.id,
@@ -795,18 +699,6 @@ export function createFold(): TranscriptFold {
         touch(call.id);
         break;
       }
-      // Older threads paused a call for its person to connect; it shows as waiting for approval,
-      // as such a call does now, and any approval it had is set aside until it runs.
-      case "tool.blocked": {
-        const call = calls.get(event.data.callId);
-        if (!call || (call.state !== "pending" && call.state !== "allowed")) break;
-        if (call.decision) parked.set(call.id, call.decision);
-        call.state = "pending";
-        call.waits = true;
-        call.decision = null;
-        touch(call.id);
-        break;
-      }
       case "tool.ran": {
         const call = calls.get(event.data.callId);
         if (!call) break;
@@ -816,7 +708,6 @@ export function createFold(): TranscriptFold {
           call.standingOn = standing.id;
           call.decision = { ...standing.decision };
         }
-        call.decision ??= parked.get(call.id) ?? null;
         call.state = event.data.ok ? "ran" : "failed";
         call.output = event.data.ok
           ? {
@@ -965,6 +856,11 @@ export function createFold(): TranscriptFold {
 
     indexOf(id) {
       return indexOf.get(id) ?? -1;
+    },
+
+    fork() {
+      // One copy of everything, so rows the maps hold stay the rows the list holds.
+      return createFold(structuredClone({ ...state, run, last }));
     },
   };
 }

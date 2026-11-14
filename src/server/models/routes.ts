@@ -151,11 +151,11 @@ export function modelRoutes(options: {
   const { identity, connections, models } = options;
 
   // A connection as the API shows it, with its proxy and the ends of its secrets.
-  function shown(owner: Principal, connection: Connection) {
+  async function shown(owner: Principal, connection: Connection) {
     return summary(
       connection,
-      connections.proxyOf(owner, connection.id),
-      connections.hintsOf(owner, connection.id),
+      await connections.proxyOf(owner, connection.id),
+      await connections.hintsOf(owner, connection.id),
     );
   }
 
@@ -166,8 +166,8 @@ export function modelRoutes(options: {
         const list = await models.resolveModels(orgId, c.req.valid("query"));
         return c.json(list satisfies ModelListSummary, 200);
       })
-      .get("/v1/settings/default-model", (c) => {
-        const ref = models.defaultModel(signedIn(c.var.principal).orgId);
+      .get("/v1/settings/default-model", async (c) => {
+        const ref = await models.defaultModel(signedIn(c.var.principal).orgId);
         return c.json({ ref } satisfies DefaultModel, 200);
       })
       .put("/v1/settings/default-model", setDefaultModel, async (c) => {
@@ -177,20 +177,20 @@ export function modelRoutes(options: {
         await models.setDefaultModel(principal.orgId, ref);
         return c.json({ ref } satisfies DefaultModel, 200);
       })
-      .get("/v1/settings/default-effort", (c) => {
-        const effort = models.defaultEffort(signedIn(c.var.principal).orgId);
+      .get("/v1/settings/default-effort", async (c) => {
+        const effort = await models.defaultEffort(signedIn(c.var.principal).orgId);
         return c.json({ effort } satisfies DefaultEffort, 200);
       })
-      .put("/v1/settings/default-effort", setDefaultEffort, (c) => {
+      .put("/v1/settings/default-effort", setDefaultEffort, async (c) => {
         const principal = signedIn(c.var.principal);
         requireAdmin(principal);
         const { effort } = c.req.valid("json");
-        models.setDefaultEffort(principal.orgId, effort);
+        await models.setDefaultEffort(principal.orgId, effort);
         return c.json({ effort } satisfies DefaultEffort, 200);
       })
       .get("/v1/settings/title-model", async (c) => {
         const { orgId } = signedIn(c.var.principal);
-        const ref = models.chosenTitleModel(orgId);
+        const ref = await models.chosenTitleModel(orgId);
         const automatic = await models.automaticTitleModel(orgId);
         return c.json({ ref, automatic } satisfies TitleModel, 200);
       })
@@ -224,22 +224,22 @@ export function modelRoutes(options: {
         }
         await next();
       })
-      .get("/v1/connections", (c) => {
+      .get("/v1/connections", async (c) => {
         const owner = signedIn(c.var.principal);
-        const list = connections.list(owner);
+        const list = await connections.list(owner);
         return c.json(
-          list.map((connection) => shown(owner, connection)),
+          await Promise.all(list.map(async (connection) => shown(owner, connection))),
           200,
         );
       })
-      .patch("/v1/connections/:id/proxy", proxyInput, (c) => {
+      .patch("/v1/connections/:id/proxy", proxyInput, async (c) => {
         const owner = signedIn(c.var.principal);
         const id = c.req.param("id");
-        connections.setProxy(owner, id, c.req.valid("json"));
+        await connections.setProxy(owner, id, c.req.valid("json"));
         models.invalidate(id);
-        const connection = connections.list(owner).find((found) => found.id === id);
+        const connection = (await connections.list(owner)).find((found) => found.id === id);
         if (!connection) throw new ConnectionError(404, "Connection not found");
-        return c.json(shown(owner, connection), 200);
+        return c.json(await shown(owner, connection), 200);
       })
       .post("/v1/connections", connectionInput, async (c) => {
         const owner = signedIn(c.var.principal);
@@ -256,13 +256,13 @@ export function modelRoutes(options: {
           secrets,
           proxy,
         });
-        return c.json(shown(owner, connection), 200);
+        return c.json(await shown(owner, connection), 200);
       })
       .patch("/v1/connections/:id", connectionChange, async (c) => {
         const owner = signedIn(c.var.principal);
         const id = c.req.param("id");
         const { method: methodId, label, values } = c.req.valid("json");
-        const { connection, values: merged } = connections.editValues(owner, id, values);
+        const { connection, values: merged } = await connections.editValues(owner, id, values);
         const current = methodOf(connection.host, connection.settings.method, connection.authKind);
         const split = splitValues(connection.host, methodId ?? current?.id ?? "", merged);
         if (!split.ok) return c.json({ error: split.error }, 400);
@@ -274,7 +274,7 @@ export function modelRoutes(options: {
           settings,
           secrets,
         });
-        return c.json(shown(owner, changed), 200);
+        return c.json(await shown(owner, changed), 200);
       })
       .get("/v1/connections/:id/models", refreshQuery, async (c) => {
         const { orgId } = signedIn(c.var.principal);
@@ -301,8 +301,11 @@ export function modelRoutes(options: {
         connections.cancel("codex", signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
       })
-      .post("/v1/connections/claude/authorization", (c) => {
-        return c.json(connections.startAuthorization("claude", signedIn(c.var.principal)), 200);
+      .post("/v1/connections/claude/authorization", async (c) => {
+        return c.json(
+          await connections.startAuthorization("claude", signedIn(c.var.principal)),
+          200,
+        );
       })
       .post("/v1/connections/claude/attempts/:id/code", pastedCode, async (c) => {
         const connection = await connections.finishAuthorization(
@@ -313,8 +316,8 @@ export function modelRoutes(options: {
         );
         return c.json(summary(connection), 200);
       })
-      .delete("/v1/connections/:id", (c) => {
-        connections.remove(signedIn(c.var.principal), c.req.param("id"));
+      .delete("/v1/connections/:id", async (c) => {
+        await connections.remove(signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
       })
   );

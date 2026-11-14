@@ -18,7 +18,7 @@ import { and, asc, eq, isNull, sql } from "drizzle-orm";
 
 import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
-import { type Db, withAsyncTransactions } from "@/server/db/db.ts";
+import type { Db } from "@/server/db/db.ts";
 
 import { keepGroupEmails } from "./group-email.ts";
 import type { OrgRole } from "./directory.ts";
@@ -56,37 +56,45 @@ export type Auth = ReturnType<typeof createAuth>;
 export function createAuth(options: AuthOptions) {
   const { db, oidc, scim: directory } = options;
 
-  function personalOrgOf(userId: string) {
-    return db
-      .select({ id: schema.organization.id })
-      .from(schema.member)
-      .innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
-      .where(and(eq(schema.member.userId, userId), eq(schema.organization.kind, "personal")))
-      .get();
+  async function personalOrgOf(userId: string) {
+    return (
+      await db
+        .select({ id: schema.organization.id })
+        .from(schema.member)
+        .innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
+        .where(and(eq(schema.member.userId, userId), eq(schema.organization.kind, "personal")))
+        .limit(1)
+    )[0];
   }
 
-  function hasMembers(orgId: string) {
-    return !!db
-      .select({ id: schema.member.id })
-      .from(schema.member)
-      .where(eq(schema.member.organizationId, orgId))
-      .get();
+  async function hasMembers(orgId: string) {
+    return !!(
+      await db
+        .select({ id: schema.member.id })
+        .from(schema.member)
+        .where(eq(schema.member.organizationId, orgId))
+        .limit(1)
+    )[0];
   }
 
-  function userIdByEmail(email: string) {
-    return db
-      .select({ id: schema.user.id })
-      .from(schema.user)
-      .where(eq(sql`lower(${schema.user.email})`, email.toLowerCase()))
-      .get()?.id;
+  async function userIdByEmail(email: string) {
+    return (
+      await db
+        .select({ id: schema.user.id })
+        .from(schema.user)
+        .where(eq(sql`lower(${schema.user.email})`, email.toLowerCase()))
+        .limit(1)
+    )[0]?.id;
   }
 
   // The directory brought them and no longer has them active.
-  function turnedOff(userId: string) {
-    return !!db.get(sql`
+  async function turnedOff(userId: string) {
+    return !!(
+      await db.execute(sql`
       select 1 from scim_subject s
        where s.user_id = ${userId}
-         and not exists (select 1 from scim_user u where u.user_id = s.user_id and u.active = 1)`);
+         and not exists (select 1 from scim_user u where u.user_id = s.user_id and u.active = true)`)
+    ).rows[0];
   }
 
   function rejectPersonal(org: Record<string, unknown>, message: string) {
@@ -111,7 +119,7 @@ export function createAuth(options: AuthOptions) {
       }),
       // A personal org has its owner and no one else.
       beforeAddMember: async ({ organization }) => {
-        if (hasMembers(organization.id)) {
+        if (await hasMembers(organization.id)) {
           rejectPersonal(organization, "A personal organization has no other members");
         }
       },
@@ -130,8 +138,8 @@ export function createAuth(options: AuthOptions) {
     trustedOrigins: [options.baseUrl, ...options.trustedOrigins],
     telemetry: { enabled: false, debug: false },
     advanced: { cookiePrefix: "mage", disableOriginCheck: false, disableCSRFCheck: false },
-    database: drizzleAdapter(withAsyncTransactions(db), {
-      provider: "sqlite",
+    database: drizzleAdapter(db, {
+      provider: "pg",
       schema,
       transaction: true,
     }),
@@ -149,35 +157,35 @@ export function createAuth(options: AuthOptions) {
             const org = await auth.api.createOrganization({
               body: { name: user.name, slug: user.id, userId: user.id, kind: "personal" },
             });
-            db.update(schema.member)
+            await db
+              .update(schema.member)
               .set({ directRole: "owner" })
-              .where(eq(schema.member.organizationId, org.id))
-              .run();
+              .where(eq(schema.member.organizationId, org.id));
             await options.hooks?.run("person.signedUp", { userId: user.id, orgId: org.id });
             // Sign-up opens its session before this runs, so that session is pointed at the org here.
-            db.update(schema.session)
+            await db
+              .update(schema.session)
               .set({ activeOrganizationId: org.id })
               .where(
                 and(
                   eq(schema.session.userId, user.id),
                   isNull(schema.session.activeOrganizationId),
                 ),
-              )
-              .run();
+              );
           },
         },
       },
       session: {
         create: {
           before: async (session) => {
-            if (turnedOff(session.userId)) {
+            if (await turnedOff(session.userId)) {
               throw new APIError("FORBIDDEN", {
                 code: "ACCOUNT_TURNED_OFF",
                 message: "Your account was turned off in your organization's directory",
               });
             }
             if (session.activeOrganizationId) return;
-            const org = personalOrgOf(session.userId);
+            const org = await personalOrgOf(session.userId);
             if (!org) return;
             return { data: { ...session, activeOrganizationId: org.id } };
           },
@@ -213,8 +221,8 @@ export function createAuth(options: AuthOptions) {
               identity: {
                 // The operator connected the directory, so the email it gives is trusted to join the
                 // account that has it, which it manages from then on.
-                resolveUser: ({ resource }) => {
-                  const userId = userIdByEmail(resource.primaryEmail);
+                resolveUser: async ({ resource }) => {
+                  const userId = await userIdByEmail(resource.primaryEmail);
                   return userId
                     ? { action: "link", userId, profile: "manage" }
                     : { action: "create" };
@@ -223,7 +231,7 @@ export function createAuth(options: AuthOptions) {
               projection: {
                 reconcileUser: async ({ userId, active }) => {
                   if (!active) {
-                    db.delete(schema.session).where(eq(schema.session.userId, userId)).run();
+                    await db.delete(schema.session).where(eq(schema.session.userId, userId));
                   }
                   await directory.changed(userId, active);
                 },
@@ -244,22 +252,26 @@ export function createAuth(options: AuthOptions) {
 // names, or else in the org they used last, or else their personal one. Naming another org makes it
 // the one used last.
 export function createIdentity(auth: Auth, db: Db): Identity {
-  function roleIn(userId: string, orgId: string) {
-    const member = db
-      .select({ role: schema.member.role })
-      .from(schema.member)
-      .where(and(eq(schema.member.userId, userId), eq(schema.member.organizationId, orgId)))
-      .get();
+  async function roleIn(userId: string, orgId: string) {
+    const member = (
+      await db
+        .select({ role: schema.member.role })
+        .from(schema.member)
+        .where(and(eq(schema.member.userId, userId), eq(schema.member.organizationId, orgId)))
+        .limit(1)
+    )[0];
     return member ? (member.role as OrgRole) : null;
   }
 
-  function personalOrgOf(userId: string) {
-    return db
-      .select({ id: schema.organization.id })
-      .from(schema.member)
-      .innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
-      .where(and(eq(schema.member.userId, userId), eq(schema.organization.kind, "personal")))
-      .get()?.id;
+  async function personalOrgOf(userId: string) {
+    return (
+      await db
+        .select({ id: schema.organization.id })
+        .from(schema.member)
+        .innerJoin(schema.organization, eq(schema.member.organizationId, schema.organization.id))
+        .where(and(eq(schema.member.userId, userId), eq(schema.organization.kind, "personal")))
+        .limit(1)
+    )[0]?.id;
   }
 
   return {
@@ -270,18 +282,18 @@ export function createIdentity(auth: Auth, db: Db): Identity {
       const signedIn = { userId, email: result.user.email };
       const last = result.session.activeOrganizationId;
       if (orgId) {
-        const role = roleIn(userId, orgId);
+        const role = await roleIn(userId, orgId);
         if (!role) return { ...signedIn, principal: null };
         if (orgId !== last) {
-          db.update(schema.session)
+          await db
+            .update(schema.session)
             .set({ activeOrganizationId: orgId })
-            .where(eq(schema.session.id, result.session.id))
-            .run();
+            .where(eq(schema.session.id, result.session.id));
         }
         return { ...signedIn, principal: { userId, orgId, role } };
       }
-      for (const candidate of [last, personalOrgOf(userId)]) {
-        const role = candidate ? roleIn(userId, candidate) : null;
+      for (const candidate of [last, await personalOrgOf(userId)]) {
+        const role = candidate ? await roleIn(userId, candidate) : null;
         if (candidate && role)
           return { ...signedIn, principal: { userId, orgId: candidate, role } };
       }
@@ -289,29 +301,33 @@ export function createIdentity(auth: Auth, db: Db): Identity {
     },
 
     async profile(principal: Principal) {
-      const row = db
-        .select({
-          user: { id: schema.user.id, name: schema.user.name, email: schema.user.email },
-          org: {
-            id: schema.organization.id,
-            name: schema.organization.name,
-            kind: schema.organization.kind,
-          },
-        })
-        .from(schema.user)
-        .innerJoin(schema.organization, eq(schema.organization.id, principal.orgId))
-        .where(eq(schema.user.id, principal.userId))
-        .get();
+      const row = (
+        await db
+          .select({
+            user: { id: schema.user.id, name: schema.user.name, email: schema.user.email },
+            org: {
+              id: schema.organization.id,
+              name: schema.organization.name,
+              kind: schema.organization.kind,
+            },
+          })
+          .from(schema.user)
+          .innerJoin(schema.organization, eq(schema.organization.id, principal.orgId))
+          .where(eq(schema.user.id, principal.userId))
+          .limit(1)
+      )[0];
       if (!row) throw new Error("principal has no user or org");
-      const owner = db
-        .select({ name: schema.user.name })
-        .from(schema.member)
-        .innerJoin(schema.user, eq(schema.user.id, schema.member.userId))
-        .where(
-          and(eq(schema.member.organizationId, principal.orgId), eq(schema.member.role, "owner")),
-        )
-        .orderBy(asc(schema.member.createdAt))
-        .get();
+      const owner = (
+        await db
+          .select({ name: schema.user.name })
+          .from(schema.member)
+          .innerJoin(schema.user, eq(schema.user.id, schema.member.userId))
+          .where(
+            and(eq(schema.member.organizationId, principal.orgId), eq(schema.member.role, "owner")),
+          )
+          .orderBy(asc(schema.member.createdAt))
+          .limit(1)
+      )[0];
       return {
         ...row,
         org: { ...row.org, ownerName: owner?.name ?? null },

@@ -8,7 +8,7 @@ import { and, asc, desc, eq, inArray, isNotNull, type SQL, sql } from "drizzle-o
 import { ulid } from "ulid";
 
 import { after, containing, pageLimit, pageOf } from "@/server/db/paging.ts";
-import { type Db, writeLock } from "@/server/db/db.ts";
+import type { Db } from "@/server/db/db.ts";
 import { space, spaceMember } from "@/server/spaces/schema.ts";
 
 import type { Directory, OrgRole, RecordSource, Settled } from "./directory.ts";
@@ -28,7 +28,7 @@ const RANK: Record<OrgRole, number> = { member: 1, owner: 2 };
 function activeGroupsOf(userId: SQL) {
   return sql`(select gm.group_id from scim_group_member gm
                 join scim_user su on su.id = gm.scim_user_id
-               where su.user_id = ${userId} and su.active = 1)`;
+               where su.user_id = ${userId} and su.active = true)`;
 }
 
 // Where the user's record comes from.
@@ -39,86 +39,104 @@ function sourceOf(userId: SQL) {
 
 // How many active people are in the group.
 function memberCountOf(groupId: SQL) {
-  return sql`(select count(distinct su.user_id) from scim_group_member gm
+  return sql`(select count(distinct su.user_id)::int from scim_group_member gm
                 join scim_user su on su.id = gm.scim_user_id
-               where gm.group_id = ${groupId} and su.active = 1)`;
+               where gm.group_id = ${groupId} and su.active = true)`;
 }
 
 // A member's columns beside their user's: how many of the org's linked groups they are in, the first
 // of them by name, the highest role those groups give, and their own role.
 const memberContext = sql`
-  (select count(*) from org_group og
+  (select count(*)::int from org_group og
     where og.organization_id = m.organization_id and og.group_id in ${activeGroupsOf(sql`u.id`)})
-    as groupCount,
+    as "groupCount",
   (select g.display_name from org_group og join scim_group g on g.id = og.group_id
     where og.organization_id = m.organization_id and og.group_id in ${activeGroupsOf(sql`u.id`)}
-    order by lower(g.display_name) limit 1) as viaGroup,
+    order by lower(g.display_name) limit 1) as "viaGroup",
   (select og.role from org_group og
     where og.organization_id = m.organization_id and og.group_id in ${activeGroupsOf(sql`u.id`)}
-    order by og.role = 'owner' desc limit 1) as groupRole,
-  m.direct_role as directRole,
+    order by og.role = 'owner' desc limit 1) as "groupRole",
+  m.direct_role as "directRole",
   ${sourceOf(sql`u.id`)} as source`;
 
-interface MemberContext {
+type MemberContext = {
   groupCount: number;
   viaGroup: string | null;
   groupRole: OrgRole | null;
   directRole: OrgRole | null;
   source: RecordSource;
-}
+};
 
 export function createDirectory(db: Db, auth: Auth): Directory {
-  function userOf(id: string) {
+  async function userOf(id: string) {
     return (
-      db.get<{ id: string; name: string; email: string; source: RecordSource }>(sql`
-        select u.id, u.name, u.email, ${sourceOf(sql`u.id`)} as source from user u
-         where u.id = ${id}`) ?? null
+      (
+        await db.execute<{ id: string; name: string; email: string; source: RecordSource }>(sql`
+        select u.id, u.name, u.email, ${sourceOf(sql`u.id`)} as source from "user" u
+         where u.id = ${id}`)
+      ).rows[0] ?? null
     );
   }
 
-  function roleIn(orgId: string, userId: string) {
-    const row = db
-      .select({ role: member.role })
-      .from(member)
-      .where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
-      .get();
+  async function roleIn(orgId: string, userId: string) {
+    const row = (
+      await db
+        .select({ role: member.role })
+        .from(member)
+        .where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
+        .limit(1)
+    )[0];
     return row ? (row.role as OrgRole) : null;
   }
 
-  function directOwnerCount(orgId: string) {
+  async function directOwnerCount(orgId: string) {
     return (
-      db.get<{ n: number }>(sql`
-        select count(*) as n from member
-         where organization_id = ${orgId} and direct_role = 'owner'`)?.n ?? 0
+      (
+        await db.execute<{ n: number }>(sql`
+        select count(*)::int as n from member
+         where organization_id = ${orgId} and direct_role = 'owner'`)
+      ).rows[0]?.n ?? 0
     );
   }
 
-  function isTeam(orgId: string) {
+  async function isTeam(orgId: string) {
     return (
-      db
-        .select({ kind: organization.kind })
-        .from(organization)
-        .where(eq(organization.id, orgId))
-        .get()?.kind === "team"
+      (
+        await db
+          .select({ kind: organization.kind })
+          .from(organization)
+          .where(eq(organization.id, orgId))
+          .limit(1)
+      )[0]?.kind === "team"
     );
   }
 
   return {
-    memberPage(orgId, params) {
+    async memberPage(orgId, params) {
       const where = sql`m.organization_id = ${orgId}
         ${params.role ? sql`and m.role = ${params.role}` : sql``}
         ${params.userId ? sql`and m.user_id = ${params.userId}` : sql``}
         and ${containing(params.q, sql`u.name`, sql`u.email`)}`;
-      const rows = db.all<
-        { id: string; name: string; email: string; role: OrgRole; joinedAt: number } & MemberContext
-      >(sql`
-        select u.id, u.name, u.email, m.role, m.created_at as joinedAt, ${memberContext}
-          from member m join user u on u.id = m.user_id
+      const rows = (
+        await db.execute<
+          {
+            id: string;
+            name: string;
+            email: string;
+            role: OrgRole;
+            joinedAt: number;
+          } & MemberContext
+        >(sql`
+        select u.id, u.name, u.email, m.role, m.created_at as "joinedAt", ${memberContext}
+          from member m join "user" u on u.id = m.user_id
          where ${where} and ${after(params.cursor, sql`lower(u.name)`, sql`u.id`)}
          order by lower(u.name), u.id
-         ${pageLimit(params)}`);
-      const total = db.get<{ n: number }>(sql`
-        select count(*) as n from member m join user u on u.id = m.user_id where ${where}`);
+         ${pageLimit(params)}`)
+      ).rows;
+      const total = (
+        await db.execute<{ n: number }>(sql`
+        select count(*)::int as n from member m join "user" u on u.id = m.user_id where ${where}`)
+      ).rows[0];
       return pageOf(
         rows.map((row) => ({ ...row, joinedAt: new Date(row.joinedAt) })),
         params,
@@ -127,29 +145,29 @@ export function createDirectory(db: Db, auth: Auth): Directory {
       );
     },
 
-    peoplePage(orgId, params) {
+    async peoplePage(orgId, params) {
       const invites = params.invitesAt
         ? sql`
         select 'invite', i.id, null, i.email, i.role, i.expires_at, c.name, '0' || lower(i.email),
                0, null, null, null, 'local'
-          from org_invite i left join user c on c.id = i.created_by
+          from org_invite i left join "user" c on c.id = i.created_by
          where i.organization_id = ${orgId} and i.accepted_at is null and i.revoked_at is null
-           and i.expires_at > ${params.invitesAt.getTime()}
+           and i.expires_at > ${params.invitesAt}
         union all`
         : sql``;
       // The first select names the columns.
       const people = sql`
         select 'group' as kind, g.id, g.display_name as name, g.email as email, og.role,
-               og.created_at as at, null as createdByName, '1' || lower(g.display_name) as sortKey,
-               ${memberCountOf(sql`g.id`)} as groupCount, null as viaGroup, null as groupRole,
-               null as directRole,
+               og.created_at as at, null as "createdByName", '1' || lower(g.display_name) as "sortKey",
+               ${memberCountOf(sql`g.id`)} as "groupCount", null as "viaGroup", null as "groupRole",
+               null as "directRole",
                'scim' as source
           from org_group og join scim_group g on g.id = og.group_id
          where og.organization_id = ${orgId}
         union all ${invites}
         select 'member', u.id, u.name, u.email, m.role, m.created_at, null,
                '2' || lower(u.name), ${memberContext}
-          from member m join user u on u.id = m.user_id
+          from member m join "user" u on u.id = m.user_id
          where m.organization_id = ${orgId} and m.direct_role is not null`;
       const where = sql`${containing(params.q, sql`name`, sql`email`)}
         ${params.role ? sql`and role = ${params.role}` : sql``}
@@ -162,25 +180,29 @@ export function createDirectory(db: Db, auth: Auth): Directory {
                 ? sql`and kind = 'group'`
                 : sql``
         }`;
-      const rows = db.all<
-        {
-          kind: "member" | "invite" | "group";
-          id: string;
-          name: string | null;
-          email: string | null;
-          role: OrgRole;
-          at: number;
-          createdByName: string | null;
-          sortKey: string;
-        } & MemberContext
-      >(sql`
+      const rows = (
+        await db.execute<
+          {
+            kind: "member" | "invite" | "group";
+            id: string;
+            name: string | null;
+            email: string | null;
+            role: OrgRole;
+            at: number;
+            createdByName: string | null;
+            sortKey: string;
+          } & MemberContext
+        >(sql`
         select * from (${people})
-         where ${where} and ${after(params.cursor, sql`sortKey`, sql`id`)}
-         order by sortKey, id
-         ${pageLimit(params)}`);
-      const total = db.get<{ n: number }>(
-        sql`select count(*) as n from (${people}) where ${where}`,
-      );
+         where ${where} and ${after(params.cursor, sql`"sortKey"`, sql`id`)}
+         order by "sortKey", id
+         ${pageLimit(params)}`)
+      ).rows;
+      const total = (
+        await db.execute<{ n: number }>(
+          sql`select count(*)::int as n from (${people}) where ${where}`,
+        )
+      ).rows[0];
       const page = pageOf(rows, params, total?.n ?? 0, (row) => [row.sortKey, row.id]);
       return {
         ...page,
@@ -224,70 +246,80 @@ export function createDirectory(db: Db, auth: Auth): Directory {
       };
     },
 
-    member(orgId, userId) {
-      const row = db.get<{
-        id: string;
-        name: string;
-        email: string;
-        role: OrgRole;
-        joinedAt: number;
-        source: RecordSource;
-      }>(sql`
-        select u.id, u.name, u.email, m.role, m.created_at as joinedAt,
+    async member(orgId, userId) {
+      const row = (
+        await db.execute<{
+          id: string;
+          name: string;
+          email: string;
+          role: OrgRole;
+          joinedAt: number;
+          source: RecordSource;
+        }>(sql`
+        select u.id, u.name, u.email, m.role, m.created_at as "joinedAt",
                ${sourceOf(sql`u.id`)} as source
-          from member m join user u on u.id = m.user_id
-         where m.organization_id = ${orgId} and m.user_id = ${userId}`);
+          from member m join "user" u on u.id = m.user_id
+         where m.organization_id = ${orgId} and m.user_id = ${userId}`)
+      ).rows[0];
       return row ? { ...row, joinedAt: new Date(row.joinedAt) } : null;
     },
 
-    group(id) {
-      const row = db.get<{
-        id: string;
-        name: string;
-        externalId: string | null;
-        email: string | null;
-        createdAt: number;
-      }>(
-        sql`select id, display_name as name, external_id as externalId, email, created_at as createdAt
+    async group(id) {
+      const row = (
+        await db.execute<{
+          id: string;
+          name: string;
+          externalId: string | null;
+          email: string | null;
+          createdAt: number;
+        }>(
+          sql`select id, display_name as name, external_id as "externalId", email, created_at as "createdAt"
               from scim_group where id = ${id}`,
-      );
+        )
+      ).rows[0];
       return row ? { ...row, source: "scim", createdAt: new Date(row.createdAt) } : null;
     },
 
-    linkedRole(orgId, groupId) {
+    async linkedRole(orgId, groupId) {
       return (
-        db
-          .select({ role: orgGroup.role })
-          .from(orgGroup)
-          .where(and(eq(orgGroup.organizationId, orgId), eq(orgGroup.groupId, groupId)))
-          .get()?.role ?? null
+        (
+          await db
+            .select({ role: orgGroup.role })
+            .from(orgGroup)
+            .where(and(eq(orgGroup.organizationId, orgId), eq(orgGroup.groupId, groupId)))
+            .limit(1)
+        )[0]?.role ?? null
       );
     },
 
-    groupPage(orgId, params) {
+    async groupPage(orgId, params) {
       const where = sql`og.organization_id = ${orgId}
         ${params.userId ? sql`and g.id in ${activeGroupsOf(sql`${params.userId}`)}` : sql``}
         and ${containing(params.q, sql`g.display_name`, sql`g.email`)}`;
-      const rows = db.all<{
-        id: string;
-        name: string;
-        externalId: string | null;
-        email: string | null;
-        createdAt: number;
-        role: OrgRole;
-        linkedAt: number;
-        memberCount: number;
-      }>(sql`
-        select g.id, g.display_name as name, g.external_id as externalId, g.email,
-               g.created_at as createdAt, og.role, og.created_at as linkedAt,
-               ${memberCountOf(sql`g.id`)} as memberCount
+      const rows = (
+        await db.execute<{
+          id: string;
+          name: string;
+          externalId: string | null;
+          email: string | null;
+          createdAt: number;
+          role: OrgRole;
+          linkedAt: number;
+          memberCount: number;
+        }>(sql`
+        select g.id, g.display_name as name, g.external_id as "externalId", g.email,
+               g.created_at as "createdAt", og.role, og.created_at as "linkedAt",
+               ${memberCountOf(sql`g.id`)} as "memberCount"
           from org_group og join scim_group g on g.id = og.group_id
          where ${where} and ${after(params.cursor, sql`lower(g.display_name)`, sql`g.id`)}
          order by lower(g.display_name), g.id
-         ${pageLimit(params)}`);
-      const total = db.get<{ n: number }>(sql`
-        select count(*) as n from org_group og join scim_group g on g.id = og.group_id
-         where ${where}`);
+         ${pageLimit(params)}`)
+      ).rows;
+      const total = (
+        await db.execute<{ n: number }>(sql`
+        select count(*)::int as n from org_group og join scim_group g on g.id = og.group_id
+         where ${where}`)
+      ).rows[0];
       return pageOf(
         rows.map((row) => ({
           ...row,
@@ -301,17 +333,21 @@ export function createDirectory(db: Db, auth: Auth): Directory {
       );
     },
 
-    groupMemberPage(groupId, params) {
+    async groupMemberPage(groupId, params) {
       const where = sql`u.id in (select su.user_id from scim_group_member gm
                                     join scim_user su on su.id = gm.scim_user_id
-                                   where gm.group_id = ${groupId} and su.active = 1)
+                                   where gm.group_id = ${groupId} and su.active = true)
         and ${containing(params.q, sql`u.name`, sql`u.email`)}`;
-      const rows = db.all<{ id: string; name: string; email: string }>(sql`
-        select u.id, u.name, u.email from user u
+      const rows = (
+        await db.execute<{ id: string; name: string; email: string }>(sql`
+        select u.id, u.name, u.email from "user" u
          where ${where} and ${after(params.cursor, sql`lower(u.name)`, sql`u.id`)}
          order by lower(u.name), u.id
-         ${pageLimit(params)}`);
-      const total = db.get<{ n: number }>(sql`select count(*) as n from user u where ${where}`);
+         ${pageLimit(params)}`)
+      ).rows;
+      const total = (
+        await db.execute<{ n: number }>(sql`select count(*)::int as n from "user" u where ${where}`)
+      ).rows[0];
       return pageOf(
         rows.map((row) => ({ ...row, source: "scim" as const })),
         params,
@@ -320,30 +356,42 @@ export function createDirectory(db: Db, auth: Auth): Directory {
       );
     },
 
-    groupIdsOf(orgId, userId) {
-      return db
-        .all<{ id: string }>(sql`
+    async groupIdsOf(orgId, userId) {
+      return (
+        await db.execute<{ id: string }>(sql`
           select group_id as id from org_group
            where organization_id = ${orgId} and group_id in ${activeGroupsOf(sql`${userId}`)}`)
-        .map((row) => row.id);
+      ).rows.map((row) => row.id);
     },
 
-    memberCount(groupId) {
-      return db.get<{ n: number }>(sql`select ${memberCountOf(sql`${groupId}`)} as n`)?.n ?? 0;
+    async memberCount(groupId) {
+      return (
+        (await db.execute<{ n: number }>(sql`select ${memberCountOf(sql`${groupId}`)} as n`))
+          .rows[0]?.n ?? 0
+      );
     },
 
-    directoryPeoplePage(orgId, params) {
-      const where = sql`exists (select 1 from scim_user su where su.user_id = u.id and su.active = 1)
+    async directoryPeoplePage(orgId, params) {
+      const where = sql`exists (select 1 from scim_user su where su.user_id = u.id and su.active = true)
         and ${containing(params.q, sql`u.name`, sql`u.email`)}`;
-      const rows = db.all<{ id: string; name: string; email: string; role: OrgRole | null }>(sql`
+      const rows = (
+        await db.execute<{
+          id: string;
+          name: string;
+          email: string;
+          role: OrgRole | null;
+        }>(sql`
         select u.id, u.name, u.email,
                (select m.role from member m
                  where m.organization_id = ${orgId} and m.user_id = u.id) as role
-          from user u
+          from "user" u
          where ${where} and ${after(params.cursor, sql`lower(u.name)`, sql`u.id`)}
          order by lower(u.name), u.id
-         ${pageLimit(params)}`);
-      const total = db.get<{ n: number }>(sql`select count(*) as n from user u where ${where}`);
+         ${pageLimit(params)}`)
+      ).rows;
+      const total = (
+        await db.execute<{ n: number }>(sql`select count(*)::int as n from "user" u where ${where}`)
+      ).rows[0];
       return pageOf(
         rows.map((row) => ({ ...row, source: "scim" as const })),
         params,
@@ -352,28 +400,32 @@ export function createDirectory(db: Db, auth: Auth): Directory {
       );
     },
 
-    directoryGroupPage(orgId, params) {
+    async directoryGroupPage(orgId, params) {
       const where = containing(params.q, sql`g.display_name`, sql`g.email`);
-      const rows = db.all<{
-        id: string;
-        name: string;
-        externalId: string | null;
-        email: string | null;
-        createdAt: number;
-        memberCount: number;
-        role: OrgRole | null;
-      }>(sql`
-        select g.id, g.display_name as name, g.external_id as externalId, g.email,
-               g.created_at as createdAt, ${memberCountOf(sql`g.id`)} as memberCount,
+      const rows = (
+        await db.execute<{
+          id: string;
+          name: string;
+          externalId: string | null;
+          email: string | null;
+          createdAt: number;
+          memberCount: number;
+          role: OrgRole | null;
+        }>(sql`
+        select g.id, g.display_name as name, g.external_id as "externalId", g.email,
+               g.created_at as "createdAt", ${memberCountOf(sql`g.id`)} as "memberCount",
                (select og.role from org_group og
                  where og.organization_id = ${orgId} and og.group_id = g.id) as role
           from scim_group g
          where ${where} and ${after(params.cursor, sql`lower(g.display_name)`, sql`g.id`)}
          order by lower(g.display_name), g.id
-         ${pageLimit(params)}`);
-      const total = db.get<{ n: number }>(
-        sql`select count(*) as n from scim_group g where ${where}`,
-      );
+         ${pageLimit(params)}`)
+      ).rows;
+      const total = (
+        await db.execute<{ n: number }>(
+          sql`select count(*)::int as n from scim_group g where ${where}`,
+        )
+      ).rows[0];
       return pageOf(
         rows.map((row) => ({
           ...row,
@@ -386,63 +438,64 @@ export function createDirectory(db: Db, auth: Auth): Directory {
       );
     },
 
-    linkGroup(orgId, groupId, role) {
-      db.insert(orgGroup)
+    async linkGroup(orgId, groupId, role) {
+      await db
+        .insert(orgGroup)
         .values({ organizationId: orgId, groupId, role })
-        .onConflictDoUpdate({ target: [orgGroup.organizationId, orgGroup.groupId], set: { role } })
-        .run();
+        .onConflictDoUpdate({ target: [orgGroup.organizationId, orgGroup.groupId], set: { role } });
     },
 
-    unlinkGroup(orgId, groupId) {
-      db.transaction((tx) => {
-        tx.delete(orgGroup)
-          .where(and(eq(orgGroup.organizationId, orgId), eq(orgGroup.groupId, groupId)))
-          .run();
+    async unlinkGroup(orgId, groupId) {
+      await db.transaction(async (tx) => {
+        await tx
+          .delete(orgGroup)
+          .where(and(eq(orgGroup.organizationId, orgId), eq(orgGroup.groupId, groupId)));
         const spaces = tx
           .select({ id: space.id })
           .from(space)
           .where(eq(space.organizationId, orgId));
-        tx.delete(spaceMember)
+        await tx
+          .delete(spaceMember)
           .where(
             and(
               eq(spaceMember.subjectKind, "group"),
               eq(spaceMember.subjectId, groupId),
               inArray(spaceMember.spaceId, spaces),
             ),
-          )
-          .run();
-      }, writeLock);
+          );
+      });
     },
 
-    org(orgId) {
+    async org(orgId) {
       return (
-        db.select(orgColumns).from(organization).where(eq(organization.id, orgId)).get() ?? null
+        (
+          await db.select(orgColumns).from(organization).where(eq(organization.id, orgId)).limit(1)
+        )[0] ?? null
       );
     },
 
-    orgsOf(userId) {
-      const owners = db
+    async orgsOf(userId) {
+      const owners = await db
         .select({ orgId: member.organizationId, name: user.name })
         .from(member)
         .innerJoin(user, eq(user.id, member.userId))
         .where(eq(member.role, "owner"))
-        .orderBy(asc(member.createdAt))
-        .all();
+        .orderBy(asc(member.createdAt));
       const ownerName = new Map<string, string>();
       for (const owner of owners)
         if (!ownerName.has(owner.orgId)) ownerName.set(owner.orgId, owner.name);
-      return db
-        .select({ ...orgColumns, role: member.role })
-        .from(member)
-        .innerJoin(organization, eq(organization.id, member.organizationId))
-        .where(eq(member.userId, userId))
-        .orderBy(desc(sql`${organization.kind} = 'personal'`), asc(organization.name))
-        .all()
-        .map((row) => ({
-          ...row,
-          role: row.role as OrgRole,
-          ownerName: ownerName.get(row.id) ?? null,
-        }));
+      return (
+        await db
+          .select({ ...orgColumns, role: member.role })
+          .from(member)
+          .innerJoin(organization, eq(organization.id, member.organizationId))
+          .where(eq(member.userId, userId))
+          .orderBy(desc(sql`${organization.kind} = 'personal'`), asc(organization.name))
+      ).map((row) => ({
+        ...row,
+        role: row.role as OrgRole,
+        ownerName: ownerName.get(row.id) ?? null,
+      }));
     },
 
     async createTeamOrg(name, ownerId) {
@@ -450,44 +503,46 @@ export function createDirectory(db: Db, auth: Auth): Directory {
         body: { name, slug: ulid().toLowerCase(), userId: ownerId, kind: "team" },
       });
       if (!created) throw new Error("the org was not created");
-      db.update(member)
+      await db
+        .update(member)
         .set({ directRole: "owner" })
-        .where(and(eq(member.organizationId, created.id), eq(member.userId, ownerId)))
-        .run();
+        .where(and(eq(member.organizationId, created.id), eq(member.userId, ownerId)));
       return { id: created.id, name: created.name, kind: "team", createdAt: created.createdAt };
     },
 
-    renameOrg(orgId, name) {
-      db.update(organization).set({ name }).where(eq(organization.id, orgId)).run();
+    async renameOrg(orgId, name) {
+      await db.update(organization).set({ name }).where(eq(organization.id, orgId));
     },
 
     // Everything else in the org goes with its row through the tables' cascades.
-    deleteOrg(orgId) {
-      db.transaction((tx) => {
-        tx.update(session)
+    async deleteOrg(orgId) {
+      await db.transaction(async (tx) => {
+        await tx
+          .update(session)
           .set({ activeOrganizationId: null })
-          .where(eq(session.activeOrganizationId, orgId))
-          .run();
-        tx.delete(organization).where(eq(organization.id, orgId)).run();
-      }, writeLock);
+          .where(eq(session.activeOrganizationId, orgId));
+        await tx.delete(organization).where(eq(organization.id, orgId));
+      });
     },
 
     user: userOf,
 
-    userByEmail(email) {
-      const row = db
-        .select({ id: user.id })
-        .from(user)
-        .where(eq(sql`lower(${user.email})`, email.toLowerCase()))
-        .get();
-      return row ? userOf(row.id) : null;
+    async userByEmail(email) {
+      const row = (
+        await db
+          .select({ id: user.id })
+          .from(user)
+          .where(eq(sql`lower(${user.email})`, email.toLowerCase()))
+          .limit(1)
+      )[0];
+      return row ? await userOf(row.id) : null;
     },
 
     roleIn,
 
-    members(orgId) {
-      return db
-        .all<{
+    async members(orgId) {
+      return (
+        await db.execute<{
           id: string;
           name: string;
           email: string;
@@ -495,53 +550,53 @@ export function createDirectory(db: Db, auth: Auth): Directory {
           joinedAt: number;
           source: RecordSource;
         }>(sql`
-          select u.id, u.name, u.email, m.role, m.created_at as joinedAt,
+          select u.id, u.name, u.email, m.role, m.created_at as "joinedAt",
                  ${sourceOf(sql`u.id`)} as source
-            from member m join user u on u.id = m.user_id
+            from member m join "user" u on u.id = m.user_id
            where m.organization_id = ${orgId}
            order by m.created_at`)
-        .map((row) => ({ ...row, joinedAt: new Date(row.joinedAt) }));
+      ).rows.map((row) => ({ ...row, joinedAt: new Date(row.joinedAt) }));
     },
 
     async addMember(orgId, userId, role) {
       await auth.api.addMember({ body: { userId, role, organizationId: orgId } });
-      db.update(member)
+      await db
+        .update(member)
         .set({ directRole: role })
-        .where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
-        .run();
-      db.delete(orgFormerMember)
-        .where(and(eq(orgFormerMember.organizationId, orgId), eq(orgFormerMember.userId, userId)))
-        .run();
+        .where(and(eq(member.organizationId, orgId), eq(member.userId, userId)));
+      await db
+        .delete(orgFormerMember)
+        .where(and(eq(orgFormerMember.organizationId, orgId), eq(orgFormerMember.userId, userId)));
     },
 
-    setDirectRole(orgId, userId, role) {
-      db.update(member)
+    async setDirectRole(orgId, userId, role) {
+      await db
+        .update(member)
         .set({ directRole: role })
-        .where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
-        .run();
+        .where(and(eq(member.organizationId, orgId), eq(member.userId, userId)));
       // Someone not a member yet joins with it.
-      if (role && !roleIn(orgId, userId)) {
-        db.insert(member)
-          .values({
-            id: ulid(),
-            organizationId: orgId,
-            userId,
-            role,
-            directRole: role,
-            createdAt: new Date(),
-          })
-          .run();
-        db.delete(orgFormerMember)
-          .where(and(eq(orgFormerMember.organizationId, orgId), eq(orgFormerMember.userId, userId)))
-          .run();
+      if (role && !(await roleIn(orgId, userId))) {
+        await db.insert(member).values({
+          id: ulid(),
+          organizationId: orgId,
+          userId,
+          role,
+          directRole: role,
+          createdAt: new Date(),
+        });
+        await db
+          .delete(orgFormerMember)
+          .where(
+            and(eq(orgFormerMember.organizationId, orgId), eq(orgFormerMember.userId, userId)),
+          );
       }
     },
 
     directOwnerCount,
 
-    settle(orgId, at, userIds) {
+    async settle(orgId, at, userIds) {
       const none: Settled = { joined: [], left: [], changed: false };
-      if (userIds?.length === 0 || !isTeam(orgId)) return none;
+      if (userIds?.length === 0 || !(await isTeam(orgId))) return none;
       const among = (column: SQL) =>
         userIds
           ? sql`and ${column} in (${sql.join(
@@ -549,9 +604,10 @@ export function createDirectory(db: Db, auth: Auth): Directory {
               sql`, `,
             )})`
           : sql``;
-      return db.transaction((tx) => {
-        const wanted = tx.all<{ userId: string; rank: number }>(sql`
-          select user_id as userId, max(rank) as rank from (
+      return db.transaction(async (tx) => {
+        const wanted = (
+          await tx.execute<{ userId: string; rank: number }>(sql`
+          select user_id as "userId", max(rank) as rank from (
             select m.user_id, case m.direct_role when 'owner' then 2 else 1 end as rank
               from member m
              where m.organization_id = ${orgId} and m.direct_role is not null
@@ -559,16 +615,17 @@ export function createDirectory(db: Db, auth: Auth): Directory {
             select su.user_id, case og.role when 'owner' then 2 else 1 end
               from org_group og
               join scim_group_member gm on gm.group_id = og.group_id
-              join scim_user su on su.id = gm.scim_user_id and su.active = 1
+              join scim_user su on su.id = gm.scim_user_id and su.active = true
              where og.organization_id = ${orgId}
           ) where 1 = 1 ${among(sql`user_id`)}
-          group by user_id`);
+          group by user_id`)
+        ).rows;
         const current = new Map(
-          tx
-            .all<{ userId: string; role: OrgRole }>(sql`
-              select user_id as userId, role from member
+          (
+            await tx.execute<{ userId: string; role: OrgRole }>(sql`
+              select user_id as "userId", role from member
                where organization_id = ${orgId} ${among(sql`user_id`)}`)
-            .map((row) => [row.userId, row.role]),
+          ).rows.map((row) => [row.userId, row.role]),
         );
         const settled: Settled = { joined: [], left: [], changed: false };
         for (const { userId, rank } of wanted) {
@@ -578,20 +635,20 @@ export function createDirectory(db: Db, auth: Auth): Directory {
           if (now === role) continue;
           settled.changed = true;
           if (now) {
-            tx.update(member)
+            await tx
+              .update(member)
               .set({ role })
-              .where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
-              .run();
+              .where(and(eq(member.organizationId, orgId), eq(member.userId, userId)));
             continue;
           }
-          tx.insert(member)
-            .values({ id: ulid(), organizationId: orgId, userId, role, createdAt: at })
-            .run();
-          tx.delete(orgFormerMember)
+          await tx
+            .insert(member)
+            .values({ id: ulid(), organizationId: orgId, userId, role, createdAt: at });
+          await tx
+            .delete(orgFormerMember)
             .where(
               and(eq(orgFormerMember.organizationId, orgId), eq(orgFormerMember.userId, userId)),
-            )
-            .run();
+            );
           settled.joined.push(userId);
         }
         const spaces = tx
@@ -601,33 +658,33 @@ export function createDirectory(db: Db, auth: Auth): Directory {
         for (const userId of current.keys()) {
           settled.changed = true;
           settled.left.push(userId);
-          tx.delete(member)
-            .where(and(eq(member.organizationId, orgId), eq(member.userId, userId)))
-            .run();
-          tx.delete(spaceMember)
+          await tx
+            .delete(member)
+            .where(and(eq(member.organizationId, orgId), eq(member.userId, userId)));
+          await tx
+            .delete(spaceMember)
             .where(
               and(
                 eq(spaceMember.subjectKind, "user"),
                 eq(spaceMember.subjectId, userId),
                 inArray(spaceMember.spaceId, spaces),
               ),
-            )
-            .run();
-          tx.insert(orgFormerMember)
+            );
+          await tx
+            .insert(orgFormerMember)
             .values({ organizationId: orgId, userId, removedAt: at })
             .onConflictDoUpdate({
               target: [orgFormerMember.organizationId, orgFormerMember.userId],
               set: { removedAt: at },
-            })
-            .run();
+            });
         }
         return settled;
-      }, writeLock);
+      });
     },
 
-    orgsToSettle(userId) {
-      return db
-        .all<{ id: string }>(sql`
+    async orgsToSettle(userId) {
+      return (
+        await db.execute<{ id: string }>(sql`
           select m.organization_id as id from member m
             join organization o on o.id = m.organization_id
            where m.user_id = ${userId} and o.kind = 'team'
@@ -636,11 +693,11 @@ export function createDirectory(db: Db, auth: Auth): Directory {
             join scim_group_member gm on gm.group_id = og.group_id
             join scim_user su on su.id = gm.scim_user_id
            where su.user_id = ${userId}`)
-        .map((row) => row.id);
+      ).rows.map((row) => row.id);
     },
 
-    clearDirectRoles(userId) {
-      const rows = db
+    async clearDirectRoles(userId) {
+      const rows = await db
         .select({ orgId: member.organizationId, directRole: member.directRole })
         .from(member)
         .innerJoin(organization, eq(organization.id, member.organizationId))
@@ -650,27 +707,29 @@ export function createDirectory(db: Db, auth: Auth): Directory {
             eq(organization.kind, "team"),
             isNotNull(member.directRole),
           ),
-        )
-        .all();
+        );
       for (const row of rows) {
-        if (row.directRole === "owner" && directOwnerCount(row.orgId) <= 1) continue;
-        db.update(member)
+        if (row.directRole === "owner" && (await directOwnerCount(row.orgId)) <= 1) continue;
+        await db
+          .update(member)
           .set({ directRole: null })
-          .where(and(eq(member.organizationId, row.orgId), eq(member.userId, userId)))
-          .run();
+          .where(and(eq(member.organizationId, row.orgId), eq(member.userId, userId)));
       }
     },
 
-    formerMembers(orgId, userIds) {
+    async formerMembers(orgId, userIds) {
       if (userIds.length === 0) return [];
-      return db
-        .select({ userId: orgFormerMember.userId })
-        .from(orgFormerMember)
-        .where(
-          and(eq(orgFormerMember.organizationId, orgId), inArray(orgFormerMember.userId, userIds)),
-        )
-        .all()
-        .map((row) => row.userId);
+      return (
+        await db
+          .select({ userId: orgFormerMember.userId })
+          .from(orgFormerMember)
+          .where(
+            and(
+              eq(orgFormerMember.organizationId, orgId),
+              inArray(orgFormerMember.userId, userIds),
+            ),
+          )
+      ).map((row) => row.userId);
     },
   };
 }

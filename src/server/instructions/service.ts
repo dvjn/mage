@@ -15,8 +15,8 @@ export interface InstructionRecord {
 
 export interface InstructionStore {
   // The org's own with no space given, or the space's.
-  get(orgId: string, spaceId: string | null): InstructionRecord | null;
-  set(orgId: string, spaceId: string | null, text: string, userId: string): void;
+  get(orgId: string, spaceId: string | null): Promise<InstructionRecord | null>;
+  set(orgId: string, spaceId: string | null, text: string, userId: string): Promise<void>;
 }
 
 export interface InstructionsOptions {
@@ -29,36 +29,43 @@ export type Instructions = ReturnType<typeof createInstructions>;
 const ORG_ONLY = "Only the organization's owners can change its instructions";
 
 export function createInstructions({ store, spaces }: InstructionsOptions) {
-  function read(orgId: string, spaceId: string | null): InstructionsBody {
-    const record = store.get(orgId, spaceId);
+  async function read(orgId: string, spaceId: string | null): Promise<InstructionsBody> {
+    const record = await store.get(orgId, spaceId);
     return { text: record?.text ?? "", updatedAt: record?.updatedAt.toISOString() ?? null };
   }
 
   return {
     // The org's and the space's, as the agent reads them in the space.
-    textsFor(space: Pick<Space, "id" | "orgId">) {
-      return { org: read(space.orgId, null).text, space: read(space.orgId, space.id).text };
+    async textsFor(space: Pick<Space, "id" | "orgId">) {
+      return {
+        org: (await read(space.orgId, null)).text,
+        space: (await read(space.orgId, space.id)).text,
+      };
     },
 
-    inOrg(principal: Principal): InstructionsBody {
+    async inOrg(principal: Principal): Promise<InstructionsBody> {
       return read(principal.orgId, null);
     },
 
-    setInOrg(principal: Principal, text: string): InstructionsBody {
+    async setInOrg(principal: Principal, text: string): Promise<InstructionsBody> {
       if (principal.role !== "owner") throw new ServiceError(403, ORG_ONLY);
-      store.set(principal.orgId, null, text.trim(), principal.userId);
+      await store.set(principal.orgId, null, text.trim(), principal.userId);
       return read(principal.orgId, null);
     },
 
-    inSpace(principal: Principal, spaceId: string): SpaceInstructions {
-      const space = spaces.require(principal, spaceId);
-      return { own: read(space.orgId, space.id), org: read(space.orgId, null) };
+    async inSpace(principal: Principal, spaceId: string): Promise<SpaceInstructions> {
+      const space = await spaces.require(principal, spaceId);
+      return { own: await read(space.orgId, space.id), org: await read(space.orgId, null) };
     },
 
-    setInSpace(principal: Principal, spaceId: string, text: string): SpaceInstructions {
-      const space = spaces.require(principal, spaceId, "manage");
-      store.set(space.orgId, space.id, text.trim(), principal.userId);
-      return { own: read(space.orgId, space.id), org: read(space.orgId, null) };
+    async setInSpace(
+      principal: Principal,
+      spaceId: string,
+      text: string,
+    ): Promise<SpaceInstructions> {
+      const space = await spaces.require(principal, spaceId, "manage");
+      await store.set(space.orgId, space.id, text.trim(), principal.userId);
+      return { own: await read(space.orgId, space.id), org: await read(space.orgId, null) };
     },
   };
 }

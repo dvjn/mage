@@ -9,7 +9,6 @@ import { ArtifactCard } from "@/web/artifacts/artifact-card";
 import type { TranscriptEntry } from "@/web/threads/transcript/entries";
 import { RelayMessages } from "@/web/threads/transcript/relay-message";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
-import { SubagentNotice } from "@/web/threads/transcript/subagent-notice";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
 import { ToolGroup } from "@/web/threads/transcript/tool-group";
 import { TranscriptItem } from "@/web/threads/transcript/transcript-item";
@@ -33,8 +32,6 @@ function sameEntry(a: TranscriptEntry, b: TranscriptEntry) {
   switch (a.kind) {
     case "row":
       return a.row === (b as typeof a).row && a.endsTurn === (b as typeof a).endsTurn;
-    case "notice":
-      return a.row === (b as typeof a).row;
     case "calls": {
       const other = b as typeof a;
       return same(a.rows, other.rows) && same(a.calls, other.calls) && a.turn === other.turn;
@@ -91,8 +88,6 @@ export const EntryView = memo(
             onOpenChange={onOpenChange}
           />
         );
-      case "notice":
-        return <SubagentNotice row={entry.row} />;
       case "artifacts":
         return (
           <div className="flex flex-col gap-1.5">

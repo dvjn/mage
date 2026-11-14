@@ -69,145 +69,152 @@ function tokenContext(sourceId: string) {
 const builtins = scopedOn(builtinSkillSetting);
 
 export function createSkillStore(db: Db, cipher: Cipher): SkillStore {
-  function builtinSwitches(scope: SettingScope) {
-    const rows = db.select().from(builtinSkillSetting).where(builtins.at(scope)).all();
+  async function builtinSwitches(scope: SettingScope) {
+    const rows = await db.select().from(builtinSkillSetting).where(builtins.at(scope));
     return new Map(rows.map((row) => [row.key, row.enabled]));
   }
 
-  function setBuiltin(scope: SettingScope, key: string, enabled: boolean) {
-    db.insert(builtinSkillSetting)
+  async function setBuiltin(scope: SettingScope, key: string, enabled: boolean) {
+    await db
+      .insert(builtinSkillSetting)
       .values({ ...builtins.of(scope), key, enabled })
       .onConflictDoUpdate({
         ...builtins.conflict(scope, builtinSkillSetting.key),
         set: { enabled },
-      })
-      .run();
+      });
   }
 
   return {
-    createSource({ orgId, ...rest }) {
+    async createSource({ orgId, ...rest }) {
       return sourceOf(
-        db
-          .insert(skillSource)
-          .values({ id: ulid(), organizationId: orgId, fetchedAt: new Date(), ...rest })
-          .returning(sourceColumns)
-          .get(),
+        (
+          await db
+            .insert(skillSource)
+            .values({ id: ulid(), organizationId: orgId, fetchedAt: new Date(), ...rest })
+            .returning(sourceColumns)
+        )[0]!,
       );
     },
 
-    findSource(id) {
-      const row = db.select(sourceColumns).from(skillSource).where(eq(skillSource.id, id)).get();
+    async findSource(id) {
+      const row = (
+        await db.select(sourceColumns).from(skillSource).where(eq(skillSource.id, id)).limit(1)
+      )[0];
       return row ? sourceOf(row) : null;
     },
 
-    sources(scope) {
-      return db
-        .select(sourceColumns)
-        .from(skillSource)
-        .where(scoped(skillSource, scope))
-        .orderBy(asc(skillSource.id))
-        .all()
-        .map(sourceOf);
+    async sources(scope) {
+      return (
+        await db
+          .select(sourceColumns)
+          .from(skillSource)
+          .where(scoped(skillSource, scope))
+          .orderBy(asc(skillSource.id))
+      ).map(sourceOf);
     },
 
-    updateSource(id, changes) {
-      db.update(skillSource).set(changes).where(eq(skillSource.id, id)).run();
+    async updateSource(id, changes) {
+      await db.update(skillSource).set(changes).where(eq(skillSource.id, id));
     },
 
-    deleteSource(id) {
-      db.delete(skillSource).where(eq(skillSource.id, id)).run();
+    async deleteSource(id) {
+      await db.delete(skillSource).where(eq(skillSource.id, id));
     },
 
-    token(id) {
-      const row = db
-        .select({ keyVersion: skillSource.tokenKeyVersion, data: skillSource.token })
-        .from(skillSource)
-        .where(eq(skillSource.id, id))
-        .get();
+    async token(id) {
+      const row = (
+        await db
+          .select({ keyVersion: skillSource.tokenKeyVersion, data: skillSource.token })
+          .from(skillSource)
+          .where(eq(skillSource.id, id))
+          .limit(1)
+      )[0];
       if (!row || row.keyVersion === null || !row.data) return null;
       return cipher
         .open({ keyVersion: row.keyVersion, data: row.data }, tokenContext(id))
         .toString();
     },
 
-    setToken(id, token) {
+    async setToken(id, token) {
       const sealed = token ? cipher.seal(Buffer.from(token), tokenContext(id)) : null;
-      db.update(skillSource)
+      await db
+        .update(skillSource)
         .set({ tokenKeyVersion: sealed?.keyVersion ?? null, token: sealed?.data ?? null })
-        .where(eq(skillSource.id, id))
-        .run();
+        .where(eq(skillSource.id, id));
     },
 
-    create({ orgId, ...rest }) {
-      return db
-        .insert(skill)
-        .values({ id: ulid(), organizationId: orgId, ...rest })
-        .returning(skillColumns)
-        .get() as Skill;
+    async create({ orgId, ...rest }) {
+      return (
+        await db
+          .insert(skill)
+          .values({ id: ulid(), organizationId: orgId, ...rest })
+          .returning(skillColumns)
+      )[0]! as Skill;
     },
 
-    find(id) {
-      return (db.select(skillColumns).from(skill).where(eq(skill.id, id)).get() as Skill) ?? null;
+    async find(id) {
+      return (
+        ((
+          await db.select(skillColumns).from(skill).where(eq(skill.id, id)).limit(1)
+        )[0] as Skill) ?? null
+      );
     },
 
-    inScope(scope) {
-      return db
+    async inScope(scope) {
+      return (await db
         .select(skillColumns)
         .from(skill)
         .where(scoped(skill, scope))
-        .orderBy(asc(skill.name), asc(skill.id))
-        .all() as Skill[];
+        .orderBy(asc(skill.name), asc(skill.id))) as Skill[];
     },
 
-    update(id, changes) {
-      db.update(skill).set(changes).where(eq(skill.id, id)).run();
+    async update(id, changes) {
+      await db.update(skill).set(changes).where(eq(skill.id, id));
     },
 
-    delete(id) {
-      db.delete(skill).where(eq(skill.id, id)).run();
+    async delete(id) {
+      await db.delete(skill).where(eq(skill.id, id));
     },
 
-    spaceSourceSettings(spaceId) {
-      const rows = db
+    async spaceSourceSettings(spaceId) {
+      const rows = await db
         .select({ id: spaceSkillSourceSetting.sourceId, enabled: spaceSkillSourceSetting.enabled })
         .from(spaceSkillSourceSetting)
-        .where(eq(spaceSkillSourceSetting.spaceId, spaceId))
-        .all();
+        .where(eq(spaceSkillSourceSetting.spaceId, spaceId));
       return new Map(rows.map((row) => [row.id, row.enabled]));
     },
 
-    setSpaceSource(spaceId, sourceId, enabled) {
-      db.insert(spaceSkillSourceSetting)
+    async setSpaceSource(spaceId, sourceId, enabled) {
+      await db
+        .insert(spaceSkillSourceSetting)
         .values({ spaceId, sourceId, enabled })
         .onConflictDoUpdate({
           target: [spaceSkillSourceSetting.spaceId, spaceSkillSourceSetting.sourceId],
           set: { enabled },
-        })
-        .run();
+        });
     },
 
-    spaceSkillSettings(spaceId) {
-      const rows = db
+    async spaceSkillSettings(spaceId) {
+      const rows = await db
         .select({ id: spaceSkillSetting.skillId, enabled: spaceSkillSetting.enabled })
         .from(spaceSkillSetting)
-        .where(eq(spaceSkillSetting.spaceId, spaceId))
-        .all();
+        .where(eq(spaceSkillSetting.spaceId, spaceId));
       return new Map(rows.map((row) => [row.id, row.enabled]));
     },
 
-    orgBuiltinSwitches: (orgId) => builtinSwitches({ orgId }),
-    setOrgBuiltin: (orgId, key, enabled) => setBuiltin({ orgId }, key, enabled),
-    spaceBuiltinSwitches: (spaceId) => builtinSwitches({ spaceId }),
-    setSpaceBuiltin: (spaceId, key, enabled) => setBuiltin({ spaceId }, key, enabled),
+    orgBuiltinSwitches: async (orgId) => builtinSwitches({ orgId }),
+    setOrgBuiltin: async (orgId, key, enabled) => setBuiltin({ orgId }, key, enabled),
+    spaceBuiltinSwitches: async (spaceId) => builtinSwitches({ spaceId }),
+    setSpaceBuiltin: async (spaceId, key, enabled) => setBuiltin({ spaceId }, key, enabled),
 
-    setSpaceSkill(spaceId, skillId, enabled) {
-      db.insert(spaceSkillSetting)
+    async setSpaceSkill(spaceId, skillId, enabled) {
+      await db
+        .insert(spaceSkillSetting)
         .values({ spaceId, skillId, enabled })
         .onConflictDoUpdate({
           target: [spaceSkillSetting.spaceId, spaceSkillSetting.skillId],
           set: { enabled },
-        })
-        .run();
+        });
     },
   };
 }

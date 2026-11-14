@@ -35,9 +35,9 @@ import { addUsage } from "@/shared/usage.ts";
 import { ulid } from "ulid";
 import * as z from "zod";
 
-import type { Transact } from "@/server/db/db.ts";
-import type { Lease as RowLease } from "@/server/db/lease.ts";
-import type { EventBus } from "@/server/kernel/event-bus.ts";
+import type { AfterCommit, Sync, Transact } from "@/server/sync/sync.ts";
+import type { Lease as RowLease } from "@/server/sync/lease.ts";
+import type { Signals } from "@/server/sync/signals.ts";
 import { connectionOf, failureSentence } from "@/server/agent/failure-text.ts";
 import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
@@ -52,7 +52,7 @@ import {
 } from "@/server/models/gateway.ts";
 import type { Models, OpenModel } from "@/server/models/service.ts";
 import type { Space, SpaceStore } from "@/server/spaces/service.ts";
-import type { ThreadAccess } from "@/server/spaces/thread-access.ts";
+import type { ThreadAccess } from "@/server/access/access.ts";
 import type { Append, ThreadLog } from "@/server/threads/log.ts";
 import type { DeltaStore, Thread, ThreadStore } from "@/server/threads/service.ts";
 import type { Transcripts } from "@/server/threads/transcripts.ts";
@@ -77,7 +77,7 @@ import {
   notificationsMessage,
 } from "./context.ts";
 import { deferredByServer, TOOL_SEARCH } from "./tool-search.ts";
-import type { ToolOutput, AnyToolSpec, Tools } from "./tools.ts";
+import type { ToolOutput, AnyToolSpec, SpaceTools, Tools } from "./tools.ts";
 
 export type RunStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled";
 
@@ -141,51 +141,51 @@ export class LeaseLost extends Error {
 }
 
 export interface RunStore {
-  create(run: NewRun): Run;
-  find(id: string): Run | null;
+  create(run: NewRun): Promise<Run>;
+  find(id: string): Promise<Run | null>;
   // The newest run of the thread's current branch.
-  latest(threadId: string): Run | null;
+  latest(threadId: string): Promise<Run | null>;
   // The queued, running or waiting run of the thread's current branch.
-  active(threadId: string): Run | null;
+  active(threadId: string): Promise<Run | null>;
   // The branch's queued, running or waiting run.
-  activeOn(branchId: string): Run | null;
+  activeOn(branchId: string): Promise<Run | null>;
   // The threads with a queued, running or waiting run.
-  activeThreadIds(): string[];
+  activeThreadIds(): Promise<string[]>;
   // The queued, running and waiting runs of the space's threads, or of the threads named.
-  activeInSpace(spaceId: string): Run[];
-  activeIn(threadIds: string[]): Run[];
+  activeInSpace(spaceId: string): Promise<Run[]>;
+  activeIn(threadIds: string[]): Promise<Run[]>;
   // Asks the thread's active run to stop, unless someone already has; null when there is none. A
   // null user is the server itself, as when the agent may no longer run in the thread's space.
-  requestCancel(threadId: string, userId: string | null, at: Date): Run | null;
+  requestCancel(threadId: string, userId: string | null, at: Date): Promise<Run | null>;
   // Asks the branch's active run to stop, as `requestCancel` does the current branch's.
-  requestCancelOn(branchId: string, userId: string | null, at: Date): Run | null;
-  // Takes the oldest queued run for the owner until `expiresAt`.
-  claim(owner: string, expiresAt: Date): Run | null;
-  // Takes a running run whose lease expired before `before`.
-  takeOver(id: string, owner: string, expiresAt: Date, before: Date): Run | null;
-  // Running runs whose lease expired before `before`.
-  stale(before: Date): Run[];
+  requestCancelOn(branchId: string, userId: string | null, at: Date): Promise<Run | null>;
+  // Takes the oldest queued run for the owner, for `leaseMs`.
+  claim(owner: string, leaseMs: number): Promise<Run | null>;
+  // Takes a running run whose lease ran out, for `leaseMs`.
+  takeOver(id: string, owner: string, leaseMs: number): Promise<Run | null>;
+  // Running runs whose lease ran out.
+  stale(): Promise<Run[]>;
   // Ends the lease now, so that whoever looks next takes the run over.
-  expire(lease: Lease): void;
+  expire(lease: Lease): Promise<void>;
   // The run as it is now; throws LeaseLost unless the lease holds.
-  hold(lease: Lease): Run;
+  hold(lease: Lease): Promise<Run>;
   // Extends the lease; throws LeaseLost unless it holds.
-  renew(lease: Lease, expiresAt: Date): Run;
+  renew(lease: Lease, leaseMs: number): Promise<Run>;
   // Records the model the run replies with.
-  setModel(lease: Lease, model: string): void;
+  setModel(lease: Lease, model: string): Promise<void>;
   // Adds the tools, turned on by the call, to those the run's thread offers from now on.
-  turnOn(lease: Lease, callId: string, toolIds: readonly string[]): void;
+  turnOn(lease: Lease, callId: string, toolIds: readonly string[]): Promise<void>;
   // The tools turned on in the thread, in the order they were.
-  toolsOn(threadId: string): ToolOn[];
+  toolsOn(threadId: string): Promise<ToolOn[]>;
   // Lets the lease go while the run waits for a person's decision; nothing holds it meanwhile.
-  wait(lease: Lease): Run;
+  wait(lease: Lease): Promise<Run>;
   // Queues a waiting run again, to be claimed like any other; false when it was not waiting.
-  resume(runId: string): boolean;
+  resume(runId: string): Promise<boolean>;
   // Ends the run and lets its lease go. Why a run failed is told by its run.failed event.
   end(
     lease: Lease,
     outcome: { status: EndStatus; usage?: { inputTokens: number; outputTokens: number } },
-  ): Run;
+  ): Promise<Run>;
 }
 
 export interface RunWorkerOptions {
@@ -197,11 +197,17 @@ export interface RunWorkerOptions {
   access: Pick<ThreadAccess, "can">;
   deltas: DeltaStore;
   log: ThreadLog;
-  bus: EventBus;
+  bus: Signals;
   transact: Transact;
+  afterCommit: AfterCommit;
+  // Names this server instance in the leases it takes on runs.
+  instanceId: string;
+  // The worker's periodic pass and the keeper of its leases.
+  sync: Pick<Sync, "ticker" | "keeper">;
   models: Pick<Models, "open" | "replyModel">;
   tools: Pick<
     Tools,
+    | "toolsIn"
     | "offered"
     | "riskOf"
     | "forModel"
@@ -215,22 +221,27 @@ export interface RunWorkerOptions {
   >;
   // What the org and the space tell the agent beyond Mage's own prompt, given the tools offered,
   // and what the thread does about it.
-  guidance?: (space: Space, offered: readonly AnyToolSpec[], thread: Thread) => Guidance;
+  guidance?: (
+    space: Space,
+    offered: readonly AnyToolSpec[],
+    thread: Thread,
+    now: SpaceTools,
+  ) => Promise<Guidance>;
   // The tools the thread's agent may call of those its space offers; all of them when not given.
-  narrow?: (thread: Thread, offered: AnyToolSpec[]) => AnyToolSpec[];
+  narrow?: (thread: Thread, offered: AnyToolSpec[]) => Promise<AnyToolSpec[]>;
   // What the thread's agent reads ahead of the thread itself; nothing when not given.
-  before?: (thread: Thread) => ModelMessage[];
+  before?: (thread: Thread) => Promise<ModelMessage[]>;
   // Hears of each run that ended, after its end is stored.
-  ended?: (run: Run) => void;
+  ended?: (run: Run) => Promise<void>;
   // Takes over a call moved to the background, which runs on beside the run.
-  adopt?: (call: Adoption) => string;
+  adopt?: (call: Adoption) => Promise<string>;
   // Where running calls say what they print, for the people watching; nowhere when not given.
   live?: Pick<Live, "open" | "close" | "end">;
   logger: Logger;
   // What ties each run's span to the work that woke its thread; runs are not traced without it.
   traces?: RunTraces;
   // Whether the agent may run in the space; a run claimed where it may not is stopped unstarted.
-  runsIn?: (space: Space) => boolean;
+  runsIn?: (space: Space) => Promise<boolean>;
   // Where the worker hears that people may have lost a role in an org's spaces, or that spaces
   // were archived or put in trash.
   hooks?: Hooks;
@@ -360,27 +371,28 @@ function replyParts(text: string, reasoning: string, durationMs?: number): Reply
 
 // The thread's waiting messages whose authors may still post in it, and those whose authors no
 // longer may.
-export function sortWaiting(
+export async function sortWaiting(
   threads: Pick<ThreadStore, "find">,
   spaceStore: Pick<SpaceStore, "find">,
   access: Pick<ThreadAccess, "can">,
   threadId: string,
   pending: PendingMessage[],
 ) {
-  const thread = threads.find(threadId);
-  const space = thread && spaceStore.find(thread.spaceId);
+  const thread = await threads.find(threadId);
+  const space = thread && (await spaceStore.find(thread.spaceId));
   const admitted: PendingMessage[] = [];
   const refused: PendingMessage[] = [];
   for (const message of pending) {
     const allowed =
-      !!space && access.can({ userId: message.author.userId, orgId: space.orgId }, thread, "post");
+      !!space &&
+      (await access.can({ userId: message.author.userId, orgId: space.orgId }, thread, "post"));
     (allowed ? admitted : refused).push(message);
   }
   return { admitted, refused };
 }
 
 // Drops the waiting messages of the org's threads whose authors can no longer post in them.
-function dropRefusedWaiting(options: {
+async function dropRefusedWaiting(options: {
   threads: Pick<ThreadStore, "find">;
   transcripts: Pick<Transcripts, "of">;
   spaceStore: Pick<SpaceStore, "find">;
@@ -390,14 +402,14 @@ function dropRefusedWaiting(options: {
   orgId: string;
 }) {
   const { threads, transcripts, spaceStore, runs, access, log, orgId } = options;
-  for (const threadId of new Set(runs.activeThreadIds())) {
-    const thread = threads.find(threadId);
-    if (!thread || spaceStore.find(thread.spaceId)?.orgId !== orgId) continue;
-    log.write(threadId, (append) => {
-      const pending = transcripts.of(threadId).transcript().pending;
-      const { refused } = sortWaiting(threads, spaceStore, access, threadId, pending);
+  for (const threadId of new Set(await runs.activeThreadIds())) {
+    const thread = await threads.find(threadId);
+    if (!thread || (await spaceStore.find(thread.spaceId))?.orgId !== orgId) continue;
+    await log.write(threadId, async (append) => {
+      const pending = (await transcripts.of(threadId)).transcript().pending;
+      const { refused } = await sortWaiting(threads, spaceStore, access, threadId, pending);
       for (const message of refused) {
-        append({ type: "message.dropped", actor: AGENT, data: { messageId: message.id } });
+        await append({ type: "message.dropped", actor: AGENT, data: { messageId: message.id } });
       }
     });
   }
@@ -405,35 +417,35 @@ function dropRefusedWaiting(options: {
 
 // Asks the active runs of the org's threads in spaces where the agent may no longer run to stop,
 // queueing again those that wait for a decision so that a worker ends them.
-function stopBarredRuns(options: {
+async function stopBarredRuns(options: {
   threads: Pick<ThreadStore, "find">;
   spaceStore: Pick<SpaceStore, "find">;
   runs: Pick<RunStore, "activeThreadIds" | "requestCancel" | "resume">;
-  bus: Pick<EventBus, "wake">;
-  runsIn: (space: Space) => boolean;
+  bus: Pick<Signals, "wake">;
+  runsIn: (space: Space) => Promise<boolean>;
   orgId: string;
   now?: () => Date;
 }) {
   const { threads, spaceStore, runs, bus, runsIn, orgId } = options;
-  for (const threadId of new Set(runs.activeThreadIds())) {
-    const thread = threads.find(threadId);
-    const space = thread && spaceStore.find(thread.spaceId);
-    if (!space || space.orgId !== orgId || runsIn(space)) continue;
-    const run = runs.requestCancel(threadId, null, options.now?.() ?? new Date());
-    if (run?.status === "waiting") runs.resume(run.id);
+  for (const threadId of new Set(await runs.activeThreadIds())) {
+    const thread = await threads.find(threadId);
+    const space = thread && (await spaceStore.find(thread.spaceId));
+    if (!space || space.orgId !== orgId || (await runsIn(space))) continue;
+    const run = await runs.requestCancel(threadId, null, options.now?.() ?? new Date());
+    if (run?.status === "waiting") await runs.resume(run.id);
     bus.wake(threadId);
   }
 }
 
 // Starts a run in a transaction that is appending to the thread, taking in the given messages.
-export function startRun(
+export async function startRun(
   runs: Pick<RunStore, "create">,
   append: Append,
   input: NewRun,
   admit: string[] = [],
 ) {
-  const run = runs.create(input);
-  append({
+  const run = await runs.create(input);
+  await append({
     type: "run.created",
     actor: input.createdBy ? { kind: "user", userId: input.createdBy } : AGENT,
     data: {
@@ -443,7 +455,11 @@ export function startRun(
     },
   });
   if (admit.length > 0) {
-    append({ type: "message.admitted", actor: AGENT, data: { runId: run.id, messageIds: admit } });
+    await append({
+      type: "message.admitted",
+      actor: AGENT,
+      data: { runId: run.id, messageIds: admit },
+    });
   }
   return run;
 }
@@ -457,14 +473,14 @@ export function createRunWorker(options: RunWorkerOptions) {
   const { models, tools, logger } = options;
   const now = options.now ?? (() => new Date());
   const guidance = options.guidance ?? (() => NO_GUIDANCE);
-  const runsIn = options.runsIn ?? (() => true);
+  const runsIn = options.runsIn ?? (async () => Promise.resolve(true));
   const narrow = options.narrow ?? ((_thread: Thread, offered: AnyToolSpec[]) => offered);
   const before = options.before ?? (() => []);
   const ended = options.ended ?? (() => {});
   // When people may have lost a role in an org's spaces, their waiting messages there are dropped,
   // and the agent stops in spaces archived or put in trash.
-  function accessChanged(orgId: string) {
-    dropRefusedWaiting({
+  async function accessChanged(orgId: string) {
+    await dropRefusedWaiting({
       threads,
       transcripts,
       spaceStore,
@@ -473,65 +489,60 @@ export function createRunWorker(options: RunWorkerOptions) {
       log,
       orgId,
     });
-    stopBarredRuns({ threads, spaceStore, runs, bus, runsIn, orgId, now });
+    await stopBarredRuns({ threads, spaceStore, runs, bus, runsIn, orgId, now });
   }
-  options.hooks?.on("org.personalSpacesChanged", ({ orgId, allowed }) => {
-    if (!allowed) accessChanged(orgId);
+  options.hooks?.on("org.personalSpacesChanged", async ({ orgId, allowed }) => {
+    if (!allowed) await accessChanged(orgId);
   });
-  options.hooks?.on("org.membersSettled", ({ orgId }) => accessChanged(orgId));
-  options.hooks?.on("space.accessChanged", ({ orgId }) => accessChanged(orgId));
+  options.hooks?.on("org.membersSettled", async ({ orgId }) => accessChanged(orgId));
+  options.hooks?.on("space.accessChanged", async ({ orgId }) => accessChanged(orgId));
   const leaseMs = options.leaseMs ?? 30_000;
   const pollMs = options.pollMs ?? 5_000;
   const flushMs = options.flushMs ?? 75;
   const maxSteps = options.maxSteps ?? 20;
   const maxAttempts = options.maxAttempts ?? 3;
-  const owner = ulid();
+  const owner = options.instanceId;
   const executions = new Map<string, Execution>();
   let stopped = true;
-  let ticking = false;
-  let again = false;
-  let timer: ReturnType<typeof setInterval> | undefined;
   let unsubscribe: (() => void)[] = [];
 
-  function expiry() {
-    return new Date(now().getTime() + leaseMs);
-  }
-
   // The transcript of the run's branch.
-  function transcript(run: Pick<Run, "threadId" | "branchId">) {
-    return transcripts.of(run.threadId, run.branchId).transcript();
+  async function transcript(run: Pick<Run, "threadId" | "branchId">) {
+    return (await transcripts.of(run.threadId, run.branchId)).transcript();
   }
 
   // The rows as the model reads them, with what its calls gave back, large or not.
-  function whole(rows: readonly TranscriptRow[]) {
+  async function whole(rows: readonly TranscriptRow[]) {
     return wholeWhereRead(rows, transcripts.whole);
   }
 
   // Whether the run's branch still takes runs: only the thread's current one does.
-  function live(run: Pick<Run, "threadId" | "branchId">) {
-    return threads.find(run.threadId)?.currentBranchId === run.branchId;
+  async function live(run: Pick<Run, "threadId" | "branchId">) {
+    return (await threads.find(run.threadId))?.currentBranchId === run.branchId;
   }
 
   // Appends the run's events to its branch only while its lease holds.
-  function write<T>(
+  async function write<T>(
     lease: Lease,
     run: Pick<Run, "threadId" | "branchId">,
     work: (append: Append) => T,
   ) {
-    return log.write(
-      run.threadId,
-      (append) => {
-        runs.hold(lease);
-        return work(append);
-      },
-      run.branchId,
+    return (
+      await log.write(
+        run.threadId,
+        async (append) => {
+          await runs.hold(lease);
+          return work(append);
+        },
+        run.branchId,
+      )
     ).result;
   }
 
   // Whether the run's lease still holds.
-  function holds(lease: Lease) {
+  async function holds(lease: Lease) {
     try {
-      runs.hold(lease);
+      await runs.hold(lease);
       return true;
     } catch (err) {
       if (err instanceof LeaseLost) return false;
@@ -541,17 +552,17 @@ export function createRunWorker(options: RunWorkerOptions) {
 
   // Pending messages whose authors may still post in the thread, as members of its space or as
   // its guests; the others are dropped.
-  function admissible(threadId: string, pending: PendingMessage[], append: Append) {
-    const { admitted, refused } = sortWaiting(threads, spaceStore, access, threadId, pending);
+  async function admissible(threadId: string, pending: PendingMessage[], append: Append) {
+    const { admitted, refused } = await sortWaiting(threads, spaceStore, access, threadId, pending);
     for (const message of refused) {
-      append({ type: "message.dropped", actor: AGENT, data: { messageId: message.id } });
+      await append({ type: "message.dropped", actor: AGENT, data: { messageId: message.id } });
     }
     return admitted;
   }
 
   // Ends the run, then starts the next one: the same input again when it is to be retried, or the
   // messages that waited for it to end.
-  function end(
+  async function end(
     lease: Lease,
     run: Run,
     append: Append,
@@ -560,36 +571,36 @@ export function createRunWorker(options: RunWorkerOptions) {
   ) {
     const { status, failure, usage } = outcome;
     // Its calls still open will not run.
-    for (const row of transcript(run).rows) {
+    for (const row of (await transcript(run)).rows) {
       if (row.kind !== "tool" || row.runId !== run.id || !open(row)) continue;
-      options.live?.end(row.id);
-      append({
+      await options.live?.end(row.id);
+      await append({
         type: "tool.denied",
         actor: AGENT,
         data: { runId: run.id, callId: row.id, reason: "stopped" },
       });
     }
-    const ended = runs.end(lease, { status, usage });
+    const ended = await runs.end(lease, { status, usage });
     if (status === "failed") {
-      append({
+      await append({
         type: "run.failed",
         actor: AGENT,
         data: { runId: run.id, ...(failure ?? { error: "" }) },
       });
     } else if (status === "cancelled") {
       const by = ended.cancelRequestedBy;
-      append({
+      await append({
         type: "run.cancelled",
         actor: by ? { kind: "user", userId: by } : AGENT,
         data: { runId: run.id },
       });
     } else {
-      append({ type: "run.completed", actor: AGENT, data: { runId: run.id } });
+      await append({ type: "run.completed", actor: AGENT, data: { runId: run.id } });
     }
     // A branch no longer live takes nothing more.
-    if (!live(run)) return false;
-    const { pending, inbox } = transcript(run);
-    const waiting = admissible(run.threadId, pending, append);
+    if (!(await live(run))) return false;
+    const { pending, inbox } = await transcript(run);
+    const waiting = await admissible(run.threadId, pending, append);
     // An interrupting message starts the next run, with everything queued; else another agent's.
     const first = waiting.find((message) => message.mode === "interrupt") ?? waiting[0];
     const relayed = waking(inbox)[0];
@@ -626,7 +637,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           : null;
     // A message asking to compact the thread is taken in by the run that does it, at once.
     const admit = !retry && first && asksToCompact(first) ? [first.id] : [];
-    if (next) startRun(runs, append, next, admit);
+    if (next) await startRun(runs, append, next, admit);
     return next !== null;
   }
 
@@ -646,10 +657,30 @@ export function createRunWorker(options: RunWorkerOptions) {
       part: Part;
       reasoningFrom: number | null;
       reasoningMs: number | null;
+      // Set once the model ended the step that writes it with no calls, with the step's token
+      // use: it is completed by the next write that needs it, which may also end the run.
+      ended: ModelUsage | null;
     } | null = null;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // The batches being stored, one after another: a reply is completed only after the last of
+    // them, so that no piece is stored or announced after the reply that holds it whole.
+    let flushing: Promise<void> = Promise.resolve();
+
+    // Waits for the batches being stored, and stores no more until the next is gathered. Called
+    // before the write that closes the reply, never inside it: a batch is stored in a write of its
+    // own, which would wait for the closing one.
+    async function settled() {
+      clearTimeout(timer);
+      timer = undefined;
+      await flushing;
+    }
 
     function flush() {
+      flushing = flushing.then(store);
+      return flushing;
+    }
+
+    async function store() {
       clearTimeout(timer);
       timer = undefined;
       if (!open || open.buffer.length === 0) return;
@@ -662,12 +693,16 @@ export function createRunWorker(options: RunWorkerOptions) {
       open.stored += batch.texts.length;
       open.buffer = [];
       try {
-        const current = transact(() => {
-          const held = runs.hold(lease);
-          deltas.append(run.threadId, batch);
+        const current = await transact(async () => {
+          const held = await runs.hold(lease);
+          await deltas.append(run.threadId, batch);
+          bus.publish(run.threadId, {
+            kind: "delta",
+            messageId: batch.messageId,
+            upto: batch.index + batch.texts.length,
+          });
           return held;
         });
-        bus.publish(run.threadId, { kind: "delta", delta: batch });
         stopIfAsked(execution, current);
       } catch (err) {
         if (!(err instanceof LeaseLost)) logger.error({ err, runId: run.id }, "reply pieces lost");
@@ -675,16 +710,23 @@ export function createRunWorker(options: RunWorkerOptions) {
       }
     }
 
-    // Appends the open reply's completion, if any, and drops its pieces, inside a write.
-    function close(append: Append, status: ReplyStatus, usage?: ModelUsage) {
+    // Appends the open reply's completion, if any, and drops its pieces, inside a write that
+    // follows `settled`. One the model ended is completed, whatever stopped the run since.
+    async function close(append: Append, given: ReplyStatus, stepUsage?: ModelUsage) {
       clearTimeout(timer);
       timer = undefined;
       if (!open) return;
-      const { id, text, reasoning, reasoningFrom } = open;
+      const { id, text, reasoning, reasoningFrom, ended } = open;
+      const status = ended ? "completed" : given;
+      const usage = stepUsage ?? ended ?? undefined;
       const durationMs = open.reasoningMs ?? (reasoningFrom && now().getTime() - reasoningFrom);
-      open = null;
-      deltas.remove(id);
-      append({
+      // Let go of once the write is kept: a write run again closes the reply again.
+      const closing = open;
+      options.afterCommit(() => {
+        if (open === closing) open = null;
+      });
+      await deltas.remove(id);
+      await append({
         type: "message.completed",
         actor: AGENT,
         data: {
@@ -697,11 +739,12 @@ export function createRunWorker(options: RunWorkerOptions) {
       });
     }
 
-    function start() {
+    async function start() {
       const id = ulid();
-      write(lease, run, (append) => {
-        close(append, "completed");
-        append({
+      await settled();
+      await write(lease, run, async (append) => {
+        await close(append, "completed");
+        await append({
           type: "message.started",
           actor: AGENT,
           data: {
@@ -721,17 +764,18 @@ export function createRunWorker(options: RunWorkerOptions) {
         part: "text",
         reasoningFrom: null,
         reasoningMs: null,
+        ended: null,
       };
       return id;
     }
 
     return {
       start,
-      add(text: string, part: Part = "text") {
-        if (!open) start();
+      async add(text: string, part: Part = "text") {
+        if (!open) await start();
         const reply = open!;
         // A batch holds pieces of one part.
-        if (reply.part !== part) flush();
+        if (reply.part !== part) await flush();
         reply.part = part;
         if (part === "reasoning") {
           reply.reasoning += text;
@@ -745,9 +789,33 @@ export function createRunWorker(options: RunWorkerOptions) {
         reply.buffer.push(text);
         timer ??= setTimeout(flush, flushMs);
       },
-      complete(usage: ModelUsage) {
-        write(lease, run, (append) => close(append, "completed", usage));
+      async complete(usage: ModelUsage) {
+        await settled();
+        await write(lease, run, async (append) => close(append, "completed", usage));
       },
+      // Notes that the model ended the reply's step with no calls, leaving its completion to
+      // the next write that needs it.
+      end(usage: ModelUsage) {
+        if (open) open.ended = usage;
+      },
+      // Whether the reply's step ended and its completion is not written yet.
+      ended() {
+        return !!open?.ended;
+      },
+      // Completes the ended reply inside the write under way, when there is one.
+      async closeEnded(append: Append) {
+        if (open?.ended) await close(append, "completed");
+      },
+      // Completes the reply and, in the same write, whatever `then` does after it; what that
+      // answers.
+      async closeAnd<T>(then: (append: Append) => Promise<T>) {
+        await settled();
+        return write(lease, run, async (append) => {
+          await close(append, "completed");
+          return then(append);
+        });
+      },
+      settled,
       close,
     };
   }
@@ -763,19 +831,23 @@ export function createRunWorker(options: RunWorkerOptions) {
   // (all of them before the first model call, afterwards only those sent to steer) in the order
   // they were sent, then every notification waiting, and returns them, the notifications as one.
   // Those asking to compact the thread wait for runs of their own.
-  function boundary(execution: Execution, all: boolean): ModelMessage[] {
+  // A reply whose step ended is completed before what is taken in after it.
+  async function boundary(
+    execution: Execution,
+    all: boolean,
+    reply?: ReturnType<typeof replies>,
+  ): Promise<ModelMessage[]> {
     const { run, lease, controller } = execution;
-    const admitted = write(lease, run, (append) => {
-      const current = runs.hold(lease);
+    await reply?.settled();
+    const admitted = await write(lease, run, async (append) => {
+      const current = await runs.hold(lease);
       stopIfAsked(execution, current);
       if (controller.signal.aborted) return [];
-      const { pending, inbox } = transcript(run);
-      const people = admissible(run.threadId, pending, append).filter(
-        (message) => !asksToCompact(message) && (all || message.mode === "steer"),
-      );
+      const { people, inbox } = await toTakeIn(run, all, append);
       const ids = [...people, ...inbox].map((message) => message.id);
       if (ids.length > 0) {
-        append({
+        await reply?.closeEnded(append);
+        await append({
           type: "message.admitted",
           actor: AGENT,
           data: { runId: run.id, messageIds: ids },
@@ -790,9 +862,33 @@ export function createRunWorker(options: RunWorkerOptions) {
     return admitted;
   }
 
+  // What a step boundary takes in, inside the write under way: the people's messages waiting
+  // (only those sent to steer, unless `all`) and every notification waiting.
+  async function toTakeIn(run: Run, all: boolean, append: Append) {
+    const { pending, inbox } = await transcript(run);
+    const people = (await admissible(run.threadId, pending, append)).filter(
+      (message) => !asksToCompact(message) && (all || message.mode === "steer"),
+    );
+    return { people, inbox };
+  }
+
+  // Ends the run as completed inside the write under way, once the model ended with a step that
+  // made no calls, unless something waits to be taken in at the next boundary or it was asked to
+  // stop; whether it did. The reply that step wrote is completed in the same write, so the two
+  // are kept, and shown, together.
+  async function endIfDone(execution: Execution, append: Append, usage: ModelUsage) {
+    const { run, lease, controller } = execution;
+    stopIfAsked(execution, await runs.hold(lease));
+    if (controller.signal.aborted) return false;
+    const { people, inbox } = await toTakeIn(run, false, append);
+    if (people.length > 0 || inbox.length > 0) return false;
+    await end(lease, run, append, { status: "completed", usage });
+    return true;
+  }
+
   // The tools the thread's agent may call now.
-  function offeredIn(space: Space, thread: Thread) {
-    return narrow(thread, tools.offered(space));
+  async function offeredIn(space: Space, thread: Thread, now?: SpaceTools) {
+    return narrow(thread, await tools.offered(space, now));
   }
 
   // The model the thread replies with now, opened.
@@ -811,41 +907,42 @@ export function createRunWorker(options: RunWorkerOptions) {
     execution.ref = ref;
     execution.effort = picked.effort;
     const model = await models.open(space.orgId, ref);
-    runs.setModel(execution.lease, ref);
+    await runs.setModel(execution.lease, ref);
     return { model, effort: picked.effort, own };
   }
 
   // The MCP tools the thread leaves out of the model's requests until it turns them on: all it
   // could offer, those turned on, in the order they were, and those still left out.
-  function deferralOf(threadId: string, space: Space) {
-    const all = tools.fromServers(space, tools.modelNames(space));
+  async function deferralOf(threadId: string, space: Space, now?: SpaceTools) {
+    const all = await tools.fromServers(space, await tools.modelNames(space), now);
     const ids = new Set(all.map((tool) => tool.id));
-    const turnedOn = runs.toolsOn(threadId).filter((tool) => ids.has(tool.id));
+    const turnedOn = (await runs.toolsOn(threadId)).filter((tool) => ids.has(tool.id));
     const on = new Set(turnedOn.map((tool) => tool.id));
     return { all, on, turnedOn, left: all.filter((tool) => !on.has(tool.id)) };
   }
 
   // A tool as the model knows it, which is how errors it reads name tools.
-  function modelName(space: Space, toolId: string) {
-    return wireToolName(tools.modelNames(space).toModel(toolId));
+  async function modelName(space: Space, toolId: string) {
+    return wireToolName((await tools.modelNames(space)).toModel(toolId));
   }
 
   // Records the calls a model step asked for, each with whether it waits for a decision. A call of
   // a tool not offered, or left out of the request and not turned on, or with input the tool does
   // not take, fails at once.
-  function request(
+  async function request(
     execution: Execution,
     space: Space,
     calls: (ModelToolCall & { messageId: string })[],
   ) {
     const { run, lease } = execution;
-    write(lease, run, (append) => {
-      const thread = threads.find(run.threadId);
+    await write(lease, run, async (append) => {
+      const thread = await threads.find(run.threadId);
       if (!thread) throw new LeaseLost(run.id);
-      const { rows } = transcript(run);
-      const offered = offeredIn(space, thread);
-      const { left } = deferralOf(execution.run.threadId, space);
-      const named = tools.namesNow(space);
+      const { rows } = await transcript(run);
+      const now = await tools.toolsIn(space);
+      const offered = await offeredIn(space, thread, now);
+      const { left } = await deferralOf(execution.run.threadId, space, now);
+      const named = await tools.namesNow(space);
       for (const call of calls) {
         const { callId, toolId, input, messageId } = call;
         const unsearched = left.find((tool) => tool.id === toolId);
@@ -854,21 +951,23 @@ export function createRunWorker(options: RunWorkerOptions) {
           : offered.find((candidate) => candidate.name === toolId);
         const parsed = spec && spec.input.safeParse(input);
         const ok = !!spec && !!parsed?.success;
-        const risk = ok ? tools.riskOf(space, spec, parsed.data, execution.ref) : "normal";
+        const risk = ok ? await tools.riskOf(space, spec, parsed.data, execution.ref) : "normal";
         // A call that asks always waits for its answer.
         const waits =
           ok &&
           (spec.waitsFor === "answer" ||
-            tools.evaluate(
-              rows,
-              thread,
-              space,
-              toolId,
-              spec.risk(parsed.data, { model: execution.ref, orgId: space.orgId }),
-              parsed.data,
+            (
+              await tools.evaluate(
+                rows,
+                thread,
+                space,
+                toolId,
+                await spec.risk(parsed.data, { model: execution.ref, orgId: space.orgId }),
+                parsed.data,
+              )
             ).kind === "wait");
         const names = named(toolId);
-        append({
+        await append({
           type: "tool.requested",
           actor: AGENT,
           data: {
@@ -884,7 +983,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           },
         });
         if (spec && parsed?.success) continue;
-        append({
+        await append({
           type: "tool.ran",
           actor: AGENT,
           data: {
@@ -892,7 +991,7 @@ export function createRunWorker(options: RunWorkerOptions) {
             callId,
             ok: false,
             error: unsearched
-              ? `${modelName(space, unsearched.name)} is not on yet. Search for it or select it with tools.search first.`
+              ? `${await modelName(space, unsearched.name)} is not on yet. Search for it or select it with tools.search first.`
               : spec
                 ? `The input is not valid: ${z.prettifyError(parsed!.error!)}`
                 : `No tool is named ${toolId} here.`,
@@ -905,18 +1004,18 @@ export function createRunWorker(options: RunWorkerOptions) {
 
   // The run's first open call that may run now, after denying those whose approval no longer
   // holds or whose tool is gone; when none may and some wait for a decision, the run waits.
-  function nextCall(execution: Execution, space: Space) {
+  async function nextCall(execution: Execution, space: Space) {
     const { run, lease, controller } = execution;
-    const next = write(lease, run, (append) => {
-      stopIfAsked(execution, runs.hold(lease));
+    const next = await write(lease, run, async (append) => {
+      stopIfAsked(execution, await runs.hold(lease));
       if (controller.signal.aborted) return null;
-      const thread = threads.find(run.threadId);
+      const thread = await threads.find(run.threadId);
       if (!thread) throw new LeaseLost(run.id);
-      const { rows } = transcript(run);
+      const { rows } = await transcript(run);
       const calls = rows.filter(
         (row): row is ToolRow => row.kind === "tool" && row.runId === run.id && open(row),
       );
-      const offered = offeredIn(space, thread);
+      const offered = await offeredIn(space, thread);
       let waiting = false;
       for (const call of calls) {
         const spec = offered.find((candidate) => candidate.name === call.toolId);
@@ -933,17 +1032,21 @@ export function createRunWorker(options: RunWorkerOptions) {
             waiting = true;
             continue;
           }
-          allowed = tools.answerHolds(call, rows, thread, space);
+          allowed = await tools.answerHolds(call, rows, thread, space);
         } else if (spec && parsed?.success) {
-          const risk = tools.riskOf(space, spec, parsed.data, execution.ref);
+          const risk = await tools.riskOf(space, spec, parsed.data, execution.ref);
           if (call.state === "allowed") {
-            allowed = tools.approvalHolds(call, rows, thread, space, risk);
+            allowed = await tools.approvalHolds(call, rows, thread, space, risk);
             approvedBy = call.decision?.by.userId;
             // An approved call runs with its approver's own login.
-            if (spec.connection?.(parsed.data, space)) runAs = call.decision?.by.userId ?? null;
+            if (await spec.connection?.(parsed.data, space))
+              runAs = call.decision?.by.userId ?? null;
           } else {
-            const declared = spec.risk(parsed.data, { model: execution.ref, orgId: space.orgId });
-            const decision = tools.evaluate(
+            const declared = await spec.risk(parsed.data, {
+              model: execution.ref,
+              orgId: space.orgId,
+            });
+            const decision = await tools.evaluate(
               rows,
               thread,
               space,
@@ -970,13 +1073,18 @@ export function createRunWorker(options: RunWorkerOptions) {
             approvedBy,
           };
         }
-        append({
+        await append({
           type: "tool.denied",
           actor: AGENT,
           data: { runId: run.id, callId: call.id, reason: "stale" },
         });
       }
-      if (waiting) runs.wait(lease);
+      if (waiting) {
+        // A stop asked for since the run last looked finds it waiting no longer: it is queued
+        // again, for a worker to end.
+        const waits = await runs.wait(lease);
+        if (waits.cancelRequestedAt) await runs.resume(run.id);
+      }
       return waiting ? ("wait" as const) : null;
     });
     if (controller.signal.aborted) throw controller.signal.reason;
@@ -987,13 +1095,18 @@ export function createRunWorker(options: RunWorkerOptions) {
   // Runs the run's open calls that may run, one at a time in order, until none is left; throws
   // Waiting when some wait for a decision. `request` gives a tool what the thread's next model call
   // would send.
-  async function settle(execution: Execution, space: Space, request: () => ThreadRequest) {
+  async function settle(execution: Execution, space: Space, request: () => Promise<ThreadRequest>) {
     const { run, lease } = execution;
-    for (let next = nextCall(execution, space); next; next = nextCall(execution, space)) {
+    for (
+      let next = await nextCall(execution, space);
+      next;
+      next = await nextCall(execution, space)
+    ) {
       const { call, spec, input, runAs, standingOn, approvedBy } = next;
       const started = now().getTime();
       // The search for left-out tools is given them, and turns them on for the rest of the thread.
-      const deferral = spec.name === TOOL_SEARCH ? deferralOf(execution.run.threadId, space) : null;
+      const deferral =
+        spec.name === TOOL_SEARCH ? await deferralOf(execution.run.threadId, space) : null;
       const span = tracer.startSpan(`execute_tool ${call.toolId}`, {
         attributes: {
           "gen_ai.operation.name": "execute_tool",
@@ -1034,7 +1147,7 @@ export function createRunWorker(options: RunWorkerOptions) {
             ...(approvedBy && { approvedBy }),
             signal: callController.signal,
             ...(options.live && {
-              live: options.live.open(run.threadId, call.id, () => holds(lease)),
+              live: options.live.open(run.threadId, call.id, async () => holds(lease)),
             }),
             ...(call.answers && { answers: call.answers }),
             threadRequest: request,
@@ -1042,15 +1155,16 @@ export function createRunWorker(options: RunWorkerOptions) {
               deferred: {
                 tools: deferral.all,
                 on: deferral.on,
-                turnOn: (ids: string[]) =>
-                  write(lease, run, () => runs.turnOn(lease, call.id, ids)),
+                turnOn: async (ids: string[]) =>
+                  write(lease, run, async () => runs.turnOn(lease, call.id, ids)),
               },
             }),
             // Once moved to the background the call writes on its own, the run's lease gone.
-            write: (work) =>
+            write: async (work) =>
               moved
-                ? log.write(run.threadId, (append) => work(append), run.branchId).result
-                : write(lease, run, (append) => work(append)),
+                ? (await log.write(run.threadId, async (append) => work(append), run.branchId))
+                    .result
+                : await write(lease, run, async (append) => work(append)),
           }),
         );
         const settled = await Promise.race([work, ...(options.adopt ? [toBackground] : [])]);
@@ -1058,7 +1172,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           adoption = { work, controller: callController, started: new Date(started) };
           // The call goes on beside the run as one of its own, its stop its own from here.
           execution.controller.signal.removeEventListener("abort", stopCall);
-          const id = options.adopt!({
+          const id = await options.adopt!({
             ...adoption,
             threadId: run.threadId,
             runId: run.id,
@@ -1095,10 +1209,10 @@ export function createRunWorker(options: RunWorkerOptions) {
       }
       span.end();
       const ms = Math.max(0, now().getTime() - started);
-      write(lease, run, (append) => {
+      await write(lease, run, async (append) => {
         // What it printed while it ran goes as its result is recorded.
-        options.live?.end(call.id);
-        append({
+        await options.live?.end(call.id);
+        await append({
           type: "tool.ran",
           actor: AGENT,
           data: {
@@ -1118,39 +1232,46 @@ export function createRunWorker(options: RunWorkerOptions) {
   // request until the model turns them on with the tool search, which is offered whenever the
   // thread has any; the prompt lists them all, on or not. The model knows tools by their model
   // names; calls, results and the prompt name them so.
-  function threadRequest(
+  async function threadRequest(
     execution: Execution,
     space: Space,
     thread: Thread,
     model: Replying,
-  ): ThreadRequest {
-    return requestOf(space, thread, transcript(execution.run).rows, model.effort, execution.run.id);
+  ): Promise<ThreadRequest> {
+    return requestOf(
+      space,
+      thread,
+      (await transcript(execution.run)).rows,
+      model.effort,
+      execution.run.id,
+    );
   }
 
   // What a model call would send for the rows, with the effort, as the run named sends it.
-  function requestOf(
+  async function requestOf(
     space: Space,
     thread: Thread,
     rows: readonly TranscriptRow[],
     effort: Thread["effort"],
     runId?: string,
-  ): ThreadRequest {
+  ): Promise<ThreadRequest> {
     const model = { effort };
-    const offered = offeredIn(space, thread);
-    const deferral = deferralOf(thread.id, space);
+    const now = await tools.toolsIn(space);
+    const offered = await offeredIn(space, thread, now);
+    const deferral = await deferralOf(thread.id, space, now);
     const searchable = new Set(deferral.all.map((tool) => tool.id));
     const available = offered.filter(
       (spec) => spec.name !== TOOL_SEARCH || deferral.all.length > 0,
     );
-    const names = tools.modelNames(space);
+    const names = await tools.modelNames(space);
     const { instructions, messages, firstEffort } = contextOf(
-      whole(rows),
+      await whole(rows),
       {
-        ...guidance(space, available, thread),
+        ...(await guidance(space, available, thread, now)),
         toolName: names.toModel,
         ...(deferral.all.length && { deferredTools: deferredByServer(deferral.all) }),
       },
-      before(thread),
+      await before(thread),
       deferral.turnedOn,
       model.effort,
     );
@@ -1172,8 +1293,8 @@ export function createRunWorker(options: RunWorkerOptions) {
 
   // The message that woke the run when it asks to compact the thread, and so the run is one that
   // compacts it; null otherwise.
-  function compactionAsked(run: Run) {
-    const trigger = threads.eventAt(run.threadId, run.triggerSeq);
+  async function compactionAsked(run: Run) {
+    const trigger = await threads.eventAt(run.threadId, run.triggerSeq);
     if (trigger?.type !== "message") return null;
     if (trigger.actor.kind !== "user" || !trigger.data.command) return null;
     return asksToCompact(trigger.data)
@@ -1188,14 +1309,14 @@ export function createRunWorker(options: RunWorkerOptions) {
     space: Space,
     thread: Thread,
     model: Replying,
-    asked: NonNullable<ReturnType<typeof compactionAsked>>,
+    asked: NonNullable<Awaited<ReturnType<typeof compactionAsked>>>,
   ) {
     const { run, lease, controller } = execution;
-    write(lease, run, (append) => {
-      stopIfAsked(execution, runs.hold(lease));
+    await write(lease, run, async (append) => {
+      stopIfAsked(execution, await runs.hold(lease));
       if (controller.signal.aborted) return;
-      if (!transcript(run).pending.some((message) => message.id === asked.id)) return;
-      append({
+      if (!(await transcript(run)).pending.some((message) => message.id === asked.id)) return;
+      await append({
         type: "message.admitted",
         actor: AGENT,
         data: { runId: run.id, messageIds: [asked.id] },
@@ -1204,62 +1325,66 @@ export function createRunWorker(options: RunWorkerOptions) {
     if (controller.signal.aborted) throw controller.signal.reason;
     await compact({
       threadId: run.threadId,
-      rows: whole(transcript(run).rows),
+      rows: await whole((await transcript(run)).rows),
       model: model.model,
-      request: threadRequest(execution, space, thread, model),
+      request: await threadRequest(execution, space, thread, model),
       ...(asked.focus && { focus: asked.focus }),
       actor: asked.by,
-      write: (work) => write(lease, run, work),
+      write: async (work) => write(lease, run, work),
       signal: controller.signal,
     });
   }
 
-  // Adds each step's token use to `usage`.
-  async function drive(execution: Execution, reply: ReturnType<typeof replies>, usage: ModelUsage) {
+  // Adds each step's token use to `usage`. Whether it ended the run.
+  async function drive(
+    execution: Execution,
+    reply: ReturnType<typeof replies>,
+    usage: ModelUsage,
+  ): Promise<boolean> {
     const { run, controller } = execution;
-    const thread = threads.find(run.threadId);
-    const space = thread && spaceStore.find(thread.spaceId);
+    const thread = await threads.find(run.threadId);
+    const space = thread && (await spaceStore.find(thread.spaceId));
     if (!thread || !space) throw new LeaseLost(run.id);
-    if (!runsIn(space)) {
+    if (!(await runsIn(space))) {
       controller.abort({ kind: "cancel" } satisfies Abort);
       throw controller.signal.reason;
     }
     let model = await replying(execution, space, thread);
-    const asked = compactionAsked(run);
+    const asked = await compactionAsked(run);
     if (asked) {
       await compactFor(execution, space, thread, model, asked);
-      return;
+      return false;
     }
     // A run queued again after a decision takes in only the messages sent to steer it.
-    const resumed = transcript(execution.run).rows.some(
+    const resumed = (await transcript(execution.run)).rows.some(
       (row) => row.kind === "tool" && row.runId === run.id,
     );
 
-    const nextRequest = () =>
-      threadRequest(execution, space, threads.find(thread.id) ?? thread, model);
+    const nextRequest = async () =>
+      threadRequest(execution, space, (await threads.find(thread.id)) ?? thread, model);
     let steps = 0;
     // What the calls gave back goes to the model before the run ends.
     let answer = resumed;
     // Each model call is followed by another while steering messages keep arriving, or while
     // tool calls have results to give back.
     for (let call = 0; steps < maxSteps; call += 1) {
-      const admitted = boundary(execution, call === 0 && !resumed);
+      const admitted = await boundary(execution, call === 0 && !resumed);
       await settle(execution, space, nextRequest);
       if (call > 0 && admitted.length === 0 && !answer) break;
       answer = false;
       // A tool that changed the thread's model or effort changes what replies from here.
-      const current = threads.find(thread.id) ?? thread;
+      const current = (await threads.find(thread.id)) ?? thread;
       if (current.model !== model.own.model || current.effort !== model.own.effort) {
         model = await replying(execution, space, current);
       }
-      const names = tools.modelNames(space);
+      const names = await tools.modelNames(space);
       const calls: (ModelToolCall & { messageId: string })[] = [];
       let messageId = "";
       const stream = model.model.stream(
         {
-          ...threadRequest(execution, space, current, model),
+          ...(await threadRequest(execution, space, current, model)),
           maxSteps: maxSteps - steps,
-          beforeStep: () => boundary(execution, false),
+          beforeStep: async () => boundary(execution, false, reply),
         },
         controller.signal,
       );
@@ -1267,13 +1392,13 @@ export function createRunWorker(options: RunWorkerOptions) {
         switch (event.type) {
           case "step-start":
             steps += 1;
-            messageId = reply.start();
+            messageId = await reply.start();
             break;
           case "delta":
-            reply.add(event.text);
+            await reply.add(event.text);
             break;
           case "reasoning":
-            reply.add(event.text, "reasoning");
+            await reply.add(event.text, "reasoning");
             break;
           case "tool-call": {
             const { type: _type, ...asked } = event;
@@ -1286,41 +1411,41 @@ export function createRunWorker(options: RunWorkerOptions) {
           }
           case "step-end":
             addUsage(usage, event.usage);
-            reply.complete(event.usage);
+            if (calls.length > 0) await reply.complete(event.usage);
+            else reply.end(event.usage);
             break;
         }
       }
       if (controller.signal.aborted) throw controller.signal.reason;
+      if (
+        reply.ended() &&
+        (await reply.closeAnd(async (append) => endIfDone(execution, append, usage)))
+      )
+        return true;
       if (calls.length > 0) {
-        request(execution, space, calls);
+        await request(execution, space, calls);
         await settle(execution, space, nextRequest);
         answer = true;
       }
     }
+    return false;
   }
 
   async function execute(execution: Execution) {
     const { run, lease, controller, span } = execution;
     const reply = replies(execution);
-    const renewal = setInterval(() => {
-      try {
-        stopIfAsked(execution, runs.renew(lease, expiry()));
-      } catch (err) {
-        if (!(err instanceof LeaseLost))
-          logger.error({ err, runId: run.id }, "lease renewal failed");
-        controller.abort({ kind: "lease" } satisfies Abort);
-      }
-    }, leaseMs / 3);
     const usage: ModelUsage = { inputTokens: 0, outputTokens: 0 };
     // How the run's span ends: completed, failed, cancelled, waiting, or left to recovery.
     let outcome = "completed";
     try {
-      await drive(execution, reply, usage);
-      write(lease, run, (append) => {
-        reply.close(append, "completed");
-        end(lease, run, append, { status: "completed", usage });
-      });
-      tellEnded(run);
+      if (!(await drive(execution, reply, usage))) {
+        await reply.settled();
+        await write(lease, run, async (append) => {
+          await reply.close(append, "completed");
+          await end(lease, run, append, { status: "completed", usage });
+        });
+      }
+      await tellEnded(run);
     } catch (err) {
       if (err instanceof Waiting) {
         outcome = "waiting";
@@ -1331,21 +1456,23 @@ export function createRunWorker(options: RunWorkerOptions) {
       if (abort?.kind === "cancel") {
         outcome = "cancelled";
         try {
-          write(lease, run, (append) => {
-            reply.close(append, "interrupted");
-            end(lease, run, append, { status: "cancelled", usage });
+          await reply.settled();
+          await write(lease, run, async (append) => {
+            await reply.close(append, "interrupted");
+            await end(lease, run, append, { status: "cancelled", usage });
           });
-          tellEnded(run);
+          await tellEnded(run);
         } catch (writeErr) {
-          if (!(writeErr instanceof LeaseLost))
-            logger.error({ err: writeErr }, "run end not saved");
+          if (writeErr instanceof LeaseLost)
+            logger.warn({ runId: run.id }, "run end not saved: lease lost");
+          else logger.error({ err: writeErr }, "run end not saved");
         }
         return;
       }
       if (err instanceof LeaseLost || abort) {
         outcome = "left";
         // A server stopping lets the run go at once, for the next to take over.
-        if (abort?.kind === "shutdown") runs.expire(lease);
+        if (abort?.kind === "shutdown") await runs.expire(lease);
         logger.info({ runId: run.id, reason: abort?.kind ?? "lease" }, "run left to recovery");
         return;
       }
@@ -1355,16 +1482,18 @@ export function createRunWorker(options: RunWorkerOptions) {
       span.setStatus({ code: SpanStatusCode.ERROR, message: failureSentence(failure) });
       if (failure.kind) span.setAttribute("run.error_kind", failure.kind);
       try {
-        write(lease, run, (append) => {
-          reply.close(append, "failed");
-          end(lease, run, append, { status: "failed", failure, usage });
+        await reply.settled();
+        await write(lease, run, async (append) => {
+          await reply.close(append, "failed");
+          await end(lease, run, append, { status: "failed", failure, usage });
         });
-        tellEnded(run);
+        await tellEnded(run);
       } catch (writeErr) {
-        if (!(writeErr instanceof LeaseLost)) logger.error({ err: writeErr }, "run end not saved");
+        if (writeErr instanceof LeaseLost)
+          logger.warn({ runId: run.id }, "run end not saved: lease lost");
+        else logger.error({ err: writeErr }, "run end not saved");
       }
     } finally {
-      clearInterval(renewal);
       executions.delete(run.id);
       span.setAttributes({
         "run.outcome": outcome,
@@ -1376,28 +1505,28 @@ export function createRunWorker(options: RunWorkerOptions) {
       options.traces?.ended(run.id);
       // The run that follows this one, if any, is linked to it.
       options.traces?.caused(run.threadId, true);
-      tick();
+      await tick();
     }
   }
 
-  // Fails running runs nobody holds any more: those whose lease expired before `before`. Another
-  // instance may hold the rest. Each is tried again until its input has failed too many times.
-  function recover(before: Date) {
-    for (const stale of runs.stale(before)) {
-      const run = runs.takeOver(stale.id, owner, expiry(), before);
+  // Fails running runs nobody holds any more: those whose lease ran out. Another instance may hold
+  // the rest. Each is tried again until its input has failed too many times.
+  async function recover() {
+    for (const stale of await runs.stale()) {
+      const run = await runs.takeOver(stale.id, owner, leaseMs);
       if (!run) continue;
       const lease = { runId: run.id, owner, epoch: run.leaseEpoch };
       const retry = run.attempt < maxAttempts;
       const failure: Failure = { error: "", kind: retry ? "interrupted" : "gave_up" };
       try {
-        write(lease, run, (append) => {
-          for (const row of transcript(run).rows) {
+        await write(lease, run, async (append) => {
+          for (const row of (await transcript(run)).rows) {
             if (row.kind !== "agent" || row.runId !== run.id || row.status !== "streaming") {
               continue;
             }
-            const { text, reasoning } = deltas.partsOf(row.id);
-            deltas.remove(row.id);
-            append({
+            const { text, reasoning } = await deltas.partsOf(row.id);
+            await deltas.remove(row.id);
+            await append({
               type: "message.completed",
               actor: AGENT,
               data: {
@@ -1408,9 +1537,9 @@ export function createRunWorker(options: RunWorkerOptions) {
               },
             });
           }
-          end(lease, run, append, { status: "failed", failure }, retry);
+          await end(lease, run, append, { status: "failed", failure }, retry);
         });
-        tellEnded(run);
+        await tellEnded(run);
         if (!retry) logger.warn({ runId: run.id, attempt: run.attempt }, "run input given up on");
       } catch (err) {
         logger.error({ err, runId: run.id }, "run recovery failed");
@@ -1419,19 +1548,19 @@ export function createRunWorker(options: RunWorkerOptions) {
   }
 
   // Tells whoever needs to of the run that ended; what they do with it is theirs to get right.
-  function tellEnded(run: Run) {
+  async function tellEnded(run: Run) {
     try {
-      ended(runs.find(run.id) ?? run);
+      await ended((await runs.find(run.id)) ?? run);
     } catch (err) {
       logger.error({ err, runId: run.id }, "run end not told");
     }
   }
 
   // The run's span: in the trace of what woke its thread, or none when not traced.
-  function spanOf(run: Run) {
+  async function spanOf(run: Run) {
     if (!options.traces) return trace.wrapSpanContext(INVALID_SPAN_CONTEXT);
-    const thread = threads.find(run.threadId);
-    const space = thread && spaceStore.find(thread.spaceId);
+    const thread = await threads.find(run.threadId);
+    const space = thread && (await spaceStore.find(thread.spaceId));
     return options.traces.start(run, {
       "thread.id": run.threadId,
       "run.id": run.id,
@@ -1441,8 +1570,8 @@ export function createRunWorker(options: RunWorkerOptions) {
     });
   }
 
-  function begin(run: Run) {
-    const span = spanOf(run);
+  async function begin(run: Run) {
+    const span = await spanOf(run);
     const execution: Execution = {
       run,
       lease: { runId: run.id, owner, epoch: run.leaseEpoch },
@@ -1476,33 +1605,53 @@ export function createRunWorker(options: RunWorkerOptions) {
     return false;
   }
 
-  function tick() {
-    if (stopped) return;
-    if (ticking) {
-      again = true;
-      return;
-    }
-    ticking = true;
-    try {
-      do {
-        again = false;
-        recover(now());
-        for (let run = runs.claim(owner, expiry()); run; run = runs.claim(owner, expiry())) {
-          begin(run);
+  // Claims and begins the runs waiting, after failing those others left: one pass at a time,
+  // and asked for while one is under way, that one goes round once more.
+  const ticker = options.sync.ticker(
+    "runs",
+    async () => {
+      if (stopped) return;
+      await recover();
+      for (
+        let run = await runs.claim(owner, leaseMs);
+        run;
+        run = await runs.claim(owner, leaseMs)
+      ) {
+        await begin(run);
+      }
+    },
+    pollMs,
+  );
+  const tick = () => ticker.now();
+
+  // Keeps the leases of the runs in progress here, letting go of any no longer this worker's, and
+  // fails those others left.
+  const keeper = options.sync.keeper({
+    name: "runs",
+    everyMs: leaseMs / 3,
+    held: () => executions.values(),
+    renew: async (execution: Execution) => {
+      try {
+        stopIfAsked(execution, await runs.renew(execution.lease, leaseMs));
+        return true;
+      } catch (err) {
+        if (!(err instanceof LeaseLost)) {
+          logger.error({ err, runId: execution.run.id }, "lease renewal failed");
         }
-      } while (again && !stopped);
-    } catch (err) {
-      logger.error({ err }, "run worker tick failed");
-    } finally {
-      ticking = false;
-    }
-  }
+        return false;
+      }
+    },
+    onLost: (execution: Execution) => {
+      execution.controller.abort({ kind: "lease" } satisfies Abort);
+    },
+    sweep: recover,
+  });
 
   return {
     // Fails the runs a stopped server left running whose leases have expired. Call before serving
     // and starting; the worker looks again as it ticks.
-    recover() {
-      recover(now());
+    async recover() {
+      await recover();
     },
 
     // The model the thread replies with, opened, and what its next call would send were the
@@ -1510,23 +1659,28 @@ export function createRunWorker(options: RunWorkerOptions) {
     // about that row from outside the thread's runs, so that it reads what the provider's prompt
     // cache holds of the thread.
     async requestAt(threadId: string, branchId: string, rowId?: string) {
-      const thread = threads.find(threadId);
-      const space = thread && spaceStore.find(thread.spaceId);
+      const thread = await threads.find(threadId);
+      const space = thread && (await spaceStore.find(thread.spaceId));
       if (!thread || !space) throw new RunFailure({ error: "", kind: "gone" });
       const picked = await models.replyModel(space, { model: thread.model, effort: thread.effort });
       if (!picked) throw new RunFailure({ error: "", kind: "no_model" });
       const ref = picked.used?.ref ?? picked.chosen.ref;
       const model = await models.open(space.orgId, ref);
-      const { rows } = transcript({ threadId, branchId });
+      const { rows } = await transcript({ threadId, branchId });
       const index = rowId === undefined ? -1 : rows.findIndex((row) => row.id === rowId);
-      const read = whole(rows.slice(0, index === -1 ? rows.length : index + 1));
-      return { model, ref, rows: read, request: requestOf(space, thread, read, picked.effort) };
+      const read = await whole(rows.slice(0, index === -1 ? rows.length : index + 1));
+      return {
+        model,
+        ref,
+        rows: read,
+        request: await requestOf(space, thread, read, picked.effort),
+      };
     },
 
-    start() {
+    async start() {
       if (!stopped) return;
       stopped = false;
-      const wakes = bus.onWake((threadId) => {
+      const woken = async (threadId: string) => {
         // Whatever woke the thread is linked from its next run, and from the one under way.
         const cause = options.traces?.caused(threadId);
         for (const execution of executions.values()) {
@@ -1535,28 +1689,37 @@ export function createRunWorker(options: RunWorkerOptions) {
           const own = cause?.context.traceId === execution.span.spanContext().traceId;
           if (cause && !own) execution.span.addLink(cause);
           try {
-            stopIfAsked(execution, runs.hold(execution.lease));
+            stopIfAsked(execution, await runs.hold(execution.lease));
           } catch (err) {
             if (!(err instanceof LeaseLost)) logger.error({ err }, "stop check failed");
           }
         }
-        tick();
-      });
+        await tick();
+      };
+      const wakes = bus.onWake(
+        (threadId) =>
+          void woken(threadId).catch((err: unknown) => logger.error({ err }, "wake failed")),
+      );
       // A person asked through another instance to move a call running here.
       const moves = bus.onMoveCall(({ threadId, callId }) => {
         moveHere(threadId, callId);
       });
-      unsubscribe = [wakes, moves];
-      timer = setInterval(tick, pollMs);
-      tick();
+      // What may have been missed is looked for at once.
+      const gaps = bus.onGap(() => {
+        void tick();
+        void keeper.beat();
+      });
+      unsubscribe = [wakes, moves, gaps];
+      await keeper.start();
+      await ticker.start();
     },
 
     // Moves the thread's call that is running now to the background, where its run carries on
     // without waiting for it; whether it was running here and may move. A run another instance
     // holds is asked to, and that instance moves it if it may.
-    moveToBackground(threadId: string, callId: string) {
+    async moveToBackground(threadId: string, callId: string) {
       if (moveHere(threadId, callId)) return true;
-      const run = runs.active(threadId);
+      const run = await runs.active(threadId);
       if (run?.status !== "running" || !run.leaseOwner || run.leaseOwner === owner) return false;
       bus.moveCall({ threadId, callId });
       return true;
@@ -1565,7 +1728,8 @@ export function createRunWorker(options: RunWorkerOptions) {
     // Stops claiming and lets the runs in progress go, for recovery here or elsewhere.
     async stop() {
       stopped = true;
-      clearInterval(timer);
+      await ticker.stop();
+      await keeper.stop();
       for (const stop of unsubscribe) stop();
       unsubscribe = [];
       for (const execution of executions.values()) {
@@ -1577,7 +1741,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     // Resolves once no run is in progress and none is waiting to be claimed.
     async idle() {
       for (;;) {
-        tick();
+        await tick();
         if (executions.size === 0) return;
         await Promise.allSettled([...executions.values()].map((execution) => execution.done));
       }

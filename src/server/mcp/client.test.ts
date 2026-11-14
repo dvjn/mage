@@ -19,8 +19,8 @@ function memory(initial: McpOAuthState = {}) {
     get state(): McpOAuthState {
       return state;
     },
-    load: (): McpOAuthState => structuredClone(state),
-    save: (next: McpOAuthState) => void (state = structuredClone(next)),
+    load: async (): Promise<McpOAuthState> => structuredClone(state),
+    save: async (next: McpOAuthState) => void (state = structuredClone(next)),
   } satisfies McpOAuthStore & { state: McpOAuthState };
 }
 
@@ -181,8 +181,8 @@ describe("a call that takes its time", () => {
     const heard: { progress: number; total?: number; message?: string }[] = [];
     const logged: string[] = [];
     const result = await client.call(slow, "count", { steps: 3, ms: 1 }, undefined, {
-      progress: (progress) => heard.push(progress),
-      log: (line) => logged.push(line),
+      progress: async (progress) => void heard.push(progress),
+      log: async (line) => void logged.push(line),
     });
     expect(heard).toEqual([
       { progress: 1, total: 3, message: "Step 1 of 3" },
@@ -204,8 +204,8 @@ describe("a call that takes its time", () => {
         }
       ).cancelled;
     const call = client.call(slow, "count", { steps: 1000, ms: 5 }, stop.signal, {
-      progress: () => stop.abort(new Error("cancelled")),
-      log: () => {},
+      progress: async () => stop.abort(new Error("cancelled")),
+      log: async () => {},
     });
     await expect(call).rejects.toThrow();
     await expect.poll(cancelled).toBe(1);

@@ -8,6 +8,7 @@ import { FORMER_TOOL_IDS } from "@/shared/tools.ts";
 import type { TranscriptFold, TranscriptRow } from "@/shared/transcript.ts";
 
 import type { Branch } from "./service.ts";
+import { findAsync } from "@/server/kernel/async.ts";
 
 // What a branch takes of another: its events up to `untilSeq`, all of them when null.
 export interface Source {
@@ -121,16 +122,16 @@ function holds(sources: readonly Source[], version: Version) {
 // One restored from a row goes on in place of the message after with the line saying so, which is
 // its version from the moment it is made. Also, by row, the first row of the versions each belongs
 // to.
-export function versionsOf(input: {
+export async function versionsOf(input: {
   viewed: string;
   current: string;
   branches: readonly Branch[];
   rows: readonly TranscriptRow[];
-  sourcesOf: (branchId: string) => readonly Source[];
+  sourcesOf: (branchId: string) => Promise<readonly Source[]>;
   // The id and seq of the first row of the branch's own, if it has one yet.
-  firstOf: (branch: Branch) => { id: string; seq: number } | null;
+  firstOf: (branch: Branch) => Promise<{ id: string; seq: number } | null>;
   // The row of the versions as the branch holds it: its seq and the branch whose event made it.
-  originOf: (branchId: string, rowId: string) => { owner: string; seq: number } | null;
+  originOf: (branchId: string, rowId: string) => Promise<{ owner: string; seq: number } | null>;
 }) {
   const { viewed, current, branches, rows, sourcesOf, firstOf, originOf } = input;
   const versions = new Map<string, RowVersions>();
@@ -143,17 +144,19 @@ export function versionsOf(input: {
   const newestFirst = branches.toSorted(
     (a, b) => b.createdAt.getTime() - a.createdAt.getTime() || b.id.localeCompare(a.id),
   );
-  const viewedSources = sourcesOf(viewed);
-  const currentSources = sourcesOf(current);
+  const viewedSources = await sourcesOf(viewed);
+  const currentSources = await sourcesOf(current);
   for (const [groupRowId, members] of groups) {
     const first = members[0]!;
-    const origin = first.parentBranchId ? originOf(first.parentBranchId, groupRowId) : null;
+    const origin = first.parentBranchId ? await originOf(first.parentBranchId, groupRowId) : null;
     const all: (Version | null)[] = [
       origin && { ...origin, rowId: groupRowId },
-      ...members.map((member) => {
-        const own = firstOf(member);
-        return own && { owner: member.id, seq: own.seq, rowId: own.id };
-      }),
+      ...(await Promise.all(
+        members.map(async (member) => {
+          const own = await firstOf(member);
+          return own && { owner: member.id, seq: own.seq, rowId: own.id };
+        }),
+      )),
     ];
     const known = all.filter((version): version is Version => version !== null);
     if (known.length < 2) continue;
@@ -163,10 +166,16 @@ export function versionsOf(input: {
       (version) => holds(viewedSources, version) && shown.has(version.rowId),
     );
     if (at === -1) continue;
-    const shownIn = known.map((version) =>
-      holds(currentSources, version)
-        ? current
-        : (newestFirst.find((branch) => holds(sourcesOf(branch.id), version))?.id ?? version.owner),
+    const shownIn = await Promise.all(
+      known.map(async (version) =>
+        holds(currentSources, version)
+          ? current
+          : ((
+              await findAsync(newestFirst, async (branch) =>
+                holds(await sourcesOf(branch.id), version),
+              )
+            )?.id ?? version.owner),
+      ),
     );
     versions.set(known[at]!.rowId, { at, branches: shownIn });
   }

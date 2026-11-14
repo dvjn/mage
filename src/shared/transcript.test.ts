@@ -1,13 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { AnyThreadEvent } from "@/shared/threads/events.ts";
-import {
-  agentTurnOf,
-  createFold,
-  failureParts,
-  notificationParts,
-  type TranscriptRow,
-} from "@/shared/transcript.ts";
+import { agentTurnOf, createFold, type TranscriptRow } from "@/shared/transcript.ts";
 
 const row = (kind: string, extra: object = {}) => ({ kind, id: kind, ...extra }) as TranscriptRow;
 const human = row("human");
@@ -36,7 +30,7 @@ describe("agentTurnOf", () => {
   });
 
   it("starts a new agent turn after received messages and notifications", () => {
-    const rows = [human, words, row("relay"), tool, row("notice"), thinking];
+    const rows = [human, words, row("relay"), tool, row("relay"), thinking];
     expect(rows.map((_, i) => agentTurnOf(rows, i)?.continued ?? null)).toEqual([
       null,
       false,
@@ -46,7 +40,7 @@ describe("agentTurnOf", () => {
       false,
     ]);
     expect(agentTurnOf([row("relay"), words], 1)?.continued).toBe(false);
-    expect(agentTurnOf([words, row("notice"), human, thinking], 3)?.continued).toBe(false);
+    expect(agentTurnOf([words, row("relay"), human, thinking], 3)?.continued).toBe(false);
   });
 
   it("names the model of the turn's reply from its first call", () => {
@@ -67,53 +61,6 @@ describe("agentTurnOf", () => {
     expect(agentTurnOf([human, row("failure")], 1)).toBeNull();
     expect(agentTurnOf([human, row("stop")], 1)).toBeNull();
     expect(agentTurnOf([human], 1)).toBeNull();
-  });
-});
-
-describe("notificationParts", () => {
-  const source = { threadId: "t1", name: "Reviewer" } as never;
-  const read = (kind: string, text: string) =>
-    notificationParts({ kind, source, text } as Parameters<typeof notificationParts>[0]);
-
-  it("reads the error and last message back out of an older subagent notification", () => {
-    expect(
-      read("agent.failed", "Reviewer failed: The model failed: Down\n\nIts last message:\n\nHalf"),
-    ).toEqual({
-      text: "Reviewer failed: The model failed: Down",
-      subagents: [{ threadId: "t1", name: "Reviewer" }],
-      error: "The model failed: Down",
-      last: "Half",
-    });
-    expect(read("agent.stopped", "Reviewer stopped")).toEqual({
-      text: "Reviewer stopped",
-      subagents: [{ threadId: "t1", name: "Reviewer" }],
-    });
-    expect(read("agent.ended", "Reviewer ended")).toMatchObject({ text: "Reviewer ended" });
-  });
-
-  it("reads which idle form an older notification was", () => {
-    expect(read("agent.idle", "All idle: A, B")).toEqual({
-      text: "All idle: A, B",
-      when: "all_idle",
-    });
-    expect(read("agent.idle", "Idle: A")).toEqual({ text: "Idle: A", when: "any_idle" });
-  });
-
-  it("keeps a notification that already has parts", () => {
-    const data = { kind: "agent.idle", source, text: "Idle", subagents: [], when: "any_idle" };
-    expect(notificationParts(data as never)).toBe(data);
-  });
-});
-
-describe("failureParts", () => {
-  it("reads old sentences back into kinds", () => {
-    expect(failureParts({ error: "The thread is gone." })).toEqual({ error: "", kind: "gone" });
-    expect(failureParts({ error: "The model failed: Down" })).toEqual({
-      error: "Down",
-      kind: "model_error",
-    });
-    expect(failureParts({ error: "Down" })).toEqual({ error: "Down" });
-    expect(failureParts({ error: "x", kind: "auth" })).toEqual({ error: "x", kind: "auth" });
   });
 });
 
@@ -252,7 +199,13 @@ describe("createFold", () => {
       parts: [{ type: "text", text: "Checking" }],
       status: "completed",
     });
-    add("subagent.ended", { threadId: "child", name: "Reviewer", state: "idle", last: "Done" });
+    add("notification", {
+      kind: "agent.ended",
+      source: { threadId: "child", name: "Reviewer", main: false },
+      text: "Reviewer ended its run without reporting.",
+      people: [],
+      wake: false,
+    });
     add("message.started", { runId: "r2", messageId: "second", model: "a/b" });
     expect(fold.transcript().rows.map((_, i) => fold.turnAt(i)?.continued)).toEqual([
       false,
@@ -280,65 +233,16 @@ describe("createFold", () => {
     ]);
   });
 
-  it("holds other agents' messages until taken in, and tells subagents that ended together", () => {
-    seq = 0;
-    const relayed = (text: string) =>
-      event("agent.message", {
-        parts: [{ type: "text", text }],
-        from: { threadId: "h1", name: "Writer", main: false },
-        to: "agent",
-        steeredBy: [{ userId: "ada", name: "Ada Lovelace", via: ["Writer"] }],
-      });
-    const ended = (threadId: string, name: string, state: string) =>
-      event("subagent.ended", { threadId, name, state, last: `${name} done` });
-    const fold = createFold();
-    for (const each of [
-      relayed("Draft one"),
-      relayed("Draft two"),
-      ended("h1", "Writer", "idle"),
-      ended("h2", "Critic", "idle"),
-      ended("h1", "Writer", "stopped"),
-    ]) {
-      fold.add(each);
-    }
-    expect(fold.transcript().inbox.map((message) => message.text)).toEqual([
-      "Draft one",
-      "Draft two",
-    ]);
-    // Subagents that ended one after another are one notice, each with its latest.
-    expect(fold.transcript().rows).toEqual([
-      expect.objectContaining({
-        kind: "notice",
-        seq: 3,
-        subagents: [
-          { threadId: "h2", name: "Critic", state: "idle", last: "Critic done" },
-          { threadId: "h1", name: "Writer", state: "stopped", last: "Writer done" },
-        ],
-      }),
-    ]);
-    fold.add(event("message.admitted", { ...run, messageIds: ["e1", "e2"] }));
-    fold.add(ended("h2", "Critic", "failed"));
-    const { rows, inbox } = fold.transcript();
-    expect(inbox).toEqual([]);
-    expect(rows.map((one) => [one.kind, one.seq])).toEqual([
-      ["notice", 3],
-      ["relay", 6],
-      ["relay", 6],
-      ["notice", 7],
-    ]);
-    expect(rows[1]).toMatchObject({ from: { name: "Writer" }, to: "agent", text: "Draft one" });
-  });
-
-  it("holds notifications until taken in, as older agents' messages are", () => {
+  it("holds notifications, other agents' messages among them, until taken in", () => {
     seq = 0;
     const fold = createFold();
     fold.add(
-      event("agent.message", {
-        parts: [{ type: "text", text: "Draft one" }],
-        from: { threadId: "h1", name: "Writer", main: false },
+      event("notification", {
+        kind: "message",
+        source: { threadId: "h1", name: "Writer", main: false, callId: "c1" },
+        text: "Draft one",
+        people: [],
         to: "agent",
-        steeredBy: [],
-        call: { threadId: "h1", callId: "c1" },
       }),
     );
     fold.add(

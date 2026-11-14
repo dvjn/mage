@@ -68,20 +68,20 @@ export function orgRoutes(options: {
       // What an org invite link offers; signed out, the whole email it is for.
       .get("/org-invites/:token", async (c) => {
         const account = await identity.resolve(c.req.raw.headers, null);
-        return c.json(orgs.preview(c.req.param("token"), account && accountOf(account)), 200);
+        return c.json(await orgs.preview(c.req.param("token"), account && accountOf(account)), 200);
       })
       .get("/v1/me", async (c) => {
         const profile = await identity.profile(signedIn(c.var.principal));
         return c.json({ ...profile, ...(options.tracing && { tracing: true }) } satisfies Me, 200);
       })
-      .get("/v1/orgs", (c) => {
-        return c.json(orgs.list(accountOf(c.var.account)), 200);
+      .get("/v1/orgs", async (c) => {
+        return c.json(await orgs.list(accountOf(c.var.account)), 200);
       })
       .post("/v1/orgs", orgName, async (c) => {
         return c.json(await orgs.create(accountOf(c.var.account), c.req.valid("json").name), 200);
       })
-      .get("/v1/locate", placeQuery, (c) => {
-        const orgId = orgs.locate(accountOf(c.var.account), c.req.valid("query"));
+      .get("/v1/locate", placeQuery, async (c) => {
+        const orgId = await orgs.locate(accountOf(c.var.account), c.req.valid("query"));
         if (!orgId) return c.json({ error: "Not found" }, 404);
         return c.json({ orgId }, 200);
       })
@@ -89,25 +89,25 @@ export function orgRoutes(options: {
         const { token } = c.req.valid("json");
         return c.json(await orgs.accept(accountOf(c.var.account), token), 200);
       })
-      .patch("/v1/org", orgName, (c) => {
-        orgs.rename(signedIn(c.var.principal), c.req.valid("json").name);
+      .patch("/v1/org", orgName, async (c) => {
+        await orgs.rename(signedIn(c.var.principal), c.req.valid("json").name);
         return c.json({ ok: true }, 200);
       })
-      .delete("/v1/org", (c) => {
-        orgs.delete(signedIn(c.var.principal));
+      .delete("/v1/org", async (c) => {
+        await orgs.delete(signedIn(c.var.principal));
         return c.json({ ok: true }, 200);
       })
-      .get("/v1/org/members", memberQuery, (c) => {
+      .get("/v1/org/members", memberQuery, async (c) => {
         const { role, ...query } = c.req.valid("query");
         const params = { ...pageParams(query), ...(role && { role }) };
-        return c.json(orgs.members(signedIn(c.var.principal), params), 200);
+        return c.json(await orgs.members(signedIn(c.var.principal), params), 200);
       })
-      .get("/v1/org/members/:userId", (c) => {
-        return c.json(orgs.member(signedIn(c.var.principal), c.req.param("userId")), 200);
+      .get("/v1/org/members/:userId", async (c) => {
+        return c.json(await orgs.member(signedIn(c.var.principal), c.req.param("userId")), 200);
       })
-      .get("/v1/org/members/:userId/groups", pageQuery, (c) => {
+      .get("/v1/org/members/:userId/groups", pageQuery, async (c) => {
         const params = pageParams(c.req.valid("query"));
-        const page = orgs.groupsOf(signedIn(c.var.principal), c.req.param("userId"), params);
+        const page = await orgs.groupsOf(signedIn(c.var.principal), c.req.param("userId"), params);
         return c.json(
           {
             ...page,
@@ -123,10 +123,10 @@ export function orgRoutes(options: {
           200,
         );
       })
-      .get("/v1/org/people", peopleQuery, (c) => {
+      .get("/v1/org/people", peopleQuery, async (c) => {
         const { role, status, ...query } = c.req.valid("query");
         const params = { ...pageParams(query), ...(role && { role }), ...(status && { status }) };
-        return c.json(orgs.people(signedIn(c.var.principal), params), 200);
+        return c.json(await orgs.people(signedIn(c.var.principal), params), 200);
       })
       .patch("/v1/org/members/:userId", setOrgRole, async (c) => {
         const { role } = c.req.valid("json");
@@ -159,8 +159,8 @@ export function orgRoutes(options: {
         await orgs.unlinkGroup(signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
       })
-      .get("/v1/directory/people", pageQuery, (c) => {
-        const page = orgs.directoryPeople(
+      .get("/v1/directory/people", pageQuery, async (c) => {
+        const page = await orgs.directoryPeople(
           signedIn(c.var.principal),
           pageParams(c.req.valid("query")),
         );
@@ -177,8 +177,8 @@ export function orgRoutes(options: {
           200,
         );
       })
-      .get("/v1/directory/groups", pageQuery, (c) => {
-        const page = orgs.directoryGroups(
+      .get("/v1/directory/groups", pageQuery, async (c) => {
+        const page = await orgs.directoryGroups(
           signedIn(c.var.principal),
           pageParams(c.req.valid("query")),
         );
@@ -196,38 +196,44 @@ export function orgRoutes(options: {
           200,
         );
       })
-      .post("/v1/org/invites", newOrgInvite, (c) => {
+      .post("/v1/org/invites", newOrgInvite, async (c) => {
         const { email, role } = c.req.valid("json");
-        return c.json(orgs.invite(signedIn(c.var.principal), email, role), 200);
+        return c.json(await orgs.invite(signedIn(c.var.principal), email, role), 200);
       })
-      .delete("/v1/org/invites/:id", (c) => {
-        orgs.revokeInvite(signedIn(c.var.principal), c.req.param("id"));
+      .delete("/v1/org/invites/:id", async (c) => {
+        await orgs.revokeInvite(signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
       })
-      .get("/v1/org/agent", (c) => {
-        return c.json(orgs.agentName(signedIn(c.var.principal)), 200);
+      .get("/v1/org/agent", async (c) => {
+        return c.json(await orgs.agentName(signedIn(c.var.principal)), 200);
       })
-      .patch("/v1/org/agent", agentName, (c) => {
-        return c.json(orgs.setAgentName(signedIn(c.var.principal), c.req.valid("json").name), 200);
+      .patch("/v1/org/agent", agentName, async (c) => {
+        return c.json(
+          await orgs.setAgentName(signedIn(c.var.principal), c.req.valid("json").name),
+          200,
+        );
       })
-      .get("/v1/org/settings", (c) => {
-        return c.json(orgs.settings(signedIn(c.var.principal)), 200);
+      .get("/v1/org/settings", async (c) => {
+        return c.json(await orgs.settings(signedIn(c.var.principal)), 200);
       })
       .patch("/v1/org/settings", teamSettingsChange, async (c) => {
         return c.json(await orgs.setSettings(signedIn(c.var.principal), c.req.valid("json")), 200);
       })
-      .get("/v1/org/groups", pageQuery, (c) => {
+      .get("/v1/org/groups", pageQuery, async (c) => {
         return c.json(
-          groups.list(signedIn(c.var.principal), pageParams(c.req.valid("query"))),
+          await groups.list(signedIn(c.var.principal), pageParams(c.req.valid("query"))),
           200,
         );
       })
-      .get("/v1/org/groups/:id", (c) => {
-        return c.json(groups.get(signedIn(c.var.principal), c.req.param("id")), 200);
+      .get("/v1/org/groups/:id", async (c) => {
+        return c.json(await groups.get(signedIn(c.var.principal), c.req.param("id")), 200);
       })
-      .get("/v1/org/groups/:id/members", pageQuery, (c) => {
+      .get("/v1/org/groups/:id/members", pageQuery, async (c) => {
         const params = pageParams(c.req.valid("query"));
-        return c.json(groups.members(signedIn(c.var.principal), c.req.param("id"), params), 200);
+        return c.json(
+          await groups.members(signedIn(c.var.principal), c.req.param("id"), params),
+          200,
+        );
       })
   );
 }

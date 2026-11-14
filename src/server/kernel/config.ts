@@ -6,7 +6,8 @@ export interface Config {
   authTrustedOrigins: string[];
   // AES-256 key sealing stored credentials.
   credentialKey: Buffer;
-  databasePath: string;
+  // Where the Postgres database is reached.
+  databaseUrl: string;
   logFormat: "json" | "pretty";
   port: number;
   // Where artifact pages are served from, apart from the app's origin, with `*` as its leftmost
@@ -116,6 +117,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (env.NODE_ENV === "production" && credentialKey.equals(DEVELOPMENT_CREDENTIAL_KEY)) {
     throw new Error("CREDENTIAL_KEY must not be the development key in production");
   }
+  const databaseUrl = env.DATABASE_URL ?? "";
+  if (!/^postgres(ql)?:\/\//.test(databaseUrl)) {
+    throw new Error("DATABASE_URL must be a postgres:// URL");
+  }
   const authTrustedOrigins = (env.AUTH_TRUSTED_ORIGINS ?? "")
     .split(",")
     .map((value) => value.trim())
@@ -163,7 +168,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     authSecret,
     authTrustedOrigins,
     credentialKey,
-    databasePath: env.DATABASE_PATH ?? "data/mage.db",
+    databaseUrl,
     logFormat,
     port,
     artifactOrigin,

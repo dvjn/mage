@@ -4,7 +4,7 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
 
 import type { Db } from "@/server/db/db.ts";
-import { leasesOn } from "@/server/db/lease.ts";
+import { leasesOn } from "@/server/sync/lease.ts";
 
 import { backgroundCall } from "./schema.ts";
 import type { CallLease, CallRecord, CallStore } from "./calls.ts";
@@ -20,36 +20,35 @@ export function createCallStore(db: Db): CallStore {
     );
 
   return {
-    create(input, lease) {
-      return db
-        .insert(backgroundCall)
-        .values({
-          ...input,
-          ...(lease && {
-            leaseOwner: lease.owner,
-            leaseExpiresAt: lease.expiresAt,
-            leaseEpoch: 1,
-          }),
-        })
-        .returning()
-        .get();
+    async create(input, lease) {
+      return (
+        await db
+          .insert(backgroundCall)
+          .values({
+            ...input,
+            ...(lease && { ...leases.take(lease.owner, lease.leaseMs), leaseEpoch: 1 }),
+          })
+          .returning()
+      )[0]!;
     },
 
-    find(id) {
-      return db.select().from(backgroundCall).where(eq(backgroundCall.id, id)).get() ?? null;
+    async find(id) {
+      return (
+        (await db.select().from(backgroundCall).where(eq(backgroundCall.id, id)).limit(1))[0] ??
+        null
+      );
     },
 
-    inThread(threadId): CallRecord[] {
-      return db
+    async inThread(threadId): Promise<CallRecord[]> {
+      return await db
         .select()
         .from(backgroundCall)
         .where(eq(backgroundCall.threadId, threadId))
-        .orderBy(desc(backgroundCall.createdAt), desc(backgroundCall.id))
-        .all();
+        .orderBy(desc(backgroundCall.createdAt), desc(backgroundCall.id));
     },
 
-    open(threadId): CallRecord[] {
-      return db
+    async open(threadId): Promise<CallRecord[]> {
+      return await db
         .select()
         .from(backgroundCall)
         .where(
@@ -57,85 +56,91 @@ export function createCallStore(db: Db): CallStore {
             eq(backgroundCall.threadId, threadId),
             inArray(backgroundCall.status, ["pending", "running"]),
           ),
-        )
-        .all();
+        );
     },
 
-    start(id, owner, expiresAt) {
+    async start(id, owner, leaseMs) {
       return (
-        db
-          .update(backgroundCall)
-          .set({ status: "running", ...leases.take(owner, expiresAt) })
-          .where(and(eq(backgroundCall.id, id), eq(backgroundCall.status, "pending")))
-          .returning()
-          .get() ?? null
+        (
+          await db
+            .update(backgroundCall)
+            .set({ status: "running", ...leases.take(owner, leaseMs) })
+            .where(and(eq(backgroundCall.id, id), eq(backgroundCall.status, "pending")))
+            .returning()
+        )[0] ?? null
       );
     },
 
-    renew(lease, expiresAt) {
-      const row = db
-        .update(backgroundCall)
-        .set(leases.renew(expiresAt))
-        .where(held(lease))
-        .returning({ id: backgroundCall.id })
-        .get();
+    async renew(lease, leaseMs) {
+      const row = (
+        await db
+          .update(backgroundCall)
+          .set(leases.renew(leaseMs))
+          .where(held(lease))
+          .returning({ id: backgroundCall.id })
+      )[0];
       return !!row;
     },
 
-    finish(lease, fields) {
-      const row = db
-        .update(backgroundCall)
-        .set({ ...fields, ...leases.release() })
-        .where(held(lease))
-        .returning({ id: backgroundCall.id })
-        .get();
+    async finish(lease, fields) {
+      const row = (
+        await db
+          .update(backgroundCall)
+          .set({ ...fields, ...leases.release() })
+          .where(held(lease))
+          .returning({ id: backgroundCall.id })
+      )[0];
       return !!row;
     },
 
-    expire(lease) {
-      db.update(backgroundCall).set(leases.expire()).where(held(lease)).run();
+    async expire(lease) {
+      await db.update(backgroundCall).set(leases.expire()).where(held(lease));
     },
 
-    stale(before) {
-      return db
+    async stale() {
+      return await db
         .select()
         .from(backgroundCall)
-        .where(and(eq(backgroundCall.status, "running"), leases.expired(before)))
-        .all();
+        .where(and(eq(backgroundCall.status, "running"), leases.expired()));
     },
 
-    interrupt(id, before, at) {
+    async interrupt(id, at) {
       return (
-        db
-          .update(backgroundCall)
-          .set({ status: "interrupted", endedAt: at, ...leases.release() })
-          .where(
-            and(
-              eq(backgroundCall.id, id),
-              eq(backgroundCall.status, "running"),
-              leases.expired(before),
-            ),
-          )
-          .returning()
-          .get() ?? null
+        (
+          await db
+            .update(backgroundCall)
+            .set({ status: "interrupted", endedAt: at, ...leases.release() })
+            .where(
+              and(
+                eq(backgroundCall.id, id),
+                eq(backgroundCall.status, "running"),
+                leases.expired(),
+              ),
+            )
+            .returning()
+        )[0] ?? null
       );
     },
 
-    cancel(id, at) {
+    async cancel(id, at) {
       return (
-        db
-          .update(backgroundCall)
-          .set({ status: "cancelled", endedAt: at, ...leases.release() })
-          .where(
-            and(eq(backgroundCall.id, id), inArray(backgroundCall.status, ["pending", "running"])),
-          )
-          .returning()
-          .get() ?? null
+        (
+          await db
+            .update(backgroundCall)
+            .set({ status: "cancelled", endedAt: at, ...leases.release() })
+            .where(
+              and(
+                eq(backgroundCall.id, id),
+                inArray(backgroundCall.status, ["pending", "running"]),
+              ),
+            )
+            .returning()
+        )[0] ?? null
       );
     },
 
-    update(id, fields) {
-      db.update(backgroundCall).set(fields).where(eq(backgroundCall.id, id)).run();
+    async update(id, fields) {
+      await db.update(backgroundCall).set(fields).where(eq(backgroundCall.id, id));
     },
   };
 }

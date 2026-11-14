@@ -15,9 +15,9 @@
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { Models } from "@/server/models/service.ts";
-import type { Directory, OrgRole } from "@/server/orgs/directory.ts";
+import type { Directory, Org, OrgRole } from "@/server/orgs/directory.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
-import type { OrgSettingStore } from "@/server/orgs/service.ts";
+import type { OrgSettings, OrgSettingStore } from "@/server/orgs/service.ts";
 import type { ThreadStore } from "@/server/threads/service.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import type { PageParams, Page } from "@/shared/paging.ts";
@@ -30,6 +30,7 @@ import {
   spaceNameFor,
 } from "@/shared/spaces.ts";
 import type { Effort } from "@/shared/threads/thread.ts";
+import { filterAsync, mapAsync } from "@/server/kernel/async.ts";
 
 // Owners manage the space; messagers and owners post; viewers only read.
 export type SpaceRole = "owner" | "messager" | "viewer";
@@ -79,11 +80,32 @@ export interface Space {
 
 // What the agent of the space's threads goes by: the space's name for it, else its org's, else the
 // usual one.
-export function agentNameIn(
+export async function agentNameIn(
   settings: Pick<OrgSettingStore, "get">,
   space: Pick<Space, "orgId" | "agentName">,
 ) {
-  return space.agentName ?? settings.get(space.orgId).agentName ?? DEFAULT_AGENT_NAME;
+  return agentNameFrom(space, await settings.get(space.orgId));
+}
+
+// The same, given the org's settings.
+export function agentNameFrom(
+  space: Pick<Space, "agentName">,
+  settings: Pick<OrgSettings, "agentName">,
+) {
+  return space.agentName ?? settings.agentName ?? DEFAULT_AGENT_NAME;
+}
+
+// Whether the space is archived: a team org member's own space while the org does not allow them
+// one, or while its person is not in the org. `creatorStays` is asked only when it matters.
+export async function archivedFrom(
+  space: Pick<Space, "kind" | "createdBy">,
+  org: Pick<Org, "kind"> | null,
+  settings: Pick<OrgSettings, "memberSpaces">,
+  creatorStays: () => Promise<boolean>,
+) {
+  if (space.kind !== "personal" || org?.kind !== "team") return false;
+  if (!settings.memberSpaces) return true;
+  return !space.createdBy || !(await creatorStays());
 }
 
 // A member's own space in trash, with its person, who put it there and how many threads it has.
@@ -117,46 +139,46 @@ export interface CatalogSpace extends Space {
 // return them.
 export interface SpaceStore {
   // Makes the space with its creator as owner.
-  create(space: NewSpace): Space;
-  find(id: string): Space | null;
+  create(space: NewSpace): Promise<Space>;
+  find(id: string): Promise<Space | null>;
   // The org's spaces: primary ones first, then oldest first.
-  listInOrg(orgId: string): Space[];
+  listInOrg(orgId: string): Promise<Space[]>;
   // The user's highest role in each of the org's spaces where they have one: given to them, to a
   // group of theirs, or to everyone in the org while they are in it.
-  rolesIn(orgId: string, userId: string): Map<string, SpaceRole>;
+  rolesIn(orgId: string, userId: string): Promise<Map<string, SpaceRole>>;
   // The user's highest role in the space, as above, or null when they have none.
-  roleOf(spaceId: string, userId: string): SpaceRole | null;
+  roleOf(spaceId: string, userId: string): Promise<SpaceRole | null>;
   // The roles given in the space to people and groups: people first, then groups, by name.
-  grants(spaceId: string): Grant[];
+  grants(spaceId: string): Promise<Grant[]>;
   // A page of them, matching the text in the name or email, of the role if given.
-  grantPage(spaceId: string, params: PageParams & { role?: SpaceRole }): Page<Grant>;
+  grantPage(spaceId: string, params: PageParams & { role?: SpaceRole }): Promise<Page<Grant>>;
   // A page of the org's spaces by the name everyone sees, matching the text in it, of the kind and
   // everyone's role if given ("none" for shared spaces open to no one in the org).
   catalogPage(
     orgId: string,
     params: PageParams & { kind?: Space["kind"]; everyone?: EveryoneRole | "none" },
-  ): Page<CatalogSpace>;
+  ): Promise<Page<CatalogSpace>>;
   // Gives the subject the role in the space, or changes the one it has.
-  grant(spaceId: string, subject: Subject, role: SpaceRole): void;
-  revoke(spaceId: string, subject: Subject): void;
-  setEveryoneRole(id: string, role: EveryoneRole | null): Space;
+  grant(spaceId: string, subject: Subject, role: SpaceRole): Promise<void>;
+  revoke(spaceId: string, subject: Subject): Promise<void>;
+  setEveryoneRole(id: string, role: EveryoneRole | null): Promise<Space>;
   // The user's own private space in a team org, or null when they have none.
-  memberSpaceOf(orgId: string, userId: string): Space | null;
+  memberSpaceOf(orgId: string, userId: string): Promise<Space | null>;
   // The org's spaces whose default model is one of the refs.
-  withDefaultModel(orgId: string, refs: string[]): Space[];
-  rename(id: string, name: string): Space;
+  withDefaultModel(orgId: string, refs: string[]): Promise<Space[]>;
+  rename(id: string, name: string): Promise<Space>;
   // Null goes back to the org's; a field left out is kept.
-  setDefaults(id: string, changes: SpaceDefaultsChange): Space;
-  delete(id: string): void;
-  setArchivedAt(id: string, at: Date | null): void;
-  trash(id: string, by: string, at: Date): void;
-  untrash(id: string): void;
+  setDefaults(id: string, changes: SpaceDefaultsChange): Promise<Space>;
+  delete(id: string): Promise<void>;
+  setArchivedAt(id: string, at: Date | null): Promise<void>;
+  trash(id: string, by: string, at: Date): Promise<void>;
+  untrash(id: string): Promise<void>;
   // The org's spaces in trash, the last put there first.
-  trashedIn(orgId: string): TrashedSpace[];
+  trashedIn(orgId: string): Promise<TrashedSpace[]>;
   // The spaces put in trash at or before the time, in any org.
-  trashedBefore(at: Date): Space[];
+  trashedBefore(at: Date): Promise<Space[]>;
   // Every team org's members' own spaces, but those in trash.
-  memberSpaces(): Space[];
+  memberSpaces(): Promise<Space[]>;
 }
 
 export interface SpacesOptions {
@@ -213,6 +235,12 @@ const REFUSED: Record<SpaceAction, string> = {
 // Who acts: their org role is known for signed-in people, not for the authors of waiting messages.
 type Who = Pick<Principal, "userId" | "orgId"> & { role?: OrgRole };
 
+// Where a person stands in a space: their role there, if any, and whether it is archived.
+export interface Standing {
+  role: SpaceRole | null;
+  archived: boolean;
+}
+
 export type SpaceView = Space & {
   role: SpaceRole | null;
   post: boolean;
@@ -227,8 +255,8 @@ export function createSpaces(options: SpacesOptions) {
   const accessChanged = (orgId: string) => options.hooks?.run("space.accessChanged", { orgId });
 
   // Someone new starts with their own space in their personal org.
-  options.hooks?.on("person.signedUp", ({ userId, orgId }) => {
-    spaces.create({
+  options.hooks?.on("person.signedUp", async ({ userId, orgId }) => {
+    await spaces.create({
       orgId,
       kind: "personal",
       name: FIRST_SPACE_NAME,
@@ -239,44 +267,48 @@ export function createSpaces(options: SpacesOptions) {
 
   // Members who came back get back the space they left. Whoever left or came back, and every
   // member when the org stops or starts allowing their spaces, starts or stops their countdown.
-  options.hooks?.on("org.membersSettled", ({ orgId, joined }) => {
+  options.hooks?.on("org.membersSettled", async ({ orgId, joined }) => {
     for (const userId of joined) {
-      const own = spaces.memberSpaceOf(orgId, userId);
-      if (own) spaces.grant(own.id, { kind: "user", id: userId }, "owner");
+      const own = await spaces.memberSpaceOf(orgId, userId);
+      if (own) await spaces.grant(own.id, { kind: "user", id: userId }, "owner");
     }
-    noteArchived(orgId);
+    await noteArchived(orgId);
   });
-  options.hooks?.on("org.personalSpacesChanged", ({ orgId }) => noteArchived(orgId));
+  options.hooks?.on("org.personalSpacesChanged", async ({ orgId }) => noteArchived(orgId));
 
   // Notes since when each member's space of the org, or of every org, is archived, and forgets it
   // once it is not.
-  function noteArchived(orgId?: string, at = now()) {
-    for (const space of spaces.memberSpaces()) {
+  async function noteArchived(orgId?: string, at = now()) {
+    for (const space of await spaces.memberSpaces()) {
       if (orgId && space.orgId !== orgId) continue;
-      const isArchived = archived(space);
-      if (isArchived && !space.archivedAt) spaces.setArchivedAt(space.id, at);
-      else if (!isArchived && space.archivedAt) spaces.setArchivedAt(space.id, null);
+      const isArchived = await archived(space);
+      if (isArchived && !space.archivedAt) await spaces.setArchivedAt(space.id, at);
+      else if (!isArchived && space.archivedAt) await spaces.setArchivedAt(space.id, null);
     }
   }
 
   // A team org member's own private space.
-  function memberSpace(space: Space) {
-    return space.kind === "personal" && directory.org(space.orgId)?.kind === "team";
+  async function memberSpace(space: Space) {
+    return space.kind === "personal" && (await directory.org(space.orgId))?.kind === "team";
   }
 
   // A member's space while their org does not allow them, or while its person is not in the org.
   // Worked out whenever it is asked, so allowing them again, or rejoining, restores it.
-  function archived(space: Space) {
-    if (!memberSpace(space)) return false;
-    if (!settings.get(space.orgId).memberSpaces) return true;
-    return !space.createdBy || !directory.roleIn(space.orgId, space.createdBy);
+  async function archived(space: Space) {
+    if (!(await memberSpace(space))) return false;
+    return archivedFrom(
+      space,
+      { kind: "team" },
+      await settings.get(space.orgId),
+      async () => !!(await directory.roleIn(space.orgId, space.createdBy!)),
+    );
   }
 
   // The person's role in the space, or null when its org is not theirs, they have none or it is in
   // trash.
-  function roleIn(who: Who, space: Space) {
+  async function roleIn(who: Who, space: Space) {
     return space.orgId === who.orgId && !space.trashedAt
-      ? spaces.roleOf(space.id, who.userId)
+      ? await spaces.roleOf(space.id, who.userId)
       : null;
   }
 
@@ -291,8 +323,8 @@ export function createSpaces(options: SpacesOptions) {
   }
 
   // The space in trash, when the principal put it there or owns its org.
-  function requireTrashed(principal: Principal, id: string) {
-    const space = spaces.find(id);
+  async function requireTrashed(principal: Principal, id: string) {
+    const space = await spaces.find(id);
     if (
       !space?.trashedAt ||
       space.orgId !== principal.orgId ||
@@ -303,67 +335,92 @@ export function createSpaces(options: SpacesOptions) {
     return space;
   }
 
+  // Where the person stands in the space, read once for every action asked about: their role
+  // there and whether it is archived.
+  async function standing(who: Who, space: Space, given?: SpaceRole | null): Promise<Standing> {
+    return {
+      role: given === undefined ? await roleIn(who, space) : given,
+      archived: await archived(space),
+    };
+  }
+
   // The one rule for what a person may do in a space: their org owns it and their role there
   // allows the action, or they own the org and manage its shared spaces. An archived space only
   // lets its person read it and clear it out.
-  function can(who: Who, space: Space, action: SpaceAction) {
-    const role = roleIn(who, space);
-    if (archived(space)) return role !== null && ARCHIVED_ALLOWED.includes(action);
+  function allows(who: Who, space: Space, { role, archived }: Standing, action: SpaceAction) {
+    if (archived) return role !== null && ARCHIVED_ALLOWED.includes(action);
     if (role !== null && ALLOWED[role].includes(action)) return true;
     return (action === "manage" || action === "remove") && orgManages(who, space);
   }
 
-  function canSee(who: Who, space: Space) {
+  async function can(who: Who, space: Space, action: SpaceAction) {
+    return allows(who, space, await standing(who, space), action);
+  }
+
+  async function canSee(who: Who, space: Space) {
     return can(who, space, "read");
   }
 
   // The space with the person's role when they can read it, otherwise null.
-  function findVisible(who: Who, id: string): (Space & { role: SpaceRole }) | null {
-    const space = spaces.find(id);
-    const role = space && roleIn(who, space);
+  async function findVisible(who: Who, id: string): Promise<(Space & { role: SpaceRole }) | null> {
+    const space = await spaces.find(id);
+    const role = space && (await roleIn(who, space));
     return space && role ? { ...space, role } : null;
   }
 
   // The space as the person sees it: their own is their personal space, another's is named for
   // its person.
-  function view(who: Who, space: Space, role = roleIn(who, space)): SpaceView {
-    const owner = space.createdBy ? directory.user(space.createdBy)?.name : null;
+  async function view(who: Who, space: Space, given?: SpaceRole | null): Promise<SpaceView> {
+    return viewAs(who, space, await standing(who, space, given));
+  }
+
+  async function viewAs(who: Who, space: Space, stands: Standing): Promise<SpaceView> {
+    const owner = space.createdBy ? (await directory.user(space.createdBy))?.name : null;
     const name = spaceNameFor(space, owner ?? "A former member", space.createdBy === who.userId);
     return {
       ...space,
       name,
-      role,
-      post: can(who, space, "message"),
-      manage: can(who, space, "manage"),
-      remove: can(who, space, "remove"),
-      archived: archived(space),
+      role: stands.role,
+      post: allows(who, space, stands, "message"),
+      manage: allows(who, space, stands, "manage"),
+      remove: allows(who, space, stands, "remove"),
+      archived: stands.archived,
     };
   }
 
   // The space when the principal may take the action there. A space they cannot see is not found,
   // so its existence does not leak; one they can see but not act on is forbidden.
-  function require(principal: Who, id: string, action: SpaceAction = "read"): SpaceView {
-    const space = spaces.find(id);
-    const role = space && roleIn(principal, space);
+  async function require(
+    principal: Who,
+    id: string,
+    action: SpaceAction = "read",
+  ): Promise<SpaceView> {
+    const space = await spaces.find(id);
+    const role = space && (await roleIn(principal, space));
     if (!space || (!role && !orgManages(principal, space))) {
       throw new ServiceError(404, REFUSED.read);
     }
-    if (!can(principal, space, action)) {
-      throw new ServiceError(
-        403,
-        archived(space)
-          ? ARCHIVED
-          : role
-            ? REFUSED[action]
-            : "Add yourself in Members to read its threads",
-      );
-    }
-    return view(principal, space, role);
+    const stands = await standing(principal, space, role);
+    refuseUnless(principal, space, stands, action);
+    return viewAs(principal, space, stands);
+  }
+
+  // Refuses the action, as `require` does, unless the person's standing allows it.
+  function refuseUnless(who: Who, space: Space, stands: Standing, action: SpaceAction) {
+    if (allows(who, space, stands, action)) return;
+    throw new ServiceError(
+      403,
+      stands.archived
+        ? ARCHIVED
+        : stands.role
+          ? REFUSED[action]
+          : "Add yourself in Members to read its threads",
+    );
   }
 
   // The shared space, for changing who is in it.
-  function requireShared(principal: Principal, id: string) {
-    const space = require(principal, id, "manage");
+  async function requireShared(principal: Principal, id: string) {
+    const space = await require(principal, id, "manage");
     if (space.kind !== "shared") {
       throw new ServiceError(409, "A private space has no other members");
     }
@@ -371,80 +428,88 @@ export function createSpaces(options: SpacesOptions) {
   }
 
   // Whether the principal may make spaces in their org.
-  function canCreate(principal: Principal) {
+  async function canCreate(principal: Principal) {
     if (principal.role === "owner") return true;
-    return settings.get(principal.orgId).spaceCreation === "members";
+    return (await settings.get(principal.orgId)).spaceCreation === "members";
   }
 
   return {
     can,
+    standing,
+    allows,
+    refuseUnless,
     canSee,
     canCreate,
     findVisible,
     require,
 
     // Whether the space is archived; false for one that is gone.
-    isArchived(id: string) {
-      const space = spaces.find(id);
-      return !!space && archived(space);
+    async isArchived(id: string) {
+      const space = await spaces.find(id);
+      return !!space && (await archived(space));
     },
 
     // The id of the org that owns the space, or null for one that is gone.
-    orgOf(id: string) {
-      return spaces.find(id)?.orgId ?? null;
+    async orgOf(id: string) {
+      return (await spaces.find(id))?.orgId ?? null;
     },
 
     // Whether the space is in trash or gone.
-    isGone(id: string) {
-      const space = spaces.find(id);
+    async isGone(id: string) {
+      const space = await spaces.find(id);
       return !space || !!space.trashedAt;
     },
 
     // Whether the agent may run in the space's threads.
-    runsIn(space: Space) {
-      return !space.trashedAt && !archived(space);
+    async runsIn(space: Space) {
+      return !space.trashedAt && !(await archived(space));
     },
 
     // The spaces the principal has a role in and, for a team org's owners, its other shared ones.
-    list(principal: Principal): SpaceView[] {
-      const roles = spaces.rolesIn(principal.orgId, principal.userId);
-      return spaces
-        .listInOrg(principal.orgId)
-        .filter((space) => roles.has(space.id) || orgManages(principal, space))
-        .map((space) => view(principal, space, roles.get(space.id) ?? null));
+    async list(principal: Principal): Promise<SpaceView[]> {
+      const roles = await spaces.rolesIn(principal.orgId, principal.userId);
+      return await Promise.all(
+        (await spaces.listInOrg(principal.orgId))
+          .filter((space) => roles.has(space.id) || orgManages(principal, space))
+          .map(async (space) => view(principal, space, roles.get(space.id) ?? null)),
+      );
     },
 
     // A page of every space of a team org for its owners, shared ones and its members' private
     // ones, with who made each, how many people and groups have a role there, and how many threads
     // it has.
-    catalog(
+    async catalog(
       principal: Principal,
       params: PageParams & { kind?: Space["kind"]; everyone?: EveryoneRole | "none" },
     ) {
-      if (directory.org(principal.orgId)?.kind !== "team" || principal.role !== "owner") {
+      if ((await directory.org(principal.orgId))?.kind !== "team" || principal.role !== "owner") {
         throw new ServiceError(403, "Only the organization's owners can see all its spaces");
       }
-      const roles = spaces.rolesIn(principal.orgId, principal.userId);
-      const page = spaces.catalogPage(principal.orgId, params);
+      const roles = await spaces.rolesIn(principal.orgId, principal.userId);
+      const page = await spaces.catalogPage(principal.orgId, params);
       return {
         ...page,
-        items: page.items.map(({ displayName, ownerName, memberCount, threadCount, ...space }) => ({
-          ...view(principal, space, roles.get(space.id) ?? null),
-          name: displayName,
-          ownerName,
-          memberCount,
-          threadCount,
-        })),
+        items: await Promise.all(
+          page.items.map(
+            async ({ displayName, ownerName, memberCount, threadCount, ...space }) => ({
+              ...(await view(principal, space, roles.get(space.id) ?? null)),
+              name: displayName,
+              ownerName,
+              memberCount,
+              threadCount,
+            }),
+          ),
+        ),
       };
     },
 
     // In a team org a new space is shared; in a personal one, private.
-    create(principal: Principal, name: string): SpaceView {
-      const team = directory.org(principal.orgId)?.kind === "team";
-      if (team && !canCreate(principal)) {
+    async create(principal: Principal, name: string): Promise<SpaceView> {
+      const team = (await directory.org(principal.orgId))?.kind === "team";
+      if (team && !(await canCreate(principal))) {
         throw new ServiceError(403, "Only the organization's owners can make spaces");
       }
-      const space = spaces.create({
+      const space = await spaces.create({
         orgId: principal.orgId,
         kind: team ? "shared" : "personal",
         name,
@@ -455,17 +520,17 @@ export function createSpaces(options: SpacesOptions) {
 
     // Makes the principal's own private space in their team org, when it allows them one and they
     // have none.
-    createMine(principal: Principal): SpaceView {
-      if (directory.org(principal.orgId)?.kind !== "team") {
+    async createMine(principal: Principal): Promise<SpaceView> {
+      if ((await directory.org(principal.orgId))?.kind !== "team") {
         throw new ServiceError(409, "A personal organization has its own space");
       }
-      if (!settings.get(principal.orgId).memberSpaces) {
+      if (!(await settings.get(principal.orgId)).memberSpaces) {
         throw new ServiceError(403, "This organization does not allow personal spaces");
       }
-      if (spaces.memberSpaceOf(principal.orgId, principal.userId)) {
+      if (await spaces.memberSpaceOf(principal.orgId, principal.userId)) {
         throw new ServiceError(409, "You already have a space");
       }
-      const space = spaces.create({
+      const space = await spaces.create({
         orgId: principal.orgId,
         kind: "personal",
         name: FIRST_SPACE_NAME,
@@ -476,48 +541,51 @@ export function createSpaces(options: SpacesOptions) {
     },
 
     // A person's own space keeps their name.
-    rename(principal: Principal, id: string, name: string) {
-      const space = require(principal, id, "manage");
+    async rename(principal: Principal, id: string, name: string) {
+      const space = await require(principal, id, "manage");
       if (namedForPerson(space)) {
         throw new ServiceError(409, "A personal space is named for its person");
       }
-      return view(principal, spaces.rename(id, name));
+      return view(principal, await spaces.rename(id, name));
     },
 
     // A default model must be one the org can use now; null goes back to the org's, as it does for
     // the agent's name.
     async setDefaults(principal: Principal, id: string, changes: SpaceDefaultsChange) {
-      require(principal, id, "manage");
+      await require(principal, id, "manage");
       if (changes.model) await models.requireModel(principal.orgId, changes.model);
       // Seen again after the model check, which waits on providers.
-      require(principal, id, "manage");
-      return view(principal, spaces.setDefaults(id, changes));
+      await require(principal, id, "manage");
+      return view(principal, await spaces.setDefaults(id, changes));
     },
 
     // A member's space goes to trash with its threads, by its person or by one of the org's
     // owners, who never read it, and the agent stops there; any other space is deleted once it has
     // no threads.
     async remove(principal: Principal, id: string) {
-      const found = spaces.find(id);
+      const found = await spaces.find(id);
       const member =
-        !!found && !found.trashedAt && memberSpace(found) && found.orgId === principal.orgId;
-      const space = member && principal.role === "owner" ? found : require(principal, id, "remove");
+        !!found &&
+        !found.trashedAt &&
+        (await memberSpace(found)) &&
+        found.orgId === principal.orgId;
+      const space =
+        member && principal.role === "owner" ? found : await require(principal, id, "remove");
       if (member) {
-        spaces.trash(space.id, principal.userId, now());
+        await spaces.trash(space.id, principal.userId, now());
         await accessChanged(space.orgId);
         return;
       }
       if (space.primary) throw new ServiceError(409, `${space.name} cannot be deleted`);
-      if (threads.anyInSpace(id)) {
+      if (await threads.anyInSpace(id)) {
         throw new ServiceError(409, "Only a space without threads can be deleted");
       }
-      spaces.delete(id);
+      await spaces.delete(id);
     },
 
     // The org's spaces in trash: all of them for its owners, those they put there for anyone else.
-    trash(principal: Principal) {
-      return spaces
-        .trashedIn(principal.orgId)
+    async trash(principal: Principal) {
+      return (await spaces.trashedIn(principal.orgId))
         .filter((space) => principal.role === "owner" || space.trashedBy === principal.userId)
         .map((space) => ({
           ...space,
@@ -530,76 +598,75 @@ export function createSpaces(options: SpacesOptions) {
     },
 
     // Takes the space out of trash as it was, unless its person has made another since.
-    restore(principal: Principal, id: string) {
-      const space = requireTrashed(principal, id);
-      if (space.createdBy && spaces.memberSpaceOf(space.orgId, space.createdBy)) {
+    async restore(principal: Principal, id: string) {
+      const space = await requireTrashed(principal, id);
+      if (space.createdBy && (await spaces.memberSpaceOf(space.orgId, space.createdBy))) {
         throw new ServiceError(409, "Its person has made another space since");
       }
-      spaces.untrash(id);
+      await spaces.untrash(id);
       // Its person may have left and come back while it was in trash.
-      if (space.createdBy && directory.roleIn(space.orgId, space.createdBy)) {
-        spaces.grant(id, { kind: "user", id: space.createdBy }, "owner");
+      if (space.createdBy && (await directory.roleIn(space.orgId, space.createdBy))) {
+        await spaces.grant(id, { kind: "user", id: space.createdBy }, "owner");
       }
-      noteArchived(space.orgId);
+      await noteArchived(space.orgId);
     },
 
     // Deletes the space in trash with its threads for good.
-    purge(principal: Principal, id: string) {
-      spaces.delete(requireTrashed(principal, id).id);
+    async purge(principal: Principal, id: string) {
+      await spaces.delete((await requireTrashed(principal, id)).id);
     },
 
     // Deletes for good the spaces in trash for longer than its days, and the members' spaces
     // archived for longer than theirs, first noting since when those not yet noted are archived.
     // Answers how many went.
-    sweep(at = now()) {
-      noteArchived(undefined, at);
+    async sweep(at = now()) {
+      await noteArchived(undefined, at);
       const before = (days: number) => at.getTime() - days * DAY_MS;
       const gone = [
-        ...spaces.trashedBefore(new Date(before(TRASH_DAYS))),
-        ...spaces
-          .memberSpaces()
-          .filter(
-            (space) =>
-              !!space.archivedAt &&
-              space.archivedAt.getTime() <= before(ARCHIVE_DAYS) &&
-              archived(space),
-          ),
+        ...(await spaces.trashedBefore(new Date(before(TRASH_DAYS)))),
+        ...(await filterAsync(
+          await spaces.memberSpaces(),
+          async (space) =>
+            !!space.archivedAt &&
+            space.archivedAt.getTime() <= before(ARCHIVE_DAYS) &&
+            (await archived(space)),
+        )),
       ];
-      for (const space of gone) spaces.delete(space.id);
+      for (const space of gone) await spaces.delete(space.id);
       return gone.length;
     },
 
     // Who is in the space and how, a page at a time: the roles given to people and groups, and to
     // everyone in the org; each person's role as it works out, and what gives it when that is not
     // their own. The asker may not change their own role, nor the last owner's.
-    members(
+    async members(
       principal: Principal,
       id: string,
       params: PageParams & { role?: SpaceRole },
-    ): SpaceMembers {
-      const found = spaces.find(id);
-      const space = require(principal, id, found && can(principal, found, "manage")
+    ): Promise<SpaceMembers> {
+      const found = await spaces.find(id);
+      const space = await require(principal, id, found && (await can(principal, found, "manage"))
         ? "manage"
         : "read");
-      const orgName = directory.org(space.orgId)?.name ?? "";
-      const all = spaces.grants(id);
+      const orgName = (await directory.org(space.orgId))?.name ?? "";
+      const all = await spaces.grants(id);
       const groupGrants = all.filter((grant) => grant.subject.kind === "group");
       const owners = all.filter(
         (grant) => grant.subject.kind === "user" && grant.role === "owner",
       ).length;
-      const page = spaces.grantPage(id, params);
+      const page = await spaces.grantPage(id, params);
       return {
         kind: space.kind,
         everyoneRole: space.everyoneRole,
         orgName,
         grants: {
           ...page,
-          items: page.items.map((grant) => {
+          items: await mapAsync(page.items, async (grant) => {
             const { subject, role, name, email } = grant;
             let effective = role;
             let via: { name: string; groupId: string | null } | null = null;
             const groups =
-              subject.kind === "user" ? directory.groupIdsOf(space.orgId, subject.id) : [];
+              subject.kind === "user" ? await directory.groupIdsOf(space.orgId, subject.id) : [];
             const covering = groupGrants.filter((other) => groups.includes(other.subject.id));
             for (const other of covering) {
               if (RANK[other.role] > RANK[effective]) {
@@ -625,7 +692,8 @@ export function createSpaces(options: SpacesOptions) {
               via: via?.name ?? null,
               viaGroupId: via?.groupId ?? null,
               coveredBy: covering.map((other) => ({ name: other.name, role: other.role })),
-              memberCount: subject.kind === "group" ? directory.memberCount(subject.id) : null,
+              memberCount:
+                subject.kind === "group" ? await directory.memberCount(subject.id) : null,
               locked:
                 subject.kind !== "user"
                   ? null
@@ -643,22 +711,22 @@ export function createSpaces(options: SpacesOptions) {
     // Gives a person or group of the org a role in the shared space, changes it, or with null
     // takes it away.
     async setMember(principal: Principal, id: string, subject: Subject, role: SpaceRole | null) {
-      const space = requireShared(principal, id);
-      if (subject.kind === "user" && !directory.roleIn(space.orgId, subject.id)) {
+      const space = await requireShared(principal, id);
+      if (subject.kind === "user" && !(await directory.roleIn(space.orgId, subject.id))) {
         throw new ServiceError(404, "Member not found");
       }
-      if (subject.kind === "group" && !directory.linkedRole(space.orgId, subject.id)) {
+      if (subject.kind === "group" && !(await directory.linkedRole(space.orgId, subject.id))) {
         throw new ServiceError(404, "Group not found");
       }
-      if (role) spaces.grant(id, subject, role);
-      else spaces.revoke(id, subject);
+      if (role) await spaces.grant(id, subject, role);
+      else await spaces.revoke(id, subject);
       await accessChanged(space.orgId);
     },
 
     // The role everyone in the org has in the shared space, now and later; null for none.
     async setEveryone(principal: Principal, id: string, role: EveryoneRole | null) {
-      const space = requireShared(principal, id);
-      const changed = spaces.setEveryoneRole(id, role);
+      const space = await requireShared(principal, id);
+      const changed = await spaces.setEveryoneRole(id, role);
       await accessChanged(space.orgId);
       return view(principal, changed);
     },

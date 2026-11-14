@@ -32,7 +32,7 @@ const artifactColumns = {
 function activeGroupsOf(userId: string) {
   return sql`(select gm.group_id from scim_group_member gm
                 join scim_user su on su.id = gm.scim_user_id
-               where su.user_id = ${userId} and su.active = 1)`;
+               where su.user_id = ${userId} and su.active = true)`;
 }
 
 const versionColumns = {
@@ -49,158 +49,162 @@ const settings = scopedOn(artifactSetting);
 
 export function createArtifactStore(db: Db): ArtifactStore {
   // Whether the scope lets artifacts be made public, where it set so.
-  function publicAllowed(scope: SettingScope) {
-    return db
-      .select({ allowed: artifactSetting.publicAllowed })
-      .from(artifactSetting)
-      .where(settings.at(scope))
-      .get()?.allowed;
+  async function publicAllowed(scope: SettingScope) {
+    return (
+      await db
+        .select({ allowed: artifactSetting.publicAllowed })
+        .from(artifactSetting)
+        .where(settings.at(scope))
+        .limit(1)
+    )[0]?.allowed;
   }
 
-  function setPublicAllowed(scope: SettingScope, allowed: boolean) {
-    db.insert(artifactSetting)
+  async function setPublicAllowed(scope: SettingScope, allowed: boolean) {
+    await db
+      .insert(artifactSetting)
       .values({ ...settings.of(scope), publicAllowed: allowed })
-      .onConflictDoUpdate({ ...settings.conflict(scope), set: { publicAllowed: allowed } })
-      .run();
+      .onConflictDoUpdate({ ...settings.conflict(scope), set: { publicAllowed: allowed } });
   }
 
-  function putAssets(id: string, assets: { name: string; contentType: string; data: Buffer }[]) {
+  async function putAssets(
+    id: string,
+    assets: { name: string; contentType: string; data: Buffer }[],
+  ) {
     for (const asset of assets) {
-      db.insert(artifactAsset)
+      await db
+        .insert(artifactAsset)
         .values({ artifactId: id, ...asset })
         .onConflictDoUpdate({
           target: [artifactAsset.artifactId, artifactAsset.name],
           set: { contentType: asset.contentType, data: asset.data, createdAt: new Date() },
-        })
-        .run();
+        });
     }
   }
 
-  function removeAssets(id: string, names: readonly string[]) {
+  async function removeAssets(id: string, names: readonly string[]) {
     if (names.length === 0) return;
-    db.delete(artifactAsset)
-      .where(and(eq(artifactAsset.artifactId, id), inArray(artifactAsset.name, [...names])))
-      .run();
+    await db
+      .delete(artifactAsset)
+      .where(and(eq(artifactAsset.artifactId, id), inArray(artifactAsset.name, [...names])));
   }
 
   return {
-    create({ id, spaceId, threadId, version, assets }) {
-      db.transaction(() => {
-        db.insert(artifact).values({ id, spaceId, createdInThreadId: threadId, version: 1 }).run();
-        db.insert(artifactVersion)
-          .values({ artifactId: id, version: 1, threadId, ...version })
-          .run();
-        db.insert(artifactThreadUse)
+    async create({ id, spaceId, threadId, version, assets }) {
+      await db.transaction(async () => {
+        await db.insert(artifact).values({ id, spaceId, createdInThreadId: threadId, version: 1 });
+        await db
+          .insert(artifactVersion)
+          .values({ artifactId: id, version: 1, threadId, ...version });
+        await db
+          .insert(artifactThreadUse)
           .values({ artifactId: id, threadId, guestsSharedAt: new Date() })
-          .onConflictDoNothing()
-          .run();
-        putAssets(id, assets);
+          .onConflictDoNothing();
+        await putAssets(id, assets);
       });
     },
 
-    find(id) {
-      return db.select(artifactColumns).from(artifact).where(eq(artifact.id, id)).get() ?? null;
+    async find(id) {
+      return (
+        (await db.select(artifactColumns).from(artifact).where(eq(artifact.id, id)).limit(1))[0] ??
+        null
+      );
     },
 
-    inThread(threadId) {
-      return db
+    async inThread(threadId) {
+      return await db
         .select(artifactColumns)
         .from(artifact)
         .innerJoin(artifactThreadUse, eq(artifactThreadUse.artifactId, artifact.id))
         .where(eq(artifactThreadUse.threadId, threadId))
-        .orderBy(asc(artifact.createdAt), asc(artifact.id))
-        .all();
+        .orderBy(asc(artifact.createdAt), asc(artifact.id));
     },
 
-    inSpace(spaceId) {
-      return db
+    async inSpace(spaceId) {
+      return await db
         .select(artifactColumns)
         .from(artifact)
         .where(eq(artifact.spaceId, spaceId))
-        .orderBy(desc(artifact.updatedAt), desc(artifact.id))
-        .all();
+        .orderBy(desc(artifact.updatedAt), desc(artifact.id));
     },
 
-    inOrg(orgId) {
-      return db
+    async inOrg(orgId) {
+      return await db
         .select(artifactColumns)
         .from(artifact)
         .innerJoin(space, eq(space.id, artifact.spaceId))
         .where(eq(space.organizationId, orgId))
-        .orderBy(desc(artifact.updatedAt), desc(artifact.id))
-        .all();
+        .orderBy(desc(artifact.updatedAt), desc(artifact.id));
     },
 
-    use(id, threadId) {
-      db.insert(artifactThreadUse).values({ artifactId: id, threadId }).onConflictDoNothing().run();
+    async use(id, threadId) {
+      await db.insert(artifactThreadUse).values({ artifactId: id, threadId }).onConflictDoNothing();
     },
 
-    usedIn(id) {
-      return db
-        .select({ threadId: artifactThreadUse.threadId })
-        .from(artifactThreadUse)
-        .where(eq(artifactThreadUse.artifactId, id))
-        .orderBy(asc(artifactThreadUse.createdAt), asc(artifactThreadUse.threadId))
-        .all()
-        .map((row) => row.threadId);
+    async usedIn(id) {
+      return (
+        await db
+          .select({ threadId: artifactThreadUse.threadId })
+          .from(artifactThreadUse)
+          .where(eq(artifactThreadUse.artifactId, id))
+          .orderBy(asc(artifactThreadUse.createdAt), asc(artifactThreadUse.threadId))
+      ).map((row) => row.threadId);
     },
 
-    guestShares(id) {
-      return db
-        .select({ threadId: artifactThreadUse.threadId })
-        .from(artifactThreadUse)
-        .where(
-          and(eq(artifactThreadUse.artifactId, id), isNotNull(artifactThreadUse.guestsSharedAt)),
-        )
-        .all()
-        .map((row) => row.threadId);
+    async guestShares(id) {
+      return (
+        await db
+          .select({ threadId: artifactThreadUse.threadId })
+          .from(artifactThreadUse)
+          .where(
+            and(eq(artifactThreadUse.artifactId, id), isNotNull(artifactThreadUse.guestsSharedAt)),
+          )
+      ).map((row) => row.threadId);
     },
 
-    setGuestShare(id, threadId, by) {
-      db.update(artifactThreadUse)
+    async setGuestShare(id, threadId, by) {
+      await db
+        .update(artifactThreadUse)
         .set(
           by === null
             ? { guestsSharedAt: null, guestsSharedBy: null }
             : { guestsSharedAt: new Date(), guestsSharedBy: by },
         )
-        .where(and(eq(artifactThreadUse.artifactId, id), eq(artifactThreadUse.threadId, threadId)))
-        .run();
+        .where(and(eq(artifactThreadUse.artifactId, id), eq(artifactThreadUse.threadId, threadId)));
     },
 
-    people(id) {
-      return db
+    async people(id) {
+      return await db
         .select({ userId: artifactPersonShare.userId, role: artifactPersonShare.role })
         .from(artifactPersonShare)
         .where(eq(artifactPersonShare.artifactId, id))
-        .orderBy(asc(artifactPersonShare.createdAt), asc(artifactPersonShare.userId))
-        .all();
+        .orderBy(asc(artifactPersonShare.createdAt), asc(artifactPersonShare.userId));
     },
 
-    personRole(id, userId) {
+    async personRole(id, userId) {
       return (
-        db
-          .select({ role: artifactPersonShare.role })
-          .from(artifactPersonShare)
-          .where(
-            and(eq(artifactPersonShare.artifactId, id), eq(artifactPersonShare.userId, userId)),
-          )
-          .get()?.role ?? null
+        (
+          await db
+            .select({ role: artifactPersonShare.role })
+            .from(artifactPersonShare)
+            .where(
+              and(eq(artifactPersonShare.artifactId, id), eq(artifactPersonShare.userId, userId)),
+            )
+            .limit(1)
+        )[0]?.role ?? null
       );
     },
 
-    sharedWith(userId) {
-      const personal = db
+    async sharedWith(userId) {
+      const personal = await db
         .select(artifactColumns)
         .from(artifact)
         .innerJoin(artifactPersonShare, eq(artifactPersonShare.artifactId, artifact.id))
-        .where(eq(artifactPersonShare.userId, userId))
-        .all();
-      const grouped = db
+        .where(eq(artifactPersonShare.userId, userId));
+      const grouped = await db
         .select(artifactColumns)
         .from(artifact)
         .innerJoin(artifactGroupShare, eq(artifactGroupShare.artifactId, artifact.id))
-        .where(sql`${artifactGroupShare.groupId} in ${activeGroupsOf(userId)}`)
-        .all();
+        .where(sql`${artifactGroupShare.groupId} in ${activeGroupsOf(userId)}`);
       const seen = new Set<string>();
       return [...personal, ...grouped]
         .filter((record) => !seen.has(record.id) && !!seen.add(record.id))
@@ -209,107 +213,111 @@ export function createArtifactStore(db: Db): ArtifactStore {
         );
     },
 
-    groups(id) {
-      return db
+    async groups(id) {
+      return await db
         .select({ groupId: artifactGroupShare.groupId, role: artifactGroupShare.role })
         .from(artifactGroupShare)
         .where(eq(artifactGroupShare.artifactId, id))
-        .orderBy(asc(artifactGroupShare.createdAt), asc(artifactGroupShare.groupId))
-        .all();
+        .orderBy(asc(artifactGroupShare.createdAt), asc(artifactGroupShare.groupId));
     },
 
-    groupRole(id, userId) {
-      const row = db.get<{ edit: number | null }>(sql`
-        select max(gs.role = 'edit') as edit
+    async groupRole(id, userId) {
+      const row = (
+        await db.execute<{ edit: boolean | null }>(sql`
+        select bool_or(gs.role = 'edit') as edit
           from artifact_group_share gs
           join artifact a on a.id = gs.artifact_id
           join space s on s.id = a.space_id
           join org_group og on og.organization_id = s.organization_id and og.group_id = gs.group_id
-         where gs.artifact_id = ${id} and gs.group_id in ${activeGroupsOf(userId)}`);
-      return row?.edit === null || row === undefined ? null : row.edit === 1 ? "edit" : "view";
+         where gs.artifact_id = ${id} and gs.group_id in ${activeGroupsOf(userId)}`)
+      ).rows[0];
+      return row?.edit === null || row === undefined ? null : row.edit ? "edit" : "view";
     },
 
-    setGroupShare(id, groupId, by, role) {
+    async setGroupShare(id, groupId, by, role) {
       if (by === null) {
-        db.delete(artifactGroupShare)
+        await db
+          .delete(artifactGroupShare)
           .where(
             and(eq(artifactGroupShare.artifactId, id), eq(artifactGroupShare.groupId, groupId)),
-          )
-          .run();
+          );
         return;
       }
-      db.insert(artifactGroupShare)
+      await db
+        .insert(artifactGroupShare)
         .values({ artifactId: id, groupId, sharedBy: by, role })
         .onConflictDoUpdate({
           target: [artifactGroupShare.artifactId, artifactGroupShare.groupId],
           set: { role },
-        })
-        .run();
+        });
     },
 
-    setPersonShare(id, userId, by, role) {
+    async setPersonShare(id, userId, by, role) {
       if (by === null) {
-        db.delete(artifactPersonShare)
+        await db
+          .delete(artifactPersonShare)
           .where(
             and(eq(artifactPersonShare.artifactId, id), eq(artifactPersonShare.userId, userId)),
-          )
-          .run();
+          );
         return;
       }
-      db.insert(artifactPersonShare)
+      await db
+        .insert(artifactPersonShare)
         .values({ artifactId: id, userId, sharedBy: by, role })
         .onConflictDoUpdate({
           target: [artifactPersonShare.artifactId, artifactPersonShare.userId],
           set: { role },
-        })
-        .run();
+        });
     },
 
-    version(id, number): (VersionRecord & { html: string }) | null {
+    async version(id, number): Promise<(VersionRecord & { html: string }) | null> {
       return (
-        db
-          .select({ ...versionColumns, html: artifactVersion.html })
-          .from(artifactVersion)
-          .where(and(eq(artifactVersion.artifactId, id), eq(artifactVersion.version, number)))
-          .get() ?? null
+        (
+          await db
+            .select({ ...versionColumns, html: artifactVersion.html })
+            .from(artifactVersion)
+            .where(and(eq(artifactVersion.artifactId, id), eq(artifactVersion.version, number)))
+            .limit(1)
+        )[0] ?? null
       );
     },
 
-    versions(id) {
-      return db
+    async versions(id) {
+      return await db
         .select(versionColumns)
         .from(artifactVersion)
         .where(eq(artifactVersion.artifactId, id))
-        .orderBy(desc(artifactVersion.version))
-        .all();
+        .orderBy(desc(artifactVersion.version));
     },
 
-    addVersion(id, basedOn, { version, threadId, assets, removed }) {
-      return db.transaction(() => {
-        const current = db
-          .select({ version: artifact.version })
-          .from(artifact)
-          .where(eq(artifact.id, id))
-          .get();
+    async addVersion(id, basedOn, { version, threadId, assets, removed }) {
+      return db.transaction(async () => {
+        const current = (
+          await db
+            .select({ version: artifact.version })
+            .from(artifact)
+            .where(eq(artifact.id, id))
+            .limit(1)
+        )[0];
         if (!current) return null;
         if (current.version !== basedOn) return { stale: current.version };
         const number = current.version + 1;
-        db.insert(artifactVersion)
-          .values({ artifactId: id, version: number, threadId, ...version })
-          .run();
-        db.insert(artifactThreadUse)
+        await db
+          .insert(artifactVersion)
+          .values({ artifactId: id, version: number, threadId, ...version });
+        await db
+          .insert(artifactThreadUse)
           .values({ artifactId: id, threadId })
-          .onConflictDoNothing()
-          .run();
-        db.update(artifact).set({ version: number }).where(eq(artifact.id, id)).run();
-        removeAssets(id, removed);
-        putAssets(id, assets);
+          .onConflictDoNothing();
+        await db.update(artifact).set({ version: number }).where(eq(artifact.id, id));
+        await removeAssets(id, removed);
+        await putAssets(id, assets);
         return { version: number };
       });
     },
 
-    assets(id) {
-      return db
+    async assets(id) {
+      return await db
         .select({
           name: artifactAsset.name,
           contentType: artifactAsset.contentType,
@@ -317,36 +325,37 @@ export function createArtifactStore(db: Db): ArtifactStore {
         })
         .from(artifactAsset)
         .where(eq(artifactAsset.artifactId, id))
-        .orderBy(asc(artifactAsset.name))
-        .all();
+        .orderBy(asc(artifactAsset.name));
     },
 
-    asset(id, name) {
+    async asset(id, name) {
       return (
-        db
-          .select({ contentType: artifactAsset.contentType, data: artifactAsset.data })
-          .from(artifactAsset)
-          .where(and(eq(artifactAsset.artifactId, id), eq(artifactAsset.name, name)))
-          .get() ?? null
+        (
+          await db
+            .select({ contentType: artifactAsset.contentType, data: artifactAsset.data })
+            .from(artifactAsset)
+            .where(and(eq(artifactAsset.artifactId, id), eq(artifactAsset.name, name)))
+            .limit(1)
+        )[0] ?? null
       );
     },
 
-    setSharing(id, sharing) {
-      db.update(artifact).set({ sharing }).where(eq(artifact.id, id)).run();
+    async setSharing(id, sharing) {
+      await db.update(artifact).set({ sharing }).where(eq(artifact.id, id));
     },
 
-    setOrgRole(id, orgRole) {
-      db.update(artifact).set({ orgRole }).where(eq(artifact.id, id)).run();
+    async setOrgRole(id, orgRole) {
+      await db.update(artifact).set({ orgRole }).where(eq(artifact.id, id));
     },
 
-    delete(id) {
-      db.delete(artifact).where(eq(artifact.id, id)).run();
+    async delete(id) {
+      await db.delete(artifact).where(eq(artifact.id, id));
     },
 
     // An org without a setting does not allow it; a space without one does.
-    orgPublicAllowed: (orgId) => publicAllowed({ orgId }) ?? false,
-    setOrgPublicAllowed: (orgId, allowed) => setPublicAllowed({ orgId }, allowed),
-    spacePublicAllowed: (spaceId) => publicAllowed({ spaceId }) ?? true,
-    setSpacePublicAllowed: (spaceId, allowed) => setPublicAllowed({ spaceId }, allowed),
+    orgPublicAllowed: async (orgId) => (await publicAllowed({ orgId })) ?? false,
+    setOrgPublicAllowed: async (orgId, allowed) => setPublicAllowed({ orgId }, allowed),
+    spacePublicAllowed: async (spaceId) => (await publicAllowed({ spaceId })) ?? true,
+    setSpacePublicAllowed: async (spaceId, allowed) => setPublicAllowed({ spaceId }, allowed),
   };
 }

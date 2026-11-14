@@ -1,5 +1,6 @@
-import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer, index, blob, primaryKey } from "drizzle-orm/sqlite-core";
+import { pgTable, text, integer, index, primaryKey, boolean, json } from "drizzle-orm/pg-core";
+
+import { at, bytes, NOW } from "@/server/db/columns.ts";
 
 import { scopeColumns, scopeIndexes } from "@/server/spaces/scope.ts";
 import { space } from "@/server/spaces/schema.ts";
@@ -7,7 +8,7 @@ import { user, organization } from "@/server/orgs/schema.ts";
 
 // A git repository an org or a space reads skills from, at the commit last read, with the token a
 // private one is read with sealed by the cipher.
-export const skillSource = sqliteTable(
+export const skillSource = pgTable(
   "skill_source",
   {
     id: text("id").primaryKey(),
@@ -24,16 +25,14 @@ export const skillSource = sqliteTable(
     resolvedRef: text("resolved_ref"),
     subpath: text("subpath"),
     commit: text("commit").notNull(),
-    fetchedAt: integer("fetched_at", { mode: "timestamp_ms" }).notNull(),
-    enabled: integer("enabled", { mode: "boolean" }).default(true).notNull(),
+    fetchedAt: at("fetched_at").notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
     tokenKeyVersion: integer("token_key_version"),
-    token: blob("token", { mode: "buffer" }),
+    token: bytes("token"),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-      .notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    createdAt: at("created_at").default(NOW).notNull(),
+    updatedAt: at("updated_at")
+      .default(NOW)
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
   },
@@ -44,7 +43,7 @@ export const skillSource = sqliteTable(
 );
 
 // A skill: from a source's folder at its commit, or written in settings; its files as JSON.
-export const skill = sqliteTable(
+export const skill = pgTable(
   "skill",
   {
     id: text("id").primaryKey(),
@@ -59,14 +58,12 @@ export const skill = sqliteTable(
     name: text("name").notNull(),
     description: text("description").notNull(),
     body: text("body").notNull(),
-    files: text("files", { mode: "json" }).$type<{ path: string; text: string }[]>().notNull(),
-    enabled: integer("enabled", { mode: "boolean" }).default(true).notNull(),
+    files: json("files").$type<{ path: string; text: string }[]>().notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-      .notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    createdAt: at("created_at").default(NOW).notNull(),
+    updatedAt: at("updated_at")
+      .default(NOW)
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
   },
@@ -78,7 +75,7 @@ export const skill = sqliteTable(
 );
 
 // Whether a space uses one of the org's skill sources, once it set so.
-export const spaceSkillSourceSetting = sqliteTable(
+export const spaceSkillSourceSetting = pgTable(
   "space_skill_source_setting",
   {
     spaceId: text("space_id")
@@ -87,14 +84,14 @@ export const spaceSkillSourceSetting = sqliteTable(
     sourceId: text("source_id")
       .notNull()
       .references(() => skillSource.id, { onDelete: "cascade" }),
-    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+    enabled: boolean("enabled").notNull(),
   },
   (table) => [primaryKey({ columns: [table.spaceId, table.sourceId] })],
 );
 
 // Whether a space uses one of the org's skills, once it set so; one the org turned off is off in
 // every space whatever the space set.
-export const spaceSkillSetting = sqliteTable(
+export const spaceSkillSetting = pgTable(
   "space_skill_setting",
   {
     spaceId: text("space_id")
@@ -103,7 +100,7 @@ export const spaceSkillSetting = sqliteTable(
     skillId: text("skill_id")
       .notNull()
       .references(() => skill.id, { onDelete: "cascade" }),
-    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+    enabled: boolean("enabled").notNull(),
   },
   (table) => [primaryKey({ columns: [table.spaceId, table.skillId] })],
 );
@@ -111,12 +108,12 @@ export const spaceSkillSetting = sqliteTable(
 // Whether an org uses a built-in skill, or the whole built-in source, once it set so; or a space,
 // which can only turn off what its org has on. The key is the id the built-in source or skill is
 // listed under; the skills themselves are never stored.
-export const builtinSkillSetting = sqliteTable(
+export const builtinSkillSetting = pgTable(
   "builtin_skill_setting",
   {
     ...scopeColumns(),
     key: text("key").notNull(),
-    enabled: integer("enabled", { mode: "boolean" }).notNull(),
+    enabled: boolean("enabled").notNull(),
   },
   (table) => scopeIndexes("builtin_skill_setting", table, table.key),
 );

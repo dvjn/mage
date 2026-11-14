@@ -81,7 +81,7 @@ export interface ModelRequest {
   firstEffort?: Effort;
   // Called at each step boundary after the first; the messages it returns join the conversation
   // before the next step.
-  beforeStep?: () => ModelMessage[];
+  beforeStep?: () => Promise<ModelMessage[]>;
   // The tools the model may call. A step that calls any ends the request; whoever asked runs them
   // and asks again with what they gave back.
   tools?: ModelTool[];

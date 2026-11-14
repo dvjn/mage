@@ -18,12 +18,12 @@ export async function agentThread(
   const ada = await workspace.signUp("Ada Lovelace", "ada@example.com");
   const space = await workspace.yourSpace(ada.cookie);
   const thread = await workspace.createThread(ada.cookie, space.id);
-  const grace = workspace.join(
+  const grace = await workspace.join(
     await workspace.signUp("Grace Hopper", "grace@example.com"),
     space.id,
     "messager",
   );
-  const alan = workspace.join(
+  const alan = await workspace.join(
     await workspace.signUp("Alan Turing", "alan@example.com"),
     space.id,
     "viewer",
@@ -36,15 +36,15 @@ export async function agentThread(
     expect(res.status).toBe(202);
     return (await res.json()) as { id: string };
   }
-  function events() {
-    return workspace.threadStore.eventsAfter(thread.id, 0).map(eventSummary);
+  async function events() {
+    return (await workspace.threadStore.eventsAfter(thread.id, 0)).map(eventSummary);
   }
-  function types() {
-    return events().map((event) => event.type);
+  async function types() {
+    return (await events()).map((event) => event.type);
   }
   // The transcript as people see it: who wrote each row and its text.
-  function transcript() {
-    return transcriptOf(events()).rows.map((row) =>
+  async function transcript() {
+    return transcriptOf(await events()).rows.map((row) =>
       row.kind === "human"
         ? `${personLabel(row.author)}: ${row.text}`
         : row.kind === "agent"
@@ -56,17 +56,22 @@ export async function agentThread(
               : row.kind,
     );
   }
-  function runs() {
-    return workspace.db.all<{ id: string; status: string; reason: string | null; attempt: number }>(
-      "select id, status, reason, attempt from run order by id",
-    );
+  async function runs() {
+    return (
+      await workspace.db.execute<{
+        id: string;
+        status: string;
+        reason: string | null;
+        attempt: number;
+      }>("select id, status, reason, attempt from run order by id")
+    ).rows;
   }
-  function start(worker = workspace.worker) {
-    worker.start();
+  async function start(worker = workspace.worker) {
+    await worker.start();
     onTestFinished(() => worker.stop());
   }
-  function pending() {
-    return transcriptOf(events()).pending.map(
+  async function pending() {
+    return transcriptOf(await events()).pending.map(
       (message) => `${personLabel(message.author)} (${message.mode}): ${message.text}`,
     );
   }

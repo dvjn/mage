@@ -1,9 +1,10 @@
 // Starts tracing: the OpenTelemetry SDK, configured by the standard OTEL_* variables, exporting
-// over OTLP; spans of outgoing fetches, recording only the provider headers allowed; and the AI
-// SDK's spans of each model call, with its token use, cache reads and writes, and what the
-// provider reported.
+// over OTLP; spans of outgoing fetches, recording only the provider headers allowed; spans of
+// database queries, with their parameterised text and never their values; and the AI SDK's spans
+// of each model call, with its token use, cache reads and writes, and what the provider reported.
 
 import { OpenTelemetry } from "@ai-sdk/otel";
+import { PgInstrumentation } from "@opentelemetry/instrumentation-pg";
 import { UndiciInstrumentation } from "@opentelemetry/instrumentation-undici";
 import { NodeSDK } from "@opentelemetry/sdk-node";
 import { registerTelemetry } from "ai";
@@ -38,6 +39,8 @@ export function startTracing(tracing: Tracing) {
           span.setAttributes(recordedHeaders("response", responseHeaderPairs(response.headers)));
         },
       }),
+      // Only queries made for traced work: requests and runs, not periodic passes or listening.
+      new PgInstrumentation({ requireParentSpan: true, enhancedDatabaseReporting: false }),
     ],
   });
   sdk.start();

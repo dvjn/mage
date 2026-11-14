@@ -1,11 +1,12 @@
-import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer } from "drizzle-orm/sqlite-core";
+import { pgTable, text } from "drizzle-orm/pg-core";
+
+import { at, NOW } from "@/server/db/columns.ts";
 
 import { space } from "@/server/spaces/schema.ts";
 import { user, organization } from "@/server/orgs/schema.ts";
 
 // The instructions an org or one of its spaces gives the agent, by the org's or the space's id.
-export const instruction = sqliteTable("instruction", {
+export const instruction = pgTable("instruction", {
   scopeId: text("scope_id").primaryKey(),
   organizationId: text("organization_id")
     .notNull()
@@ -14,8 +15,8 @@ export const instruction = sqliteTable("instruction", {
   spaceId: text("space_id").references(() => space.id, { onDelete: "cascade" }),
   text: text("text").notNull(),
   updatedBy: text("updated_by").references(() => user.id, { onDelete: "set null" }),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+  updatedAt: at("updated_at")
+    .default(NOW)
     .$onUpdate(() => /* @__PURE__ */ new Date())
     .notNull(),
 });

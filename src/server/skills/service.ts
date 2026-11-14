@@ -102,38 +102,38 @@ export type SkillChanges = Partial<
 >;
 
 export interface SkillStore {
-  createSource(source: NewSkillSource): SkillSource;
-  findSource(id: string): SkillSource | null;
+  createSource(source: NewSkillSource): Promise<SkillSource>;
+  findSource(id: string): Promise<SkillSource | null>;
   // The sources of the scope: the org's own when no space is given.
-  sources(scope: Scope): SkillSource[];
+  sources(scope: Scope): Promise<SkillSource[]>;
   updateSource(
     id: string,
     changes: Partial<Pick<SkillSource, "enabled" | "commit" | "resolvedRef" | "fetchedAt">>,
-  ): void;
+  ): Promise<void>;
   // Deletes the source with its skills.
-  deleteSource(id: string): void;
+  deleteSource(id: string): Promise<void>;
   // The token a private source is read with, sealed at rest; null to forget it.
-  token(id: string): string | null;
-  setToken(id: string, token: string | null): void;
+  token(id: string): Promise<string | null>;
+  setToken(id: string, token: string | null): Promise<void>;
 
-  create(skill: NewSkill): Skill;
-  find(id: string): Skill | null;
+  create(skill: NewSkill): Promise<Skill>;
+  find(id: string): Promise<Skill | null>;
   // Every skill of the scope, from its sources and written there.
-  inScope(scope: Scope): Skill[];
-  update(id: string, changes: SkillChanges): void;
-  delete(id: string): void;
+  inScope(scope: Scope): Promise<Skill[]>;
+  update(id: string, changes: SkillChanges): Promise<void>;
+  delete(id: string): Promise<void>;
 
   // What a space set for the org's sources and skills, for those it set.
-  spaceSourceSettings(spaceId: string): Map<string, boolean>;
-  setSpaceSource(spaceId: string, sourceId: string, enabled: boolean): void;
-  spaceSkillSettings(spaceId: string): Map<string, boolean>;
-  setSpaceSkill(spaceId: string, skillId: string, enabled: boolean): void;
+  spaceSourceSettings(spaceId: string): Promise<Map<string, boolean>>;
+  setSpaceSource(spaceId: string, sourceId: string, enabled: boolean): Promise<void>;
+  spaceSkillSettings(spaceId: string): Promise<Map<string, boolean>>;
+  setSpaceSkill(spaceId: string, skillId: string, enabled: boolean): Promise<void>;
 
   // The switches on the built-in skills, by the ids they are listed under: the org's and a space's.
-  orgBuiltinSwitches(orgId: string): Map<string, boolean>;
-  setOrgBuiltin(orgId: string, key: string, enabled: boolean): void;
-  spaceBuiltinSwitches(spaceId: string): Map<string, boolean>;
-  setSpaceBuiltin(spaceId: string, key: string, enabled: boolean): void;
+  orgBuiltinSwitches(orgId: string): Promise<Map<string, boolean>>;
+  setOrgBuiltin(orgId: string, key: string, enabled: boolean): Promise<void>;
+  spaceBuiltinSwitches(spaceId: string): Promise<Map<string, boolean>>;
+  setSpaceBuiltin(spaceId: string, key: string, enabled: boolean): Promise<void>;
 }
 
 export interface SkillsOptions {
@@ -239,14 +239,14 @@ export function createSkills(options: SkillsOptions) {
   const { skills, git, archives, spaces, settings, logger } = options;
   const now = options.now ?? (() => new Date());
 
-  function spacesMayAdd(orgId: string) {
-    return settings.get(orgId).spaceSkills;
+  async function spacesMayAdd(orgId: string) {
+    return (await settings.get(orgId)).spaceSkills;
   }
 
   // The scope the principal manages: the org's for its owners, or a space's for its managers.
-  function managed(principal: Principal, spaceId: string | null): Scope {
+  async function managed(principal: Principal, spaceId: string | null): Promise<Scope> {
     if (spaceId) {
-      const space = spaces.require(principal, spaceId, "manage");
+      const space = await spaces.require(principal, spaceId, "manage");
       return { orgId: space.orgId, spaceId: space.id };
     }
     if (principal.role !== "owner") throw new ServiceError(403, ORG_ONLY);
@@ -254,9 +254,10 @@ export function createSkills(options: SkillsOptions) {
   }
 
   // A scope the principal may add skills to: as above, for a space only while the org lets it.
-  function addable(principal: Principal, spaceId: string | null) {
-    const scope = managed(principal, spaceId);
-    if (scope.spaceId && !spacesMayAdd(scope.orgId)) throw new ServiceError(403, SPACES_OFF);
+  async function addable(principal: Principal, spaceId: string | null) {
+    const scope = await managed(principal, spaceId);
+    if (scope.spaceId && !(await spacesMayAdd(scope.orgId)))
+      throw new ServiceError(403, SPACES_OFF);
     return scope;
   }
 
@@ -264,32 +265,34 @@ export function createSkills(options: SkillsOptions) {
     return { orgId: item.orgId, spaceId: item.spaceId };
   }
 
-  function manageableSource(principal: Principal, id: string) {
+  async function manageableSource(principal: Principal, id: string) {
     if (isBuiltinId(id)) throw new ServiceError(400, BUILT_IN);
-    const source = skills.findSource(id);
+    const source = await skills.findSource(id);
     if (!source || source.orgId !== principal.orgId) throw new ServiceError(404, SOURCE_NOT_FOUND);
-    managed(principal, source.spaceId);
+    await managed(principal, source.spaceId);
     return source;
   }
 
-  function manageableSkill(principal: Principal, id: string) {
+  async function manageableSkill(principal: Principal, id: string) {
     if (isBuiltinId(id)) throw new ServiceError(400, BUILT_IN);
-    const skill = skills.find(id);
+    const skill = await skills.find(id);
     if (!skill || skill.orgId !== principal.orgId) throw new ServiceError(404, NOT_FOUND);
-    managed(principal, skill.spaceId);
+    await managed(principal, skill.spaceId);
     return skill;
   }
 
   // The skills on in the scope, but the one given.
-  function onIn(scope: Scope, except: (skill: Skill) => boolean = () => false) {
-    const sources = byId(skills.sources(scope));
-    return skills.inScope(scope).filter((skill) => onInScope(skill, sources) && !except(skill));
+  async function onIn(scope: Scope, except: (skill: Skill) => boolean = () => false) {
+    const sources = byId(await skills.sources(scope));
+    return (await skills.inScope(scope)).filter(
+      (skill) => onInScope(skill, sources) && !except(skill),
+    );
   }
 
   // Refuses to turn on skills of these names where one of each is on already, or where two share
   // a name.
-  function refuseClashes(scope: Scope, names: string[], except: (skill: Skill) => boolean) {
-    const on = new Set(onIn(scope, except).map((skill) => skill.name));
+  async function refuseClashes(scope: Scope, names: string[], except: (skill: Skill) => boolean) {
+    const on = new Set((await onIn(scope, except)).map((skill) => skill.name));
     const seen = new Set<string>();
     for (const name of names) {
       if (on.has(name) || seen.has(name)) throw new ServiceError(409, alreadyOn(name));
@@ -330,41 +333,44 @@ export function createSkills(options: SkillsOptions) {
   }
 
   // The scope's sources with their skills, and the skills written there.
-  function listed(scope: Scope) {
-    const all = skills.inScope(scope);
+  async function listed(scope: Scope) {
+    const all = await skills.inScope(scope);
     return {
-      sources: skills.sources(scope).map((source) => sourceSummary(source, all)),
+      sources: (await skills.sources(scope)).map((source) => sourceSummary(source, all)),
       written: all.filter((skill) => !skill.sourceId).map(skillSummary),
     };
   }
 
   // The org's built-in source and skills, as its switches leave them.
-  function builtinOf(orgId: string) {
-    const switches = skills.orgBuiltinSwitches(orgId);
+  async function builtinOf(orgId: string) {
+    const switches = await skills.orgBuiltinSwitches(orgId);
     return {
       source: builtinSource(orgId, switches.get(BUILTIN_SOURCE_ID) !== false),
       skills: builtinSkills(orgId, switches),
     };
   }
 
-  function spaceSkills(space: Pick<Space, "id" | "orgId">): SpaceSkills {
+  async function spaceSkills(space: Pick<Space, "id" | "orgId">): Promise<SpaceSkills> {
     const org = { orgId: space.orgId, spaceId: null };
     const own = { orgId: space.orgId, spaceId: space.id };
-    const builtin = builtinOf(space.orgId);
-    const builtinSwitches = skills.spaceBuiltinSwitches(space.id);
+    const builtin = await builtinOf(space.orgId);
+    const builtinSwitches = await skills.spaceBuiltinSwitches(space.id);
     return {
-      orgSources: [builtin.source, ...skills.sources(org)],
-      orgSkills: [...builtin.skills, ...skills.inScope(org)],
-      ownSources: skills.sources(own),
-      ownSkills: skills.inScope(own),
-      sourceSwitches: new Map([...skills.spaceSourceSettings(space.id), ...builtinSwitches]),
-      skillSwitches: new Map([...skills.spaceSkillSettings(space.id), ...builtinSwitches]),
-      allowed: spacesMayAdd(space.orgId),
+      orgSources: [builtin.source, ...(await skills.sources(org))],
+      orgSkills: [...builtin.skills, ...(await skills.inScope(org))],
+      ownSources: await skills.sources(own),
+      ownSkills: await skills.inScope(own),
+      sourceSwitches: new Map([
+        ...(await skills.spaceSourceSettings(space.id)),
+        ...builtinSwitches,
+      ]),
+      skillSwitches: new Map([...(await skills.spaceSkillSettings(space.id)), ...builtinSwitches]),
+      allowed: await spacesMayAdd(space.orgId),
     };
   }
 
-  function effectiveIn(space: Pick<Space, "id" | "orgId">) {
-    return effectiveSkills(spaceSkills(space));
+  async function effectiveIn(space: Pick<Space, "id" | "orgId">) {
+    return effectiveSkills(await spaceSkills(space));
   }
 
   async function snapshotOf(parsed: ParsedSource, token: string | null) {
@@ -391,7 +397,7 @@ export function createSkills(options: SkillsOptions) {
     spaceId: string | null,
     input: SkillUpload,
   ): Promise<SkillUploadResult> {
-    const scope = addable(principal, spaceId);
+    const scope = await addable(principal, spaceId);
     const bytes = Buffer.from(input.data, "base64");
     const base = input.fileName.replace(/^.*[/\\]/, "").replace(/\.[^.]+$/, "");
     let found: FoundSkill[];
@@ -429,31 +435,33 @@ export function createSkills(options: SkillsOptions) {
     if (found.some((skill) => skill.body.length > SKILL_BODY_MAX)) {
       throw new ServiceError(400, "The instructions are too long");
     }
-    const on = new Set(onIn(scope).map((skill) => skill.name));
-    const added = found.map((skill) =>
-      skills.create({
-        ...scope,
-        sourceId: null,
-        path: null,
-        name: skill.name,
-        description: skill.description,
-        body: skill.body,
-        files: skill.files,
-        enabled: found.length === 1 && !on.has(skill.name),
-        createdBy: principal.userId,
-      }),
+    const on = new Set((await onIn(scope)).map((skill) => skill.name));
+    const added = await Promise.all(
+      found.map(async (skill) =>
+        skills.create({
+          ...scope,
+          sourceId: null,
+          path: null,
+          name: skill.name,
+          description: skill.description,
+          body: skill.body,
+          files: skill.files,
+          enabled: found.length === 1 && !on.has(skill.name),
+          createdBy: principal.userId,
+        }),
+      ),
     );
     return { status: "added", skills: added.map(skillSummary) };
   }
 
   // Adds the whole repository, every skill found in it off until someone turns it on.
   async function addSource(principal: Principal, spaceId: string | null, input: SkillSourceInput) {
-    const scope = addable(principal, spaceId);
+    const scope = await addable(principal, spaceId);
     const parsed = parsedOf(input.input);
     const token = input.token ?? null;
     const snapshot = await snapshotOf(parsed, token);
     const found = foundIn(snapshot, parsed);
-    const source = skills.createSource({
+    const source = await skills.createSource({
       ...scope,
       label: parsed.label,
       url: parsed.url,
@@ -463,9 +471,9 @@ export function createSkills(options: SkillsOptions) {
       commit: snapshot.commit,
       createdBy: principal.userId,
     });
-    if (token) skills.setToken(source.id, token);
+    if (token) await skills.setToken(source.id, token);
     for (const skill of found) {
-      skills.create({
+      await skills.create({
         ...scope,
         sourceId: source.id,
         path: skill.path,
@@ -477,16 +485,18 @@ export function createSkills(options: SkillsOptions) {
         createdBy: principal.userId,
       });
     }
-    return sourceSummary(skills.findSource(source.id)!, skills.inScope(scope));
+    return sourceSummary((await skills.findSource(source.id))!, await skills.inScope(scope));
   }
 
-  function targetOf(source: SkillSource) {
-    return { url: source.url, ref: source.ref, token: skills.token(source.id) };
+  async function targetOf(source: SkillSource) {
+    return { url: source.url, ref: source.ref, token: await skills.token(source.id) };
   }
 
   // What reading the source again changes, by folder: skills added, changed and removed.
-  function changesOf(source: SkillSource, found: FoundSkill[]) {
-    const current = skills.inScope(scopeOf(source)).filter((skill) => skill.sourceId === source.id);
+  async function changesOf(source: SkillSource, found: FoundSkill[]) {
+    const current = (await skills.inScope(scopeOf(source))).filter(
+      (skill) => skill.sourceId === source.id,
+    );
     const byPath = new Map(current.map((skill) => [skill.path, skill]));
     const paths = new Set(found.map((skill) => skill.path));
     return {
@@ -509,45 +519,51 @@ export function createSkills(options: SkillsOptions) {
     effectiveIn,
 
     // The skills on in the space, as the agent's prompt lists them, when it can load them.
-    listFor(
+    async listFor(
       space: Pick<Space, "id" | "orgId">,
       offered: readonly AnyToolSpec[],
-    ): Guidance["skills"] {
+    ): Promise<Guidance["skills"]> {
       if (!offered.some((spec) => spec.name === LOAD_SKILL)) return [];
-      return effectiveIn(space).map(line);
+      return (await effectiveIn(space)).map(line);
     },
 
     // The org's skills, which its members may read.
-    orgSkills(principal: Principal): OrgSkillList {
+    async orgSkills(principal: Principal): Promise<OrgSkillList> {
       const scope = { orgId: principal.orgId, spaceId: null };
-      const { sources, written } = listed(scope);
-      const builtin = builtinOf(principal.orgId);
+      const { sources, written } = await listed(scope);
+      const builtin = await builtinOf(principal.orgId);
       return {
         sources: [sourceSummary(builtin.source, builtin.skills), ...sources],
         written,
-        spaceSkills: spacesMayAdd(principal.orgId),
+        spaceSkills: await spacesMayAdd(principal.orgId),
       };
     },
 
-    setSpaceSkills(principal: Principal, allowed: boolean) {
+    async setSpaceSkills(principal: Principal, allowed: boolean) {
       if (principal.role !== "owner") throw new ServiceError(403, ORG_ONLY);
-      settings.setSpaceSkills(principal.orgId, allowed);
+      await settings.setSpaceSkills(principal.orgId, allowed);
     },
 
     // A space's: the org's skills, each with the space's switch, and its own.
-    spaceSkills(principal: Principal, spaceId: string): SpaceSkillList {
-      const space = spaces.require(principal, spaceId);
+    async spaceSkills(principal: Principal, spaceId: string): Promise<SpaceSkillList> {
+      const space = await spaces.require(principal, spaceId);
       const org = { orgId: space.orgId, spaceId: null };
       const own = { orgId: space.orgId, spaceId: space.id };
-      const builtinSwitches = skills.spaceBuiltinSwitches(space.id);
-      const sourceSwitches = new Map([...skills.spaceSourceSettings(space.id), ...builtinSwitches]);
-      const skillSwitches = new Map([...skills.spaceSkillSettings(space.id), ...builtinSwitches]);
-      const builtin = builtinOf(space.orgId);
+      const builtinSwitches = await skills.spaceBuiltinSwitches(space.id);
+      const sourceSwitches = new Map([
+        ...(await skills.spaceSourceSettings(space.id)),
+        ...builtinSwitches,
+      ]);
+      const skillSwitches = new Map([
+        ...(await skills.spaceSkillSettings(space.id)),
+        ...builtinSwitches,
+      ]);
+      const builtin = await builtinOf(space.orgId);
       const inSpace = (skill: SkillSummary) => ({
         ...skill,
         inSpace: skillSwitches.get(skill.id) !== false,
       });
-      const orgListed = listed(org);
+      const orgListed = await listed(org);
       return {
         org: {
           sources: [sourceSummary(builtin.source, builtin.skills), ...orgListed.sources].map(
@@ -559,62 +575,67 @@ export function createSkills(options: SkillsOptions) {
           ),
           written: orgListed.written.map(inSpace),
         },
-        own: listed(own),
-        allowed: spacesMayAdd(space.orgId),
+        own: await listed(own),
+        allowed: await spacesMayAdd(space.orgId),
       };
     },
 
     addSource,
 
     // Turns the whole source on or off; on, none of its skills may clash with one on.
-    setSourceEnabled(principal: Principal, id: string, enabled: boolean) {
+    async setSourceEnabled(principal: Principal, id: string, enabled: boolean) {
       if (id === BUILTIN_SOURCE_ID) {
-        return skills.setOrgBuiltin(managed(principal, null).orgId, id, enabled);
+        return skills.setOrgBuiltin((await managed(principal, null)).orgId, id, enabled);
       }
-      const source = manageableSource(principal, id);
+      const source = await manageableSource(principal, id);
       if (enabled && !source.enabled) {
         const scope = scopeOf(source);
-        const names = skills
-          .inScope(scope)
+        const names = (await skills.inScope(scope))
           .filter((skill) => skill.sourceId === id && skill.enabled)
           .map((skill) => skill.name);
-        refuseClashes(scope, names, (skill) => skill.sourceId === id);
+        await refuseClashes(scope, names, (skill) => skill.sourceId === id);
       }
-      skills.updateSource(id, { enabled });
+      await skills.updateSource(id, { enabled });
     },
 
-    setSkillEnabled(principal: Principal, id: string, enabled: boolean) {
+    async setSkillEnabled(principal: Principal, id: string, enabled: boolean) {
       if (isBuiltinId(id)) {
-        const orgId = managed(principal, null).orgId;
-        if (!builtinOf(orgId).skills.some((skill) => skill.id === id)) {
+        const orgId = (await managed(principal, null)).orgId;
+        if (!(await builtinOf(orgId)).skills.some((skill) => skill.id === id)) {
           throw new ServiceError(404, NOT_FOUND);
         }
         return skills.setOrgBuiltin(orgId, id, enabled);
       }
-      const skill = manageableSkill(principal, id);
-      if (enabled) refuseClashes(scopeOf(skill), [skill.name], (other) => other.id === id);
-      skills.update(id, { enabled });
+      const skill = await manageableSkill(principal, id);
+      if (enabled) await refuseClashes(scopeOf(skill), [skill.name], (other) => other.id === id);
+      await skills.update(id, { enabled });
     },
 
     // The skill with its instructions and files, for anyone who may read its scope.
-    get(principal: Principal, id: string): SkillDetail {
+    async get(principal: Principal, id: string): Promise<SkillDetail> {
       if (isBuiltinId(id)) {
-        const skill = builtinOf(principal.orgId).skills.find((candidate) => candidate.id === id);
+        const skill = (await builtinOf(principal.orgId)).skills.find(
+          (candidate) => candidate.id === id,
+        );
         if (!skill) throw new ServiceError(404, NOT_FOUND);
         return { ...skillSummary(skill), body: skill.body, files: skill.files };
       }
-      const skill = skills.find(id);
+      const skill = await skills.find(id);
       if (!skill || skill.orgId !== principal.orgId) throw new ServiceError(404, NOT_FOUND);
-      if (skill.spaceId) spaces.require(principal, skill.spaceId);
+      if (skill.spaceId) await spaces.require(principal, skill.spaceId);
       return { ...skillSummary(skill), body: skill.body, files: skill.files };
     },
 
     // Writes a skill in settings, on unless one of its name is.
-    write(principal: Principal, spaceId: string | null, input: SkillInput): SkillSummary {
-      const scope = addable(principal, spaceId);
-      refuseClashes(scope, [input.name], () => false);
+    async write(
+      principal: Principal,
+      spaceId: string | null,
+      input: SkillInput,
+    ): Promise<SkillSummary> {
+      const scope = await addable(principal, spaceId);
+      await refuseClashes(scope, [input.name], () => false);
       return skillSummary(
-        skills.create({
+        await skills.create({
           ...scope,
           sourceId: null,
           path: null,
@@ -626,28 +647,29 @@ export function createSkills(options: SkillsOptions) {
       );
     },
 
-    edit(principal: Principal, id: string, input: SkillInput): SkillSummary {
-      const skill = manageableSkill(principal, id);
+    async edit(principal: Principal, id: string, input: SkillInput): Promise<SkillSummary> {
+      const skill = await manageableSkill(principal, id);
       if (skill.sourceId) throw new ServiceError(400, WRITTEN_ONLY);
-      if (skill.enabled) refuseClashes(scopeOf(skill), [input.name], (other) => other.id === id);
-      skills.update(id, input);
-      return skillSummary(skills.find(id)!);
+      if (skill.enabled)
+        await refuseClashes(scopeOf(skill), [input.name], (other) => other.id === id);
+      await skills.update(id, input);
+      return skillSummary((await skills.find(id))!);
     },
 
     upload,
 
-    remove(principal: Principal, id: string) {
-      const skill = manageableSkill(principal, id);
+    async remove(principal: Principal, id: string) {
+      const skill = await manageableSkill(principal, id);
       if (skill.sourceId) throw new ServiceError(400, WRITTEN_ONLY);
-      skills.delete(id);
+      await skills.delete(id);
     },
 
     // Reads the source's branch or tag again and applies it at once: new skills arrive off,
     // removed ones go, changed ones keep their switch unless their new name is on already. A
     // commit already read changes nothing.
     async refresh(principal: Principal, id: string): Promise<SkillRefresh> {
-      const source = manageableSource(principal, id);
-      const target = targetOf(source);
+      const source = await manageableSource(principal, id);
+      const target = await targetOf(source);
       const scope = scopeOf(source);
       let head: string;
       try {
@@ -656,9 +678,9 @@ export function createSkills(options: SkillsOptions) {
         return gitFailure(err);
       }
       if (head === source.commit) {
-        skills.updateSource(id, { fetchedAt: now() });
+        await skills.updateSource(id, { fetchedAt: now() });
         return {
-          source: sourceSummary(skills.findSource(id)!, skills.inScope(scope)),
+          source: sourceSummary((await skills.findSource(id))!, await skills.inScope(scope)),
           added: [],
           changed: [],
           removed: [],
@@ -666,16 +688,18 @@ export function createSkills(options: SkillsOptions) {
       }
       const snapshot = await snapshotOf(source, target.token);
       const found = foundIn(snapshot, source);
-      const { current, added, changed, removed } = changesOf(source, found);
+      const { current, added, changed, removed } = await changesOf(source, found);
       const byPath = new Map(current.map((skill) => [skill.path, skill]));
-      for (const skill of removed) skills.delete(skill.id);
+      for (const skill of removed) await skills.delete(skill.id);
       for (const skill of changed) {
         const before = byPath.get(skill.path)!;
         const clashes =
           before.enabled &&
           before.name !== skill.name &&
-          onIn(scope, (other) => other.id === before.id).some((other) => other.name === skill.name);
-        skills.update(before.id, {
+          (await onIn(scope, (other) => other.id === before.id)).some(
+            (other) => other.name === skill.name,
+          );
+        await skills.update(before.id, {
           name: skill.name,
           description: skill.description,
           body: skill.body,
@@ -684,7 +708,7 @@ export function createSkills(options: SkillsOptions) {
         });
       }
       for (const skill of added) {
-        skills.create({
+        await skills.create({
           ...scope,
           sourceId: source.id,
           path: skill.path,
@@ -696,13 +720,13 @@ export function createSkills(options: SkillsOptions) {
           createdBy: principal.userId,
         });
       }
-      skills.updateSource(id, {
+      await skills.updateSource(id, {
         commit: snapshot.commit,
         resolvedRef: snapshot.ref,
         fetchedAt: now(),
       });
       return {
-        source: sourceSummary(skills.findSource(id)!, skills.inScope(scope)),
+        source: sourceSummary((await skills.findSource(id))!, await skills.inScope(scope)),
         added: added.map((skill) => skill.name),
         changed: changed.map((skill) => skill.name),
         removed: removed.map((skill) => skill.name),
@@ -711,7 +735,7 @@ export function createSkills(options: SkillsOptions) {
 
     // Changes the token the source is read with, once it reads the source; null forgets it.
     async setToken(principal: Principal, id: string, token: string | null) {
-      const source = manageableSource(principal, id);
+      const source = await manageableSource(principal, id);
       if (token) {
         try {
           await git.head({ url: source.url, ref: source.ref, token });
@@ -719,37 +743,43 @@ export function createSkills(options: SkillsOptions) {
           return gitFailure(err);
         }
       }
-      skills.setToken(id, token || null);
-      return sourceSummary(skills.findSource(id)!, skills.inScope(scopeOf(source)));
+      await skills.setToken(id, token || null);
+      return sourceSummary((await skills.findSource(id))!, await skills.inScope(scopeOf(source)));
     },
 
-    removeSource(principal: Principal, id: string) {
-      manageableSource(principal, id);
-      skills.deleteSource(id);
+    async removeSource(principal: Principal, id: string) {
+      await manageableSource(principal, id);
+      await skills.deleteSource(id);
     },
 
     // Turns one of the org's sources on or off for the space alone; never on while the org has
     // it off.
-    setSpaceSource(principal: Principal, spaceId: string, sourceId: string, enabled: boolean) {
-      const space = spaces.require(principal, spaceId, "manage");
+    async setSpaceSource(
+      principal: Principal,
+      spaceId: string,
+      sourceId: string,
+      enabled: boolean,
+    ) {
+      const space = await spaces.require(principal, spaceId, "manage");
       if (sourceId === BUILTIN_SOURCE_ID) {
-        if (enabled && !builtinOf(space.orgId).source.enabled) throw new ServiceError(409, ORG_OFF);
+        if (enabled && !(await builtinOf(space.orgId)).source.enabled)
+          throw new ServiceError(409, ORG_OFF);
         return skills.setSpaceBuiltin(space.id, sourceId, enabled);
       }
-      const source = skills.findSource(sourceId);
+      const source = await skills.findSource(sourceId);
       if (!source || source.orgId !== space.orgId || source.spaceId) {
         throw new ServiceError(404, SOURCE_NOT_FOUND);
       }
       if (enabled && !source.enabled) throw new ServiceError(409, ORG_OFF);
-      skills.setSpaceSource(space.id, source.id, enabled);
+      await skills.setSpaceSource(space.id, source.id, enabled);
     },
 
     // Turns one of the org's skills on or off for the space alone; never on while the org has it
     // off.
-    setSpaceSkill(principal: Principal, spaceId: string, skillId: string, enabled: boolean) {
-      const space = spaces.require(principal, spaceId, "manage");
+    async setSpaceSkill(principal: Principal, spaceId: string, skillId: string, enabled: boolean) {
+      const space = await spaces.require(principal, spaceId, "manage");
       if (isBuiltinId(skillId)) {
-        const builtin = builtinOf(space.orgId);
+        const builtin = await builtinOf(space.orgId);
         const found = builtin.skills.find((candidate) => candidate.id === skillId);
         if (!found) throw new ServiceError(404, NOT_FOUND);
         if (enabled && (!found.enabled || !builtin.source.enabled)) {
@@ -757,24 +787,24 @@ export function createSkills(options: SkillsOptions) {
         }
         return skills.setSpaceBuiltin(space.id, skillId, enabled);
       }
-      const skill = skills.find(skillId);
+      const skill = await skills.find(skillId);
       if (!skill || skill.orgId !== space.orgId || skill.spaceId) {
         throw new ServiceError(404, NOT_FOUND);
       }
-      const source = skill.sourceId ? skills.findSource(skill.sourceId) : null;
+      const source = skill.sourceId ? await skills.findSource(skill.sourceId) : null;
       if (enabled && (!skill.enabled || (source && !source.enabled))) {
         throw new ServiceError(409, ORG_OFF);
       }
-      skills.setSpaceSkill(space.id, skill.id, enabled);
+      await skills.setSpaceSkill(space.id, skill.id, enabled);
     },
 
     // The built-in Skills toolset: loading a skill that is on in the thread's space, and reading
     // one of its files; always on where a skill is on, with no switch and no policy.
     toolset(): Toolset {
-      const named = (space: Pick<Space, "id" | "orgId">, name: string) =>
-        effectiveIn(space).find((skill) => skill.name === name);
-      const missing = (space: Pick<Space, "id" | "orgId">, name: string) => {
-        const names = effectiveIn(space).map((skill) => skill.name);
+      const named = async (space: Pick<Space, "id" | "orgId">, name: string) =>
+        (await effectiveIn(space)).find((skill) => skill.name === name);
+      const missing = async (space: Pick<Space, "id" | "orgId">, name: string) => {
+        const names = (await effectiveIn(space)).map((skill) => skill.name);
         return {
           ok: false as const,
           error: names.length
@@ -791,10 +821,10 @@ export function createSkills(options: SkillsOptions) {
         description: "Load a skill by name: its instructions and its file list.",
         input: z.object({ name: nameInput }),
         risk: () => "normal",
-        run({ name }, ctx) {
+        async run({ name }, ctx) {
           const space = { id: ctx.spaceId, orgId: ctx.orgId };
-          const skill = named(space, name);
-          if (!skill) return Promise.resolve(missing(space, name));
+          const skill = await named(space, name);
+          if (!skill) return Promise.resolve(await missing(space, name));
           return Promise.resolve({
             ok: true,
             value: {
@@ -821,10 +851,10 @@ export function createSkills(options: SkillsOptions) {
             .meta({ title: "Path", description: "As the skill lists it" }),
         }),
         risk: () => "normal",
-        run({ name, path }, ctx) {
+        async run({ name, path }, ctx) {
           const space = { id: ctx.spaceId, orgId: ctx.orgId };
-          const skill = named(space, name);
-          if (!skill) return Promise.resolve(missing(space, name));
+          const skill = await named(space, name);
+          if (!skill) return Promise.resolve(await missing(space, name));
           const file = skill.files.find((candidate) => candidate.path === path);
           if (!file) {
             return Promise.resolve({
@@ -844,7 +874,7 @@ export function createSkills(options: SkillsOptions) {
         source: "builtin",
         tools: [load, readFile],
         // Offered only where some skill is on.
-        usefulIn: (space) => effectiveIn(space).length > 0,
+        usefulIn: async (space) => (await effectiveIn(space)).length > 0,
         fixed: true,
         // Every org has the built-in skills, so settings always show it.
         listedIn: () => true,

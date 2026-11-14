@@ -21,26 +21,35 @@ const columns = {
 
 export function createOrgInviteStore(db: Db): OrgInviteStore {
   return {
-    create({ orgId, ...invite }) {
-      return db
-        .insert(orgInvite)
-        .values({ id: ulid(), organizationId: orgId, ...invite })
-        .returning(columns)
-        .get();
-    },
-
-    find(id): OrgInvite | null {
-      return db.select(columns).from(orgInvite).where(eq(orgInvite.id, id)).get() ?? null;
-    },
-
-    findByHash(tokenHash): OrgInvite | null {
+    async create({ orgId, ...invite }) {
       return (
-        db.select(columns).from(orgInvite).where(eq(orgInvite.tokenHash, tokenHash)).get() ?? null
+        await db
+          .insert(orgInvite)
+          .values({ id: ulid(), organizationId: orgId, ...invite })
+          .returning(columns)
+      )[0]!;
+    },
+
+    async find(id): Promise<OrgInvite | null> {
+      return (
+        (await db.select(columns).from(orgInvite).where(eq(orgInvite.id, id)).limit(1))[0] ?? null
       );
     },
 
-    pending(orgId, now) {
-      return db
+    async findByHash(tokenHash): Promise<OrgInvite | null> {
+      return (
+        (
+          await db
+            .select(columns)
+            .from(orgInvite)
+            .where(eq(orgInvite.tokenHash, tokenHash))
+            .limit(1)
+        )[0] ?? null
+      );
+    },
+
+    async pending(orgId, now) {
+      return await db
         .select({ ...columns, createdByName: user.name })
         .from(orgInvite)
         .leftJoin(user, eq(user.id, orgInvite.createdBy))
@@ -52,21 +61,20 @@ export function createOrgInviteStore(db: Db): OrgInviteStore {
             gt(orgInvite.expiresAt, now),
           ),
         )
-        .orderBy(desc(orgInvite.createdAt))
-        .all();
+        .orderBy(desc(orgInvite.createdAt));
     },
 
-    markAccepted(id, userId, at) {
-      const result = db
+    async markAccepted(id, userId, at) {
+      const result = await db
         .update(orgInvite)
         .set({ acceptedBy: userId, acceptedAt: at })
         .where(and(eq(orgInvite.id, id), isNull(orgInvite.acceptedAt), isNull(orgInvite.revokedAt)))
-        .run();
-      return result.changes > 0;
+        .returning({ id: orgInvite.id });
+      return result.length > 0;
     },
 
-    revoke(id, at) {
-      db.update(orgInvite).set({ revokedAt: at }).where(eq(orgInvite.id, id)).run();
+    async revoke(id, at) {
+      await db.update(orgInvite).set({ revokedAt: at }).where(eq(orgInvite.id, id));
     },
   };
 }

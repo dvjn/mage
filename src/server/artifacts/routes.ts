@@ -36,78 +36,96 @@ export function artifactRoutes(options: {
   const { artifacts } = options;
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
   return new Hono<ApiEnv>()
-    .get("/v1/threads/:id/artifacts", (c) => {
-      return c.json(artifacts.inThread(signedIn(c.var.principal), c.req.param("id")), 200);
+    .get("/v1/threads/:id/artifacts", async (c) => {
+      return c.json(await artifacts.inThread(signedIn(c.var.principal), c.req.param("id")), 200);
     })
-    .get("/v1/artifacts", listQuery, (c) => {
-      return c.json(artifacts.list(signedIn(c.var.principal), c.req.valid("query")), 200);
+    .get("/v1/artifacts", listQuery, async (c) => {
+      return c.json(await artifacts.list(signedIn(c.var.principal), c.req.valid("query")), 200);
     })
-    .get("/v1/artifacts/:id", (c) => {
-      return c.json(artifacts.detail(signedIn(c.var.principal), c.req.param("id")), 200);
+    .get("/v1/artifacts/:id", async (c) => {
+      return c.json(await artifacts.detail(signedIn(c.var.principal), c.req.param("id")), 200);
     })
-    .delete("/v1/artifacts/:id", (c) => {
-      artifacts.delete(signedIn(c.var.principal), c.req.param("id"));
+    .delete("/v1/artifacts/:id", async (c) => {
+      await artifacts.delete(signedIn(c.var.principal), c.req.param("id"));
       return c.body(null, 204);
     })
     .post("/v1/artifacts/:id/view", viewRequest, async (c) => {
       const principal = signedIn(c.var.principal);
       return c.json(await artifacts.view(principal, c.req.param("id"), c.req.valid("json")), 200);
     })
-    .put("/v1/artifacts/:id/sharing", sharingChange, (c) => {
+    .put("/v1/artifacts/:id/sharing", sharingChange, async (c) => {
       const principal = signedIn(c.var.principal);
       const { sharing, orgRole } = c.req.valid("json");
-      return c.json(artifacts.setSharing(principal, c.req.param("id"), sharing, orgRole), 200);
+      return c.json(
+        await artifacts.setSharing(principal, c.req.param("id"), sharing, orgRole),
+        200,
+      );
     })
-    .put("/v1/artifacts/:id/guests", guestShare, (c) => {
+    .put("/v1/artifacts/:id/guests", guestShare, async (c) => {
       const principal = signedIn(c.var.principal);
       const { threadId, shared } = c.req.valid("json");
-      return c.json(artifacts.setGuestShare(principal, c.req.param("id"), threadId, shared), 200);
-    })
-    .get("/v1/artifacts/:id/people", candidateQuery, (c) => {
-      const principal = signedIn(c.var.principal);
       return c.json(
-        artifacts.candidates(principal, c.req.param("id"), c.req.valid("query").q),
+        await artifacts.setGuestShare(principal, c.req.param("id"), threadId, shared),
         200,
       );
     })
-    .put("/v1/artifacts/:id/people/:userId", personChange, (c) => {
+    .get("/v1/artifacts/:id/people", candidateQuery, async (c) => {
       const principal = signedIn(c.var.principal);
-      const { role } = c.req.valid("json");
       return c.json(
-        artifacts.setPersonShare(principal, c.req.param("id"), c.req.param("userId"), true, role),
+        await artifacts.candidates(principal, c.req.param("id"), c.req.valid("query").q),
         200,
       );
     })
-    .delete("/v1/artifacts/:id/people/:userId", (c) => {
-      const principal = signedIn(c.var.principal);
-      return c.json(
-        artifacts.setPersonShare(principal, c.req.param("id"), c.req.param("userId"), false),
-        200,
-      );
-    })
-    .put("/v1/artifacts/:id/groups/:groupId", personChange, (c) => {
+    .put("/v1/artifacts/:id/people/:userId", personChange, async (c) => {
       const principal = signedIn(c.var.principal);
       const { role } = c.req.valid("json");
       return c.json(
-        artifacts.setGroupShare(principal, c.req.param("id"), c.req.param("groupId"), true, role),
+        await artifacts.setPersonShare(
+          principal,
+          c.req.param("id"),
+          c.req.param("userId"),
+          true,
+          role,
+        ),
         200,
       );
     })
-    .delete("/v1/artifacts/:id/groups/:groupId", (c) => {
+    .delete("/v1/artifacts/:id/people/:userId", async (c) => {
       const principal = signedIn(c.var.principal);
       return c.json(
-        artifacts.setGroupShare(principal, c.req.param("id"), c.req.param("groupId"), false),
+        await artifacts.setPersonShare(principal, c.req.param("id"), c.req.param("userId"), false),
         200,
       );
     })
-    .get("/v1/artifacts/:id/events", (c) => {
+    .put("/v1/artifacts/:id/groups/:groupId", personChange, async (c) => {
+      const principal = signedIn(c.var.principal);
+      const { role } = c.req.valid("json");
+      return c.json(
+        await artifacts.setGroupShare(
+          principal,
+          c.req.param("id"),
+          c.req.param("groupId"),
+          true,
+          role,
+        ),
+        200,
+      );
+    })
+    .delete("/v1/artifacts/:id/groups/:groupId", async (c) => {
+      const principal = signedIn(c.var.principal);
+      return c.json(
+        await artifacts.setGroupShare(principal, c.req.param("id"), c.req.param("groupId"), false),
+        200,
+      );
+    })
+    .get("/v1/artifacts/:id/events", async (c) => {
       const principal = signedIn(c.var.principal);
       const id = c.req.param("id");
       // Answers 404 before the stream starts.
-      artifacts.detail(principal, id);
+      await artifacts.detail(principal, id);
       return streamSSE(c, async (stream) => {
         let writing = Promise.resolve();
-        const unsubscribe = artifacts.follow(principal, id, (event) => {
+        const unsubscribe = await artifacts.follow(principal, id, (event) => {
           writing = writing.then(() =>
             stream.writeSSE({ event: event.type, data: JSON.stringify(event) }),
           );
@@ -117,7 +135,7 @@ export function artifactRoutes(options: {
           await new Promise((resolve) => setTimeout(resolve, heartbeatMs));
           if (stream.aborted || options.shutdown?.aborted) break;
           // Whoever may no longer view it is told so, and the stream ends.
-          if (!artifacts.viewable(principal, id)) {
+          if (!(await artifacts.viewable(principal, id))) {
             await writing;
             await stream.writeSSE({ event: "access-ended", data: "{}" });
             break;
@@ -128,19 +146,28 @@ export function artifactRoutes(options: {
         unsubscribe();
       });
     })
-    .get("/v1/org/artifacts/settings", (c) => {
-      return c.json(artifacts.orgSettings(signedIn(c.var.principal)), 200);
+    .get("/v1/org/artifacts/settings", async (c) => {
+      return c.json(await artifacts.orgSettings(signedIn(c.var.principal)), 200);
     })
-    .put("/v1/org/artifacts/settings", settingsChange, (c) => {
+    .put("/v1/org/artifacts/settings", settingsChange, async (c) => {
       const principal = signedIn(c.var.principal);
-      return c.json(artifacts.setOrgSettings(principal, c.req.valid("json").publicAllowed), 200);
+      return c.json(
+        await artifacts.setOrgSettings(principal, c.req.valid("json").publicAllowed),
+        200,
+      );
     })
-    .get("/v1/spaces/:id/artifacts/settings", (c) => {
-      return c.json(artifacts.spaceSettings(signedIn(c.var.principal), c.req.param("id")), 200);
+    .get("/v1/spaces/:id/artifacts/settings", async (c) => {
+      return c.json(
+        await artifacts.spaceSettings(signedIn(c.var.principal), c.req.param("id")),
+        200,
+      );
     })
-    .put("/v1/spaces/:id/artifacts/settings", settingsChange, (c) => {
+    .put("/v1/spaces/:id/artifacts/settings", settingsChange, async (c) => {
       const principal = signedIn(c.var.principal);
       const { publicAllowed } = c.req.valid("json");
-      return c.json(artifacts.setSpaceSettings(principal, c.req.param("id"), publicAllowed), 200);
+      return c.json(
+        await artifacts.setSpaceSettings(principal, c.req.param("id"), publicAllowed),
+        200,
+      );
     });
 }

@@ -1,0 +1,1 @@
+ALTER TABLE "run" ADD CONSTRAINT "run_status_check" CHECK ("run"."status" in ('queued', 'running', 'waiting', 'completed', 'failed', 'cancelled'));

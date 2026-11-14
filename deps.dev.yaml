@@ -1,10 +1,27 @@
-# Jaeger keeping the dev server's traces in memory.
+# What the dev server depends on: Postgres for its data, and Jaeger keeping its traces in memory.
 name: mage-dev
 
 services:
+  postgres:
+    image: docker.io/library/postgres:18.1
+    environment:
+      POSTGRES_USER: mage
+      POSTGRES_PASSWORD: mage
+      POSTGRES_DB: mage
+    ports:
+      - "4804:5432"
+    volumes:
+      - postgres:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mage"]
+      interval: 2s
+
   # Its UI on 16686, and OTLP over HTTP on 4318.
   jaeger:
     image: docker.io/jaegertracing/jaeger:2.22.0
     ports:
       - "16686:16686"
       - "4318:4318"
+
+volumes:
+  postgres:

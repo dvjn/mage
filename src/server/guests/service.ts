@@ -7,7 +7,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 
-import type { EventBus } from "@/server/kernel/event-bus.ts";
+import type { Signals } from "@/server/sync/signals.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { SpaceRole } from "@/server/spaces/service.ts";
 import type {
@@ -20,9 +20,9 @@ import type {
 } from "@/server/threads/service.ts";
 import type { Directory } from "@/server/orgs/directory.ts";
 import type { PageParams, Page } from "@/shared/paging.ts";
-import type { Transact } from "@/server/db/db.ts";
+import type { Transact } from "@/server/sync/sync.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
-import type { Access, ThreadAccess } from "@/server/spaces/thread-access.ts";
+import type { Access, ThreadAccess } from "@/server/access/access.ts";
 import {
   ACCESS_FOR_MS,
   type AccessFor,
@@ -86,7 +86,7 @@ export interface GuestThread {
 
 export interface GuestStore {
   // The user's guest row in the thread, active or not, or null when they never were one.
-  find(threadId: string, userId: string): ThreadGuest | null;
+  find(threadId: string, userId: string): Promise<ThreadGuest | null>;
   // Makes the user a guest of the thread with access until then, or gives a guest row that exists
   // that access again, clearing any revocation.
   grant(guest: {
@@ -96,10 +96,10 @@ export interface GuestStore {
     accessUntil: Date | null;
     // Message when not given.
     role?: ThreadRole;
-  }): ThreadGuest;
-  setRole(threadId: string, userId: string, role: ThreadRole): void;
+  }): Promise<ThreadGuest>;
+  setRole(threadId: string, userId: string, role: ThreadRole): Promise<void>;
   // The group's grant on the thread, active or not, or null when it never had one.
-  findGroup(threadId: string, groupId: string): ThreadGroupGuest | null;
+  findGroup(threadId: string, groupId: string): Promise<ThreadGroupGuest | null>;
   // Lets the group's people in until then, or gives a grant that exists that access again.
   grantGroup(grant: {
     threadId: string;
@@ -107,34 +107,39 @@ export interface GuestStore {
     invitedBy: string | null;
     accessUntil: Date | null;
     role: ThreadRole;
-  }): ThreadGroupGuest;
-  setGroupRole(threadId: string, groupId: string, role: ThreadRole): void;
-  revokeGroup(threadId: string, groupId: string, by: string, at: Date): void;
+  }): Promise<ThreadGroupGuest>;
+  setGroupRole(threadId: string, groupId: string, role: ThreadRole): Promise<void>;
+  revokeGroup(threadId: string, groupId: string, by: string, at: Date): Promise<void>;
   // The thread's groups whose grant has not ended at `now`, oldest first, with their names, how
   // many people are in them and their inviters' names.
   activeGroupsIn(
     threadId: string,
     now: Date,
-  ): (ThreadGroupGuest & { name: string; memberCount: number; invitedByName: string | null })[];
+  ): Promise<
+    (ThreadGroupGuest & { name: string; memberCount: number; invitedByName: string | null })[]
+  >;
   // What the user's active groups let them do in the thread while they have no role in its space,
   // the most any gives; null when none does.
-  groupRole(threadId: string, userId: string, now: Date): ThreadRole | null;
+  groupRole(threadId: string, userId: string, now: Date): Promise<ThreadRole | null>;
   // Everyone who is a guest of the thread at `now`, by a grant of their own or through a group,
   // with the most they may do.
-  reachedIn(threadId: string, now: Date): { userId: string; name: string; role: ThreadRole }[];
+  reachedIn(
+    threadId: string,
+    now: Date,
+  ): Promise<{ userId: string; name: string; role: ThreadRole }[]>;
   // What the org's members outside the thread's space may do in it.
-  orgAccess(threadId: string): OrgAccess;
-  setOrgAccess(threadId: string, orgAccess: OrgAccess): void;
-  revoke(threadId: string, userId: string, by: string, at: Date): void;
+  orgAccess(threadId: string): Promise<OrgAccess>;
+  setOrgAccess(threadId: string, orgAccess: OrgAccess): Promise<void>;
+  revoke(threadId: string, userId: string, by: string, at: Date): Promise<void>;
   // The thread's guests whose access has not ended at `now`, oldest first, with their names and
   // their inviters' names.
   activeIn(
     threadId: string,
     now: Date,
-  ): (ThreadGuest & { name: string; invitedByName: string | null })[];
+  ): Promise<(ThreadGuest & { name: string; invitedByName: string | null })[]>;
   // The threads the user is an active guest in at `now`, or reaches through their org's access to
   // a space they have no role in, but those of spaces in trash, most recently active first.
-  threadsOf(userId: string, now: Date): GuestThread[];
+  threadsOf(userId: string, now: Date): Promise<GuestThread[]>;
   // Those of them the filter keeps, matching text in their title or the place they are in; those
   // the window takes, every match without one.
   sharedListed(
@@ -142,9 +147,9 @@ export interface GuestStore {
     now: Date,
     filter: ThreadListFilter,
     window?: ListWindow,
-  ): Listed<GuestThread & ListedThread>;
+  ): Promise<Listed<GuestThread & ListedThread>>;
   // The thread's space name as someone outside its org sees it, or null for an unknown thread.
-  hostSpaceName(threadId: string): string | null;
+  hostSpaceName(threadId: string): Promise<string | null>;
 
   createInvite(invite: {
     threadId: string;
@@ -153,15 +158,15 @@ export interface GuestStore {
     linkExpiresAt: Date;
     accessFor: AccessFor;
     role: ThreadRole;
-  }): ThreadInvite;
-  setInviteRole(id: string, role: ThreadRole): void;
-  findInvite(id: string): ThreadInvite | null;
-  findInviteByHash(tokenHash: string): ThreadInvite | null;
+  }): Promise<ThreadInvite>;
+  setInviteRole(id: string, role: ThreadRole): Promise<void>;
+  findInvite(id: string): Promise<ThreadInvite | null>;
+  findInviteByHash(tokenHash: string): Promise<ThreadInvite | null>;
   // The thread's links not used, revoked or expired at `now`, oldest first.
-  pendingInvites(threadId: string, now: Date): ThreadInvite[];
+  pendingInvites(threadId: string, now: Date): Promise<ThreadInvite[]>;
   // Stamps the link used by the user; false when it was used or revoked first.
-  markAccepted(id: string, userId: string, at: Date): boolean;
-  revokeInvite(id: string, at: Date): void;
+  markAccepted(id: string, userId: string, at: Date): Promise<boolean>;
+  revokeInvite(id: string, at: Date): Promise<void>;
 }
 
 export interface GuestsOptions {
@@ -171,7 +176,7 @@ export interface GuestsOptions {
   threads: Pick<ThreadStore, "eventsOfType">;
   transact: Transact;
   // Tells the guest's inbox when their access begins or ends.
-  bus: Pick<EventBus, "activity">;
+  bus: Pick<Signals, "activity">;
   // Where the app is served; invite links lead there.
   baseUrl: string;
   now?: () => Date;
@@ -246,15 +251,15 @@ export function createGuests(options: GuestsOptions) {
 
   return {
     // A new link to the thread; its token is in the url and nowhere else.
-    invite(
+    async invite(
       principal: Principal,
       threadId: string,
       accessFor: AccessFor,
       role: ThreadRole,
-    ): CreatedInvite {
-      access.require(principal, threadId, "share");
+    ): Promise<CreatedInvite> {
+      await access.require(principal, threadId, "share");
       const token = randomBytes(32).toString("base64url");
-      const invite = guests.createInvite({
+      const invite = await guests.createInvite({
         threadId,
         tokenHash: hashOf(token),
         createdBy: principal.userId,
@@ -273,58 +278,68 @@ export function createGuests(options: GuestsOptions) {
 
     // The org's members and groups who could be added, matching the text in name or email, those
     // who already have access too, marked with why. The groups come with the first page.
-    candidates(principal: Principal, threadId: string, params: PageParams): Page<GuestCandidate> {
-      const { thread } = access.require(principal, threadId, "share");
-      const page = directory.memberPage(principal.orgId, params);
+    async candidates(
+      principal: Principal,
+      threadId: string,
+      params: PageParams,
+    ): Promise<Page<GuestCandidate>> {
+      const { thread } = await access.require(principal, threadId, "share");
+      const page = await directory.memberPage(principal.orgId, params);
       const held = new Set(
-        guests.activeGroupsIn(thread.rootThreadId ?? threadId, now()).map((row) => row.groupId),
+        (await guests.activeGroupsIn(thread.rootThreadId ?? threadId, now())).map(
+          (row) => row.groupId,
+        ),
       );
       const groups = params.cursor
         ? []
-        : directory
-            .groupPage(principal.orgId, {
+        : (
+            await directory.groupPage(principal.orgId, {
               ...(params.q && { q: params.q }),
               limit: GROUPS_MAX,
             })
-            .items.map((group): GuestCandidate => ({
-              kind: "group",
-              id: group.id,
-              name: group.name,
-              email: group.email ?? "",
-              memberCount: group.memberCount,
-              already: held.has(group.id) ? "Added" : null,
-            }));
-      const people = page.items.map((member): GuestCandidate => ({
-        kind: "user",
-        id: member.id,
-        name: member.name,
-        email: member.email,
-        memberCount: null,
-        already: reason(access.of({ userId: member.id, orgId: principal.orgId }, thread)),
-      }));
+          ).items.map((group): GuestCandidate => ({
+            kind: "group",
+            id: group.id,
+            name: group.name,
+            email: group.email ?? "",
+            memberCount: group.memberCount,
+            already: held.has(group.id) ? "Added" : null,
+          }));
+      const people = await Promise.all(
+        page.items.map(async (member): Promise<GuestCandidate> => ({
+          kind: "user",
+          id: member.id,
+          name: member.name,
+          email: member.email,
+          memberCount: null,
+          already: reason(
+            (await access.of({ userId: member.id, orgId: principal.orgId }, thread))?.via ?? null,
+          ),
+        })),
+      );
       return { items: [...groups, ...people], nextCursor: page.nextCursor, total: page.total };
     },
 
     // Makes a member of the thread's org a guest for as long as asked, as a link would; only one
     // the thread's candidates include.
-    add(
+    async add(
       principal: Principal,
       threadId: string,
       userId: string,
       accessFor: AccessFor,
       role: ThreadRole,
     ) {
-      const { thread } = access.require(principal, threadId, "share");
-      const person = directory.user(userId);
+      const { thread } = await access.require(principal, threadId, "share");
+      const person = await directory.user(userId);
       if (
         !person ||
-        !directory.roleIn(principal.orgId, userId) ||
-        reaches(access.of({ userId, orgId: principal.orgId }, thread))
+        !(await directory.roleIn(principal.orgId, userId)) ||
+        reaches((await access.of({ userId, orgId: principal.orgId }, thread))?.via ?? null)
       ) {
         throw new ServiceError(404, "Person not found");
       }
       const span = ACCESS_FOR_MS[accessFor];
-      guests.grant({
+      await guests.grant({
         threadId,
         userId,
         invitedBy: principal.userId,
@@ -336,19 +351,19 @@ export function createGuests(options: GuestsOptions) {
 
     // Lets everyone in a group of the thread's org in as guests for as long as asked, while they
     // are in it.
-    addGroup(
+    async addGroup(
       principal: Principal,
       threadId: string,
       groupId: string,
       accessFor: AccessFor,
       role: ThreadRole,
     ) {
-      const { thread } = access.require(principal, threadId, "share");
-      if (!directory.linkedRole(principal.orgId, groupId)) {
+      const { thread } = await access.require(principal, threadId, "share");
+      if (!(await directory.linkedRole(principal.orgId, groupId))) {
         throw new ServiceError(404, "Group not found");
       }
       const span = ACCESS_FOR_MS[accessFor];
-      guests.grantGroup({
+      await guests.grantGroup({
         threadId: thread.rootThreadId ?? threadId,
         groupId,
         invitedBy: principal.userId,
@@ -359,18 +374,18 @@ export function createGuests(options: GuestsOptions) {
     },
 
     // The space's members who have written in the thread, its guests, and its links not yet used.
-    people(principal: Principal, threadId: string): ThreadPeople {
-      const { thread, access: mine } = access.require(principal, threadId, "share");
+    async people(principal: Principal, threadId: string): Promise<ThreadPeople> {
+      const { thread, via: mine } = await access.require(principal, threadId, "share");
       const at = now();
-      const active = guests.activeIn(threadId, at);
-      const groups = guests.activeGroupsIn(thread.rootThreadId ?? threadId, at);
+      const active = await guests.activeIn(threadId, at);
+      const groups = await guests.activeGroupsIn(thread.rootThreadId ?? threadId, at);
       const guestIds = new Set(active.map((guest) => guest.userId));
       const writers = new Map<string, { name: string; role: SpaceRole }>();
-      for (const event of threads.eventsOfType(threadId, "message")) {
+      for (const event of await threads.eventsOfType(threadId, "message")) {
         if (event.type !== "message" || event.actor.kind !== "user") continue;
         const { userId } = event.actor;
         if (guestIds.has(userId) || writers.has(userId) || !event.actorName) continue;
-        const theirs = access.of({ userId, orgId: principal.orgId }, thread);
+        const theirs = (await access.of({ userId, orgId: principal.orgId }, thread))?.via;
         if (theirs?.via === "space")
           writers.set(userId, { name: event.actorName, role: theirs.role });
       }
@@ -411,45 +426,49 @@ export function createGuests(options: GuestsOptions) {
             canRevoke: mayRevoke(mine, principal, group.invitedBy),
           })),
         ],
-        invites: guests
-          .pendingInvites(threadId, at)
-          .map((invite) => pendingSummary(invite, mayRevoke(mine, principal, invite.createdBy))),
-        orgAccess: guests.orgAccess(thread.rootThreadId ?? threadId),
+        invites: (await guests.pendingInvites(threadId, at)).map((invite) =>
+          pendingSummary(invite, mayRevoke(mine, principal, invite.createdBy)),
+        ),
+        orgAccess: await guests.orgAccess(thread.rootThreadId ?? threadId),
       };
     },
 
     // What the org's members outside the space may do in the thread.
-    setOrgAccess(principal: Principal, threadId: string, orgAccess: OrgAccess) {
-      const { thread } = access.require(principal, threadId, "share");
-      guests.setOrgAccess(thread.rootThreadId ?? threadId, orgAccess);
+    async setOrgAccess(principal: Principal, threadId: string, orgAccess: OrgAccess) {
+      const { thread } = await access.require(principal, threadId, "share");
+      await guests.setOrgAccess(thread.rootThreadId ?? threadId, orgAccess);
       bus.activity({ threadId });
     },
 
     // What an active guest may do in the thread.
-    setGuestRole(principal: Principal, threadId: string, userId: string, role: ThreadRole) {
-      access.require(principal, threadId, "share");
-      const guest = guests.activeIn(threadId, now()).find((found) => found.userId === userId);
+    async setGuestRole(principal: Principal, threadId: string, userId: string, role: ThreadRole) {
+      await access.require(principal, threadId, "share");
+      const guest = (await guests.activeIn(threadId, now())).find(
+        (found) => found.userId === userId,
+      );
       if (!guest) throw new ServiceError(404, "Guest not found");
-      guests.setRole(threadId, userId, role);
+      await guests.setRole(threadId, userId, role);
       bus.activity({ threadId });
     },
 
     // What an active group of guests may do in the thread.
-    setGroupRole(principal: Principal, threadId: string, groupId: string, role: ThreadRole) {
-      const { thread } = access.require(principal, threadId, "share");
+    async setGroupRole(principal: Principal, threadId: string, groupId: string, role: ThreadRole) {
+      const { thread } = await access.require(principal, threadId, "share");
       const root = thread.rootThreadId ?? threadId;
-      if (!guests.activeGroupsIn(root, now()).some((found) => found.groupId === groupId)) {
+      if (!(await guests.activeGroupsIn(root, now())).some((found) => found.groupId === groupId)) {
         throw new ServiceError(404, "Group not found");
       }
-      guests.setGroupRole(root, groupId, role);
+      await guests.setGroupRole(root, groupId, role);
       bus.activity({ threadId });
     },
 
-    revokeGroup(principal: Principal, threadId: string, groupId: string) {
-      const { thread, access: mine } = access.require(principal, threadId, "share");
+    async revokeGroup(principal: Principal, threadId: string, groupId: string) {
+      const { thread, via: mine } = await access.require(principal, threadId, "share");
       const root = thread.rootThreadId ?? threadId;
       const at = now();
-      const group = guests.activeGroupsIn(root, at).find((found) => found.groupId === groupId);
+      const group = (await guests.activeGroupsIn(root, at)).find(
+        (found) => found.groupId === groupId,
+      );
       if (!group) throw new ServiceError(404, "Group not found");
       if (!mayRevoke(mine, principal, group.invitedBy)) {
         throw new ServiceError(
@@ -457,23 +476,28 @@ export function createGuests(options: GuestsOptions) {
           "Only the space's owner or whoever added the group can remove it",
         );
       }
-      guests.revokeGroup(root, groupId, principal.userId, at);
+      await guests.revokeGroup(root, groupId, principal.userId, at);
       bus.activity({ threadId });
     },
 
     // What whoever opens a link not yet used may do in the thread.
-    setInviteRole(principal: Principal, threadId: string, inviteId: string, role: ThreadRole) {
-      access.require(principal, threadId, "share");
-      const invite = guests.findInvite(inviteId);
+    async setInviteRole(
+      principal: Principal,
+      threadId: string,
+      inviteId: string,
+      role: ThreadRole,
+    ) {
+      await access.require(principal, threadId, "share");
+      const invite = await guests.findInvite(inviteId);
       if (!invite || invite.threadId !== threadId || invite.acceptedAt || invite.revokedAt) {
         throw new ServiceError(404, "Invite not found");
       }
-      guests.setInviteRole(inviteId, role);
+      await guests.setInviteRole(inviteId, role);
     },
 
-    revokeInvite(principal: Principal, threadId: string, inviteId: string) {
-      const { access: mine } = access.require(principal, threadId, "share");
-      const invite = guests.findInvite(inviteId);
+    async revokeInvite(principal: Principal, threadId: string, inviteId: string) {
+      const { via: mine } = await access.require(principal, threadId, "share");
+      const invite = await guests.findInvite(inviteId);
       if (!invite || invite.threadId !== threadId || invite.acceptedAt || invite.revokedAt) {
         throw new ServiceError(404, "Invite not found");
       }
@@ -483,13 +507,13 @@ export function createGuests(options: GuestsOptions) {
           "Only the space's owner or whoever made the link can revoke it",
         );
       }
-      guests.revokeInvite(inviteId, now());
+      await guests.revokeInvite(inviteId, now());
     },
 
-    revokeGuest(principal: Principal, threadId: string, userId: string) {
-      const { access: mine } = access.require(principal, threadId, "share");
+    async revokeGuest(principal: Principal, threadId: string, userId: string) {
+      const { via: mine } = await access.require(principal, threadId, "share");
       const at = now();
-      const guest = guests.activeIn(threadId, at).find((found) => found.userId === userId);
+      const guest = (await guests.activeIn(threadId, at)).find((found) => found.userId === userId);
       if (!guest) throw new ServiceError(404, "Guest not found");
       if (!mayRevoke(mine, principal, guest.invitedBy)) {
         throw new ServiceError(
@@ -497,42 +521,42 @@ export function createGuests(options: GuestsOptions) {
           "Only the space's owner or whoever invited them can revoke a guest",
         );
       }
-      guests.revoke(threadId, userId, principal.userId, at);
+      await guests.revoke(threadId, userId, principal.userId, at);
       bus.activity({ threadId });
     },
 
     // Makes the principal a guest of the link's thread, or renews their access, and uses the link
     // up. Someone who can already see the thread through its space just goes to it, leaving the
     // link for whoever it was meant for; opening a link one has used again goes to the thread too.
-    accept(principal: Principal, token: string) {
-      const invite = guests.findInviteByHash(hashOf(token));
+    async accept(principal: Principal, token: string) {
+      const invite = await guests.findInviteByHash(hashOf(token));
       if (!invite) throw new ServiceError(404, "This invite link does not exist", "not_found");
       const { threadId } = invite;
-      const reached = () => {
+      const reached = async () => {
         try {
-          return access.require(principal, threadId).access;
+          return (await access.require(principal, threadId)).via;
         } catch {
           return null;
         }
       };
-      if (reached()?.via === "space") return { threadId };
-      if (invite.acceptedBy === principal.userId && reached()) return { threadId };
+      if ((await reached())?.via === "space") return { threadId };
+      if (invite.acceptedBy === principal.userId && (await reached())) return { threadId };
       refuse(invite);
-      transact(() => {
+      await transact(async () => {
         const at = now();
         // Someone else used or revoked it meanwhile.
-        if (!guests.markAccepted(invite.id, principal.userId, at)) {
-          refuse(guests.findInvite(invite.id) ?? invite);
+        if (!(await guests.markAccepted(invite.id, principal.userId, at))) {
+          refuse((await guests.findInvite(invite.id)) ?? invite);
           throw new ServiceError(410, "This invite link was already used", "used");
         }
         const span = ACCESS_FOR_MS[invite.accessFor];
         const until = span === null ? null : new Date(at.getTime() + span);
-        const current = guests.find(threadId, principal.userId);
+        const current = await guests.find(threadId, principal.userId);
         const holds =
           current && !current.revokedAt && (!current.accessUntil || current.accessUntil > at);
         // Access that already lasts longer stays as it is, with whoever gave it.
         const keeps = holds && later(current.accessUntil, until) === current.accessUntil;
-        guests.grant({
+        await guests.grant({
           threadId,
           userId: principal.userId,
           invitedBy: keeps ? current.invitedBy : invite.createdBy,

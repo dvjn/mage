@@ -12,7 +12,6 @@ import {
   failureKindSchema,
   notificationKindSchema,
   notificationPartsSchema,
-  subagentEndSchema,
   subagentTaskSchema,
   replyStatusSchema,
   senderSchema,
@@ -273,20 +272,6 @@ const relayRowSchema = z.object({
   ...notificationPartsSchema.shape,
 });
 
-// Subagents that ended runs, told together: each with where it stands and the last thing it said.
-const noticeRowSchema = z.object({
-  ...rowFields,
-  kind: z.literal("notice"),
-  subagents: z.array(
-    z.object({
-      threadId: z.string(),
-      name: z.string(),
-      state: subagentEndSchema,
-      last: z.string(),
-    }),
-  ),
-});
-
 // The thread's subagents sent each other as many messages as they may, linking to the call first
 // refused where the reader may read its thread.
 const limitRowSchema = z.object({
@@ -329,7 +314,6 @@ export const shownRowSchema = z.discriminatedUnion("kind", [
   stopRowSchema,
   compactionRowSchema,
   relayRowSchema,
-  noticeRowSchema,
   limitRowSchema,
   forkRowSchema,
   restoreRowSchema,
@@ -343,7 +327,6 @@ export type ToolRow = z.infer<typeof toolRowSchema>;
 export type FailureRow = z.infer<typeof failureRowSchema>;
 export type CompactionRow = z.infer<typeof compactionRowSchema>;
 export type RelayRow = z.infer<typeof relayRowSchema>;
-export type NoticeRow = z.infer<typeof noticeRowSchema>;
 export type LimitRow = z.infer<typeof limitRowSchema>;
 export type ForkRow = z.infer<typeof forkRowSchema>;
 export type RestoreRow = z.infer<typeof restoreRowSchema>;

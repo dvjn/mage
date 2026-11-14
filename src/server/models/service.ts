@@ -43,6 +43,7 @@ import {
   type ProviderProxy,
 } from "./gateway.ts";
 import { parseModelRef } from "@/shared/model-ref.ts";
+import { filterAsync, findAsync } from "@/server/kernel/async.ts";
 
 export interface ModelChoice {
   enabled: boolean;
@@ -57,9 +58,9 @@ export interface ModelChoiceStore {
     modelIds: string[],
     enableNew: boolean,
     now: Date,
-  ): Map<string, ModelChoice>;
+  ): Promise<Map<string, ModelChoice>>;
   // Turns the models given on or off, recording those not seen before as first seen now.
-  set(connectionId: string, modelIds: string[], enabled: boolean, now: Date): void;
+  set(connectionId: string, modelIds: string[], enabled: boolean, now: Date): Promise<void>;
 }
 
 export interface Model extends CatalogModel {
@@ -194,12 +195,12 @@ export function createModels(options: ModelsOptions) {
   }
 
   // The connection's models with each one's choice, new ones recorded as the connection says.
-  function withChoices(
+  async function withChoices(
     connection: Connection,
     models: CatalogModel[],
     slug: string,
-  ): ConnectionModel[] {
-    const chosen = choices.sync(
+  ): Promise<ConnectionModel[]> {
+    const chosen = await choices.sync(
       connection.id,
       models.map((m) => m.id),
       connection.autoEnableModels,
@@ -224,8 +225,8 @@ export function createModels(options: ModelsOptions) {
     }));
   }
 
-  function connectionIn(orgId: string, id: string) {
-    const connection = connections.find(orgId, id);
+  async function connectionIn(orgId: string, id: string) {
+    const connection = await connections.find(orgId, id);
     if (!connection) throw new ConnectionError(404, "Connection not found");
     return connection;
   }
@@ -236,20 +237,20 @@ export function createModels(options: ModelsOptions) {
   }
 
   // The connection a ref names, or null.
-  function connectionOf(orgId: string, prefix: string) {
-    return namedBy(connections.list(orgId), prefix);
+  async function connectionOf(orgId: string, prefix: string) {
+    return namedBy(await connections.list(orgId), prefix);
   }
 
   // The connection's slug among its org's.
-  function slugIn(orgId: string, connection: Connection) {
-    return connectionSlugs(connections.list(orgId)).get(connection.id) ?? connection.id;
+  async function slugIn(orgId: string, connection: Connection) {
+    return connectionSlugs(await connections.list(orgId)).get(connection.id) ?? connection.id;
   }
 
   // The ref a model is stored under, given that or its alias; what names no connection of the org
   // is given back as it is.
-  function canonicalRef(orgId: string, ref: string) {
+  async function canonicalRef(orgId: string, ref: string) {
     const { connectionId: prefix, modelId } = parseModelRef(ref);
-    const list = connections.list(orgId);
+    const list = await connections.list(orgId);
     if (!prefix || namedBy(list, prefix)) return ref;
     const slugs = connectionSlugs(list);
     const connection = list.find((c) => slugs.get(c.id) === prefix);
@@ -258,15 +259,15 @@ export function createModels(options: ModelsOptions) {
 
   // The alias of the model a ref or alias names; given back as it is when the org has no such
   // connection.
-  function aliasOf(orgId: string, ref: string) {
-    const { connectionId: prefix, modelId } = parseModelRef(canonicalRef(orgId, ref));
-    const connection = connectionOf(orgId, prefix);
-    return connection ? `${slugIn(orgId, connection)}/${modelId}` : ref;
+  async function aliasOf(orgId: string, ref: string) {
+    const { connectionId: prefix, modelId } = parseModelRef(await canonicalRef(orgId, ref));
+    const connection = await connectionOf(orgId, prefix);
+    return connection ? `${await slugIn(orgId, connection)}/${modelId}` : ref;
   }
 
   // The one place that decides which models exist for an org.
   async function resolveModels(orgId: string, { refresh = false } = {}): Promise<ModelList> {
-    const list = connections.list(orgId);
+    const list = await connections.list(orgId);
     const slugs = connectionSlugs(list);
     const ids = new Set(list.map((c) => c.id));
     for (const [id, cached] of cache) {
@@ -275,15 +276,15 @@ export function createModels(options: ModelsOptions) {
 
     const results = await Promise.allSettled(list.map((c) => listOf(orgId, c, refresh)));
     const result: ModelList = { models: [], errors: [], turnedOff: [] };
-    results.forEach((settled, index) => {
+    for (const [index, settled] of results.entries()) {
       const connection = list[index]!;
       const { id: connectionId } = connection;
       if (settled.status === "rejected") {
         const message = settled.reason instanceof Error ? settled.reason.message : "Failed";
         result.errors.push({ connectionId, message });
-        return;
+        continue;
       }
-      for (const { enabled, firstSeenAt: _seen, ...model } of withChoices(
+      for (const { enabled, firstSeenAt: _seen, ...model } of await withChoices(
         connection,
         settled.value,
         slugs.get(connectionId) ?? connectionId,
@@ -291,22 +292,24 @@ export function createModels(options: ModelsOptions) {
         if (enabled) result.models.push(model);
         else result.turnedOff.push({ ref: model.ref, name: model.name, connectionId });
       }
-    });
+    }
     return result;
   }
 
   // Every model of the connection, on or off, and whether new ones are turned on; reads the list
   // again when asked.
   async function connectionModels(orgId: string, id: string, { refresh = false } = {}) {
-    const connection = connectionIn(orgId, id);
+    const connection = await connectionIn(orgId, id);
     const list = await listOf(orgId, connection, refresh);
-    const orgDefault = settings.get(orgId).defaultModel;
+    const orgDefault = (await settings.get(orgId)).defaultModel;
     return {
       autoEnable: connection.autoEnableModels,
-      models: withChoices(connection, list, slugIn(orgId, connection)).map((model) => ({
-        ...model,
-        orgDefault: model.ref === orgDefault,
-      })),
+      models: (await withChoices(connection, list, await slugIn(orgId, connection))).map(
+        (model) => ({
+          ...model,
+          orgDefault: model.ref === orgDefault,
+        }),
+      ),
     };
   }
 
@@ -320,7 +323,7 @@ export function createModels(options: ModelsOptions) {
     const off = turnedOff.find((model) => model.ref === ref);
     if (off) return { ref, name: off.name, status: "off" };
     const { connectionId, modelId } = parseModelRef(ref);
-    const connection = connectionOf(orgId, connectionId);
+    const connection = await connectionOf(orgId, connectionId);
     const unread = !!connection && errors.some((e) => e.connectionId === connection.id);
     return { ref, name: modelId, status: unread ? "ok" : "unavailable" };
   }
@@ -331,7 +334,7 @@ export function createModels(options: ModelsOptions) {
     space: Pick<Space, "orgId" | "defaultModel" | "defaultEffort">,
     own: ModelPair,
   ): Promise<ReplyModel | null> {
-    const org = settings.get(space.orgId);
+    const org = await settings.get(space.orgId);
     const picked = await pickReplyModel(
       replyCandidates(
         own,
@@ -421,7 +424,7 @@ export function createModels(options: ModelsOptions) {
     // given, which become the connection's list.
     async add(owner: Owner, input: NewHostConnection): Promise<Connection> {
       const list = await checked(input.host, input, input.proxy ?? null);
-      const connection = tokens.add(owner, input);
+      const connection = await tokens.add(owner, input);
       cache.set(connection.id, { orgId: owner.orgId, at: now().getTime(), models: list });
       return connection;
     },
@@ -429,12 +432,12 @@ export function createModels(options: ModelsOptions) {
     // Changes the connection once its host, through its proxy, lists models with what it now
     // has, which become its list.
     async edit(owner: Owner, id: string, change: HostConnectionChange): Promise<Connection> {
-      const { host } = connectionIn(owner.orgId, id);
+      const { host } = await connectionIn(owner.orgId, id);
       const proxy = await tokens.withFreshToken(owner.orgId, id, (token) =>
         Promise.resolve(token.proxy),
       );
       const list = await checked(host, change, proxy);
-      const connection = tokens.edit(owner, id, change);
+      const connection = await tokens.edit(owner, id, change);
       cache.set(id, { orgId: owner.orgId, at: now().getTime(), models: list });
       return connection;
     },
@@ -445,7 +448,7 @@ export function createModels(options: ModelsOptions) {
     async open(orgId: string, ref: string): Promise<OpenModel> {
       const { connectionId: prefix, modelId: model } = parseModelRef(ref);
       if (!prefix || !model) throw new ModelError("model", `${ref} is not a model ref.`);
-      const connection = connectionOf(orgId, prefix);
+      const connection = await connectionOf(orgId, prefix);
       if (!connection) {
         const needs = isHost(prefix)
           ? `a ${HOSTS[prefix].label} connection`
@@ -454,7 +457,7 @@ export function createModels(options: ModelsOptions) {
       }
       // A list that cannot be read leaves the model's reasoning unknown.
       const list = await listOf(orgId, connection, false).catch(() => []);
-      const listed = withChoices(connection, list, slugIn(orgId, connection)).find(
+      const listed = (await withChoices(connection, list, await slugIn(orgId, connection))).find(
         (m) => m.id === model,
       );
       if (listed && !listed.enabled) throw new ModelTurnedOff(listed.name);
@@ -494,15 +497,15 @@ export function createModels(options: ModelsOptions) {
       id: string,
       change: { autoEnable?: boolean; set?: { ids: string[]; enabled: boolean } },
     ) {
-      const connection = connectionIn(orgId, id);
+      const connection = await connectionIn(orgId, id);
       let affected: { id: string; name: string }[] = [];
       if (change.set) {
         let { ids } = change.set;
         const { enabled } = change.set;
         if (!enabled) {
-          const isDefault = (modelId: string) =>
-            modelRef(connection, modelId) === settings.get(orgId).defaultModel;
-          const kept = ids.find(isDefault);
+          const isDefault = async (modelId: string) =>
+            modelRef(connection, modelId) === (await settings.get(orgId)).defaultModel;
+          const kept = await findAsync(ids, isDefault);
           if (kept && ids.length === 1) {
             const name =
               (await listOf(orgId, connection, false).catch(() => [])).find((m) => m.id === kept)
@@ -512,41 +515,44 @@ export function createModels(options: ModelsOptions) {
               `${name} is the organization's default model. Choose another default first.`,
             );
           }
-          ids = ids.filter((modelId) => !isDefault(modelId));
+          ids = await filterAsync(ids, async (modelId) => !(await isDefault(modelId)));
           const refs = ids.map((modelId) => modelRef(connection, modelId));
-          affected = spaces.withDefaultModel(orgId, refs).map((s) => ({ id: s.id, name: s.name }));
+          affected = (await spaces.withDefaultModel(orgId, refs)).map((s) => ({
+            id: s.id,
+            name: s.name,
+          }));
         }
-        choices.set(connection.id, ids, enabled, now());
+        await choices.set(connection.id, ids, enabled, now());
       }
       if (change.autoEnable !== undefined) {
-        connections.setAutoEnableModels(connection.id, change.autoEnable);
+        await connections.setAutoEnableModels(connection.id, change.autoEnable);
       }
       return { ...(await connectionModels(orgId, id)), spacesUsingOff: affected };
     },
 
-    defaultModel(orgId: string): string | null {
-      return settings.get(orgId).defaultModel;
+    async defaultModel(orgId: string): Promise<string | null> {
+      return (await settings.get(orgId)).defaultModel;
     },
 
     async setDefaultModel(orgId: string, ref: string) {
       await requireModel(orgId, ref);
-      settings.setDefaultModel(orgId, ref);
+      await settings.setDefaultModel(orgId, ref);
     },
 
-    defaultEffort(orgId: string): Effort | null {
-      return settings.get(orgId).defaultEffort;
+    async defaultEffort(orgId: string): Promise<Effort | null> {
+      return (await settings.get(orgId)).defaultEffort;
     },
 
     // Null goes back to each model's usual effort.
-    setDefaultEffort(orgId: string, effort: Effort | null) {
-      settings.setDefaultEffort(orgId, effort);
+    async setDefaultEffort(orgId: string, effort: Effort | null) {
+      await settings.setDefaultEffort(orgId, effort);
     },
 
     // The org's models as lists show them, by ref: who makes each, the host and the connection it
     // comes through, null when the org has none such, and the name its last list gave it, else its
     // id. Reads the org's connections once and asks no host.
-    shownModels(orgId: string): (ref: string) => ShownModel {
-      const list = connections.list(orgId);
+    async shownModels(orgId: string): Promise<(ref: string) => ShownModel> {
+      const list = await connections.list(orgId);
       return (ref) => {
         const { connectionId: prefix, modelId: id } = parseModelRef(ref);
         const connection = namedBy(list, prefix);
@@ -567,10 +573,10 @@ export function createModels(options: ModelsOptions) {
     // Says a model in one line, given its ref or alias: the name its last list gave it, else its
     // id, and its connection by the name people gave it, else its host's; null for a model of no
     // connection of the org.
-    modelLabels(orgId: string): (ref: string) => string | null {
-      const list = connections.list(orgId);
-      return (given) => {
-        const { connectionId: prefix, modelId } = parseModelRef(canonicalRef(orgId, given));
+    async modelLabels(orgId: string): Promise<(ref: string) => Promise<string | null>> {
+      const list = await connections.list(orgId);
+      return async (given) => {
+        const { connectionId: prefix, modelId } = parseModelRef(await canonicalRef(orgId, given));
         const connection = namedBy(list, prefix);
         if (!connection) return null;
         const listed = cache.get(connection.id)?.models.find((m) => m.id === modelId);
@@ -579,20 +585,22 @@ export function createModels(options: ModelsOptions) {
       };
     },
 
-    defaults(space: Pick<Space, "orgId" | "defaultModel" | "defaultEffort">): Defaults {
-      return defaultsOf(space, settings.get(space.orgId));
+    async defaults(
+      space: Pick<Space, "orgId" | "defaultModel" | "defaultEffort">,
+    ): Promise<Defaults> {
+      return defaultsOf(space, await settings.get(space.orgId));
     },
 
     // The org's title model, null when it chooses automatically.
-    chosenTitleModel(orgId: string): string | null {
-      return settings.get(orgId).titleModel;
+    async chosenTitleModel(orgId: string): Promise<string | null> {
+      return (await settings.get(orgId)).titleModel;
     },
 
     // The title model for the first of the org's connections whose live list has it; null when
     // none does, and each thread is named with its own model.
     async automaticTitleModel(orgId: string): Promise<string | null> {
       const { models } = await resolveModels(orgId);
-      for (const connection of connections.list(orgId)) {
+      for (const connection of await connections.list(orgId)) {
         const title = hostOf(connection.host).titleModel;
         const ref = title && modelRef(connection, title);
         if (ref && models.some((model) => model.ref === ref)) return ref;
@@ -603,7 +611,7 @@ export function createModels(options: ModelsOptions) {
     // Null chooses automatically again.
     async setTitleModel(orgId: string, ref: string | null) {
       if (ref) await requireModel(orgId, ref);
-      settings.setTitleModel(orgId, ref);
+      await settings.setTitleModel(orgId, ref);
     },
   };
 }

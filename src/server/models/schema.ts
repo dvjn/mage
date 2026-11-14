@@ -1,11 +1,21 @@
 import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer, uniqueIndex, blob, primaryKey } from "drizzle-orm/sqlite-core";
+import {
+  pgTable,
+  text,
+  integer,
+  uniqueIndex,
+  primaryKey,
+  boolean,
+  json,
+} from "drizzle-orm/pg-core";
+
+import { at, bytes, NOW } from "@/server/db/columns.ts";
 
 import { AUTH_KINDS } from "@/shared/hosts.ts";
 import { user, organization } from "@/server/orgs/schema.ts";
 
 // A provider account an org reaches models through.
-export const connection = sqliteTable(
+export const connection = pgTable(
   "connection",
   {
     id: text("id").primaryKey(),
@@ -23,14 +33,12 @@ export const connection = sqliteTable(
     // A name people gave it; null for sign-ins.
     label: text("label"),
     // What is not secret about how it connects, as JSON; null where it says nothing.
-    settings: text("settings", { mode: "json" }).$type<Record<string, string>>(),
+    settings: json("settings").$type<Record<string, string>>(),
     // Whether models the provider adds are turned on when first seen.
-    autoEnableModels: integer("auto_enable_models", { mode: "boolean" }).default(true).notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-      .notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    autoEnableModels: boolean("auto_enable_models").default(true).notNull(),
+    createdAt: at("created_at").default(NOW).notNull(),
+    updatedAt: at("updated_at")
+      .default(NOW)
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
   },
@@ -43,31 +51,29 @@ export const connection = sqliteTable(
 );
 
 // Each model a connection's list has shown, whether people can pick it, and when it first showed.
-export const connectionModel = sqliteTable(
+export const connectionModel = pgTable(
   "connection_model",
   {
     connectionId: text("connection_id")
       .notNull()
       .references(() => connection.id, { onDelete: "cascade" }),
     modelId: text("model_id").notNull(),
-    enabled: integer("enabled", { mode: "boolean" }).notNull(),
-    firstSeenAt: integer("first_seen_at", { mode: "timestamp_ms" }).notNull(),
+    enabled: boolean("enabled").notNull(),
+    firstSeenAt: at("first_seen_at").notNull(),
   },
   (table) => [primaryKey({ columns: [table.connectionId, table.modelId] })],
 );
 
 // A connection's secrets, sealed with the credential key of the recorded version.
-export const credential = sqliteTable("credential", {
+export const credential = pgTable("credential", {
   connectionId: text("connection_id")
     .primaryKey()
     .references(() => connection.id, { onDelete: "cascade" }),
   keyVersion: integer("key_version").notNull(),
-  sealed: blob("sealed", { mode: "buffer" }).notNull(),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-    .notNull(),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+  sealed: bytes("sealed").notNull(),
+  createdAt: at("created_at").default(NOW).notNull(),
+  updatedAt: at("updated_at")
+    .default(NOW)
     .$onUpdate(() => /* @__PURE__ */ new Date())
     .notNull(),
 });

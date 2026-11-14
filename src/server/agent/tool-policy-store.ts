@@ -8,9 +8,9 @@ import { toolPolicy, toolPolicyMember } from "./schema.ts";
 
 export function createToolPolicyStore(db: Db): ToolPolicyStore {
   // The policies with whom they name.
-  function recordsOf(rows: (typeof toolPolicy.$inferSelect)[]): ToolPolicyRecord[] {
+  async function recordsOf(rows: (typeof toolPolicy.$inferSelect)[]): Promise<ToolPolicyRecord[]> {
     if (rows.length === 0) return [];
-    const members = db
+    const members = await db
       .select()
       .from(toolPolicyMember)
       .where(
@@ -19,8 +19,7 @@ export function createToolPolicyStore(db: Db): ToolPolicyStore {
           rows.map((row) => row.id),
         ),
       )
-      .orderBy(asc(toolPolicyMember.position))
-      .all();
+      .orderBy(asc(toolPolicyMember.position));
     const keysOf = (id: string, role: "user" | "approver") =>
       members.filter((one) => one.policyId === id && one.role === role).map((one) => one.key);
     return rows.map(({ organizationId, ...row }) => ({
@@ -31,54 +30,54 @@ export function createToolPolicyStore(db: Db): ToolPolicyStore {
     }));
   }
 
-  function setMembers(policyId: string, { users, approvers }: ToolPolicyFields) {
-    db.delete(toolPolicyMember).where(eq(toolPolicyMember.policyId, policyId)).run();
+  async function setMembers(policyId: string, { users, approvers }: ToolPolicyFields) {
+    await db.delete(toolPolicyMember).where(eq(toolPolicyMember.policyId, policyId));
     const rows = [
       ...users.map((key, position) => ({ policyId, role: "user" as const, key, position })),
       ...approvers.map((key, position) => ({ policyId, role: "approver" as const, key, position })),
     ];
-    if (rows.length > 0) db.insert(toolPolicyMember).values(rows).onConflictDoNothing().run();
+    if (rows.length > 0) await db.insert(toolPolicyMember).values(rows).onConflictDoNothing();
   }
 
   return {
-    inOrg(orgId) {
+    async inOrg(orgId) {
       return recordsOf(
-        db
+        await db
           .select()
           .from(toolPolicy)
           .where(eq(toolPolicy.organizationId, orgId))
-          .orderBy(asc(toolPolicy.createdAt), asc(toolPolicy.id))
-          .all(),
+          .orderBy(asc(toolPolicy.createdAt), asc(toolPolicy.id)),
       );
     },
 
-    find(id) {
-      const row = db.select().from(toolPolicy).where(eq(toolPolicy.id, id)).get();
-      return row ? recordsOf([row])[0]! : null;
+    async find(id) {
+      const row = (await db.select().from(toolPolicy).where(eq(toolPolicy.id, id)).limit(1))[0];
+      return row ? (await recordsOf([row]))[0]! : null;
     },
 
-    create({ orgId, spaceId, users, approvers, ...fields }) {
-      return db.transaction(() => {
-        const row = db
-          .insert(toolPolicy)
-          .values({ id: ulid(), organizationId: orgId, spaceId, ...fields })
-          .returning()
-          .get();
-        setMembers(row.id, { ...fields, users, approvers });
-        return recordsOf([row])[0]!;
+    async create({ orgId, spaceId, users, approvers, ...fields }) {
+      return db.transaction(async () => {
+        const row = (
+          await db
+            .insert(toolPolicy)
+            .values({ id: ulid(), organizationId: orgId, spaceId, ...fields })
+            .returning()
+        )[0]!;
+        await setMembers(row.id, { ...fields, users, approvers });
+        return (await recordsOf([row]))[0]!;
       });
     },
 
-    update(id, { users, approvers, ...fields }) {
-      db.transaction(() => {
-        db.update(toolPolicy).set(fields).where(eq(toolPolicy.id, id)).run();
-        setMembers(id, { ...fields, users, approvers });
+    async update(id, { users, approvers, ...fields }) {
+      await db.transaction(async () => {
+        await db.update(toolPolicy).set(fields).where(eq(toolPolicy.id, id));
+        await setMembers(id, { ...fields, users, approvers });
       });
     },
 
     // Its members and the settings that name it go with it.
-    delete(id) {
-      db.delete(toolPolicy).where(eq(toolPolicy.id, id)).run();
+    async delete(id) {
+      await db.delete(toolPolicy).where(eq(toolPolicy.id, id));
     },
   };
 }

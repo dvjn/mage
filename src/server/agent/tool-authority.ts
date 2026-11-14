@@ -12,9 +12,10 @@
 // thread always waits for an answer, and the answer counts as its writer's words. Agents never
 // count themselves: a message from another agent counts as the words of everyone who steered it.
 
-import type { Access } from "@/server/spaces/thread-access.ts";
+import type { Access } from "@/server/access/access.ts";
 import type { ToolRisk } from "@/shared/threads/events.ts";
 import { EDITORS, type PolicyUse } from "@/shared/tools.ts";
+import { filterAsync } from "@/server/kernel/async.ts";
 
 // Anyone who can message in the thread may use its tools and approve calls: its space's owners
 // and messagers, and its guests whose role is to message. Viewers, guests who only view, and anyone
@@ -191,13 +192,13 @@ const WAIT: Decision = { kind: "wait" };
 
 // Whether a call runs on its own, runs on a vouch for now, or waits for a decision. For a tool
 // whose calls go with one person's own login, `connected` says whose login works.
-export function decide(input: {
+export async function decide(input: {
   declared: ToolRisk;
   rule: ToolRule;
   influence: readonly Influence[];
   standing: readonly Approval[];
-  connected?: (userId: string) => boolean;
-}): Decision {
+  connected?: (userId: string) => boolean | Promise<boolean>;
+}): Promise<Decision> {
   const { declared, rule, influence, standing, connected } = input;
   const risk = riskOf(declared, rule);
   // Where the tool or its rule asks for approval or independent review, every call waits.
@@ -206,19 +207,22 @@ export function decide(input: {
   const writers = new Set(influence.map((words) => words.userId));
   const owner = writers.size === 1 ? [...writers][0]! : null;
   const direct = influence.every(usesTool);
-  if (direct && (!connected || (owner && connected(owner)))) {
+  if (direct && (!connected || (owner && (await connected(owner))))) {
     return connected ? { kind: "run", runAs: owner! } : { kind: "run" };
   }
   // The latest vouch that holds, so a call runs as whoever gave it.
-  const held = standing
-    .filter((approval) =>
+  const held = (
+    await filterAsync(standing, async (approval) =>
       holds(
-        { ...approval, eligible: approval.eligible && (!connected || connected(approval.by)) },
+        {
+          ...approval,
+          eligible: approval.eligible && (!connected || (await connected(approval.by))),
+        },
         influence,
         connected ? isGiver(approval) : usesTool,
       ),
     )
-    .sort((a, b) => b.atSeq - a.atSeq)[0];
+  ).sort((a, b) => b.atSeq - a.atSeq)[0];
   if (!held) return WAIT;
   return {
     kind: "standing",

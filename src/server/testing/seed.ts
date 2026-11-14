@@ -38,38 +38,43 @@ const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 // Makes the user a member of the space with the role, in its org, and points their sessions at
 // that org. A tab of theirs still open names its own org with each request, which points the
 // session back.
-export function joinSpace(
+export async function joinSpace(
   db: Db,
   userId: string,
   joined: { id: string; orgId: string },
   role: SpaceRole,
 ) {
-  db.insert(member)
-    .values({
-      id: ulid(),
-      organizationId: joined.orgId,
-      userId,
-      role: "member",
-      directRole: "member",
-      createdAt: new Date(),
-    })
-    .run();
-  db.update(session)
+  await db.insert(member).values({
+    id: ulid(),
+    organizationId: joined.orgId,
+    userId,
+    role: "member",
+    directRole: "member",
+    createdAt: new Date(),
+  });
+  await db
+    .update(session)
     .set({ activeOrganizationId: joined.orgId })
-    .where(eq(session.userId, userId))
-    .run();
-  db.insert(spaceMember)
-    .values({ spaceId: joined.id, subjectKind: "user", subjectId: userId, role, source: "direct" })
-    .run();
+    .where(eq(session.userId, userId));
+  await db
+    .insert(spaceMember)
+    .values({ spaceId: joined.id, subjectKind: "user", subjectId: userId, role, source: "direct" });
 }
 
-// The value with every string that is a key of `names` replaced by what it names, however deep.
-function renamed(value: unknown, names: ReadonlyMap<string, string>): unknown {
-  if (typeof value === "string") return names.get(value) ?? value;
-  if (Array.isArray(value)) return value.map((one) => renamed(one, names));
+// The keys that hold ids, or lists of them, besides `id`, `...Id` and `...Ids`.
+const ID_KEYS = new Set(["keep", "ranAs", "standingOn", "trigger"]);
+
+// The value with every id that is a key of `names` replaced by what it names, however deep: the
+// strings under a key that holds ids, so words in text stay as written.
+function renamed(value: unknown, names: ReadonlyMap<string, string>, ids = false): unknown {
+  if (typeof value === "string") return ids ? (names.get(value) ?? value) : value;
+  if (Array.isArray(value)) return value.map((one) => renamed(one, names, ids));
   if (value && typeof value === "object") {
     return Object.fromEntries(
-      Object.entries(value).map(([key, one]) => [key, renamed(one, names)]),
+      Object.entries(value).map(([key, one]) => [
+        key,
+        renamed(one, names, /^id$|Ids?$/.test(key) || ID_KEYS.has(key)),
+      ]),
     );
   }
   return value;
@@ -84,8 +89,10 @@ export function createSeed({ db, threads, guests, reads, log }: SeedOptions) {
     return new Date(lastAdded);
   }
 
-  function userId(email: string) {
-    const row = db.select({ id: user.id }).from(user).where(eq(user.email, email)).get();
+  async function userId(email: string) {
+    const row = (
+      await db.select({ id: user.id }).from(user).where(eq(user.email, email)).limit(1)
+    )[0];
     if (!row) throw new Error(`no user ${email}`);
     return row.id;
   }
@@ -93,14 +100,16 @@ export function createSeed({ db, threads, guests, reads, log }: SeedOptions) {
   // The person's primary space. Someone who has just signed up may not have it yet: their page
   // can show a moment before the sign-up has made it.
   async function primarySpaceOf(email: string) {
-    const owner = userId(email);
+    const owner = await userId(email);
     const until = Date.now() + 2000;
     for (;;) {
-      const row = db
-        .select({ id: space.id, orgId: space.organizationId })
-        .from(space)
-        .where(and(eq(space.createdBy, owner), eq(space.primary, true)))
-        .get();
+      const row = (
+        await db
+          .select({ id: space.id, orgId: space.organizationId })
+          .from(space)
+          .where(and(eq(space.createdBy, owner), eq(space.primary, true)))
+          .limit(1)
+      )[0];
       if (row) return { ...row, userId: owner };
       if (Date.now() > until) throw new Error(`no primary space for ${email}`);
       await pause(20);
@@ -112,7 +121,7 @@ export function createSeed({ db, threads, guests, reads, log }: SeedOptions) {
     // answering its org's id.
     async joinSpace(input: { ownerEmail: string; email: string; role: "messager" | "viewer" }) {
       const joined = await primarySpaceOf(input.ownerEmail);
-      joinSpace(db, userId(input.email), joined, input.role);
+      await joinSpace(db, await userId(input.email), joined, input.role);
       return { orgId: joined.orgId };
     },
 
@@ -121,7 +130,7 @@ export function createSeed({ db, threads, guests, reads, log }: SeedOptions) {
     async threads(input: { email: string; count: number; prefix: string }) {
       const home = await primarySpaceOf(input.email);
       for (let index = 1; index <= input.count; index += 1) {
-        threads.create({
+        await threads.create({
           spaceId: home.id,
           model: null,
           createdBy: home.userId,
@@ -137,9 +146,9 @@ export function createSeed({ db, threads, guests, reads, log }: SeedOptions) {
     // space of the user with `ownerEmail`.
     async shareThreads(input: { ownerEmail: string; guestEmail: string }) {
       const home = await primarySpaceOf(input.ownerEmail);
-      const guest = userId(input.guestEmail);
-      for (const thread of threads.listInSpace(home.id)) {
-        guests.grant({
+      const guest = await userId(input.guestEmail);
+      for (const thread of await threads.listInSpace(home.id)) {
+        await guests.grant({
           threadId: thread.id,
           userId: guest,
           invitedBy: home.userId,
@@ -159,13 +168,13 @@ export function createSeed({ db, threads, guests, reads, log }: SeedOptions) {
       unread?: { email: string; count: number };
     }) {
       const home = await primarySpaceOf(input.email);
-      const other = input.unread && userId(input.unread.email);
+      const other = input.unread && (await userId(input.unread.email));
       const authors = [
         ...Array.from({ length: input.count }, () => home.userId),
         ...Array.from({ length: input.unread?.count ?? 0 }, () => other!),
       ];
       const at = nextTime();
-      const thread = threads.create({
+      const thread = await threads.create({
         spaceId: home.id,
         model: null,
         createdBy: home.userId,
@@ -176,18 +185,18 @@ export function createSeed({ db, threads, guests, reads, log }: SeedOptions) {
       // Writing its notes makes it active now, which must be after the threads added before it.
       while (Date.now() <= at.getTime()) await pause(1);
       const start = Date.now() - authors.length;
-      log.write(thread.id, (append) => {
-        authors.forEach((author, index) => {
+      await log.write(thread.id, async (append) => {
+        for (const [index, author] of authors.entries()) {
           const text = `Note ${index + 1}\n\nA line to give it height.\n\nAnd one more.`;
-          append({
+          await append({
             type: "message",
             actor: { kind: "user", userId: author },
             data: { parts: [{ type: "text", text }], quiet: true, mode: "steer" },
             createdAt: new Date(start + index + 1),
           });
-        });
+        }
       });
-      reads.mark(home.userId, thread.id, input.count, new Date());
+      await reads.mark(home.userId, thread.id, input.count, new Date());
       return { threadId: thread.id };
     },
 
@@ -202,7 +211,7 @@ export function createSeed({ db, threads, guests, reads, log }: SeedOptions) {
       people?: Record<string, string>;
     }) {
       const home = await primarySpaceOf(input.email);
-      const thread = threads.create({
+      const thread = await threads.create({
         spaceId: home.id,
         model: null,
         createdBy: home.userId,
@@ -212,12 +221,12 @@ export function createSeed({ db, threads, guests, reads, log }: SeedOptions) {
       });
       const names = new Map<string, string>([["thread", thread.id]]);
       for (const [name, email] of Object.entries(input.people ?? {}))
-        names.set(name, userId(email));
+        names.set(name, await userId(email));
       const ids: Record<string, string> = {};
-      log.write(thread.id, (append) => {
+      await log.write(thread.id, async (append) => {
         for (const event of input.events) {
           const actor = renamed(event.actor, names) as ActorSummary;
-          const stored = append({
+          const stored = await append({
             type: event.type,
             actor: actor.kind === "user" ? { kind: "user", userId: actor.userId } : actor,
             data: renamed(event.data, names),
@@ -230,7 +239,7 @@ export function createSeed({ db, threads, guests, reads, log }: SeedOptions) {
       return { threadId: thread.id, ids };
     },
 
-    invariants: () => invariants(db),
+    invariants: async () => invariants(db),
   };
 }
 
@@ -279,5 +288,5 @@ export function seedRoutes(seed: Seed) {
       if ("events" in input) return c.json(await seed.events(input.events));
       return c.json(await seed.notesThread(input.notesThread));
     })
-    .get("/invariants", (c) => c.json({ violations: seed.invariants() }));
+    .get("/invariants", async (c) => c.json({ violations: await seed.invariants() }));
 }

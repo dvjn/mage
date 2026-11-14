@@ -1,10 +1,11 @@
-import { sql } from "drizzle-orm";
-import { sqliteTable, text, integer, index, primaryKey } from "drizzle-orm/sqlite-core";
+import { pgTable, text, index, primaryKey, boolean } from "drizzle-orm/pg-core";
+
+import { at, NOW } from "@/server/db/columns.ts";
 
 import { user, organization } from "@/server/orgs/schema.ts";
 
 // Where an org's threads live; people see a space's threads by being its members.
-export const space = sqliteTable(
+export const space = pgTable(
   "space",
   {
     id: text("id").primaryKey(),
@@ -14,7 +15,7 @@ export const space = sqliteTable(
     kind: text("kind", { enum: ["personal", "shared"] }).notNull(),
     name: text("name").notNull(),
     // The space every personal org starts with; it can be renamed but not deleted.
-    primary: integer("is_primary", { mode: "boolean" }).default(false).notNull(),
+    primary: boolean("is_primary").default(false).notNull(),
     // The model ref and reasoning effort its new threads start with; null takes the org's.
     defaultModel: text("default_model"),
     defaultEffort: text("default_effort", { enum: ["low", "medium", "high"] }),
@@ -25,15 +26,13 @@ export const space = sqliteTable(
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
     // Since when a member's own space has been archived, which starts its countdown to deletion;
     // null while it is not. Whether it is archived is still worked out when asked.
-    archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+    archivedAt: at("archived_at"),
     // When it went to trash, and by whom; trash is emptied after a while.
-    trashedAt: integer("trashed_at", { mode: "timestamp_ms" }),
+    trashedAt: at("trashed_at"),
     trashedBy: text("trashed_by").references(() => user.id, { onDelete: "set null" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-      .notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    createdAt: at("created_at").default(NOW).notNull(),
+    updatedAt: at("updated_at")
+      .default(NOW)
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
   },
@@ -41,7 +40,7 @@ export const space = sqliteTable(
 );
 
 // A person's or a group's role in a space.
-export const spaceMember = sqliteTable(
+export const spaceMember = pgTable(
   "space_member",
   {
     spaceId: text("space_id")
@@ -54,9 +53,7 @@ export const spaceMember = sqliteTable(
     role: text("role", { enum: ["owner", "messager", "viewer"] }).notNull(),
     // How the role came to be given.
     source: text("source", { enum: ["direct"] }).notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-      .notNull(),
+    createdAt: at("created_at").default(NOW).notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.spaceId, table.subjectKind, table.subjectId] }),

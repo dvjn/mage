@@ -75,7 +75,8 @@ description = "Wait until the dev dependencies answer"
 hide = true
 run = """
 set -eu
-until curl -fs -o /dev/null http://localhost:16686; do
+until curl -fs -o /dev/null http://localhost:16686 &&
+  mise run deps:compose exec -T postgres pg_isready -q -U mage; do
   echo "Waiting for the dev dependencies; start them with: mise run deps:up" >&2
   sleep 3
 done
@@ -94,8 +95,23 @@ description = "Lint, format check and type check"
 run = "pnpm check"
 
 [tasks.test]
-description = "Run the tests"
-run = "pnpm test"
+description = "Run the unit and integration tests"
+run = [{ task = "test:unit" }, { task = "test:integration" }]
+
+[tasks."test:unit"]
+description = "Run the tests that need no database"
+run = "pnpm exec vp test run --project unit"
+
+[tasks."test:integration"]
+description = "Run the tests that use a database"
+run = "pnpm exec vp test run --project integration"
+
+[tasks."test:pg"]
+description = "Run the tests that use a database against a real Postgres, failing without one"
+run = "pnpm exec vp test run --project integration"
+
+[tasks."test:pg".env]
+REQUIRE_PG = "1"
 
 [tasks.e2e]
 description = "Run the browser journeys"

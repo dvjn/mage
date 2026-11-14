@@ -135,10 +135,10 @@ export function keepGroupEmails(db: Db, handle: (request: Request) => Promise<Re
           .catch(() => undefined)) as { id?: string } | undefined
       )?.id;
     if (!id || email === undefined) return response;
-    db.update(scimGroup)
+    await db
+      .update(scimGroup)
       .set({ email, emailKey: email ? email.toLowerCase() : null })
-      .where(eq(scimGroup.id, id))
-      .run();
+      .where(eq(scimGroup.id, id));
     return response;
   };
 }

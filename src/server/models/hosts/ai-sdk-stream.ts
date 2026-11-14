@@ -444,9 +444,9 @@ export async function* streamReply(
       ({ steps }) => (steps.at(-1)?.toolCalls.length ?? 0) > 0,
     ],
     // Messages taken in at a step boundary join the conversation before the next step.
-    prepareStep: ({ stepNumber, messages }) => {
+    prepareStep: async ({ stepNumber, messages }) => {
       if (stepNumber === 0 || !request.beforeStep) return undefined;
-      const added = request.beforeStep();
+      const added = await request.beforeStep();
       return added.length > 0
         ? { messages: [...messages, ...sdkMessages(added, changes, searched)] }
         : undefined;

@@ -12,29 +12,34 @@ const hookSecret = jsonBody(hookSecretInputSchema, "secret is required, or null 
 export function triggerRoutes(options: { triggers: Triggers }) {
   const { triggers } = options;
   return new Hono<ApiEnv>()
-    .get("/v1/threads/:id/triggers/:triggerId/history", historyQuery, (c) => {
+    .get("/v1/threads/:id/triggers/:triggerId/history", historyQuery, async (c) => {
       const { id, triggerId } = c.req.param();
       const { offset = 0 } = c.req.valid("query");
-      return c.json(triggers.history(signedIn(c.var.principal), id, triggerId, offset), 200);
+      return c.json(await triggers.history(signedIn(c.var.principal), id, triggerId, offset), 200);
     })
-    .post("/v1/threads/:id/triggers/:triggerId/pause", (c) => {
+    .post("/v1/threads/:id/triggers/:triggerId/pause", async (c) => {
       const { id, triggerId } = c.req.param();
-      triggers.pause(signedIn(c.var.principal), id, triggerId);
+      await triggers.pause(signedIn(c.var.principal), id, triggerId);
       return c.json({ ok: true }, 200);
     })
-    .post("/v1/threads/:id/triggers/:triggerId/resume", (c) => {
+    .post("/v1/threads/:id/triggers/:triggerId/resume", async (c) => {
       const { id, triggerId } = c.req.param();
-      triggers.resume(signedIn(c.var.principal), id, triggerId);
+      await triggers.resume(signedIn(c.var.principal), id, triggerId);
       return c.json({ ok: true }, 200);
     })
-    .put("/v1/threads/:id/triggers/:triggerId/secret", hookSecret, (c) => {
+    .put("/v1/threads/:id/triggers/:triggerId/secret", hookSecret, async (c) => {
       const { id, triggerId } = c.req.param();
-      triggers.setSecret(signedIn(c.var.principal), id, triggerId, c.req.valid("json").secret);
+      await triggers.setSecret(
+        signedIn(c.var.principal),
+        id,
+        triggerId,
+        c.req.valid("json").secret,
+      );
       return c.json({ ok: true }, 200);
     })
-    .delete("/v1/threads/:id/triggers/:triggerId", (c) => {
+    .delete("/v1/threads/:id/triggers/:triggerId", async (c) => {
       const { id, triggerId } = c.req.param();
-      triggers.delete(signedIn(c.var.principal), id, triggerId);
+      await triggers.delete(signedIn(c.var.principal), id, triggerId);
       return c.json({ ok: true }, 200);
     });
 }

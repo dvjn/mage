@@ -2,23 +2,24 @@
 // followers about each, so nothing is announced that was not stored, and people's inboxes that the
 // thread may read differently now.
 
-import type { Transact } from "@/server/db/db.ts";
-import type { EventBus } from "@/server/kernel/event-bus.ts";
+import type { Sync, Transact } from "@/server/sync/sync.ts";
+import type { Signals } from "@/server/sync/signals.ts";
 import type { ThreadEventSummary } from "@/shared/threads/events.ts";
 
 import type { NewEvent, StoredEvent, ThreadStore } from "./service.ts";
 
 export interface ThreadLogOptions {
-  threads: Pick<ThreadStore, "append">;
-  bus: EventBus;
+  threads: Pick<ThreadStore, "append" | "lock">;
+  bus: Signals;
   transact: Transact;
+  ordered: Sync["ordered"];
 }
 
 export type ThreadLog = ReturnType<typeof createThreadLog>;
 
 // Appends one event inside a write; `title` names the thread when it has no title yet, and
 // `branchId` names the branch it goes to in place of the write's.
-export type Append = (event: NewEvent, title?: string, branchId?: string) => StoredEvent;
+export type Append = (event: NewEvent, title?: string, branchId?: string) => Promise<StoredEvent>;
 
 export function eventSummary(event: StoredEvent): ThreadEventSummary {
   const { id, threadId, seq, type, data, actor, actorName, actorFormer } = event;
@@ -42,25 +43,36 @@ export function eventSummary(event: StoredEvent): ThreadEventSummary {
 }
 
 export function createThreadLog(options: ThreadLogOptions) {
-  const { threads, bus, transact } = options;
+  const { threads, bus, transact, ordered } = options;
 
   return {
     // Runs `work` in one transaction with the events it appends, to the branch named or else the
-    // thread's current one, then publishes them. Returns what `work` returns and the events.
-    write<T>(threadId: string, work: (append: Append) => T, branchId?: string) {
-      const appended: StoredEvent[] = [];
-      const result = transact(() =>
-        work((event, title, to) => {
-          const stored = threads.append(threadId, event, title, to ?? branchId);
+    // thread's current one, then publishes them once it is kept. Returns what `work` returns and
+    // the events. `also` names the other threads the work writes to, locked with this one in
+    // order.
+    async write<T>(
+      threadId: string,
+      work: (append: Append) => Promise<T>,
+      branchId?: string,
+      also: string[] = [],
+    ) {
+      let appended: StoredEvent[] = [];
+      const result = await transact(async () => {
+        appended = [];
+        // Writes to one thread take turns, so what one reads of it holds until it is done.
+        await ordered("thread", [threadId, ...also], async (ids) => threads.lock(ids));
+        const result = await work(async (event, title, to) => {
+          const stored = await threads.append(threadId, event, title, to ?? branchId);
           appended.push(stored);
           return stored;
-        }),
-      );
-      const events = appended.map(eventSummary);
-      for (const event of events) bus.publish(threadId, { kind: "event", seq: event.seq });
-      // Run changes made in the write, such as waiting for a decision, show too.
-      bus.activity({ threadId });
-      return { result, events };
+        });
+        // Told as the write commits, and only if it does.
+        for (const event of appended) bus.publish(threadId, { kind: "event", seq: event.seq });
+        // Run changes made in the write, such as waiting for a decision, show too.
+        bus.activity({ threadId });
+        return result;
+      });
+      return { result, events: appended.map(eventSummary) };
     },
   };
 }

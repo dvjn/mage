@@ -10,20 +10,20 @@ const instructionsInput = checkedBody(instructionsInputSchema);
 export function instructionRoutes(options: { instructions: Instructions }) {
   const { instructions } = options;
   return new Hono<ApiEnv>()
-    .get("/v1/org/instructions", (c) => {
-      return c.json(instructions.inOrg(signedIn(c.var.principal)), 200);
+    .get("/v1/org/instructions", async (c) => {
+      return c.json(await instructions.inOrg(signedIn(c.var.principal)), 200);
     })
-    .put("/v1/org/instructions", instructionsInput, (c) => {
+    .put("/v1/org/instructions", instructionsInput, async (c) => {
       const principal = signedIn(c.var.principal);
-      return c.json(instructions.setInOrg(principal, c.req.valid("json").text), 200);
+      return c.json(await instructions.setInOrg(principal, c.req.valid("json").text), 200);
     })
-    .get("/v1/spaces/:id/instructions", (c) => {
-      return c.json(instructions.inSpace(signedIn(c.var.principal), c.req.param("id")), 200);
+    .get("/v1/spaces/:id/instructions", async (c) => {
+      return c.json(await instructions.inSpace(signedIn(c.var.principal), c.req.param("id")), 200);
     })
-    .put("/v1/spaces/:id/instructions", instructionsInput, (c) => {
+    .put("/v1/spaces/:id/instructions", instructionsInput, async (c) => {
       const principal = signedIn(c.var.principal);
       return c.json(
-        instructions.setInSpace(principal, c.req.param("id"), c.req.valid("json").text),
+        await instructions.setInSpace(principal, c.req.param("id"), c.req.valid("json").text),
         200,
       );
     });

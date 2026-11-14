@@ -2,11 +2,11 @@
 // says it, and only it.
 
 import { type SQL, sql } from "drizzle-orm";
-import type { SQLiteColumn } from "drizzle-orm/sqlite-core";
+import type { PgColumn } from "drizzle-orm/pg-core";
 
 import { subagent } from "@/server/agent/schema.ts";
 
-export function parentOf(threadId: SQLiteColumn): SQL<string | null> {
+export function parentOf(threadId: PgColumn): SQL<string | null> {
   return sql<
     string | null
   >`(select ${subagent.parentThreadId} from ${subagent} where ${subagent.threadId} = ${threadId})`;

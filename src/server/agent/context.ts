@@ -24,14 +24,7 @@ import { LOAD_SKILL } from "@/shared/skills.ts";
 import { SEND_SUBAGENT_MESSAGE } from "@/shared/subagents.ts";
 import { QUIET_PREFIX } from "@/shared/threads/events.ts";
 import { wireToolName } from "@/shared/tools.ts";
-import type {
-  HumanRow,
-  LimitRow,
-  NoticeRow,
-  RelayRow,
-  ToolRow,
-  TranscriptRow,
-} from "@/shared/transcript.ts";
+import type { HumanRow, LimitRow, RelayRow, ToolRow, TranscriptRow } from "@/shared/transcript.ts";
 
 import { readOf } from "./compaction.ts";
 import { personLabel } from "@/shared/people.ts";
@@ -83,30 +76,12 @@ export function notificationsMessage(
   };
 }
 
-// The longest a subagent's last words run in a notice.
-const NOTICE_CHARS = 120;
-
-// One line of what the subagent said last, cut short.
-export function lastLine(text: string) {
-  const line = text.replace(/\s+/g, " ").trim();
-  return line.length > NOTICE_CHARS ? `${line.slice(0, NOTICE_CHARS - 1)}…` : line;
-}
-
 // That the thread's subagents may send each other no more messages, as the agent reads it.
 export function limitMessage(row: Pick<LimitRow, "limit">): UserMessage {
   return {
     role: "user",
     text: `[Subagents] Your subagents have sent each other ${row.limit} messages, their limit; further ones are refused.`,
   };
-}
-
-// Subagents that ended runs as the agent reads them: one line each, where it stands and what it
-// said last.
-export function noticeMessage(row: Pick<NoticeRow, "subagents">): UserMessage {
-  const lines = row.subagents.map(
-    (subagent) => `${subagent.name} · ${subagent.state} · last: "${lastLine(subagent.last)}"`,
-  );
-  return { role: "user", text: `[Subagents] ${lines.join("\n")}` };
 }
 
 // What a subagent is told of itself when it starts: its label, the thread whose agent started it,
@@ -362,8 +337,6 @@ export function contextOf(
         .slice(index)
         .filter((other): other is RelayRow => other.kind === "relay" && other.seq === row.seq);
       messages.push(notificationsMessage(together));
-    } else if (row.kind === "notice") {
-      messages.push(noticeMessage(row));
     } else if (row.kind === "limit") {
       messages.push(limitMessage(row));
     } else if (row.kind === "agent" && row.status !== "streaming" && !row.retried) {

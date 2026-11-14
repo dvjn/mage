@@ -223,7 +223,10 @@ function serverOf(tools: readonly DeferredTool[], name: string) {
   );
 }
 
-function search(input: SearchInput, deferred: NonNullable<ToolContext["deferred"]>): ToolOutput {
+async function search(
+  input: SearchInput,
+  deferred: NonNullable<ToolContext["deferred"]>,
+): Promise<ToolOutput> {
   const { tools, on } = deferred;
   const turnOn: DeferredTool[] = [];
   const value: Record<string, unknown> = {};
@@ -257,7 +260,7 @@ function search(input: SearchInput, deferred: NonNullable<ToolContext["deferred"
     };
   }
   const ids = [...new Set(turnOn.map((tool) => tool.id))];
-  if (ids.length) deferred.turnOn(ids);
+  if (ids.length) await deferred.turnOn(ids);
   const now = turnOn.filter((tool) => !on.has(tool.id)).map((tool) => tool.name);
   return {
     ok: true,
@@ -272,7 +275,7 @@ function search(input: SearchInput, deferred: NonNullable<ToolContext["deferred"
 // Searching for the MCP tools a run leaves out, and turning them on; of use where the space has MCP
 // servers.
 export function createToolSearch(
-  hasServers: (space: { id: string; orgId: string }) => boolean,
+  hasServers: (space: { id: string; orgId: string }) => Promise<boolean>,
 ): ToolSpec<SearchInput> {
   return {
     name: TOOL_SEARCH,
@@ -284,18 +287,22 @@ export function createToolSearch(
     input: searchInput,
     risk: () => "normal",
     usefulIn: hasServers,
-    run(input, ctx) {
+    async run(input, ctx) {
       if (!ctx.deferred) {
         return Promise.resolve({ ok: false, error: "No MCP tools are here to search for." });
       }
-      return Promise.resolve(search(input, ctx.deferred));
+      return Promise.resolve(await search(input, ctx.deferred));
     },
   };
 }
 
 // Mage's own MCP toolset: the tools that work across the space's servers, each always on where it
 // is of use, and listed in settings where the org or the space has servers.
-export function createMcpTools(tools: AnyToolSpec[], hasServers: Toolset["listedIn"]): Toolset {
+export function createMcpTools(
+  tools: AnyToolSpec[],
+  hasServers: Toolset["listedIn"],
+  usesServers: Toolset["usefulIn"],
+): Toolset {
   return {
     id: MCP_OWN_TOOLSET,
     title: "MCP",
@@ -303,5 +310,7 @@ export function createMcpTools(tools: AnyToolSpec[], hasServers: Toolset["listed
     tools,
     fixed: true,
     listedIn: hasServers,
+    // None of its tools is of use in a space that uses no server.
+    usefulIn: usesServers,
   };
 }

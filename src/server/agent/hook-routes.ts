@@ -17,7 +17,7 @@ export function hookRoutes(options: { triggers: Pick<Triggers, "deliver"> }) {
       onError: (c) => c.json({ error: "Too large" }, 413),
     }),
     async (c) => {
-      options.triggers.deliver(c.req.param("token"), {
+      await options.triggers.deliver(c.req.param("token"), {
         body: new Uint8Array(await c.req.arrayBuffer()),
         contentType: c.req.header("content-type") ?? null,
         signature: c.req.header(HOOK_SIGNATURE_HEADER) ?? null,

@@ -18,9 +18,9 @@ export type Groups = ReturnType<typeof createGroups>;
 export function createGroups(options: GroupsOptions) {
   const { directory } = options;
 
-  function requireGroup(principal: Principal, id: string) {
-    const group = directory.group(id);
-    const role = directory.linkedRole(principal.orgId, id);
+  async function requireGroup(principal: Principal, id: string) {
+    const group = await directory.group(id);
+    const role = await directory.linkedRole(principal.orgId, id);
     if (!group || !role) throw new ServiceError(404, "Group not found");
     return { ...group, role, linkedAt: group.createdAt };
   }
@@ -39,20 +39,24 @@ export function createGroups(options: GroupsOptions) {
 
   return {
     // A page of the org's groups by name, with how many are in each.
-    list(principal: Principal, params: PageParams): Page<GroupSummary> {
-      const page = directory.groupPage(principal.orgId, params);
+    async list(principal: Principal, params: PageParams): Promise<Page<GroupSummary>> {
+      const page = await directory.groupPage(principal.orgId, params);
       return { ...page, items: page.items.map(summaryOf) };
     },
 
-    get(principal: Principal, id: string) {
-      const group = requireGroup(principal, id);
-      return summaryOf({ ...group, memberCount: directory.memberCount(id) });
+    async get(principal: Principal, id: string) {
+      const group = await requireGroup(principal, id);
+      return summaryOf({ ...group, memberCount: await directory.memberCount(id) });
     },
 
     // A page of the group's members by name.
-    members(principal: Principal, id: string, params: PageParams): Page<GroupMember> {
-      requireGroup(principal, id);
-      const page = directory.groupMemberPage(id, params);
+    async members(
+      principal: Principal,
+      id: string,
+      params: PageParams,
+    ): Promise<Page<GroupMember>> {
+      await requireGroup(principal, id);
+      const page = await directory.groupMemberPage(id, params);
       return {
         ...page,
         items: page.items.map((user) => ({ userId: user.id, name: user.name, email: user.email })),

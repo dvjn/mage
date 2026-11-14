@@ -7,30 +7,32 @@ import { subagent } from "./schema.ts";
 
 export function createSubagentStore(db: Db): SubagentStore {
   return {
-    create(input) {
-      return db.insert(subagent).values(input).returning().get();
+    async create(input) {
+      return (await db.insert(subagent).values(input).returning())[0]!;
     },
 
-    find(threadId) {
-      return db.select().from(subagent).where(eq(subagent.threadId, threadId)).get() ?? null;
+    async find(threadId) {
+      return (
+        (await db.select().from(subagent).where(eq(subagent.threadId, threadId)).limit(1))[0] ??
+        null
+      );
     },
 
-    ofParents(parentThreadIds): SubagentRecord[] {
+    async ofParents(parentThreadIds): Promise<SubagentRecord[]> {
       if (parentThreadIds.length === 0) return [];
-      return db
+      return await db
         .select()
         .from(subagent)
         .where(inArray(subagent.parentThreadId, parentThreadIds))
-        .orderBy(asc(subagent.createdAt), asc(subagent.threadId))
-        .all();
+        .orderBy(asc(subagent.createdAt), asc(subagent.threadId));
     },
 
-    setShareTasks(threadId) {
-      db.update(subagent).set({ shareTasks: true }).where(eq(subagent.threadId, threadId)).run();
+    async setShareTasks(threadId) {
+      await db.update(subagent).set({ shareTasks: true }).where(eq(subagent.threadId, threadId));
     },
 
-    setArchived(threadId, at) {
-      db.update(subagent).set({ archivedAt: at }).where(eq(subagent.threadId, threadId)).run();
+    async setArchived(threadId, at) {
+      await db.update(subagent).set({ archivedAt: at }).where(eq(subagent.threadId, threadId));
     },
   };
 }

@@ -56,23 +56,25 @@ export function createCommands(options: CommandsOptions) {
 
   return {
     // The commands the person has in the space: its skills, then its servers' prompts.
-    list(space: Pick<Space, "id" | "orgId">, userId: string): ThreadCommand[] {
+    async list(space: Pick<Space, "id" | "orgId">, userId: string): Promise<ThreadCommand[]> {
       return [
-        ...skills.effectiveIn(space).map((skill) => ({
+        ...(await skills.effectiveIn(space)).map((skill) => ({
           name: skill.name,
           description: skill.description,
           argumentHint: null,
           kind: "skill" as const,
           tag: "Skill",
         })),
-        ...prompts.promptsIn(space, userId).map(({ server, serverName, prompt, connection }) => ({
-          name: `${server}:${prompt.name}`,
-          description: prompt.description ?? prompt.title ?? prompt.name,
-          argumentHint: promptHint(prompt),
-          kind: "prompt" as const,
-          tag: serverName,
-          ...(connection && { connection }),
-        })),
+        ...(await prompts.promptsIn(space, userId)).map(
+          ({ server, serverName, prompt, connection }) => ({
+            name: `${server}:${prompt.name}`,
+            description: prompt.description ?? prompt.title ?? prompt.name,
+            argumentHint: promptHint(prompt),
+            kind: "prompt" as const,
+            tag: serverName,
+            ...(connection && { connection }),
+          }),
+        ),
       ];
     },
 
@@ -86,7 +88,9 @@ export function createCommands(options: CommandsOptions) {
     ): Promise<string | null> {
       const at = command.name.indexOf(":");
       if (at === -1) {
-        const skill = skills.effectiveIn(space).find((found) => found.name === command.name);
+        const skill = (await skills.effectiveIn(space)).find(
+          (found) => found.name === command.name,
+        );
         return skill ? skillText(skill, command.args, typed) : null;
       }
       const slug = command.name.slice(0, at);

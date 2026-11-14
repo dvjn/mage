@@ -1,31 +1,29 @@
-import { relations, sql } from "drizzle-orm";
-import { sqliteTable, text, integer, index, primaryKey } from "drizzle-orm/sqlite-core";
+import { relations } from "drizzle-orm";
+import { pgTable, text, integer, index, primaryKey, boolean } from "drizzle-orm/pg-core";
 
-export const user = sqliteTable("user", {
+import { at, NOW } from "@/server/db/columns.ts";
+
+export const user = pgTable("user", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   email: text("email").notNull().unique(),
-  emailVerified: integer("email_verified", { mode: "boolean" }).default(false).notNull(),
+  emailVerified: boolean("email_verified").default(false).notNull(),
   image: text("image"),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-    .notNull(),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+  createdAt: at("created_at").default(NOW).notNull(),
+  updatedAt: at("updated_at")
+    .default(NOW)
     .$onUpdate(() => /* @__PURE__ */ new Date())
     .notNull(),
 });
 
-export const session = sqliteTable(
+export const session = pgTable(
   "session",
   {
     id: text("id").primaryKey(),
-    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    expiresAt: at("expires_at").notNull(),
     token: text("token").notNull().unique(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-      .notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    createdAt: at("created_at").default(NOW).notNull(),
+    updatedAt: at("updated_at")
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
     ipAddress: text("ip_address"),
@@ -38,7 +36,7 @@ export const session = sqliteTable(
   (table) => [index("session_userId_idx").on(table.userId)],
 );
 
-export const account = sqliteTable(
+export const account = pgTable(
   "account",
   {
     id: text("id").primaryKey(),
@@ -50,53 +48,45 @@ export const account = sqliteTable(
     accessToken: text("access_token"),
     refreshToken: text("refresh_token"),
     idToken: text("id_token"),
-    accessTokenExpiresAt: integer("access_token_expires_at", {
-      mode: "timestamp_ms",
-    }),
-    refreshTokenExpiresAt: integer("refresh_token_expires_at", {
-      mode: "timestamp_ms",
-    }),
+    accessTokenExpiresAt: at("access_token_expires_at"),
+    refreshTokenExpiresAt: at("refresh_token_expires_at"),
     scope: text("scope"),
     password: text("password"),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-      .notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    createdAt: at("created_at").default(NOW).notNull(),
+    updatedAt: at("updated_at")
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
   },
   (table) => [index("account_userId_idx").on(table.userId)],
 );
 
-export const verification = sqliteTable(
+export const verification = pgTable(
   "verification",
   {
     id: text("id").primaryKey(),
     identifier: text("identifier").notNull(),
     value: text("value").notNull(),
-    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-      .notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+    expiresAt: at("expires_at").notNull(),
+    createdAt: at("created_at").default(NOW).notNull(),
+    updatedAt: at("updated_at")
+      .default(NOW)
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
   },
   (table) => [index("verification_identifier_idx").on(table.identifier)],
 );
 
-export const organization = sqliteTable("organization", {
+export const organization = pgTable("organization", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   slug: text("slug").notNull().unique(),
   logo: text("logo"),
-  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  createdAt: at("created_at").notNull(),
   metadata: text("metadata"),
   kind: text("kind", { enum: ["personal", "team"] }).notNull(),
 });
 
-export const member = sqliteTable(
+export const member = pgTable(
   "member",
   {
     id: text("id").primaryKey(),
@@ -111,7 +101,7 @@ export const member = sqliteTable(
     // The role given to them in the org itself, apart from any group; null when they are in only
     // through groups.
     directRole: text("direct_role", { enum: ["owner", "member"] }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: at("created_at").notNull(),
   },
   (table) => [
     index("member_organizationId_idx").on(table.organizationId),
@@ -121,7 +111,7 @@ export const member = sqliteTable(
   ],
 );
 
-export const invitation = sqliteTable(
+export const invitation = pgTable(
   "invitation",
   {
     id: text("id").primaryKey(),
@@ -131,10 +121,8 @@ export const invitation = sqliteTable(
     email: text("email").notNull(),
     role: text("role"),
     status: text("status").default("pending").notNull(),
-    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-      .notNull(),
+    expiresAt: at("expires_at").notNull(),
+    createdAt: at("created_at").default(NOW).notNull(),
     inviterId: text("inviter_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
@@ -146,7 +134,7 @@ export const invitation = sqliteTable(
 );
 
 // Choices an org makes for everyone in it.
-export const orgSetting = sqliteTable("org_setting", {
+export const orgSetting = pgTable("org_setting", {
   organizationId: text("organization_id")
     .primaryKey()
     .references(() => organization.id, { onDelete: "cascade" }),
@@ -162,24 +150,22 @@ export const orgSetting = sqliteTable("org_setting", {
     .notNull(),
   // Whether a team org's members may make a private space of their own; while not, the ones made
   // are archived.
-  memberSpaces: integer("member_spaces", { mode: "boolean" }).default(false).notNull(),
+  memberSpaces: boolean("member_spaces").default(false).notNull(),
   // Whether a space's managers may add MCP servers for it, and its threads use them.
-  spaceMcpServers: integer("space_mcp_servers", { mode: "boolean" }).default(true).notNull(),
+  spaceMcpServers: boolean("space_mcp_servers").default(true).notNull(),
   // Whether a space's managers may add skills for it, and its threads use them.
-  spaceSkills: integer("space_skills", { mode: "boolean" }).default(true).notNull(),
+  spaceSkills: boolean("space_skills").default(true).notNull(),
   // What the agent of the org's threads goes by where people see it; null for the usual name.
   agentName: text("agent_name"),
-  createdAt: integer("created_at", { mode: "timestamp_ms" })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-    .notNull(),
-  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
-    .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
+  createdAt: at("created_at").default(NOW).notNull(),
+  updatedAt: at("updated_at")
+    .default(NOW)
     .$onUpdate(() => /* @__PURE__ */ new Date())
     .notNull(),
 });
 
 // A directory group linked to a team org: everyone active in it is a member with the role.
-export const orgGroup = sqliteTable(
+export const orgGroup = pgTable(
   "org_group",
   {
     organizationId: text("organization_id")
@@ -189,9 +175,7 @@ export const orgGroup = sqliteTable(
       .notNull()
       .references(() => scimGroup.id, { onDelete: "cascade" }),
     role: text("role", { enum: ["owner", "member"] }).notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-      .notNull(),
+    createdAt: at("created_at").default(NOW).notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.organizationId, table.groupId] }),
@@ -201,7 +185,7 @@ export const orgGroup = sqliteTable(
 
 // A single-use link that lets the account with that email join a team org with the role. Only the
 // hash of its token is kept.
-export const orgInvite = sqliteTable(
+export const orgInvite = pgTable(
   "org_invite",
   {
     id: text("id").primaryKey(),
@@ -213,19 +197,17 @@ export const orgInvite = sqliteTable(
     role: text("role", { enum: ["owner", "member"] }).notNull(),
     tokenHash: text("token_hash").notNull().unique(),
     createdBy: text("created_by").references(() => user.id, { onDelete: "set null" }),
-    createdAt: integer("created_at", { mode: "timestamp_ms" })
-      .default(sql`(cast(unixepoch('subsecond') * 1000 as integer))`)
-      .notNull(),
-    expiresAt: integer("expires_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: at("created_at").default(NOW).notNull(),
+    expiresAt: at("expires_at").notNull(),
     acceptedBy: text("accepted_by").references(() => user.id, { onDelete: "set null" }),
-    acceptedAt: integer("accepted_at", { mode: "timestamp_ms" }),
-    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+    acceptedAt: at("accepted_at"),
+    revokedAt: at("revoked_at"),
   },
   (table) => [index("org_invite_org_idx").on(table.organizationId, table.email)],
 );
 
 // Someone removed from an org, so what they wrote there says so; joining again clears it.
-export const orgFormerMember = sqliteTable(
+export const orgFormerMember = pgTable(
   "org_former_member",
   {
     organizationId: text("organization_id")
@@ -234,7 +216,7 @@ export const orgFormerMember = sqliteTable(
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
-    removedAt: integer("removed_at", { mode: "timestamp_ms" }).notNull(),
+    removedAt: at("removed_at").notNull(),
   },
   (table) => [primaryKey({ columns: [table.organizationId, table.userId] })],
 );
@@ -243,15 +225,15 @@ export const orgFormerMember = sqliteTable(
 // through, the people and groups it brings, who is in which group, and what it remembers of people
 // it deleted. A directory person is linked to one user.
 
-export const scimConnectionBinding = sqliteTable(
+export const scimConnectionBinding = pgTable(
   "scim_connection_binding",
   {
     id: text("id").primaryKey(),
     connectionId: text("connection_id").notNull(),
     connectionKey: text("connection_key").notNull().unique(),
     provisioningDomainId: text("provisioning_domain_id").notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-    decommissionedAt: integer("decommissioned_at", { mode: "timestamp_ms" }),
+    createdAt: at("created_at").notNull(),
+    decommissionedAt: at("decommissioned_at"),
     decommissionStatus: text("decommission_status").default("active").notNull(),
     decommissionCursorUserId: text("decommission_cursor_user_id"),
     decommissionReconciledUserCount: integer("decommission_reconciled_user_count")
@@ -259,14 +241,14 @@ export const scimConnectionBinding = sqliteTable(
       .notNull(),
     decommissionBatchCount: integer("decommission_batch_count").default(0).notNull(),
     decommissionRevision: integer("decommission_revision").default(0).notNull(),
-    decommissionCompletedAt: integer("decommission_completed_at", { mode: "timestamp_ms" }),
+    decommissionCompletedAt: at("decommission_completed_at"),
     decommissionLeaseId: text("decommission_lease_id"),
-    decommissionLeaseExpiresAt: integer("decommission_lease_expires_at", { mode: "timestamp_ms" }),
+    decommissionLeaseExpiresAt: at("decommission_lease_expires_at"),
   },
   (table) => [index("scim_connection_binding_connection_idx").on(table.connectionId)],
 );
 
-export const scimIdentityTombstone = sqliteTable(
+export const scimIdentityTombstone = pgTable(
   "scim_identity_tombstone",
   {
     id: text("id").primaryKey(),
@@ -278,7 +260,7 @@ export const scimIdentityTombstone = sqliteTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     profile: text("profile").notNull(),
-    deletedAt: integer("deleted_at", { mode: "timestamp_ms" }).notNull(),
+    deletedAt: at("deleted_at").notNull(),
   },
   (table) => [
     index("scim_identity_tombstone_connection_idx").on(table.connectionId),
@@ -288,7 +270,7 @@ export const scimIdentityTombstone = sqliteTable(
 );
 
 // A user a directory has provisioned, whether or not it still does.
-export const scimSubject = sqliteTable(
+export const scimSubject = pgTable(
   "scim_subject",
   {
     id: text("id").primaryKey(),
@@ -298,13 +280,13 @@ export const scimSubject = sqliteTable(
       .references(() => user.id, { onDelete: "cascade" }),
     profileSourceId: text("profile_source_id"),
     revision: integer("revision").notNull(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: at("created_at").notNull(),
+    updatedAt: at("updated_at").notNull(),
   },
   (table) => [index("scim_subject_profile_source_idx").on(table.profileSourceId)],
 );
 
-export const scimUser = sqliteTable(
+export const scimUser = pgTable(
   "scim_user",
   {
     id: text("id").primaryKey(),
@@ -327,10 +309,10 @@ export const scimUser = sqliteTable(
     serializedAttributes: text("serialized_attributes"),
     externalId: text("external_id"),
     externalIdKey: text("external_id_key").unique(),
-    active: integer("active", { mode: "boolean" }).notNull(),
+    active: boolean("active").notNull(),
     orderKey: text("order_key").notNull().unique(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: at("created_at").notNull(),
+    updatedAt: at("updated_at").notNull(),
   },
   (table) => [
     index("scim_user_connection_idx").on(table.connectionId),
@@ -339,7 +321,7 @@ export const scimUser = sqliteTable(
   ],
 );
 
-export const scimProjectionGrant = sqliteTable(
+export const scimProjectionGrant = pgTable(
   "scim_projection_grant",
   {
     id: text("id").primaryKey(),
@@ -356,8 +338,8 @@ export const scimProjectionGrant = sqliteTable(
     sourceValue: text("source_value"),
     role: text("role").notNull(),
     grantKey: text("grant_key").notNull().unique(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: at("created_at").notNull(),
+    updatedAt: at("updated_at").notNull(),
   },
   (table) => [
     index("scim_projection_grant_connection_idx").on(table.connectionId),
@@ -367,7 +349,7 @@ export const scimProjectionGrant = sqliteTable(
   ],
 );
 
-export const scimGroup = sqliteTable(
+export const scimGroup = pgTable(
   "scim_group",
   {
     id: text("id").primaryKey(),
@@ -382,8 +364,8 @@ export const scimGroup = sqliteTable(
     email: text("email"),
     emailKey: text("email_key"),
     orderKey: text("order_key").notNull().unique(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: at("created_at").notNull(),
+    updatedAt: at("updated_at").notNull(),
   },
   (table) => [
     index("scim_group_connection_idx").on(table.connectionId),
@@ -392,7 +374,7 @@ export const scimGroup = sqliteTable(
   ],
 );
 
-export const scimGroupMember = sqliteTable(
+export const scimGroupMember = pgTable(
   "scim_group_member",
   {
     id: text("id").primaryKey(),
@@ -404,7 +386,7 @@ export const scimGroupMember = sqliteTable(
       .notNull()
       .references(() => scimUser.id, { onDelete: "cascade" }),
     membershipKey: text("membership_key").notNull().unique(),
-    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: at("created_at").notNull(),
   },
   (table) => [
     index("scim_group_member_connection_idx").on(table.connectionId),

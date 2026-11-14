@@ -1,6 +1,6 @@
 // Made-up thread logs that between them hold every event type and every shape an event's data
-// takes, the ones no longer written among them. They are folded into the rows people see, and
-// what comes out is kept beside them, so a change to how any shape reads shows as a diff.
+// takes. They are folded into the rows people see, and what comes out is kept beside them, so a
+// change to how any shape reads shows as a diff.
 
 import type { AnyThreadEvent } from "@/shared/threads/events.ts";
 
@@ -593,131 +593,6 @@ function notices() {
   return l.events;
 }
 
-// Shapes no longer written, which threads from before still hold.
-function oldShapes() {
-  const l = log();
-  // Another agent's message as its own event type, now a notification. The first is the task.
-  const task = l.add("agent.message", {
-    parts: text("Research the topic."),
-    from: MAIN,
-    to: "Researcher",
-    steeredBy: [ADA_STEERED],
-    task: { instructions: "Be brief." },
-  });
-  const message = l.add("agent.message", {
-    parts: text("Any progress?"),
-    from: MAIN,
-    to: "Researcher",
-    steeredBy: [ADA_STEERED, GRACE_STEERED],
-    call: { threadId: "thread", callId: "send-1" },
-  });
-  l.add("run.created", { runId: "r1", reason: null, continuesRunId: null });
-  l.add("message.admitted", { runId: "r1", messageIds: [task, message] });
-  l.add("message.started", { messageId: "m1", runId: "r1" });
-  l.add("message.completed", { messageId: "m1", runId: "r1", parts: [], status: "completed" });
-  // A call paused for its person to connect their own login, after an approval and before one.
-  const ask = (callId: string) =>
-    l.add("tool.requested", {
-      runId: "r1",
-      callId,
-      messageId: "m1",
-      toolId: "mcp.github.search",
-      input: { query: "mage" },
-      risk: "ask",
-      waits: true,
-    });
-  ask("c-parked");
-  l.add("tool.approved", { runId: "r1", callId: "c-parked", scope: "for_now" }, ADA);
-  l.add("tool.blocked", { runId: "r1", callId: "c-parked", userId: "ada" });
-  l.add("tool.ran", { runId: "r1", callId: "c-parked", ok: true, value: [], ms: 12, ranAs: "ada" });
-  ask("c-blocked");
-  l.add("tool.blocked", { runId: "r1", callId: "c-blocked", userId: "grace" });
-  l.add("tool.denied", { runId: "r1", callId: "c-blocked", reason: "stopped" });
-  // A call moved to the background under the id of the call it was, with no row of its own.
-  l.add("tool.requested", {
-    runId: "r1",
-    callId: "c-moved",
-    messageId: "m1",
-    toolId: "web.fetch",
-    input: { url: "https://example.com/slow" },
-    risk: "normal",
-    waits: false,
-  });
-  l.add("tool.ran", {
-    runId: "r1",
-    callId: "c-moved",
-    ok: true,
-    value: { movedToBackground: true, callId: "c-moved" },
-    ms: 1500,
-  });
-  l.add("run.completed", { runId: "r1" });
-  // Subagents ending their runs as an event type of their own; several in a row read as one.
-  l.add("subagent.ended", {
-    threadId: "child-1",
-    name: "Researcher",
-    state: "idle",
-    last: "Done.",
-  });
-  l.add("subagent.ended", { threadId: "child-2", name: "Writer", state: "failed", last: "" });
-  l.add("subagent.ended", {
-    threadId: "child-1",
-    name: "Researcher",
-    state: "stopped",
-    last: "Cut.",
-  });
-  // Notifications about subagents that said everything in their text.
-  const note = (kind: string, value: string, extra: object = {}, source: object = RESEARCHER) =>
-    l.add("notification", { kind, source, text: value, people: [], ...extra });
-  const told = [
-    note("agent.ended", "Researcher ended its run.\n\nIts last message:\n\nAll sources read."),
-    note("agent.ended", "Researcher ended its run."),
-    note("agent.failed", "Researcher failed: overloaded\n\nIts last message:\n\nReading."),
-    note("agent.failed", "Something else went wrong"),
-    note("agent.stopped", "Researcher was stopped."),
-    // Idle notices that name their subagents without their threads.
-    note("agent.idle", "All idle: Researcher, Writer", {}, MAIN),
-    note("agent.idle", "Idle: Writer", {}, MAIN),
-    note("agent.idle", "The subagents are idle.", {}, MAIN),
-    // Firings that do not carry the id of what fired, and say who they are from in no one form.
-    note(
-      "trigger.fired",
-      "Daily digest: write today's digest.",
-      {},
-      { ...MAIN, name: "Daily digest" },
-    ),
-    note(
-      "webhook.received",
-      "Deploys was posted to.\n\nContent-Type: text/plain\n\nok",
-      {},
-      {
-        ...MAIN,
-        name: "Deploys",
-      },
-    ),
-    // A quiet change with only its text.
-    note("change", "Ada Lovelace renamed a task.", { wake: false }, MAIN),
-    note("task.changed", 'Ada Lovelace marked "Draft" done.', { people: [ADA_STEERED] }, MAIN),
-    note("call.ended", "The call finished.", {}, { ...MAIN, callId: "c-moved" }),
-  ];
-  l.add("run.created", { runId: "r2", reason: null, continuesRunId: null });
-  l.add("message.admitted", { runId: "r2", messageIds: told });
-  // Failures worded as sentences, from before they had kinds.
-  for (const [index, error] of [
-    "Pick a model for this thread.",
-    "The thread is gone.",
-    "The agent could not reply.",
-    "The server stopped while the agent was replying.",
-    "The agent stopped 3 times on this input and gave up.",
-    "The model failed: overloaded",
-    "Something nobody expected",
-  ].entries()) {
-    if (index > 0)
-      l.add("run.created", { runId: `f${index}`, reason: "retry", continuesRunId: "r2" });
-    l.add("run.failed", { runId: index > 0 ? `f${index}` : "r2", error });
-  }
-  return l.events;
-}
-
 // A thread's branches, forks and compactions.
 function history() {
   const l = log();
@@ -890,7 +765,6 @@ export const threadFixtures: Record<string, AnyThreadEvent[]> = {
   failures: failures(),
   tools: tools(),
   notices: notices(),
-  "old-shapes": oldShapes(),
   history: history().events,
   restored: restored(),
   open: open(),

@@ -54,8 +54,8 @@ export function mcpRoutes(options: { identity: Identity; mcp: McpServers }) {
       .get("/mcp/oauth/client.json", (c) => {
         return c.json(mcp.clientDocument(), 200, { "Cache-Control": "public, max-age=3600" });
       })
-      .get("/v1/mcp-connections", (c) => {
-        return c.json(mcp.connections(signedIn(c.var.principal)), 200);
+      .get("/v1/mcp-connections", async (c) => {
+        return c.json(await mcp.connections(signedIn(c.var.principal)), 200);
       })
       .put("/v1/mcp-servers/:id/connection", connectHeaders, async (c) => {
         const principal = signedIn(c.var.principal);
@@ -67,45 +67,45 @@ export function mcpRoutes(options: { identity: Identity; mcp: McpServers }) {
         const { returnTo } = c.req.valid("json");
         return c.json(await mcp.connectOAuth(principal, c.req.param("id"), returnTo), 200);
       })
-      .delete("/v1/mcp-servers/:id/connection", (c) => {
-        mcp.disconnect(signedIn(c.var.principal), c.req.param("id"));
+      .delete("/v1/mcp-servers/:id/connection", async (c) => {
+        await mcp.disconnect(signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
       })
-      .get("/v1/org/mcp-servers", (c) => {
-        return c.json(mcp.orgServers(signedIn(c.var.principal)), 200);
+      .get("/v1/org/mcp-servers", async (c) => {
+        return c.json(await mcp.orgServers(signedIn(c.var.principal)), 200);
       })
       .post("/v1/org/mcp-servers", newMcpServer, async (c) => {
         return c.json(await mcp.addToOrg(signedIn(c.var.principal), c.req.valid("json")), 200);
       })
-      .put("/v1/org/mcp-servers/space-servers", spaceServersChange, (c) => {
+      .put("/v1/org/mcp-servers/space-servers", spaceServersChange, async (c) => {
         const principal = signedIn(c.var.principal);
-        mcp.setSpaceServers(principal, c.req.valid("json").allowed);
-        return c.json(mcp.orgServers(principal), 200);
+        await mcp.setSpaceServers(principal, c.req.valid("json").allowed);
+        return c.json(await mcp.orgServers(principal), 200);
       })
-      .get("/v1/spaces/:id/mcp-servers", (c) => {
-        return c.json(mcp.spaceServers(signedIn(c.var.principal), c.req.param("id")), 200);
+      .get("/v1/spaces/:id/mcp-servers", async (c) => {
+        return c.json(await mcp.spaceServers(signedIn(c.var.principal), c.req.param("id")), 200);
       })
       .post("/v1/spaces/:id/mcp-servers", newMcpServer, async (c) => {
         const principal = signedIn(c.var.principal);
         return c.json(await mcp.addToSpace(principal, c.req.param("id"), c.req.valid("json")), 200);
       })
-      .put("/v1/spaces/:id/mcp-servers/:serverId", mcpEnabledChange, (c) => {
+      .put("/v1/spaces/:id/mcp-servers/:serverId", mcpEnabledChange, async (c) => {
         const principal = signedIn(c.var.principal);
         const { id, serverId } = c.req.param();
-        mcp.setInSpace(principal, id, serverId, c.req.valid("json").enabled);
-        return c.json(mcp.spaceServers(principal, id), 200);
+        await mcp.setInSpace(principal, id, serverId, c.req.valid("json").enabled);
+        return c.json(await mcp.spaceServers(principal, id), 200);
       })
-      .get("/v1/mcp-servers/:id", (c) => {
-        return c.json(mcp.get(signedIn(c.var.principal), c.req.param("id")), 200);
+      .get("/v1/mcp-servers/:id", async (c) => {
+        return c.json(await mcp.get(signedIn(c.var.principal), c.req.param("id")), 200);
       })
       .patch("/v1/mcp-servers/:id", mcpServerChange, async (c) => {
         const principal = signedIn(c.var.principal);
         return c.json(await mcp.change(principal, c.req.param("id"), c.req.valid("json")), 200);
       })
-      .put("/v1/mcp-servers/:id/enabled", mcpEnabledChange, (c) => {
+      .put("/v1/mcp-servers/:id/enabled", mcpEnabledChange, async (c) => {
         const principal = signedIn(c.var.principal);
         return c.json(
-          mcp.setEnabled(principal, c.req.param("id"), c.req.valid("json").enabled),
+          await mcp.setEnabled(principal, c.req.param("id"), c.req.valid("json").enabled),
           200,
         );
       })
@@ -115,8 +115,8 @@ export function mcpRoutes(options: { identity: Identity; mcp: McpServers }) {
       .post("/v1/mcp-servers/:id/authorize", async (c) => {
         return c.json(await mcp.authorize(signedIn(c.var.principal), c.req.param("id")), 200);
       })
-      .delete("/v1/mcp-servers/:id", (c) => {
-        mcp.remove(signedIn(c.var.principal), c.req.param("id"));
+      .delete("/v1/mcp-servers/:id", async (c) => {
+        await mcp.remove(signedIn(c.var.principal), c.req.param("id"));
         return c.json({ ok: true }, 200);
       })
   );

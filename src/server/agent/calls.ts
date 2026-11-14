@@ -9,9 +9,10 @@
 import { ulid } from "ulid";
 import * as z from "zod";
 
-import type { Lease } from "@/server/db/lease.ts";
+import type { Lease } from "@/server/sync/lease.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
-import type { EventBus } from "@/server/kernel/event-bus.ts";
+import type { Signals } from "@/server/sync/signals.ts";
+import type { Sync } from "@/server/sync/sync.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { SpaceStore } from "@/server/spaces/service.ts";
 import type { Append, ThreadLog } from "@/server/threads/log.ts";
@@ -34,6 +35,7 @@ import type { Notifier } from "./notifications.ts";
 import type { RunStore } from "./runs.ts";
 import { steeringIn } from "./subagents.ts";
 import type { AnyToolSpec, ToolOutput, Tools, Toolset, ToolSpec } from "./tools.ts";
+import { findAsync } from "@/server/kernel/async.ts";
 
 export interface CallRecord {
   id: string;
@@ -63,28 +65,28 @@ export interface CallStore {
       CallRecord,
       "createdAt" | "endedAt" | "leaseOwner" | "leaseExpiresAt" | "leaseEpoch"
     >,
-    lease?: { owner: string; expiresAt: Date },
-  ): CallRecord;
-  find(id: string): CallRecord | null;
+    lease?: { owner: string; leaseMs: number },
+  ): Promise<CallRecord>;
+  find(id: string): Promise<CallRecord | null>;
   // The thread's calls, newest first.
-  inThread(threadId: string): CallRecord[];
+  inThread(threadId: string): Promise<CallRecord[]>;
   // The thread's calls that are running or wait for approval.
-  open(threadId: string): CallRecord[];
+  open(threadId: string): Promise<CallRecord[]>;
   // Runs a call that waited for approval, held by the owner; null when it no longer waits.
-  start(id: string, owner: string, expiresAt: Date): CallRecord | null;
+  start(id: string, owner: string, leaseMs: number): Promise<CallRecord | null>;
   // Extends the lease; false when it no longer holds, as when the call was stopped or taken over.
-  renew(lease: CallLease, expiresAt: Date): boolean;
+  renew(lease: CallLease, leaseMs: number): Promise<boolean>;
   // Ends a running call under its lease; false when the lease no longer holds.
-  finish(lease: CallLease, fields: Pick<CallRecord, "status" | "endedAt">): boolean;
+  finish(lease: CallLease, fields: Pick<CallRecord, "status" | "endedAt">): Promise<boolean>;
   // Ends the lease now, for whoever looks next to find the call left behind.
-  expire(lease: CallLease): void;
-  // Running calls whose lease expired before `before`.
-  stale(before: Date): CallRecord[];
+  expire(lease: CallLease): Promise<void>;
+  // Running calls whose lease ran out.
+  stale(): Promise<CallRecord[]>;
   // Marks a stale call interrupted, unless another did first; null then.
-  interrupt(id: string, before: Date, at: Date): CallRecord | null;
+  interrupt(id: string, at: Date): Promise<CallRecord | null>;
   // Stops a call that runs or waits; null when it had ended already.
-  cancel(id: string, at: Date): CallRecord | null;
-  update(id: string, fields: Partial<Pick<CallRecord, "status" | "endedAt">>): void;
+  cancel(id: string, at: Date): Promise<CallRecord | null>;
+  update(id: string, fields: Partial<Pick<CallRecord, "status" | "endedAt">>): Promise<void>;
 }
 
 // The longest a call's result runs in the notification that tells of it.
@@ -101,7 +103,7 @@ export interface CallsOptions {
   spaceStore: Pick<SpaceStore, "find">;
   runs: Pick<RunStore, "find" | "toolsOn">;
   log: ThreadLog;
-  bus: EventBus;
+  bus: Signals;
   logger: Logger;
   // The tools; given when needed, since they include these.
   tools: () => Pick<
@@ -116,12 +118,14 @@ export interface CallsOptions {
     | "run"
   >;
   // The tools the thread's agent may call of those its space offers; all of them when not given.
-  narrow?: (thread: Thread, offered: AnyToolSpec[]) => AnyToolSpec[];
+  narrow?: (thread: Thread, offered: AnyToolSpec[]) => Promise<AnyToolSpec[]>;
   notifier: Notifier;
   // Where running calls say what they print, for the people watching; nowhere when not given.
   live?: Pick<Live, "open" | "move" | "moved" | "close" | "end" | "of">;
   // Names this server instance in the leases it takes on the calls it runs.
-  instanceId?: string;
+  instanceId: string;
+  // Keeps those leases.
+  keeper: Sync["keeper"];
   leaseMs?: number;
   now?: () => Date;
 }
@@ -160,9 +164,11 @@ const ACTOR = { kind: "agent" } as const;
 // A call the tool refuses, with what the model is told.
 class ToolRefusal extends Error {}
 
-function refusing<T>(work: () => T): { ok: true; value: T } | { ok: false; error: string } {
+async function refusing<T>(
+  work: () => T | Promise<T>,
+): Promise<{ ok: true; value: T } | { ok: false; error: string }> {
   try {
-    return { ok: true, value: work() };
+    return { ok: true, value: await work() };
   } catch (err) {
     if (err instanceof ToolRefusal) return { ok: false, error: err.message };
     throw err;
@@ -185,75 +191,105 @@ export function createCalls(options: CallsOptions) {
   const now = options.now ?? (() => new Date());
   const narrow = options.narrow ?? ((_thread: Thread, offered: AnyToolSpec[]) => offered);
   const { notifier } = options;
-  const owner = options.instanceId ?? ulid();
+  const owner = options.instanceId;
   const leaseMs = options.leaseMs ?? 30_000;
   // The calls running here, by id, each with what stops it and the lease it runs under.
   const live = new Map<string, { controller: AbortController; lease: CallLease }>();
-  let timer: ReturnType<typeof setInterval> | undefined;
-  let unsubscribe: (() => void) | undefined;
-
-  function expiry() {
-    return new Date(now().getTime() + leaseMs);
-  }
+  let started = false;
+  let unsubscribe: (() => void)[] = [];
 
   function leaseOf(record: CallRecord): CallLease {
     return { callId: record.id, owner, epoch: record.leaseEpoch };
   }
 
   // Whether this instance still carries the call out under the lease.
-  function holds(lease: CallLease) {
-    const now = calls.find(lease.callId);
+  async function holds(lease: CallLease) {
+    const now = await calls.find(lease.callId);
     return now?.leaseOwner === lease.owner && now.leaseEpoch === lease.epoch;
   }
 
-  // Keeps the leases of the calls running here, and stops those whose lease no longer holds, as
-  // when someone stopped the call through another instance.
-  function renew(threadId?: string) {
-    for (const [id, held] of live) {
-      if (threadId && calls.find(id)?.threadId !== threadId) continue;
-      if (calls.renew(held.lease, expiry())) continue;
-      live.delete(id);
-      held.controller.abort(new Error("cancelled"));
+  // Ends the calls a stopped server left running, telling their threads' agents: those whose
+  // lease ran out. Another instance may be running the rest.
+  async function recover() {
+    for (const record of await calls.stale()) {
+      try {
+        const interrupted = await settle(
+          record,
+          async () => calls.interrupt(record.id, now()),
+          async (append) => {
+            await closeRow(record, append, {
+              ok: false,
+              error: "The server stopped while the call ran.",
+            });
+            await notify(
+              record,
+              `Background call ${record.id} (${record.toolId}) was interrupted: the server stopped while it ran.`,
+            );
+          },
+        );
+        if (!interrupted) continue;
+        live.get(record.id)?.controller.abort(new Error("interrupted"));
+        live.delete(record.id);
+      } catch (err) {
+        logger.warn({ err, callId: record.id }, "interrupted call not recorded");
+      }
     }
   }
 
-  function contextOf(threadId: string) {
-    const thread = threads.find(threadId);
-    const space = thread && spaceStore.find(thread.spaceId);
+  // Keeps the leases of the calls running here, and stops those whose lease no longer holds, as
+  // when someone stopped the call through another instance; then ends those others left behind.
+  const keeper = options.keeper({
+    name: "jobs",
+    everyMs: leaseMs / 3,
+    held: () => live.keys(),
+    renew: async (id: string) => {
+      const held = live.get(id);
+      return !held || (await calls.renew(held.lease, leaseMs));
+    },
+    onLost: (id: string) => {
+      live.get(id)?.controller.abort(new Error("cancelled"));
+      live.delete(id);
+    },
+    sweep: recover,
+  });
+
+  async function contextOf(threadId: string) {
+    const thread = await threads.find(threadId);
+    const space = thread && (await spaceStore.find(thread.spaceId));
     if (!thread || !space) throw new ToolRefusal("The thread is gone.");
     return { thread, space };
   }
 
-  function rowsOf(threadId: string) {
-    return transcripts.of(threadId).transcript().rows;
+  async function rowsOf(threadId: string) {
+    return (await transcripts.of(threadId)).transcript().rows;
   }
 
-  function titleOf(space: { id: string; orgId: string }, toolId: string) {
-    return options.tools().namesNow(space)(toolId)?.title ?? toolId;
+  async function titleOf(space: { id: string; orgId: string }, toolId: string) {
+    return (await options.tools().namesNow(space))(toolId)?.title ?? toolId;
   }
 
   // The call's row in its thread's log, which holds what it was asked and gave back.
-  function rowOf(record: CallRecord) {
-    return rowsOf(record.threadId).find(
+  async function rowOf(record: CallRecord) {
+    return (await rowsOf(record.threadId)).find(
       (one): one is ToolRow => one.kind === "tool" && one.id === record.id,
     );
   }
 
   // The model that replied in the run that started the call.
-  function modelOf(record: CallRecord) {
-    return runs.find(record.runId)?.model ?? null;
+  async function modelOf(record: CallRecord) {
+    return (await runs.find(record.runId))?.model ?? null;
   }
 
   // Whose words steered the call: those the agent had read when it was asked for.
-  function steeringOf(record: CallRecord) {
-    const rows = rowsOf(record.threadId);
+  async function steeringOf(record: CallRecord) {
+    const rows = await rowsOf(record.threadId);
     const at = rows.findIndex((row) => row.id === record.id);
     return steeringIn(at === -1 ? rows : rows.slice(0, at));
   }
 
   // Closes the call's row if it is still open, as it was left: ran with its result, or stopped.
   // The log records the call; its row in the table says only where it stands.
-  function closeRow(
+  async function closeRow(
     record: CallRecord,
     append: Append,
     output: ToolOutput | "stopped",
@@ -261,19 +297,19 @@ export function createCalls(options: CallsOptions) {
     extra = {},
   ) {
     // What it printed while it ran goes as its end is recorded.
-    options.live?.end(record.id);
+    await options.live?.end(record.id);
     // A stop is written whatever the row, so readers see where the call stands.
     if (output === "stopped") {
-      append({
+      await append({
         type: "tool.denied",
         actor: ACTOR,
         data: { runId: record.id, callId: record.id, reason: "stopped" },
       });
       return;
     }
-    const row = rowOf(record);
+    const row = await rowOf(record);
     if (!row || (row.state !== "pending" && row.state !== "allowed")) return;
-    append({
+    await append({
       type: "tool.ran",
       actor: ACTOR,
       data: {
@@ -289,10 +325,14 @@ export function createCalls(options: CallsOptions) {
   // Moves the call on in one write: `change` to its row in the table, which holds only while the
   // call stands as it was, then `record` in the log, the agent told along with it. So the table
   // and the log never disagree. False when the change no longer held.
-  function settle(record: CallRecord, change: () => unknown, write: (append: Append) => void) {
-    const { result } = log.write(record.threadId, (append) => {
-      if (!change()) return false;
-      write(append);
+  async function settle(
+    record: CallRecord,
+    change: () => Promise<unknown>,
+    write: (append: Append) => Promise<void>,
+  ) {
+    const { result } = await log.write(record.threadId, async (append) => {
+      if (!(await change())) return false;
+      await write(append);
       return true;
     });
     if (result) bus.wake(record.threadId);
@@ -301,8 +341,8 @@ export function createCalls(options: CallsOptions) {
 
   // The call's row in the log. It goes under its own id as its run, so that no run of the thread
   // counts it among its own calls: it neither waits for it nor stops it when it ends.
-  function requested(
-    append: (event: NewEvent) => unknown,
+  async function requested(
+    append: (event: NewEvent) => Promise<unknown>,
     call: {
       id: string;
       toolId: string;
@@ -313,7 +353,7 @@ export function createCalls(options: CallsOptions) {
     },
   ) {
     const { id, names } = call;
-    append({
+    await append({
       type: "tool.requested",
       actor: ACTOR,
       data: {
@@ -332,31 +372,31 @@ export function createCalls(options: CallsOptions) {
   }
 
   // Tells the thread's agent how the call ended.
-  function notify(record: CallRecord, text: string, result?: string) {
-    const thread = threads.find(record.threadId);
-    const space = thread && spaceStore.find(thread.spaceId);
+  async function notify(record: CallRecord, text: string, result?: string) {
+    const thread = await threads.find(record.threadId);
+    const space = thread && (await spaceStore.find(thread.spaceId));
     if (!thread || !space) return;
-    notifier.send(thread.id, {
+    await notifier.send(thread.id, {
       kind: "call.ended",
       source: {
         threadId: thread.id,
-        name: titleOf(space, record.toolId),
+        name: await titleOf(space, record.toolId),
         main: true,
         callId: record.id,
       },
-      actor: { kind: "source", label: titleOf(space, record.toolId), type: "job" },
+      actor: { kind: "source", label: await titleOf(space, record.toolId), type: "job" },
       text,
-      people: steeringOf(record),
+      people: await steeringOf(record),
       ...(result && { last: result }),
     });
   }
 
   // Ends the call with its output, unless it ended already or is no longer this instance's, and
   // tells the agent.
-  function end(id: string, output: ToolOutput, started: Date, extra: object = {}) {
+  async function end(id: string, output: ToolOutput, started: Date, extra: object = {}) {
     const held = live.get(id);
     live.delete(id);
-    const record = calls.find(id);
+    const record = await calls.find(id);
     if (!held || !record) {
       // Ended elsewhere, with what it printed.
       options.live?.close(id);
@@ -365,14 +405,14 @@ export function createCalls(options: CallsOptions) {
     const ms = Math.max(0, now().getTime() - started.getTime());
     const status = output.ok ? ("done" as const) : ("failed" as const);
     try {
-      settle(
+      await settle(
         record,
-        () => calls.finish(held.lease, { status, endedAt: now() }),
-        (append) => {
-          closeRow(record, append, output, ms, extra);
-          notify(
+        async () => calls.finish(held.lease, { status, endedAt: now() }),
+        async (append) => {
+          await closeRow(record, append, output, ms, extra);
+          await notify(
             record,
-            `Background call ${id} (${titleOf(contextOf(record.threadId).space, record.toolId)}) ${output.ok ? "finished" : "failed"}`,
+            `Background call ${id} (${await titleOf((await contextOf(record.threadId)).space, record.toolId)}) ${output.ok ? "finished" : "failed"}`,
             resultText(output),
           );
         },
@@ -383,14 +423,14 @@ export function createCalls(options: CallsOptions) {
   }
 
   // Runs the call now, held here, and ends it when it is done.
-  function launch(
+  async function launch(
     record: CallRecord,
     spec: AnyToolSpec,
     runAs: string | null,
     extra: object = {},
     approvedBy?: string,
   ) {
-    const { thread, space } = contextOf(record.threadId);
+    const { thread, space } = await contextOf(record.threadId);
     const controller = new AbortController();
     const lease = leaseOf(record);
     live.set(record.id, { controller, lease });
@@ -406,42 +446,46 @@ export function createCalls(options: CallsOptions) {
           callId: record.id,
           background: true,
           actor: ACTOR,
-          model: modelOf(record),
+          model: await modelOf(record),
           runAs,
           ...(approvedBy && { approvedBy }),
           signal: controller.signal,
           ...(options.live && {
-            live: options.live.open(thread.id, record.id, () => holds(lease)),
+            live: options.live.open(thread.id, record.id, async () => holds(lease)),
           }),
-          write: (work) => log.write(thread.id, (append) => work(append)).result,
+          write: async (work) =>
+            (await log.write(thread.id, async (append) => work(append))).result,
         }),
       );
     } catch (err) {
       work = Promise.reject(err);
     }
     void work.then(
-      (output) => end(record.id, output, started, extra),
-      (err: unknown) => {
+      async (output) => end(record.id, output, started, extra),
+      async (err: unknown) => {
         logger.warn({ err, callId: record.id, toolId: record.toolId }, "background call failed");
-        end(record.id, { ok: false, error: messageOf(err) }, started, extra);
+        await end(record.id, { ok: false, error: messageOf(err) }, started, extra);
       },
     );
   }
 
   // The tool the agent may call by this name, for a background call.
-  function specFor(thread: Thread, space: { id: string; orgId: string }, toolId: string) {
+  async function specFor(thread: Thread, space: { id: string; orgId: string }, toolId: string) {
     const tools = options.tools();
     const wanted =
-      tools.modelNames(space).fromModel(toolId) ??
-      tools
-        .offered(space)
-        .find(
-          (one) =>
+      (await tools.modelNames(space)).fromModel(toolId) ??
+      (
+        await findAsync(
+          await tools.offered(space),
+          async (one) =>
             one.name === toolId ||
-            wireToolName(tools.modelNames(space).toModel(one.name)) === toolId,
-        )?.name ??
+            wireToolName((await tools.modelNames(space)).toModel(one.name)) === toolId,
+        )
+      )?.name ??
       toolId;
-    const spec = narrow(thread, tools.offered(space)).find((one) => one.name === wanted);
+    const spec = (await narrow(thread, await tools.offered(space))).find(
+      (one) => one.name === wanted,
+    );
     if (!spec) throw new ToolRefusal(`No tool is named ${toolId} here.`);
     if (spec.name.startsWith(`${CALLS_TOOLSET}.`)) {
       throw new ToolRefusal("A background call cannot start another.");
@@ -449,10 +493,10 @@ export function createCalls(options: CallsOptions) {
     if (spec.waitsFor === "answer") {
       throw new ToolRefusal("A tool that asks cannot run in the background.");
     }
-    const left = tools
-      .fromServers(space, tools.modelNames(space))
-      .some((tool) => tool.id === spec.name);
-    if (left && !runs.toolsOn(thread.id).some((tool) => tool.id === spec.name)) {
+    const left = (await tools.fromServers(space, await tools.modelNames(space))).some(
+      (tool) => tool.id === spec.name,
+    );
+    if (left && !(await runs.toolsOn(thread.id)).some((tool) => tool.id === spec.name)) {
       throw new ToolRefusal(
         `${toolId} is not on yet. Search for it or select it with tools.search first.`,
       );
@@ -460,21 +504,21 @@ export function createCalls(options: CallsOptions) {
     return spec;
   }
 
-  function mine(id: string, threadId: string) {
-    const record = calls.find(id);
+  async function mine(id: string, threadId: string) {
+    const record = await calls.find(id);
     if (!record || record.threadId !== threadId) throw new ToolRefusal(`No call has the id ${id}.`);
     return record;
   }
 
-  function summaryOf(record: CallRecord) {
-    const { thread, space } = contextOf(record.threadId);
-    const row = rowOf(record);
-    const output = row && transcripts.whole([row])[0]!.output;
+  async function summaryOf(record: CallRecord) {
+    const { thread, space } = await contextOf(record.threadId);
+    const row = await rowOf(record);
+    const output = row && (await transcripts.whole([row]))[0]!.output;
     // What a running call has printed so far, its end cut to the cap, and how far it has come.
-    const printed = record.status === "running" ? options.live?.of(record.id) : null;
+    const printed = record.status === "running" ? await options.live?.of(record.id) : null;
     return {
       id: record.id,
-      tool: titleOf(space, record.toolId),
+      tool: await titleOf(space, record.toolId),
       toolId: record.toolId,
       status: record.status,
       ...(output?.ok && { result: resultText(output) }),
@@ -489,11 +533,11 @@ export function createCalls(options: CallsOptions) {
 
   // Stops the call: it runs no more and tells nobody. Run elsewhere, the instance running it stops
   // it once its lease no longer holds. False when it had ended already.
-  function stop(record: CallRecord) {
-    const stopped = settle(
+  async function stop(record: CallRecord) {
+    const stopped = await settle(
       record,
-      () => calls.cancel(record.id, now()),
-      (append) => closeRow(record, append, "stopped"),
+      async () => calls.cancel(record.id, now()),
+      async (append) => closeRow(record, append, "stopped"),
     );
     if (!stopped) return false;
     live.get(record.id)?.controller.abort(new Error("cancelled"));
@@ -515,34 +559,34 @@ export function createCalls(options: CallsOptions) {
     risk: () => "normal",
     run(input, ctx) {
       return Promise.resolve(
-        refusing(() => {
-          const { thread, space } = contextOf(ctx.threadId);
-          const spec = specFor(thread, space, input.tool);
+        refusing(async () => {
+          const { thread, space } = await contextOf(ctx.threadId);
+          const spec = await specFor(thread, space, input.tool);
           const parsed = spec.input.safeParse(input.input ?? {});
           if (!parsed.success) {
             throw new ToolRefusal(`The input is not valid: ${z.prettifyError(parsed.error)}`);
           }
-          if (calls.open(thread.id).length >= BACKGROUND_LIMIT) {
+          if ((await calls.open(thread.id)).length >= BACKGROUND_LIMIT) {
             throw new ToolRefusal(
               `This thread has ${BACKGROUND_LIMIT} background calls running or waiting. Wait for some to end or cancel them.`,
             );
           }
           const tools = options.tools();
-          const rows = rowsOf(thread.id);
-          const decision = tools.evaluate(
+          const rows = await rowsOf(thread.id);
+          const decision = await tools.evaluate(
             rows,
             thread,
             space,
             spec.name,
-            spec.risk(parsed.data, { model: ctx.model, orgId: space.orgId }),
+            await spec.risk(parsed.data, { model: ctx.model, orgId: space.orgId }),
             parsed.data,
           );
           const waits = decision.kind === "wait";
-          const risk = tools.riskOf(space, spec, parsed.data, ctx.model);
-          const names = tools.namesNow(space)(spec.name);
+          const risk = await tools.riskOf(space, spec, parsed.data, ctx.model);
+          const names = (await tools.namesNow(space))(spec.name);
           const id = ulid();
-          const record = ctx.write((append) => {
-            const made = calls.create(
+          const record = await ctx.write(async (append) => {
+            const made = await calls.create(
               {
                 id,
                 threadId: thread.id,
@@ -551,13 +595,20 @@ export function createCalls(options: CallsOptions) {
                 input: parsed.data,
                 status: waits ? "pending" : "running",
               },
-              waits ? undefined : { owner, expiresAt: expiry() },
+              waits ? undefined : { owner, leaseMs },
             );
-            requested(append, { id, toolId: spec.name, input: parsed.data, risk, waits, names });
+            await requested(append, {
+              id,
+              toolId: spec.name,
+              input: parsed.data,
+              risk,
+              waits,
+              names,
+            });
             return made;
           });
           if (!waits) {
-            launch(
+            await launch(
               record,
               spec,
               decision.runAs ?? null,
@@ -580,7 +631,7 @@ export function createCalls(options: CallsOptions) {
     input: z.object({ id: z.string().min(1).meta({ title: "Id" }) }),
     risk: () => "normal",
     run({ id }, ctx) {
-      return Promise.resolve(refusing(() => summaryOf(mine(id, ctx.threadId))));
+      return Promise.resolve(refusing(async () => summaryOf(await mine(id, ctx.threadId))));
     },
   };
 
@@ -594,11 +645,18 @@ export function createCalls(options: CallsOptions) {
     risk: () => "normal",
     run(_input, ctx) {
       return Promise.resolve(
-        refusing(() => ({
-          calls: calls.inThread(ctx.threadId).map((record) => {
-            const { result: _result, error: _error, output: _output, ...rest } = summaryOf(record);
-            return rest;
-          }),
+        refusing(async () => ({
+          calls: await Promise.all(
+            (await calls.inThread(ctx.threadId)).map(async (record) => {
+              const {
+                result: _result,
+                error: _error,
+                output: _output,
+                ...rest
+              } = await summaryOf(record);
+              return rest;
+            }),
+          ),
         })),
       );
     },
@@ -614,10 +672,12 @@ export function createCalls(options: CallsOptions) {
     risk: () => "normal",
     run({ id }, ctx) {
       return Promise.resolve(
-        refusing(() => {
-          const record = mine(id, ctx.threadId);
-          if (!stop(record)) {
-            throw new ToolRefusal(`Call ${id} already ${calls.find(id)?.status ?? "ended"}.`);
+        refusing(async () => {
+          const record = await mine(id, ctx.threadId);
+          if (!(await stop(record))) {
+            throw new ToolRefusal(
+              `Call ${id} already ${(await calls.find(id))?.status ?? "ended"}.`,
+            );
           }
           return { id, status: "cancelled" };
         }),
@@ -637,47 +697,49 @@ export function createCalls(options: CallsOptions) {
       };
     },
 
-    find: (id: string) => calls.find(id),
+    find: async (id: string) => calls.find(id),
 
     // Whether the thread has room for another call running or waiting.
-    room: (threadId: string) => calls.open(threadId).length < BACKGROUND_LIMIT,
+    room: async (threadId: string) => (await calls.open(threadId)).length < BACKGROUND_LIMIT,
 
     // A call a person approved or denied while it waited: a denied one ends and the agent is told;
     // an approved one runs, if the approval still holds.
-    proceed(threadId: string, callId: string, allow: boolean) {
-      const record = calls.find(callId);
+    async proceed(threadId: string, callId: string, allow: boolean) {
+      const record = await calls.find(callId);
       if (!record || record.threadId !== threadId || record.status !== "pending") return;
-      const { thread, space } = contextOf(threadId);
+      const { thread, space } = await contextOf(threadId);
       const tools = options.tools();
-      const rows = rowsOf(threadId);
+      const rows = await rowsOf(threadId);
       const row = rows.find((one): one is ToolRow => one.kind === "tool" && one.id === callId);
-      const spec = narrow(thread, tools.offered(space)).find((one) => one.name === record.toolId);
+      const spec = (await narrow(thread, await tools.offered(space))).find(
+        (one) => one.name === record.toolId,
+      );
       const parsed = spec && spec.input.safeParse(record.input);
       const holds =
         allow &&
         !!row &&
         !!spec &&
         !!parsed?.success &&
-        tools.approvalHolds(
+        (await tools.approvalHolds(
           row,
           rows,
           thread,
           space,
-          tools.riskOf(space, spec, parsed.data, modelOf(record)),
-        );
+          await tools.riskOf(space, spec, parsed.data, await modelOf(record)),
+        ));
       if (!holds || !spec) {
-        settle(
+        await settle(
           record,
-          () => calls.cancel(callId, now()),
-          (append) => {
+          async () => calls.cancel(callId, now()),
+          async (append) => {
             if (allow) {
-              append({
+              await append({
                 type: "tool.denied",
                 actor: ACTOR,
                 data: { runId: callId, callId, reason: "stale" },
               });
             }
-            notify(
+            await notify(
               record,
               `Background call ${callId} (${record.toolId}) was ${allow ? "not allowed to run: its approval no longer held" : "denied"}.`,
             );
@@ -686,24 +748,24 @@ export function createCalls(options: CallsOptions) {
         return;
       }
       // Another instance may have taken the decision up first.
-      const started = calls.start(callId, owner, expiry());
+      const started = await calls.start(callId, owner, leaseMs);
       if (!started) return;
-      const runAs = spec.connection?.(record.input, space)
+      const runAs = (await spec.connection?.(record.input, space))
         ? (row.decision?.by.userId ?? null)
         : null;
-      launch(started, spec, runAs, {}, row.decision?.by.userId);
+      await launch(started, spec, runAs, {}, row.decision?.by.userId);
     },
 
     // Stops a call that is running or waiting for approval, as a person asked.
-    cancel(threadId: string, callId: string) {
-      const record = calls.find(callId);
+    async cancel(threadId: string, callId: string) {
+      const record = await calls.find(callId);
       if (!record || record.threadId !== threadId) throw new ServiceError(404, "Call not found");
-      if (!stop(record)) throw new ServiceError(409, "This call has ended");
+      if (!(await stop(record))) throw new ServiceError(409, "This call has ended");
     },
 
     // Moves a call that waits for approval in a run to the background, as a call of its own that
     // waits for the same decision, and gives the run its id as the call's result. Returns the id.
-    detach(
+    async detach(
       threadId: string,
       call: {
         id: string;
@@ -717,7 +779,7 @@ export function createCalls(options: CallsOptions) {
       append: Append,
     ) {
       const id = ulid();
-      calls.create({
+      await calls.create({
         id,
         threadId,
         runId: call.runId,
@@ -725,8 +787,8 @@ export function createCalls(options: CallsOptions) {
         input: call.input,
         status: "pending",
       });
-      requested(append, { ...call, id, waits: true, names: call });
-      append({
+      await requested(append, { ...call, id, waits: true, names: call });
+      await append({
         type: "tool.ran",
         actor: ACTOR,
         data: {
@@ -742,93 +804,63 @@ export function createCalls(options: CallsOptions) {
 
     // Takes over a call that was running in a run, as a call of its own beside it that goes on and
     // ends as any does, and returns its id. The run's call says it moved there.
-    adopt(call: Adoption) {
+    async adopt(call: Adoption) {
       const id = ulid();
-      const record = log.write(call.threadId, (append) => {
-        const made = calls.create(
-          {
-            id,
-            threadId: call.threadId,
-            runId: call.runId,
-            toolId: call.toolId,
-            input: call.input,
-            status: "running",
-          },
-          { owner, expiresAt: expiry() },
-        );
-        requested(append, { ...call, id, waits: false, names: call });
-        // What it printed so far goes on with it.
-        const lease = leaseOf(made);
-        options.live?.move(call.callId, id, () => holds(lease));
-        return made;
-      }).result;
+      const record = (
+        await log.write(call.threadId, async (append) => {
+          const made = await calls.create(
+            {
+              id,
+              threadId: call.threadId,
+              runId: call.runId,
+              toolId: call.toolId,
+              input: call.input,
+              status: "running",
+            },
+            { owner, leaseMs },
+          );
+          await requested(append, { ...call, id, waits: false, names: call });
+          // What it printed so far goes on with it.
+          const lease = leaseOf(made);
+          await options.live?.move(call.callId, id, async () => holds(lease));
+          return made;
+        })
+      ).result;
       live.set(record.id, { controller: call.controller, lease: leaseOf(record) });
-      options.live?.moved(call.threadId, id);
+      await options.live?.moved(call.threadId, id);
       void call.work.then(
-        (output) => end(record.id, output, call.started),
-        (err: unknown) => {
+        async (output) => end(record.id, output, call.started),
+        async (err: unknown) => {
           logger.warn({ err, callId: record.id, toolId: record.toolId }, "background call failed");
-          end(record.id, { ok: false, error: messageOf(err) }, call.started);
+          await end(record.id, { ok: false, error: messageOf(err) }, call.started);
         },
       );
       return id;
     },
 
-    // Ends the calls a stopped server left running, telling their threads' agents: those whose
-    // lease expired before `before`. Another instance may be running the rest.
-    recover(before = now()) {
-      for (const record of calls.stale(before)) {
-        try {
-          const interrupted = settle(
-            record,
-            () => calls.interrupt(record.id, before, now()),
-            (append) => {
-              closeRow(record, append, {
-                ok: false,
-                error: "The server stopped while the call ran.",
-              });
-              notify(
-                record,
-                `Background call ${record.id} (${record.toolId}) was interrupted: the server stopped while it ran.`,
-              );
-            },
-          );
-          if (!interrupted) continue;
-          live.get(record.id)?.controller.abort(new Error("interrupted"));
-          live.delete(record.id);
-        } catch (err) {
-          logger.warn({ err, callId: record.id }, "interrupted call not recorded");
-        }
-      }
-    },
+    recover,
 
     // Keeps the leases of the calls running here, and ends those other instances left behind, now
-    // and as time goes on. A thread woken has its calls here checked at once.
-    start() {
-      if (timer) return;
-      this.recover();
-      timer = setInterval(() => {
-        try {
-          renew();
-          this.recover();
-        } catch (err) {
-          logger.error({ err }, "background call leases not kept");
-        }
-      }, leaseMs / 3);
-      timer.unref();
-      unsubscribe = bus.onWake((threadId) => renew(threadId));
+    // and as time goes on. A thread woken, or a gap in what was heard, has them checked at once.
+    async start() {
+      if (started) return;
+      started = true;
+      await keeper.start();
+      const beat = () => void keeper.beat();
+      unsubscribe = [bus.onWake(beat), bus.onGap(beat)];
     },
 
     // Stops the calls running here and lets them go, to be ended as interrupted by whoever looks
     // next.
-    stop() {
-      clearInterval(timer);
-      timer = undefined;
-      unsubscribe?.();
+    async stop() {
+      started = false;
+      await keeper.stop();
+      for (const stop of unsubscribe) stop();
+      unsubscribe = [];
       for (const [id, held] of live) {
         live.delete(id);
         held.controller.abort(new Error("shutdown"));
-        calls.expire(held.lease);
+        await calls.expire(held.lease);
       }
     },
   };

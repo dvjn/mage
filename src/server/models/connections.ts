@@ -51,22 +51,22 @@ export type ConnectionChanges = Partial<
 >;
 
 export interface ConnectionStore {
-  create(connection: NewConnection): Connection;
-  list(orgId: string): Connection[];
+  create(connection: NewConnection): Promise<Connection>;
+  list(orgId: string): Promise<Connection[]>;
   // The connection with this id when it belongs to the org.
-  find(orgId: string, id: string): Connection | null;
-  update(id: string, changes: ConnectionChanges): void;
-  setAutoEnableModels(id: string, on: boolean): void;
-  delete(id: string): void;
+  find(orgId: string, id: string): Promise<Connection | null>;
+  update(id: string, changes: ConnectionChanges): Promise<void>;
+  setAutoEnableModels(id: string, on: boolean): Promise<void>;
+  delete(id: string): Promise<void>;
 }
 
 export type Credential = Record<string, unknown>;
 
 export interface CredentialStore {
-  put(connectionId: string, credential: Credential): void;
+  put(connectionId: string, credential: Credential): Promise<void>;
   // Null when the connection has none; throws when the stored value fails authentication.
-  get(connectionId: string): Credential | null;
-  delete(connectionId: string): void;
+  get(connectionId: string): Promise<Credential | null>;
+  delete(connectionId: string): Promise<void>;
 }
 
 // The hosts signed in to with a subscription: by a device code, or by pasting back a code.
@@ -261,8 +261,8 @@ export function createConnections(options: ConnectionsOptions) {
   const codeAttempts = new Map<string, CodeAttempt>();
   const refreshing = new Map<string, Promise<AccountCredential>>();
 
-  function rejectIfConnected(kind: AccountKind, orgId: string) {
-    if (connections.list(orgId).some((c) => c.authKind === "oauth" && c.host === kind)) {
+  async function rejectIfConnected(kind: AccountKind, orgId: string) {
+    if ((await connections.list(orgId)).some((c) => c.authKind === "oauth" && c.host === kind)) {
       throw new ConnectionError(409, `${providers[kind].label} is already connected`);
     }
   }
@@ -280,29 +280,29 @@ export function createConnections(options: ConnectionsOptions) {
     };
   }
 
-  function savedCredential(connectionId: string) {
-    const saved = credentials.get(connectionId);
+  async function savedCredential(connectionId: string) {
+    const saved = await credentials.get(connectionId);
     if (!saved) throw new ConnectionError(404, "Connection not found");
     return credentialSchema.parse(saved);
   }
 
-  function savedAny(connectionId: string) {
-    const saved = credentials.get(connectionId);
+  async function savedAny(connectionId: string) {
+    const saved = await credentials.get(connectionId);
     if (!saved) throw new ConnectionError(404, "Connection not found");
     return anyCredentialSchema.parse(saved);
   }
 
-  function save(kind: AccountKind, owner: Owner, tokens: OAuthTokens): Connection {
-    rejectIfConnected(kind, owner.orgId);
+  async function save(kind: AccountKind, owner: Owner, tokens: OAuthTokens): Promise<Connection> {
+    await rejectIfConnected(kind, owner.orgId);
     const { label } = providers[kind];
-    const connection = connections.create({
+    const connection = await connections.create({
       orgId: owner.orgId,
       createdBy: owner.userId,
       host: kind,
       authKind: "oauth",
       account: tokens.email ?? tokens.accountId ?? label,
     });
-    credentials.put(connection.id, credentialOf(tokens));
+    await credentials.put(connection.id, credentialOf(tokens));
     return connection;
   }
 
@@ -338,7 +338,10 @@ export function createConnections(options: ConnectionsOptions) {
       const approval = await pollUntilApproved(attempt, oauth, code);
       const tokens = await oauth.exchangeDevice(approval, attempt.controller.signal);
       if (attempt.result.status !== "pending") return;
-      attempt.result = { status: "connected", connection: save(attempt.kind, attempt, tokens) };
+      attempt.result = {
+        status: "connected",
+        connection: await save(attempt.kind, attempt, tokens),
+      };
     } catch (err) {
       if (attempt.result.status !== "pending") return;
       const error = err instanceof ConnectionError ? err : rejected(attempt.kind, err);
@@ -362,7 +365,7 @@ export function createConnections(options: ConnectionsOptions) {
 
   // Renews the connection's tokens when they are about to expire, or always when forced.
   async function renew(connectionId: string, kind: AccountKind, force: boolean) {
-    const saved = credentialSchema.parse(credentials.get(connectionId));
+    const saved = credentialSchema.parse(await credentials.get(connectionId));
     if (!force && saved.expires - REFRESH_SKEW_MS > now().getTime()) return saved;
     let tokens: OAuthTokens;
     try {
@@ -375,21 +378,21 @@ export function createConnections(options: ConnectionsOptions) {
       );
     }
     // Read again, for a proxy changed while renewing; gone when disconnected meanwhile.
-    const next = credentialOf(tokens, savedCredential(connectionId));
-    credentials.put(connectionId, next);
+    const next = credentialOf(tokens, await savedCredential(connectionId));
+    await credentials.put(connectionId, next);
     return next;
   }
 
   return {
-    list(owner: Owner): Connection[] {
+    async list(owner: Owner): Promise<Connection[]> {
       return connections.list(owner.orgId);
     },
 
     // Adds a key, cloud credentials or a server to the org, under the label given, with its
     // settings and its secrets sealed. The caller has checked the host takes them.
-    add(owner: Owner, input: NewHostConnection): Connection {
+    async add(owner: Owner, input: NewHostConnection): Promise<Connection> {
       const { apiKey, ...secrets } = input.secrets;
-      const connection = connections.create({
+      const connection = await connections.create({
         orgId: owner.orgId,
         createdBy: owner.userId,
         host: input.host,
@@ -398,7 +401,7 @@ export function createConnections(options: ConnectionsOptions) {
         label: input.label,
         settings: input.settings,
       });
-      credentials.put(connection.id, {
+      await credentials.put(connection.id, {
         ...(apiKey && { apiKey }),
         ...(Object.keys(secrets).length > 0 && { secrets }),
         ...(input.proxy && { proxy: input.proxy }),
@@ -408,13 +411,13 @@ export function createConnections(options: ConnectionsOptions) {
 
     // The values a change of the connection is checked with: its settings and secrets by field
     // name, with the values given over them; a secret left blank keeps the stored one.
-    editValues(owner: Owner, id: string, values: Record<string, string>) {
-      const connection = connections.find(owner.orgId, id);
+    async editValues(owner: Owner, id: string, values: Record<string, string>) {
+      const connection = await connections.find(owner.orgId, id);
       if (!connection) throw new ConnectionError(404, "Connection not found");
       if (connection.authKind === "oauth") {
         throw new ConnectionError(400, "A sign-in has nothing to change");
       }
-      const saved = secretsCredentialSchema.parse(credentials.get(id) ?? {});
+      const saved = secretsCredentialSchema.parse((await credentials.get(id)) ?? {});
       const stored: Record<string, string> = {
         ...saved.secrets,
         ...(saved.apiKey && { apiKey: saved.apiKey }),
@@ -429,10 +432,10 @@ export function createConnections(options: ConnectionsOptions) {
 
     // Saves a connection's new label, way of connecting and fields, with its secrets sealed and
     // its proxy kept. The caller has checked the host takes them.
-    edit(owner: Owner, id: string, change: HostConnectionChange): Connection {
-      const connection = connections.find(owner.orgId, id);
+    async edit(owner: Owner, id: string, change: HostConnectionChange): Promise<Connection> {
+      const connection = await connections.find(owner.orgId, id);
       if (!connection) throw new ConnectionError(404, "Connection not found");
-      const saved = savedAny(id);
+      const saved = await savedAny(id);
       const { apiKey, ...secrets } = change.secrets;
       const changes = {
         authKind: change.authKind,
@@ -440,8 +443,8 @@ export function createConnections(options: ConnectionsOptions) {
         label: change.label,
         settings: change.settings,
       };
-      connections.update(id, changes);
-      credentials.put(id, {
+      await connections.update(id, changes);
+      await credentials.put(id, {
         ...(apiKey && { apiKey }),
         ...(Object.keys(secrets).length > 0 && { secrets }),
         ...(saved.proxy && { proxy: saved.proxy }),
@@ -450,10 +453,10 @@ export function createConnections(options: ConnectionsOptions) {
     },
 
     // The ends of the connection's secrets by field name, as people may see them again.
-    hintsOf(owner: Owner, id: string): Record<string, string> {
-      const connection = connections.find(owner.orgId, id);
+    async hintsOf(owner: Owner, id: string): Promise<Record<string, string>> {
+      const connection = await connections.find(owner.orgId, id);
       if (!connection || connection.authKind === "oauth") return {};
-      const saved = secretsCredentialSchema.safeParse(credentials.get(id) ?? {});
+      const saved = secretsCredentialSchema.safeParse((await credentials.get(id)) ?? {});
       if (!saved.success) return {};
       const { apiKey, secrets = {} } = saved.data;
       return Object.fromEntries(
@@ -466,17 +469,17 @@ export function createConnections(options: ConnectionsOptions) {
 
     // Removes a connection of the org with its credential. The provider is not told: these
     // sign-ins have no revocation.
-    remove(owner: Owner, id: string) {
-      if (!connections.find(owner.orgId, id))
+    async remove(owner: Owner, id: string) {
+      if (!(await connections.find(owner.orgId, id)))
         throw new ConnectionError(404, "Connection not found");
-      credentials.delete(id);
-      connections.delete(id);
+      await credentials.delete(id);
+      await connections.delete(id);
     },
 
     // Starts a device code sign-in that the server waits on until it is approved or expires.
     async startDevice(kind: DeviceKind, owner: Owner) {
       const { oauth } = providers[kind];
-      rejectIfConnected(kind, owner.orgId);
+      await rejectIfConnected(kind, owner.orgId);
       for (const attempt of deviceAttempts.values()) {
         if (attempt.expiresAt.getTime() + DEVICE_KEEP_MS <= now().getTime()) {
           cancelDevice(attempt);
@@ -529,8 +532,8 @@ export function createConnections(options: ConnectionsOptions) {
 
     // Starts a sign-in whose authorization ends on a page showing a code to paste back. The
     // user's earlier one is dropped.
-    startAuthorization(kind: CodeKind, owner: Owner) {
-      rejectIfConnected(kind, owner.orgId);
+    async startAuthorization(kind: CodeKind, owner: Owner) {
+      await rejectIfConnected(kind, owner.orgId);
       deleteExpiredCodes();
       for (const [state, attempt] of codeAttempts) {
         const ours = attempt.kind === kind && attempt.orgId === owner.orgId;
@@ -590,12 +593,12 @@ export function createConnections(options: ConnectionsOptions) {
       use: (token: FreshToken) => Promise<T>,
       { force = false } = {},
     ): Promise<T> {
-      const connection = connections.find(orgId, connectionId);
+      const connection = await connections.find(orgId, connectionId);
       if (!connection) throw new ConnectionError(404, "Connection not found");
       // Keys and cloud credentials never expire here; the host says when they no longer work, and
       // the adapters renew what cloud credentials make.
       if (connection.authKind !== "oauth") {
-        const saved = secretsCredentialSchema.parse(credentials.get(connectionId));
+        const saved = secretsCredentialSchema.parse(await credentials.get(connectionId));
         return use({
           access: saved.apiKey ?? "",
           accountId: null,
@@ -619,20 +622,20 @@ export function createConnections(options: ConnectionsOptions) {
     },
 
     // The connection's proxy without its header values, or null when it has none.
-    proxyOf(owner: Owner, id: string): ProxySummary | null {
-      if (!connections.find(owner.orgId, id))
+    async proxyOf(owner: Owner, id: string): Promise<ProxySummary | null> {
+      if (!(await connections.find(owner.orgId, id)))
         throw new ConnectionError(404, "Connection not found");
-      const saved = credentials.get(id);
+      const saved = await credentials.get(id);
       const proxy = saved && anyCredentialSchema.parse(saved).proxy;
       return proxy ? { baseUrl: proxy.baseUrl, headerNames: Object.keys(proxy.headers) } : null;
     },
 
     // Sets where the connection's provider API requests go and the headers they add. A null header
     // value keeps the stored one; a proxy with no base URL and no headers is removed.
-    setProxy(owner: Owner, id: string, input: ProxyInput) {
-      if (!connections.find(owner.orgId, id))
+    async setProxy(owner: Owner, id: string, input: ProxyInput) {
+      if (!(await connections.find(owner.orgId, id)))
         throw new ConnectionError(404, "Connection not found");
-      const saved = savedAny(id);
+      const saved = await savedAny(id);
       const headers: Record<string, string> = {};
       for (const [name, value] of Object.entries(input.headers)) {
         const kept = value ?? saved.proxy?.headers[name];
@@ -641,7 +644,10 @@ export function createConnections(options: ConnectionsOptions) {
       }
       const { proxy: _proxy, ...rest } = saved;
       const empty = !input.baseUrl && Object.keys(headers).length === 0;
-      credentials.put(id, empty ? rest : { ...rest, proxy: { baseUrl: input.baseUrl, headers } });
+      await credentials.put(
+        id,
+        empty ? rest : { ...rest, proxy: { baseUrl: input.baseUrl, headers } },
+      );
     },
   };
 }

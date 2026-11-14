@@ -68,17 +68,17 @@ describe("a call runs on its own when everyone who steered it could run the tool
     ],
     ["a group with someone who may not", call({ influence: [ada(1), alan(2)] }), { kind: "wait" }],
   ];
-  it.each(cases)("%s", (_name, input, expected) => {
-    expect(decide(input)).toEqual(expected);
+  it.each(cases)("%s", async (_name, input, expected) => {
+    expect(await decide(input)).toEqual(expected);
   });
 });
 
 describe("otherwise an approver vouches for it, once or for now", () => {
-  it("once vs for now", () => {
+  it("once vs for now", async () => {
     // A vouch once decides one call and leaves the next to wait; one for now covers it.
     const steered = [ada(1), alan(2)];
-    expect(decide(call({ influence: steered }))).toEqual({ kind: "wait" });
-    expect(decide(call({ influence: steered, standing: [vouch(5)] }))).toEqual({
+    expect(await decide(call({ influence: steered }))).toEqual({ kind: "wait" });
+    expect(await decide(call({ influence: steered, standing: [vouch(5)] }))).toEqual({
       kind: "standing",
       callId: "call-1",
     });
@@ -106,16 +106,18 @@ describe("otherwise an approver vouches for it, once or for now", () => {
       "standing",
     ],
   ];
-  it.each(cases)("%s", (_name, input, expected) => {
-    expect(decide(input).kind).toBe(expected);
+  it.each(cases)("%s", async (_name, input, expected) => {
+    expect((await decide(input)).kind).toBe(expected);
   });
 });
 
 describe("strictness", () => {
-  it("a tool declared as asking waits for every call, whoever steered it and whatever stands", () => {
-    expect(decide({ ...call({ influence: [ada(1)] }), declared: "ask" })).toEqual({ kind: "wait" });
+  it("a tool declared as asking waits for every call, whoever steered it and whatever stands", async () => {
+    expect(await decide({ ...call({ influence: [ada(1)] }), declared: "ask" })).toEqual({
+      kind: "wait",
+    });
     expect(
-      decide({ ...call({ influence: [ada(1)], standing: [vouch(5)] }), declared: "ask" }),
+      await decide({ ...call({ influence: [ada(1)], standing: [vouch(5)] }), declared: "ask" }),
     ).toEqual({ kind: "wait" });
   });
 
@@ -157,8 +159,8 @@ describe("strictness", () => {
       "wait",
     ],
   ];
-  it.each(cases)("%s", (_name, input, expected) => {
-    expect(decide(input).kind).toBe(expected);
+  it.each(cases)("%s", async (_name, input, expected) => {
+    expect((await decide(input)).kind).toBe(expected);
   });
 
   it("raises a tool's strictness from its rule", () => {
@@ -249,8 +251,8 @@ describe("a personal-login tool asks whose login", () => {
       { kind: "wait" },
     ],
   ];
-  it.each(cases)("%s", (_name, input, expected) => {
-    expect(decide(input)).toEqual(expected);
+  it.each(cases)("%s", async (_name, input, expected) => {
+    expect(await decide(input)).toEqual(expected);
   });
 });
 

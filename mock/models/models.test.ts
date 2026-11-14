@@ -118,11 +118,11 @@ describe.each(providers)("the stand-in over $name", ({ gateway, base, model, fai
     accountId: null,
     proxy: { baseUrl: `${ORIGIN}${base}`, headers: {} },
   };
-  const stream = (messages: ModelMessage[], more?: Partial<ModelRequest>) =>
+  const stream = async (messages: ModelMessage[], more?: Partial<ModelRequest>) =>
     gateway.stream(token, requestOf(model, messages, more), new AbortController().signal);
 
   it("streams its words and how many messages it read", async () => {
-    const events = await collect(stream([{ role: "user", text: "Hello" }]));
+    const events = await collect(await stream([{ role: "user", text: "Hello" }]));
     expect(events[0]).toEqual({ type: "step-start" });
     expect(textOf(events)).toBe("I have read 1 message, and so the engine turns its wheels and");
     expect(events.filter((event) => event.type === "delta").length).toBeGreaterThan(1);
@@ -131,12 +131,12 @@ describe.each(providers)("the stand-in over $name", ({ gateway, base, model, fai
 
   it("calls a tool a line asks for, by its id, and says what it gave back", async () => {
     const asked = '^tool notes.add {"title":"Looms"}';
-    const events = await collect(stream([{ role: "user", text: asked }]));
+    const events = await collect(await stream([{ role: "user", text: asked }]));
     const call = events.find((event) => event.type === "tool-call");
     expect(call).toMatchObject({ toolId: "notes.add", input: { title: "Looms" } });
 
     const after = await collect(
-      stream([
+      await stream([
         { role: "user", text: asked },
         { role: "assistant", text: "", toolCalls: [call as never] },
         {
@@ -156,31 +156,31 @@ describe.each(providers)("the stand-in over $name", ({ gateway, base, model, fai
   });
 
   it("says it cannot use a tool it is not offered", async () => {
-    const events = await collect(stream([{ role: "user", text: "^tool looms.weave {}" }]));
+    const events = await collect(await stream([{ role: "user", text: "^tool looms.weave {}" }]));
     expect(textOf(events)).toContain("I cannot use looms.weave here.");
     expect(events.some((event) => event.type === "tool-call")).toBe(false);
   });
 
   it("replies with what follows a say line", async () => {
-    const events = await collect(stream([{ role: "user", text: "^say\nPunched cards." }]));
+    const events = await collect(await stream([{ role: "user", text: "^say\nPunched cards." }]));
     expect(textOf(events)).toBe("Punched cards.");
   });
 
   it("thinks before it answers when asked to", async () => {
     const events = await collect(
-      stream([{ role: "user", text: "Think it over" }], { effort: "low" }),
+      await stream([{ role: "user", text: "Think it over" }], { effort: "low" }),
     );
     expect(textOf(events, "reasoning")).toContain("Considering the gears");
   });
 
   it("fails mid-reply with the text a fail line gives", async () => {
-    const err = await failure(stream([{ role: "user", text: "^fail The looms jammed." }]));
+    const err = await failure(await stream([{ role: "user", text: "^fail The looms jammed." }]));
     if (failureSaid !== false) expect(err.message).toContain("The looms jammed.");
   });
 
   it("refuses with a status, as a limit when it is 429", async () => {
     const err = await failure(
-      stream([{ role: "user", text: "^status 429 retry-after=0 Slow down" }]),
+      await stream([{ role: "user", text: "^status 429 retry-after=0 Slow down" }]),
     );
     expect(err).toBeInstanceOf(ModelError);
     expect((err as ModelError).kind).toBe("limit");
@@ -188,7 +188,7 @@ describe.each(providers)("the stand-in over $name", ({ gateway, base, model, fai
   });
 
   it("refuses a key it is told to, as a sign-in that no longer works", async () => {
-    const err = await failure(stream([{ role: "user", text: "^status 401 Bad key" }]));
+    const err = await failure(await stream([{ role: "user", text: "^status 401 Bad key" }]));
     expect((err as ModelError).kind).toBe("auth");
   });
 
@@ -196,7 +196,7 @@ describe.each(providers)("the stand-in over $name", ({ gateway, base, model, fai
     const events: ModelEvent[] = [];
     let err: unknown;
     try {
-      for await (const event of stream([{ role: "user", text: "^drop" }])) events.push(event);
+      for await (const event of await stream([{ role: "user", text: "^drop" }])) events.push(event);
     } catch (caught) {
       err = caught;
     }
@@ -207,7 +207,7 @@ describe.each(providers)("the stand-in over $name", ({ gateway, base, model, fai
 
   it("waits before it starts when told to stall", async () => {
     const started = Date.now();
-    await collect(stream([{ role: "user", text: "^stall 150" }]));
+    await collect(await stream([{ role: "user", text: "^stall 150" }]));
     expect(Date.now() - started).toBeGreaterThanOrEqual(140);
   });
 });

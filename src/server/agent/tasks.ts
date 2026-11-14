@@ -7,10 +7,10 @@
 import { ulid } from "ulid";
 import * as z from "zod";
 
-import type { EventBus } from "@/server/kernel/event-bus.ts";
+import type { Signals } from "@/server/sync/signals.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
-import type { ThreadAccess } from "@/server/spaces/thread-access.ts";
+import type { ThreadAccess } from "@/server/access/access.ts";
 import type { Thread, ThreadStore } from "@/server/threads/service.ts";
 import type { Transcripts } from "@/server/threads/transcripts.ts";
 import type { ThreadLog } from "@/server/threads/log.ts";
@@ -35,6 +35,7 @@ import { type Notifier, silentChange } from "./notifications.ts";
 import { WATCH_LIMIT, type Watch, type WatchStore } from "./watches.ts";
 import { steeringIn, type Subagents } from "./subagents.ts";
 import type { Toolset, ToolSpec } from "./tools.ts";
+import { filterAsync } from "@/server/kernel/async.ts";
 
 export interface TaskRecord {
   id: string;
@@ -52,18 +53,18 @@ export interface TaskRecord {
 
 export interface TaskStore {
   // The thread's tasks in order: the ones on the list, or with archived set the ones archived.
-  inThread(threadId: string, archived?: boolean): TaskRecord[];
-  find(id: string): TaskRecord | null;
+  inThread(threadId: string, archived?: boolean): Promise<TaskRecord[]>;
+  find(id: string): Promise<TaskRecord | null>;
   // Adds the thread's tasks after its last, in order.
-  add(rows: Omit<TaskRecord, "position" | "updatedAt" | "archivedAt">[]): TaskRecord[];
+  add(rows: Omit<TaskRecord, "position" | "updatedAt" | "archivedAt">[]): Promise<TaskRecord[]>;
   update(
     id: string,
     fields: Partial<
       Pick<TaskRecord, "title" | "status" | "assignee" | "updatedBy" | "updatedAt" | "archivedAt">
     >,
-  ): TaskRecord | undefined;
-  remove(ids: string[]): void;
-  userName(userId: string): string | null;
+  ): Promise<TaskRecord | undefined>;
+  remove(ids: string[]): Promise<void>;
+  userName(userId: string): Promise<string | null>;
 }
 
 // What the agent is told about them.
@@ -76,12 +77,12 @@ export interface TasksOptions {
   transcripts: Pick<Transcripts, "of">;
   access: Pick<ThreadAccess, "require" | "can">;
   // The org a space belongs to, for who may post.
-  orgOf: (spaceId: string) => string | null;
+  orgOf: (spaceId: string) => Promise<string | null>;
   subagents: Pick<Subagents, "find" | "mayStart" | "ofParents" | "shareTasks">;
   log: ThreadLog;
-  bus: EventBus;
+  bus: Signals;
   // What the agent of the space's threads goes by.
-  agentNameIn?: (spaceId: string) => string;
+  agentNameIn?: (spaceId: string) => Promise<string>;
   notifier: Notifier;
   // Agents waiting on tasks, as on subagents.
   watches: Pick<WatchStore, "add" | "on" | "count" | "end">;
@@ -93,13 +94,12 @@ export type Tasks = ReturnType<typeof createTasks>;
 // A call the tool refuses, with what the model is told.
 class ToolRefusal extends Error {}
 
-function refusing<T>(work: () => T) {
+async function refusing(work: () => unknown) {
   try {
-    return Promise.resolve({ ok: true as const, value: work() as unknown });
+    return { ok: true as const, value: await work() };
   } catch (err) {
-    if (err instanceof ToolRefusal)
-      return Promise.resolve({ ok: false as const, error: err.message });
-    return Promise.reject(err);
+    if (err instanceof ToolRefusal) return { ok: false as const, error: err.message };
+    throw err;
   }
 }
 
@@ -118,15 +118,14 @@ export function createTasks(options: TasksOptions) {
   const { notifier, watches } = options;
 
   // The thread whose list the thread works on: its starter's for a subagent started to share it.
-  function ownerOf(threadId: string) {
-    const subagent = subagents.find(threadId);
+  async function ownerOf(threadId: string) {
+    const subagent = await subagents.find(threadId);
     return subagent?.shareTasks ? subagent.parentThreadId : threadId;
   }
 
   // The owner's subagents that are not retired.
-  function liveSubagents(ownerId: string) {
-    return subagents
-      .ofParents([ownerId])
+  async function liveSubagents(ownerId: string) {
+    return (await subagents.ofParents([ownerId]))
       .filter(({ record }) => !record.archivedAt)
       .map(({ record }) => ({ threadId: record.threadId, name: record.name }));
   }
@@ -140,13 +139,18 @@ export function createTasks(options: TasksOptions) {
     bus.activity({ threadId: ownerId, tasks: true });
   }
 
-  function listOf(ownerId: string, canEdit: boolean, shared = false, archived = false): TaskList {
+  async function listOf(
+    ownerId: string,
+    canEdit: boolean,
+    shared = false,
+    archived = false,
+  ): Promise<TaskList> {
     return {
       ...(shared && { shared }),
-      tasks: tasks.inThread(ownerId, archived).map(shown),
+      tasks: (await tasks.inThread(ownerId, archived)).map(shown),
       canEdit: canEdit && !archived,
-      subagents: liveSubagents(ownerId),
-      assignees: archived ? [] : candidatesOf(ownerId),
+      subagents: await liveSubagents(ownerId),
+      assignees: archived ? [] : await candidatesOf(ownerId),
     };
   }
 
@@ -154,27 +158,27 @@ export function createTasks(options: TasksOptions) {
   // The agent or person that did something to the tasks.
   type ByWho = { name: string; threadId?: string; userId?: string };
 
-  function actorOf(by: ByWho): NotificationActor | undefined {
+  async function actorOf(by: ByWho): Promise<NotificationActor | undefined> {
     if (by.userId) return { kind: "person", userId: by.userId, name: by.name };
     if (!by.threadId) return undefined;
     return {
       kind: "agent",
       threadId: by.threadId,
       name: by.name,
-      main: !subagents.find(by.threadId),
+      main: !(await subagents.find(by.threadId)),
     };
   }
 
-  function agentActor(threadId: string, spaceId: string): TaskActor {
-    const subagent = subagents.find(threadId);
-    return { kind: "agent", name: subagent?.name ?? agentNameIn(spaceId) };
+  async function agentActor(threadId: string, spaceId: string): Promise<TaskActor> {
+    const subagent = await subagents.find(threadId);
+    return { kind: "agent", name: subagent?.name ?? (await agentNameIn(spaceId)) };
   }
 
   // The people who have written in the list owner's thread, by name, with whether they may post.
-  function writersOf(ownerId: string) {
-    const thread = threads.find(ownerId);
-    const orgId = thread && options.orgOf(thread.spaceId);
-    const rows = options.transcripts.of(ownerId).transcript().rows;
+  async function writersOf(ownerId: string) {
+    const thread = await threads.find(ownerId);
+    const orgId = thread && (await options.orgOf(thread.spaceId));
+    const rows = (await options.transcripts.of(ownerId)).transcript().rows;
     const seen = new Map<string, { userId: string; name: string; canPost: boolean }>();
     for (const row of rows) {
       if (row.kind !== "human" || seen.has(row.author.userId)) continue;
@@ -182,7 +186,8 @@ export function createTasks(options: TasksOptions) {
       seen.set(userId, {
         userId,
         name: name ?? "Someone",
-        canPost: !!thread && !!orgId && options.access.can({ userId, orgId }, thread, "post"),
+        canPost:
+          !!thread && !!orgId && (await options.access.can({ userId, orgId }, thread, "post")),
       });
     }
     return [...seen.values()];
@@ -190,12 +195,12 @@ export function createTasks(options: TasksOptions) {
 
   // Whom a task of the list may be given to: the agent, the live subagents and the people who have
   // written in the thread and may post in it.
-  function candidatesOf(ownerId: string): TaskCandidate[] {
-    const thread = threads.find(ownerId);
+  async function candidatesOf(ownerId: string): Promise<TaskCandidate[]> {
+    const thread = await threads.find(ownerId);
     return [
-      { kind: "agent", name: thread ? agentNameIn(thread.spaceId) : DEFAULT_AGENT_NAME },
-      ...liveSubagents(ownerId).map((one) => ({ kind: "subagent" as const, ...one })),
-      ...writersOf(ownerId)
+      { kind: "agent", name: thread ? await agentNameIn(thread.spaceId) : DEFAULT_AGENT_NAME },
+      ...(await liveSubagents(ownerId)).map((one) => ({ kind: "subagent" as const, ...one })),
+      ...(await writersOf(ownerId))
         .filter((one) => one.canPost)
         .map(({ userId, name }) => ({ kind: "person" as const, userId, name })),
     ];
@@ -203,12 +208,12 @@ export function createTasks(options: TasksOptions) {
 
   // The assignee a name the agent gave stands for: agent, a live subagent of the list's owner, or a
   // person who wrote in the thread and may post in it, by name or id.
-  function resolve(ownerId: string, label: string): TaskAssignee {
+  async function resolve(ownerId: string, label: string): Promise<TaskAssignee> {
     if (sameName(label, "agent")) return { kind: "agent" };
-    const live = liveSubagents(ownerId);
+    const live = await liveSubagents(ownerId);
     const found = live.find((one) => sameName(one.name, label));
     if (found) return { kind: "subagent", ...found };
-    const writers = writersOf(ownerId);
+    const writers = await writersOf(ownerId);
     const people = writers.filter((one) => one.userId === label.trim());
     const named = people.length > 0 ? people : writers.filter((one) => sameName(one.name, label));
     if (named.length > 1) {
@@ -231,8 +236,8 @@ export function createTasks(options: TasksOptions) {
     );
   }
 
-  function mine(id: string, ownerId: string) {
-    const record = tasks.find(id);
+  async function mine(id: string, ownerId: string) {
+    const record = await tasks.find(id);
     if (!record || record.threadId !== ownerId || record.archivedAt) {
       throw new ToolRefusal(`No task ${id}.`);
     }
@@ -259,8 +264,8 @@ export function createTasks(options: TasksOptions) {
 
   // The tasks of the list the thread may see: a subagent sharing its starter's list sees its own
   // unless all is set.
-  function visible(ownerId: string, threadId: string, all: boolean, archived = false) {
-    const every = tasks.inThread(ownerId, archived);
+  async function visible(ownerId: string, threadId: string, all: boolean, archived = false) {
+    const every = await tasks.inThread(ownerId, archived);
     if (ownerId === threadId || all) return { shown: every, others: 0 };
     const shown = every.filter(
       (task) => task.assignee?.kind === "subagent" && task.assignee.threadId === threadId,
@@ -284,9 +289,9 @@ export function createTasks(options: TasksOptions) {
     }),
     risk: () => "normal",
     run(input, ctx) {
-      return refusing(() => {
-        const ownerId = ownerOf(ctx.threadId);
-        const { shown: found, others } = visible(
+      return refusing(async () => {
+        const ownerId = await ownerOf(ctx.threadId);
+        const { shown: found, others } = await visible(
           ownerId,
           ctx.threadId,
           !!input.all,
@@ -323,32 +328,34 @@ export function createTasks(options: TasksOptions) {
     }),
     risk: () => "normal",
     run(input, ctx) {
-      return refusing(() => {
-        const ownerId = ownerOf(ctx.threadId);
-        if (tasks.inThread(ownerId).length + input.tasks.length > TASK_LIMIT) {
+      return refusing(async () => {
+        const ownerId = await ownerOf(ctx.threadId);
+        if ((await tasks.inThread(ownerId)).length + input.tasks.length > TASK_LIMIT) {
           throw new ToolRefusal(`A list holds ${TASK_LIMIT} tasks. Remove some first.`);
         }
-        const by = agentActor(ctx.threadId, ctx.spaceId);
+        const by = await agentActor(ctx.threadId, ctx.spaceId);
         // A task without an assignee is the creator's: a subagent sharing the list, else the agent.
-        const sharing = subagents.find(ctx.threadId);
+        const sharing = await subagents.find(ctx.threadId);
         const own: TaskAssignee =
           sharing && ownerId !== ctx.threadId
             ? { kind: "subagent", threadId: ctx.threadId, name: sharing.name }
             : { kind: "agent" };
-        const added = tasks.add(
-          input.tasks.map((task) => ({
-            id: ulid(),
-            threadId: ownerId,
-            title: task.title,
-            status: "todo" as const,
-            assignee: task.assignee ? resolve(ownerId, task.assignee) : own,
-            createdBy: by,
-            updatedBy: by,
-          })),
+        const added = await tasks.add(
+          await Promise.all(
+            input.tasks.map(async (task) => ({
+              id: ulid(),
+              threadId: ownerId,
+              title: task.title,
+              status: "todo" as const,
+              assignee: task.assignee ? await resolve(ownerId, task.assignee) : own,
+              createdBy: by,
+              updatedBy: by,
+            })),
+          ),
         );
         changed(ownerId);
-        for (const record of added) giveToSubagent(ownerId, record, by.name, ctx.threadId);
-        announceAdded(ownerId, { name: by.name, threadId: ctx.threadId }, added);
+        for (const record of added) await giveToSubagent(ownerId, record, by.name, ctx.threadId);
+        await announceAdded(ownerId, { name: by.name, threadId: ctx.threadId }, added);
         return { tasks: added.map(shownBrief) };
       });
     },
@@ -373,24 +380,24 @@ export function createTasks(options: TasksOptions) {
     }),
     risk: () => "normal",
     run(input, ctx) {
-      return refusing(() => {
-        const ownerId = ownerOf(ctx.threadId);
-        const record = mine(input.id, ownerId);
-        const by = agentActor(ctx.threadId, ctx.spaceId);
-        const next = tasks.update(record.id, {
+      return refusing(async () => {
+        const ownerId = await ownerOf(ctx.threadId);
+        const record = await mine(input.id, ownerId);
+        const by = await agentActor(ctx.threadId, ctx.spaceId);
+        const next = await tasks.update(record.id, {
           ...(input.status && { status: input.status }),
           ...(input.title && { title: input.title }),
-          ...(input.assignee !== undefined && { assignee: resolve(ownerId, input.assignee) }),
+          ...(input.assignee !== undefined && { assignee: await resolve(ownerId, input.assignee) }),
           updatedBy: by,
           updatedAt: now(),
         });
         changed(ownerId);
         if (next && input.assignee && !sameAssignee(record.assignee, next.assignee)) {
-          giveToSubagent(ownerId, next, by.name, ctx.threadId);
+          await giveToSubagent(ownerId, next, by.name, ctx.threadId);
         }
-        announce(
+        await announce(
           ownerId,
-          { name: by.name, threadId: ctx.threadId, people: peopleOf(ctx.threadId) },
+          { name: by.name, threadId: ctx.threadId, people: await peopleOf(ctx.threadId) },
           record,
           next ?? record,
           {
@@ -413,16 +420,16 @@ export function createTasks(options: TasksOptions) {
     input: z.object({ ids: z.array(z.string().min(1)).min(1).meta({ title: "Ids" }) }),
     risk: () => "normal",
     run({ ids }, ctx) {
-      return refusing(() => {
-        const ownerId = ownerOf(ctx.threadId);
-        const records = ids.map((id) => mine(id, ownerId));
-        tasks.remove(ids);
+      return refusing(async () => {
+        const ownerId = await ownerOf(ctx.threadId);
+        const records = await Promise.all(ids.map(async (id) => mine(id, ownerId)));
+        await tasks.remove(ids);
         changed(ownerId);
-        const by = agentActor(ctx.threadId, ctx.spaceId);
+        const by = await agentActor(ctx.threadId, ctx.spaceId);
         for (const record of records) {
-          announce(
+          await announce(
             ownerId,
-            { name: by.name, threadId: ctx.threadId, people: peopleOf(ctx.threadId) },
+            { name: by.name, threadId: ctx.threadId, people: await peopleOf(ctx.threadId) },
             record,
             null,
             {},
@@ -443,12 +450,12 @@ export function createTasks(options: TasksOptions) {
     input: z.object({ ids: z.array(z.string().min(1)).min(1).optional().meta({ title: "Ids" }) }),
     risk: () => "normal",
     run(input, ctx) {
-      return refusing(() => {
-        const ownerId = ownerOf(ctx.threadId);
-        const { shown: yours } = visible(ownerId, ctx.threadId, false);
+      return refusing(async () => {
+        const ownerId = await ownerOf(ctx.threadId);
+        const { shown: yours } = await visible(ownerId, ctx.threadId, false);
         let targets: TaskRecord[];
         if (input.ids) {
-          targets = input.ids.map((id) => mine(id, ownerId));
+          targets = await Promise.all(input.ids.map(async (id) => mine(id, ownerId)));
           const foreign = targets.filter((record) => !yours.some((one) => one.id === record.id));
           if (foreign.length > 0) {
             throw new ToolRefusal(
@@ -464,16 +471,16 @@ export function createTasks(options: TasksOptions) {
         } else {
           targets = yours.filter((record) => record.status === "done");
         }
-        const by = agentActor(ctx.threadId, ctx.spaceId);
-        const archived = archiveAll(ownerId, targets, by);
-        announceArchive(
+        const by = await agentActor(ctx.threadId, ctx.spaceId);
+        const archived = await archiveAll(ownerId, targets, by);
+        await announceArchive(
           ownerId,
-          { name: by.name, threadId: ctx.threadId, people: peopleOf(ctx.threadId) },
+          { name: by.name, threadId: ctx.threadId, people: await peopleOf(ctx.threadId) },
           archived,
         );
         return {
           archived: archived.map((record) => record.id),
-          tasks: visible(ownerId, ctx.threadId, false).shown.map(shownBrief),
+          tasks: (await visible(ownerId, ctx.threadId, false)).shown.map(shownBrief),
         };
       });
     },
@@ -492,11 +499,13 @@ export function createTasks(options: TasksOptions) {
     }),
     risk: () => "normal",
     run(input, ctx) {
-      return refusing(() => {
-        const ownerId = ownerOf(ctx.threadId);
+      return refusing(async () => {
+        const ownerId = await ownerOf(ctx.threadId);
         const until = input.until ?? "done";
-        const named = input.ids ? input.ids.map((id) => mine(id, ownerId)) : null;
-        const open = (named ?? tasks.inThread(ownerId)).filter(
+        const named = input.ids
+          ? await Promise.all(input.ids.map(async (id) => mine(id, ownerId)))
+          : null;
+        const open = (named ?? (await tasks.inThread(ownerId))).filter(
           (record) => (named && until === "changed") || record.status !== "done",
         );
         if (open.length === 0) {
@@ -507,10 +516,10 @@ export function createTasks(options: TasksOptions) {
               : "No task is open, so there is nothing to wait on.",
           };
         }
-        if (watches.count(ctx.threadId) >= WATCH_LIMIT) {
+        if ((await watches.count(ctx.threadId)) >= WATCH_LIMIT) {
           throw new ToolRefusal(`You can have ${WATCH_LIMIT} watches at once. Wait for one first.`);
         }
-        watches.add({
+        await watches.add({
           id: ulid(),
           threadId: ctx.threadId,
           ownerId,
@@ -529,11 +538,16 @@ export function createTasks(options: TasksOptions) {
   };
 
   // Archives the tasks, as the one who did it, and tells the page.
-  function archiveAll(ownerId: string, records: TaskRecord[], by: TaskActor) {
+  async function archiveAll(ownerId: string, records: TaskRecord[], by: TaskActor) {
     const at = now();
-    const archived = records.flatMap(
-      (record) => tasks.update(record.id, { archivedAt: at, updatedBy: by, updatedAt: at }) ?? [],
-    );
+    const archived = (
+      await Promise.all(
+        records.map(
+          async (record) =>
+            (await tasks.update(record.id, { archivedAt: at, updatedBy: by, updatedAt: at })) ?? [],
+        ),
+      )
+    ).flat();
     if (archived.length > 0) changed(ownerId);
     return archived;
   }
@@ -541,7 +555,7 @@ export function createTasks(options: TasksOptions) {
   // Tells the agents watching archived tasks, in one notice, that someone archived them, and the
   // agent of the list and those the tasks were given to, without waking them. Whoever archived
   // them is not told.
-  function announceArchive(
+  async function announceArchive(
     ownerId: string,
     by: ByWho & { people: Steering[] },
     records: TaskRecord[],
@@ -560,22 +574,22 @@ export function createTasks(options: TasksOptions) {
       action: "archive",
     };
     const reached = new Set<string>();
-    for (const watch of watches.on(ownerId, "tasks")) {
+    for (const watch of await watches.on(ownerId, "tasks")) {
       if (!records.some((record) => fires(watch, record, record))) continue;
-      if (watches.end(watch.id)) reached.add(watch.threadId);
+      if (await watches.end(watch.id)) reached.add(watch.threadId);
     }
     for (const threadId of reached) {
-      if (threadId === by.threadId || !threads.find(threadId)) continue;
-      notifier.send(threadId, {
+      if (threadId === by.threadId || !(await threads.find(threadId))) continue;
+      await notifier.send(threadId, {
         kind: "task.changed",
         source: { threadId: ownerId, name: "Tasks", main: true },
-        actor: actorOf(by),
+        actor: await actorOf(by),
         change: what,
         text,
         people: by.people,
       });
     }
-    tellQuietly(
+    await tellQuietly(
       ownerId,
       by,
       records.flatMap((record) => [record.assignee]),
@@ -587,7 +601,7 @@ export function createTasks(options: TasksOptions) {
 
   // Tells the list's agent and the agents tasks are given to, without waking them, what someone
   // did, unless they were told already or did it.
-  function tellQuietly(
+  async function tellQuietly(
     ownerId: string,
     by: ByWho,
     assignees: (TaskAssignee | null | undefined)[],
@@ -600,20 +614,24 @@ export function createTasks(options: TasksOptions) {
       if (assignee?.kind === "subagent") quiet.add(assignee.threadId);
     }
     for (const threadId of quiet) {
-      if (told.has(threadId) || threadId === by.threadId || !threads.find(threadId)) continue;
-      notifier.send(threadId, silentChange(threadId, by.name, text, "tasks", actorOf(by), change));
+      if (told.has(threadId) || threadId === by.threadId || !(await threads.find(threadId)))
+        continue;
+      await notifier.send(
+        threadId,
+        silentChange(threadId, by.name, text, "tasks", await actorOf(by), change),
+      );
     }
   }
 
   // Tells the list's agent, without waking it, that someone added tasks.
-  function announceAdded(ownerId: string, by: ByWho, records: TaskRecord[]) {
+  async function announceAdded(ownerId: string, by: ByWho, records: TaskRecord[]) {
     if (records.length === 0) return;
     const titles = records.map((record) => `"${record.title}"`).join(", ");
     const text =
       records.length === 1
         ? `${by.name} added task ${titles}.`
         : `${by.name} added ${records.length} tasks: ${titles}.`;
-    tellQuietly(ownerId, by, [], new Set(), text, {
+    await tellQuietly(ownerId, by, [], new Set(), text, {
       subject: {
         kind: "task",
         name: records.length === 1 ? records[0]!.title : `${records.length} tasks`,
@@ -623,8 +641,8 @@ export function createTasks(options: TasksOptions) {
   }
 
   // The people whose words steered the thread's agent.
-  function peopleOf(threadId: string): Steering[] {
-    return steeringIn(options.transcripts.of(threadId).transcript().rows);
+  async function peopleOf(threadId: string): Promise<Steering[]> {
+    return steeringIn((await options.transcripts.of(threadId)).transcript().rows);
   }
 
   function sameAssignee(a: TaskAssignee, b: TaskAssignee) {
@@ -632,19 +650,24 @@ export function createTasks(options: TasksOptions) {
   }
 
   // A task given to a subagent puts the list in its hands and tells it, so an idle one wakes.
-  function giveToSubagent(ownerId: string, record: TaskRecord, who: string, byThread?: string) {
+  async function giveToSubagent(
+    ownerId: string,
+    record: TaskRecord,
+    who: string,
+    byThread?: string,
+  ) {
     const { assignee } = record;
     if (assignee?.kind !== "subagent") return;
-    subagents.shareTasks(assignee.threadId);
-    if (assignee.threadId === byThread || !threads.find(assignee.threadId)) return;
-    notifier.send(assignee.threadId, {
+    await subagents.shareTasks(assignee.threadId);
+    if (assignee.threadId === byThread || !(await threads.find(assignee.threadId))) return;
+    await notifier.send(assignee.threadId, {
       kind: "task.changed",
       source: { threadId: ownerId, name: "Tasks", main: true },
       actor: {
         kind: "agent",
         threadId: byThread ?? ownerId,
         name: who,
-        main: !subagents.find(byThread ?? ownerId),
+        main: !(await subagents.find(byThread ?? ownerId)),
       },
       change: {
         subject: { kind: "task", name: record.title },
@@ -652,7 +675,7 @@ export function createTasks(options: TasksOptions) {
         to: assignee.name,
       },
       text: `${who} gave you task "${record.title}". The task list is now shared with you: read it with thread.list_tasks and mark the task as doing and done.`,
-      people: byThread ? peopleOf(byThread) : [],
+      people: byThread ? await peopleOf(byThread) : [],
     });
   }
 
@@ -719,7 +742,7 @@ export function createTasks(options: TasksOptions) {
 
   // Tells the agents a task was given to, before or after the change, that someone changed it, and
   // the agents watching it, which hear once and whose watch ends. Whoever changed it is not told.
-  function announce(
+  async function announce(
     ownerId: string,
     by: ByWho & { people: Steering[] },
     before: TaskRecord,
@@ -737,72 +760,78 @@ export function createTasks(options: TasksOptions) {
         if (assignee?.kind === "subagent") reached.add(assignee.threadId);
       }
     }
-    for (const watch of watches.on(ownerId, "tasks")) {
+    for (const watch of await watches.on(ownerId, "tasks")) {
       if (!fires(watch, before, after) || watch.threadId === by.threadId) continue;
-      if (watches.end(watch.id)) reached.add(watch.threadId);
+      if (await watches.end(watch.id)) reached.add(watch.threadId);
     }
     for (const threadId of reached) {
-      if (threadId === by.threadId || !threads.find(threadId)) continue;
-      notifier.send(threadId, {
+      if (threadId === by.threadId || !(await threads.find(threadId))) continue;
+      await notifier.send(threadId, {
         kind: "task.changed",
         source: { threadId: ownerId, name: "Tasks", main: true },
-        actor: actorOf(by),
+        actor: await actorOf(by),
         ...(what && { change: what }),
         text,
         people: by.people,
       });
     }
-    tellQuietly(ownerId, by, [before.assignee, after?.assignee], reached, text, what);
+    await tellQuietly(ownerId, by, [before.assignee, after?.assignee], reached, text, what);
   }
 
   // The list's owner thread and whether the person may change it, for a reader of the thread.
-  function openFor(principal: Principal, threadId: string) {
-    const thread = props(principal, threadId, "read");
-    const ownerId = ownerOf(thread.id);
+  async function openFor(principal: Principal, threadId: string) {
+    const thread = await props(principal, threadId, "read");
+    const ownerId = await ownerOf(thread.id);
     let canEdit = true;
     try {
-      props(principal, thread.id, "post");
+      await props(principal, thread.id, "post");
     } catch {
       canEdit = false;
     }
     return { ownerId, canEdit };
   }
 
-  function props(principal: Principal, threadId: string, action: "read" | "post"): Thread {
-    return options.access.require(principal, threadId, action).thread;
+  async function props(
+    principal: Principal,
+    threadId: string,
+    action: "read" | "post",
+  ): Promise<Thread> {
+    return (await options.access.require(principal, threadId, action)).thread;
   }
 
-  function person(principal: Principal): Steering {
+  async function person(principal: Principal): Promise<Steering> {
     return {
       userId: principal.userId,
-      name: tasks.userName(principal.userId) ?? "Someone",
+      name: (await tasks.userName(principal.userId)) ?? "Someone",
       via: [],
     };
   }
 
-  function assigneeFor(
+  async function assigneeFor(
     principal: Principal,
     ownerId: string,
     input: NonNullable<TaskChangeInput["assignee"]>,
   ) {
     if (input.kind === "agent") return { kind: "agent" as const };
     if (input.kind === "me") {
-      const { userId, name } = person(principal);
+      const { userId, name } = await person(principal);
       return { kind: "person" as const, userId, name };
     }
     if (input.kind === "person") {
       if (input.userId === principal.userId) return assigneeFor(principal, ownerId, { kind: "me" });
-      const found = writersOf(ownerId).find((one) => one.userId === input.userId && one.canPost);
+      const found = (await writersOf(ownerId)).find(
+        (one) => one.userId === input.userId && one.canPost,
+      );
       if (!found) throw new ServiceError(404, "Person not found");
       return { kind: "person" as const, userId: found.userId, name: found.name };
     }
-    const found = liveSubagents(ownerId).find((one) => one.threadId === input.threadId);
+    const found = (await liveSubagents(ownerId)).find((one) => one.threadId === input.threadId);
     if (!found) throw new ServiceError(404, "Subagent not found");
     return { kind: "subagent" as const, ...found };
   }
 
-  function mineOrThrow(id: string, ownerId: string) {
-    const record = tasks.find(id);
+  async function mineOrThrow(id: string, ownerId: string) {
+    const record = await tasks.find(id);
     if (!record || record.threadId !== ownerId || record.archivedAt) {
       throw new ServiceError(404, "Task not found");
     }
@@ -826,47 +855,50 @@ export function createTasks(options: TasksOptions) {
 
     // Giving the starter's tasks to a subagent it starts.
     handover: {
-      check(ownerId: string, taskIds: string[]) {
-        const missing = taskIds.filter((id) => tasks.find(id)?.threadId !== ownerId);
+      async check(ownerId: string, taskIds: string[]) {
+        const missing = await filterAsync(
+          taskIds,
+          async (id) => (await tasks.find(id))?.threadId !== ownerId,
+        );
         return missing.length > 0 ? `No task ${missing.join(", ")}. Add tasks first.` : null;
       },
-      give(ownerId: string, taskIds: string[], subagent: { threadId: string; name: string }) {
-        const by = agentActor(ownerId, threads.find(ownerId)?.spaceId ?? "");
+      async give(ownerId: string, taskIds: string[], subagent: { threadId: string; name: string }) {
+        const by = await agentActor(ownerId, (await threads.find(ownerId))?.spaceId ?? "");
         for (const id of taskIds) {
-          const record = tasks.find(id);
+          const record = await tasks.find(id);
           if (!record) continue;
-          const next = tasks.update(id, {
+          const next = await tasks.update(id, {
             assignee: { kind: "subagent", threadId: subagent.threadId, name: subagent.name },
             updatedBy: by,
             updatedAt: now(),
           });
-          subagents.shareTasks(subagent.threadId);
-          giveToSubagent(ownerId, next ?? record, by.name, ownerId);
+          await subagents.shareTasks(subagent.threadId);
+          await giveToSubagent(ownerId, next ?? record, by.name, ownerId);
         }
         if (taskIds.length > 0) changed(ownerId);
       },
     },
 
     // The list of the thread, as the reader sees it.
-    listFor(principal: Principal, threadId: string, archived = false): TaskList {
-      const { ownerId, canEdit } = openFor(principal, threadId);
-      const list = listOf(ownerId, canEdit, ownerId !== threadId, archived);
+    async listFor(principal: Principal, threadId: string, archived = false): Promise<TaskList> {
+      const { ownerId, canEdit } = await openFor(principal, threadId);
+      const list = await listOf(ownerId, canEdit, ownerId !== threadId, archived);
       if (!canEdit || list.assignees.length === 0) return list;
       // The reader may post, so a task may be given to them whether or not they have written yet.
-      const { userId, name } = person(principal);
+      const { userId, name } = await person(principal);
       if (list.assignees.some((one) => one.kind === "person" && one.userId === userId)) return list;
       return { ...list, assignees: [...list.assignees, { kind: "person", userId, name }] };
     },
 
-    add(principal: Principal, threadId: string, title: string) {
-      const thread = props(principal, threadId, "post");
-      const ownerId = ownerOf(thread.id);
-      if (tasks.inThread(ownerId).length >= TASK_LIMIT) {
+    async add(principal: Principal, threadId: string, title: string) {
+      const thread = await props(principal, threadId, "post");
+      const ownerId = await ownerOf(thread.id);
+      if ((await tasks.inThread(ownerId)).length >= TASK_LIMIT) {
         throw new ServiceError(409, `A list holds ${TASK_LIMIT} tasks`);
       }
-      const by = { kind: "user" as const, ...person(principal) };
+      const by = { kind: "user" as const, ...(await person(principal)) };
       const { via: _via, ...actor } = by;
-      const added = tasks.add([
+      const added = await tasks.add([
         {
           id: ulid(),
           threadId: ownerId,
@@ -879,26 +911,26 @@ export function createTasks(options: TasksOptions) {
         },
       ]);
       changed(ownerId);
-      announceAdded(ownerId, { name: actor.name, userId: by.userId }, added);
+      await announceAdded(ownerId, { name: actor.name, userId: by.userId }, added);
     },
 
-    change(principal: Principal, threadId: string, taskId: string, change: TaskChangeInput) {
-      const thread = props(principal, threadId, "post");
-      const ownerId = ownerOf(thread.id);
-      const before = mineOrThrow(taskId, ownerId);
-      const who = person(principal);
-      const next = tasks.update(taskId, {
+    async change(principal: Principal, threadId: string, taskId: string, change: TaskChangeInput) {
+      const thread = await props(principal, threadId, "post");
+      const ownerId = await ownerOf(thread.id);
+      const before = await mineOrThrow(taskId, ownerId);
+      const who = await person(principal);
+      const next = await tasks.update(taskId, {
         ...(change.status && { status: change.status }),
         ...(change.title && { title: change.title }),
         ...(change.assignee !== undefined && {
-          assignee: assigneeFor(principal, ownerId, change.assignee),
+          assignee: await assigneeFor(principal, ownerId, change.assignee),
         }),
         updatedBy: { kind: "user", userId: who.userId, name: who.name },
         updatedAt: now(),
       });
       changed(ownerId);
-      if (next?.assignee?.kind === "subagent") subagents.shareTasks(next.assignee.threadId);
-      announce(
+      if (next?.assignee?.kind === "subagent") await subagents.shareTasks(next.assignee.threadId);
+      await announce(
         ownerId,
         { name: who.name, userId: who.userId, people: [who] },
         before,
@@ -909,28 +941,38 @@ export function createTasks(options: TasksOptions) {
 
     // Archives the list's done tasks, the ones given to the thread's subagent in a thread sharing
     // its starter's list; how many.
-    archiveDone(principal: Principal, threadId: string) {
-      const thread = props(principal, threadId, "post");
-      const ownerId = ownerOf(thread.id);
-      const { shown } = visible(ownerId, thread.id, false);
-      const who = person(principal);
-      const archived = archiveAll(
+    async archiveDone(principal: Principal, threadId: string) {
+      const thread = await props(principal, threadId, "post");
+      const ownerId = await ownerOf(thread.id);
+      const { shown } = await visible(ownerId, thread.id, false);
+      const who = await person(principal);
+      const archived = await archiveAll(
         ownerId,
         shown.filter((record) => record.status === "done"),
         { kind: "user", userId: who.userId, name: who.name },
       );
-      announceArchive(ownerId, { name: who.name, userId: who.userId, people: [who] }, archived);
+      await announceArchive(
+        ownerId,
+        { name: who.name, userId: who.userId, people: [who] },
+        archived,
+      );
       return archived.length;
     },
 
-    remove(principal: Principal, threadId: string, taskId: string) {
-      const thread = props(principal, threadId, "post");
-      const ownerId = ownerOf(thread.id);
-      const before = mineOrThrow(taskId, ownerId);
-      tasks.remove([taskId]);
+    async remove(principal: Principal, threadId: string, taskId: string) {
+      const thread = await props(principal, threadId, "post");
+      const ownerId = await ownerOf(thread.id);
+      const before = await mineOrThrow(taskId, ownerId);
+      await tasks.remove([taskId]);
       changed(ownerId);
-      const who = person(principal);
-      announce(ownerId, { name: who.name, userId: who.userId, people: [who] }, before, null, {});
+      const who = await person(principal);
+      await announce(
+        ownerId,
+        { name: who.name, userId: who.userId, people: [who] },
+        before,
+        null,
+        {},
+      );
     },
   };
 }

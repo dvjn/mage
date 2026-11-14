@@ -189,8 +189,7 @@ export type NotificationActor = z.infer<typeof notificationActorSchema>;
 
 // What a notification about subagents tells, apart from its text, so it can be shown as parts:
 // the subagents it is about, for an idle watch whether it waited for all of them, for a failure
-// its error, and the last thing the subagent said, which the text leaves out. Older notifications
-// carry only their text.
+// its error, and the last thing the subagent said, which the text leaves out.
 export const changeSchema = z.object({
   subject: z.object({
     kind: z.enum(["task", "schedule", "webhook", "thread"]),
@@ -242,11 +241,6 @@ export const notificationPartsSchema = z.object({
 
 export type NotificationParts = z.infer<typeof notificationPartsSchema>;
 
-// Where a subagent stands once its run ended: waiting for more, stopped, or failed.
-export const subagentEndSchema = z.enum(["idle", "stopped", "failed"]);
-
-export type SubagentEnd = z.infer<typeof subagentEndSchema>;
-
 // The most characters of JSON a tool's result takes in the log; a larger one is kept apart from it.
 export const LARGE_RESULT_CHARS = 16_000;
 
@@ -267,18 +261,6 @@ export const eventDataSchemas = {
   "message.withdrawn": z.object({ messageId: z.string() }),
   // A message the agent had not taken in yet was dropped: its author can no longer post.
   "message.dropped": z.object({ messageId: z.string() }),
-  // No longer written: another agent's message to this thread's agent, with the people whose words
-  // steered it, now a notification. The first one in a subagent's thread is its task.
-  "agent.message": z.object({
-    parts: z.array(textPartSchema),
-    from: senderSchema,
-    // Whom it was sent to, as the sender named them.
-    to: z.string(),
-    steeredBy: z.array(steeringSchema),
-    task: subagentTaskSchema.optional(),
-    // The call that sent it; older messages do not say.
-    call: causeSchema.optional(),
-  }),
   // Something the thread's agent is told, with everyone whose words it carries, who count as
   // steering what the agent does with it. It waits like a person's message until the agent takes
   // it in. A message names whom it was sent to, and the first in a subagent's thread is its task.
@@ -294,14 +276,6 @@ export const eventDataSchemas = {
     // its next model call, or its next run.
     wake: z.boolean().optional(),
     ...notificationPartsSchema.shape,
-  }),
-  // No longer written: one of the thread's subagents ended a run with nothing more to do, and the
-  // last thing it said.
-  "subagent.ended": z.object({
-    threadId: z.string(),
-    name: z.string(),
-    state: subagentEndSchema,
-    last: z.string(),
   }),
   // The thread's subagents sent each other as many messages as they may; more are refused. With
   // the call first refused, in its subagent's thread.
@@ -401,9 +375,6 @@ export const eventDataSchemas = {
   "tool.answered": z.object({ runId: z.string(), callId: z.string(), answers: askAnswersSchema }),
   // The call will not run, and why.
   "tool.denied": z.object({ runId: z.string(), callId: z.string(), reason: toolDenialSchema }),
-  // No longer written: older threads paused a call here for the person it would run as to connect
-  // their own login. Read as the call waiting for approval.
-  "tool.blocked": z.object({ runId: z.string(), callId: z.string(), userId: z.string() }),
   // The call ran, with what it gave back or why it failed, in milliseconds; for a tool that runs
   // with each person's own login, whose it ran with; and for a call that ran on a standing
   // approval, the call that approval was given on. What it gave back is kept apart from the log
@@ -459,9 +430,7 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("message.changed"),
   eventSchema("message.withdrawn"),
   eventSchema("message.dropped"),
-  eventSchema("agent.message"),
   eventSchema("notification"),
-  eventSchema("subagent.ended"),
   eventSchema("subagent.limited"),
   eventSchema("message.admitted"),
   eventSchema("message.started"),
@@ -478,7 +447,6 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("tool.approved"),
   eventSchema("tool.answered"),
   eventSchema("tool.denied"),
-  eventSchema("tool.blocked"),
   eventSchema("tool.ran"),
 ]);
 
@@ -526,10 +494,3 @@ export const liveChunkSchema = z.object({
 });
 
 export type LiveChunk = z.infer<typeof liveChunkSchema>;
-
-// What a thread's followers are told: each event appended, each batch of reply pieces stored, and
-// each piece of a running call's output stored.
-export type ThreadFeedItem =
-  | { kind: "event"; seq: number }
-  | { kind: "delta"; delta: DeltaBatch }
-  | { kind: "live"; live: LiveChunk };

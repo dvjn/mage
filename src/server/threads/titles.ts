@@ -46,10 +46,10 @@ export function createTitles(options: TitlesOptions) {
   const timeoutMs = options.timeoutMs ?? 60_000;
 
   async function modelFor(orgId: string, threadModel: string | null) {
-    const chosen = models.chosenTitleModel(orgId);
+    const chosen = await models.chosenTitleModel(orgId);
     if (chosen) return chosen;
     const automatic = await models.automaticTitleModel(orgId).catch(() => null);
-    return automatic ?? threadModel ?? models.defaultModel(orgId);
+    return automatic ?? threadModel ?? (await models.defaultModel(orgId));
   }
 
   async function titleOf(orgId: string, threadId: string, ref: string, text: string) {
@@ -79,18 +79,18 @@ export function createTitles(options: TitlesOptions) {
     // Resolves once the thread is named, or it is given up on.
     async name(orgId: string, threadId: string, text: string) {
       try {
-        const thread = threads.find(threadId);
+        const thread = await threads.find(threadId);
         if (!thread || thread.titleSource === "person") return;
         const ref = await modelFor(orgId, thread.model);
         if (!ref) return;
         const { title, usage } = await titleOf(orgId, threadId, ref, text);
         if (!title) return;
-        log.write(threadId, (append) => {
-          const current = threads.find(threadId);
+        await log.write(threadId, async (append) => {
+          const current = await threads.find(threadId);
           if (!current || current.titleSource === "person") return;
-          threads.update(threadId, { title, titleSource: "agent" });
+          await threads.update(threadId, { title, titleSource: "agent" });
           const used = usage.inputTokens + usage.outputTokens > 0 || usage.cost !== undefined;
-          append({
+          await append({
             type: "thread.renamed",
             actor: { kind: "agent" },
             data: { title, ...(used && { usage }) },

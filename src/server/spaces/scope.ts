@@ -4,7 +4,7 @@
 // the conditions and values here.
 
 import { and, eq, isNull, type SQL, sql } from "drizzle-orm";
-import { type SQLiteColumn, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { type PgColumn, text, uniqueIndex } from "drizzle-orm/pg-core";
 
 import { organization } from "@/server/orgs/schema.ts";
 
@@ -25,13 +25,13 @@ export function scopeColumns() {
 }
 
 interface Scoped {
-  organizationId: SQLiteColumn;
-  spaceId: SQLiteColumn;
+  organizationId: PgColumn;
+  spaceId: PgColumn;
 }
 
 // The indexes that keep one row per scope and key, the key being the columns that name the
 // setting: one over the org's own rows, one over the spaces'.
-export function scopeIndexes(name: string, table: Scoped, ...key: SQLiteColumn[]) {
+export function scopeIndexes(name: string, table: Scoped, ...key: PgColumn[]) {
   return [
     uniqueIndex(`${name}_org_idx`)
       .on(table.organizationId, ...key)
@@ -57,7 +57,7 @@ export function scopedOn(table: Scoped) {
             spaceId: scope.spaceId,
           },
     // What a new row of the scope with the same key collides on, to change that row instead.
-    conflict: (scope: SettingScope, ...key: SQLiteColumn[]) =>
+    conflict: (scope: SettingScope, ...key: PgColumn[]) =>
       "orgId" in scope
         ? { target: [table.organizationId, ...key], targetWhere: sql`${table.spaceId} is null` }
         : { target: [table.spaceId, ...key] },

@@ -126,12 +126,19 @@ export default defineConfig({
       applyToEnvironment: (environment: { name: string }) => environment.name === "client",
     })),
     {
-      // The server bundle applies migrations from the folder next to it.
+      // The server bundle applies migrations from the folder next to the code that opens the
+      // database, wherever the bundler put it.
       name: "copy-migrations",
       applyToEnvironment: (environment) => environment.name === "ssr",
-      writeBundle() {
+      writeBundle(output, bundle) {
+        const opener = path.join(here, "src/server/db/db.ts");
+        const chunk = Object.values(bundle).find(
+          (file) => file.type === "chunk" && file.moduleIds.includes(opener),
+        );
+        if (!chunk) throw new Error("No chunk of the server bundle opens the database.");
         const from = path.join(here, "src/server/db/migrations");
-        cpSync(from, path.join(here, "dist/server/migrations"), { recursive: true });
+        const to = path.join(output.dir!, path.dirname(chunk.fileName), "migrations");
+        cpSync(from, to, { recursive: true });
       },
     },
     devServer({
@@ -248,6 +255,7 @@ export default defineConfig({
         files: ["src/server/**"],
         excludeFiles: [
           "src/server/main.ts",
+          "src/server/compose.ts",
           "src/server/app.ts",
           "src/server/testing/**",
           "**/*.test.ts",
@@ -266,6 +274,26 @@ export default defineConfig({
                 {
                   regex: "^@/server/[^/]+/routes\\.ts$",
                   message: "Only the app mounts a feature's routes.",
+                },
+              ],
+            },
+          ],
+        },
+      },
+      {
+        // What instances agree through stands on the database and the kernel alone.
+        files: ["src/server/sync/**"],
+        excludeFiles: ["**/*.test.ts"],
+        rules: {
+          "no-restricted-imports": [
+            "error",
+            {
+              patterns: [
+                outOfFolder,
+                webCode,
+                {
+                  group: ["@/server/**", "!@/server/db/**", "!@/server/kernel/**"],
+                  message: "Sync imports only the database and the kernel.",
                 },
               ],
             },
@@ -293,6 +321,30 @@ export default defineConfig({
   },
   test: {
     root: here,
-    include: ["src/**/*.test.ts", "scripts/**/*.test.ts", "mock/**/*.test.ts"],
+    // A test's Postgres runs inside its process, a statement at a time, and a scenario with an
+    // agent in it makes a few thousand of them.
+    testTimeout: 15_000,
+    // Unit tests touch no database; integration tests each open their own, from a migrated
+    // database made once for the run.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "unit",
+          include: ["src/**/*.test.ts", "scripts/**/*.test.ts", "mock/**/*.test.ts"],
+          exclude: ["**/node_modules/**", "**/*.integration.test.ts"],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "integration",
+          include: ["src/**/*.integration.test.ts", "mock/**/*.integration.test.ts"],
+          globalSetup: [path.join(here, "src/server/testing/global-setup.ts")],
+          // Query counting hooks the Postgres driver before anything loads it.
+          setupFiles: [path.join(here, "src/server/testing/tracing.ts")],
+        },
+      },
+    ],
   },
 });

@@ -4,6 +4,7 @@ import { type Context, Hono } from "hono";
 import { stream, streamSSE } from "hono/streaming";
 import { validator } from "hono/validator";
 
+import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import { type ApiEnv, signedIn, jsonBody, queryOf } from "@/server/http.ts";
 import { backgroundSeenSchema } from "@/shared/calls.ts";
@@ -180,84 +181,87 @@ export function threadRoutes(options: {
 }) {
   const { threads } = options;
   return new Hono<ApiEnv>()
-    .get("/v1/spaces/:id/threads", (c) => {
-      return c.json(threads.list(signedIn(c.var.principal), c.req.param("id")), 200);
+    .get("/v1/spaces/:id/threads", async (c) => {
+      return c.json(await threads.list(signedIn(c.var.principal), c.req.param("id")), 200);
     })
-    .get("/v1/spaces/:id/threads/sidebar", (c) => {
-      return c.json(threads.sidebar(signedIn(c.var.principal), c.req.param("id")), 200);
+    .get("/v1/spaces/:id/threads/sidebar", async (c) => {
+      return c.json(await threads.sidebar(signedIn(c.var.principal), c.req.param("id")), 200);
     })
-    .get("/v1/spaces/:id/threads/page", threadPageQuery, (c) => {
+    .get("/v1/spaces/:id/threads/page", threadPageQuery, async (c) => {
       const { show, ...query } = c.req.valid("query");
       const params = { ...pageParams(query), ...(show && { show }) };
-      return c.json(threads.listPage(signedIn(c.var.principal), c.req.param("id"), params), 200);
+      return c.json(
+        await threads.listPage(signedIn(c.var.principal), c.req.param("id"), params),
+        200,
+      );
     })
     .post("/v1/spaces/:id/threads", newThread, async (c) => {
       const input = c.req.valid("json");
       const thread = await threads.create(signedIn(c.var.principal), c.req.param("id"), input);
       return c.json(thread, 200);
     })
-    .get("/v1/spaces/:id/commands", (c) => {
-      return c.json(threads.spaceCommands(signedIn(c.var.principal), c.req.param("id")), 200);
+    .get("/v1/spaces/:id/commands", async (c) => {
+      return c.json(await threads.spaceCommands(signedIn(c.var.principal), c.req.param("id")), 200);
     })
-    .get("/v1/shared-threads", (c) => {
-      return c.json(threads.shared(signedIn(c.var.principal)), 200);
+    .get("/v1/shared-threads", async (c) => {
+      return c.json(await threads.shared(signedIn(c.var.principal)), 200);
     })
-    .get("/v1/shared-threads/page", threadPageQuery, (c) => {
+    .get("/v1/shared-threads/page", threadPageQuery, async (c) => {
       const { show, ...query } = c.req.valid("query");
       const params = { ...pageParams(query), ...(show && { show }) };
-      return c.json(threads.sharedPage(signedIn(c.var.principal), params), 200);
+      return c.json(await threads.sharedPage(signedIn(c.var.principal), params), 200);
     })
-    .get("/v1/threads/search", threadSearch, (c) => {
+    .get("/v1/threads/search", threadSearch, async (c) => {
       const { q } = c.req.valid("query");
-      return c.json(threads.search(signedIn(c.var.principal), q), 200);
+      return c.json(await threads.search(signedIn(c.var.principal), q), 200);
     })
     .get("/v1/threads/:id", branchQuery, async (c) => {
       const { branch } = c.req.valid("query");
       return c.json(await threads.get(signedIn(c.var.principal), c.req.param("id"), branch), 200);
     })
-    .get("/v1/threads/:id/rows", rowsQuery, (c) => {
+    .get("/v1/threads/:id/rows", rowsQuery, async (c) => {
       const { before, limit, at, branch, unreadFrom } = c.req.valid("query");
       const principal = signedIn(c.var.principal);
       return c.json(
-        threads.rows(principal, c.req.param("id"), before, limit, at, branch, unreadFrom),
+        await threads.rows(principal, c.req.param("id"), before, limit, at, branch, unreadFrom),
         200,
       );
     })
-    .get("/v1/tool-results/:id", (c) => {
-      return c.json(threads.result(signedIn(c.var.principal), c.req.param("id")), 200);
+    .get("/v1/tool-results/:id", async (c) => {
+      return c.json(await threads.result(signedIn(c.var.principal), c.req.param("id")), 200);
     })
-    .get("/v1/threads/:id/rows/:rowId/branch", (c) => {
+    .get("/v1/threads/:id/rows/:rowId/branch", async (c) => {
       const { id, rowId } = c.req.param();
-      return c.json(threads.branchOf(signedIn(c.var.principal), id, rowId), 200);
+      return c.json(await threads.branchOf(signedIn(c.var.principal), id, rowId), 200);
     })
     .post("/v1/threads/:id/history", branchAction, async (c) => {
       const action = c.req.valid("json");
       const principal = signedIn(c.var.principal);
       return c.json(await threads.act(principal, c.req.param("id"), action), 200);
     })
-    .post("/v1/threads/:id/fork", fork, (c) => {
+    .post("/v1/threads/:id/fork", fork, async (c) => {
       const input = c.req.valid("json");
-      return c.json(threads.fork(signedIn(c.var.principal), c.req.param("id"), input), 200);
+      return c.json(await threads.fork(signedIn(c.var.principal), c.req.param("id"), input), 200);
     })
-    .get("/v1/threads/:id/asides", (c) => {
-      return c.json(threads.asides(signedIn(c.var.principal), c.req.param("id")), 200);
+    .get("/v1/threads/:id/asides", async (c) => {
+      return c.json(await threads.asides(signedIn(c.var.principal), c.req.param("id")), 200);
     })
-    .post("/v1/threads/:id/asides", newAside, (c) => {
+    .post("/v1/threads/:id/asides", newAside, async (c) => {
       const input = c.req.valid("json");
       const principal = signedIn(c.var.principal);
-      const asking = threads.askAside(principal, c.req.param("id"), input);
+      const asking = await threads.askAside(principal, c.req.param("id"), input);
       return answering(c, asking, options.shutdown);
     })
-    .post("/v1/threads/:id/asides/:asideId/messages", asideFollowUp, (c) => {
+    .post("/v1/threads/:id/asides/:asideId/messages", asideFollowUp, async (c) => {
       const { id, asideId } = c.req.param();
       const { text } = c.req.valid("json");
       const principal = signedIn(c.var.principal);
-      const asking = threads.followUpAside(principal, id, asideId, text);
+      const asking = await threads.followUpAside(principal, id, asideId, text);
       return answering(c, asking, options.shutdown);
     })
-    .post("/v1/threads/:id/asides/:asideId/stop", (c) => {
+    .post("/v1/threads/:id/asides/:asideId/stop", async (c) => {
       const { id, asideId } = c.req.param();
-      threads.stopAside(signedIn(c.var.principal), id, asideId);
+      await threads.stopAside(signedIn(c.var.principal), id, asideId);
       return c.json({ ok: true }, 200);
     })
     .post("/v1/threads/:id/summary-thread", fork, async (c) => {
@@ -270,26 +274,32 @@ export function threadRoutes(options: {
       const thread = await threads.update(signedIn(c.var.principal), c.req.param("id"), changes);
       return c.json(thread, 200);
     })
-    .post("/v1/threads/:id/move", threadMove, (c) => {
+    .post("/v1/threads/:id/move", threadMove, async (c) => {
       const { spaceId } = c.req.valid("json");
-      return c.json(threads.move(signedIn(c.var.principal), c.req.param("id"), spaceId), 200);
+      return c.json(await threads.move(signedIn(c.var.principal), c.req.param("id"), spaceId), 200);
     })
-    .delete("/v1/threads/:id", (c) => {
-      threads.remove(signedIn(c.var.principal), c.req.param("id"));
+    .delete("/v1/threads/:id", async (c) => {
+      await threads.remove(signedIn(c.var.principal), c.req.param("id"));
       return c.json({ ok: true }, 200);
     })
-    .get("/v1/threads/:id/background", (c) => {
-      return c.json(threads.backgroundList(signedIn(c.var.principal), c.req.param("id")), 200);
+    .get("/v1/threads/:id/background", async (c) => {
+      return c.json(
+        await threads.backgroundList(signedIn(c.var.principal), c.req.param("id")),
+        200,
+      );
     })
-    .post("/v1/threads/:id/background/seen", seenInput, (c) => {
+    .post("/v1/threads/:id/background/seen", seenInput, async (c) => {
       const { kind } = c.req.valid("json");
-      return c.json(threads.seeBackground(signedIn(c.var.principal), c.req.param("id"), kind), 200);
+      return c.json(
+        await threads.seeBackground(signedIn(c.var.principal), c.req.param("id"), kind),
+        200,
+      );
     })
-    .get("/v1/threads/:id/events", eventCursor, (c) => {
+    .get("/v1/threads/:id/events", eventCursor, async (c) => {
       const principal = signedIn(c.var.principal);
       const id = c.req.param("id");
       // Answers 404 before the stream starts.
-      threads.visible(principal, id);
+      await threads.visible(principal, id);
       const { after } = c.req.valid("query");
       return streamSSE(c, async (stream) => {
         // One write at a time, in order.
@@ -304,18 +314,31 @@ export function threadRoutes(options: {
         // Rows carry the seq of the newest event they reach as the id a reconnecting browser
         // resumes after; reply pieces carry none, and are sent again from the start of each reply
         // on reconnecting.
-        const unsubscribe = threads.follow(principal, id, after, (item) => {
-          void write(() => stream.writeSSE(feedMessage(item)));
-        });
+        const ended = () => write(() => stream.writeSSE({ event: "access-ended", data: "{}" }));
+        // The reader may have lost the thread since the request was answered.
+        const unsubscribe = await threads
+          .follow(principal, id, after, (item) => {
+            void write(() => stream.writeSSE(feedMessage(item)));
+          })
+          .catch((err: unknown) => {
+            if (err instanceof ServiceError) return null;
+            throw err;
+          });
+        if (!unsubscribe) {
+          await ended();
+          return;
+        }
         stream.onAbort(unsubscribe);
+        // The reader may have gone while what was stored was read for them.
+        if (stream.aborted) unsubscribe();
         while (!stream.aborted && !options.shutdown?.aborted) {
           await heartbeat(options);
           if (stream.aborted || options.shutdown?.aborted) break;
           // Whoever may no longer read the thread, as a guest whose access ended or a member who
           // left its space, is told so, and the stream ends.
-          if (!threads.readable(principal, id)) {
+          if (!(await threads.readable(principal, id))) {
             unsubscribe();
-            await write(() => stream.writeSSE({ event: "access-ended", data: "{}" }));
+            await ended();
             break;
           }
           await write(() => stream.write(": heartbeat\n\n").then(() => {}));
@@ -324,9 +347,9 @@ export function threadRoutes(options: {
         if (!stream.aborted && options.shutdown?.aborted) unsubscribe();
       });
     })
-    .put("/v1/threads/:id/read", threadRead, (c) => {
+    .put("/v1/threads/:id/read", threadRead, async (c) => {
       const { seq } = c.req.valid("json");
-      return c.json(threads.markRead(signedIn(c.var.principal), c.req.param("id"), seq), 200);
+      return c.json(await threads.markRead(signedIn(c.var.principal), c.req.param("id"), seq), 200);
     })
     .get("/v1/inbox/events", (c) => {
       const principal = signedIn(c.var.principal);
@@ -337,7 +360,7 @@ export function threadRoutes(options: {
           writing = writing.then(send, send);
           return writing;
         }
-        const inbox = threads.inbox(principal, (item) => {
+        const inbox = await threads.inbox(principal, (item) => {
           void write(() =>
             item.kind === "thread"
               ? stream.writeSSE({
@@ -360,14 +383,14 @@ export function threadRoutes(options: {
           await heartbeat(options);
           if (stream.aborted || options.shutdown?.aborted) break;
           // Threads the reader can no longer read, as a guest whose access ended, are gone.
-          inbox.recheck();
+          await inbox.recheck();
           await write(() => stream.write(": heartbeat\n\n").then(() => {}));
         }
         inbox.stop();
       });
     })
-    .get("/v1/threads/:id/commands", (c) => {
-      return c.json(threads.commands(signedIn(c.var.principal), c.req.param("id")), 200);
+    .get("/v1/threads/:id/commands", async (c) => {
+      return c.json(await threads.commands(signedIn(c.var.principal), c.req.param("id")), 200);
     })
     .post("/v1/threads/:id/messages", message, async (c) => {
       const { text, mode, command } = c.req.valid("json");
@@ -375,28 +398,31 @@ export function threadRoutes(options: {
       const id = c.req.param("id");
       const posted = command
         ? await threads.postCommand(principal, id, text, mode, command)
-        : threads.postMessage(principal, id, text, mode);
+        : await threads.postMessage(principal, id, text, mode);
       return c.json(posted, 202);
     })
-    .patch("/v1/threads/:id/messages/:messageId", pendingChange, (c) => {
+    .patch("/v1/threads/:id/messages/:messageId", pendingChange, async (c) => {
       const { id, messageId } = c.req.param();
       const change = c.req.valid("json");
-      return c.json(threads.changeMessage(signedIn(c.var.principal), id, messageId, change), 200);
+      return c.json(
+        await threads.changeMessage(signedIn(c.var.principal), id, messageId, change),
+        200,
+      );
     })
-    .delete("/v1/threads/:id/messages/:messageId", (c) => {
+    .delete("/v1/threads/:id/messages/:messageId", async (c) => {
       const { id, messageId } = c.req.param();
-      return c.json(threads.withdrawMessage(signedIn(c.var.principal), id, messageId), 200);
+      return c.json(await threads.withdrawMessage(signedIn(c.var.principal), id, messageId), 200);
     })
-    .post("/v1/threads/:id/stop", (c) => {
-      threads.stop(signedIn(c.var.principal), c.req.param("id"));
+    .post("/v1/threads/:id/stop", async (c) => {
+      await threads.stop(signedIn(c.var.principal), c.req.param("id"));
       return c.json({ ok: true }, 202);
     })
-    .post("/v1/threads/:id/unarchive", (c) => {
-      threads.unarchive(signedIn(c.var.principal), c.req.param("id"));
+    .post("/v1/threads/:id/unarchive", async (c) => {
+      await threads.unarchive(signedIn(c.var.principal), c.req.param("id"));
       return c.json({ ok: true }, 200);
     })
-    .post("/v1/threads/:id/retry", retry, (c) => {
+    .post("/v1/threads/:id/retry", retry, async (c) => {
       const { runId } = c.req.valid("json");
-      return c.json(threads.retry(signedIn(c.var.principal), c.req.param("id"), runId), 202);
+      return c.json(await threads.retry(signedIn(c.var.principal), c.req.param("id"), runId), 202);
     });
 }

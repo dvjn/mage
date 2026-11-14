@@ -50,7 +50,7 @@ export function createFakeGateway(): ModelGateway {
       ]);
       for (let step = 0; step < request.maxSteps; step += 1) {
         if (step > 0) {
-          const added = request.beforeStep?.() ?? [];
+          const added = (await request.beforeStep?.()) ?? [];
           if (added.length === 0) return;
           for (const message of added) if (message.role !== "change") messages.push(message);
         }

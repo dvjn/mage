@@ -16,10 +16,15 @@ import { aside, asideTurn } from "./schema.ts";
 
 export interface AsideStore {
   // The person's side questions in the thread, oldest first, each with its turns in order.
-  of(threadId: string, userId: string): Aside[];
+  of(threadId: string, userId: string): Promise<Aside[]>;
   // With who asked it, by name.
-  find(id: string): (Aside & { threadId: string; userId: string; name: string }) | null;
-  create(input: { threadId: string; branchId: string; rowId: string; userId: string }): string;
+  find(id: string): Promise<(Aside & { threadId: string; userId: string; name: string }) | null>;
+  create(input: {
+    threadId: string;
+    branchId: string;
+    rowId: string;
+    userId: string;
+  }): Promise<string>;
   addTurn(
     asideId: string,
     turn: {
@@ -29,7 +34,7 @@ export interface AsideStore {
       failure?: "stopped" | "error";
       error?: string;
     },
-  ): void;
+  ): Promise<void>;
 }
 
 const STOPPED = "Stopped";
@@ -41,15 +46,14 @@ function failureOf(text: string) {
 }
 
 export function createAsideStore(db: Db): AsideStore {
-  function turnsOf(ids: string[]) {
+  async function turnsOf(ids: string[]) {
     if (ids.length === 0) return new Map<string, Aside["turns"]>();
     const turns = new Map<string, Aside["turns"]>();
-    const rows = db
+    const rows = await db
       .select()
       .from(asideTurn)
       .where(inArray(asideTurn.asideId, ids))
-      .orderBy(asc(asideTurn.createdAt), asc(asideTurn.id))
-      .all();
+      .orderBy(asc(asideTurn.createdAt), asc(asideTurn.id));
     for (const row of rows) {
       turns.set(row.asideId, [
         ...(turns.get(row.asideId) ?? []),
@@ -77,48 +81,50 @@ export function createAsideStore(db: Db): AsideStore {
   }
 
   return {
-    of(threadId, userId) {
-      const rows = db
+    async of(threadId, userId) {
+      const rows = await db
         .select()
         .from(aside)
         .where(and(eq(aside.threadId, threadId), eq(aside.userId, userId)))
-        .orderBy(asc(aside.createdAt), asc(aside.id))
-        .all();
-      const turns = turnsOf(rows.map((row) => row.id));
+        .orderBy(asc(aside.createdAt), asc(aside.id));
+      const turns = await turnsOf(rows.map((row) => row.id));
       return rows.map((row) => shown(row, turns));
     },
 
-    find(id) {
-      const found = db
-        .select({ aside, name: user.name })
-        .from(aside)
-        .innerJoin(user, eq(user.id, aside.userId))
-        .where(eq(aside.id, id))
-        .get();
+    async find(id) {
+      const found = (
+        await db
+          .select({ aside, name: user.name })
+          .from(aside)
+          .innerJoin(user, eq(user.id, aside.userId))
+          .where(eq(aside.id, id))
+          .limit(1)
+      )[0];
       if (!found) return null;
       const { aside: row, name } = found;
-      return { ...shown(row, turnsOf([id])), threadId: row.threadId, userId: row.userId, name };
+      return {
+        ...shown(row, await turnsOf([id])),
+        threadId: row.threadId,
+        userId: row.userId,
+        name,
+      };
     },
 
-    create(input) {
+    async create(input) {
       const id = ulid();
-      db.insert(aside)
-        .values({ id, ...input })
-        .run();
+      await db.insert(aside).values({ id, ...input });
       return id;
     },
 
-    addTurn(asideId, { failure, error, ...turn }) {
-      db.insert(asideTurn)
-        .values({
-          id: ulid(),
-          asideId,
-          ...turn,
-          // A failed turn keeps what went wrong in its text: "Stopped" marks one that was stopped.
-          text: failure === "stopped" ? STOPPED : failure ? (error ?? "") : turn.text,
-          failed: !!failure,
-        })
-        .run();
+    async addTurn(asideId, { failure, error, ...turn }) {
+      await db.insert(asideTurn).values({
+        id: ulid(),
+        asideId,
+        ...turn,
+        // A failed turn keeps what went wrong in its text: "Stopped" marks one that was stopped.
+        text: failure === "stopped" ? STOPPED : failure ? (error ?? "") : turn.text,
+        failed: !!failure,
+      });
     },
   };
 }

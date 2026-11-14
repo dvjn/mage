@@ -70,9 +70,9 @@ const spaceMemberQuery = queryOf(spaceMemberFilterSchema);
 export function spaceRoutes(options: { spaces: Spaces }) {
   const { spaces } = options;
   return new Hono<ApiEnv>()
-    .get("/v1/org/spaces", orgSpaceQuery, (c) => {
+    .get("/v1/org/spaces", orgSpaceQuery, async (c) => {
       const { kind, everyone, ...query } = c.req.valid("query");
-      const page = spaces.catalog(signedIn(c.var.principal), {
+      const page = await spaces.catalog(signedIn(c.var.principal), {
         ...pageParams(query),
         ...(kind && { kind }),
         ...(everyone && { everyone }),
@@ -90,19 +90,19 @@ export function spaceRoutes(options: { spaces: Spaces }) {
         200,
       );
     })
-    .get("/v1/spaces", (c) => {
-      return c.json(spaces.list(signedIn(c.var.principal)).map(spaceSummary), 200);
+    .get("/v1/spaces", async (c) => {
+      return c.json((await spaces.list(signedIn(c.var.principal))).map(spaceSummary), 200);
     })
-    .post("/v1/spaces", spaceName, (c) => {
-      const space = spaces.create(signedIn(c.var.principal), c.req.valid("json").name);
+    .post("/v1/spaces", spaceName, async (c) => {
+      const space = await spaces.create(signedIn(c.var.principal), c.req.valid("json").name);
       return c.json(spaceSummary(space), 200);
     })
-    .post("/v1/spaces/mine", (c) => {
-      return c.json(spaceSummary(spaces.createMine(signedIn(c.var.principal))), 200);
+    .post("/v1/spaces/mine", async (c) => {
+      return c.json(spaceSummary(await spaces.createMine(signedIn(c.var.principal))), 200);
     })
-    .patch("/v1/spaces/:id", spaceName, (c) => {
+    .patch("/v1/spaces/:id", spaceName, async (c) => {
       const { name } = c.req.valid("json");
-      const space = spaces.rename(signedIn(c.var.principal), c.req.param("id"), name);
+      const space = await spaces.rename(signedIn(c.var.principal), c.req.param("id"), name);
       return c.json(spaceSummary(space), 200);
     })
     .patch("/v1/spaces/:id/defaults", spaceDefaults, async (c) => {
@@ -114,31 +114,34 @@ export function spaceRoutes(options: { spaces: Spaces }) {
       await spaces.remove(signedIn(c.var.principal), c.req.param("id"));
       return c.json({ ok: true }, 200);
     })
-    .get("/v1/spaces/trash", (c) => {
-      const trash: TrashedSpaceSummary[] = spaces
-        .trash(signedIn(c.var.principal))
-        .map(({ id, name, ownerName, trashedByName, trashedAt, threadCount }) => ({
+    .get("/v1/spaces/trash", async (c) => {
+      const trash: TrashedSpaceSummary[] = (await spaces.trash(signedIn(c.var.principal))).map(
+        ({ id, name, ownerName, trashedByName, trashedAt, threadCount }) => ({
           id,
           name,
           ownerName,
           trashedByName,
           trashedAt: trashedAt.toISOString(),
           threadCount,
-        }));
+        }),
+      );
       return c.json(trash, 200);
     })
-    .post("/v1/spaces/trash/:id/restore", (c) => {
-      spaces.restore(signedIn(c.var.principal), c.req.param("id"));
+    .post("/v1/spaces/trash/:id/restore", async (c) => {
+      await spaces.restore(signedIn(c.var.principal), c.req.param("id"));
       return c.json({ ok: true }, 200);
     })
-    .delete("/v1/spaces/trash/:id", (c) => {
-      spaces.purge(signedIn(c.var.principal), c.req.param("id"));
+    .delete("/v1/spaces/trash/:id", async (c) => {
+      await spaces.purge(signedIn(c.var.principal), c.req.param("id"));
       return c.json({ ok: true }, 200);
     })
-    .get("/v1/spaces/:id/members", spaceMemberQuery, (c) => {
+    .get("/v1/spaces/:id/members", spaceMemberQuery, async (c) => {
       const { role, ...query } = c.req.valid("query");
       const params = { ...pageParams(query), ...(role && { role }) };
-      return c.json(spaces.members(signedIn(c.var.principal), c.req.param("id"), params), 200);
+      return c.json(
+        await spaces.members(signedIn(c.var.principal), c.req.param("id"), params),
+        200,
+      );
     })
     .put("/v1/spaces/:id/members", setSpaceMember, async (c) => {
       const { kind, id, role } = c.req.valid("json");

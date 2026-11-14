@@ -5,10 +5,10 @@ import { ulid } from "ulid";
 
 import { thread } from "@/server/threads/schema.ts";
 import type { Db } from "@/server/db/db.ts";
-import { leasesOn } from "@/server/db/lease.ts";
+import { leasesOn } from "@/server/sync/lease.ts";
 
 import { type Lease, LeaseLost, type Run, type RunStore } from "./runs.ts";
-import { run, threadTool } from "./schema.ts";
+import { run, runMachine, threadTool } from "./schema.ts";
 
 const columns = {
   id: run.id,
@@ -42,20 +42,23 @@ const inCurrent = sql`${run.branchId} = ${thread.currentBranchId}`;
 
 const leases = leasesOn(run);
 
+// The event that ends a run in each way it ends.
+const ENDS = { completed: "complete", failed: "fail", cancelled: "cancel" } as const;
+
 export function createRunStore(db: Db): RunStore {
   function held(lease: Lease) {
     return and(eq(run.id, lease.runId), leases.held(lease), eq(run.status, "running"));
   }
 
-  function staleWhere(before: Date) {
-    return and(eq(run.status, "running"), leases.expired(before));
+  function staleWhere() {
+    return and(runMachine.from("takeOver", run.status), leases.expired());
   }
 
-  function take(owner: string, expiresAt: Date) {
+  function take(event: "claim" | "takeOver", owner: string, leaseMs: number) {
     return {
-      status: "running" as const,
-      ...leases.take(owner, expiresAt),
-      startedAt: sql`coalesce(${run.startedAt}, ${Date.now()})`,
+      ...runMachine.to(event),
+      ...leases.take(owner, leaseMs),
+      startedAt: sql`coalesce(${run.startedAt}, ${new Date()})`,
       updatedAt: new Date(),
     };
   }
@@ -64,231 +67,245 @@ export function createRunStore(db: Db): RunStore {
   const currentOf = (threadId: string) =>
     sql`(select ${thread.currentBranchId} from ${thread} where ${thread.id} = ${threadId})`;
 
-  function activeOn(branchId: string | ReturnType<typeof sql>) {
+  async function activeOn(branchId: string | ReturnType<typeof sql>) {
     return (
-      db
-        .select(columns)
-        .from(run)
-        .where(and(eq(run.branchId, branchId), inArray(run.status, ACTIVE)))
-        .get() ?? null
+      (
+        await db
+          .select(columns)
+          .from(run)
+          .where(and(eq(run.branchId, branchId), inArray(run.status, ACTIVE)))
+          .limit(1)
+      )[0] ?? null
     );
   }
 
-  function active(threadId: string) {
+  async function active(threadId: string) {
     return activeOn(currentOf(threadId));
   }
 
-  function requestCancelWhere(where: ReturnType<typeof and>, userId: string | null, at: Date) {
-    db.update(run)
+  async function requestCancelWhere(
+    where: ReturnType<typeof and>,
+    userId: string | null,
+    at: Date,
+  ) {
+    await db
+      .update(run)
       .set({ cancelRequestedAt: at, cancelRequestedBy: userId, updatedAt: at })
-      .where(and(where, inArray(run.status, ACTIVE), isNull(run.cancelRequestedAt)))
-      .run();
+      .where(and(where, inArray(run.status, ACTIVE), isNull(run.cancelRequestedAt)));
   }
 
   return {
     // In the thread's current branch when none is named.
-    create({ branchId, ...input }) {
-      return db
-        .insert(run)
-        .values({
-          id: ulid(),
-          status: "queued",
-          ...input,
-          branchId: branchId ?? currentOf(input.threadId),
-        })
-        .returning(columns)
-        .get();
+    async create({ branchId, ...input }) {
+      return (
+        await db
+          .insert(run)
+          .values({
+            id: ulid(),
+            status: "queued",
+            ...input,
+            branchId: branchId ?? currentOf(input.threadId),
+          })
+          .returning(columns)
+      )[0]!;
     },
 
     activeOn,
 
-    requestCancelOn(branchId, userId, at) {
-      requestCancelWhere(eq(run.branchId, branchId), userId, at);
+    async requestCancelOn(branchId, userId, at) {
+      await requestCancelWhere(eq(run.branchId, branchId), userId, at);
       return activeOn(branchId);
     },
 
-    find(id) {
-      return db.select(columns).from(run).where(eq(run.id, id)).get() ?? null;
+    async find(id) {
+      return (await db.select(columns).from(run).where(eq(run.id, id)).limit(1))[0] ?? null;
     },
 
-    latest(threadId) {
+    async latest(threadId) {
       return (
-        db
-          .select(columns)
-          .from(run)
-          .where(and(eq(run.threadId, threadId), eq(run.branchId, currentOf(threadId))))
-          // Ids made in the same millisecond do not sort by time; rows are numbered as inserted.
-          .orderBy(desc(sql`rowid`))
-          .limit(1)
-          .get() ?? null
+        (
+          await db
+            .select(columns)
+            .from(run)
+            .where(and(eq(run.threadId, threadId), eq(run.branchId, currentOf(threadId))))
+            .orderBy(desc(run.createdAt), desc(run.id))
+            .limit(1)
+        )[0] ?? null
       );
     },
 
     active,
 
-    activeThreadIds() {
-      return db
-        .select({ threadId: run.threadId })
-        .from(run)
-        .where(inArray(run.status, ACTIVE))
-        .all()
-        .map((row) => row.threadId);
+    async activeThreadIds() {
+      return (
+        await db.select({ threadId: run.threadId }).from(run).where(inArray(run.status, ACTIVE))
+      ).map((row) => row.threadId);
     },
 
     // Each thread's run in its current branch comes after any in its others.
-    activeInSpace(spaceId) {
-      return db
+    async activeInSpace(spaceId) {
+      return await db
         .select(columns)
         .from(run)
         .innerJoin(thread, eq(thread.id, run.threadId))
         .where(and(eq(thread.spaceId, spaceId), inArray(run.status, ACTIVE)))
-        .orderBy(inCurrent)
-        .all();
+        .orderBy(inCurrent);
     },
 
-    activeIn(threadIds) {
+    async activeIn(threadIds) {
       if (threadIds.length === 0) return [];
-      return db
+      return await db
         .select(columns)
         .from(run)
         .innerJoin(thread, eq(thread.id, run.threadId))
         .where(and(inArray(run.threadId, threadIds), inArray(run.status, ACTIVE)))
-        .orderBy(inCurrent)
-        .all();
+        .orderBy(inCurrent);
     },
 
-    requestCancel(threadId, userId, at) {
-      requestCancelWhere(eq(run.branchId, currentOf(threadId)), userId, at);
+    async requestCancel(threadId, userId, at) {
+      await requestCancelWhere(eq(run.branchId, currentOf(threadId)), userId, at);
       return active(threadId);
     },
 
-    claim(owner, expiresAt) {
+    // The oldest queued run another worker is not claiming at the same moment.
+    async claim(owner, leaseMs) {
       const next = db
         .select({ id: run.id })
         .from(run)
-        .where(eq(run.status, "queued"))
+        .where(runMachine.from("claim", run.status))
         .orderBy(asc(run.id))
-        .limit(1);
+        .limit(1)
+        .for("no key update", { skipLocked: true });
       return (
-        db
-          .update(run)
-          .set(take(owner, expiresAt))
-          .where(and(eq(run.status, "queued"), eq(run.id, sql`(${next})`)))
-          .returning(columns)
-          .get() ?? null
+        (
+          await db
+            .update(run)
+            .set(take("claim", owner, leaseMs))
+            .where(and(runMachine.from("claim", run.status), eq(run.id, sql`(${next})`)))
+            .returning(columns)
+        )[0] ?? null
       );
     },
 
-    takeOver(id, owner, expiresAt, before) {
+    async takeOver(id, owner, leaseMs) {
       return (
-        db
-          .update(run)
-          .set(take(owner, expiresAt))
-          .where(and(eq(run.id, id), staleWhere(before)))
-          .returning(columns)
-          .get() ?? null
+        (
+          await db
+            .update(run)
+            .set(take("takeOver", owner, leaseMs))
+            .where(and(eq(run.id, id), staleWhere()))
+            .returning(columns)
+        )[0] ?? null
       );
     },
 
-    stale(before) {
-      return db.select(columns).from(run).where(staleWhere(before)).orderBy(asc(run.id)).all();
+    async stale() {
+      return await db.select(columns).from(run).where(staleWhere()).orderBy(asc(run.id));
     },
 
-    hold(lease) {
-      const row = db.select(columns).from(run).where(held(lease)).get();
+    async hold(lease) {
+      const row = (await db.select(columns).from(run).where(held(lease)).limit(1))[0];
       if (!row) throw new LeaseLost(lease.runId);
       return row;
     },
 
-    renew(lease, expiresAt) {
-      const row = db
+    async renew(lease, leaseMs) {
+      const row = (
+        await db
+          .update(run)
+          .set({ ...leases.renew(leaseMs), updatedAt: new Date() })
+          .where(held(lease))
+          .returning(columns)
+      )[0];
+      if (!row) throw new LeaseLost(lease.runId);
+      return row;
+    },
+
+    async expire(lease) {
+      await db
         .update(run)
-        .set({ ...leases.renew(expiresAt), updatedAt: new Date() })
-        .where(held(lease))
-        .returning(columns)
-        .get();
-      if (!row) throw new LeaseLost(lease.runId);
-      return row;
-    },
-
-    expire(lease) {
-      db.update(run)
         .set({ ...leases.expire(), updatedAt: new Date() })
-        .where(held(lease))
-        .run();
+        .where(held(lease));
     },
 
-    setModel(lease, model) {
-      const row = db
-        .update(run)
-        .set({ model, updatedAt: new Date() })
-        .where(held(lease))
-        .returning({ id: run.id })
-        .get();
+    async setModel(lease, model) {
+      const row = (
+        await db
+          .update(run)
+          .set({ model, updatedAt: new Date() })
+          .where(held(lease))
+          .returning({ id: run.id })
+      )[0];
       if (!row) throw new LeaseLost(lease.runId);
     },
 
-    turnOn(lease, callId, toolIds) {
-      const current = db.select({ threadId: run.threadId }).from(run).where(held(lease)).get();
+    async turnOn(lease, callId, toolIds) {
+      const current = (
+        await db.select({ threadId: run.threadId }).from(run).where(held(lease)).limit(1)
+      )[0];
       if (!current) throw new LeaseLost(lease.runId);
-      const on = db
-        .select({ count: sql<number>`count(*)` })
-        .from(threadTool)
-        .where(eq(threadTool.threadId, current.threadId))
-        .get();
+      const on = (
+        await db
+          .select({ count: sql<number>`count(*)` })
+          .from(threadTool)
+          .where(eq(threadTool.threadId, current.threadId))
+          .limit(1)
+      )[0];
       const values = [...new Set(toolIds)].map((toolId, index) => ({
         threadId: current.threadId,
         toolId,
         callId,
         position: (on?.count ?? 0) + index,
       }));
-      if (values.length > 0) db.insert(threadTool).values(values).onConflictDoNothing().run();
+      if (values.length > 0) await db.insert(threadTool).values(values).onConflictDoNothing();
     },
 
-    toolsOn(threadId) {
-      return db
+    async toolsOn(threadId) {
+      return await db
         .select({ id: threadTool.toolId, callId: threadTool.callId })
         .from(threadTool)
         .where(eq(threadTool.threadId, threadId))
-        .orderBy(asc(threadTool.position))
-        .all();
+        .orderBy(asc(threadTool.position));
     },
 
-    wait(lease) {
-      const row = db
-        .update(run)
-        .set({ status: "waiting", ...leases.release(), updatedAt: new Date() })
-        .where(held(lease))
-        .returning(columns)
-        .get();
+    async wait(lease) {
+      const row = (
+        await db
+          .update(run)
+          .set({ ...runMachine.to("wait"), ...leases.release(), updatedAt: new Date() })
+          .where(and(held(lease), runMachine.from("wait", run.status)))
+          .returning(columns)
+      )[0];
       if (!row) throw new LeaseLost(lease.runId);
       return row;
     },
 
-    resume(runId) {
-      const row = db
-        .update(run)
-        .set({ status: "queued", updatedAt: new Date() })
-        .where(and(eq(run.id, runId), eq(run.status, "waiting")))
-        .returning({ id: run.id })
-        .get();
+    async resume(runId) {
+      const row = (
+        await db
+          .update(run)
+          .set({ ...runMachine.to("resume"), updatedAt: new Date() })
+          .where(and(eq(run.id, runId), runMachine.from("resume", run.status)))
+          .returning({ id: run.id })
+      )[0];
       return !!row;
     },
 
-    end(lease, { status, usage }): Run {
+    async end(lease, { status, usage }): Promise<Run> {
       const now = new Date();
-      const row = db
-        .update(run)
-        .set({
-          status,
-          ...(usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }),
-          ...leases.release(),
-          endedAt: now,
-          updatedAt: now,
-        })
-        .where(held(lease))
-        .returning(columns)
-        .get();
+      const row = (
+        await db
+          .update(run)
+          .set({
+            ...runMachine.to(ENDS[status]),
+            ...(usage && { inputTokens: usage.inputTokens, outputTokens: usage.outputTokens }),
+            ...leases.release(),
+            endedAt: now,
+            updatedAt: now,
+          })
+          .where(and(held(lease), runMachine.from(ENDS[status], run.status)))
+          .returning(columns)
+      )[0];
       if (!row) throw new LeaseLost(lease.runId);
       return row;
     },

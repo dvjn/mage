@@ -25,7 +25,7 @@ import {
   type TranscriptRow,
 } from "@/shared/transcript.ts";
 
-import { noticeMessage, notificationLine } from "./context.ts";
+import { notificationLine } from "./context.ts";
 import { personLabel } from "@/shared/people.ts";
 
 // About how many tokens of the most recent conversation are kept word for word.
@@ -95,12 +95,14 @@ export function keptFrom(rows: readonly TranscriptRow[]) {
 // The rows with those the agent reads word for word made whole by `whole`, which reads the results
 // kept apart from the log back into the rows it is given; those before the latest compaction's cut
 // are left as they are.
-export function wholeWhereRead<Row extends TranscriptRow>(
+export async function wholeWhereRead<Row extends TranscriptRow>(
   rows: readonly Row[],
-  whole: (rows: readonly Row[]) => readonly Row[],
-): readonly Row[] {
+  whole: (rows: readonly Row[]) => Promise<readonly Row[]>,
+): Promise<readonly Row[]> {
   const from = keptFrom(rows);
-  return from === 0 ? whole(rows) : [...rows.slice(0, from), ...whole(rows.slice(from))];
+  return from === 0
+    ? await whole(rows)
+    : [...rows.slice(0, from), ...(await whole(rows.slice(from)))];
 }
 
 // What the agent reads of the thread: the summary of its latest compaction, if any, and the rows
@@ -177,8 +179,6 @@ export function conversationText(rows: readonly TranscriptRow[]) {
         lines.push(`[${personLabel(row.author)}]: ${row.command?.text ?? row.text}`);
     } else if (row.kind === "relay") {
       lines.push(notificationLine(row));
-    } else if (row.kind === "notice") {
-      lines.push(noticeMessage(row).text);
     } else if (row.kind === "agent") {
       if (readReply(row) && row.text) lines.push(`[Agent]: ${row.text}`);
     } else if (row.kind === "tool") {
@@ -381,7 +381,7 @@ export async function compact(input: {
   request?: ThreadRequest;
   focus?: string;
   actor: Actor;
-  write: <T>(work: (append: (event: NewEvent) => void) => T) => T;
+  write: <T>(work: (append: (event: NewEvent) => Promise<unknown>) => Promise<T>) => Promise<T>;
   signal: AbortSignal;
 }): Promise<Compacted | null> {
   const { rows, focus = "", actor, write } = input;
@@ -400,7 +400,7 @@ export async function compact(input: {
     tokensAfter: tokensOf(summary) + tokens(at),
   };
   const used = usage.inputTokens + usage.outputTokens > 0 || usage.cost !== undefined;
-  write((append) =>
+  await write(async (append) =>
     append({
       type: "thread.compacted",
       actor,

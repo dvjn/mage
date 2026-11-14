@@ -6,7 +6,7 @@
 // checks for a run under way, so one arriving as a run ends is either taken up by that run's end,
 // which starts the next run on it, or starts one itself.
 
-import type { EventBus } from "@/server/kernel/event-bus.ts";
+import type { Signals } from "@/server/sync/signals.ts";
 import type { Append, ThreadLog } from "@/server/threads/log.ts";
 import type { Transcripts } from "@/server/threads/transcripts.ts";
 import type {
@@ -63,9 +63,9 @@ export interface NotifierOptions {
   transcripts: Pick<Transcripts, "of">;
   runs: Pick<RunStore, "active" | "create">;
   log: ThreadLog;
-  bus: EventBus;
+  bus: Signals;
   // Whether the thread's agent may be started on what waits for it now; always when not given.
-  mayStart?: (threadId: string) => boolean;
+  mayStart?: (threadId: string) => Promise<boolean>;
 }
 
 export type Notifier = ReturnType<typeof createNotifier>;
@@ -85,12 +85,12 @@ export function createNotifier(options: NotifierOptions) {
   const mayStart = options.mayStart ?? (() => true);
 
   // Starts the thread's agent on the notifications waiting for it, when it is idle and may run.
-  function startIfFree(threadId: string, append: Append) {
-    if (runs.active(threadId)) return;
-    const { inbox } = transcripts.of(threadId).transcript();
+  async function startIfFree(threadId: string, append: Append) {
+    if (await runs.active(threadId)) return;
+    const { inbox } = (await transcripts.of(threadId)).transcript();
     const waiting = waking(inbox);
-    if (waiting.length === 0 || !mayStart(threadId)) return;
-    startRun(
+    if (waiting.length === 0 || !(await mayStart(threadId))) return;
+    await startRun(
       runs,
       append,
       { threadId, triggerSeq: waiting[0]!.seq, createdBy: null },
@@ -100,15 +100,15 @@ export function createNotifier(options: NotifierOptions) {
 
   return {
     // Leaves the notification in the thread, and starts its agent on it when it is idle.
-    send(threadId: string, notification: Notification) {
+    async send(threadId: string, notification: Notification) {
       const actor = actorOf(notification);
-      const { result } = log.write(threadId, (append) => {
-        const stored = append({
+      const { result } = await log.write(threadId, async (append) => {
+        const stored = await append({
           type: "notification",
           actor: { kind: "agent" },
           data: { ...notification, ...(actor && { actor }) },
         });
-        if (notification.wake !== false) startIfFree(threadId, append);
+        if (notification.wake !== false) await startIfFree(threadId, append);
         return stored;
       });
       bus.wake(threadId);
@@ -116,8 +116,8 @@ export function createNotifier(options: NotifierOptions) {
     },
 
     // Starts the thread's agent on what waits for it, when it is idle and now may run.
-    wake(threadId: string) {
-      log.write(threadId, (append) => startIfFree(threadId, append));
+    async wake(threadId: string) {
+      await log.write(threadId, async (append) => startIfFree(threadId, append));
       bus.wake(threadId);
     },
   };

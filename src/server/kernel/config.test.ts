@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { loadConfig } from "./config.ts";
 
 const valid = {
+  DATABASE_URL: "postgres://mage:mage@localhost:5432/mage",
   BASE_URL: "http://localhost:4783",
   AUTH_SECRET: "test-secret-that-is-long-enough-1234567890",
   CREDENTIAL_KEY: Buffer.alloc(32, 7).toString("base64"),

@@ -29,9 +29,9 @@ export type WatchStore = ReturnType<typeof createWatchStore>;
 
 export function createWatchStore(db: Db) {
   // The watches found, each with its subjects, oldest first.
-  function withSubjects(rows: (typeof threadWatch.$inferSelect)[]): Watch[] {
+  async function withSubjects(rows: (typeof threadWatch.$inferSelect)[]): Promise<Watch[]> {
     if (rows.length === 0) return [];
-    const subjects = db
+    const subjects = await db
       .select()
       .from(threadWatchSubject)
       .where(
@@ -39,8 +39,7 @@ export function createWatchStore(db: Db) {
           threadWatchSubject.watchId,
           rows.map((row) => row.id),
         ),
-      )
-      .all();
+      );
     return rows.map(({ createdAt: _at, ...row }) => ({
       ...row,
       subjects: subjects.filter((one) => one.watchId === row.id).map((one) => one.subjectId),
@@ -48,54 +47,58 @@ export function createWatchStore(db: Db) {
   }
 
   return {
-    add(watch: Watch) {
-      db.transaction(() => {
+    async add(watch: Watch) {
+      await db.transaction(async () => {
         const { subjects, ...row } = watch;
-        db.insert(threadWatch).values(row).run();
-        db.insert(threadWatchSubject)
-          .values(subjects.map((subjectId) => ({ watchId: watch.id, subjectId })))
-          .run();
+        await db.insert(threadWatch).values(row);
+        await db
+          .insert(threadWatchSubject)
+          .values(subjects.map((subjectId) => ({ watchId: watch.id, subjectId })));
       });
     },
 
     // The watches on the owner's tasks or subagents.
-    on(ownerId: string, kind: WatchKind): Watch[] {
+    async on(ownerId: string, kind: WatchKind): Promise<Watch[]> {
       return withSubjects(
-        db
+        await db
           .select()
           .from(threadWatch)
           .where(and(eq(threadWatch.ownerId, ownerId), eq(threadWatch.kind, kind)))
-          .orderBy(threadWatch.createdAt, threadWatch.id)
-          .all(),
+          .orderBy(threadWatch.createdAt, threadWatch.id),
       );
     },
 
     // The watches the thread's agent set of the kind.
-    setIn(threadId: string, kind: WatchKind): Watch[] {
+    async setIn(threadId: string, kind: WatchKind): Promise<Watch[]> {
       return withSubjects(
-        db
+        await db
           .select()
           .from(threadWatch)
           .where(and(eq(threadWatch.threadId, threadId), eq(threadWatch.kind, kind)))
-          .orderBy(threadWatch.createdAt, threadWatch.id)
-          .all(),
+          .orderBy(threadWatch.createdAt, threadWatch.id),
       );
     },
 
     // How many watches the thread's agent has, of either kind.
-    count(threadId: string) {
+    async count(threadId: string) {
       return (
-        db
-          .select({ total: count() })
-          .from(threadWatch)
-          .where(eq(threadWatch.threadId, threadId))
-          .get()?.total ?? 0
+        (
+          await db
+            .select({ total: count() })
+            .from(threadWatch)
+            .where(eq(threadWatch.threadId, threadId))
+            .limit(1)
+        )[0]?.total ?? 0
       );
     },
 
     // Ends the watch; false when it had ended already.
-    end(id: string) {
-      return db.delete(threadWatch).where(eq(threadWatch.id, id)).run().changes > 0;
+    async end(id: string) {
+      const ended = await db
+        .delete(threadWatch)
+        .where(eq(threadWatch.id, id))
+        .returning({ id: threadWatch.id });
+      return ended.length > 0;
     },
   };
 }

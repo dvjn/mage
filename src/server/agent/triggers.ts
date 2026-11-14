@@ -7,18 +7,19 @@
 // and leaves the row due. A firing happens once. Firings missed while the server was down happen
 // once, and the next time is worked out from then.
 
+import { and, eq, lte, notInArray } from "drizzle-orm";
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { Cron } from "croner";
 import { ulid } from "ulid";
 import * as z from "zod";
 
-import type { Transact } from "@/server/db/db.ts";
-import type { EventBus } from "@/server/kernel/event-bus.ts";
+import type { Sync, Transact } from "@/server/sync/sync.ts";
+import type { Signals } from "@/server/sync/signals.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
-import type { ThreadAccess } from "@/server/spaces/thread-access.ts";
+import type { ThreadAccess } from "@/server/access/access.ts";
 import type { ThreadLog } from "@/server/threads/log.ts";
 import type { ThreadStore } from "@/server/threads/service.ts";
 import type { Transcripts } from "@/server/threads/transcripts.ts";
@@ -43,6 +44,7 @@ import {
 } from "@/shared/triggers.ts";
 
 import { type Notifier, silentChange } from "./notifications.ts";
+import { threadTrigger } from "./schema.ts";
 import { steeringIn, type Subagents } from "./subagents.ts";
 import type { Toolset, ToolSpec } from "./tools.ts";
 
@@ -73,34 +75,32 @@ export interface TriggerStore {
       TriggerRecord,
       "createdAt" | "lastFiredAt" | "hookToken" | "secretKeyVersion" | "secret"
     > & { hookToken?: string },
-  ): TriggerRecord;
-  find(id: string): TriggerRecord | null;
-  findByToken(token: string): TriggerRecord | null;
-  userName(userId: string): string | null;
+  ): Promise<TriggerRecord>;
+  find(id: string): Promise<TriggerRecord | null>;
+  findByToken(token: string): Promise<TriggerRecord | null>;
+  userName(userId: string): Promise<string | null>;
   // Sets a webhook's signing secret, sealed, or clears it.
-  setSecret(id: string, secret: string | null): void;
+  setSecret(id: string, secret: string | null): Promise<void>;
   // A webhook's signing secret, opened.
   openSecret(record: TriggerRecord): string | null;
   // Notes that a webhook was posted to.
-  delivered(id: string, at: Date): void;
+  delivered(id: string, at: Date): Promise<void>;
   // The thread's triggers that are active or paused, oldest first.
-  inThread(threadId: string): TriggerRecord[];
-  // Every trigger the thread ever had, deleted and finished ones too.
-  everInThread(threadId: string): TriggerRecord[];
+  inThread(threadId: string): Promise<TriggerRecord[]>;
   update(
     id: string,
     fields: Partial<Pick<TriggerRecord, "status" | "nextRunAt">>,
-  ): TriggerRecord | undefined;
+  ): Promise<TriggerRecord | undefined>;
   // Rows whose time has come.
-  due(now: Date, limit: number): TriggerRecord[];
+  due(now: Date, limit: number): Promise<TriggerRecord[]>;
   // Moves a row as it was read on to its next time, noting it fired; null when another instance
   // did first.
   advance(
     seen: TriggerRecord,
     fields: Pick<TriggerRecord, "nextRunAt" | "lastFiredAt">,
-  ): TriggerRecord | null;
+  ): Promise<TriggerRecord | null>;
   // Marks a fired one-shot as done, unless it was paused or deleted meanwhile.
-  finishOnce(id: string): void;
+  finishOnce(id: string): Promise<void>;
 }
 
 // What the agent is told about them.
@@ -110,8 +110,6 @@ export const TRIGGERS_GUIDANCE =
 // How many due rows one tick takes at most, and how often it looks.
 const TICK_BATCH = 50;
 const TICK_MS = 5_000;
-// How long after its last firing an ended trigger may still own an event that carries no id.
-const ENDED_SLACK_MS = 60_000;
 
 export interface TriggersOptions {
   triggers: TriggerStore;
@@ -120,14 +118,16 @@ export interface TriggersOptions {
   access: Pick<ThreadAccess, "require">;
   subagents: Pick<Subagents, "find" | "mayStart">;
   log: ThreadLog;
-  bus: EventBus;
+  bus: Signals;
   logger: Logger;
   // What the agent of the space's threads goes by.
-  agentNameIn?: (spaceId: string) => string;
+  agentNameIn?: (spaceId: string) => Promise<string>;
   // The address the server is reached at, for the URLs of webhooks.
   baseUrl: string;
   // Fires a trigger and moves it on in one transaction.
   transact: Transact;
+  // Takes due rows, and looks for them now and then.
+  sync: Pick<Sync, "claimDue" | "ticker">;
   tickMs?: number;
   notifier: Notifier;
   now?: () => Date;
@@ -138,13 +138,12 @@ export type Triggers = ReturnType<typeof createTriggers>;
 // A call the tool refuses, with what the model is told.
 class ToolRefusal extends Error {}
 
-function refusing<T>(work: () => T) {
+async function refusing(work: () => unknown) {
   try {
-    return Promise.resolve({ ok: true as const, value: work() as unknown });
+    return { ok: true as const, value: await work() };
   } catch (err) {
-    if (err instanceof ToolRefusal)
-      return Promise.resolve({ ok: false as const, error: err.message });
-    return Promise.reject(err);
+    if (err instanceof ToolRefusal) return { ok: false as const, error: err.message };
+    throw err;
   }
 }
 
@@ -182,8 +181,8 @@ export function createTriggers(options: TriggersOptions) {
     bus.activity({ threadId, rows: true });
   }
 
-  function rowsOf(threadId: string) {
-    return options.transcripts.of(threadId).transcript().rows;
+  async function rowsOf(threadId: string) {
+    return (await options.transcripts.of(threadId)).transcript().rows;
   }
 
   // One as the agent reads it in a list, whatever its kind.
@@ -206,56 +205,32 @@ export function createTriggers(options: TriggersOptions) {
     };
   }
 
-  // What a trigger fired, oldest first, from the notifications it left in the thread. Older ones do
-  // not carry the trigger's id: those count when they are of its kind, name it, and it is the only
-  // trigger of that name and kind that existed when they came in. Nothing records when a trigger
-  // was deleted, so one that ended is taken to have existed until its last firing.
-  function firings(record: TriggerRecord) {
-    const kind = record.kind === "webhook" ? "webhook.received" : "trigger.fired";
-    const peers = triggers
-      .everInThread(record.threadId)
-      .filter(
-        (one) =>
-          one.name === record.name && (one.kind === "webhook") === (kind === "webhook.received"),
-      );
-    const existed = (one: TriggerRecord, at: Date) =>
-      at >= one.createdAt &&
-      (one.status === "active" ||
-        one.status === "paused" ||
-        (one.lastFiredAt !== null && at.getTime() <= one.lastFiredAt.getTime() + ENDED_SLACK_MS));
-    return threads.eventsOfType(record.threadId, "notification").filter((event) => {
-      if (event.type !== "notification") return false;
-      const { data } = event;
-      if (data.trigger) return data.trigger === record.id;
-      return (
-        data.kind === kind &&
-        data.source.threadId === record.threadId &&
-        data.source.name === record.name &&
-        existed(record, event.createdAt) &&
-        peers.filter((one) => existed(one, event.createdAt)).length === 1
-      );
-    });
+  // What a trigger fired, oldest first, from the notifications it left in the thread.
+  async function firings(record: TriggerRecord) {
+    return (await threads.eventsOfType(record.threadId, "notification")).filter(
+      (event) => event.type === "notification" && event.data.trigger === record.id,
+    );
   }
 
   function hookUrl(record: TriggerRecord) {
     return new URL(`${HOOK_PATH}${record.hookToken}`, options.baseUrl).toString();
   }
 
-  function agentName(threadId: string) {
-    const thread = threads.find(threadId);
-    return subagents.find(threadId)?.name ?? agentNameIn(thread?.spaceId ?? "");
+  async function agentName(threadId: string) {
+    const thread = await threads.find(threadId);
+    return (await subagents.find(threadId))?.name ?? (await agentNameIn(thread?.spaceId ?? ""));
   }
 
-  function mine(id: string, threadId: string) {
-    const record = triggers.find(id);
+  async function mine(id: string, threadId: string) {
+    const record = await triggers.find(id);
     if (!record || record.threadId !== threadId || record.status === "deleted") {
       throw new ToolRefusal(`No trigger has the id ${id}.`);
     }
     return record;
   }
 
-  function room(threadId: string) {
-    if (triggers.inThread(threadId).length >= TRIGGER_LIMIT) {
+  async function room(threadId: string) {
+    if ((await triggers.inThread(threadId)).length >= TRIGGER_LIMIT) {
       throw new ToolRefusal(
         `This thread has ${TRIGGER_LIMIT} triggers. Delete some with triggers.delete first.`,
       );
@@ -263,10 +238,10 @@ export function createTriggers(options: TriggersOptions) {
   }
 
   // A live trigger's name is its own in the thread, whatever the case.
-  function unique(threadId: string, name: string) {
-    const clash = triggers
-      .inThread(threadId)
-      .find((one) => one.name.toLowerCase() === name.toLowerCase());
+  async function unique(threadId: string, name: string) {
+    const clash = (await triggers.inThread(threadId)).find(
+      (one) => one.name.toLowerCase() === name.toLowerCase(),
+    );
     if (clash) {
       const what =
         clash.kind === "webhook" ? "webhook" : clash.kind === "cron" ? "schedule" : "trigger";
@@ -296,7 +271,7 @@ export function createTriggers(options: TriggersOptions) {
     }),
     risk: () => "normal",
     run(input, ctx) {
-      return refusing(() => {
+      return refusing(async () => {
         if ((input.in_seconds === undefined) === (input.at === undefined)) {
           throw new ToolRefusal("Give in_seconds or at, not both and not neither.");
         }
@@ -312,8 +287,8 @@ export function createTriggers(options: TriggersOptions) {
         if (when.getTime() - start.getTime() > WAKE_HORIZON * 1000) {
           throw new ToolRefusal("That is more than a year ahead.");
         }
-        room(ctx.threadId);
-        const record = triggers.create({
+        await room(ctx.threadId);
+        const record = await triggers.create({
           id: ulid(),
           threadId: ctx.threadId,
           kind: "once",
@@ -321,8 +296,8 @@ export function createTriggers(options: TriggersOptions) {
           cron: null,
           timezone: null,
           prompt: input.note,
-          steeredBy: steeringIn(rowsOf(ctx.threadId)),
-          createdByLabel: agentName(ctx.threadId),
+          steeredBy: steeringIn(await rowsOf(ctx.threadId)),
+          createdByLabel: await agentName(ctx.threadId),
           status: "active",
           nextRunAt: when,
         });
@@ -352,12 +327,12 @@ export function createTriggers(options: TriggersOptions) {
     }),
     risk: () => "normal",
     run(input, ctx) {
-      return refusing(() => {
+      return refusing(async () => {
         const timezone = input.timezone ?? "UTC";
         const next = checkCron(input.cron, timezone, now());
-        room(ctx.threadId);
-        unique(ctx.threadId, input.name);
-        const record = triggers.create({
+        await room(ctx.threadId);
+        await unique(ctx.threadId, input.name);
+        const record = await triggers.create({
           id: ulid(),
           threadId: ctx.threadId,
           kind: "cron",
@@ -365,8 +340,8 @@ export function createTriggers(options: TriggersOptions) {
           cron: input.cron,
           timezone,
           prompt: input.prompt,
-          steeredBy: steeringIn(rowsOf(ctx.threadId)),
-          createdByLabel: agentName(ctx.threadId),
+          steeredBy: steeringIn(await rowsOf(ctx.threadId)),
+          createdByLabel: await agentName(ctx.threadId),
           status: "active",
           nextRunAt: next,
         });
@@ -390,10 +365,10 @@ export function createTriggers(options: TriggersOptions) {
     // Opens the thread to the outside world, so every call waits for a person, whatever is allowed.
     risk: () => "ask",
     run(input, ctx) {
-      return refusing(() => {
-        room(ctx.threadId);
-        unique(ctx.threadId, input.name);
-        const record = triggers.create({
+      return refusing(async () => {
+        await room(ctx.threadId);
+        await unique(ctx.threadId, input.name);
+        const record = await triggers.create({
           id: ulid(),
           threadId: ctx.threadId,
           kind: "webhook",
@@ -401,8 +376,8 @@ export function createTriggers(options: TriggersOptions) {
           cron: null,
           timezone: null,
           prompt: input.note,
-          steeredBy: steeringIn(rowsOf(ctx.threadId)),
-          createdByLabel: agentName(ctx.threadId),
+          steeredBy: steeringIn(await rowsOf(ctx.threadId)),
+          createdByLabel: await agentName(ctx.threadId),
           status: "active",
           nextRunAt: null,
           hookToken: randomBytes(24).toString("base64url"),
@@ -423,8 +398,8 @@ export function createTriggers(options: TriggersOptions) {
     input: z.object({}).strict() as z.ZodType<Record<string, never>>,
     risk: () => "normal",
     run(_input, ctx) {
-      return refusing(() => ({
-        triggers: triggers.inThread(ctx.threadId).map(brief),
+      return refusing(async () => ({
+        triggers: (await triggers.inThread(ctx.threadId)).map(brief),
       }));
     },
   };
@@ -438,9 +413,9 @@ export function createTriggers(options: TriggersOptions) {
     input: z.object({ id: z.string().min(1).meta({ title: "Id" }) }),
     risk: () => "normal",
     run({ id }, ctx) {
-      return refusing(() => {
-        const record = mine(id, ctx.threadId);
-        triggers.update(record.id, { status: "deleted", nextRunAt: null });
+      return refusing(async () => {
+        const record = await mine(id, ctx.threadId);
+        await triggers.update(record.id, { status: "deleted", nextRunAt: null });
         changed(ctx.threadId);
         return { deleted: id };
       });
@@ -448,9 +423,9 @@ export function createTriggers(options: TriggersOptions) {
   };
 
   // Tells the thread's agent the trigger went off.
-  function fire(record: TriggerRecord) {
+  async function fire(record: TriggerRecord) {
     const once = record.kind === "once";
-    notifier.send(record.threadId, {
+    await notifier.send(record.threadId, {
       kind: "trigger.fired",
       trigger: record.id,
       source: { threadId: record.threadId, name: record.name, main: true },
@@ -478,7 +453,7 @@ export function createTriggers(options: TriggersOptions) {
 
   // Takes a post to a webhook's address and tells the thread's agent, as data. Unknown and deleted
   // webhooks are not found; one with a signing secret takes only posts signed with it.
-  function deliver(
+  async function deliver(
     token: string,
     post: {
       body: Uint8Array;
@@ -486,7 +461,7 @@ export function createTriggers(options: TriggersOptions) {
       signature: string | null;
     },
   ) {
-    const record = triggers.findByToken(token);
+    const record = await triggers.findByToken(token);
     if (!record || record.kind !== "webhook" || record.status === "deleted") {
       throw new ServiceError(404, "Not found");
     }
@@ -500,7 +475,7 @@ export function createTriggers(options: TriggersOptions) {
       }
     }
     if (record.status !== "active") throw new ServiceError(409, "This webhook is paused");
-    notifier.send(record.threadId, {
+    await notifier.send(record.threadId, {
       kind: "webhook.received",
       trigger: record.id,
       source: { threadId: record.threadId, name: record.name, main: true },
@@ -515,60 +490,77 @@ export function createTriggers(options: TriggersOptions) {
         signed: !!secret,
       },
     });
-    triggers.delivered(record.id, now());
+    await triggers.delivered(record.id, now());
     changed(record.threadId);
   }
 
-  // Takes every due trigger and fires it; returns how many fired here.
-  function tick() {
+  // Takes the due triggers one at a time, each in a transaction of its own that locks its row, so
+  // instances ticking together share them out; returns how many fired here. One that fails is
+  // left for the next tick.
+  async function tick() {
     const start = now();
     let fired = 0;
-    for (const seen of triggers.due(start, TICK_BATCH)) {
-      // The next time is worked out from now, so firings missed while down happen once.
-      let next: Date | null = null;
+    const failed: string[] = [];
+    for (let taken = 0; taken < TICK_BATCH; taken += 1) {
+      let seen: TriggerRecord | undefined;
       try {
-        if (seen.kind === "cron") next = nextRun(seen.cron!, seen.timezone ?? "UTC", start);
-      } catch (err) {
-        logger.warn({ err, triggerId: seen.id }, "trigger has no next time");
-      }
-      try {
-        const done = options.transact(() => {
-          const claimed = triggers.advance(seen, { nextRunAt: next, lastFiredAt: start });
+        const done = await options.transact(async () => {
+          [seen] = await options.sync.claimDue(threadTrigger, {
+            where: and(
+              eq(threadTrigger.status, "active"),
+              lte(threadTrigger.nextRunAt, start),
+              failed.length > 0 ? notInArray(threadTrigger.id, failed) : undefined,
+            )!,
+            orderBy: threadTrigger.nextRunAt,
+            limit: 1,
+          });
+          if (!seen) return null;
+          // The next time is worked out from now, so firings missed while down happen once.
+          let next: Date | null = null;
+          try {
+            if (seen.kind === "cron") next = nextRun(seen.cron!, seen.timezone ?? "UTC", start);
+          } catch (err) {
+            logger.warn({ err, triggerId: seen.id }, "trigger has no next time");
+          }
+          const claimed = await triggers.advance(seen, { nextRunAt: next, lastFiredAt: start });
           if (!claimed) return false;
-          fire(claimed);
-          if (claimed.kind === "once" || !next) triggers.finishOnce(claimed.id);
+          await fire(claimed);
+          if (claimed.kind === "once" || !next) await triggers.finishOnce(claimed.id);
           return true;
         });
+        if (done === null) break;
         if (!done) continue;
         fired += 1;
-        changed(seen.threadId);
+        changed(seen!.threadId);
       } catch (err) {
         // Rolled back: the row is still due, and the next tick tries again.
-        logger.warn({ err, triggerId: seen.id }, "trigger did not fire");
+        logger.warn({ err, triggerId: seen?.id }, "trigger did not fire");
+        if (!seen) break;
+        failed.push(seen.id);
       }
     }
     return fired;
   }
 
-  let timer: ReturnType<typeof setInterval> | undefined;
+  const ticker = options.sync.ticker("schedules", tick, options.tickMs ?? TICK_MS);
 
-  function props(principal: Principal, threadId: string, action: "read" | "post") {
-    return options.access.require(principal, threadId, action).thread;
+  async function props(principal: Principal, threadId: string, action: "read" | "post") {
+    return (await options.access.require(principal, threadId, action)).thread;
   }
 
   // Tells the thread's agent, without waking it, that a person did something to one of its triggers.
-  function told(
+  async function told(
     principal: Principal,
     record: TriggerRecord,
     did: string,
     action: Change["action"],
     to?: string,
   ) {
-    const who = triggers.userName(principal.userId) ?? "Someone";
+    const who = (await triggers.userName(principal.userId)) ?? "Someone";
     const kind =
       record.kind === "webhook" ? "webhook" : record.kind === "once" ? "wake-up" : "schedule";
     const name = record.kind === "once" ? record.prompt : record.name;
-    notifier.send(
+    await notifier.send(
       record.threadId,
       silentChange(
         record.threadId,
@@ -591,14 +583,14 @@ export function createTriggers(options: TriggersOptions) {
     deleted: ["deleted", "delete"],
   };
 
-  function changeStatus(
+  async function changeStatus(
     principal: Principal,
     threadId: string,
     id: string,
     to: "active" | "paused" | "deleted",
   ) {
-    const thread = props(principal, threadId, "post");
-    const record = triggers.find(id);
+    const thread = await props(principal, threadId, "post");
+    const record = await triggers.find(id);
     if (!record || record.threadId !== thread.id || record.status === "deleted") {
       throw new ServiceError(404, "Trigger not found");
     }
@@ -610,9 +602,9 @@ export function createTriggers(options: TriggersOptions) {
         : to === "deleted"
           ? null
           : record.nextRunAt;
-    triggers.update(id, { status: to, nextRunAt: next });
+    await triggers.update(id, { status: to, nextRunAt: next });
     changed(thread.id);
-    if (record.status !== to) told(principal, record, ...DID[to]);
+    if (record.status !== to) await told(principal, record, ...DID[to]);
   }
 
   return {
@@ -632,28 +624,21 @@ export function createTriggers(options: TriggersOptions) {
     deliver,
 
     // Starts looking for due triggers, now and then every few seconds.
-    start() {
-      if (timer) return;
-      const safely = () => {
-        try {
-          tick();
-        } catch (err) {
-          logger.error({ err }, "trigger tick failed");
-        }
-      };
-      safely();
-      timer = setInterval(safely, options.tickMs ?? TICK_MS);
-      timer.unref();
+    async start() {
+      await ticker.start();
     },
 
-    stop() {
-      clearInterval(timer);
-      timer = undefined;
+    async stop() {
+      await ticker.stop();
     },
 
     // The card of the trigger a call set, as the reader sees it.
-    workFor(id: string, threadId: string, canChange: boolean): BackgroundWork | null {
-      const record = triggers.find(id);
+    async workFor(
+      id: string,
+      threadId: string,
+      canChange: boolean,
+    ): Promise<BackgroundWork | null> {
+      const record = await triggers.find(id);
       if (!record || record.threadId !== threadId) return null;
       const status =
         record.status === "active"
@@ -684,7 +669,7 @@ export function createTriggers(options: TriggersOptions) {
             ...(record.lastFiredAt && {
               lastFiredAt: record.lastFiredAt.toISOString(),
             }),
-            fired: firings(record).length,
+            fired: (await firings(record)).length,
             canChange: change,
           },
         };
@@ -714,7 +699,7 @@ export function createTriggers(options: TriggersOptions) {
           ...(record.lastFiredAt && {
             lastFiredAt: record.lastFiredAt.toISOString(),
           }),
-          fired: firings(record).length,
+          fired: (await firings(record)).length,
           canChange: canChange && (record.status === "active" || record.status === "paused"),
         },
       };
@@ -722,13 +707,18 @@ export function createTriggers(options: TriggersOptions) {
 
     // A page of what a schedule fired or a webhook took, newest first, for anyone who may read the
     // thread.
-    history(principal: Principal, threadId: string, id: string, offset: number): TriggerHistory {
-      const thread = props(principal, threadId, "read");
-      const record = triggers.find(id);
+    async history(
+      principal: Principal,
+      threadId: string,
+      id: string,
+      offset: number,
+    ): Promise<TriggerHistory> {
+      const thread = await props(principal, threadId, "read");
+      const record = await triggers.find(id);
       if (!record || record.threadId !== thread.id || record.status === "deleted") {
         throw new ServiceError(404, "Trigger not found");
       }
-      const all = firings(record).reverse();
+      const all = (await firings(record)).reverse();
       return {
         entries: all.slice(offset, offset + HISTORY_PAGE).map((event) => {
           const delivery = event.type === "notification" ? event.data.delivery : undefined;
@@ -744,9 +734,9 @@ export function createTriggers(options: TriggersOptions) {
     },
 
     // A person sets a webhook's signing secret, or clears it with null.
-    setSecret(principal: Principal, threadId: string, id: string, secret: string | null) {
-      const thread = props(principal, threadId, "post");
-      const record = triggers.find(id);
+    async setSecret(principal: Principal, threadId: string, id: string, secret: string | null) {
+      const thread = await props(principal, threadId, "post");
+      const record = await triggers.find(id);
       if (
         !record ||
         record.threadId !== thread.id ||
@@ -756,9 +746,9 @@ export function createTriggers(options: TriggersOptions) {
         throw new ServiceError(404, "Webhook not found");
       }
       const next = secret?.trim() || null;
-      triggers.setSecret(id, next);
+      await triggers.setSecret(id, next);
       changed(thread.id);
-      told(
+      await told(
         principal,
         record,
         next ? "set the signature of" : "cleared the signature of",
@@ -767,11 +757,11 @@ export function createTriggers(options: TriggersOptions) {
       );
     },
 
-    pause: (principal: Principal, threadId: string, id: string) =>
+    pause: async (principal: Principal, threadId: string, id: string) =>
       changeStatus(principal, threadId, id, "paused"),
-    resume: (principal: Principal, threadId: string, id: string) =>
+    resume: async (principal: Principal, threadId: string, id: string) =>
       changeStatus(principal, threadId, id, "active"),
-    delete: (principal: Principal, threadId: string, id: string) =>
+    delete: async (principal: Principal, threadId: string, id: string) =>
       changeStatus(principal, threadId, id, "deleted"),
   };
 }
