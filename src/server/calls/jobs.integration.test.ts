@@ -1,3 +1,4 @@
+import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 import * as z from "zod";
 
@@ -165,7 +166,7 @@ describe("background calls", () => {
     });
   });
 
-  it("refuse tools that ask, calls of their own and a thread with too many", async () => {
+  it("refuse tools that ask and calls of their own", async () => {
     const t = await callThread();
     await t.start();
     await t.post(t.ada, "Go");
@@ -179,7 +180,147 @@ describe("background calls", () => {
     expect(refused.texts.join("\n")).toContain("cannot run in the background");
     expect(refused.texts.join("\n")).toContain("cannot start another");
     expect(refused.texts.join("\n")).toContain("The input is not valid");
+  });
 
+  it("queue past the thread's limit, start in turn as places free, and are cancelled while queued", async () => {
+    const t = await callThread();
+    await t.start();
+    await t.post(t.ada, "Many");
+    await t.asks(
+      ...Array.from({ length: BACKGROUND_LIMIT }, (_, index): [string, unknown] => [
+        "jobs.start",
+        { tool: "probe.wait", input: { label: `l${index}` } },
+      ]),
+      ["jobs.start", { tool: "probe.wait", input: { label: "first" } }],
+      ["jobs.start", { tool: "probe.wait", input: { label: "second" } }],
+    );
+    const told = await t.replies("Started.");
+    await t.worker.idle();
+    expect(told.texts.filter((text) => text.includes('"status":"queued"'))).toHaveLength(2);
+    expect(told.texts.at(-1)).toContain(`${BACKGROUND_LIMIT} background calls running;`);
+    const statuses = async () => (await t.records()).map((record) => record.status).toSorted();
+    expect(await statuses()).toEqual([
+      "ready",
+      "ready",
+      ...Array(BACKGROUND_LIMIT).fill("running"),
+    ]);
+    const ids = (await t.tools()).filter((row) => row.background).map((row) => row.id);
+    const [first, second] = ids.slice(-2);
+    // The tray says they are queued, and they may be cancelled.
+    const tray = (await (
+      await t.api("GET", `/threads/${t.thread.id}/activity`, t.ada.cookie)
+    ).json()) as { items: { rowId: string; work: { status: string; canCancel: boolean } }[] };
+    expect(tray.items.filter((item) => [first, second].includes(item.rowId))).toEqual([
+      expect.objectContaining({
+        work: expect.objectContaining({ status: "queued", canCancel: true }),
+      }),
+      expect.objectContaining({
+        work: expect.objectContaining({ status: "queued", canCancel: true }),
+      }),
+    ]);
+
+    // A place frees: the older of the two starts, the other waits on.
+    t.tool.finish("l0", "done");
+    await t.until(() => t.tool.running("first"));
+    expect(t.tool.running("second")).toBe(false);
+    await t.replies("Noted.");
+    await t.worker.idle();
+
+    expect((await t.callApi(`${second}/cancel`)).status).toBe(200);
+    expect((await t.records()).find((record) => record.id === second)).toMatchObject({
+      status: "cancelled",
+    });
+  });
+
+  it("waiting for approval hold no place, and once approved with none free wait their turn", async () => {
+    const t = await callThread();
+    const policy = await t.toolPolicyStore.create({
+      orgId: t.ada.orgId,
+      spaceId: null,
+      name: "Sign-off",
+      color: "orange",
+      use: "none",
+      users: [],
+      approvers: [EDITORS],
+      independent: false,
+    });
+    const startAll = async (prefix: string) => {
+      await t.post(t.ada, `Start ${prefix}`);
+      await t.asks(
+        ...Array.from({ length: BACKGROUND_LIMIT }, (_, index): [string, unknown] => [
+          "jobs.start",
+          { tool: "probe.wait", input: { label: `${prefix}${index}` } },
+        ]),
+      );
+      await t.replies("Started.");
+      await t.worker.idle();
+    };
+    await t.toolSettings.setInOrg(t.ada.orgId, ["probe.wait"], policy.id);
+    await t.start();
+    await startAll("w");
+    await t.toolSettings.setInOrg(t.ada.orgId, ["probe.wait"], null);
+    // Eight wait on a person, and eight more all run.
+    await startAll("l");
+    const count = async (status: string) =>
+      (await t.records()).filter((record) => record.status === status).length;
+    expect([await count("waiting"), await count("running")]).toEqual([
+      BACKGROUND_LIMIT,
+      BACKGROUND_LIMIT,
+    ]);
+    // One approved while all places are taken waits its turn, then starts when one frees.
+    const first = (await t.tools()).find((row) => row.state === "waiting")!;
+    expect(
+      (await t.callApi(`${first.id}/decision`, t.ada, { allow: true, scope: "once" })).status,
+    ).toBe(200);
+    await t.calls.beat();
+    expect((await t.records()).find((record) => record.id === first.id)).toMatchObject({
+      status: "ready",
+    });
+    t.tool.finish("l0", "done");
+    await t.until(
+      async () => (await t.records()).find((r) => r.id === first.id)?.status === "running",
+    );
+    await t.replies("Noted.");
+    await t.worker.idle();
+  });
+
+  it("start after those already waiting their turn, even with a place free", async () => {
+    const t = await callThread();
+    const policy = await t.toolPolicyStore.create({
+      orgId: t.ada.orgId,
+      spaceId: null,
+      name: "Sign-off",
+      color: "orange",
+      use: "none",
+      users: [],
+      approvers: [EDITORS],
+      independent: false,
+    });
+    await t.toolSettings.setInOrg(t.ada.orgId, ["probe.wait"], policy.id);
+    await t.start();
+    await t.post(t.ada, "Ask");
+    await t.asks(["jobs.start", { tool: "probe.wait", input: { label: "approved" } }]);
+    await t.replies("Asked.");
+    await t.worker.idle();
+    await t.toolSettings.setInOrg(t.ada.orgId, ["probe.wait"], null);
+    // Approved while no sweep runs, it waits its turn; one asked for next goes behind it.
+    await t.calls.stop();
+    const [waiting] = await t.records();
+    expect(
+      (await t.callApi(`${waiting!.id}/decision`, t.ada, { allow: true, scope: "once" })).status,
+    ).toBe(200);
+    await t.post(t.ada, "Another");
+    await t.asks(["jobs.start", { tool: "probe.wait", input: { label: "later" } }]);
+    const told = await t.replies("Asked.");
+    expect(told.texts.at(-1)).toContain('"status":"queued"');
+    await t.start();
+    await t.calls.beat();
+    await t.until(() => t.tool.running("approved") && t.tool.running("later"));
+  });
+
+  it("waiting their turn in a space since archived go stale, and the agent is told", async () => {
+    const t = await callThread();
+    await t.start();
     await t.post(t.ada, "Many");
     await t.asks(
       ...Array.from({ length: BACKGROUND_LIMIT + 1 }, (_, index): [string, unknown] => [
@@ -187,10 +328,15 @@ describe("background calls", () => {
         { tool: "probe.wait", input: { label: `l${index}` } },
       ]),
     );
-    const full = await t.replies("Full.");
+    await t.replies("Started.");
     await t.worker.idle();
-    expect(await t.records()).toHaveLength(BACKGROUND_LIMIT);
-    expect(full.texts.at(-1)).toContain(`${BACKGROUND_LIMIT} background calls`);
+    await t.db.execute(sql`update space set archived_at = now() where id = ${t.space.id}`);
+    t.tool.finish("l0", "done");
+    const told = await t.replies("Noted.");
+    await t.until(async () => (await t.records()).some((record) => record.status === "stale"));
+    expect(
+      told.texts.join("\n") + (await t.events()).map((e) => JSON.stringify(e.data)).join(),
+    ).toContain("its space is archived");
   });
 
   it("wait as calls of their own for the tool's usual approval, which the run does not wait on", async () => {
@@ -281,16 +427,16 @@ describe("background calls", () => {
     expect((await t.callApi(`${callId}/background`)).status).toBe(200);
     const carried = await t.replies("Carrying on.");
     await t.worker.idle();
-    // It goes on as a call of its own, on its own row, which the run's call names.
+    // It goes on as a job under its own id, on its own row, asked for once.
     const job = (await t.records())[0]!;
+    expect(job).toMatchObject({ id: callId, status: "running" });
     expect(carried.texts.at(-1)).toBe(
-      `result probe.wait: {"ok":true,"value":{"movedToBackground":true,"callId":"${job.id}"}}`,
+      `result probe.wait: {"ok":true,"value":{"movedToBackground":true,"callId":"${callId}"}}`,
     );
-    expect(job).toMatchObject({ status: "running" });
     expect((await t.tools()).map((row) => `${row.state}${row.background ? " bg" : ""}`)).toEqual([
-      "completed",
       "ready bg",
     ]);
+    expect((await t.events()).filter((event) => event.type === "tool.requested")).toHaveLength(1);
     // The run is over; the call is not.
     expect((await t.runs()).map((run) => run.status)).toEqual(["completed"]);
     expect((await t.callApi(`${callId}/background`)).status).toBe(409);
@@ -300,11 +446,14 @@ describe("background calls", () => {
     await t.worker.idle();
     expect(told.texts.at(-1)).toContain("Result:\n\nlate");
     expect((await t.records())[0]).toMatchObject({ status: "completed" });
-    // What it gave back is in the log, on its own row.
-    expect((await t.tools()).find((row) => row.id === job.id)).toMatchObject({
-      state: "completed",
-      output: { ok: true, value: "late" },
-    });
+    // What it gave back is in the log, on its one row, while the turn that asked still reads it
+    // as moved.
+    expect(await t.tools()).toMatchObject([
+      { id: callId, state: "completed", output: { ok: true, value: "late" } },
+    ]);
+    expect(told.texts).toContain(
+      `result probe.wait: {"ok":true,"value":{"movedToBackground":true,"callId":"${callId}"}}`,
+    );
   });
 
   it("move from a run that waits for a decision, which stays decidable as a call of its own", async () => {
@@ -331,11 +480,11 @@ describe("background calls", () => {
     const carried = await t.replies("Carrying on.");
     await t.worker.idle();
     const record = (await t.records())[0]!;
+    expect(record).toMatchObject({ id: callId, status: "waiting" });
     expect(carried.texts.at(-1)).toBe(
-      `result probe.wait: {"ok":true,"value":{"movedToBackground":true,"callId":"${record.id}"}}`,
+      `result probe.wait: {"ok":true,"value":{"movedToBackground":true,"callId":"${callId}"}}`,
     );
     expect((await t.tools()).map((row) => `${row.state}${row.background ? " bg" : ""}`)).toEqual([
-      "completed",
       "waiting bg",
     ]);
 

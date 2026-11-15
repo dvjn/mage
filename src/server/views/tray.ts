@@ -1,5 +1,5 @@
 // The rules of the activity tray: which background items need a reader, and which are still live.
-// A background job leaves when it ends, its notification in the transcript being the record of it;
+// A background job leaves when it ends, its notice in the transcript being the record of it;
 // the other finished kinds stay until a reader has seen them, so a failure nobody saw is not lost.
 
 import type { Attention, Work, WorkStatus } from "@/shared/jobs.ts";

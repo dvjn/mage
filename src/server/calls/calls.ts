@@ -11,7 +11,6 @@
 // its branch holds, all read inside the write they guard.
 
 import { context, SpanStatusCode, trace } from "@opentelemetry/api";
-import { ulid } from "ulid";
 import * as z from "zod";
 
 import type { Reader } from "@/server/access/access.ts";
@@ -144,11 +143,13 @@ export interface CallsOptions {
     | "turnedOn"
   >;
   // Where running calls say what they print, for the people watching; nowhere when not given.
-  live?: Pick<Live, "open" | "close" | "end" | "of" | "move" | "moved">;
+  live?: Pick<Live, "open" | "close" | "end" | "of" | "moved">;
   instanceId: string;
   keeper: Sync["keeper"];
   transact: Sync["transact"];
   claimDue: Sync["claimDue"];
+  // Why the thread may no longer run work, as a subagent's archived; null while it may.
+  retired?: (thread: Thread) => Promise<string | null>;
   leaseMs?: number;
   now?: () => Date;
 }
@@ -181,6 +182,7 @@ export function createCalls(options: CallsOptions) {
 
   const jobs = createJobs({
     store,
+    ...(options.retired && { retired: options.retired }),
     threads,
     spaceStore,
     log,
@@ -436,8 +438,8 @@ export function createCalls(options: CallsOptions) {
     },
 
     // Runs the call under the run's hold: it stands running while the tool runs between writes,
-    // then its result is recorded. One asked to move to the background goes on as a job from then
-    // on, and the run is given the job's id as its result.
+    // then its result is recorded. One asked to move to the background goes on as a job under its
+    // own id from then on, and the run reads that it moved.
     async run(next: Runnable, hold: RunHold, env: CallEnv) {
       const { run } = hold;
       const { call, spec, input, runAs, standingOn, approvedBy } = next;
@@ -482,7 +484,6 @@ export function createCalls(options: CallsOptions) {
       // The job it becomes, once moved, whose lease fences its writes from then on.
       let job: Call | null = null;
       let output: ToolOutput;
-      let movedTo: string | null = null;
       // Whose words the model had read when it asked for the call.
       const influence = influenceOf(await options.queue.words(run.threadId, run.branchId));
       try {
@@ -500,20 +501,19 @@ export function createCalls(options: CallsOptions) {
             influence,
             signal: controller.signal,
             ...(options.live && {
-              // Stored under the call while it runs under the run's lease, then under the job it
-              // became while this instance holds that.
+              // Stored while the call runs under the run's lease, then once moved, while this
+              // instance holds the job's.
               live: options.live.open(run.threadId, call.id, async () => {
-                if ((await store.find(run.threadId, call.id))?.status === "running") {
-                  try {
-                    await hold.hold();
-                    return call.id;
-                  } catch (err) {
-                    if (!(err instanceof LeaseLost)) throw err;
-                    return null;
-                  }
+                const row = await store.find(run.threadId, call.id);
+                if (row?.status !== "running") return false;
+                if (row.background) return await jobs.holds(jobs.leaseOf(row));
+                try {
+                  await hold.hold();
+                  return true;
+                } catch (err) {
+                  if (!(err instanceof LeaseLost)) throw err;
+                  return false;
                 }
-                const moved = await store.movedTo(run.threadId, call.id);
-                return moved && (await jobs.holds(jobs.leaseOf(moved))) ? moved.id : null;
               }),
             }),
             ...(call.answers && { answers: call.answers }),
@@ -536,43 +536,28 @@ export function createCalls(options: CallsOptions) {
         if (result === MOVED) {
           env.signal.removeEventListener("abort", stopCall);
           job = await held(hold, async (append) => {
-            const id = ulid();
-            const made = await jobs.requested(append, {
-              model: hold.ref,
-              threadId: run.threadId,
-              branchId: run.branchId,
-              id,
-              runId: run.id,
-              toolId: call.toolId,
-              input,
-              risk: call.risk,
-              waits: false,
-              names: {
-                ...(call.title && { title: call.title }),
-                ...(call.toolset && { toolset: call.toolset }),
-              },
-              movedFrom: call.id,
+            const moved = await store.toBackground(run.threadId, call.id, {
+              owner: options.instanceId,
+              leaseMs,
             });
-            // What it printed so far goes on with it.
-            await options.live?.move(call.id, id);
+            if (!moved) return null;
             await append({
-              type: "tool.ran",
+              type: "tool.moved",
               actor: ACTOR,
-              data: {
-                runId: run.id,
-                callId: call.id,
-                ok: true,
-                value: { movedToBackground: true, callId: id },
-                ms: Math.max(0, now().getTime() - started),
-              },
+              data: { runId: run.id, callId: call.id, ms: Math.max(0, now().getTime() - started) },
             });
-            await store.complete(run.threadId, call.id);
-            return made;
+            return moved;
           });
-          movedTo = job.id;
-          await options.live?.moved(run.threadId, job.id);
-          jobs.follow(job, controller, work, new Date(started));
-          output = { ok: true, value: { movedToBackground: true, callId: job.id } };
+          if (job) {
+            await options.live?.moved(run.threadId, job.id);
+            jobs.follow(job, controller, work, new Date(started));
+            output = { ok: true, value: { movedToBackground: true, callId: job.id } };
+          } else {
+            // It ended meanwhile: what it gives back is its run's.
+            env.signal.addEventListener("abort", stopCall, { once: true });
+            if (env.signal.aborted) stopCall();
+            output = await work;
+          }
         } else {
           output = result;
         }
@@ -597,7 +582,7 @@ export function createCalls(options: CallsOptions) {
         if (result) span.setAttribute("gen_ai.tool.call.result", result);
       }
       span.end();
-      if (movedTo) return;
+      if (job) return;
       const ms = Math.max(0, now().getTime() - started);
       await held(hold, async (append) => {
         // What it printed while it ran goes as its result is recorded.
@@ -755,42 +740,18 @@ export function createCalls(options: CallsOptions) {
         if (row.background || !(await options.tools.movable(call, space))) {
           throw new ServiceError(409, "This call cannot move to the background");
         }
-        if (!(await jobs.room(thread.id))) {
-          throw new ServiceError(409, "This thread has too many background calls");
-        }
         if (call.state === "waiting") {
-          // Waiting in a run nobody holds: it goes on as a job, and the run goes on.
-          if (row.status !== "waiting") throw new ServiceError(409, "No longer needed");
-          const id = ulid();
-          await jobs.requested(append, {
-            model: row.model,
-            threadId: thread.id,
-            branchId: row.branchId,
-            id,
-            runId: call.runId,
-            toolId: call.toolId,
-            input: call.input,
-            risk: call.risk,
-            waits: true,
-            names: {
-              ...(call.title && { title: call.title }),
-              ...(call.toolset && { toolset: call.toolset }),
-            },
-            movedFrom: call.id,
-          });
+          // Waiting in a run nobody holds: it goes on as a job that waits for the same decision,
+          // and the run goes on as if it no longer waited.
+          if (row.status !== "waiting" || !(await store.toBackground(thread.id, callId))) {
+            throw new ServiceError(409, "No longer needed");
+          }
           await append({
-            type: "tool.ran",
+            type: "tool.moved",
             actor: ACTOR,
-            data: {
-              runId: call.runId,
-              callId: call.id,
-              ok: true,
-              value: { movedToBackground: true, callId: id },
-              ms: 0,
-            },
+            data: { runId: call.runId, callId: call.id, ms: 0 },
           });
-          const moved = await store.complete(thread.id, callId);
-          if (moved) await settled(moved);
+          await settled(row);
           return;
         }
         if (!(await store.requestMove(thread.id, callId))) {
@@ -800,7 +761,7 @@ export function createCalls(options: CallsOptions) {
       signals.wake(thread.id);
     },
 
-    // Stops a job that runs or waits for a decision, as a person asked.
+    // Stops a job that runs, waits its turn or waits for a decision, as a person asked.
     async cancel(reader: Reader, callId: string) {
       const job = await store.find(reader.thread.id, callId);
       if (!job?.background) throw new ServiceError(404, "Call not found");

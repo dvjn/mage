@@ -412,7 +412,7 @@ export function createThreadViews(options: ThreadViewsOptions) {
         !!space &&
         (await tools.movable(row, space));
       const state = row.state === "waiting" ? (await reader.waitingCalls()).get(row.id) : null;
-      const { background: _flag, waits: _waits, ...plain } = row;
+      const { background: _flag, waits: _waits, moved: _moved, ...plain } = row;
       const call = {
         ...plain,
         ...(row.state === "waiting" && { waitsFor: state?.waitsFor ?? ("decision" as const) }),
@@ -463,7 +463,7 @@ export function createThreadViews(options: ThreadViewsOptions) {
     return { ...row, ...place };
   }
 
-  // A notification as the reader sees it: named as people know things, and linking back to where
+  // A notice as the reader sees it: named as people know things, and linking back to where
   // it came from in the threads they may read.
   async function shownNotice(
     row: NoticeRow,
@@ -500,8 +500,8 @@ export function createThreadViews(options: ThreadViewsOptions) {
   // last: each is what the reader will see once it is taken in, marked as waiting, with what they
   // may still do with it. A person's message is its author's to change: to reword unless it was
   // sent as a command, to switch between steering and queueing unless it interrupts, and to take
-  // back; a notification is nobody's to change. The fold keeps people's messages and other
-  // agents' notifications apart; a new kind of input is one more branch here.
+  // back; a notice is nobody's to change. The fold keeps people's messages and other
+  // agents' notices apart; a new kind of input is one more branch here.
   async function shownWaiting(transcript: Transcript, reader: Page): Promise<WaitingRow[]> {
     const inputs = (await reader.waiting()).flatMap(
       (
@@ -543,7 +543,7 @@ export function createThreadViews(options: ThreadViewsOptions) {
     );
   }
 
-  // The background call a notification tells ended, as the reader may read it where it was made.
+  // The background call a notice tells ended, as the reader may read it where it was made.
   async function completedOf(row: NoticeRow, reader: Page) {
     const call = row.call;
     if (row.type !== "call.ended" || !call) return null;
@@ -553,7 +553,7 @@ export function createThreadViews(options: ThreadViewsOptions) {
     reader.folds.set(thread.id, fold);
     const ran = fold.transcript().rows[fold.indexOf(call.callId)];
     if (ran?.kind !== "tool") return null;
-    const { background: _flag, waits: _waits, ...plain } = ran;
+    const { background: _flag, waits: _waits, moved: _moved, ...plain } = ran;
     return { ...plain, ...(await reader.names(ran)) };
   }
 

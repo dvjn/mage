@@ -2389,6 +2389,7 @@
       "type": "string",
       "enum": [
         "waiting",
+        "queued",
         "running",
         "completed",
         "failed",
@@ -2482,7 +2483,10 @@
           "type": "boolean"
         },
         "startedAt": {
-          "type": "string"
+          "type": [
+            "string",
+            "null"
+          ]
         },
         "endedAt": {
           "type": "string"
@@ -2503,12 +2507,12 @@
       "type": "string",
       "enum": [
         "waiting",
+        "queued",
         "running",
         "completed",
         "failed",
         "cancelled",
         "interrupted",
-        "queued",
         "idle",
         "scheduled",
         "listening",
@@ -9470,6 +9474,64 @@
                 "runId",
                 "callId",
                 "ok",
+                "ms"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "threadId",
+            "seq",
+            "actor",
+            "createdAt",
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            },
+            "seq": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "actor": {
+              "$ref": "threads/events.ts#actorSchema"
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "type": {
+              "type": "string",
+              "const": "tool.moved"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "runId": {
+                  "type": "string"
+                },
+                "callId": {
+                  "type": "string"
+                },
+                "ms": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "runId",
+                "callId",
                 "ms"
               ]
             }

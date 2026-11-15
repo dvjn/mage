@@ -15,13 +15,13 @@ import type { ToolSpec } from "@/server/tools/registry.ts";
 import { influenceIn } from "@/server/calls/influence.ts";
 import * as z from "zod";
 
-// The notifications the model is given together, and that as the call's texts show it.
-function notifications(...lines: string[]) {
+// The notices the model is given together, and that as the call's texts show it.
+function notices(...lines: string[]) {
   return [NOTICES_HEADING, ...lines].join("\n\n");
 }
 
 function notified(...lines: string[]) {
-  return `user: ${notifications(...lines)}`;
+  return `user: ${notices(...lines)}`;
 }
 
 // A thread whose agent starts subagents, with the model's calls taken by the thread they are made
@@ -338,7 +338,7 @@ describe("subagents", () => {
     busy.delta("Drafting.");
     busy.endStep();
     expect(await busy.boundary()).toEqual([
-      { role: "user", text: notifications("[Agent of Go] First", "[Agent of Go] Second") },
+      { role: "user", text: notices("[Agent of Go] First", "[Agent of Go] Second") },
     ]);
     busy.reply("Done both.");
     await workspace.worker.idle();

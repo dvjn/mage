@@ -341,8 +341,8 @@ function tools() {
   });
   job("j-denied", { risk: "ask", waits: true });
   l.add("tool.denied", { runId: "r1", callId: "j-denied", reason: "denied" }, GRACE);
-  // A call moved to the background while it ran: its own row answers the run at once, and the
-  // job carries on under a row of its own.
+  // A call an older log moved to the background while it ran: its own row answers the run at once,
+  // and the job carries on under a row of its own.
   l.add("run.created", { runId: "r2", reason: "queued_input", continuesRunId: "r1" }, ADA);
   l.add("message.started", { messageId: "m2", runId: "r2", model: "anthropic/claude-test" });
   l.add("message.completed", { messageId: "m2", runId: "r2", parts: [], status: "completed" });
@@ -367,6 +367,31 @@ function tools() {
   });
   l.add("run.completed", { runId: "r2" });
   l.add("tool.ran", { runId: "r2", callId: "j-moved", ok: true, value: "page", ms: 60_000 });
+  // A call moved to the background now: it keeps its id and its row, which its result settles
+  // after its run has ended.
+  l.add("run.created", { runId: "r3", reason: "queued_input", continuesRunId: "r2" }, ADA);
+  l.add("message.started", { messageId: "m3", runId: "r3", model: "anthropic/claude-test" });
+  l.add("message.completed", { messageId: "m3", runId: "r3", parts: [], status: "completed" });
+  l.add("tool.requested", {
+    runId: "r3",
+    callId: "c-moved-in-place",
+    messageId: "m3",
+    toolId: "web.fetch",
+    input: { url: "https://example.com/slower" },
+    risk: "normal",
+    waits: false,
+    title: "Fetch",
+    toolset: "Web",
+  });
+  l.add("tool.moved", { runId: "r3", callId: "c-moved-in-place", ms: 1500 });
+  l.add("run.completed", { runId: "r3" });
+  l.add("tool.ran", {
+    runId: "r3",
+    callId: "c-moved-in-place",
+    ok: true,
+    value: "page",
+    ms: 45_000,
+  });
   return l.events;
 }
 

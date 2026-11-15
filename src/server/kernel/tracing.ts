@@ -107,7 +107,7 @@ const CAUSE_MS = 10 * 60 * 1000;
 const CAUSES_PER_THREAD = 16;
 
 // Ties runs to what caused them: whatever woke a thread (a post, a decision, an answer, a
-// notification, or the run before) is linked from the run it starts, and from the run under way,
+// notice, or the run before) is linked from the run it starts, and from the run under way,
 // which it may steer. Each run's own span is known by its id while it runs, for its readers.
 export function createRunTraces(now: () => number = Date.now) {
   const causes = new Map<string, { link: Link; at: number; after: boolean }[]>();

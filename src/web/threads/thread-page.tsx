@@ -61,7 +61,7 @@ import {
   useRetryRun,
   useStopRun,
   useThreadModel,
-  useCancelBackground,
+  useCancelJob,
   useScheduleAndWebhookActions,
   useMoveToBackground,
   useToolAnswer,
@@ -92,7 +92,7 @@ import {
   RowToolbar,
 } from "@/web/threads/transcript/row-history";
 import { ActivityTray, type TrayGroup, OpenTrayContext } from "@/web/threads/activity-tray";
-import { Composer, PendingTray, RunStatus } from "@/web/threads/thread-composer";
+import { Composer, WaitingTray, RunStatus } from "@/web/threads/thread-composer";
 import { withEarlier, withLatestPage } from "@/web/threads/thread-rows";
 import { EarlierUnread } from "@/web/threads/transcript/earlier-unread";
 import { AgentStarting } from "@/web/threads/transcript/agent-starting";
@@ -106,7 +106,7 @@ import {
   rowElementId,
   RowFocusContext,
 } from "@/web/threads/transcript/row-focus";
-import { BackgroundActionsContext } from "@/web/threads/transcript/job-actions";
+import { ActivityActionsContext } from "@/web/threads/transcript/activity-actions";
 
 const threadRoute = getRouteApi("/_app/t/$threadId");
 
@@ -266,8 +266,8 @@ export function ThreadPage() {
   const retrying = useRetryRun(threadId);
   const decision = useToolDecision(threadId);
   const answering = useToolAnswer(threadId);
-  const backgrounding = useMoveToBackground(threadId);
-  const cancelling = useCancelBackground(threadId);
+  const moving = useMoveToBackground(threadId);
+  const cancelling = useCancelJob(threadId);
   const timed = useScheduleAndWebhookActions(threadId);
   const modelChange = useThreadModel(threadId);
   const subagent = detail.data?.subagent ?? null;
@@ -384,7 +384,7 @@ export function ThreadPage() {
 
   // Moves a call to the background, and stops one there.
   const background = {
-    move: (callId: string) => backgrounding.mutateAsync(callId).catch(() => {}),
+    move: (callId: string) => moving.mutateAsync(callId).catch(() => {}),
     cancel: (callId: string) => cancelling.mutateAsync(callId).catch(() => {}),
     schedule: {
       pause: (id: string) => timed.schedule.pause(id).catch(() => {}),
@@ -395,8 +395,7 @@ export function ThreadPage() {
       pause: (id: string) => timed.webhook.pause(id).catch(() => {}),
       resume: (id: string) => timed.webhook.resume(id).catch(() => {}),
       remove: (id: string) => timed.webhook.remove(id).catch(() => {}),
-      secret: (id: string, secret: string | null) =>
-        timed.webhook.secret(id, secret).catch(() => {}),
+      secret: (id: string, secret: string | null) => timed.webhook.secret(id, secret),
       deliveryHeader: (id: string, header: string | null) =>
         timed.webhook.deliveryHeader(id, header),
     },
@@ -706,7 +705,7 @@ export function ThreadPage() {
       <ThreadAgentContext.Provider value={agent}>
         <ArtifactThreadContext.Provider value={threadId}>
           <RowFocusContext.Provider value={focus}>
-            <BackgroundActionsContext.Provider value={background}>
+            <ActivityActionsContext.Provider value={background}>
               <OpenTrayContext.Provider value={setTrayOpen}>
                 <RowHistoryContext.Provider value={history}>
                   <AsidesContext.Provider value={asides}>
@@ -782,7 +781,7 @@ export function ThreadPage() {
                   </AsidesContext.Provider>
                 </RowHistoryContext.Provider>
               </OpenTrayContext.Provider>
-            </BackgroundActionsContext.Provider>
+            </ActivityActionsContext.Provider>
           </RowFocusContext.Provider>
         </ArtifactThreadContext.Provider>
       </ThreadAgentContext.Provider>
@@ -803,11 +802,11 @@ export function ThreadPage() {
             {!viewing && (
               <>
                 <RunStatus stopping={!!run && run.id === stopped} />
-                <PendingTray threadId={threadId} waiting={detail.data?.waiting ?? []} />
+                <WaitingTray threadId={threadId} waiting={detail.data?.waiting ?? []} />
                 <FieldError>{posting.error?.message}</FieldError>
               </>
             )}
-            <BackgroundActionsContext.Provider value={background}>
+            <ActivityActionsContext.Provider value={background}>
               <ActivityTray
                 threadId={threadId}
                 agentName={agentName}
@@ -894,7 +893,7 @@ export function ThreadPage() {
                   />
                 )}
               </ActivityTray>
-            </BackgroundActionsContext.Provider>
+            </ActivityActionsContext.Provider>
           </div>
         </div>
       </div>

@@ -29,7 +29,7 @@ describe("agentTurnOf", () => {
     expect(agentTurnOf([human, tool, words], 2)?.continued).toBe(true);
   });
 
-  it("starts a new agent turn after received messages and notifications", () => {
+  it("starts a new agent turn after received messages and notices", () => {
     const rows = [human, words, row("notice"), tool, row("notice"), thinking];
     expect(rows.map((_, i) => agentTurnOf(rows, i)?.continued ?? null)).toEqual([
       null,
@@ -189,7 +189,72 @@ describe("createFold", () => {
     ]);
   });
 
-  it("starts a new turn when the agent resumes after a subagent notification", () => {
+  it("keeps a call moved to the background as one row, settled by its job's result", () => {
+    seq = 0;
+    const { fold } = folded(
+      event("message.started", { ...run, messageId: "m1", model: "a/b" }),
+      event("tool.requested", {
+        ...run,
+        callId: "c1",
+        messageId: "m1",
+        toolId: "shell.run",
+        input: {},
+        risk: "normal",
+        waits: false,
+      }),
+      event("tool.moved", { ...run, callId: "c1", ms: 40 }),
+      event("tool.ran", { ...run, callId: "c1", ok: true, value: "done", ms: 90 }),
+    );
+    const tools = fold.transcript().rows.filter((row) => row.kind === "tool");
+    expect(tools).toHaveLength(1);
+    expect(tools[0]).toMatchObject({
+      id: "c1",
+      messageId: "m1",
+      background: true,
+      moved: { seq: 3 },
+      state: "completed",
+      output: { ok: true, value: "done" },
+    });
+  });
+
+  it("keeps an older log's move as two rows: the call and the job it became", () => {
+    seq = 0;
+    const { fold } = folded(
+      event("tool.requested", {
+        ...run,
+        callId: "c1",
+        messageId: "m1",
+        toolId: "shell.run",
+        input: {},
+        risk: "normal",
+        waits: false,
+      }),
+      event("tool.requested", {
+        ...run,
+        callId: "j1",
+        messageId: "",
+        toolId: "shell.run",
+        input: {},
+        risk: "normal",
+        waits: false,
+        background: true,
+      }),
+      event("tool.ran", {
+        ...run,
+        callId: "c1",
+        ok: true,
+        value: { movedToBackground: true, callId: "j1" },
+        ms: 40,
+      }),
+    );
+    const tools = fold.transcript().rows.filter((row) => row.kind === "tool");
+    expect(tools.map((row) => [row.id, row.state, !!row.background, !!row.moved])).toEqual([
+      ["c1", "completed", false, false],
+      ["j1", "ready", true, false],
+    ]);
+  });
+
+  it("starts a new turn when the agent resumes after a subagent notice", () => {
     const fold = createFold();
     const add = (type: string, data: object) => fold.add(event(type, data));
     add("message.started", { ...run, messageId: "first", model: "a/b" });
@@ -233,7 +298,7 @@ describe("createFold", () => {
     ]);
   });
 
-  it("holds notifications, other agents' messages among them, until taken in", () => {
+  it("holds notices, other agents' messages among them, until taken in", () => {
     seq = 0;
     const fold = createFold();
     fold.add(

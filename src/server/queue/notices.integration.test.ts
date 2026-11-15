@@ -8,7 +8,7 @@ import { NOTICES_HEADING } from "@/server/execution/context.ts";
 
 import { type Notice, silentChange } from "./notices.ts";
 
-// A thread whose agent is sent notifications, as any feature sends them.
+// A thread whose agent is sent notices, as any feature sends them.
 async function notifiedThread() {
   const workspace = await agentThread();
   const { queue, thread } = workspace;
@@ -29,12 +29,12 @@ async function notifiedThread() {
   return { ...workspace, send, sendQuietly };
 }
 
-// What the model reads of notifications taken in together.
+// What the model reads of notices taken in together.
 function notified(...lines: string[]) {
   return [NOTICES_HEADING, ...lines].join("\n\n");
 }
 
-describe("notifications", () => {
+describe("notices", () => {
   it("start an idle agent", async () => {
     const { model, worker, start, send, transcript, runs } = await notifiedThread();
     await start();
@@ -112,7 +112,7 @@ describe("notifications", () => {
 
   it("wake an agent they reach just as its turn ends", async () => {
     const { ada, model, worker, start, post, send, runStore, runs } = await notifiedThread();
-    // The notification is written as the run ends, after its last pause.
+    // The notice is written as the run ends, after its last pause.
     const end = runStore.end.bind(runStore);
     let arrive = true;
     runStore.end = async (lease, outcome) => {

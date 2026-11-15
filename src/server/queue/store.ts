@@ -192,15 +192,15 @@ export function createQueueStore(db: Db) {
       await db.execute(waitingOnCurrent(sql`t.id = ${threadId}`));
     },
 
-    // The notices waiting on the branch left that the new branch does not read, and that it is
-    // told: those no call sent, and those whose call it holds.
+    // The notices waiting on the branch left, or taken in there, that the new branch does not
+    // read, and that it is told: those no call sent, and those whose call it holds.
     async carried(threadId: string, left: string, branchId: string) {
       const rows = await db.execute<{ id: string }>(sql`
         select i.id
           from ${threadInput} i
           join thread_event e on e.thread_id = i.thread_id and e.id = i.id
          where i.thread_id = ${threadId} and i.branch_id = ${left}
-           and i.status = 'waiting' and i.kind = 'notice'
+           and i.status in ('waiting', 'admitted') and i.kind = 'notice'
            and not exists (select 1 from thread_branch_source s
                             where s.branch_id = ${branchId} and s.source_branch_id = e.branch_id
                               and (s.until_seq is null or e.seq <= s.until_seq))

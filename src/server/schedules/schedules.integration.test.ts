@@ -91,7 +91,7 @@ describe("wake-up timers", () => {
     expect(told.texts.at(-1)).toContain("Check the build");
     await t.worker.idle();
 
-    // It was the notification that carried the people.
+    // It was the notice that carried the people.
     const notice = (await t.rowsOf()).find((row) => row.kind === "notice");
     expect(notice).toMatchObject({ type: "schedule.fired" });
     expect(notice?.kind === "notice" && notice.influence.map((one) => one.name)).toEqual([

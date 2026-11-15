@@ -3,7 +3,7 @@
 // with, unique among the thread's live subagents. A subagent is given its task as its first
 // message, has its starter's tools but for those only the starter has, and may start from a copy of
 // its starter's conversation. It works until it has nothing left to do and is idle; any message
-// sent to it wakes it again. Messages between agents are notifications, and nothing goes anywhere
+// sent to it wakes it again. Messages between agents are notices, and nothing goes anywhere
 // unless sent: a subagent's replies stay in its own thread, and results go to the thread's agent as
 // messages. That agent is notified when a subagent ended a run without sending it anything, failed
 // or was stopped; and, once, when the subagents a watch was set on are idle, as a subagent is of
@@ -13,7 +13,7 @@
 // past which the agent that started them is told and further messages between them are refused. A
 // subagent is stopped, which keeps what it knows, or retired, which keeps its thread readable and
 // refuses it messages, until someone brings it back. Whose words steer what an agent does carries
-// over with each message and notification it is sent, so a call any agent makes runs directly only
+// over with each message and notice it is sent, so a call any agent makes runs directly only
 // when every person behind it could have made it.
 
 import { ulid } from "ulid";
@@ -121,7 +121,7 @@ export { AGENT_NAME };
 
 // What the agent of a thread that can start subagents is told about them.
 export const SUBAGENTS_GUIDANCE = [
-  "Use a subagent to keep large work out of this conversation: exploring many files or results, a long investigation, or parts of a job that don't depend on each other. Each runs in the background in its own thread; its report, and runs that end without one, fail or are stopped, arrive as notifications from [Subagent <label>].",
+  "Use a subagent to keep large work out of this conversation: exploring many files or results, a long investigation, or parts of a job that don't depend on each other. Each runs in the background in its own thread; its report, and runs that end without one, fail or are stopped, arrive as notices from [Subagent <label>].",
   "- Brief it as a peer who knows nothing: the goal, what you already know or ruled out, where to look, and what to return. The brief is all the context it has.\n- Ask for a short report: conclusions, decisions, ids and links, not raw data. Ask it to say what it verified and what it assumed.\n- Split work so subagents don't overlap, and run them in parallel. Plan tasks first, then start them with their task ids in tasks so they pick up and check off items on this thread's list (share_tasks alone shares the list).\n- Don't do the same work yourself while one runs. To wait, watch them and end your turn; a watch stays set until it fires, so don't set it again after each report.\n- Reuse a subagent that already has the context, archived or not, rather than starting another. Archive each once you've used its report, and all of them when the job is done.\n- Treat a report as a claim. Check anything that matters before acting on it.",
 ].join("\n\n");
 
@@ -454,7 +454,7 @@ export function createSubagents(options: SubagentsOptions) {
     );
   }
 
-  // The subagent as the source of a notification its starter is sent, with the row it came of.
+  // The subagent as the source of a notice its starter is sent, with the row it came of.
   function sourceOf(subagent: SubagentRecord, rowId?: string) {
     return {
       threadId: subagent.threadId,

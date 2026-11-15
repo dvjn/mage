@@ -162,7 +162,7 @@ export function tasksQuery(threadId: string, archived = false) {
 }
 
 // The thread's live background work; its live stream keeps it current.
-export function backgroundQuery(threadId: string) {
+export function activityQuery(threadId: string) {
   return queryOptions({
     queryKey: ["threads", threadId, "background"],
     queryFn: async () => {

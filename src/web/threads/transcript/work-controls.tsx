@@ -8,7 +8,7 @@ import type { Work } from "@/shared/jobs.ts";
 import { ConfirmDialog } from "@/web/components/confirm-dialog";
 import { Button } from "@/web/components/ui/button";
 import { WithTooltip } from "@/web/components/with-tooltip";
-import { useBackgroundActions } from "@/web/threads/transcript/job-actions";
+import { useActivityActions } from "@/web/threads/transcript/activity-actions";
 
 export function WorkControls({
   work,
@@ -20,7 +20,7 @@ export function WorkControls({
   // What it is called, for the question before it is deleted.
   name: string;
 }) {
-  const actions = useBackgroundActions()?.[work.kind === "webhook" ? "webhook" : "schedule"];
+  const actions = useActivityActions()?.[work.kind === "webhook" ? "webhook" : "schedule"];
   const [busy, setBusy] = useState(false);
   const [asking, setAsking] = useState(false);
   const paused = work.status === "paused";

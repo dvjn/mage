@@ -62,7 +62,7 @@
       {
         "kind": "tool",
         "id": "c-auto",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -91,7 +91,7 @@
       {
         "kind": "tool",
         "id": "c-unnamed",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -118,7 +118,7 @@
       {
         "kind": "tool",
         "id": "c-silent",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -145,7 +145,7 @@
       {
         "kind": "tool",
         "id": "c-once",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -190,7 +190,7 @@
       {
         "kind": "tool",
         "id": "c-standing",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -229,7 +229,7 @@
       {
         "kind": "tool",
         "id": "c-stood",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -269,7 +269,7 @@
       {
         "kind": "tool",
         "id": "c-agent",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -296,7 +296,7 @@
       {
         "kind": "tool",
         "id": "c-denied",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -330,7 +330,7 @@
       {
         "kind": "tool",
         "id": "c-stale",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -354,7 +354,7 @@
       {
         "kind": "tool",
         "id": "c-cancelled",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -378,7 +378,7 @@
       {
         "kind": "tool",
         "id": "c-skipped",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -412,7 +412,7 @@
       {
         "kind": "tool",
         "id": "c-lapsed",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -446,7 +446,7 @@
       {
         "kind": "tool",
         "id": "c-ask",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "ask.questions",
@@ -498,7 +498,7 @@
       {
         "kind": "tool",
         "id": "c-large",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -529,7 +529,7 @@
       {
         "kind": "tool",
         "id": "c-review",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -553,7 +553,7 @@
       {
         "kind": "tool",
         "id": "j-ran",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-ran",
         "toolId": "web.fetch",
@@ -587,7 +587,7 @@
       {
         "kind": "tool",
         "id": "j-failed",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-failed",
         "toolId": "web.fetch",
@@ -621,7 +621,7 @@
       {
         "kind": "tool",
         "id": "j-cancelled",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-cancelled",
         "toolId": "web.fetch",
@@ -644,7 +644,7 @@
         "work": {
           "kind": "job",
           "status": "cancelled",
-          "startedAt": "2026-01-01T00:00:49.000Z",
+          "startedAt": null,
           "endedAt": "2026-01-01T00:00:50.000Z",
           "canCancel": false
         }
@@ -652,7 +652,7 @@
       {
         "kind": "tool",
         "id": "j-approved",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-approved",
         "toolId": "web.fetch",
@@ -702,7 +702,7 @@
       {
         "kind": "tool",
         "id": "j-denied",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-denied",
         "toolId": "web.fetch",
@@ -735,7 +735,7 @@
         "work": {
           "kind": "job",
           "status": "cancelled",
-          "startedAt": "2026-01-01T00:00:54.000Z",
+          "startedAt": null,
           "endedAt": "2026-01-01T00:00:55.000Z",
           "canCancel": false
         }
@@ -757,6 +757,7 @@
         "turn": null,
         "can": [
           "retry",
+          "restore",
           "fork",
           "aside"
         ]
@@ -764,7 +765,7 @@
       {
         "kind": "tool",
         "id": "c-moved",
-        "seq": 61,
+        "seq": 66,
         "runId": "r2",
         "messageId": "m2",
         "toolId": "web.fetch",
@@ -794,7 +795,7 @@
       {
         "kind": "tool",
         "id": "j-moved",
-        "seq": 63,
+        "seq": 66,
         "runId": "r2",
         "messageId": "j-moved",
         "toolId": "web.fetch",
@@ -822,6 +823,61 @@
           "status": "completed",
           "startedAt": "2026-01-01T00:01:00.000Z",
           "endedAt": "2026-01-01T00:01:03.000Z",
+          "canCancel": false
+        }
+      },
+      {
+        "kind": "agent",
+        "id": "m3",
+        "seq": 66,
+        "runId": "r3",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:01:05.000Z",
+        "text": "",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": null,
+        "retried": false,
+        "order": 25,
+        "turn": null,
+        "can": [
+          "retry",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "tool",
+        "id": "c-moved-in-place",
+        "seq": 70,
+        "runId": "r3",
+        "messageId": "m3",
+        "toolId": "web.fetch",
+        "title": "Fetch",
+        "toolset": "Web",
+        "input": {
+          "url": "https://example.com/slower"
+        },
+        "risk": "normal",
+        "requestedAt": "2026-01-01T00:01:07.000Z",
+        "state": "completed",
+        "decision": null,
+        "output": {
+          "ok": true,
+          "value": "page"
+        },
+        "ms": 45000,
+        "order": 26,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "work": {
+          "kind": "job",
+          "status": "completed",
+          "startedAt": "2026-01-01T00:01:07.000Z",
+          "endedAt": "2026-01-01T00:01:10.000Z",
           "canCancel": false
         }
       }
@@ -895,7 +951,7 @@
       {
         "kind": "tool",
         "id": "c-auto",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -924,7 +980,7 @@
       {
         "kind": "tool",
         "id": "c-unnamed",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -951,7 +1007,7 @@
       {
         "kind": "tool",
         "id": "c-silent",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -978,7 +1034,7 @@
       {
         "kind": "tool",
         "id": "c-once",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1023,7 +1079,7 @@
       {
         "kind": "tool",
         "id": "c-standing",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1062,7 +1118,7 @@
       {
         "kind": "tool",
         "id": "c-stood",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1102,7 +1158,7 @@
       {
         "kind": "tool",
         "id": "c-agent",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1129,7 +1185,7 @@
       {
         "kind": "tool",
         "id": "c-denied",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1163,7 +1219,7 @@
       {
         "kind": "tool",
         "id": "c-stale",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1187,7 +1243,7 @@
       {
         "kind": "tool",
         "id": "c-cancelled",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1211,7 +1267,7 @@
       {
         "kind": "tool",
         "id": "c-skipped",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1245,7 +1301,7 @@
       {
         "kind": "tool",
         "id": "c-lapsed",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1279,7 +1335,7 @@
       {
         "kind": "tool",
         "id": "c-ask",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "ask.questions",
@@ -1331,7 +1387,7 @@
       {
         "kind": "tool",
         "id": "c-large",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1362,7 +1418,7 @@
       {
         "kind": "tool",
         "id": "c-review",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1386,7 +1442,7 @@
       {
         "kind": "tool",
         "id": "j-ran",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-ran",
         "toolId": "web.fetch",
@@ -1420,7 +1476,7 @@
       {
         "kind": "tool",
         "id": "j-failed",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-failed",
         "toolId": "web.fetch",
@@ -1454,7 +1510,7 @@
       {
         "kind": "tool",
         "id": "j-cancelled",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-cancelled",
         "toolId": "web.fetch",
@@ -1477,7 +1533,7 @@
         "work": {
           "kind": "job",
           "status": "cancelled",
-          "startedAt": "2026-01-01T00:00:49.000Z",
+          "startedAt": null,
           "endedAt": "2026-01-01T00:00:50.000Z",
           "canCancel": false
         }
@@ -1485,7 +1541,7 @@
       {
         "kind": "tool",
         "id": "j-approved",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-approved",
         "toolId": "web.fetch",
@@ -1535,7 +1591,7 @@
       {
         "kind": "tool",
         "id": "j-denied",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-denied",
         "toolId": "web.fetch",
@@ -1568,7 +1624,7 @@
         "work": {
           "kind": "job",
           "status": "cancelled",
-          "startedAt": "2026-01-01T00:00:54.000Z",
+          "startedAt": null,
           "endedAt": "2026-01-01T00:00:55.000Z",
           "canCancel": false
         }
@@ -1590,6 +1646,7 @@
         "turn": null,
         "can": [
           "retry",
+          "restore",
           "fork",
           "aside"
         ]
@@ -1597,7 +1654,7 @@
       {
         "kind": "tool",
         "id": "c-moved",
-        "seq": 61,
+        "seq": 66,
         "runId": "r2",
         "messageId": "m2",
         "toolId": "web.fetch",
@@ -1627,7 +1684,7 @@
       {
         "kind": "tool",
         "id": "j-moved",
-        "seq": 63,
+        "seq": 66,
         "runId": "r2",
         "messageId": "j-moved",
         "toolId": "web.fetch",
@@ -1655,6 +1712,61 @@
           "status": "completed",
           "startedAt": "2026-01-01T00:01:00.000Z",
           "endedAt": "2026-01-01T00:01:03.000Z",
+          "canCancel": false
+        }
+      },
+      {
+        "kind": "agent",
+        "id": "m3",
+        "seq": 66,
+        "runId": "r3",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:01:05.000Z",
+        "text": "",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": null,
+        "retried": false,
+        "order": 25,
+        "turn": null,
+        "can": [
+          "retry",
+          "fork",
+          "aside"
+        ]
+      },
+      {
+        "kind": "tool",
+        "id": "c-moved-in-place",
+        "seq": 70,
+        "runId": "r3",
+        "messageId": "m3",
+        "toolId": "web.fetch",
+        "title": "Fetch",
+        "toolset": "Web",
+        "input": {
+          "url": "https://example.com/slower"
+        },
+        "risk": "normal",
+        "requestedAt": "2026-01-01T00:01:07.000Z",
+        "state": "completed",
+        "decision": null,
+        "output": {
+          "ok": true,
+          "value": "page"
+        },
+        "ms": 45000,
+        "order": 26,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "work": {
+          "kind": "job",
+          "status": "completed",
+          "startedAt": "2026-01-01T00:01:07.000Z",
+          "endedAt": "2026-01-01T00:01:10.000Z",
           "canCancel": false
         }
       }
@@ -1717,7 +1829,7 @@
       {
         "kind": "tool",
         "id": "c-auto",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1746,7 +1858,7 @@
       {
         "kind": "tool",
         "id": "c-unnamed",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1773,7 +1885,7 @@
       {
         "kind": "tool",
         "id": "c-silent",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1800,7 +1912,7 @@
       {
         "kind": "tool",
         "id": "c-once",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1845,7 +1957,7 @@
       {
         "kind": "tool",
         "id": "c-standing",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1884,7 +1996,7 @@
       {
         "kind": "tool",
         "id": "c-stood",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1924,7 +2036,7 @@
       {
         "kind": "tool",
         "id": "c-agent",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1951,7 +2063,7 @@
       {
         "kind": "tool",
         "id": "c-denied",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -1985,7 +2097,7 @@
       {
         "kind": "tool",
         "id": "c-stale",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -2009,7 +2121,7 @@
       {
         "kind": "tool",
         "id": "c-cancelled",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -2033,7 +2145,7 @@
       {
         "kind": "tool",
         "id": "c-skipped",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -2067,7 +2179,7 @@
       {
         "kind": "tool",
         "id": "c-lapsed",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -2101,7 +2213,7 @@
       {
         "kind": "tool",
         "id": "c-ask",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "ask.questions",
@@ -2153,7 +2265,7 @@
       {
         "kind": "tool",
         "id": "c-large",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -2184,7 +2296,7 @@
       {
         "kind": "tool",
         "id": "c-review",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "m1",
         "toolId": "web.fetch",
@@ -2208,7 +2320,7 @@
       {
         "kind": "tool",
         "id": "j-ran",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-ran",
         "toolId": "web.fetch",
@@ -2242,7 +2354,7 @@
       {
         "kind": "tool",
         "id": "j-failed",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-failed",
         "toolId": "web.fetch",
@@ -2276,7 +2388,7 @@
       {
         "kind": "tool",
         "id": "j-cancelled",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-cancelled",
         "toolId": "web.fetch",
@@ -2299,7 +2411,7 @@
         "work": {
           "kind": "job",
           "status": "cancelled",
-          "startedAt": "2026-01-01T00:00:49.000Z",
+          "startedAt": null,
           "endedAt": "2026-01-01T00:00:50.000Z",
           "canCancel": false
         }
@@ -2307,7 +2419,7 @@
       {
         "kind": "tool",
         "id": "j-approved",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-approved",
         "toolId": "web.fetch",
@@ -2357,7 +2469,7 @@
       {
         "kind": "tool",
         "id": "j-denied",
-        "seq": 58,
+        "seq": 66,
         "runId": "r1",
         "messageId": "j-denied",
         "toolId": "web.fetch",
@@ -2390,7 +2502,7 @@
         "work": {
           "kind": "job",
           "status": "cancelled",
-          "startedAt": "2026-01-01T00:00:54.000Z",
+          "startedAt": null,
           "endedAt": "2026-01-01T00:00:55.000Z",
           "canCancel": false
         }
@@ -2414,7 +2526,7 @@
       {
         "kind": "tool",
         "id": "c-moved",
-        "seq": 61,
+        "seq": 66,
         "runId": "r2",
         "messageId": "m2",
         "toolId": "web.fetch",
@@ -2444,7 +2556,7 @@
       {
         "kind": "tool",
         "id": "j-moved",
-        "seq": 63,
+        "seq": 66,
         "runId": "r2",
         "messageId": "j-moved",
         "toolId": "web.fetch",
@@ -2472,6 +2584,56 @@
           "status": "completed",
           "startedAt": "2026-01-01T00:01:00.000Z",
           "endedAt": "2026-01-01T00:01:03.000Z",
+          "canCancel": false
+        }
+      },
+      {
+        "kind": "agent",
+        "id": "m3",
+        "seq": 66,
+        "runId": "r3",
+        "model": "anthropic/claude-test",
+        "startedAt": "2026-01-01T00:01:05.000Z",
+        "text": "",
+        "reasoning": "",
+        "thoughtMs": null,
+        "status": "completed",
+        "usage": null,
+        "retried": false,
+        "order": 25,
+        "turn": null
+      },
+      {
+        "kind": "tool",
+        "id": "c-moved-in-place",
+        "seq": 70,
+        "runId": "r3",
+        "messageId": "m3",
+        "toolId": "web.fetch",
+        "title": "Fetch",
+        "toolset": "Web",
+        "input": {
+          "url": "https://example.com/slower"
+        },
+        "risk": "normal",
+        "requestedAt": "2026-01-01T00:01:07.000Z",
+        "state": "completed",
+        "decision": null,
+        "output": {
+          "ok": true,
+          "value": "page"
+        },
+        "ms": 45000,
+        "order": 26,
+        "turn": {
+          "continued": true,
+          "model": null
+        },
+        "work": {
+          "kind": "job",
+          "status": "completed",
+          "startedAt": "2026-01-01T00:01:07.000Z",
+          "endedAt": "2026-01-01T00:01:10.000Z",
           "canCancel": false
         }
       }

@@ -18,7 +18,7 @@ import { apiClient } from "@/web/api/api-client";
 import { errorOf } from "@/web/api/api-errors";
 import { traced } from "@/web/lib/tracing";
 import { useToast } from "@/web/shell/toaster";
-import { backgroundQuery, spaceThreadsQuery, tasksQuery, threadQuery } from "@/web/threads/queries";
+import { activityQuery, spaceThreadsQuery, tasksQuery, threadQuery } from "@/web/threads/queries";
 
 // Makes a thread in the space with its first message, and opens it.
 export function useCreateThread(spaceId: string) {
@@ -189,7 +189,7 @@ export function useMoveToBackground(threadId: string) {
 }
 
 // Notes that the reader has seen a kind of the thread's background work, so what ended leaves it.
-export function useSeenBackground(threadId: string) {
+export function useSeenActivity(threadId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (kind: TrayKind) => {
@@ -200,12 +200,12 @@ export function useSeenBackground(threadId: string) {
       if (!res.ok) throw new Error(await errorOf(res));
       return activityListSchema.parse(await res.json());
     },
-    onSuccess: (list) => queryClient.setQueryData(backgroundQuery(threadId).queryKey, list),
+    onSuccess: (list) => queryClient.setQueryData(activityQuery(threadId).queryKey, list),
   });
 }
 
 // Stops a call that runs in the background; where it stands arrives with the thread's rows.
-export function useCancelBackground(threadId: string) {
+export function useCancelJob(threadId: string) {
   const toast = useToast();
   return useMutation({
     mutationFn: (callId: string) =>
@@ -352,19 +352,19 @@ export function useTaskActions(threadId: string) {
 // secret and delivery header; where each stands arrives with the thread's rows.
 export function useScheduleAndWebhookActions(threadId: string) {
   const toast = useToast();
-  const run = useMutation({
-    mutationFn: async (work: () => Promise<Response>) => {
-      const res = await work();
-      if (!res.ok) throw new Error(await errorOf(res));
-    },
-    onError: (failed) => toast(failed.message),
-  });
+  const mutationFn = async (work: () => Promise<Response>) => {
+    const res = await work();
+    if (!res.ok) throw new Error(await errorOf(res));
+  };
+  const run = useMutation({ mutationFn, onError: (failed) => toast(failed.message) });
+  // A change asked in a dialog, whose refusal the dialog shows rather than a toast.
+  const asked = useMutation({ mutationFn });
   const schedule = (scheduleId: string) => ({ param: { id: threadId, scheduleId } });
   const webhook = (webhookId: string) => ({ param: { id: threadId, webhookId } });
   const schedules = apiClient.v1.threads[":id"].schedules[":scheduleId"];
   const webhooks = apiClient.v1.threads[":id"].webhooks[":webhookId"];
   return {
-    pending: run.isPending,
+    pending: run.isPending || asked.isPending,
     schedule: {
       pause: (id: string) => run.mutateAsync(() => schedules.pause.$post(schedule(id))),
       resume: (id: string) => run.mutateAsync(() => schedules.resume.$post(schedule(id))),
@@ -374,13 +374,13 @@ export function useScheduleAndWebhookActions(threadId: string) {
       pause: (id: string) => run.mutateAsync(() => webhooks.pause.$post(webhook(id))),
       resume: (id: string) => run.mutateAsync(() => webhooks.resume.$post(webhook(id))),
       remove: (id: string) => run.mutateAsync(() => webhooks.$delete(webhook(id))),
+      // These two reject with the server's refusal, for the dialog they were set in to show.
       secret: (id: string, secret: string | null) =>
-        run.mutateAsync(() => webhooks.secret.$put({ ...webhook(id), json: { secret } })),
-      // Rejects with the server's refusal, for the dialog it was set in to show.
-      deliveryHeader: async (id: string, header: string | null) => {
-        const res = await webhooks["delivery-header"].$put({ ...webhook(id), json: { header } });
-        if (!res.ok) throw new Error(await errorOf(res));
-      },
+        asked.mutateAsync(() => webhooks.secret.$put({ ...webhook(id), json: { secret } })),
+      deliveryHeader: (id: string, header: string | null) =>
+        asked.mutateAsync(() =>
+          webhooks["delivery-header"].$put({ ...webhook(id), json: { header } }),
+        ),
     },
   };
 }

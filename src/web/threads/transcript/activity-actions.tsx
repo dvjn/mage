@@ -12,7 +12,7 @@ import { WithTooltip } from "@/web/components/with-tooltip";
 // How long a call runs before it can be moved.
 const MOMENT_MS = 2000;
 
-export interface BackgroundActions {
+export interface ActivityActions {
   // Moves the call with the id to the background.
   move: (callId: string) => Promise<void>;
   // Stops the call with the id.
@@ -35,10 +35,10 @@ export interface BackgroundActions {
   };
 }
 
-export const BackgroundActionsContext = createContext<BackgroundActions | null>(null);
+export const ActivityActionsContext = createContext<ActivityActions | null>(null);
 
-export function useBackgroundActions() {
-  return useContext(BackgroundActionsContext);
+export function useActivityActions() {
+  return useContext(ActivityActionsContext);
 }
 
 // Whether the moment has passed since the call was asked for.
@@ -54,7 +54,7 @@ function useRunningFor(since: string) {
 }
 
 export function MoveToBackground({ row }: { row: ToolRow }) {
-  const actions = useBackgroundActions();
+  const actions = useActivityActions();
   const waited = useRunningFor(row.requestedAt);
   const [moving, setMoving] = useState(false);
   if (!actions || !row.canBackground || !waited) return null;
@@ -78,8 +78,8 @@ export function MoveToBackground({ row }: { row: ToolRow }) {
 }
 
 // Stops a call that runs in the background, where the reader may.
-export function CancelBackground({ row }: { row: ToolRow }) {
-  const actions = useBackgroundActions();
+export function CancelJob({ row }: { row: ToolRow }) {
+  const actions = useActivityActions();
   const [stopping, setStopping] = useState(false);
   if (!actions || !row.work?.canCancel) return null;
   return (

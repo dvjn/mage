@@ -8,7 +8,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getRouteApi } from "@tanstack/react-router";
 import { HistoryIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import type { ArtifactDetail, ArtifactEvent, ArtifactTheme } from "@/shared/artifacts.ts";
 import { artifactEventSchema } from "@/shared/artifacts.ts";
@@ -66,19 +66,36 @@ function ArtifactMenu({ artifact }: { artifact: ArtifactDetail }) {
   );
 }
 
-// Tells of new versions, sharing changes and deletion of the artifact while it is open.
-function useArtifactEvents(id: string, onEvent: (event: ArtifactEvent) => void) {
+// Tells of new versions, sharing changes and deletion of the artifact while it is open, and of a
+// stream opened again after it broke, when whatever happened meanwhile went untold. The stream
+// opens once per artifact, whatever the callbacks.
+function useArtifactEvents(
+  id: string,
+  onEvent: (event: ArtifactEvent) => void,
+  onReopen: () => void,
+) {
+  const tell = useEffectEvent(onEvent);
+  const reopened = useEffectEvent(onReopen);
   useEffect(() => {
     const org = tabOrg();
     const source = new EventSource(`/api/v1/artifacts/${id}/events${org ? `?org=${org}` : ""}`);
+    let lost = false;
+    source.addEventListener("error", () => {
+      lost = true;
+    });
+    source.addEventListener("open", () => {
+      if (!lost) return;
+      lost = false;
+      reopened();
+    });
     const listen = (message: MessageEvent<string>) => {
       const event = artifactEventSchema.safeParse(JSON.parse(message.data));
-      if (event.success) onEvent(event.data);
+      if (event.success) tell(event.data);
     };
     for (const type of ["published", "sharing", "deleted"]) source.addEventListener(type, listen);
-    source.addEventListener("access-ended", () => onEvent({ type: "deleted", artifactId: id }));
+    source.addEventListener("access-ended", () => tell({ type: "deleted", artifactId: id }));
     return () => source.close();
-  }, [id, onEvent]);
+  }, [id]);
 }
 
 // The versions to pick from, newest first, each with its label and when it was published.
@@ -167,13 +184,29 @@ export function ArtifactPage() {
   }, [fresh, src, loadedFor, wanted]);
 
   const [followed, setFollowed] = useState<ArtifactEvent | null>(null);
-  useArtifactEvents(artifactId, (event) => {
-    setFollowed(event);
-    void queryClient.invalidateQueries({ queryKey: ["artifacts"] });
-    if (event.type === "published" && version === undefined) {
-      void link.refetch().then(() => setReloads((count) => count + 1));
-    }
-  });
+  // The frame reloads once the link and the versions are read again, so a version picked then is
+  // one the list already holds.
+  const readAgain = (reload: (before: number | undefined) => boolean) => {
+    const { queryKey } = artifactQuery(artifactId);
+    const before = queryClient.getQueryData(queryKey)?.version;
+    void queryClient.invalidateQueries({ queryKey: ["artifacts"] }).then(() => {
+      if (version === undefined && reload(before)) setReloads((count) => count + 1);
+    });
+  };
+  useArtifactEvents(
+    artifactId,
+    (event) => {
+      setFollowed(event);
+      readAgain(() => event.type === "published");
+    },
+    // A version published while the stream was down goes untold; the frame reloads only if the
+    // newest version is not the one it showed.
+    () =>
+      readAgain(
+        (before) =>
+          queryClient.getQueryData(artifactQuery(artifactId).queryKey)?.version !== before,
+      ),
+  );
 
   if (artifact.isError || followed?.type === "deleted") {
     return <NotFound what="artifact" />;

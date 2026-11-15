@@ -193,7 +193,7 @@ export function standInModels(options: {
           .from(schema.connection)
           .where(inArray(schema.connection.organizationId, [...state.orgs.keys()]))
       : [];
-    for (const service of state.services) for (const { id } of ids) service.invalidate(id);
+    for (const service of state.services) for (const { id } of ids) await service.invalidate(id);
   }
 
   return {

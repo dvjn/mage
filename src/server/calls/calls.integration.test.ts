@@ -165,14 +165,13 @@ describe("a run's calls", () => {
     after.reply("Carrying on.");
     await t.worker.idle();
     const rows = await t.rows();
-    expect(rows.map((row) => [row.status, row.background])).toEqual([
-      ["completed", false],
-      ["running", true],
+    expect(rows.map((row) => [row.id, row.status, row.background])).toEqual([
+      [wait, "running", true],
     ]);
     t.tool.finish("w");
     (await t.model.next()).reply("Noted.");
     await t.worker.idle();
-    expect((await t.rows())[1]?.status).toBe("completed");
+    expect((await t.rows())[0]?.status).toBe("completed");
   });
 
   it("moves to the background at once while it waits for a decision, and its run goes on", async () => {
@@ -183,10 +182,9 @@ describe("a run's calls", () => {
     expect((await t.act(`${guarded}/background`)).status).toBe(200);
     (await t.model.next()).reply("Carrying on.");
     await t.worker.idle();
-    expect((await t.rows()).map((row) => [row.status, row.waits_for, row.background])).toEqual([
-      ["completed", null, false],
-      ["waiting", "decision", true],
-    ]);
+    expect(
+      (await t.rows()).map((row) => [row.id, row.status, row.waits_for, row.background]),
+    ).toEqual([[guarded, "waiting", "decision", true]]);
   });
 
   it("refuse a move of a call that is not running", async () => {
@@ -365,8 +363,8 @@ describe("an approved job", () => {
   });
 });
 
-describe("an approved job that cannot be started", () => {
-  it("goes stale, so it is not claimed ahead of the others on every sweep", async () => {
+describe("an approved job that cannot be started for now", () => {
+  it("stays waiting its turn after a failure, and starts on a later sweep", async () => {
     const t = await callThread();
     const b = setup({}, { database: t.database, toolsets: [t.tool.toolset] });
     await t.post(t.ada, "Go");
@@ -387,9 +385,12 @@ describe("an approved job that cannot be started", () => {
     expect(res.status).toBe(200);
     vi.spyOn(b.tools, "offered").mockRejectedValueOnce(new Error("for the test"));
     await b.calls.beat();
-    expect((await t.callStore.find(t.thread.id, job.id))?.status).toBe("stale");
-    (await t.model.next()).reply("Noted.");
-    await t.worker.idle();
+    expect((await t.callStore.find(t.thread.id, job.id))?.status).toBe("ready");
+    await b.calls.beat();
+    await vi.waitFor(async () =>
+      expect((await t.callStore.find(t.thread.id, job.id))?.status).toBe("completed"),
+    );
+    await b.calls.stop();
   });
 });
 
@@ -440,7 +441,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("calls on Postgres", () => {
     expect((await t.types()).filter((type) => type === "tool.ran")).toHaveLength(2);
   });
 
-  it("hold a thread to its limit of jobs when two start at once", async () => {
+  it("hold a thread to its limit of running jobs when several start at once, queueing the rest", async () => {
     const t = await callThread();
     await t.post(t.ada, "Go");
     const starts = Array.from({ length: 9 }, (_, index): [string, unknown] => [
@@ -450,7 +451,13 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("calls on Postgres", () => {
     await t.asks(...starts);
     (await t.model.next()).reply("Started.");
     await t.worker.idle();
-    expect((await t.rows()).filter((row) => row.background)).toHaveLength(8);
+    // Eight run; the ninth waits its turn.
+    expect(
+      (await t.rows())
+        .filter((row) => row.background)
+        .map((row) => row.status)
+        .toSorted(),
+    ).toEqual(["ready", ...Array(8).fill("running")]);
     await expireLeases(t.db, "call");
     await t.calls.recover();
     for (;;) {
@@ -725,7 +732,8 @@ describe("whose words were before", () => {
 describe("whose words a restore leaves out", () => {
   // A job's row is touched when it ends, so a restore from a reply before that end takes in the
   // log up to it, though the rows after the reply are left out: an aside and a quiet notice sent
-  // meanwhile are not read on the new branch, until the notice is taken in there.
+  // meanwhile are not read on the new branch, until the notice is taken in there. The job's end,
+  // whose start the new branch holds, is told there again and wakes it.
   it("are not read on the new branch until taken in there", async () => {
     const t = await seeingThread();
     await t.post(t.ada, "Go");
@@ -760,8 +768,7 @@ describe("whose words a restore leaves out", () => {
     });
     expect(res.status).toBe(200);
     // The quiet notice waits on the new branch, and is read where its next run takes it in.
-    await t.post(t.ada, "Again");
-    (await t.model.next()).reply("Again.");
+    (await t.model.next()).reply("Told.");
     await t.worker.idle();
     const words = await t.words();
     expect(words).not.toContain(`${asideSeq} Grace Hopper`);

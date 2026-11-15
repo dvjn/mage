@@ -15,6 +15,7 @@ import {
   databases,
   issuer,
   passwordServer,
+  serverEnv,
   ssoServer,
   wireServer,
 } from "./e2e/servers.ts";
@@ -24,14 +25,6 @@ const ssoJourneys = ["**/oidc.spec.ts", "**/scim.spec.ts"];
 // The journeys that reach the stand-in model through Mage's real providers.
 const wireJourneys = ["**/model-wire.spec.ts"];
 const oidcClient = { id: "mage", secret: "mage-browser-journeys-oidc-secret" };
-
-const serverEnv = {
-  NODE_ENV: "test",
-  MODEL_GATEWAY: "fake",
-  AUTH_SECRET: "mage-browser-journeys-secret-0123456789",
-  CREDENTIAL_KEY: "WFnQPvVJ7j8limmjR6tFVpYWlTRqy8Rf8i6UJnaIaQg=",
-  DATABASE_URL: databases.mage,
-};
 
 export default defineConfig({
   testDir: "e2e",

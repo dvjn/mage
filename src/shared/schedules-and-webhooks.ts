@@ -10,7 +10,7 @@ export const SCHEDULES_AND_WEBHOOKS_LIMIT = 20;
 export const HISTORY_PAGE = 10;
 
 // One page of what a schedule fired or a webhook took, newest first: when, the row of the
-// notification in the thread, and for a post what it said it was. `total` counts all of it.
+// notice in the thread, and for a post what it said it was. `total` counts all of it.
 export const firedHistorySchema = z.object({
   entries: z.array(
     z.object({

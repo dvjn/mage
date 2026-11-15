@@ -702,7 +702,7 @@ export function createRunWorker(options: RunWorkerOptions) {
 
   // At a step boundary: stops the run when asked to, otherwise takes in the waiting messages
   // (all of them before the first model call, afterwards only those sent to steer) in the order
-  // they were sent, then every notification waiting, and returns them, the notifications as one.
+  // they were sent, then every notice waiting, and returns them, the notices as one.
   // Those asking to compact the thread wait for runs of their own.
   // A reply whose step ended is completed before what is taken in after it.
   async function boundary(
@@ -973,7 +973,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     }
     // A run queued again after a decision takes in only the messages sent to steer it.
     const resumed = (await transcript(execution.run)).rows.some(
-      (row) => row.kind === "tool" && row.runId === run.id && !row.background,
+      (row) => row.kind === "tool" && row.runId === run.id && (!row.background || !!row.moved),
     );
 
     // What a tool is given of the thread's next model call is as the step it runs in reads it.

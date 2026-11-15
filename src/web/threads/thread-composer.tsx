@@ -375,7 +375,7 @@ function WaitingItem({ threadId, message }: { threadId: string; message: HumanRo
 }
 
 // People's messages waiting for the agent, oldest first.
-export function PendingTray({ threadId, waiting }: { threadId: string; waiting: WaitingRow[] }) {
+export function WaitingTray({ threadId, waiting }: { threadId: string; waiting: WaitingRow[] }) {
   const messages = waiting.filter((row) => row.kind === "human");
   if (messages.length === 0) return null;
   return (

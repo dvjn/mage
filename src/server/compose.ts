@@ -326,8 +326,13 @@ export function compose(deps: ComposeDeps) {
     ordered: sync.ordered,
   });
   const callStore = createCallStore(db);
+  const subagentStore = createSubagentStore(db);
   const calls = createCalls({
     store: callStore,
+    retired: async (thread) =>
+      thread.parentThreadId && (await subagentStore.find(thread.id))?.archivedAt
+        ? "its subagent is archived."
+        : null,
     threads: threadStore,
     spaceStore,
     log,
@@ -407,7 +412,6 @@ export function compose(deps: ComposeDeps) {
     hooks,
     ...(options.worker && { overrides: options.worker }),
   });
-  const subagentStore = createSubagentStore(db);
   const subagents = createSubagents({
     subagents: subagentStore,
     threads: threadStore,

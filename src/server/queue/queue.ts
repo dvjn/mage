@@ -213,9 +213,10 @@ export function createQueue(options: QueueOptions) {
   const admission = {
     // Takes the run's waiting inputs in: every message ("all") or those sent to steer
     // ("steering"), never one asking to compact, then every notice; or those named. Unless they are
-    // named, messages whose authors may no longer post are dropped first. `kept` are inputs an earlier run took in that
-    // this one takes in again, named first. One event names them all, messages before notices;
-    // `before` runs first when there is any. Answers what was taken in, with what each says.
+    // named, messages whose authors may no longer post are dropped first. `kept` are inputs an
+    // earlier run took in that this one takes in again, named first. One event names them all,
+    // messages before notices; `before` runs first when there is any. Answers what was taken in,
+    // with what each says.
     async admit(
       run: RunRef,
       which: "all" | "steering" | { ids: readonly string[] },
@@ -293,11 +294,11 @@ export function createQueue(options: QueueOptions) {
     },
 
     // A new current branch, made from the branch left, in the write that makes it: it has a row
-    // waiting for each notice it reads and has not taken in; each notice waiting on the branch left
-    // that it does not read is told again on it, as a copy, when the branch holds the call that
-    // sent it or none did. Messages waiting on the branch left are dropped; every other row there
-    // stays as it stands. A copy that wakes the agent starts it on the worker's next pass, unless
-    // the run that made the branch takes it in first.
+    // waiting for each notice it reads and has not taken in; each notice waiting or taken in on the
+    // branch left that it does not read is told again on it, as a copy, when the branch holds the
+    // call that sent it or none did. Messages waiting on the branch left are dropped; every other
+    // row there stays as it stands. A copy that wakes the agent starts it on the worker's next
+    // pass, unless the run that made the branch takes it in first.
     async branched(threadId: string, branchId: string, left: string) {
       await log.write(
         threadId,

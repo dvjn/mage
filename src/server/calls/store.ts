@@ -25,7 +25,7 @@ export type NewCallRow = Pick<
   | "background"
   | "seq"
 > &
-  Partial<Pick<CallRow, "movedFrom" | "model">>;
+  Partial<Pick<CallRow, "model">>;
 
 // The right to carry out a running job, held by one server instance.
 export interface CallLease extends Lease {
@@ -126,19 +126,27 @@ export function createCallStore(db: Db) {
         .orderBy(desc(call.createdAt), desc(call.id));
     },
 
-    // How many of the thread's jobs run or wait.
-    async openJobs(threadId: string) {
+    // How many of the thread's jobs run; those waiting for a person or for a turn hold no place.
+    async runningJobs(threadId: string) {
       const rows = await db
         .select({ count: sql<number>`count(*)::int` })
         .from(call)
         .where(
-          and(
-            eq(call.threadId, threadId),
-            eq(call.background, true),
-            inArray(call.status, [...OPEN_CALL_STATES]),
-          ),
+          and(eq(call.threadId, threadId), eq(call.background, true), eq(call.status, "running")),
         );
       return rows[0]?.count ?? 0;
+    },
+
+    // Whether one of the thread's jobs stands ready, waiting for its turn to run.
+    async hasReady(threadId: string) {
+      const rows = await db
+        .select({ id: call.id })
+        .from(call)
+        .where(
+          and(eq(call.threadId, threadId), eq(call.background, true), eq(call.status, "ready")),
+        )
+        .limit(1);
+      return rows.length > 0;
     },
 
     // The run's calls that have not ended, leaving out jobs.
@@ -298,25 +306,30 @@ export function createCallStore(db: Db) {
         );
     },
 
-    // The job the call became, while it runs.
-    async movedTo(threadId: string, fromId: string) {
-      return (
-        (
-          await db
-            .select()
-            .from(call)
-            .where(
-              and(
-                eq(call.threadId, threadId),
-                eq(call.movedFrom, fromId),
-                eq(call.background, true),
-                eq(call.status, "running"),
-              ),
-            )
-            .limit(1)
-        )[0] ?? null
-      );
-    },
+    // Moves a run's call that runs or waits to the background, where it goes on as a job under the
+    // same id: one running is held from then on under the lease; null when it had ended or moved.
+    toBackground: async (
+      threadId: string,
+      id: string,
+      lease?: { owner: string; leaseMs: number },
+    ) =>
+      (
+        await db
+          .update(call)
+          .set({
+            background: true,
+            moveRequestedAt: null,
+            ...(lease && leases.take(lease.owner, lease.leaseMs)),
+          })
+          .where(
+            and(
+              one(threadId, id),
+              eq(call.background, false),
+              inArray(call.status, lease ? ["running"] : ["waiting"]),
+            ),
+          )
+          .returning()
+      )[0] ?? null,
 
     // Whether the job is still held under the lease.
     async holds(lease: CallLease) {
@@ -368,7 +381,8 @@ export function createCallStore(db: Db) {
 // The rows of the calls in the threads' logs, as the logs say each stands: by the last event that
 // settled it (ran ok or not, denied, skipped, stale, stopped); else one a branch or fork started
 // afresh after is cancelled; else a run's call is cancelled once its run has ended, ready once
-// approved or answered, waiting when it waits, else ready; a job names the call it was moved from;
+// approved or answered, waiting when it waits, else ready; a call moved to the background is a job
+// from then on, and a job an older log made of a moved call names the call it was moved from;
 // a job with nothing settling it stands as its row in the old table said, when the statement runs where that
 // table is, else as a run's call does. The migration that made the table runs the same statement
 // over every thread.
@@ -412,6 +426,12 @@ export function fillFromLog(threads: SQL, oldJobs = false) {
        where e.type = 'tool.ran' and (e.data->'value'->>'movedToBackground')::boolean is true
          and ${threads}
     ),
+    moved_in_place as (
+      select distinct e.thread_id, e.data->>'callId' as id
+        from thread_event e
+        join thread t on t.id = e.thread_id
+       where e.type = 'tool.moved' and ${threads}
+    ),
     ended_runs as (
       select e.thread_id, e.data->>'runId' as run_id
         from thread_event e
@@ -424,7 +444,7 @@ export function fillFromLog(threads: SQL, oldJobs = false) {
     select r.thread_id, r.id, r.branch_id, r.seq, r.run_id, r.tool_id, r.risk, s.status,
            case when s.status = 'waiting'
                 then case when r.tool_id = 'thread.ask' then 'answer' else 'decision' end end,
-           r.background,
+           s.background,
            (select u.model from run u where u.id = r.run_id),
            (select m.from_id from moved m where m.thread_id = r.thread_id and m.id = r.id limit 1),
            case when s.status = 'running' then s.lease_owner end,
@@ -446,7 +466,13 @@ export function fillFromLog(threads: SQL, oldJobs = false) {
       left join decided d on d.thread_id = r.thread_id and d.id = r.id
       ${oldJobs ? sql`left join background_call b on b.id = r.id and r.background` : sql``}
       cross join lateral (
-        select case
+        select r.background or exists (select 1 from moved_in_place p
+                                        where p.thread_id = r.thread_id and p.id = r.id)
+               as background
+      ) g
+      cross join lateral (
+        select g.background,
+               case
                  when x.type = 'tool.ran' and x.ok then 'completed'
                  when x.type = 'tool.ran' then 'failed'
                  when x.type = 'tool.denied' and x.reason = 'denied' then 'denied'
@@ -469,7 +495,7 @@ export function fillFromLog(threads: SQL, oldJobs = false) {
                  }
                  when exists (select 1 from ended_runs u
                                where u.thread_id = r.thread_id and u.run_id = r.run_id)
-                      and not r.background then 'cancelled'
+                      and not g.background then 'cancelled'
                  when d.id is not null then 'ready'
                  when r.waits then 'waiting'
                  else 'ready'

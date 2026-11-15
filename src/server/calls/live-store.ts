@@ -35,8 +35,6 @@ export interface LiveStore {
   tail(callId: string, cap: number): Promise<LiveTail | null>;
   // What is kept of each of the thread's running calls, as one piece each.
   inThread(threadId: string, cap: number): Promise<LiveChunk[]>;
-  // Keeps what the call printed under another id.
-  move(from: string, to: string): Promise<void>;
   remove(callId: string): Promise<void>;
 }
 
@@ -103,10 +101,6 @@ export function createLiveStore(db: Db): LiveStore {
           }),
         )
       ).flat();
-    },
-
-    async move(from, to) {
-      await db.update(callOutput).set({ callId: to }).where(eq(callOutput.callId, from));
     },
 
     async remove(callId) {

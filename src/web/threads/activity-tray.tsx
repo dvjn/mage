@@ -24,8 +24,8 @@ import { Button } from "@/web/components/ui/button";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { useIsMobile } from "@/web/hooks/use-mobile";
 import { TrayList } from "@/web/threads/tray-cards";
-import { useSeenBackground } from "@/web/threads/mutations";
-import { backgroundQuery, tasksQuery } from "@/web/threads/queries";
+import { useSeenActivity } from "@/web/threads/mutations";
+import { activityQuery, tasksQuery } from "@/web/threads/queries";
 import { PagerControl, PagerSlotContext, type PagerState } from "@/web/threads/pager";
 import { TaskActions, TaskList } from "@/web/threads/task-list";
 
@@ -110,8 +110,8 @@ export function ActivityTray({
       !taskList?.shared ||
       (task.assignee?.kind === "subagent" && task.assignee.threadId === threadId),
   );
-  const items = useQuery(backgroundQuery(threadId)).data?.items ?? [];
-  const seen = useSeenBackground(threadId);
+  const items = useQuery(activityQuery(threadId)).data?.items ?? [];
+  const seen = useSeenActivity(threadId);
   const mobile = useIsMobile();
   const kinds = GROUPS.map((group) => {
     const own =

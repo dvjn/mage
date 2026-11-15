@@ -1,11 +1,11 @@
 // How a thread's rows lay out in its transcript, as structure for the markup to space: turns, each
-// a person's message, incoming messages or notifications, an event, or the agent's turn; the agent's
+// a person's message, incoming messages or notices, an event, or the agent's turn; the agent's
 // turn as blocks of reply text, cards and runs of lines, a line being a tool call's or the agent's
 // thinking; and the turn's actions after it where its last step shows none. Two or more of the
 // agent's calls in a row fold into one entry. A call that waits for a decision is a line like any
 // other; its decision is made in the activity tray. A subagent's call that waits for answers shows
 // as its card right after the entry with the line that started the subagent.
-// Received messages and notifications are turns of their own, outside the receiving agent's turn.
+// Received messages and notices are turns of their own, outside the receiving agent's turn.
 
 import { ASK_TOOL } from "@/shared/ask.ts";
 import { artifactOf, type CalledArtifact, cardsAfterReply } from "@/web/artifacts/call-artifacts";
@@ -154,7 +154,7 @@ export function transcriptEntries(rows: readonly ShownRow[]): TranscriptEntry[] 
     const row = shown[i]!;
     if (row.kind === "notice") {
       const notices = [row];
-      // Messages fold with messages, and other notifications with each other.
+      // Messages fold with messages, and other notices with each other.
       const kin = (other: ShownRow | undefined): other is NoticeRow =>
         other?.kind === "notice" &&
         (other.type === "message") === (row.type === "message") &&

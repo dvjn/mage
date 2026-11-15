@@ -5,6 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { createLogger } from "@/server/kernel/logger.ts";
 import { openTestDatabase } from "@/server/testing/database.ts";
 
+import { createClaims } from "./claim.ts";
 import { createSync } from "./sync.ts";
 
 const job = pgTable("job", { id: text("id").primaryKey(), due: integer("due").notNull() });
@@ -38,7 +39,7 @@ describe("due rows", () => {
   });
 });
 
-describe.skipIf(!process.env.TEST_DATABASE_URL)("due rows and singletons on Postgres", () => {
+describe.skipIf(!process.env.TEST_DATABASE_URL)("due rows on Postgres", () => {
   it("keep a claimed row from others until its transaction ends", async () => {
     const { a, b } = await setup();
     let release = () => {};
@@ -59,8 +60,10 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("due rows and singletons on Post
     expect(await first).toEqual(["a"]);
     expect(second).toEqual(["b", "c"]);
   });
+});
 
-  it("makes a ticker skip its pass while another instance holds the lock", async () => {
+describe("singletons", () => {
+  it("make a ticker skip its pass while another instance holds the lease", async () => {
     const { a, b } = await setup();
     let release = () => {};
     const held = new Promise<void>((resolve) => (release = resolve));
@@ -82,7 +85,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("due rows and singletons on Post
     await ticker.stop();
   });
 
-  it("is not run while another session holds its lock", async () => {
+  it("are not run while another instance holds the lease", async () => {
     const { a, b } = await setup();
     let release = () => {};
     const held = new Promise<void>((resolve) => (release = resolve));
@@ -99,5 +102,46 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("due rows and singletons on Post
     expect(await first).toEqual({ ran: true, result: "a" });
     expect(await b.singleton("sweep", async () => "b")).toEqual({ ran: true, result: "b" });
     expect(await a.db.select().from(job).where(eq(job.id, "a"))).toHaveLength(1);
+  });
+
+  it("write in transactions of their own, seen by others before the work ends", async () => {
+    const { a, b } = await setup();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let written = () => {};
+    const isWritten = new Promise<void>((resolve) => (written = resolve));
+    const first = a.singleton("sweep", async () => {
+      await a.db.delete(job).where(eq(job.id, "a"));
+      written();
+      await held;
+    });
+    await isWritten;
+    expect(await b.db.select().from(job).where(eq(job.id, "a"))).toEqual([]);
+    release();
+    await first;
+  });
+
+  it("let the lease go when its renewal fails to start", async () => {
+    const { a, b } = await setup();
+    const claims = createClaims({
+      db: a.db,
+      inTransaction: () => false,
+      instanceId: "broken",
+      keeper: () => ({
+        start: () => Promise.reject(new Error("no timer")),
+        stop: () => Promise.resolve(),
+        beat: () => Promise.resolve(),
+      }),
+      logger: createLogger({ write() {} }),
+    });
+    await expect(claims.singleton("sweep", async () => "broken")).rejects.toThrow("no timer");
+    expect(await b.singleton("sweep", async () => "b")).toEqual({ ran: true, result: "b" });
+  });
+
+  it("are refused inside a transaction", async () => {
+    const { a } = await setup();
+    await expect(a.transact(async () => a.singleton("sweep", async () => 1))).rejects.toThrow(
+      "outside any transaction",
+    );
   });
 });

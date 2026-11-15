@@ -58,7 +58,6 @@ export function createSync(deps: {
     notify: async (message) => deps.db.execute(sql`select pg_notify(${CHANNEL}, ${message})`),
   });
 
-  const claims = createClaims(db, transact, inTransaction);
   // Everything periodic made here, stopped with it.
   const running = new Set<{ stop(): Promise<void> }>();
   const { listen } = deps;
@@ -86,8 +85,10 @@ export function createSync(deps: {
       deps.logger,
     );
     running.add(made);
-    return made;
+    return { ...made, stop: async () => made.stop().finally(() => running.delete(made)) };
   }
+
+  const claims = createClaims({ db, inTransaction, instanceId, keeper, logger: deps.logger });
 
   // The listening connection is checked now and then, so one lost without a word is made again.
   const checking = listen?.check && ticker("listener", async () => listen.check?.(), 30_000);

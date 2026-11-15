@@ -125,8 +125,8 @@ export interface ModelsOptions {
   spaces: Pick<SpaceStore, "withDefaultModel">;
   // Streams replies for the connections of each host.
   gateways: Record<HostId, ModelGateway>;
-  // Tells the other instances a connection's list changed, and hears them tell it; without it,
-  // each instance's lists last their hour.
+  // Tells the other instances a connection's list changed, and hears them tell it, so they drop it
+  // before they next read the connection.
   signals?: Pick<Signals, "catalogChanged" | "onCatalogChanged" | "onGap">;
   logger: Logger;
   now?: () => Date;
@@ -189,22 +189,40 @@ export async function pickReplyModel(
 export function createModels(options: ModelsOptions) {
   const { connections, tokens, catalogs, settings, choices, spaces, gateways, logger } = options;
   const now = options.now ?? (() => new Date());
-  // Each connection's list, by connection, with its org, so one org's lists never drop another's.
-  const cache = new Map<string, { orgId: string; at: number; models: CatalogModel[] }>();
+  // Each connection's list, by connection, with its org, so one org's lists never drop another's,
+  // and the connection's `updatedAt` it was read under.
+  const cache = new Map<
+    string,
+    { orgId: string; at: number; version: number; models: CatalogModel[] }
+  >();
+  const keep = (orgId: string, id: string, updatedAt: Date, models: CatalogModel[]) =>
+    cache.set(id, { orgId, at: now().getTime(), version: updatedAt.getTime(), models });
   // A list changed on another instance is read again here at its next use; after a gap in what
-  // this instance heard, every list is.
+  // this instance heard, every list is. A signal missed without a gap is caught by the stamp on
+  // the connection, which every use reads anyway.
   options.signals?.onCatalogChanged((connectionId) => cache.delete(connectionId));
   options.signals?.onGap(() => cache.clear());
+  // The list kept for the connection as it now stands, none when it changed since.
+  const keptFor = (connection: Connection) => {
+    const cached = cache.get(connection.id);
+    return cached?.version === connection.updatedAt.getTime() ? cached : undefined;
+  };
 
   async function listOf(orgId: string, connection: Connection, refresh: boolean) {
     const { id, host } = connection;
-    const cached = cache.get(id);
-    if (!refresh && cached && now().getTime() - cached.at < CACHE_MS) return cached.models;
+    const cached = keptFor(connection);
+    if (!refresh && cached && now().getTime() - cached.at < CACHE_MS) {
+      return cached.models;
+    }
     try {
       const models = await tokens.withFreshToken(orgId, id, (token) => catalogs[host].list(token));
-      // Told before it is kept, as this instance hears what it tells too.
-      if (refresh) options.signals?.catalogChanged(id);
-      cache.set(id, { orgId, at: now().getTime(), models });
+      let updatedAt = connection.updatedAt;
+      if (refresh) {
+        updatedAt = (await connections.touch(id)) ?? updatedAt;
+        // Told before it is kept, as this instance hears what it tells too.
+        options.signals?.catalogChanged(id);
+      }
+      keep(orgId, id, updatedAt, models);
       return models;
     } catch (err) {
       if (err instanceof ConnectionError) throw err;
@@ -490,8 +508,9 @@ export function createModels(options: ModelsOptions) {
     aliasOf,
 
     // Forgets the connection's list, as when where its requests go changed, on every instance.
-    invalidate(connectionId: string) {
+    async invalidate(connectionId: string) {
       cache.delete(connectionId);
+      await connections.touch(connectionId);
       options.signals?.catalogChanged(connectionId);
     },
 
@@ -500,7 +519,7 @@ export function createModels(options: ModelsOptions) {
     async add(owner: Owner, input: NewHostConnection): Promise<Connection> {
       const list = await checked(input.host, input, input.proxy ?? null);
       const connection = await tokens.add(owner, input);
-      cache.set(connection.id, { orgId: owner.orgId, at: now().getTime(), models: list });
+      keep(owner.orgId, connection.id, connection.updatedAt, list);
       return connection;
     },
 
@@ -513,7 +532,7 @@ export function createModels(options: ModelsOptions) {
       );
       const list = await checked(host, change, proxy);
       const connection = await tokens.edit(owner, id, change);
-      cache.set(id, { orgId: owner.orgId, at: now().getTime(), models: list });
+      keep(owner.orgId, id, connection.updatedAt, list);
       return connection;
     },
 
@@ -631,7 +650,7 @@ export function createModels(options: ModelsOptions) {
       return (ref) => {
         const { connectionId: prefix, modelId: id } = parseModelRef(ref);
         const connection = namedBy(list, prefix);
-        const listed = connection && cache.get(connection.id)?.models.find((m) => m.id === id);
+        const listed = connection && keptFor(connection)?.models.find((m) => m.id === id);
         // A sign-in's ref names its host even after it is gone.
         const host = connection?.host ?? null;
         const hinted = host ?? (isHost(prefix) ? prefix : null);
@@ -654,7 +673,7 @@ export function createModels(options: ModelsOptions) {
         const { connectionId: prefix, modelId } = parseModelRef(await canonicalRef(orgId, given));
         const connection = namedBy(list, prefix);
         if (!connection) return null;
-        const listed = cache.get(connection.id)?.models.find((m) => m.id === modelId);
+        const listed = keptFor(connection)?.models.find((m) => m.id === modelId);
         const through = connectionName(connection) ?? hostOf(connection.host).label;
         return `${listed?.name ?? modelId} · ${through}`;
       };

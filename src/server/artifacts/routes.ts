@@ -5,6 +5,7 @@ import { Hono } from "hono";
 import { streamSSE } from "hono/streaming";
 
 import { type ApiEnv, checkedBody, queryOf, signedIn } from "@/server/http.ts";
+import type { Logger } from "@/server/kernel/logger.ts";
 import {
   artifactCandidateQuerySchema,
   artifactListQuerySchema,
@@ -32,6 +33,7 @@ export function artifactRoutes(options: {
   artifacts: Artifacts;
   heartbeatMs?: number;
   shutdown?: AbortSignal;
+  logger?: Logger;
 }) {
   const { artifacts } = options;
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
@@ -125,25 +127,45 @@ export function artifactRoutes(options: {
       await artifacts.detail(principal, id);
       return streamSSE(c, async (stream) => {
         let writing = Promise.resolve();
-        const unsubscribe = await artifacts.follow(principal, id, (event) => {
-          writing = writing.then(() =>
-            stream.writeSSE({ event: event.type, data: JSON.stringify(event) }),
-          );
-        });
-        stream.onAbort(unsubscribe);
-        while (!stream.aborted && !options.shutdown?.aborted) {
-          await new Promise((resolve) => setTimeout(resolve, heartbeatMs));
-          if (stream.aborted || options.shutdown?.aborted) break;
-          // Whoever may no longer view it is told so, and the stream ends.
-          if (!(await artifacts.viewable(principal, id))) {
-            await writing;
-            await stream.writeSSE({ event: "access-ended", data: "{}" });
-            break;
+        // A read that failed closes the stream untold, so the browser connects again. A write to a
+        // reader gone, or a stop as the server shuts down, is no failure.
+        const failed = (err: unknown) => {
+          if (!stream.aborted && !options.shutdown?.aborted) {
+            options.logger?.error({ err, artifactId: id }, "artifact event stream read failed");
           }
-          writing = writing.then(() => stream.write(": heartbeat\n\n").then(() => {}));
-          await writing;
+          stream.abort();
+        };
+        const followed = await artifacts.follow(
+          principal,
+          id,
+          (event) => {
+            writing = writing.then(() =>
+              stream.writeSSE({ event: event.type, data: JSON.stringify(event) }),
+            );
+          },
+          failed,
+        );
+        stream.onAbort(followed.stop);
+        try {
+          while (!stream.aborted && !options.shutdown?.aborted) {
+            await new Promise((resolve) => setTimeout(resolve, heartbeatMs));
+            if (stream.aborted || options.shutdown?.aborted) break;
+            // Whoever may no longer view it is told so, and the stream ends.
+            if (!(await artifacts.viewable(principal, id))) {
+              await writing;
+              await stream.writeSSE({ event: "access-ended", data: "{}" });
+              break;
+            }
+            // Read again without a hint, as a hint may be lost.
+            await followed.recheck();
+            if (stream.aborted) break;
+            writing = writing.then(() => stream.write(": heartbeat\n\n").then(() => {}));
+            await writing;
+          }
+        } catch (err) {
+          failed(err);
         }
-        unsubscribe();
+        followed.stop();
       });
     })
     .get("/v1/org/artifacts/settings", async (c) => {

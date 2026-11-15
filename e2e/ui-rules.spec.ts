@@ -60,35 +60,50 @@ async function sameHeight(row: Locator, rule: string) {
   for (const height of heights) near(height, heights[0]!, `${rule}: heights ${heights.join(", ")}`);
 }
 
-// Where an element's content starts: its box plus its own padding.
-async function contentLeft(locator: Locator) {
-  return locator.evaluate(
-    (element) =>
-      element.getBoundingClientRect().left +
-      Number.parseFloat(getComputedStyle(element).paddingLeft),
+// Waits for the element's animations, and those inside it, to finish, so what is measured next is
+// where it rests.
+async function settled(locator: Locator) {
+  await locator.evaluate((element) =>
+    Promise.all(
+      element
+        .getAnimations({ subtree: true })
+        .map(async (animation) => animation.finished.catch(() => {})),
+    ),
   );
 }
 
 // One inset: the search box and the highlights start at the menu's edge, and the labels and what
-// the rows hold start at the same x.
+// the rows hold start at the same x. Measured in one frame once the menu rests.
 async function oneInset(menu: Locator, rule: string) {
-  const input = menu.locator("[data-slot=input-group]").first();
-  const item = menu.locator("[data-slot=dropdown-menu-item]").first();
-  const label = menu.locator("[data-slot=dropdown-menu-label]").first();
-  const inputLeft = (await box(input)).x;
-  near((await box(item)).x, inputLeft, `${rule}: row highlight against the search box`);
-  near((await box(label)).x, inputLeft, `${rule}: label box against the search box`);
-  near(
-    await contentLeft(label),
-    await contentLeft(item),
-    `${rule}: label text against row content`,
-  );
-  const inside = await box(menu);
-  for (const each of await menu.locator("[data-slot=dropdown-menu-item]").all()) {
-    const found = await box(each);
-    expect(found.x, `${rule}: a highlight starts inside the menu`).toBeGreaterThanOrEqual(inside.x);
-    expect(found.x + found.width, `${rule}: a highlight ends inside the menu`).toBeLessThanOrEqual(
-      inside.x + inside.width + TOLERANCE,
+  await settled(menu);
+  const found = await menu.evaluate((element) => {
+    const left = (one: Element) => one.getBoundingClientRect().left;
+    // Where an element's content starts: its box plus its own padding.
+    const contentLeft = (one: Element) =>
+      left(one) + Number.parseFloat(getComputedStyle(one).paddingLeft);
+    const items = [...element.querySelectorAll("[data-slot=dropdown-menu-item]")];
+    const input = element.querySelector("[data-slot=input-group]")!;
+    const label = element.querySelector("[data-slot=dropdown-menu-label]")!;
+    const inside = element.getBoundingClientRect();
+    return {
+      input: left(input),
+      item: left(items[0]!),
+      label: left(label),
+      labelText: contentLeft(label),
+      itemContent: contentLeft(items[0]!),
+      menu: { left: inside.left, right: inside.right },
+      rows: items.map((item) => item.getBoundingClientRect()).map((r) => [r.left, r.right]),
+    };
+  });
+  near(found.item, found.input, `${rule}: row highlight against the search box`);
+  near(found.label, found.input, `${rule}: label box against the search box`);
+  near(found.labelText, found.itemContent, `${rule}: label text against row content`);
+  for (const [rowLeft, rowRight] of found.rows) {
+    expect(rowLeft, `${rule}: a highlight starts inside the menu`).toBeGreaterThanOrEqual(
+      found.menu.left,
+    );
+    expect(rowRight, `${rule}: a highlight ends inside the menu`).toBeLessThanOrEqual(
+      found.menu.right + TOLERANCE,
     );
   }
 }
@@ -141,11 +156,11 @@ test("a thread's share dialog lines its controls up, and its menus share one ins
   const more = page.getByRole("menu");
   await expect(more).toBeVisible();
   await nothingClipped(more, "Antipattern: menus too narrow for their labels (More)");
-  const items = more.locator("[data-slot=dropdown-menu-item]");
-  const first = (await box(items.first())).x;
-  for (const item of await items.all()) {
-    near((await box(item)).x, first, "Layout: one inset (More menu rows)");
-  }
+  await settled(more);
+  const rows = await more
+    .locator("[data-slot=dropdown-menu-item]")
+    .evaluateAll((all) => all.map((one) => one.getBoundingClientRect().x));
+  for (const x of rows) near(x, rows[0]!, "Layout: one inset (More menu rows)");
   await page.keyboard.press("Escape");
   await expect(more).toBeHidden();
 

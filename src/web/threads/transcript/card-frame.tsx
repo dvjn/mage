@@ -1,4 +1,4 @@
-// The frame every card in the transcript shares, tool calls and notifications alike: an outline
+// The frame every card in the transcript shares, tool calls and notices alike: an outline
 // with a header row of a kind icon, a title, an optional status or meta chip and the time, and a
 // body that is collapsed unless the card is told to open, with a chevron only where there is one.
 

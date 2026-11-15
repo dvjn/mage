@@ -37,8 +37,8 @@ import { fullTime, timeUntil } from "@/web/lib/time";
 import { PagerControl, pageHeight, usePager, usePublishPager } from "@/web/threads/pager";
 import { useStopRun } from "@/web/threads/mutations";
 import { firedHistoryQuery, threadQuery } from "@/web/threads/queries";
-import { KINDS, useElapsed } from "@/web/threads/transcript/work-card";
-import { useBackgroundActions } from "@/web/threads/transcript/job-actions";
+import { KINDS, STATUSES, useElapsed } from "@/web/threads/transcript/work-card";
+import { useActivityActions } from "@/web/threads/transcript/activity-actions";
 import { ToolCard } from "@/web/threads/transcript/tool-card";
 import { RowLink, useGoToRow } from "@/web/threads/transcript/row-focus";
 import { WorkControls } from "@/web/threads/transcript/work-controls";
@@ -76,7 +76,7 @@ function Detail({ item }: { item: ActivityItem }) {
   if (work.kind === "job") {
     return (
       <>
-        {work.status === "waiting" ? "Waiting" : "Running"}
+        {work.status === "waiting" ? "Waiting" : STATUSES[work.status].label}
         <span className="tabular-nums"> {elapsed}</span>
       </>
     );
@@ -174,10 +174,13 @@ function IconAction({
   );
 }
 
+// What the server said in refusing a change, for the dialog it was asked in.
+const refusal = (err: unknown) => (err instanceof Error && err.message) || "Could not save";
+
 // A webhook's own buttons: copy its URL, require a signature or change or remove the secret, and
 // name the header its deliveries carry their id in.
 function WebhookControls({ item }: { item: ActivityItem }) {
-  const actions = useBackgroundActions()?.webhook;
+  const actions = useActivityActions()?.webhook;
   const [open, setOpen] = useState(false);
   const [naming, setNaming] = useState(false);
   const webhook = item.work.webhook!;
@@ -213,25 +216,23 @@ function WebhookControls({ item }: { item: ActivityItem }) {
         secret
         hint="Requests must carry an X-Hub-Signature-256 header signed with this secret."
         extra={
-          webhook.signed && (
+          webhook.signed &&
+          ((settle, pending) => (
             <Button
               type="button"
               variant="ghost"
               className="text-destructive hover:text-destructive sm:mr-auto"
-              onClick={() => {
-                setOpen(false);
-                void actions.secret(webhook.id, null);
-              }}
+              disabled={pending}
+              onClick={() =>
+                settle(async () => actions.secret(webhook.id, null).then(() => undefined, refusal))
+              }
             >
               Remove signature
             </Button>
-          )
+          ))
         }
         onSubmit={(value) =>
-          actions.secret(webhook.id, value.trim()).then(
-            () => undefined,
-            () => "Could not save",
-          )
+          actions.secret(webhook.id, value.trim()).then(() => undefined, refusal)
         }
       />
       <IconAction
@@ -254,10 +255,7 @@ function WebhookControls({ item }: { item: ActivityItem }) {
         initialName={webhook.deliveryHeader ?? ""}
         hint="Empty uses the usual headers."
         onSubmit={(value) =>
-          actions.deliveryHeader(webhook.id, value.trim() || null).then(
-            () => undefined,
-            (err: unknown) => (err instanceof Error && err.message) || "Could not save",
-          )
+          actions.deliveryHeader(webhook.id, value.trim() || null).then(() => undefined, refusal)
         }
       />
     </>
@@ -277,7 +275,7 @@ function StopButton({ item }: { item: ActivityItem }) {
 }
 
 function CancelButton({ item }: { item: ActivityItem }) {
-  const actions = useBackgroundActions();
+  const actions = useActivityActions();
   const [stopping, setStopping] = useState(false);
   if (!actions) return null;
   return (
@@ -308,7 +306,7 @@ function size(bytes: number) {
 }
 
 // What a schedule fired or a webhook took, newest first and a page at a time from the server, in a
-// dialog, each with the way to its notification in the transcript. Read only once it is opened.
+// dialog, each with the way to its notice in the transcript. Read only once it is opened.
 function FiredHistory({
   threadId,
   id,

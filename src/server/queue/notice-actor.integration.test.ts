@@ -13,7 +13,7 @@ function notice(kind: NoticeKind, actor?: NoticeActor): Notice {
   return { kind, source, text: "Something happened", influence: [], ...(actor && { actor }) };
 }
 
-describe("notification actors", () => {
+describe("notice actors", () => {
   it("are the sending agent for messages and reports", () => {
     for (const kind of ["message", "agent.ended", "agent.failed", "agent.stopped"] as const) {
       expect(actorOf(notice(kind))).toEqual({
@@ -57,7 +57,7 @@ describe("notification actors", () => {
     expect(silentChange("t", "Divya", "text").change).toBeUndefined();
   });
 
-  it("are kept with the notification and shown on its row", async () => {
+  it("are kept with the notice and shown on its row", async () => {
     const { threadStore, queue, thread } = await agentThread();
     const notices = {
       send: async (threadId: string, notice: Notice) =>

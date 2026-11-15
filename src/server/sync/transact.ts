@@ -36,8 +36,18 @@ export interface Unit {
   after: (() => void)[];
   // Kept for the outermost transaction's commit; a rolled-back savepoint's are dropped with it.
   queued: unknown[];
-  // Row locks taken, by scope, shared by every savepoint of the outermost transaction.
+  // Row locks taken in this unit, by scope. A savepoint's go to its parent when it is released
+  // and are dropped when it rolls back, as Postgres drops the locks themselves.
   held: Map<string, string[]>;
+  // The unit this one is a savepoint of.
+  parent?: Unit;
+}
+
+// The row locks of the scope the unit holds, its own and those of the units it is a savepoint of.
+function heldBy(unit: Unit | undefined, scope: string): string[] {
+  const held: string[] = [];
+  for (let at = unit; at; at = at.parent) held.push(...(at.held.get(scope) ?? []));
+  return held;
 }
 
 // Deadlock and serialisation failure: the transaction lost to another and may simply run again.
@@ -90,7 +100,8 @@ export function createTransactor(root: Db, options: TransactorOptions) {
       busy: false,
       after: [],
       queued: [],
-      held: outer?.held ?? new Map(),
+      held: new Map(),
+      ...(outer && { parent: outer }),
     };
     if (outer) {
       // Two savepoints of one transaction at once are work it did not wait for, which would
@@ -114,6 +125,9 @@ export function createTransactor(root: Db, options: TransactorOptions) {
       if (outer) {
         outer.after.push(...unit.after);
         outer.queued.push(...unit.queued);
+        for (const [scope, ids] of unit.held) {
+          outer.held.set(scope, [...(outer.held.get(scope) ?? []), ...ids]);
+        }
       } else {
         // What was waiting runs outside the transaction it waited for.
         units.exit(() => unit.after.forEach((run) => runAfter(run)));
@@ -170,14 +184,14 @@ export function createTransactor(root: Db, options: TransactorOptions) {
     detached: <T>(work: () => T): T => units.exit(work),
 
     // Whether the transaction under way holds the lock of the scope's row.
-    holds: (scope: string, id: string) => current()?.held.get(scope)?.includes(id) ?? false,
+    holds: (scope: string, id: string) => heldBy(current(), scope).includes(id),
 
     // Takes the locks of the scope's rows by `lock`, in id order, leaving out those the
     // transaction holds already. One asked for below a row it holds is out of order: two
     // transactions doing so in turn can deadlock, which running again only papers over.
     ordered: async (scope: string, ids: string[], lock: (ids: string[]) => Promise<void>) => {
       const unit = current();
-      const held = unit?.held.get(scope) ?? [];
+      const held = heldBy(unit, scope);
       const wanted = [...new Set(ids)].filter((id) => !held.includes(id)).sort();
       if (wanted.length === 0) return;
       const highest = held.reduce((max, id) => (id > max ? id : max), "");
@@ -186,7 +200,7 @@ export function createTransactor(root: Db, options: TransactorOptions) {
         logger.warn({ scope, held, wanted }, "lock taken out of order");
       }
       await lock(wanted);
-      unit?.held.set(scope, [...held, ...wanted]);
+      unit?.held.set(scope, [...(unit.held.get(scope) ?? []), ...wanted]);
     },
 
     // The function, counting and warning of each call made inside a transaction, where a call

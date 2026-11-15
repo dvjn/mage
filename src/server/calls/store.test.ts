@@ -26,7 +26,7 @@ describe("a call's machine", () => {
     );
     expect(allowed).toEqual({
       ready: ["start", "goStale", "cancel"],
-      waiting: ["allow", "deny", "skip", "goStale", "complete", "cancel"],
+      waiting: ["allow", "deny", "skip", "goStale", "cancel"],
       running: ["complete", "fail", "interrupt", "cancel"],
       completed: [],
       failed: [],

@@ -1,4 +1,4 @@
-// A notification's row: its card on the right, with the actor's avatar beside it and the row's
+// A notice's row: its card on the right, with the actor's avatar beside it and the row's
 // toolbar below. The card is the bubble, built on the transcript's shared card frame.
 import type { ReactNode } from "react";
 

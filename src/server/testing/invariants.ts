@@ -190,6 +190,22 @@ const RULES: { rule: string; broken: ReturnType<typeof sql> }[] = [
        where j.moved_from is not null and (c.id is null or not j.background)`,
   },
   {
+    rule: "a call moved to the background is a job, asked for once",
+    broken: sql`
+      select c.thread_id, c.id, c.background,
+             (select count(*) from thread_event r
+               where r.thread_id = c.thread_id and r.type = 'tool.requested'
+                 and r.data->>'callId' = c.id) as requests
+        from call c
+       where exists (select 1 from thread_event m
+                      where m.thread_id = c.thread_id and m.type = 'tool.moved'
+                        and m.data->>'callId' = c.id)
+         and (not c.background
+              or (select count(*) from thread_event r
+                   where r.thread_id = c.thread_id and r.type = 'tool.requested'
+                     and r.data->>'callId' = c.id) <> 1)`,
+  },
+  {
     rule: "no call of a run that ended is left ready, waiting or running",
     broken: sql`
       select c.thread_id, c.id, c.status, r.status as run_status

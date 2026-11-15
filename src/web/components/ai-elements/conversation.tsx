@@ -42,8 +42,29 @@ export const Conversation = ({
     <OpenScrolled at={openAt} hold={holdOpenAt} />
     <ScrolledTo id={scrollTo} />
     <StaysOnOpen />
+    <RoomBelowShrinks />
   </StickToBottom>
 );
+
+// Room kept below the content, such as padding that makes way for the composer, is not what the
+// library measures: when it shrinks, the browser pulling the view up to the new end is not the
+// reader scrolling up, and the end stays followed.
+const RoomBelowShrinks = () => {
+  const { scrollRef, contentRef, state } = useStickToBottomContext();
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    const content = contentRef.current;
+    if (!scroll || !content) return;
+    let height = content.offsetHeight;
+    const observer = new ResizeObserver(() => {
+      if (content.offsetHeight < height) state.ignoreScrollToTop = scroll.scrollTop;
+      height = content.offsetHeight;
+    });
+    observer.observe(content, { box: "border-box" });
+    return () => observer.disconnect();
+  }, [scrollRef, contentRef, state]);
+  return null;
+};
 
 // Something the reader opens grows below where they are, so the view stays put rather than
 // following the end down past it.

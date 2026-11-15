@@ -44,8 +44,7 @@ export const callMachine = machine({
     skip: { from: ["waiting"], to: "skipped" },
     start: { from: ["ready"], to: "running" },
     goStale: { from: ["ready", "waiting"], to: "stale" },
-    // From waiting: moved to the background, where a job of its own goes on.
-    complete: { from: ["running", "waiting"], to: "completed" },
+    complete: { from: ["running"], to: "completed" },
     fail: { from: ["running"], to: "failed" },
     interrupt: { from: ["running"], to: "interrupted" },
     cancel: { from: ["ready", "waiting", "running"], to: "cancelled" },
@@ -81,7 +80,8 @@ export const call = pgTable(
     ...leaseColumns(),
     // A person asked to move the running call to the background; its holder acts on it.
     moveRequestedAt: at("move_requested_at"),
-    // For a job a call became when moved to the background, that call's id.
+    // For a job an older log made of a call moved to the background, that call's id; a call moved
+    // now keeps its own.
     movedFrom: text("moved_from"),
     decidedBy: text("decided_by"),
     decidedAt: at("decided_at"),

@@ -754,6 +754,53 @@
         "continued": true,
         "model": null
       }
+    },
+    {
+      "kind": "agent",
+      "id": "m3",
+      "seq": 65,
+      "runId": "r3",
+      "model": "anthropic/claude-test",
+      "startedAt": "2026-01-01T00:01:05.000Z",
+      "text": "",
+      "reasoning": "",
+      "thoughtMs": null,
+      "status": "completed",
+      "usage": null,
+      "retried": false,
+      "turn": null
+    },
+    {
+      "kind": "tool",
+      "id": "c-moved-in-place",
+      "seq": 67,
+      "runId": "r3",
+      "messageId": "m3",
+      "toolId": "web.fetch",
+      "title": "Fetch",
+      "toolset": "Web",
+      "input": {
+        "url": "https://example.com/slower"
+      },
+      "risk": "normal",
+      "waits": false,
+      "requestedAt": "2026-01-01T00:01:07.000Z",
+      "state": "completed",
+      "decision": null,
+      "output": {
+        "ok": true,
+        "value": "page"
+      },
+      "ms": 45000,
+      "background": true,
+      "moved": {
+        "seq": 68,
+        "at": "2026-01-01T00:01:08.000Z"
+      },
+      "turn": {
+        "continued": true,
+        "model": null
+      }
     }
   ],
   "waitingMessages": [],

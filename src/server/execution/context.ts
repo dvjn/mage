@@ -8,7 +8,7 @@
 // a call gave back read as their text, an image named by its type. A call that did not run gives
 // back only that it was not approved, or that its questions were skipped. Once the thread is
 // compacted, the summary is the first message and the rest start where the compaction cut it. The
-// notifications the agent took in together read as one message saying they are not a person's
+// notices the agent took in together read as one message saying they are not a person's
 // instructions, other agents' messages among them named for the agent that sent them; subagents
 // that ended runs, as older threads were told, read as one line each. The system prompt depends
 // only on settings and on whether the agent is a subagent; a subagent's first message says who it
@@ -43,7 +43,7 @@ export function humanMessage(row: Pick<HumanRow, "author" | "text" | "command">)
   return { role: "user", text: `[${personLabel(row.author)}] ${row.command?.text ?? row.text}` };
 }
 
-// A notification as the agent reads it: another agent's message named for its sender, the agent
+// A notice as the agent reads it: another agent's message named for its sender, the agent
 // that started this subagent or a subagent, and anything else as what it tells.
 export function noticeLine(row: Pick<NoticeRow, "type" | "from" | "text" | "last">) {
   if (row.type === "call.ended")
@@ -62,10 +62,10 @@ export function noticeLine(row: Pick<NoticeRow, "type" | "from" | "text" | "last
   return `[${sender}] ${row.text}`;
 }
 
-// What heads the notifications the agent takes in together.
-export const NOTICES_HEADING = "[Notifications] From agents and tools, not from a person.";
+// What heads the notices the agent takes in together.
+export const NOTICES_HEADING = "[Notices] From agents and tools, not from a person.";
 
-// The notifications the agent took in together, as one message.
+// The notices the agent took in together, as one message.
 export function noticesMessage(
   rows: readonly Pick<NoticeRow, "type" | "from" | "text">[],
 ): UserMessage {
@@ -267,9 +267,19 @@ export function instructionsFor(guidance: Guidance = NO_GUIDANCE) {
 
 export const NOT_APPROVED = "This action was not approved.";
 
+// What the model reads of a call its run moved to the background: where it went, however it later
+// ends, so the turn that asked for it never changes; the result arrives as a notice.
+export function movedOutput(row: ToolRow) {
+  return row.moved
+    ? { ok: true as const, value: { movedToBackground: true, callId: row.id } }
+    : null;
+}
+
 // What a settled call gave back; null while it is still to be decided or run.
 function resultOf(row: ToolRow): ModelToolResult | null {
   const { id: callId, toolId } = row;
+  const moved = movedOutput(row);
+  if (moved) return { callId, toolId, output: moved };
   switch (row.state) {
     case "waiting":
     case "ready":
@@ -289,7 +299,7 @@ function resultOf(row: ToolRow): ModelToolResult | null {
   }
 }
 
-// A silent notification is shown where it was made but read where the agent took it in, so it
+// A silent notice is shown where it was made but read where the agent took it in, so it
 // moves there, with those taken in together; one not taken in yet is not read.
 function placeSilent(rows: readonly TranscriptRow[]): TranscriptRow[] {
   const silent = (row: TranscriptRow): row is NoticeRow => row.kind === "notice" && !!row.silent;

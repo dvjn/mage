@@ -257,7 +257,7 @@ const sentBySchema = z.object({
   thread: z.string(),
 });
 
-// A notification: what it tells and the agent whose thread it came from. A message from another
+// A notice: what it tells and the agent whose thread it came from. A message from another
 // agent, a subagent's or one from the agent that started this thread's subagent, says whom it went
 // to, and the first of them is its task, with what the subagent was set to do beside it. Where the
 // reader may read the thread it came from, it links back: to the call that made it, with what the
@@ -269,7 +269,7 @@ const noticeRowSchema = z.object({
   postedAt: z.string(),
   type: noticeKindSchema,
   from: senderSchema,
-  // Who it is shown as coming from; older notifications carry none.
+  // Who it is shown as coming from; older notices carry none.
   actor: noticeActorSchema.optional(),
   to: z.string().optional(),
   text: z.string(),

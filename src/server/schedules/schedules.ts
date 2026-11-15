@@ -61,7 +61,7 @@ async function refusing(work: () => unknown) {
 
 // What the agent is told about them.
 export const SCHEDULES_GUIDANCE =
-  "Set a wake-up timer with schedules.wake_at to carry on later, or a recurring schedule with schedules.add (a five-field cron expression and a time zone). When one fires you get a notification with its note or prompt. Remove one with schedules.delete; see them with schedules.list.";
+  "Set a wake-up timer with schedules.wake_at to carry on later, or a recurring schedule with schedules.add (a five-field cron expression and a time zone). When one fires you get a notice with its note or prompt. Remove one with schedules.delete; see them with schedules.list.";
 
 // What setting one must pass first: room in the thread, and for a named one, a name of its own;
 // each answers why not, or null.

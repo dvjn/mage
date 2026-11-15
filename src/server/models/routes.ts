@@ -236,7 +236,7 @@ export function modelRoutes(options: {
         const owner = signedIn(c.var.principal);
         const id = c.req.param("id");
         await connections.setProxy(owner, id, c.req.valid("json"));
-        models.invalidate(id);
+        await models.invalidate(id);
         const connection = (await connections.list(owner)).find((found) => found.id === id);
         if (!connection) throw new ConnectionError(404, "Connection not found");
         return c.json(await shown(owner, connection), 200);

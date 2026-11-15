@@ -106,7 +106,7 @@ export const threadDetailSchema = threadHeadSchema.extend({
   // for; they start at `newFrom`.
   earlierUnread: z.number().int().nonnegative(),
   // Everything waiting for the agent to take it in, oldest first: people's messages and
-  // notifications alike, each as the row it will show as.
+  // notices alike, each as the row it will show as.
   waiting: z.array(waitingRowSchema),
   run: shownRunSchema.nullable(),
 });

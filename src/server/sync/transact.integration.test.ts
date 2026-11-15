@@ -223,6 +223,28 @@ describe("transactions", () => {
     expect(stats.outOfOrder).toBe(1);
   });
 
+  it("take again the locks a rolled-back savepoint took, and keep a released one's", async () => {
+    const { transact, ordered, holds } = await setup();
+    const taken: string[][] = [];
+    const lock = async (ids: string[]) => void taken.push(ids);
+    await transact(async () => {
+      await ordered("thread", ["a"], lock);
+      await expect(
+        transact(async () => {
+          await ordered("thread", ["b"], lock);
+          expect(holds("thread", "b")).toBe(true);
+          throw new Error("no");
+        }),
+      ).rejects.toThrow("no");
+      expect(holds("thread", "a")).toBe(true);
+      expect(holds("thread", "b")).toBe(false);
+      await transact(async () => ordered("thread", ["b", "c"], lock));
+      await ordered("thread", ["a", "b", "c"], lock);
+      expect(holds("thread", "c")).toBe(true);
+    });
+    expect(taken).toEqual([["a"], ["b"], ["b", "c"]]);
+  });
+
   it("count calls made inside a transaction that must be made outside one", async () => {
     const { transact, outside, stats } = await setup();
     const call = outside("fetch", (n: number) => n + 1);

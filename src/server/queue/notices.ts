@@ -52,9 +52,9 @@ export function silentChange(
 // Another agent's messages and reports come from the agent they name as their source.
 const FROM_SOURCE: NoticeKind[] = ["message", "agent.ended", "agent.failed", "agent.stopped"];
 
-export function actorOf(notification: Notice): NoticeActor | undefined {
-  if (notification.actor) return notification.actor;
-  if (!FROM_SOURCE.includes(notification.kind)) return undefined;
-  const { threadId, name, main } = notification.source;
+export function actorOf(notice: Notice): NoticeActor | undefined {
+  if (notice.actor) return notice.actor;
+  if (!FROM_SOURCE.includes(notice.kind)) return undefined;
+  const { threadId, name, main } = notice.source;
   return { kind: "agent", threadId, name, main };
 }

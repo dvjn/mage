@@ -1,4 +1,4 @@
-// A thread's events as the API shows them: people's messages and the notifications its agent is
+// A thread's events as the API shows them: people's messages and the notices its agent is
 // sent, when the agent took each one in, the agent's runs and the replies each run wrote, its tool
 // calls, its compactions, where each of its branches starts, the conversation it was forked from,
 // and the pieces of a reply in progress.
@@ -136,7 +136,7 @@ export const causeSchema = z.object({ threadId: z.string(), callId: z.string() }
 
 export type Cause = z.infer<typeof causeSchema>;
 
-// What a notification tells the agent it reaches: another agent's message; that a subagent ended
+// What a notice tells the agent it reaches: another agent's message; that a subagent ended
 // a run without sending its starter anything, failed, or was stopped; or that the subagents a
 // watch was set on went idle; that a call it started in the background ended; or that a person changed
 // a task given to it; that a timer or schedule it set went off; or that a webhook it made was posted to; or, quietly, that a
@@ -156,7 +156,7 @@ export const noticeKindSchema = z.enum([
 
 export type NoticeKind = z.infer<typeof noticeKindSchema>;
 
-// What made a notification: the agent whose thread it came from, and the call or the row there it
+// What made a notice: the agent whose thread it came from, and the call or the row there it
 // came of, where there is one.
 export const noticeSourceSchema = senderSchema.extend({
   callId: z.string().optional(),
@@ -167,9 +167,9 @@ export const noticeSourceSchema = senderSchema.extend({
 
 export type NoticeSource = z.infer<typeof noticeSourceSchema>;
 
-// Who a notification is shown as coming from, in one standard form: a person who changed something,
+// Who a notice is shown as coming from, in one standard form: a person who changed something,
 // an agent that sent a message or report or made a change, or no one, for an outside or system
-// event. Older notifications carry none.
+// event. Older notices carry none.
 export const noticeActorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("person"), userId: z.string(), name: z.string() }),
   z.object({
@@ -187,7 +187,7 @@ export const noticeActorSchema = z.discriminatedUnion("kind", [
 
 export type NoticeActor = z.infer<typeof noticeActorSchema>;
 
-// What a notification about subagents tells, apart from its text, so it can be shown as parts:
+// What a notice about subagents tells, apart from its text, so it can be shown as parts:
 // the subagents it is about, for an idle watch whether it waited for all of them, for a failure
 // its error, and the last thing the subagent said, which the text leaves out.
 export const changeSchema = z.object({
@@ -392,6 +392,13 @@ export const eventDataSchemas = {
     ranAs: z.string().optional(),
     standingOn: z.string().optional(),
   }),
+  // The call went on in the background after it ran `ms` milliseconds in its run (0 for one that
+  // waited); it keeps its id, and what settles it later settles the same call.
+  "tool.moved": z.object({
+    runId: z.string(),
+    callId: z.string(),
+    ms: z.number().int().nonnegative(),
+  }),
 };
 
 export type EventDataMap = {
@@ -449,6 +456,7 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("tool.answered"),
   eventSchema("tool.denied"),
   eventSchema("tool.ran"),
+  eventSchema("tool.moved"),
 ]);
 
 export type ThreadEventSummary = z.infer<typeof threadEventSchema>;

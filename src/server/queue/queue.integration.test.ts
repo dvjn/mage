@@ -4,6 +4,7 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
+import { NOTICES_HEADING } from "@/server/execution/context.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { eventSummary } from "@/server/threads/log.ts";
 import type { NoticeKind } from "@/shared/threads/events.ts";
@@ -453,6 +454,34 @@ describe("a new branch", () => {
     expect(types.filter((type) => type === "notice")).toHaveLength(2);
   });
 
+  it("is told again a notice the branch left took in after the fork point, whose source it holds", async () => {
+    const q = await queued();
+    await asked(q, "subagent-call");
+    const run = await held(q);
+    const fork = (await q.message(q.ada, "Fork here")).input!;
+    const report = (
+      await q.queue.enqueue(
+        q.thread.id,
+        { kind: "notice", notice: quiet("Report") },
+        { origin: { kind: "subagent", id: "sub" }, source: { callId: "subagent-call" } },
+      )
+    ).input!;
+    await q.queue.admission.admit(run, "all");
+    await ended(q, run);
+    const { left, branch } = await branchAfter(q, fork.seq);
+    const copies = (
+      await q.db.execute<{ copy_of: string; branch_id: string; status: string }>(
+        sql`select copy_of, branch_id, status from thread_input
+             where thread_id = ${q.thread.id} and copy_of is not null`,
+      )
+    ).rows;
+    expect(copies).toEqual([{ copy_of: report.id, branch_id: branch, status: "waiting" }]);
+    expect((await q.rows()).find((row) => row.id === report.id)).toMatchObject({
+      branch_id: left,
+      status: "admitted",
+    });
+  });
+
   it("holds a source made on the parent before the fork, at it, not after, and on a grandparent", async () => {
     const q = await queued();
     await asked(q, "grand");
@@ -502,6 +531,24 @@ describe("a new branch", () => {
     const q = await restoredWith(undefined);
     const call = await q.model.next();
     expect(call.texts.at(-1)).toContain("Wakes");
+    call.reply("Read.");
+    await q.worker.idle();
+  });
+
+  it("is started on a notice the branch left took in, told again as it was", async () => {
+    const q = await queued();
+    const mark = (await q.tell("Mark", false)).input!;
+    const run = await held(q);
+    await q.queue.enqueue(q.thread.id, { kind: "notice", notice: notice("Handled") });
+    await q.queue.admission.admit(run, "all");
+    await ended(q, run);
+    await branchAfter(q, mark.seq);
+    await q.start();
+    const call = await q.model.next();
+    const told = call.texts.at(-1)!;
+    expect(told).toContain(NOTICES_HEADING);
+    // Its line says what it said before, and nothing more.
+    expect(told.split("\n\n").at(-1)).toBe("Handled");
     call.reply("Read.");
     await q.worker.idle();
   });

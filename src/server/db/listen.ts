@@ -3,6 +3,8 @@
 // waiting longer after each failure, and whoever listens is told of the gap, since what was
 // notified meanwhile is lost.
 
+import { setImmediate as turn } from "node:timers/promises";
+
 import pg from "pg";
 
 const FIRST_WAIT_MS = 500;
@@ -24,6 +26,28 @@ async function inTime<T>(work: Promise<T>): Promise<T> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// Whether the work succeeds within the time. A timer that ran late, as after the event loop was
+// held up, goes off before what arrived meanwhile is read, so the work is given that one turn of
+// the loop before it counts as late.
+export async function answersInTime(work: Promise<unknown>, ms = CHECK_MS): Promise<boolean> {
+  let answered = false;
+  const settled = work.then(
+    () => (answered = true),
+    () => false,
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<false>((resolve) => {
+    timer = setTimeout(() => resolve(false), ms);
+  });
+  try {
+    if (await Promise.race([settled, late])) return true;
+  } finally {
+    clearTimeout(timer);
+  }
+  await turn();
+  return answered;
 }
 
 // Closes the connection's socket at once, which ends the connection without a word to the server.
@@ -109,11 +133,7 @@ export function listenAt(url: string) {
   listen.check = async () => {
     await Promise.all(
       [...open].map(async (client) => {
-        try {
-          await inTime(client.query("select 1"));
-        } catch {
-          cut(client);
-        }
+        if (!(await answersInTime(client.query("select 1")))) cut(client);
       }),
     );
   };

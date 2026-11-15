@@ -77,7 +77,7 @@ describe("top-level incoming activity", () => {
     expect(html).not.toContain("pl-9");
   });
 
-  it("shows received notifications at the top level without attributing them to an agent", () => {
+  it("shows received notices at the top level without attributing them to an agent", () => {
     const html = render([{ ...message(), type: "agent.idle" }]);
     expect(html).toContain('aria-label="Notice"');
     expect(html).toContain('data-slot="avatar"');
@@ -85,7 +85,7 @@ describe("top-level incoming activity", () => {
   });
 });
 
-describe("notification actors", () => {
+describe("notice actors", () => {
   const change = (actor?: NoticeRow["actor"]): NoticeRow => ({
     kind: "notice",
     id: "changed",

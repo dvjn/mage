@@ -49,7 +49,7 @@ import { tabOrg } from "@/web/lib/org-tab";
 import { lastOwner, lastSignedIn, restored } from "@/web/api/query-cache";
 import { meQuery, sessionQuery, signInOptionsQuery } from "@/web/auth/queries";
 import { spacesQuery } from "@/web/spaces/queries";
-import { backgroundQuery, tasksQuery, threadQuery } from "@/web/threads/queries";
+import { activityQuery, tasksQuery, threadQuery } from "@/web/threads/queries";
 import { PageHeader } from "@/web/shell/page-header";
 
 type Context = { context: { queryClient: QueryClient } };
@@ -252,7 +252,7 @@ const threadRoute = createRoute({
     const staleTime = 5_000;
     void queryClient.prefetchQuery({ ...threadQuery(threadId), staleTime });
     void queryClient.prefetchQuery({ ...tasksQuery(threadId), staleTime });
-    void queryClient.prefetchQuery({ ...backgroundQuery(threadId), staleTime });
+    void queryClient.prefetchQuery({ ...activityQuery(threadId), staleTime });
   },
   component: ThreadPage,
 });

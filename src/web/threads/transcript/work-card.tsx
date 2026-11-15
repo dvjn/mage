@@ -78,11 +78,12 @@ export function useElapsed({ startedAt, endedAt }: Pick<Work, "startedAt" | "end
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [endedAt]);
+  if (!startedAt) return null;
   const end = endedAt ? new Date(endedAt).getTime() : now;
   return elapsedText(end - new Date(startedAt).getTime());
 }
 
-export function BackgroundCard({
+export function WorkCard({
   work,
   name,
   onCancel,

@@ -25,8 +25,7 @@ function row(page: Page, title: string) {
     .filter({ hasText: title });
 }
 
-// Skipped for now: passes alone, but misses its wait under the full suite's parallel load.
-test.fixme("a press on a cached thread's link shows its last message at once, even on a slow server", async ({
+test("a press on a cached thread's link shows its last message at once, even on a slow server", async ({
   page,
 }) => {
   await page.goto("/signup");
@@ -54,8 +53,11 @@ test.fixme("a press on a cached thread's link shows its last message at once, ev
   await row(page, "First thread").getByRole("link").click();
   await expect(page.getByRole("log", { name: "Events" })).toContainText("first 5");
 
+  // Every request to the server is held until the message has shown.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
   await page.route("**/api/**", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await held;
     await route.continue().catch(() => {});
   });
 
@@ -64,14 +66,13 @@ test.fixme("a press on a cached thread's link shows its last message at once, ev
   await page.mouse.move(box.x + 20, box.y + 5);
   const shown = page.evaluate(
     () =>
-      new Promise<number>((resolve) => {
+      new Promise<void>((resolve) => {
         addEventListener(
           "pointerdown",
           () => {
-            const start = performance.now();
             const tick = () => {
               const log = document.querySelector("[role=log]");
-              if (log?.textContent?.includes("second only")) resolve(performance.now() - start);
+              if (log?.textContent?.includes("second only")) resolve();
               else requestAnimationFrame(tick);
             };
             requestAnimationFrame(tick);
@@ -83,7 +84,8 @@ test.fixme("a press on a cached thread's link shows its last message at once, ev
   const entries = await page.evaluate(() => history.length);
   // Only the press, no release: the page opens on press start.
   await page.mouse.down();
-  expect(await shown).toBeLessThan(100);
+  await shown;
+  release();
   await page.mouse.up();
   // The click ending the press does not follow the link again.
   await page.waitForTimeout(500);

@@ -6,7 +6,7 @@
 // carries how it was decided, what was answered to the questions it asked, and what it gave back. A
 // compaction sits where it was made, with the summary the agent reads from then on in place of what
 // came before. Another agent's message waits in the inbox and takes its place when the agent takes
-// it in, as a person's does, and so does any other notification; subagents that ended runs one
+// it in, as a person's does, and so does any other notice; subagents that ended runs one
 // after another, as older threads were told, show in one row where the first was. The events
 // folded are one branch's: where the branch starts nothing runs or waits from before but what it
 // keeps, and one restored from a row ends there, with a line saying so. A thread forked from
@@ -151,9 +151,12 @@ export interface ToolRow {
     | { ok: false; error: string }
     | null;
   ms: number | null;
-  // A job: a call started in the background, which belongs to no reply; `runId` names the run that
-  // asked for it, which neither waits for it nor stops it.
+  // A job: a call that runs in the background, which `runId`'s run neither waits for nor stops;
+  // one started there belongs to no reply, one moved there stays in the reply that asked for it.
   background?: true;
+  // Where a call its run asked for went on in the background, keeping its id: the event that moved
+  // it and when.
+  moved?: { seq: number; at: string };
   // Whose own login it ran with, for a tool that uses one.
   ranAs?: Person;
   // For a call that ran on a standing approval, the call that approval was given on; `decision`
@@ -197,13 +200,13 @@ export interface CompactionRow {
   tokensAfter: number | null;
 }
 
-// A notification, once the agent here took it in: what it tells, the agent whose thread it came
+// A notice, once the agent here took it in: what it tells, the agent whose thread it came
 // from, and the people whose words it carries, who count as steering what the agent here does with
 // it; with the call or the row there it came of, where known. A message from another agent, the
 // first of them in a subagent's thread its task, also says whom it went to.
 export interface NoticeRow extends NoticeParts {
   kind: "notice";
-  // The notification's id.
+  // The notice's id.
   id: string;
   seq: number;
   postedAt: string;
@@ -217,7 +220,7 @@ export interface NoticeRow extends NoticeParts {
   call?: Cause;
   callIds?: string[];
   rowId?: string;
-  // A notification that did not start the agent: shown when it was made, and read by the agent
+  // A notice that did not start the agent: shown when it was made, and read by the agent
   // from `taken` on, the event that took it in, once it has.
   silent?: true;
   taken?: number;
@@ -287,7 +290,7 @@ export interface ActiveRun {
 // Another agent's message, waiting to be taken in.
 export type NoticeMessage = Omit<NoticeRow, "kind">;
 
-// The notifications that start the agent: those not made silent.
+// The notices that start the agent: those not made silent.
 export function waking(notices: readonly NoticeMessage[]) {
   return notices.filter((message) => !message.silent);
 }
@@ -397,7 +400,7 @@ interface FoldState {
   turns: (AgentTurn | null)[];
   waitingMessages: Map<string, PendingMessage>;
   waitingNotices: Map<string, NoticeMessage>;
-  // The silent notifications already shown, by id, until the agent takes them in.
+  // The silent notices already shown, by id, until the agent takes them in.
   silentRows: Map<string, NoticeRow>;
   replies: Map<string, AgentRow>;
   calls: Map<string, ToolRow>;
@@ -718,6 +721,14 @@ export function createFold(from?: FoldState): TranscriptFold {
             }
           : { ok: false, error: event.data.error ?? "The tool failed." };
         call.ms = event.data.ms;
+        touch(call.id);
+        break;
+      }
+      case "tool.moved": {
+        const call = calls.get(event.data.callId);
+        if (!call || call.background) break;
+        call.background = true;
+        call.moved = { seq: event.seq, at: event.createdAt };
         touch(call.id);
         break;
       }

@@ -25,7 +25,7 @@ import {
 import { Badge } from "@/web/components/ui/badge";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { useConnectFlow } from "@/web/mcp/connect";
-import { MoveToBackground } from "@/web/threads/transcript/job-actions";
+import { MoveToBackground } from "@/web/threads/transcript/activity-actions";
 import { STATUSES } from "@/web/threads/transcript/work-card";
 import { CardFrame } from "@/web/threads/transcript/card-frame";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
@@ -48,13 +48,13 @@ function allowingPath(callId: string, scope: ToolScope) {
 // A tool call waiting for a decision: the tool's breadcrumb under the hand, its input, and the
 // buttons to decide.
 // "Steered by Ada Lovelace, and Priya Nair via Critic → Writer".
-const influence = new Intl.ListFormat("en", { type: "conjunction" });
+const conjunction = new Intl.ListFormat("en", { type: "conjunction" });
 
-function steeringSentence(steering: NonNullable<ToolRow["influence"]>) {
-  const people = steering.map(({ name, via }) =>
+function influenceSentence(influence: NonNullable<ToolRow["influence"]>) {
+  const people = influence.map(({ name, via }) =>
     via.length > 0 ? `${name} via ${via.join(" → ")}` : name,
   );
-  return `Steered by ${influence.format(people)}`;
+  return `Steered by ${conjunction.format(people)}`;
 }
 
 export function ToolCard({
@@ -176,7 +176,7 @@ export function ToolCard({
         </span>
       </div>
       {row.influence && (
-        <p className="text-xs text-muted-foreground">{steeringSentence(row.influence)}</p>
+        <p className="text-xs text-muted-foreground">{influenceSentence(row.influence)}</p>
       )}
       <div className="rounded-md bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
         <ToolInput value={row.input} schema={definition?.inputSchema} />

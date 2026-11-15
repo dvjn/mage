@@ -40,11 +40,9 @@ export type Live = ReturnType<typeof createLive>;
 interface Reporting {
   callId: string;
   threadId: string;
-  // The id to store what it prints under while this instance carries it out, read in the write
-  // that stores a piece: its own, or the job's it went on as; null once it is no longer here.
-  where: () => Promise<string | null>;
-  // The id its last piece was stored under.
-  storedAs: string;
+  // Whether this instance still carries it out, in its run or as a job, read in the write that
+  // stores a piece.
+  here: () => Promise<boolean>;
   // How many characters were printed in all, and what of them is not stored yet.
   total: number;
   unsent: string;
@@ -77,13 +75,6 @@ export function createLive(options: LiveOptions) {
     if (reporting.get(call.callId) === call) reporting.delete(call.callId);
   }
 
-  // The call reporting here whose pieces go under the id, as opened or as it went on.
-  function reportingAs(callId: string) {
-    return (
-      reporting.get(callId) ?? [...reporting.values()].find((call) => call.storedAs === callId)
-    );
-  }
-
   // Takes what is new and stores it, unless the call is no longer this instance's to carry out,
   // after the pieces taken before it, then tells the thread's followers.
   function flush(call: Reporting) {
@@ -107,23 +98,20 @@ export function createLive(options: LiveOptions) {
     { total, keepFrom, progress }: { total: number; keepFrom: number; progress?: LiveProgress },
   ) {
     // Inside a hold on the thread, so a piece is stored before the write that ends the call or not
-    // at all, under the id the call goes by then.
+    // at all.
     const stored = await transact(async () => {
       await ordered("thread", [call.threadId], async ([id]) => store.lock(id!));
-      if (reporting.get(call.callId) !== call) return null;
-      const as = await call.where();
-      if (!as) return null;
-      await store.write(call.threadId, as, {
+      if (reporting.get(call.callId) !== call || !(await call.here())) return false;
+      await store.write(call.threadId, call.callId, {
         total,
         ...(progress && { progress }),
         piece,
         keepFrom,
       });
-      signals.publish(call.threadId, { kind: "live", callId: as });
-      return as;
+      signals.publish(call.threadId, { kind: "live", callId: call.callId });
+      return true;
     });
-    if (stored) call.storedAs = stored;
-    else forget(call);
+    if (!stored) forget(call);
   }
 
   // Stores what is new at once when the call has been quiet, or else once the least time between
@@ -149,19 +137,18 @@ export function createLive(options: LiveOptions) {
   }
 
   return {
-    // What the call reports with until it ends, stored under the id `where` gives while this
-    // instance carries it out. Nothing is stored for a call that reports nothing.
+    // What the call reports with until it ends, stored while `here` says this instance carries it
+    // out. Nothing is stored for a call that reports nothing.
     // Resolves once every piece being stored is.
     async settled() {
       await Promise.all([...reporting.values()].map((call) => call.storing));
     },
 
-    open(threadId: string, callId: string, where: () => Promise<string | null>): LiveReporter {
+    open(threadId: string, callId: string, here: () => Promise<boolean>): LiveReporter {
       const call: Reporting = {
         callId,
         threadId,
-        where,
-        storedAs: callId,
+        here,
         total: 0,
         unsent: "",
         changed: false,
@@ -186,14 +173,7 @@ export function createLive(options: LiveOptions) {
       };
     },
 
-    // Keeps what the call printed under the id it goes on with, as when it is moved to the
-    // background, inside the write that moves it; its reporter's `where` gives that id from then
-    // on.
-    async move(from: string, to: string) {
-      await store.move(from, to);
-    },
-
-    // Tells followers what was kept of a call that goes on under another id, once that is written.
+    // Tells followers what was kept of a call that went on in the background, once that is written.
     async moved(threadId: string, callId: string) {
       if (await tail(callId)) signals.publish(threadId, { kind: "live", callId });
     },
@@ -202,7 +182,7 @@ export function createLive(options: LiveOptions) {
 
     // Stops taking what the call reports here, where it ended without this instance.
     close(callId: string) {
-      const call = reportingAs(callId);
+      const call = reporting.get(callId);
       if (call) forget(call);
     },
 
@@ -211,7 +191,7 @@ export function createLive(options: LiveOptions) {
     async end(callId: string) {
       await store.remove(callId);
       afterCommit(() => {
-        const call = reportingAs(callId);
+        const call = reporting.get(callId);
         if (call) forget(call);
       });
     },

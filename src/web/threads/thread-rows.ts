@@ -59,7 +59,7 @@ export function withHead(detail: ThreadDetail, head: ThreadHead): ThreadDetail {
 
 // The detail with each background call's row showing the job as the dock's feed has it now, since
 // a job ends without its row changing.
-export function withBackground(detail: ThreadDetail, items: ActivityItem[]): ThreadDetail {
+export function withActivity(detail: ThreadDetail, items: ActivityItem[]): ThreadDetail {
   const jobs = new Map(
     items.filter((item) => item.work.kind === "job").map((item) => [item.rowId, item.work]),
   );

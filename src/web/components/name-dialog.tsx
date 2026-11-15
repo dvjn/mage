@@ -48,8 +48,11 @@ export function NameDialog({
   secret?: boolean;
   // One line under the field.
   hint?: string;
-  // A button at the start of the footer, for a way out of what the field sets.
-  extra?: ReactNode;
+  // A button at the start of the footer, for a way out of what the field sets; given `settle`, it
+  // runs its own work as the form does, and `pending` while either runs.
+  extra?:
+    | ReactNode
+    | ((settle: (work: () => Promise<string | undefined>) => void, pending: boolean) => ReactNode);
   // Resolves to an error to show, or nothing when done.
   onSubmit: (name: string) => Promise<string | undefined>;
 }) {
@@ -64,14 +67,19 @@ export function NameDialog({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
 
-  async function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const name = new FormData(event.currentTarget).get("name");
+  // Runs the work, its error shown and the dialog left open when it fails, closed when it is done.
+  async function settle(work: () => Promise<string | undefined>) {
     setPending(true);
-    const failed = await onSubmit(typeof name === "string" ? name : "");
+    const failed = await work();
     setPending(false);
     setError(failed);
     if (!failed) setOpen(false);
+  }
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const name = new FormData(event.currentTarget).get("name");
+    await settle(async () => onSubmit(typeof name === "string" ? name : ""));
   }
 
   return (
@@ -105,7 +113,7 @@ export function NameDialog({
             </Field>
           </FieldGroup>
           <DialogFooter>
-            {extra}
+            {typeof extra === "function" ? extra((work) => void settle(work), pending) : extra}
             <DialogClose render={<Button type="button" variant="outline" />}>Cancel</DialogClose>
             <Button type="submit" disabled={pending}>
               {action}

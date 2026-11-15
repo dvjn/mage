@@ -27,7 +27,7 @@ import {
 } from "@/web/components/ui/collapsible";
 import { Spinner } from "@/web/components/ui/spinner";
 import { useElapsed } from "@/web/threads/transcript/work-card";
-import { CancelBackground, MoveToBackground } from "@/web/threads/transcript/job-actions";
+import { CancelJob, MoveToBackground } from "@/web/threads/transcript/activity-actions";
 import {
   lineKey,
   rowElementId,
@@ -120,7 +120,7 @@ export function ToolLine({
         status = "Running";
       }
   }
-  // A background call says where its job stands; its result is in the notification, not here.
+  // A background call says where its job stands; its result is in the notice, not here.
   const work = row.work && !isScheduleOrWebhook(row) ? row.work : null;
   if (work) {
     who = undefined;
@@ -128,6 +128,10 @@ export function ToolLine({
       case "waiting":
         icon = <HandIcon className="text-warning" />;
         status = "Waiting for approval";
+        break;
+      case "queued":
+        icon = <Spinner />;
+        status = "Queued";
         break;
       case "completed":
         icon = <CheckIcon className="text-foreground" />;
@@ -224,7 +228,7 @@ export function ToolLine({
       ) : work?.canCancel ? (
         <div className="flex items-center gap-2">
           {trigger}
-          <CancelBackground row={row} />
+          <CancelJob row={row} />
         </div>
       ) : (
         trigger

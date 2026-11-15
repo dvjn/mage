@@ -22,8 +22,8 @@ import { sharedThreadsQuery } from "@/web/guests/queries";
 import { checkServer, useOnline } from "@/web/lib/online";
 import { tabOrg } from "@/web/lib/org-tab";
 import { pieceShown, runShown } from "@/web/lib/tracing";
-import { backgroundQuery, tasksQuery, threadQuery } from "@/web/threads/queries";
-import { withBackground, withHead, withUpdate } from "@/web/threads/thread-rows";
+import { activityQuery, tasksQuery, threadQuery } from "@/web/threads/queries";
+import { withActivity, withHead, withUpdate } from "@/web/threads/thread-rows";
 
 // A reply's pieces so far, of its answer and of its reasoning, joined.
 export interface Streaming {
@@ -117,11 +117,11 @@ export function useThreadEvents(threadId: string, ready: boolean) {
     source.addEventListener("activity", (message) => {
       const list = activityListSchema.safeParse(JSON.parse(message.data as string));
       if (!list.success) return;
-      queryClient.setQueryData(backgroundQuery(threadId).queryKey, list.data);
+      queryClient.setQueryData(activityQuery(threadId).queryKey, list.data);
       // A job's row shows what the dock's card does, from this one feed.
       queryClient.setQueryData(
         queryKey,
-        (detail) => detail && withBackground(detail, list.data.items),
+        (detail) => detail && withActivity(detail, list.data.items),
       );
     });
     source.addEventListener("access-ended", () => {

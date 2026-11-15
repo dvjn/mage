@@ -19,3 +19,4 @@ export * from "@/server/artifacts/schema.ts";
 export * from "@/server/schedules/schema.ts";
 export * from "@/server/webhooks/schema.ts";
 export * from "@/server/oauth/schema.ts";
+export * from "@/server/sync/schema.ts";

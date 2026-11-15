@@ -1435,17 +1435,38 @@ export function createArtifacts(options: ArtifactsOptions) {
       publish({ type: "deleted", artifactId: record.id });
     },
 
-    // Calls the listener with what happens to an artifact the person may view, until unsubscribed.
-    async follow(principal: Principal, id: string, listener: (event: ArtifactEvent) => void) {
-      await requireViewable(principal, id);
+    // Calls the listener with what happens to an artifact the person may view, until stopped; a
+    // read that fails, as of a database gone away, is given to `failed`, and nothing more is told.
+    // `recheck` reads the artifact again without a hint, as a hint may be lost, and tells what
+    // changed since the listener was last told.
+    async follow(
+      principal: Principal,
+      id: string,
+      listener: (event: ArtifactEvent) => void,
+      failed: (err: unknown) => void = () => {},
+    ) {
+      const record = await requireViewable(principal, id);
+      let told = { version: record.version, sharing: record.sharing };
+      let broken = false;
       // Told in the order heard, one read after another.
       let telling: Promise<void> = Promise.resolve();
       const tell = (events: () => Promise<(ArtifactEvent | null)[]>) => {
         telling = telling
           .then(async () => {
-            for (const event of await events()) if (event) listener(event);
+            if (broken) return;
+            for (const event of await events()) {
+              if (!event) continue;
+              if (event.type === "published") told = { ...told, version: event.version };
+              if (event.type === "sharing") told = { ...told, sharing: event.sharing };
+              listener(event);
+            }
           })
-          .catch(() => {});
+          .catch((err: unknown) => {
+            if (err instanceof ServiceError) return;
+            broken = true;
+            failed(err);
+          });
+        return telling;
       };
       const stopHints = options.signals.subscribeArtifact(id, (hint) =>
         tell(async () => [await eventOf(hint)]),
@@ -1461,9 +1482,24 @@ export function createArtifacts(options: ArtifactsOptions) {
           ];
         }),
       );
-      return () => {
-        stopHints();
-        stopGaps();
+      return {
+        stop: () => {
+          stopHints();
+          stopGaps();
+        },
+        recheck: async () =>
+          tell(async () => {
+            const now = await store.find(id);
+            if (!now) return [{ type: "deleted", artifactId: id }];
+            return [
+              now.version === told.version
+                ? null
+                : await eventOf({ type: "published", artifactId: id, version: now.version }),
+              now.sharing === told.sharing
+                ? null
+                : { type: "sharing", artifactId: id, sharing: now.sharing },
+            ];
+          }),
       };
     },
 

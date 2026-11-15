@@ -1,4 +1,4 @@
-// Human messages sit on the right with their avatar, and so do notifications, as a card in place
+// Human messages sit on the right with their avatar, and so do notices, as a card in place
 // of the bubble; agent content uses the full left edge. Agent actions stay visible; the controls
 // of the right-hand rows appear on hover or focus.
 

@@ -297,7 +297,7 @@ describe("what the agent is told", () => {
     // The notice steers the run at its next step; the queued message starts the next run.
     const told = await w.boundary(busy);
     expect(told).toHaveLength(1);
-    expect(told[0]).toContain("[Notifications] From agents and tools, not from a person.");
+    expect(told[0]).toContain("[Notices] From agents and tools, not from a person.");
     expect(told[0]).toContain('(Wait) finished\n\nResult:\n\n{"answer":42}');
     busy.reply("Noted.");
     const next = await w.answers(w.threadId, "Done.");

@@ -1,4 +1,4 @@
-// Each incoming message or notification is a card on the right, built on the shared card frame: a
+// Each incoming message or notice is a card on the right, built on the shared card frame: a
 // header line, and a body that opens in place. What an agent says opens expanded; the rest start
 // closed. The source is available from the avatar and, on hover, a link.
 import { Link } from "@tanstack/react-router";
@@ -53,7 +53,7 @@ export function NoticeMessages({ rows, opened, onOpenChange }: { rows: NoticeRow
   );
 }
 
-// What each notification of the activity tray's items is shown with.
+// What each notice of the activity tray's items is shown with.
 const TRAY: Partial<Record<NoticeRow["type"], { kind: string; mark: ReactNode }>> = {
   "webhook.received": { kind: "Webhook", mark: <WebhookIcon /> },
   "schedule.fired": { kind: "Schedule", mark: <CalendarClockIcon /> },
@@ -145,7 +145,7 @@ export function NoticeMessage({
   const fired = row.type === "schedule.fired";
   const wake = fired && row.text.startsWith("Wake-up");
   const ending = row.type.startsWith("agent.");
-  // A message is titled by who sent it and opens on what it says. A notification about subagents
+  // A message is titled by who sent it and opens on what it says. A notice about subagents
   // is told from its parts and opens on the subagent's last words; an older one, which has only
   // its text, shows that as it is.
   const tray = row.type === "change" ? row.tray && CHANGED[row.tray] : TRAY[row.type];
@@ -166,7 +166,7 @@ export function NoticeMessage({
   ) : (
     <>{named} ended its run without reporting</>
   );
-  // What the title says, as plain text, for copying: a notification's with what it opens on.
+  // What the title says, as plain text, for copying: a notice's with what it opens on.
   const names = row.subagents?.map((one) => one.name).join(", ");
   const titleText = message
     ? text
@@ -242,7 +242,7 @@ export function NoticeMessage({
         ],
         open: renderSourceLink(true),
       };
-  // The avatar is the actor's, where the notification says who: a person's initials, an agent's
+  // The avatar is the actor's, where the notice says who: a person's initials, an agent's
   // mark, or the kind of outside event.
   const { actor } = row;
   const actorName =
@@ -266,7 +266,7 @@ export function NoticeMessage({
       : actor.kind === "agent"
         ? { ...base, name: actorName!, kind: actor.main ? "Agent" : "Subagent", mark: <BotIcon /> }
         : { ...base, name: actor.label, ...SOURCES[actor.type] };
-  // What the notification says leads with the actor's name when they made it, which the avatar and
+  // What the notice says leads with the actor's name when they made it, which the avatar and
   // name beside it say already.
   const lead = actorName && typeof title === "string" && title.startsWith(`${actorName} `);
   const shownTitle = lead ? title.slice(actorName!.length + 1) : title;

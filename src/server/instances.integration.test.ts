@@ -23,6 +23,7 @@ import {
 import { openFeed, openStream } from "@/server/testing/sse.ts";
 import { MCP_ORIGIN, setup } from "@/server/testing/workspace.ts";
 import { LIVE_LIMIT, RUNNING_LIMIT } from "@/server/subagents/subagents.ts";
+import { BACKGROUND_LIMIT } from "@/shared/jobs.ts";
 import { LARGE_RESULT_CHARS, type LiveChunk } from "@/shared/threads/events.ts";
 
 // Two server instances on one database: `a` with a thread in Ada's space, and `b`.
@@ -170,7 +171,7 @@ describe("several server instances on one database", () => {
       }
     }
     const watching = await openStream(b.app, a.ada.cookie, a.thread.id);
-    const call = a.live.open(a.thread.id, "call-1", async () => "call-1");
+    const call = a.live.open(a.thread.id, "call-1", async () => true);
     call.output("one\n");
     expect(await nextOutput(watching)).toEqual({
       callId: "call-1",
@@ -362,6 +363,42 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("several server instances on one
     }
     await Promise.all([a.spaceSweep.now(), b.spaceSweep.now()]);
     expect(sweeps).toBe(1);
+  });
+
+  it("sweep in short writes, holding a lease that another takes over once its holder died", async () => {
+    const [a, b] = await instances(2);
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    let written = () => {};
+    const isWritten = new Promise<void>((resolve) => (written = resolve));
+    const sweeps: string[] = [];
+    vi.spyOn(a.spaces, "sweep").mockImplementation(async () => {
+      sweeps.push("a");
+      await a.db.execute(sql`update space set name = 'swept' where id = ${a.space.id}`);
+      written();
+      await held;
+      return 0;
+    });
+    vi.spyOn(b.spaces, "sweep").mockImplementation(async () => {
+      sweeps.push("b");
+      return 0;
+    });
+    const sweeping = a.spaceSweep.now();
+    await isWritten;
+    // What the pass wrote is kept and seen while it still runs.
+    const name = await b.db.execute<{ name: string }>(
+      sql`select name from space where id = ${a.space.id}`,
+    );
+    expect(name.rows[0]?.name).toBe("swept");
+    await b.spaceSweep.now();
+    await kill(a);
+    release();
+    await Promise.resolve(sweeping).catch(() => {});
+    await b.spaceSweep.now();
+    expect(sweeps).toEqual(["a"]);
+    await expireLeases(b.db, "singleton");
+    await b.spaceSweep.now();
+    expect(sweeps).toEqual(["a", "b"]);
   });
 });
 
@@ -581,11 +618,15 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("an instance that dies sweeping"
     await Promise.resolve(sweeping).catch(() => {});
     const left = async () =>
       (
-        await b.db.execute(
+        await b.db.execute<{ id: string }>(
           sql`select id from space where id in ${sql.raw(`('${expired.join("','")}')`)}`,
         )
-      ).rows;
-    expect(await left()).toHaveLength(2);
+      ).rows.map((row) => row.id);
+    expect(await left()).toContain(a.space.id);
+    // The dead instance's lease holds the pass until it runs out.
+    await b.spaceSweep.now();
+    expect(await left()).toContain(a.space.id);
+    await expireLeases(b.db, "singleton");
     await b.spaceSweep.now();
     expect(await left()).toEqual([]);
     expect(await b.spaces.sweep()).toBe(0);
@@ -988,6 +1029,136 @@ async function callStatus(db: ReturnType<typeof setup>["db"], threadId: string, 
   );
   return rows.rows[0];
 }
+
+// A thread whose places all run on `a`, with two jobs queued behind them, q0 then q1.
+async function queuedBehind(a: AgentInstance, reader: Pick<Instance, "db"> = a) {
+  await a.post(a.ada, "Start many");
+  await asks(
+    a,
+    ...Array.from({ length: BACKGROUND_LIMIT }, (_, i): [string, string, unknown] => [
+      `l${i}`,
+      "jobs.start",
+      { tool: "probe.wait", input: { label: `l${i}` } },
+    ]),
+    ["q0", "jobs.start", { tool: "probe.wait", input: { label: "q0" } }],
+    ["q1", "jobs.start", { tool: "probe.wait", input: { label: "q1" } }],
+  );
+  (await a.model.next()).reply("Started.");
+  await a.worker.idle();
+  const jobs = async () =>
+    (
+      await reader.db.execute<{ id: string; status: string }>(
+        sql`select id, status from call where thread_id = ${a.thread.id} and background
+             order by created_at, id`,
+      )
+    ).rows;
+  return { jobs };
+}
+
+describe.skipIf(!process.env.TEST_DATABASE_URL)("instances with queued jobs", () => {
+  it("race for one freed place, and only the oldest queued job starts", async () => {
+    const tool = probe();
+    const [a, b, c] = await instances(3, { toolsets: [tool.toolset] });
+    await a.start();
+    const { jobs } = await queuedBehind(a);
+    expect((await jobs()).filter((job) => job.status === "ready")).toHaveLength(2);
+    const first = (await jobs())[0]!;
+    // Each instance's start waits at the thread's lock until all three are there.
+    let arrived = 0;
+    let all = () => {};
+    const together = new Promise<void>((resolve) => (all = resolve));
+    for (const one of [a, b, c]) {
+      const write = one.log.write.bind(one.log);
+      vi.spyOn(one.log, "write").mockImplementation(async (threadId, ...rest) => {
+        if (threadId === a.thread.id) {
+          arrived += 1;
+          if (arrived === 3) all();
+          await Promise.race([together, new Promise((resolve) => setTimeout(resolve, 2000))]);
+        }
+        return write(threadId, ...rest);
+      });
+    }
+    // A place frees as a person cancels a running job through another instance.
+    const res = await b.api(
+      "POST",
+      `/threads/${a.thread.id}/tools/${first.id}/cancel`,
+      a.ada.cookie,
+    );
+    expect(res.status).toBe(200);
+    arrived = 0;
+    await Promise.all([a.calls.beat(), b.calls.beat(), c.calls.beat()]);
+    vi.restoreAllMocks();
+    expect(arrived).toBeGreaterThan(1);
+    await vi.waitFor(() => expect(tool.running("q0")).toBe(true));
+    expect(tool.running("q1")).toBe(false);
+    const after = await jobs();
+    expect(after.filter((job) => job.status === "running")).toHaveLength(BACKGROUND_LIMIT);
+    expect(after.filter((job) => job.status === "ready")).toHaveLength(1);
+  });
+
+  it("start once the places an instance that died held are freed", async () => {
+    const tool = probe();
+    const [a, b] = await instances(2, { toolsets: [tool.toolset] });
+    await a.start();
+    const { jobs } = await queuedBehind(a, b);
+    await kill(a);
+    await expireLeases(b.db, "call");
+    await b.worker.start();
+    await b.calls.recover();
+    await b.calls.beat();
+    await vi.waitFor(() => expect(tool.running("q1")).toBe(true));
+    const after = await jobs();
+    expect(after.filter((job) => job.status === "interrupted")).toHaveLength(BACKGROUND_LIMIT);
+    expect(after.filter((job) => job.status === "running")).toHaveLength(2);
+  });
+
+  it("do not run a job cancelled as it starts", async () => {
+    const tool = probe();
+    const [a, b] = await instances(2, { toolsets: [tool.toolset] });
+    await a.start();
+    const { jobs } = await queuedBehind(a);
+    const [first] = await jobs();
+    const q0 = (await jobs())[BACKGROUND_LIMIT]!;
+    // Whichever instance starts it, a cancel through the other lands before the tool is run.
+    let cancelled = false;
+    let landed = () => {};
+    const done = new Promise<void>((resolve) => (landed = resolve));
+    for (const [one, other] of [
+      [a, b],
+      [b, a],
+    ] as const) {
+      const holds = one.callStore.holds.bind(one.callStore);
+      vi.spyOn(one.callStore, "holds").mockImplementation(async (lease) => {
+        if (lease.callId === q0.id && !cancelled) {
+          cancelled = true;
+          const res = await other.api(
+            "POST",
+            `/threads/${a.thread.id}/tools/${q0.id}/cancel`,
+            a.ada.cookie,
+          );
+          expect(res.status).toBe(200);
+          landed();
+        }
+        return holds(lease);
+      });
+    }
+    const res = await b.api(
+      "POST",
+      `/threads/${a.thread.id}/tools/${first!.id}/cancel`,
+      a.ada.cookie,
+    );
+    expect(res.status).toBe(200);
+    await a.calls.beat();
+    await done;
+    // The start that met the cancel has let the job go before running it.
+    await vi.waitFor(async () =>
+      expect((await a.calls.find(a.thread.id, q0.id))?.status).toBe("cancelled"),
+    );
+    vi.restoreAllMocks();
+    expect(tool.running("q0")).toBe(false);
+    expect((await jobs()).find((job) => job.id === q0.id)?.status).toBe("cancelled");
+  });
+});
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)("an instance that dies with a call", () => {
   it("running a job leaves it interrupted once, told once, its starter woken once", async () => {

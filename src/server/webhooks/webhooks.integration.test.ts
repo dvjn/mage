@@ -128,7 +128,7 @@ describe("webhooks", () => {
       "content-type": "application/json",
     });
     expect(res.status).toBe(200);
-    // The post starts the agent, which reads it as a notification.
+    // The post starts the agent, which reads it as a notice.
     const call = await t.answer(t.thread.id);
     expect(JSON.stringify(call.request)).toContain("not a message from a person");
     await t.worker.idle();

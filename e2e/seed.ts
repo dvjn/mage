@@ -49,8 +49,8 @@ export async function addNotesThread(
 }
 
 // The rules the journeys left the server's data breaking; none when it is sound.
-export async function brokenRules() {
-  const response = await fetch(`${passwordServer}/api/test/invariants`);
+export async function brokenRules(server: string = passwordServer) {
+  const response = await fetch(`${server}/api/test/invariants`);
   if (!response.ok) throw new Error(`could not check the data: ${response.status}`);
   return ((await response.json()) as { violations: unknown[] }).violations;
 }

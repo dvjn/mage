@@ -81,11 +81,42 @@ test("a webhook is a tool row and a card in the tray, takes a post, and a person
   await card.getByRole("button", { name: "Signature: off" }).click();
   await expect(page.getByText("X-Hub-Signature-256")).toBeVisible();
   await page.getByLabel("Secret").fill("s3cret");
+  // A refusal shows the server's words in the dialog, which stays open to try again.
+  const refuse = async () =>
+    page.route(
+      "**/webhooks/*/secret",
+      (route) => route.fulfill({ status: 409, json: { error: "The webhook changed. Try again." } }),
+      { times: 1 },
+    );
+  await refuse();
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Require signature" })).toContainText(
+    "The webhook changed. Try again.",
+  );
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(card.getByRole("button", { name: "Signature: on" })).toBeVisible();
   expect((await page.request.post(url, { data: {} })).status()).toBe(403);
   await card.getByRole("button", { name: "Signature: on" }).click();
   await expect(page.getByRole("dialog", { name: "Change secret" })).toBeVisible();
+  // While the removal is under way, neither it nor a save can be asked again.
+  let answer = () => {};
+  const answered = new Promise<void>((resolve) => (answer = resolve));
+  await page.route(
+    "**/webhooks/*/secret",
+    async (route) => {
+      await answered;
+      await route.fulfill({ status: 409, json: { error: "The webhook changed. Try again." } });
+    },
+    { times: 1 },
+  );
+  await page.getByRole("button", { name: "Remove signature" }).click();
+  await expect(page.getByRole("button", { name: "Remove signature" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Save", exact: true })).toBeDisabled();
+  answer();
+  await expect(page.getByRole("dialog", { name: "Change secret" })).toContainText(
+    "The webhook changed. Try again.",
+  );
+  await expect(page.getByRole("button", { name: "Remove signature" })).toBeEnabled();
   await page.getByRole("button", { name: "Remove signature" }).click();
   await expect(card.getByRole("button", { name: "Signature: off" })).toBeVisible();
   expect((await page.request.post(url, { data: {} })).status()).toBe(200);
@@ -102,7 +133,7 @@ test("a webhook is a tool row and a card in the tray, takes a post, and a person
   expect((await page.request.post(url, { data: {} })).status()).toBe(404);
 });
 
-test("each delivery is its own notification that expands to its payload", async ({ page }) => {
+test("each delivery is its own notice that expands to its payload", async ({ page }) => {
   await signUp(page);
   await write(page, `^tool webhooks.add ${JSON.stringify({ name: "Deploys", note: "Look" })}`);
   await page

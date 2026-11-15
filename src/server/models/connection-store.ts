@@ -18,6 +18,7 @@ const columns = {
   settings: connection.settings,
   autoEnableModels: connection.autoEnableModels,
   createdAt: connection.createdAt,
+  updatedAt: connection.updatedAt,
 };
 
 type Row = Omit<Connection, "host" | "settings"> & {
@@ -66,7 +67,21 @@ export function createConnectionStore(db: Db): ConnectionStore {
     },
 
     async update(id, changes) {
-      await db.update(connection).set(changes).where(eq(connection.id, id));
+      const row = (
+        await db.update(connection).set(changes).where(eq(connection.id, id)).returning(columns)
+      )[0];
+      return row ? connectionOf(row) : null;
+    },
+
+    async touch(id) {
+      const row = (
+        await db
+          .update(connection)
+          .set({ updatedAt: new Date() })
+          .where(eq(connection.id, id))
+          .returning({ updatedAt: connection.updatedAt })
+      )[0];
+      return row?.updatedAt ?? null;
     },
 
     async setAutoEnableModels(id, on) {

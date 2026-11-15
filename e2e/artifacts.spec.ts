@@ -131,6 +131,42 @@ test("the agent publishes a page, it opens from the artifact origin, an update r
   await anonymous.close();
 });
 
+test("an artifact page whose stream broke shows the version published meanwhile once it connects again", async ({
+  page,
+}) => {
+  await signUp(page);
+  await write(
+    page,
+    call("artifact.publish", { html: PAGE("Sales v1"), description: "Sales", icon: "chart" }),
+  );
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  const threadUrl = page.url();
+  const card = page.getByTestId("artifact-card");
+  await expect(card).toContainText("v1");
+  const href = await card.getByRole("link", { name: "Open" }).getAttribute("href");
+  const id = href!.split("/").pop()!;
+
+  // The page's live events fail as when the network drops, so the update goes untold.
+  const events = `**/api/v1/artifacts/${id}/events*`;
+  await page.route(events, (route) => route.abort("internetdisconnected"));
+  await page.goto(`/artifacts/${id}`);
+  const content = page.frameLocator("iframe");
+  await expect(content.getByRole("heading", { name: "Sales v1" })).toBeVisible();
+  const thread = await page.context().newPage();
+  await thread.goto(threadUrl);
+  await write(
+    thread,
+    call("artifact.update", { id, edits: [{ old: "Sales v1", new: "Sales v2" }], label: "Two" }),
+  );
+  await expect(thread.getByTestId("artifact-card").filter({ hasText: "v2" }).first()).toBeVisible();
+  await expect(content.getByRole("heading", { name: "Sales v1" })).toBeVisible();
+
+  await page.unroute(events);
+  await expect(content.getByRole("heading", { name: "Sales v2" })).toBeVisible();
+  await page.getByRole("button", { name: "Version history" }).click();
+  await expect(page.getByRole("menuitemradio", { name: /^Version 2/ })).toContainText("Latest");
+});
+
 test("each artifact opens from an origin of its own", async ({ page }) => {
   await signUp(page);
   for (const heading of ["First", "Second"]) {

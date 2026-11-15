@@ -128,6 +128,18 @@ describe("transcriptEntries", () => {
     expect(shape(rows)).toEqual([["calls:c1", ["c1", "c2", "c3"]]]);
   });
 
+  it("keeps a call moved to the background in its reply's run, running and once ended", () => {
+    const job = (status: "running" | "completed") =>
+      ({ kind: "job", status, startedAt: "", canCancel: false }) as ToolRow["work"];
+    const moved = (state: ToolRow["state"], status: "running" | "completed") => [
+      call("c1", { turn: turn(false) }),
+      call("c2", { state, work: job(status) }),
+      call("c3"),
+    ];
+    expect(shape(moved("ready", "running"))).toEqual([["calls:c1", ["c1", "c2", "c3"]]]);
+    expect(shape(moved("completed", "completed"))).toEqual([["calls:c1", ["c1", "c2", "c3"]]]);
+  });
+
   it("keeps the steps that only thought between calls inside the run", () => {
     const rows = [call("c1", { turn: turn(false) }), thought("t1"), call("c2"), thought("t2")];
     expect(shape(rows)).toEqual([["calls:c1", ["c1", "t1", "c2"]], ["t2"]]);
@@ -307,7 +319,7 @@ describe("transcriptEntries", () => {
     ]);
   });
 
-  it("folds other notifications with each other, apart from messages", () => {
+  it("folds other notices with each other, apart from messages", () => {
     const rows = [
       human("h"),
       notice("m1"),

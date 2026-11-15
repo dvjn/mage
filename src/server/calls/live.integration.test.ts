@@ -63,10 +63,9 @@ async function setup() {
     },
   };
   // The id each call is stored under while it is held here: its own, or the one it moved to.
-  const ids = new Map<string, string>();
   const open = (threadId: string, callId: string) =>
-    live.open(threadId, callId, async () => (holding.now ? (ids.get(callId) ?? callId) : null));
-  return { db, live, sent, holding, open, ids };
+    live.open(threadId, callId, async () => holding.now);
+  return { db, live, sent, holding, open };
 }
 
 // Moves the clock on, and waits for what the timers it set off store.
@@ -199,33 +198,14 @@ describe("live output", () => {
     expect(await live.of("c")).toEqual({ text: "one" });
   });
 
-  it("keeps what a call printed when it goes on under another id", async () => {
-    const { live, sent, open, ids } = await setup();
-    const call = open("t", "run-call");
+  it("drops a piece stored after the call ended elsewhere, and forgets its reporter", async () => {
+    const { live, sent, open, holding } = await setup();
+    const call = open("t", "c");
     call.output("one\n");
     await live.settled();
-    await live.move("run-call", "job");
-    ids.set("run-call", "job");
-    await live.moved("t", "job");
-    expect(sent.at(-1)).toEqual({ callId: "job", offset: 0, text: "one\n", from: 0 });
-    await advance(live, LIVE_FLUSH_MS);
-    call.output("two\n");
-    await live.settled();
-    expect(sent.at(-1)).toEqual({ callId: "job", offset: 4, text: "two\n", from: 0 });
-    expect(await live.of("run-call")).toBeNull();
-    expect(await live.of("job")).toEqual({ text: "one\ntwo\n" });
-  });
-
-  it("drops a piece stored after the call it went on as ended, and forgets its reporter", async () => {
-    const { live, sent, open, ids, holding } = await setup();
-    const call = open("t", "run-call");
-    call.output("one\n");
-    await live.settled();
-    await live.move("run-call", "job");
-    ids.set("run-call", "job");
     // The job ended elsewhere: nothing here holds it any more.
     holding.now = false;
-    await live.end("job");
+    await live.end("c");
     await advance(live, LIVE_FLUSH_MS);
     call.output("two\n");
     await live.settled();
@@ -234,7 +214,7 @@ describe("live output", () => {
     call.output("three\n");
     await live.settled();
     expect(sent).toHaveLength(1);
-    expect(await live.of("job")).toBeNull();
+    expect(await live.of("c")).toBeNull();
   });
 
   it("gives each thread its own calls", async () => {

@@ -11,13 +11,15 @@ import { webhookWorkSchema } from "./webhooks.ts";
 export const JOBS_TOOLSET = "jobs";
 export const START_JOB = "jobs.start";
 
-// How many background calls a thread has running or waiting for approval at once.
+// How many background calls a thread has running at once; more wait their turn, and those waiting
+// for approval hold no place.
 export const BACKGROUND_LIMIT = 8;
 
-// Where a job stands: waiting for approval, running, or how it ended. One a restart left running is
-// interrupted.
+// Where a job stands: waiting for approval, queued for its turn past the thread's limit, running,
+// or how it ended. One a restart left running is interrupted.
 export const jobStatusSchema = z.enum([
   "waiting",
+  "queued",
   "running",
   "completed",
   "failed",
@@ -68,7 +70,8 @@ export const workSchema = z.object({
   subagent: subagentWorkSchema.optional(),
   // For work that waits on a person, whether the reader may decide or answer it.
   canDecide: z.boolean().optional(),
-  startedAt: z.string(),
+  // Null while it has not begun, as a job waiting for its turn.
+  startedAt: z.string().nullable(),
   endedAt: z.string().optional(),
   canCancel: z.boolean(),
 });

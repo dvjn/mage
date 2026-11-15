@@ -17,7 +17,7 @@ import { Spinner } from "@/web/components/ui/spinner";
 import { useThreadAgent } from "@/web/threads/transcript/agent";
 import { ReplyReasoning } from "@/web/threads/transcript/agent-reply";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
-import { MoveToBackground } from "@/web/threads/transcript/job-actions";
+import { MoveToBackground } from "@/web/threads/transcript/activity-actions";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
 import { GIVES_WAY } from "@/web/threads/transcript/tool-crumb";
 
@@ -28,6 +28,9 @@ const MISSES: [string, ToolRow["state"][]][] = [
   ["stopped", ["cancelled"]],
   ["skipped", ["skipped"]],
 ];
+
+// The states of a call that did not run as asked.
+const FAILED: ToolRow["state"][] = ["failed", "denied", "stale", "cancelled"];
 
 // A call that waits for a decision, and one that is running.
 const waits = (call: ToolRow) => call.state === "waiting";
@@ -64,9 +67,7 @@ export function ToolGroup({
   const waiting = calls.some(waits);
   const current = waiting ? undefined : calls.findLast(running);
   const { count, toolsets, misses } = callsSummary(calls);
-  const failed = calls.some((call) =>
-    ["failed", "denied", "stale", "stopped"].includes(call.state),
-  );
+  const failed = calls.some((call) => FAILED.includes(call.state));
   const skipped = calls.some((call) => call.state === "skipped");
   const status = waiting ? "Waiting for approval" : current ? "Running" : null;
   const label = [count, toolsets, status, ...misses].filter(Boolean).join(" · ");

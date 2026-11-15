@@ -1480,7 +1480,7 @@ describe("events", () => {
     const t = await team();
     const id = await t.publish();
     const seen: ArtifactEvent[] = [];
-    const stop = await t.artifacts.follow(
+    const followed = await t.artifacts.follow(
       { userId: t.ada.userId, orgId: t.ada.orgId, role: "owner" } as never,
       id,
       (event) => seen.push(event),
@@ -1488,7 +1488,7 @@ describe("events", () => {
     await t.call(ARTIFACT_TOOLS.update, { id, html: "<title>Two</title>", label: "Two" });
     await t.api("PUT", `/artifacts/${id}/sharing`, t.ada.cookie, { sharing: "org" });
     await t.api("DELETE", `/artifacts/${id}`, t.ada.cookie);
-    stop();
+    followed.stop();
     expect(seen).toEqual([
       { type: "published", artifactId: id, version: 2, label: "Two", title: "Two" },
       { type: "sharing", artifactId: id, sharing: "org" },
@@ -1512,7 +1512,7 @@ describe("events", () => {
     await t.sync.start();
     const id = await t.publish();
     const seen: ArtifactEvent[] = [];
-    const stop = await t.artifacts.follow(
+    const followed = await t.artifacts.follow(
       { userId: t.ada.userId, orgId: t.ada.orgId, role: "owner" } as never,
       id,
       (event) => seen.push(event),
@@ -1524,7 +1524,57 @@ describe("events", () => {
         { type: "sharing", artifactId: id, sharing: "space" },
       ]),
     );
-    stop();
+    followed.stop();
+  });
+
+  it("tell followers what changed unheard when read again, and nothing when nothing did", async () => {
+    const t = await team();
+    const id = await t.publish();
+    const seen: ArtifactEvent[] = [];
+    // Every hint is lost.
+    vi.spyOn(t.sync.signals, "subscribeArtifact").mockReturnValue(() => {});
+    const followed = await t.artifacts.follow(
+      { userId: t.ada.userId, orgId: t.ada.orgId, role: "owner" } as never,
+      id,
+      (event) => seen.push(event),
+    );
+    await followed.recheck();
+    expect(seen).toEqual([]);
+    await t.call(ARTIFACT_TOOLS.update, { id, html: "<title>Two</title>", label: "Two" });
+    await t.api("PUT", `/artifacts/${id}/sharing`, t.ada.cookie, { sharing: "org" });
+    expect(seen).toEqual([]);
+    await followed.recheck();
+    await followed.recheck();
+    expect(seen).toEqual([
+      { type: "published", artifactId: id, version: 2, label: "Two", title: "Two" },
+      { type: "sharing", artifactId: id, sharing: "org" },
+    ]);
+    followed.stop();
+  });
+
+  it("give a read that fails to the follower's failure, and tell nothing after", async () => {
+    const t = await team();
+    const id = await t.publish();
+    let hint: (hint: never) => void = () => {};
+    vi.spyOn(t.sync.signals, "subscribeArtifact").mockImplementation((_id, listener) => {
+      hint = listener as never;
+      return () => {};
+    });
+    const seen: ArtifactEvent[] = [];
+    const failures: unknown[] = [];
+    const followed = await t.artifacts.follow(
+      { userId: t.ada.userId, orgId: t.ada.orgId, role: "owner" } as never,
+      id,
+      (event) => seen.push(event),
+      (err) => failures.push(err),
+    );
+    // A version that is no number fails the read in the database.
+    hint({ type: "published", artifactId: id, version: "none" } as never);
+    await vi.waitFor(() => expect(failures).toHaveLength(1));
+    await t.call(ARTIFACT_TOOLS.update, { id, html: "<title>Two</title>", label: "Two" });
+    await followed.recheck();
+    expect(seen).toEqual([]);
+    followed.stop();
   });
 });
 

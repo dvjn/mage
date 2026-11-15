@@ -115,17 +115,25 @@ function catalogSignals(db: object) {
   const listeners = catalogListeners.get(db) ?? new Set();
   catalogListeners.set(db, listeners);
   const gaps = new Set<() => void>();
+  let deaf = false;
   return {
     // Says hints may have been missed here.
     gap() {
       for (const listener of gaps) listener();
     },
+    // Hints sent from now on never reach this instance, and no gap is told.
+    deafen() {
+      deaf = true;
+    },
     catalogChanged(connectionId: string) {
       for (const listener of listeners) listener(connectionId);
     },
     onCatalogChanged(listener: (connectionId: string) => void) {
-      listeners.add(listener);
-      return () => void listeners.delete(listener);
+      const heard = (connectionId: string) => {
+        if (!deaf) listener(connectionId);
+      };
+      listeners.add(heard);
+      return () => void listeners.delete(heard);
     },
     onGap(listener: () => void) {
       gaps.add(listener);
@@ -151,10 +159,21 @@ function setup(usage?: ModelUsage, shared?: ReturnType<typeof openStoreDatabase>
   });
   const auth = createAuth({ db, logger, secret, baseUrl, trustedOrigins: [], hooks });
   const connectionStore = createConnectionStore(db);
-  const credentials = createCredentialStore(
+  const sealedCredentials = createCredentialStore(
     db,
     createCipher({ version: 1, key: Buffer.alloc(32, 7) }),
   );
+  // Runs once as a credential is about to be written, when set.
+  const beforePut: { once: (() => Promise<unknown>) | null } = { once: null };
+  const credentials: typeof sealedCredentials = {
+    ...sealedCredentials,
+    async put(connectionId, value) {
+      const run = beforePut.once;
+      beforePut.once = null;
+      await run?.();
+      return sealedCredentials.put(connectionId, value);
+    },
+  };
   const clock = { now: new Date("2026-10-21T10:00:00Z") };
   const signals = catalogSignals(db);
   const requests: { url: string; headers: Headers }[] = [];
@@ -362,6 +381,7 @@ function setup(usage?: ModelUsage, shared?: ReturnType<typeof openStoreDatabase>
   return {
     signals,
     db,
+    beforePut,
     clock,
     connections,
     requests,
@@ -636,6 +656,54 @@ describe("model lists", () => {
     );
     expect(await refs(one)).toEqual(["codex/gpt-new"]);
     expect(await refs(two)).toEqual(["codex/gpt-new"]);
+  });
+
+  it("is read again on another instance that missed the hint of a refresh, with no gap told", async () => {
+    const one = setup();
+    const { cookie, codexId } = await one.ready();
+    const two = setup(undefined, one.db);
+    const refs = async (instance: typeof one) =>
+      (
+        (await (await instance.api("GET", "/models", cookie)).json()) as {
+          models: { ref: string }[];
+        }
+      ).models
+        .map((model) => model.ref)
+        .filter((ref) => ref.startsWith("codex/"));
+    expect(await refs(two)).toEqual(["codex/gpt-big", "codex/gpt-mini"]);
+    two.signals.deafen();
+    const newer = {
+      status: 200,
+      body: {
+        models: [{ slug: "gpt-new", display_name: "GPT New", visibility: "list", priority: 1 }],
+      },
+    };
+    one.replies.codex = newer;
+    two.replies.codex = newer;
+    expect((await one.api("GET", `/connections/${codexId}/models?refresh=1`, cookie)).status).toBe(
+      200,
+    );
+    expect(await refs(two)).toEqual(["codex/gpt-new"]);
+  });
+
+  it("shows no name from a list kept from before its connection changed elsewhere", async () => {
+    const one = setup();
+    const { cookie, orgId, codexId } = await one.ready();
+    const two = setup(undefined, one.db);
+    await two.models.resolveModels(orgId);
+    expect((await two.models.shownModels(orgId))("codex/gpt-big").name).toBe("GPT Big");
+    two.signals.deafen();
+    one.replies.codex = {
+      status: 200,
+      body: {
+        models: [{ slug: "gpt-big", display_name: "GPT Bigger", visibility: "list", priority: 1 }],
+      },
+    };
+    expect((await one.api("GET", `/connections/${codexId}/models?refresh=1`, cookie)).status).toBe(
+      200,
+    );
+    expect((await two.models.shownModels(orgId))("codex/gpt-big").name).toBe("gpt-big");
+    expect(await (await two.models.modelLabels(orgId))("codex/gpt-big")).toBe("gpt-big · ChatGPT");
   });
 
   it("is read again after a gap in what the instance heard", async () => {
@@ -1421,6 +1489,17 @@ describe("changing a connection", () => {
     // A secret typed replaces the stored one.
     await api("PATCH", `/connections/${id}`, cookie, { values: { apiKey: "new-lab-key-0001" } });
     expect(requests.at(-1)?.headers.get("authorization")).toBe("Bearer new-lab-key-0001");
+  });
+
+  it("leaves no list read on another instance with the old secret under the edited connection", async () => {
+    const { api, cookie, id, db, owner, beforePut } = await labBox();
+    const two = setup(undefined, db);
+    // The other instance reads the list while the edit is being saved.
+    beforePut.once = () => two.models.resolveModels(owner.orgId);
+    await api("PATCH", `/connections/${id}`, cookie, { values: { apiKey: "new-lab-key-0001" } });
+    expect(two.requests.at(-1)?.headers.get("authorization")).toBe("Bearer lab-secret-key");
+    await two.models.resolveModels(owner.orgId);
+    expect(two.requests.at(-1)?.headers.get("authorization")).toBe("Bearer new-lab-key-0001");
   });
 
   it("refuses details the host does not take, and keeps what it had", async () => {

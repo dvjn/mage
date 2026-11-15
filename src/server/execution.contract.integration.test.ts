@@ -28,9 +28,7 @@ describe("the agent starts", () => {
     const before = w.modelCalls();
     expect(await w.hook(hook.url, '{"ref":"main"}')).toBe(200);
     const call = await w.answers(w.threadId, "Checked.");
-    expect(call.texts.at(-1)).toContain(
-      "[Notifications] From agents and tools, not from a person.",
-    );
+    expect(call.texts.at(-1)).toContain("[Notices] From agents and tools, not from a person.");
     await w.settled();
     expect(w.modelCalls()).toBe(before + 1);
     expect((await w.shown()).rows.slice(-2)).toEqual([
@@ -57,7 +55,7 @@ describe("the agent starts", () => {
     const call = await w.answers(w.threadId);
     expect(call.texts.slice(-2)).toEqual([
       "user: [Ada Lovelace] What changed?",
-      "user: [Notifications] From agents and tools, not from a person.\n\nAda Lovelace renamed the thread to Renamed by hand",
+      "user: [Notices] From agents and tools, not from a person.\n\nAda Lovelace renamed the thread to Renamed by hand",
     ]);
     await w.settled();
     expect((await w.shown()).waiting).toEqual([]);
@@ -83,7 +81,7 @@ describe("the agent starts", () => {
     // People's messages are read first, then what the agent was told.
     expect(next.texts.slice(-2)).toEqual([
       "user: [Grace Hopper] And me",
-      expect.stringContaining("[Notifications]"),
+      expect.stringContaining("[Notices]"),
     ]);
     await w.settled();
     expect(w.modelCalls()).toBe(during + 1);
@@ -181,7 +179,7 @@ describe("a subagent past its starter's running limit", () => {
     expect(call.texts).toEqual([
       "user: You are the subagent H4, started by the agent of the thread Get help.",
       "user: [Ada Lovelace] Start now",
-      "user: [Notifications] From agents and tools, not from a person.\n\n[Agent of Get help] Task H4",
+      "user: [Notices] From agents and tools, not from a person.\n\n[Agent of Get help] Task H4",
     ]);
   });
 
@@ -209,7 +207,7 @@ describe("a subagent past its starter's running limit", () => {
     h4.reply("Done.");
     const next = await w.next(threads[4]!);
     expect(next.texts.at(-1)).toBe(
-      "user: [Notifications] From agents and tools, not from a person.\n\n[Agent of Get help] One more thing",
+      "user: [Notices] From agents and tools, not from a person.\n\n[Agent of Get help] One more thing",
     );
     expect(started()).toEqual([true, true, true, true, true, false]);
   });
@@ -241,7 +239,7 @@ describe("a subagent past its starter's running limit", () => {
     await eventually(started, (now) => now[5] === true);
     const call = await w.next(threads[5]!);
     expect(call.texts.slice(1)).toEqual([
-      "user: [Notifications] From agents and tools, not from a person.\n\n[Agent of Get help] Task H5\n\n[Agent of Get help] Also this",
+      "user: [Notices] From agents and tools, not from a person.\n\n[Agent of Get help] Task H5\n\n[Agent of Get help] Also this",
     ]);
   });
 });
@@ -619,7 +617,7 @@ describe("trying again", () => {
     const again = await w.answers(w.threadId, "This time.");
     expect(again.texts.slice(-2)).toEqual([
       "user: [Ada Lovelace] Go",
-      expect.stringMatching(/^user: \[Notifications\] .*paused/s),
+      expect.stringMatching(/^user: \[Notices\] .*paused/s),
     ]);
     await w.settled();
   });
@@ -771,7 +769,7 @@ describe("trying again", () => {
     const again = await w.answers(w.threadId, "Hi again.");
     expect(again.texts.slice(-2)).toEqual([
       "user: [Ada Lovelace] Hello",
-      expect.stringMatching(/^user: \[Notifications\] .*paused/s),
+      expect.stringMatching(/^user: \[Notices\] .*paused/s),
     ]);
     await w.settled();
   });
@@ -798,7 +796,7 @@ describe("trying again", () => {
     expect(shown.waiting).toEqual([]);
     expect(shown.rows.filter((row) => row.startsWith("change: "))).toHaveLength(1);
     const again = await w.answers(w.threadId, "Hi again.");
-    expect(again.texts.at(-1)).toMatch(/^user: \[Notifications\] .*paused/s);
+    expect(again.texts.at(-1)).toMatch(/^user: \[Notices\] .*paused/s);
     expect(again.texts.join("\n")).not.toContain("Deploys");
     await w.settled();
   });
@@ -847,7 +845,7 @@ describe("trying again", () => {
     first.step("Working.");
     await first.drained();
     expect(await w.hook(hook.url, "one")).toBe(200);
-    expect(await w.boundary(first)).toEqual([expect.stringContaining("[Notifications]")]);
+    expect(await w.boundary(first)).toEqual([expect.stringContaining("[Notices]")]);
     first.reply("Done.");
     await w.settled();
     const working = (await w.detail()).rows.find(

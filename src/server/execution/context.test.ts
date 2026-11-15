@@ -125,7 +125,7 @@ describe("the system prompt", () => {
 });
 
 describe("the agent's request", () => {
-  it("reads a silent notification where the agent took it in, and not before", () => {
+  it("reads a silent notice where the agent took it in, and not before", () => {
     const thread = rowsOf();
     thread.human(ada, "Plan the launch");
     const quiet = thread.notice("Divya paused schedule Weekly check");
@@ -146,7 +146,7 @@ describe("the agent's request", () => {
     expect(later.messages.slice(0, seen.messages.length)).toEqual(seen.messages);
   });
 
-  it("keeps its start across the next turn, a new person's first message, an aside and a notification", () => {
+  it("keeps its start across the next turn, a new person's first message, an aside and a notice", () => {
     const thread = rowsOf();
     thread.human(ada, "Plan the launch");
     thread.agent("Here's the plan.");
@@ -188,6 +188,30 @@ describe("the agent's request", () => {
     const compacted = contextOf(thread.rows, guidance, [], on);
     expect(compacted.instructions).toBe(before.instructions);
     expect(compacted.messages.at(-1)).toEqual({ role: "change", tools: ["mcp.notes.echo"] });
+  });
+
+  it("reads a call moved to the background as moved, before and after its job ends", () => {
+    const thread = rowsOf();
+    thread.human(ada, "Build it");
+    const asking = thread.agent("");
+    const call = thread.tool(asking.id, "shell.run") as unknown as Record<string, unknown>;
+    Object.assign(call, {
+      state: "ready",
+      output: null,
+      ms: null,
+      background: true,
+      moved: { seq: 9, at: "" },
+    });
+    const stand = { ok: true, value: { movedToBackground: true, callId: call.id } };
+    const running = contextOf(thread.rows, guidance);
+    expect(running.messages.at(-1)).toEqual({
+      role: "tool",
+      results: [{ callId: call.id, toolId: "shell.run", output: stand }],
+    });
+    Object.assign(call, { state: "failed", output: { ok: false, error: "Exit 1" }, ms: 90 });
+    const ended = contextOf(thread.rows, guidance);
+    keepsPrefix(running, ended);
+    expect(ended.messages).toEqual(running.messages);
   });
 
   it("keeps the thread's first effort, and tells a change where it happened", () => {

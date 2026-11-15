@@ -319,27 +319,28 @@ describe("a job", () => {
     expect(await w.act(w.alan, "POST", `/tools/${ids[0]}/background`)).toBe(403);
     expect(await w.act(w.grace, "POST", `/tools/${ids[0]}/background`)).toBe(200);
     const moved = await w.answers(w.threadId, "Carrying on.");
-    expect(lastResult(moved.texts)).toMatch(
-      /^result probe\.wait: \{"ok":true,"value":\{"movedToBackground":true,"callId":"[^"]+"\}\}$/,
-    );
+    const standIn = `result probe.wait: {"ok":true,"value":{"movedToBackground":true,"callId":"${ids[0]}"}}`;
+    expect(lastResult(moved.texts)).toBe(standIn);
     await w.settled();
-    // Today the call it was is recorded as run, and the job has a row and an id of its own.
+    // The call keeps its row and its id: it goes on as the job.
     const shown = await w.shown();
     expect(shown.rows).toEqual([
       "Ada Lovelace: Start and wait",
       "agent (completed): On it.",
-      "probe.wait completed",
       "probe.wait ready [running]",
       "agent (completed): Carrying on.",
     ]);
     const [job] = await w.activity();
     expect(job).toMatchObject({ title: "Wait", work: { kind: "job", status: "running" } });
-    expect(job!.rowId).not.toBe(ids[0]);
+    expect(job!.rowId).toBe(ids[0]);
 
     w.tool.finish("a", { answer: 42 });
     const told = await w.answers(w.threadId, "Noted.");
     expect(told.texts.at(-1)).toContain('(Wait) finished\n\nResult:\n\n{"answer":42}');
+    // The turn that asked for it still reads it as moved.
+    expect(told.texts).toContain(standIn);
     await w.settled();
+    expect((await w.shown()).rows).toContain("probe.wait completed [completed]");
   });
 
   it("is what a call waiting for approval becomes when a person moves it there, where it is then decided", async () => {
@@ -350,6 +351,7 @@ describe("a job", () => {
     await w.settled();
     const [job] = await w.activity();
     expect(job).toMatchObject({
+      rowId: callId,
       work: { kind: "decision", status: "waiting", canDecide: true },
       attention: "approval",
     });

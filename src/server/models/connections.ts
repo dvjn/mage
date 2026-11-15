@@ -38,11 +38,13 @@ export interface Connection {
   // Whether models the provider adds are turned on when first seen.
   autoEnableModels: boolean;
   createdAt: Date;
+  // When it, or what it lists, last changed: a list kept from before is read again.
+  updatedAt: Date;
 }
 
 export type NewConnection = Omit<
   Connection,
-  "id" | "createdAt" | "createdBy" | "label" | "autoEnableModels" | "settings"
+  "id" | "createdAt" | "updatedAt" | "createdBy" | "label" | "autoEnableModels" | "settings"
 > & {
   createdBy: string;
   label?: string | null;
@@ -58,7 +60,10 @@ export interface ConnectionStore {
   list(orgId: string): Promise<Connection[]>;
   // The connection with this id when it belongs to the org.
   find(orgId: string, id: string): Promise<Connection | null>;
-  update(id: string, changes: ConnectionChanges): Promise<void>;
+  // The connection as changed; null when there is none.
+  update(id: string, changes: ConnectionChanges): Promise<Connection | null>;
+  // Marks what the connection lists as changed; answers when, or null when there is none.
+  touch(id: string): Promise<Date | null>;
   setAutoEnableModels(id: string, on: boolean): Promise<void>;
   delete(id: string): Promise<void>;
 }
@@ -505,13 +510,15 @@ export function createConnections(options: ConnectionsOptions) {
         label: change.label,
         settings: change.settings,
       };
-      await connections.update(id, changes);
+      // The secret first: a list read meanwhile with the old one is kept under the old stamp, which
+      // the update then moves on.
       await credentials.put(id, {
         ...(apiKey && { apiKey }),
         ...(Object.keys(secrets).length > 0 && { secrets }),
         ...(saved.proxy && { proxy: saved.proxy }),
       });
-      return { ...connection, ...changes };
+      const changed = await connections.update(id, changes);
+      return changed ?? { ...connection, ...changes };
     },
 
     // The ends of the connection's secrets by field name, as people may see them again.

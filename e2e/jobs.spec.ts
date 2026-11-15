@@ -62,15 +62,21 @@ test("a running call moved to the background goes on as a job, and the agent is 
 }) => {
   await signUp(page);
   await addCounter(page);
-  await write(page, `^tool mcp.counter.count ${JSON.stringify({ steps: 50, ms: 100 })}`);
+  await write(page, `^tool mcp.counter.count ${JSON.stringify({ steps: 80, ms: 100 })}`);
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
 
   // A call can be moved once it has run for a moment.
   await transcript(page).getByRole("button", { name: "Move to background" }).click();
   // The run goes on at once, told the call was moved.
   await expect(replies(page).last()).toContainText("movedToBackground");
+  // The call keeps its one line, which shows its job's status, and the tray lists it.
+  const line = transcript(page).getByRole("button", { name: /Count · / });
+  await expect(line).toHaveCount(1);
+  await expect(line).toHaveAccessibleName(/Count · Running/);
+  await expect((await tray(page, "Jobs")).filter({ hasText: "Count" })).toHaveCount(1);
   // The job ends on its own, and the agent is told.
   await expect(told(page)).toContainText("Count", { timeout: 15_000 });
+  await expect(line.first()).toHaveAccessibleName(/Count · Done/);
   await expect(told(page)).toContainText("Done");
   await expect(replies(page).last()).toContainText("I have read 2 messages");
 });
@@ -98,6 +104,36 @@ test("a job is cancelled from the tray, and the agent is not told", async ({ pag
   await expect(replies(page)).toHaveCount(4);
 });
 
+test("a job past the thread's limit is queued in the tray, and cancelled from there", async ({
+  page,
+}) => {
+  await signUp(page);
+  await addCounter(page);
+  await write(page, `^tool tools.search ${JSON.stringify({ select: ["mcp.counter.count"] })}`);
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  await expect(replies(page).last()).toContainText("Tool tools.search said: ok");
+  // Eight counting slowly take every place; the ninth, asked for alone, waits its turn.
+  const start = `^tool jobs.start ${JSON.stringify({ tool: "mcp.counter.count", input: { steps: 120, ms: 1000 } })}`;
+  await write(page, Array.from({ length: 8 }, () => start).join("\n"));
+  const cards = await tray(page, "Jobs");
+  await expect(cards).toHaveCount(5);
+  await expect(page.getByRole("region", { name: "Background jobs" })).toContainText("of 8");
+  await page.keyboard.press("Escape");
+  await write(page, start);
+
+  await tray(page, "Jobs");
+  await expect(page.getByRole("region", { name: "Background jobs" })).toContainText("of 9");
+  // The tray lists five at a time, oldest first: the queued one is on the second page.
+  await page
+    .getByRole("region", { name: "Background jobs" })
+    .getByRole("button", { name: "Next" })
+    .click();
+  const queued = cards.filter({ hasText: "Queued" });
+  await expect(queued).toHaveCount(1);
+  await queued.getByRole("button", { name: "Cancel" }).click();
+  await expect(cards.filter({ hasText: "Queued" })).toHaveCount(0);
+});
+
 test("a job that needs approval is decided from the tray of the thread that started it", async ({
   page,
 }) => {
@@ -118,4 +154,25 @@ test("a job that needs approval is decided from the tray of the thread that star
   await expect(told(page)).toContainText("Done");
   await expect(replies(page).last()).toContainText("I have read 2 messages");
   await expect(card).toHaveCount(0);
+});
+
+test("a call started in the background folds with the call that started it, and tells the agent when it is done", async ({
+  page,
+}) => {
+  await signUp(page);
+  await write(
+    page,
+    `^tool jobs.start ${JSON.stringify({ tool: "thread.rename", input: { title: "Looms" } })}`,
+  );
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Looms");
+  await expect(
+    page.getByRole("button", { name: "2 tool calls · Background jobs, Thread" }),
+  ).toBeVisible();
+  // The agent is told, in a card that shows the call as its tool does.
+  const notice = told(page);
+  await expect(notice).toContainText("Rename");
+  await expect(notice).toContainText("Done");
+  // Its notice is the end of it: an ended job is not in the tray.
+  await expect(page.getByRole("toolbar", { name: "Context" })).toHaveCount(0);
 });

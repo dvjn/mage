@@ -25,7 +25,7 @@ import {
   type TranscriptRow,
 } from "@/shared/transcript.ts";
 
-import { noticeLine } from "./context.ts";
+import { movedOutput, noticeLine } from "./context.ts";
 import { personLabel } from "@/shared/people.ts";
 
 // About how many tokens of the most recent conversation are kept word for word.
@@ -49,6 +49,8 @@ function json(value: unknown) {
 
 // What a tool call gave back, as the agent reads it.
 function resultOf(row: ToolRow) {
+  const moved = movedOutput(row);
+  if (moved) return json(moved.value);
   if (row.output) {
     return row.output.ok ? json(valueForAgent(row.output.value)) : `Error: ${row.output.error}`;
   }
@@ -128,7 +130,7 @@ export function anythingToCompact(rows: readonly TranscriptRow[]) {
 
 // The run a row belongs to; a job runs beside the run that asked for it, in none.
 function runOf(row: TranscriptRow) {
-  if (row.kind === "tool" && row.background) return null;
+  if (row.kind === "tool" && row.background && !row.moved) return null;
   return "runId" in row ? row.runId : null;
 }
 
