@@ -10,7 +10,7 @@ export const subagentStateSchema = z.enum(["queued", "working", "idle", "stopped
 export type SubagentState = z.infer<typeof subagentStateSchema>;
 
 // What a working subagent waits on someone in its thread for: a decision on a call, or answers.
-export const subagentNeedsSchema = z.enum(["approval", "answer"]);
+export const subagentNeedsSchema = z.enum(["decision", "answer"]);
 
 export type SubagentNeeds = z.infer<typeof subagentNeedsSchema>;
 

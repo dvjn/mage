@@ -9,7 +9,7 @@ import { type SQL, sql } from "drizzle-orm";
 
 import { containing } from "@/server/db/paging.ts";
 
-import type { ListedThread, ListWindow, Thread, ThreadListFilter } from "./service.ts";
+import type { ListedThread, ListWindow, Thread, ThreadListFilter } from "./types.ts";
 
 // The newest of these events in thread `t`'s current branch, as a correlated subquery.
 function newest(column: SQL, types: string[]) {

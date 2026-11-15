@@ -1,4 +1,4 @@
-// The agent worker: an in-process loop, woken by the event bus and by a slow poll, that claims
+// The agent worker: an in-process loop, woken by the event signals and by a slow poll, that claims
 // queued runs and drives each one. A run takes in every message waiting for it before its first
 // model call, then streams the model's reply, one reserved slot per model step, storing every piece
 // as it comes; at each step boundary it takes in the messages sent to steer it, and a steer that
@@ -16,7 +16,7 @@
 // goes on; a restart takes the same path. MCP tools stay out of the model's requests until it
 // searches for them, and those it turns on stay on in the thread. A message asking to compact the
 // thread waits for the run before it to end, and gets a run of its own that writes the summary and
-// replies with nothing; other runs leave it waiting. Notifications wait like a steer: each
+// replies with nothing; other runs leave it waiting. Notices wait like a steer: each
 // boundary takes all of them in together, and those left when a run ends start the next. What a
 // thread offers and tells the agent, and what it reads ahead of the thread, can depend on the
 // thread, as a subagent's do; and whoever needs to hears of each run that ends. Each run is traced
@@ -50,7 +50,7 @@ import {
 import type { Models, OpenModel } from "@/server/models/service.ts";
 import type { Space, SpaceStore } from "@/server/spaces/service.ts";
 import type { Append, ThreadLog } from "@/server/threads/log.ts";
-import type { DeltaStore, Thread, ThreadStore } from "@/server/threads/service.ts";
+import type { DeltaStore, Thread, ThreadStore } from "@/server/threads/types.ts";
 import type { Transcripts } from "@/server/threads/transcripts.ts";
 import type { Queue } from "@/server/queue/queue.ts";
 import type { EventDataMap, ReplyPart, ReplyStatus, RunReason } from "@/shared/threads/events.ts";
@@ -64,9 +64,9 @@ import {
   type ToolOn,
   humanMessage,
   NO_GUIDANCE,
-  notificationsMessage,
+  noticesMessage,
 } from "./context.ts";
-import { deferredByServer } from "@/server/agent/tool-search.ts";
+import { deferredByServer } from "@/server/tools/search.ts";
 import type {
   AnyToolSpec,
   DeferredTool,
@@ -74,7 +74,7 @@ import type {
   SpaceTools,
   ToolNames,
   Tools,
-} from "@/server/agent/tools.ts";
+} from "@/server/tools/registry.ts";
 
 export type RunStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled";
 
@@ -87,7 +87,7 @@ export interface Run {
   branchId: string;
   status: RunStatus;
   // The seq of the message that woke the agent.
-  triggerSeq: number;
+  wokenBySeq: number;
   // The model ref it replied with, once it started.
   model: string | null;
   // The model and effort it was asked to reply with in place of the thread's, if any.
@@ -120,7 +120,7 @@ export interface NewRun {
   branchId?: string;
   askedModel?: string | null;
   askedEffort?: Effort | null;
-  triggerSeq: number;
+  wokenBySeq: number;
   createdBy: string | null;
   continuesRunId?: string | null;
   reason?: RunReason | null;
@@ -198,7 +198,7 @@ export interface RunWorkerOptions {
   spaceStore: Pick<SpaceStore, "find">;
   deltas: DeltaStore;
   log: ThreadLog;
-  bus: Signals;
+  signals: Signals;
   transact: Transact;
   afterCommit: AfterCommit;
   // Names this server instance in the leases it takes on runs.
@@ -325,6 +325,8 @@ function namedFor(message: ModelMessage, toModel: (id: string) => string): Model
 interface RunContext {
   thread: Thread;
   space: Space;
+  // What the space had of tools when the step started.
+  now: SpaceTools;
   // The tools the thread's agent may call, and of them those its model is sent: the search only
   // where there is something to search.
   offered: AnyToolSpec[];
@@ -398,7 +400,7 @@ function messageOf(err: unknown) {
 }
 
 export function createRunWorker(options: RunWorkerOptions) {
-  const { runs, calls, queue, threads, transcripts, spaceStore, deltas, log, bus, transact } =
+  const { runs, calls, queue, threads, transcripts, spaceStore, deltas, log, signals, transact } =
     options;
   const { models, tools, logger } = options;
   const now = options.now ?? (() => new Date());
@@ -495,7 +497,7 @@ export function createRunWorker(options: RunWorkerOptions) {
           branchId: run.branchId,
           askedModel: run.askedModel,
           askedEffort: run.askedEffort,
-          triggerSeq: run.triggerSeq,
+          wokenBySeq: run.wokenBySeq,
           createdBy: null,
           continuesRunId: run.id,
           reason: "retry",
@@ -561,7 +563,7 @@ export function createRunWorker(options: RunWorkerOptions) {
         const current = await transact(async () => {
           const held = await runs.hold(lease);
           await deltas.append(run.threadId, batch);
-          bus.publish(run.threadId, {
+          signals.publish(run.threadId, {
             kind: "delta",
             messageId: batch.messageId,
             upto: batch.index + batch.texts.length,
@@ -719,7 +721,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       const notices = taken.flatMap((input) => (input.notice ? [input.notice] : []));
       return [
         ...people.map(humanMessage),
-        ...(notices.length > 0 ? [notificationsMessage(notices)] : []),
+        ...(notices.length > 0 ? [noticesMessage(notices)] : []),
       ];
     });
     if (controller.signal.aborted) throw controller.signal.reason;
@@ -727,15 +729,15 @@ export function createRunWorker(options: RunWorkerOptions) {
   }
 
   // Ends the run as completed inside the write under way, once the model ended with a step that
-  // made no calls, unless something waits to be taken in at the next boundary or it was asked to
-  // stop; whether it did. The reply that step wrote is completed in the same write, so the two
+  // made no calls, unless a message sent to steer or a notice that wakes the agent waits, or it
+  // was asked to stop; whether it did. A notice that does not wake it waits for the next run. The reply that step wrote is completed in the same write, so the two
   // are kept, and shown, together.
   async function endIfDone(execution: Running, append: Append, usage: ModelUsage) {
     const { run, lease } = execution;
     if (stopIfAsked(execution, await runs.hold(lease))) return false;
     const steers = (await queue.admission.admissible(run.threadId, run.branchId)).some(
       (input) =>
-        input.kind === "notice" ||
+        (input.kind === "notice" && input.wake) ||
         (input.delivery === "steer" && !(input.message && asksToCompact(input.message))),
     );
     if (steers) return false;
@@ -770,8 +772,8 @@ export function createRunWorker(options: RunWorkerOptions) {
 
   // The MCP tools the thread leaves out of the model's requests until it turns them on: all it
   // could offer, those turned on, in the order they were, and those still left out.
-  async function deferralOf(threadId: string, space: Space, now?: SpaceTools) {
-    const all = await tools.fromServers(space, await tools.modelNames(space), now);
+  async function deferralOf(threadId: string, space: Space, now: SpaceTools) {
+    const all = await tools.fromServers(space, await tools.modelNames(space, now), now);
     const ids = new Set(all.map((tool) => tool.id));
     const turnedOn = (await tools.turnedOn(threadId)).filter((tool) => ids.has(tool.id));
     const on = new Set(turnedOn.map((tool) => tool.id));
@@ -780,13 +782,13 @@ export function createRunWorker(options: RunWorkerOptions) {
 
   // What the step's calls are decided with, as the step read it at its start.
   function callContext(ctx: RunContext): CallContext {
-    const { thread, space, offered } = ctx;
-    return { thread, space, offered };
+    const { thread, space, offered, now } = ctx;
+    return { thread, space, offered, now };
   }
 
   // What the calls the step asks for are recorded with, outside the write that records them.
   async function requestContext(ctx: RunContext): Promise<RequestContext> {
-    ctx.titles ??= await tools.namesNow(ctx.space);
+    ctx.titles ??= await tools.namesNow(ctx.space, ctx.now);
     const { deferral, titles, names } = ctx;
     return { ...callContext(ctx), left: deferral.left, titles, names };
   }
@@ -825,14 +827,14 @@ export function createRunWorker(options: RunWorkerOptions) {
     request: () => Promise<ThreadRequest>,
   ) {
     const { run, lease } = execution;
-    const { space } = ctx;
+    const { space, now } = ctx;
     let ran = false;
     for (let next = await nextCall(execution, ctx); next; next = await nextCall(execution, ctx)) {
       ran = true;
       await calls.run(next, holdOf(execution), {
         signal: execution.controller.signal,
         threadRequest: request,
-        deferral: async () => deferralOf(run.threadId, space),
+        deferral: async () => deferralOf(run.threadId, space, now),
         turnOn: async (callId, ids) =>
           write(lease, run, async () => tools.turnOn(run.threadId, callId, ids)),
       });
@@ -865,10 +867,11 @@ export function createRunWorker(options: RunWorkerOptions) {
     return {
       thread,
       space,
+      now,
       offered,
       available,
       deferral,
-      names: await tools.modelNames(space),
+      names: await tools.modelNames(space, now),
       guidance: await guidance(space, available, thread, now),
       before: await before(thread),
     };
@@ -913,11 +916,11 @@ export function createRunWorker(options: RunWorkerOptions) {
   // The message that woke the run when it asks to compact the thread, and so the run is one that
   // compacts it; null otherwise.
   async function compactionAsked(run: Run) {
-    const trigger = await threads.eventAt(run.threadId, run.triggerSeq);
-    if (trigger?.type !== "message") return null;
-    if (trigger.actor.kind !== "user" || !trigger.data.command) return null;
-    return asksToCompact(trigger.data)
-      ? { id: trigger.id, by: trigger.actor, focus: trigger.data.command.args }
+    const woke = await threads.eventAt(run.threadId, run.wokenBySeq);
+    if (woke?.type !== "message") return null;
+    if (woke.actor.kind !== "user" || !woke.data.command) return null;
+    return asksToCompact(woke.data)
+      ? { id: woke.id, by: woke.actor, focus: woke.data.command.args }
       : null;
   }
 
@@ -1205,7 +1208,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     };
     executions.set(run.id, execution);
     // Claimed: the run's thread now shows the agent replying.
-    bus.activity({ threadId: run.threadId });
+    signals.changed({ threadId: run.threadId });
     // A claim can happen while a request is handled; the run is traced apart from it.
     const release = transcripts.hold(run.threadId);
     execution.done = context
@@ -1313,12 +1316,12 @@ export function createRunWorker(options: RunWorkerOptions) {
         }
         await tick();
       };
-      const wakes = bus.onWake(
+      const wakes = signals.onWake(
         (threadId) =>
           void woken(threadId).catch((err: unknown) => logger.error({ err }, "wake failed")),
       );
       // What may have been missed is looked for at once.
-      const gaps = bus.onGap(() => {
+      const gaps = signals.onGap(() => {
         void tick();
         void keeper.beat();
       });

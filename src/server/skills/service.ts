@@ -16,8 +16,8 @@ import type { Principal } from "@/server/orgs/identity.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { OrgSettingStore } from "@/server/orgs/service.ts";
 import type { Space, Spaces } from "@/server/spaces/service.ts";
-import type { AnyToolSpec, Toolset, ToolSpec } from "@/server/agent/tools.ts";
-import type { Guidance } from "@/server/execution/context.ts";
+import type { AnyToolSpec, SpaceTools, Toolset, ToolSpec } from "@/server/tools/registry.ts";
+import type { Guidance, SkillLine } from "@/server/execution/context.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import {
   LOAD_SKILL,
@@ -186,6 +186,11 @@ function byId(sources: readonly SkillSource[]) {
 
 // The skills on in the space, by name: the org's it did not turn off, then its own, which replace
 // the org's of the same name, while the org lets it have them.
+// The skills on in the space, as its tools read them; none where the Skills toolset read nothing.
+function loadedSkills(now: SpaceTools): Skill[] {
+  return (now.loaded.get(SKILLS_TOOLSET) as Skill[] | undefined) ?? [];
+}
+
 export function effectiveSkills(set: SpaceSkills): Skill[] {
   const orgSources = byId(set.orgSources);
   const ownSources = byId(set.ownSources);
@@ -233,6 +238,15 @@ function sameSkill(a: Pick<Skill, "name" | "description" | "body" | "files">, b:
     a.body === b.body &&
     JSON.stringify(a.files) === JSON.stringify(b.files)
   );
+}
+
+// The skills the agent's prompt lists, after the line that says how to load one.
+export function skillsGuidance(list: SkillLine[]): NonNullable<Guidance["skills"]> {
+  return {
+    line: (named) =>
+      `Skills: instructions for kinds of tasks. When a task matches one, load it with ${named(LOAD_SKILL)} before you start.`,
+    list,
+  };
 }
 
 export function createSkills(options: SkillsOptions) {
@@ -518,13 +532,11 @@ export function createSkills(options: SkillsOptions) {
   return {
     effectiveIn,
 
-    // The skills on in the space, as the agent's prompt lists them, when it can load them.
-    async listFor(
-      space: Pick<Space, "id" | "orgId">,
-      offered: readonly AnyToolSpec[],
-    ): Promise<Guidance["skills"]> {
-      if (!offered.some((spec) => spec.name === LOAD_SKILL)) return [];
-      return (await effectiveIn(space)).map(line);
+    // The skills on in the space, as the agent's prompt lists them, when it can load them: those
+    // its tools read.
+    listFor(offered: readonly AnyToolSpec[], now: SpaceTools): Guidance["skills"] {
+      if (!offered.some((spec) => spec.name === LOAD_SKILL)) return undefined;
+      return skillsGuidance(loadedSkills(now).map(line));
     },
 
     // The org's skills, which its members may read.
@@ -873,8 +885,9 @@ export function createSkills(options: SkillsOptions) {
         title: "Skills",
         source: "builtin",
         tools: [load, readFile],
+        load: effectiveIn,
         // Offered only where some skill is on.
-        usefulIn: async (space) => (await effectiveIn(space)).length > 0,
+        usefulIn: (_space, { loaded }) => (loaded as Skill[]).length > 0,
         fixed: true,
         // Every org has the built-in skills, so settings always show it.
         listedIn: () => true,

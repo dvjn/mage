@@ -21,6 +21,11 @@ const routesOfAnother = {
   message: "Only the app mounts a feature's routes.",
 };
 const outOfFolder = { regex: "^\\.\\./", message: "Import another folder's code by its @/ path." };
+// What readers are shown is read by routes alone, which the app and the entry point mount.
+const readModels = {
+  regex: "^@/server/views/(?!schema\\.ts$)",
+  message: "Only the app, the entry point and routes read views.",
+};
 const webCode = { regex: "^@/web/", message: "Only the web client imports web code." };
 
 // The client reaches the server only through the API, typed by its routes. Every rule on web code
@@ -103,11 +108,12 @@ function timedOrPosted(own: string, other: string) {
         {
           patterns: [
             outOfFolder,
+            readModels,
             webCode,
             storeOfAnother,
             routesOfAnother,
             {
-              regex: `^@/server/(${other}|execution)/|^@/server/threads/(?!schema\\.ts$)|^@/server/agent/(?!tools\\.ts$)`,
+              regex: `^@/server/(${other}|execution|subagents|tasks)/|^@/server/threads/(?!schema\\.ts$)|^@/server/tools/(?!registry\\.ts$)|^@/server/calls/(live|live-store|ask)\\.ts$`,
               message: `The ${own} import neither the ${other}, threads, runs nor the agent but its tools' registry.`,
             },
           ],
@@ -299,7 +305,7 @@ export default defineConfig({
           "no-restricted-imports": [
             "error",
             {
-              patterns: [outOfFolder, webCode, storeOfAnother, routesOfAnother],
+              patterns: [outOfFolder, readModels, webCode, storeOfAnother, routesOfAnother],
             },
           ],
         },
@@ -315,12 +321,13 @@ export default defineConfig({
             {
               patterns: [
                 outOfFolder,
+                readModels,
                 webCode,
                 storeOfAnother,
                 routesOfAnother,
                 {
-                  regex: "^@/server/(calls|execution)/",
-                  message: "The queue imports neither calls nor execution.",
+                  regex: "^@/server/(calls|execution)/(?!schema\\.ts$)",
+                  message: "The queue imports neither calls nor execution but their tables.",
                 },
               ],
             },
@@ -336,6 +343,7 @@ export default defineConfig({
             {
               patterns: [
                 outOfFolder,
+                readModels,
                 webCode,
                 storeOfAnother,
                 routesOfAnother,
@@ -359,6 +367,7 @@ export default defineConfig({
             {
               patterns: [
                 outOfFolder,
+                readModels,
                 webCode,
                 {
                   regex: "^@/server/(?!db/|kernel/|sync/|oauth/)",
@@ -379,6 +388,7 @@ export default defineConfig({
             {
               patterns: [
                 outOfFolder,
+                readModels,
                 webCode,
                 {
                   group: ["@/server/**", "!@/server/db/**", "!@/server/kernel/**"],
@@ -404,6 +414,7 @@ export default defineConfig({
             {
               patterns: [
                 outOfFolder,
+                readModels,
                 webCode,
                 { regex: "^@/server/", message: "The kernel and the database import no feature." },
               ],

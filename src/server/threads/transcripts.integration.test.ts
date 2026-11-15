@@ -10,7 +10,7 @@ describe("transcripts", () => {
     const transcripts = createTranscripts(threadStore);
     const release = transcripts.hold(thread.id);
     const texts = async () =>
-      (await transcripts.of(thread.id)).transcript().pending.map((message) => message.text);
+      (await transcripts.of(thread.id)).waiting().messages.map((message) => message.text);
     await post(ada, "kept");
     await expect(
       log.write(thread.id, async (append) => {
@@ -24,8 +24,10 @@ describe("transcripts", () => {
       }),
     ).rejects.toThrow("rolled back");
     await post(ada, "after");
-    const fresh = (await createTranscripts(threadStore).of(thread.id)).transcript();
-    expect((await transcripts.of(thread.id)).transcript()).toEqual(fresh);
+    const fresh = await createTranscripts(threadStore).of(thread.id);
+    const held = await transcripts.of(thread.id);
+    expect(held.transcript()).toEqual(fresh.transcript());
+    expect(held.waiting()).toEqual(fresh.waiting());
     expect(await texts()).not.toContain("rolled back");
     release();
   });

@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { Tasks } from "@/server/agent/tasks.ts";
-import type { Triggers } from "@/server/triggers.ts";
-import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
-import type { ToolDecisions } from "@/server/agent/tools.ts";
+import type { Tasks } from "@/server/tasks/tasks.ts";
+import type { Schedules } from "@/server/schedules/schedules.ts";
+import type { Webhooks } from "@/server/webhooks/webhooks.ts";
+import type { ToolPolicies } from "@/server/tools/policies.ts";
+import type { ToolDecisions } from "@/server/tools/registry.ts";
 import { createApp } from "@/server/app.ts";
 import { openStoreDatabase } from "@/server/testing/database.ts";
 import type { Guests } from "@/server/guests/service.ts";
@@ -15,7 +16,7 @@ import type { Models } from "@/server/models/service.ts";
 import type { Skills } from "@/server/skills/service.ts";
 import type { Artifacts } from "@/server/artifacts/service.ts";
 import type { Spaces } from "@/server/spaces/service.ts";
-import type { Threads } from "@/server/threads/service.ts";
+import type { Threads } from "@/server/threads/threads.ts";
 import type { SignInOptions } from "@/shared/sign-in.ts";
 
 import { type AuthOptions, createAuth, createIdentity, OIDC_PROVIDER } from "./auth.ts";
@@ -57,7 +58,8 @@ function setup(options: Pick<AuthOptions, "oidc"> = {}, db = openStoreDatabase()
     logger,
     signInOptions,
     tasks: {} as Tasks,
-    triggers: {} as Triggers,
+    schedules: {} as Schedules,
+    webhooks: {} as Webhooks,
     pingDatabase: () => Promise.resolve(true),
   });
 

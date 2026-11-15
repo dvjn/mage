@@ -119,7 +119,7 @@
       "risk": "ask",
       "waits": true,
       "requestedAt": "2026-01-01T00:00:19.000Z",
-      "state": "stopped",
+      "state": "cancelled",
       "decision": null,
       "output": null,
       "ms": null,
@@ -139,7 +139,7 @@
       "risk": "ask",
       "waits": true,
       "requestedAt": "2026-01-01T00:00:20.000Z",
-      "state": "stopped",
+      "state": "cancelled",
       "decision": {
         "allow": true,
         "scope": "once",
@@ -252,8 +252,8 @@
       "turn": null
     }
   ],
-  "pending": [],
-  "inbox": [],
+  "waitingMessages": [],
+  "waitingNotices": [],
   "run": null,
   "usage": {
     "inputTokens": 5360,

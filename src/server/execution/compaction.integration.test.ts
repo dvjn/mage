@@ -73,7 +73,7 @@ function call(seq: number, runId: string, extra: Partial<ToolRow> = {}): ToolRow
     risk: "normal",
     waits: false,
     requestedAt: "",
-    state: "ran",
+    state: "completed",
     decision: null,
     output: { ok: true, value: { title: "Engines" } },
     ms: 1,
@@ -102,7 +102,7 @@ describe("where a thread is cut", () => {
     // Grace's message steered the first run between its replies.
     const steered = [human(1), reply(2, "r1"), human(3), reply(4, "r1"), human(6), reply(7, "r2")];
     expect(cutOf(steered)).toBe(4);
-    const open = [human(1), reply(2, "r1"), call(3, "r1", { state: "pending", output: null })];
+    const open = [human(1), reply(2, "r1"), call(3, "r1", { state: "ready", output: null })];
     expect(cutOf([...open, human(5), reply(6, "r2")])).toBeNull();
     const together = [human(1), reply(2, "r1"), human(4), human(4), reply(5, "r2")];
     expect(cutOf(together)).toBe(2);
@@ -311,7 +311,7 @@ describe("compacting a thread", () => {
       "Agent (completed): First.",
       "Ada Lovelace: Two",
       "Agent (completed): Compacting.",
-      "thread.compact (ran)",
+      "thread.compact (completed)",
       "compaction",
       "Agent (completed): Done.",
     ]);
@@ -419,6 +419,6 @@ describe("compacting a thread", () => {
     asking.end();
     await worker.idle();
     // The call waits for approval, as it would had nothing been compacted.
-    expect((await transcript()).at(-1)).toBe("thread.rename (pending)");
+    expect((await transcript()).at(-1)).toBe("thread.rename (waiting)");
   });
 });

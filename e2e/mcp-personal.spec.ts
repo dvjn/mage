@@ -69,8 +69,7 @@ async function outputOf(page: Page, index: number, line: RegExp) {
   return call.locator("..").getByRole("region", { name: "Output" });
 }
 
-// Skipped for now: passes alone, but misses its wait under the full suite's parallel load.
-test.fixme("a server with personal credentials runs each call with its approver's own login", async ({
+test("a server with personal credentials runs each call with its approver's own login", async ({
   page,
   browser,
 }, testInfo) => {

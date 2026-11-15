@@ -1,6 +1,6 @@
 // Builds every system of the server over one database, in the order they depend on each other,
 // for the server process and for the tests alike. Tests hand in stand-ins for what reaches outside
-// (models, connections, MCP and git hosts) through `ports`; the server hands in none.
+// (model hosts' lists and replies, MCP and git hosts) through `ports`; the server hands in none.
 
 import type { Hono } from "hono";
 import { ulid } from "ulid";
@@ -8,29 +8,35 @@ import { ulid } from "ulid";
 import type { ArtifactPreviewer } from "@/server/artifacts/preview.ts";
 import { createArtifacts } from "@/server/artifacts/service.ts";
 import { createArtifactStore } from "@/server/artifacts/store.ts";
-import { createLive } from "@/server/agent/live.ts";
-import { createLiveStore } from "@/server/agent/live-store.ts";
+import { createLive } from "@/server/calls/live.ts";
+import { createLiveStore } from "@/server/calls/live-store.ts";
 import { type Calls, createCalls } from "@/server/calls/calls.ts";
 import { createCallStore } from "@/server/calls/store.ts";
 import { createQueue, type Queue } from "@/server/queue/queue.ts";
 import { createQueueStore } from "@/server/queue/store.ts";
-import { createTasks } from "@/server/agent/tasks.ts";
-import { createTaskStore } from "@/server/agent/task-store.ts";
-import { createSubagentStore } from "@/server/agent/subagent-store.ts";
-import { createSubagents } from "@/server/agent/subagents.ts";
+import { createPosts } from "@/server/queue/posts.ts";
+import { createTasks } from "@/server/tasks/tasks.ts";
+import { createTaskStore } from "@/server/tasks/store.ts";
+import { createSubagentStore } from "@/server/subagents/store.ts";
+import { createSubagents } from "@/server/subagents/subagents.ts";
 import { createOAuthAttempts } from "@/server/oauth/attempts.ts";
-import { createWatchStore } from "@/server/agent/watches.ts";
-import { createRichReplies } from "@/server/agent/rich-replies.ts";
+import { createWatchStore } from "@/server/subagents/watches.ts";
+import { createRichReplies } from "@/server/execution/rich-replies.ts";
 import { createRunStore } from "@/server/execution/store.ts";
 import { createExecution, type Execution } from "@/server/execution/execution.ts";
 import type { RunWorkerOptions } from "@/server/execution/worker.ts";
-import { createSystemTools } from "@/server/agent/system-tools.ts";
-import { createToolPolicies } from "@/server/agent/tool-policies.ts";
-import { createToolPolicyStore } from "@/server/agent/tool-policy-store.ts";
-import { createMcpTools, createToolSearch } from "@/server/agent/tool-search.ts";
-import { createToolSettingStore } from "@/server/agent/tool-setting-store.ts";
-import { createThreadToolStore } from "@/server/agent/thread-tool-store.ts";
-import { createToolDecisions, createTools, type Toolset } from "@/server/agent/tools.ts";
+import { createSystemTools } from "@/server/execution/system-tools.ts";
+import { createToolPolicies } from "@/server/tools/policies.ts";
+import { createToolPolicyStore } from "@/server/tools/policy-store.ts";
+import { createMcpTools, createToolSearch } from "@/server/tools/search.ts";
+import { createToolSettingStore } from "@/server/tools/setting-store.ts";
+import { createThreadToolStore } from "@/server/tools/thread-tool-store.ts";
+import {
+  createToolDecisions,
+  createTools,
+  type Toolset,
+  type UseTest,
+} from "@/server/tools/registry.ts";
 import { type Db, pingDatabase } from "@/server/db/db.ts";
 import { createGuests } from "@/server/guests/service.ts";
 import { createGuestStore } from "@/server/guests/store.ts";
@@ -48,8 +54,10 @@ import { createMcpServers } from "@/server/mcp/service.ts";
 import { createMcpCredentialStore, createMcpServerStore } from "@/server/mcp/store.ts";
 import { createModelChoiceStore } from "@/server/models/choice-store.ts";
 import { createConnectionStore } from "@/server/models/connection-store.ts";
-import { type Connections, createConnections } from "@/server/models/connections.ts";
+import type { Catalog } from "@/server/models/catalog.ts";
+import { createConnections } from "@/server/models/connections.ts";
 import { createCredentialStore } from "@/server/models/credential-store.ts";
+import type { ModelGateway } from "@/server/models/gateway.ts";
 import { createHostAdapters } from "@/server/models/hosts.ts";
 import {
   createFakeCatalogs,
@@ -73,14 +81,23 @@ import { agentNameIn, createSpaces } from "@/server/spaces/service.ts";
 import { createSpaceStore } from "@/server/spaces/store.ts";
 import { createAccess } from "@/server/access/access.ts";
 import { createDeltaStore } from "@/server/threads/delta-store.ts";
-import { createAsideStore } from "@/server/threads/asides.ts";
+import { createAsideStore, createAsides } from "@/server/threads/asides.ts";
+import { createBranches } from "@/server/threads/branches.ts";
+import type { Thread, ThreadAsk } from "@/server/threads/types.ts";
 import { createThreadLog, type ThreadLog } from "@/server/threads/log.ts";
-import { createThreadReadStore } from "@/server/threads/read-store.ts";
-import { createThreads } from "@/server/threads/service.ts";
+import { createActivity } from "@/server/views/activity.ts";
+import { createLists } from "@/server/views/lists.ts";
+import { createNeeds } from "@/server/views/needs.ts";
+import { createThreadReadStore } from "@/server/views/read-store.ts";
+import { createReads } from "@/server/views/reads.ts";
+import type { Views } from "@/server/views/routes.ts";
+import { createThreadViews } from "@/server/views/thread.ts";
+import { createThreads } from "@/server/threads/threads.ts";
 import { createCommands } from "@/server/threads/commands.ts";
 import { createThreadStore } from "@/server/threads/store.ts";
 import { createTranscripts } from "@/server/threads/transcripts.ts";
-import { createTitles, type TitlesOptions } from "@/server/threads/titles.ts";
+import { createTitles } from "@/server/threads/titles.ts";
+import type { HostId } from "@/shared/hosts.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
 
@@ -90,7 +107,7 @@ import { createWebhookStore } from "@/server/webhooks/store.ts";
 import { createWebhooks } from "@/server/webhooks/webhooks.ts";
 
 import { createApp } from "./app.ts";
-import { createTriggers } from "./triggers.ts";
+import { createSetRule } from "./schedules-and-webhooks.ts";
 
 // What the routes tests arrange data through are made from.
 export interface SeedDeps {
@@ -127,17 +144,17 @@ export interface ComposeDeps {
   shutdown: AbortSignal;
   // Stand-ins for what reaches outside the server; the tests set these, the server none.
   ports?: {
-    models?: Models;
-    runModels?: Pick<Models, "open" | "replyModel">;
-    connections?: Connections;
+    // Each host's model list and replies.
+    catalogs?: Record<HostId, Catalog>;
+    gateways?: Record<HostId, ModelGateway>;
     mcpFetch?: typeof fetch;
     gitFetch?: typeof fetch;
-    // What names threads; false names none.
-    titleModels?: TitlesOptions["models"] | false;
   };
   options?: {
     // Names this server instance among those sharing the database.
     instanceId?: string;
+    // Whether threads are named by a model; the stand-in model never names them.
+    titles?: boolean;
     now?: () => Date;
     worker?: Partial<Omit<RunWorkerOptions, "calls" | "queue">>;
     toolsets?: Toolset[];
@@ -193,46 +210,42 @@ export function compose(deps: ComposeDeps) {
   const connectionStore = createConnectionStore(db);
   // Sign-ins under way, for MCP servers and model providers alike.
   const attempts = createOAuthAttempts({ db, cipher });
-  const connections =
-    ports.connections ??
-    createConnections({
-      attempts,
-      instanceId,
-      ticker: sync.ticker,
-      transact,
-      connections: connectionStore,
-      credentials: createCredentialStore(db, cipher),
-      providers: {
-        codex: { label: "ChatGPT", oauth: createCodexOAuth(fetch) },
-        claude: { label: "Claude", oauth: createClaudeOAuth(fetch) },
-      },
-      logger,
-    });
+  const connections = createConnections({
+    attempts,
+    instanceId,
+    ticker: sync.ticker,
+    transact,
+    connections: connectionStore,
+    credentials: createCredentialStore(db, cipher),
+    providers: {
+      codex: { label: "ChatGPT", oauth: createCodexOAuth(fetch) },
+      claude: { label: "Claude", oauth: createClaudeOAuth(fetch) },
+    },
+    logger,
+  });
   const spaceStore = createSpaceStore(db);
   const threadStore = createThreadStore(db);
   const directory = createDirectory(db, auth);
   const settingStore = createOrgSettingStore(db);
-  const models = ports.models ?? realModels();
-  function realModels() {
-    const hosts = createHostAdapters(fetch);
-    // Connections are checked against the stand-in's lists when replies come from it, but for
-    // servers people run, whose lists are read where they say.
-    const catalogs = config.fakeModels ? createFakeCatalogs(hosts.catalogs) : hosts.catalogs;
-    return createModels({
-      connections: connectionStore,
-      choices: createModelChoiceStore(db),
-      spaces: spaceStore,
-      tokens: connections,
-      catalogs,
-      settings: settingStore,
-      gateways: hosts.gateways,
-      logger,
-    });
-  }
+  const hosts = createHostAdapters(fetch);
+  // Connections are checked against the stand-in's lists when replies come from it, but for
+  // servers people run, whose lists are read where they say.
+  const models = createModels({
+    connections: connectionStore,
+    choices: createModelChoiceStore(db),
+    spaces: spaceStore,
+    tokens: connections,
+    catalogs:
+      ports.catalogs ?? (config.fakeModels ? createFakeCatalogs(hosts.catalogs) : hosts.catalogs),
+    settings: settingStore,
+    gateways: ports.gateways ?? hosts.gateways,
+    signals: sync.signals,
+    logger,
+  });
   const runStore = createRunStore(db);
   const deltaStore = createDeltaStore(db);
-  const bus = sync.signals;
-  const log = createThreadLog({ threads: threadStore, bus, transact, ordered: sync.ordered });
+  const signals = sync.signals;
+  const log = createThreadLog({ threads: threadStore, signals, transact, ordered: sync.ordered });
   const spaces = createSpaces({
     spaces: spaceStore,
     threads: threadStore,
@@ -288,18 +301,17 @@ export function compose(deps: ComposeDeps) {
     logger,
   });
   // Threads' transcripts, folded once for the agent and the people reading them.
-  const transcripts = createTranscripts(threadStore, bus, hooks, sync.inTransaction);
+  const transcripts = createTranscripts(threadStore, signals, hooks, sync.inTransaction);
   // Every input to a thread's agent goes in through the queue; execution decides in the same write
   // what it starts.
   const queue = createQueue({
     inTransaction: sync.inTransaction,
     store: createQueueStore(db),
     log,
-    transcripts,
     threads: threadStore,
     spaceStore,
     access,
-    bus,
+    signals,
   });
   const watches = createWatchStore(db);
   const agentNameOf = async (spaceId: string) => {
@@ -308,7 +320,7 @@ export function compose(deps: ComposeDeps) {
   };
   const live = createLive({
     store: createLiveStore(db),
-    bus,
+    signals,
     transact,
     afterCommit: options.liveAfterCommit?.(sync.afterCommit) ?? sync.afterCommit,
     ordered: sync.ordered,
@@ -319,7 +331,7 @@ export function compose(deps: ComposeDeps) {
     threads: threadStore,
     spaceStore,
     log,
-    bus,
+    signals,
     queue,
     logger,
     afterCommit: sync.afterCommit,
@@ -336,7 +348,7 @@ export function compose(deps: ComposeDeps) {
     createSchedules({
       store: scheduleStore,
       queue,
-      bus,
+      signals,
       sync,
       logger,
       ...(options.now && { now: options.now }),
@@ -345,16 +357,17 @@ export function compose(deps: ComposeDeps) {
   const webhooks = createWebhooks({
     store: createWebhookStore(db, cipher),
     queue,
-    bus,
+    signals,
     transact,
     baseUrl: config.baseUrl,
     ...(options.now && { now: options.now }),
   });
-  const triggers = createTriggers({ schedules, webhooks, access });
+  // What setting a schedule or a webhook must pass, across both kinds.
+  const setRule = createSetRule({ schedules, webhooks });
   // Previews need a browser, which servers without one go without.
   const artifacts = createArtifacts({
     store: createArtifactStore(db),
-    bus,
+    signals,
     threads: threadStore,
     spaceStore,
     spaces,
@@ -367,13 +380,9 @@ export function compose(deps: ComposeDeps) {
     previewer: previewer ?? null,
   });
   // Whether the space uses any MCP server, which Mage's own MCP tools need.
-  const usesServers = async (space: { id: string; orgId: string }) =>
-    (await mcp.toolsetsInSpace(space)).length > 0;
+  const usesServers: UseTest = (_space, { added }) => added.inSpace.length > 0;
 
-  const runModels = opened(
-    "model",
-    ports.runModels ?? (config.fakeModels ? fakeRunModels(models) : models),
-  );
+  const runModels = opened("model", config.fakeModels ? fakeRunModels(models) : models);
   // The agent's runs: started, stopped and ended in one place, offered and told what the other
   // systems contribute, and held back where the subagents' limits say.
   const execution: Execution = createExecution({
@@ -385,7 +394,7 @@ export function compose(deps: ComposeDeps) {
     spaceStore,
     deltas: deltaStore,
     log,
-    bus,
+    signals,
     transact,
     afterCommit: sync.afterCommit,
     instanceId,
@@ -407,7 +416,7 @@ export function compose(deps: ComposeDeps) {
     transcripts,
     runs: runStore,
     log,
-    bus,
+    signals,
     choosesModels: async (spaceId) => {
       const space = await spaceStore.find(spaceId);
       return !!space && (await tools.optionOn(space, SUBAGENTS_TOOLSET, CHOOSE_MODELS));
@@ -427,7 +436,7 @@ export function compose(deps: ComposeDeps) {
     orgOf: async (spaceId) => (await spaceStore.find(spaceId))?.orgId ?? null,
     subagents,
     log,
-    bus,
+    signals,
     agentNameIn: agentNameOf,
     queue,
     watches,
@@ -466,11 +475,12 @@ export function compose(deps: ComposeDeps) {
   tools.register(subagents.toolset());
   tools.register(calls.toolset());
   tools.register(tasks.toolset());
-  tools.register(triggers.toolset());
+  tools.register(schedules.toolset(setRule));
+  tools.register(webhooks.toolset(setRule));
   tools.register(artifacts.toolset());
   for (const toolset of options.toolsets ?? []) tools.register(toolset);
   tools.register({
-    inSpace: async (space) => mcp.toolsetsInSpace(space),
+    readIn: async (space) => mcp.readIn(space),
     forOrgSettings: async (orgId) => mcp.toolsetsForOrgSettings(orgId),
     forSpaceSettings: async (space) => mcp.toolsetsForSpaceSettings(space),
     named: async (toolId) => mcp.named(toolId),
@@ -483,12 +493,12 @@ export function compose(deps: ComposeDeps) {
   // the toolsets say for a subagent.
   execution.contribute({ guidance: async (space) => instructions.textsFor(space) });
   execution.contribute({
-    guidance: async (space, offered) => ({
-      mcpServers: await mcp.instructionsIn(space, offered),
+    guidance: async (_space, offered, _thread, now) => ({
+      mcpServers: mcp.instructionsIn(now.sets, offered),
     }),
   });
   execution.contribute({
-    guidance: async (space, offered) => ({ skills: await skills.listFor(space, offered) }),
+    guidance: async (_space, offered, _thread, now) => ({ skills: skills.listFor(offered, now) }),
   });
   execution.contribute({
     guidance: async (space) => ({ agentName: await agentNameIn(settingStore, space) }),
@@ -524,39 +534,119 @@ export function compose(deps: ComposeDeps) {
     operatorEmails: config.operatorEmails,
   });
 
-  const titling = ports.titleModels ?? (config.fakeModels ? false : models);
-  const titleModels = titling && opened("title model", titling);
-  const threads = createThreads({
+  const titleModels = (options.titles ?? !config.fakeModels) && opened("title model", models);
+  // Whether the thread is a retired subagent's, which nobody posts in.
+  const retired = async (thread: Thread) =>
+    !!thread.parentThreadId && !!(await subagents.find(thread.id))?.archivedAt;
+  const commands = createCommands({
+    skills,
+    prompts: mcp,
+    access,
     spaces,
     spaceStore,
-    access,
-    guests: guestStore,
-    threads: threadStore,
-    transcripts,
-    reads: readStore,
-    runs: runStore,
-    execution,
-    deltas: deltaStore,
-    models,
-    log,
-    bus,
+    asides: true,
+  });
+  // A person's posts, after the subagents and commands whose rules they follow.
+  const posts = createPosts({
     queue,
-    tools,
-    subagents,
-    calls,
-    live,
-    tasks,
-    commands: createCommands({ skills, prompts: mcp }),
-    ask: (threadId, branchId, rowId) => worker.requestAt(threadId, branchId, rowId),
-    asides: createAsideStore(db),
-    ...(deps.traces && {
-      runTrace: (runId: string) => deps.traces!.traceparent(runId),
-    }),
+    access,
+    log,
+    threads: threadStore,
+    compactable: async (threadId) => execution.compactable(threadId),
+    retired,
+    expand: async (space, userId, command, text) => commands.expand(space, userId, command, text),
     // The stand-in model answers every request alike, so it names no threads.
     ...(titleModels && {
       titles: createTitles({ models: titleModels, threads: threadStore, log, logger }),
     }),
   });
+  const reads = createReads({ store: readStore, signals });
+  // The author has seen what they posted.
+  posts.onPosted(async (post) => reads.posted(post));
+  const branches = createBranches({
+    threads: threadStore,
+    transcripts,
+    access,
+    log,
+    queue,
+    execution,
+    models,
+    tools,
+    retired,
+    signals,
+  });
+  const ask: ThreadAsk = (threadId, branchId, rowId) => worker.requestAt(threadId, branchId, rowId);
+  const asides = createAsides({
+    store: createAsideStore(db),
+    access,
+    transcripts,
+    branches,
+    ask,
+  });
+  const threads = createThreads({
+    spaces,
+    access,
+    threads: threadStore,
+    runs: runStore,
+    models,
+    log,
+    signals,
+    queue,
+    posts,
+    branches,
+    transcripts,
+    calls,
+    ask,
+  });
+  // What readers are shown: built from the systems above, and read by routes alone.
+  const needs = createNeeds({ calls });
+  const activity = createActivity({
+    threads: threadStore,
+    transcripts,
+    tools,
+    needs,
+    reads,
+    subagents,
+    tasks,
+  });
+  const views: Views = {
+    reads,
+    activity,
+    lists: createLists({
+      spaces,
+      spaceStore,
+      access,
+      guests: guestStore,
+      threads: threadStore,
+      runs: runStore,
+      models,
+      signals,
+      needs,
+      reads,
+      subagents,
+    }),
+    thread: createThreadViews({
+      access,
+      threads: threadStore,
+      deltas: deltaStore,
+      models,
+      signals,
+      queue,
+      transcripts,
+      branches,
+      retired,
+      needs,
+      reads,
+      activity,
+      tools,
+      subagents,
+      tasks,
+      live,
+      ...(deps.traces && {
+        runTrace: (runId: string) => deps.traces!.traceparent(runId),
+      }),
+    }),
+  };
 
   const app = createApp({
     handleAuth: auth.handler,
@@ -565,10 +655,18 @@ export function compose(deps: ComposeDeps) {
     models,
     spaces,
     threads,
+    views,
     queue,
+    posts,
+    branches,
+    asides,
+    commands,
+    execution,
+    subagents,
     access,
     tasks,
-    triggers,
+    schedules,
+    webhooks,
     orgs,
     groups: createGroups({ directory }),
     calls,
@@ -596,7 +694,7 @@ export function compose(deps: ComposeDeps) {
       directory,
       threads: threadStore,
       transact,
-      bus,
+      signals,
       baseUrl: config.baseUrl,
     }),
     logger,
@@ -645,11 +743,15 @@ export function compose(deps: ComposeDeps) {
     deltaStore,
     transact,
     log,
-    bus,
+    signals,
     worker,
     makeWorker,
     spaces,
     threads,
+    views,
+    posts,
+    branches,
+    asides,
     access,
     directory,
     settingStore,
@@ -665,7 +767,6 @@ export function compose(deps: ComposeDeps) {
     calls,
     execution,
     transcripts,
-    triggers,
     schedules,
     makeSchedules,
     scheduleStore,

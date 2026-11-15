@@ -4,7 +4,7 @@ import { ulid } from "ulid";
 
 import * as schema from "@/server/schema.ts";
 
-import type { AnyToolSpec, ToolContext } from "@/server/agent/tools.ts";
+import type { AnyToolSpec, ToolContext } from "@/server/tools/registry.ts";
 import { openTestDatabase, type TestDatabase } from "@/server/testing/database.ts";
 import { ARTIFACT_ORIGIN, setup } from "@/server/testing/workspace.ts";
 import {
@@ -16,7 +16,6 @@ import {
   type ArtifactView,
 } from "@/shared/artifacts.ts";
 
-import { createArtifacts } from "./service.ts";
 import { createArtifactStore } from "./store.ts";
 import { type ArtifactPreviewer, loadChromiumPreviewer, type PreviewReport } from "./preview.ts";
 import { contentPolicy, applyEdits, shellOf, titleOf } from "./page.ts";
@@ -24,30 +23,12 @@ import { contentPolicy, applyEdits, shellOf, titleOf } from "./page.ts";
 const PAGE = "<title>Sales chart</title><h1>Sales</h1>";
 const PNG = Buffer.from("not really a png").toString("base64");
 
-// The workspace's artifacts on the same data, with a browser to preview in.
-function withPreviewer(workspace: ReturnType<typeof setup>, previewer: ArtifactPreviewer) {
-  return createArtifacts({
-    store: createArtifactStore(workspace.db),
-    bus: workspace.bus,
-    threads: workspace.threadStore,
-    spaceStore: workspace.spaceStore,
-    spaces: workspace.spaces,
-    access: workspace.access,
-    guests: workspace.guestStore,
-    directory: workspace.directory,
-    appOrigin: "http://localhost:4783",
-    artifactOrigin: ARTIFACT_ORIGIN,
-    secret: "test-secret-that-is-long-enough-0123456789",
-    previewer,
-  });
-}
-
 // Ada owns a team space, where Grace posts and Alan only reads; Bob is in another org.
 async function team({
   previewer,
   database,
 }: { previewer?: ArtifactPreviewer; database?: TestDatabase } = {}) {
-  const workspace = setup({}, { database });
+  const workspace = setup({}, { database, previewer });
   const { api, signUp, join, artifacts } = workspace;
   const ada = await signUp("Ada Lovelace", "ada@example.com");
   const space = await workspace.yourSpace(ada.cookie);
@@ -72,9 +53,7 @@ async function team({
   const carol = { ...carolUser, orgId: ada.orgId };
 
   const specs = new Map<string, AnyToolSpec>(
-    (previewer ? withPreviewer(workspace, previewer) : artifacts)
-      .toolset()
-      .tools.map((tool) => [tool.name, tool]),
+    artifacts.toolset().tools.map((tool) => [tool.name, tool]),
   );
   // The run the tools are called in.
   await workspace.db.insert(schema.run).values({
@@ -82,7 +61,7 @@ async function team({
     threadId: thread.id,
     branchId: thread.id,
     status: "running",
-    triggerSeq: 0,
+    wokenBySeq: 0,
   });
   // The call they are, asked for in each thread the tests call them from: the run's, or a job.
   const calling = async (threadId: string, id = "call", background = false) => {
@@ -1153,7 +1132,7 @@ describe("viewing links", () => {
     const { createArtifactStore } = await import("./store.ts");
     const bare = createArtifacts({
       store: createArtifactStore(t.db),
-      bus: t.bus,
+      signals: t.signals,
       threads: t.threadStore,
       spaceStore: t.spaceStore,
       spaces: t.spaces,
@@ -1201,7 +1180,7 @@ describe("an origin per artifact", () => {
     const { createArtifacts } = await import("./service.ts");
     const artifacts = createArtifacts({
       store: createArtifactStore(t.db),
-      bus: t.bus,
+      signals: t.signals,
       threads: t.threadStore,
       spaceStore: t.spaceStore,
       spaces: t.spaces,
@@ -1555,7 +1534,8 @@ describe("preview", () => {
     const preview = t.artifacts
       .toolset()
       .tools.find((tool) => tool.name === ARTIFACT_TOOLS.preview)!;
-    expect(await preview.usefulIn?.({ id: t.space.id, orgId: t.ada.orgId })).toBe(false);
+    const space = { id: t.space.id, orgId: t.ada.orgId };
+    expect(await preview.usefulIn?.(space, await t.tools.toolsIn(space))).toBe(false);
     expect(preview.description).toContain("at most once");
   });
 });

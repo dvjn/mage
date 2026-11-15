@@ -1,11 +1,12 @@
 import { createOAuthAttempts } from "@/server/oauth/attempts.ts";
 import { eq } from "drizzle-orm";
-import type { Tasks } from "@/server/agent/tasks.ts";
-import type { Triggers } from "@/server/triggers.ts";
+import type { Tasks } from "@/server/tasks/tasks.ts";
+import type { Schedules } from "@/server/schedules/schedules.ts";
+import type { Webhooks } from "@/server/webhooks/webhooks.ts";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
-import type { ToolDecisions } from "@/server/agent/tools.ts";
+import type { ToolPolicies } from "@/server/tools/policies.ts";
+import type { ToolDecisions } from "@/server/tools/registry.ts";
 import { createApp } from "@/server/app.ts";
 import { openStoreDatabase } from "@/server/testing/database.ts";
 import type { Guests } from "@/server/guests/service.ts";
@@ -26,7 +27,7 @@ import type { Skills } from "@/server/skills/service.ts";
 import type { Artifacts } from "@/server/artifacts/service.ts";
 import type { Spaces } from "@/server/spaces/service.ts";
 import { createSpaceStore } from "@/server/spaces/store.ts";
-import type { Threads } from "@/server/threads/service.ts";
+import type { Threads } from "@/server/threads/threads.ts";
 import { createThreadStore } from "@/server/threads/store.ts";
 import { HOST_IDS, type HostId } from "@/shared/hosts.ts";
 import { replyCandidates } from "@/shared/models.ts";
@@ -106,8 +107,35 @@ const anthropicModels = {
 
 type Reply = { status: number; body?: unknown };
 
-function setup(usage?: ModelUsage) {
-  const db = openStoreDatabase();
+// `shared` is the database of another instance, as a second server process would share it.
+// What instances on one database tell each other of model lists, as Postgres carries it: every
+// instance hears each, its own included.
+const catalogListeners = new WeakMap<object, Set<(connectionId: string) => void>>();
+function catalogSignals(db: object) {
+  const listeners = catalogListeners.get(db) ?? new Set();
+  catalogListeners.set(db, listeners);
+  const gaps = new Set<() => void>();
+  return {
+    // Says hints may have been missed here.
+    gap() {
+      for (const listener of gaps) listener();
+    },
+    catalogChanged(connectionId: string) {
+      for (const listener of listeners) listener(connectionId);
+    },
+    onCatalogChanged(listener: (connectionId: string) => void) {
+      listeners.add(listener);
+      return () => void listeners.delete(listener);
+    },
+    onGap(listener: () => void) {
+      gaps.add(listener);
+      return () => void gaps.delete(listener);
+    },
+  };
+}
+
+function setup(usage?: ModelUsage, shared?: ReturnType<typeof openStoreDatabase>) {
+  const db = shared ?? openStoreDatabase();
   const logger = createLogger({ write() {} });
   const secret = "test-secret-that-is-long-enough-1234567890";
   // Sign-up starts the person's org with its first space, as the app wires it.
@@ -128,6 +156,7 @@ function setup(usage?: ModelUsage) {
     createCipher({ version: 1, key: Buffer.alloc(32, 7) }),
   );
   const clock = { now: new Date("2026-10-21T10:00:00Z") };
+  const signals = catalogSignals(db);
   const requests: { url: string; headers: Headers }[] = [];
   // Replaces the provider's answer when set.
   const replies: { codex: Reply | null; anthropic: Reply | null } = {
@@ -238,6 +267,7 @@ function setup(usage?: ModelUsage) {
       HostId,
       ModelGateway
     >,
+    signals,
     logger,
     now: () => clock.now,
   });
@@ -260,7 +290,8 @@ function setup(usage?: ModelUsage) {
     logger,
     signInOptions: { oidc: null },
     tasks: {} as Tasks,
-    triggers: {} as Triggers,
+    schedules: {} as Schedules,
+    webhooks: {} as Webhooks,
     pingDatabase: () => Promise.resolve(true),
   });
 
@@ -329,6 +360,7 @@ function setup(usage?: ModelUsage) {
   }
 
   return {
+    signals,
     db,
     clock,
     connections,
@@ -573,6 +605,61 @@ describe("model lists", () => {
     clock.now = new Date("2026-10-21T11:01:00Z");
     await models.resolveModels(orgId);
     expect(requests).toHaveLength(6);
+  });
+
+  it("is read again on another instance once one refreshes it", async () => {
+    const one = setup();
+    const { cookie, codexId } = await one.ready();
+    const two = setup(undefined, one.db);
+    const refs = async (instance: typeof one) =>
+      (
+        (await (await instance.api("GET", "/models", cookie)).json()) as {
+          models: { ref: string }[];
+        }
+      ).models
+        .map((model) => model.ref)
+        .filter((ref) => ref.startsWith("codex/"));
+    expect(await refs(one)).toEqual(["codex/gpt-big", "codex/gpt-mini"]);
+    expect(await refs(two)).toEqual(["codex/gpt-big", "codex/gpt-mini"]);
+
+    // The provider now lists another model, to whichever instance asks.
+    const newer = {
+      status: 200,
+      body: {
+        models: [{ slug: "gpt-new", display_name: "GPT New", visibility: "list", priority: 1 }],
+      },
+    };
+    one.replies.codex = newer;
+    two.replies.codex = newer;
+    expect((await one.api("GET", `/connections/${codexId}/models?refresh=1`, cookie)).status).toBe(
+      200,
+    );
+    expect(await refs(one)).toEqual(["codex/gpt-new"]);
+    expect(await refs(two)).toEqual(["codex/gpt-new"]);
+  });
+
+  it("is read again after a gap in what the instance heard", async () => {
+    const one = setup();
+    const { cookie } = await one.ready();
+    const refs = async () =>
+      (
+        (await (await one.api("GET", "/models", cookie)).json()) as {
+          models: { ref: string }[];
+        }
+      ).models
+        .map((model) => model.ref)
+        .filter((ref) => ref.startsWith("codex/"));
+    expect(await refs()).toEqual(["codex/gpt-big", "codex/gpt-mini"]);
+    one.replies.codex = {
+      status: 200,
+      body: {
+        models: [{ slug: "gpt-new", display_name: "GPT New", visibility: "list", priority: 1 }],
+      },
+    };
+    expect(await refs()).toEqual(["codex/gpt-big", "codex/gpt-mini"]);
+
+    one.signals.gap();
+    expect(await refs()).toEqual(["codex/gpt-new"]);
   });
 
   it("reports a connection whose list fails and still lists the others", async () => {

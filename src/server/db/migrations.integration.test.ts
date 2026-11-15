@@ -658,4 +658,177 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("migrations on existing data", (
       ).toEqual([]);
     });
   });
+  it("rename what is stored to the words read now, a permission to list or delete kept for both kinds", async () => {
+    await scratch(async (db) => {
+      const upto = ["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"];
+      for (const statement of statements(...upto, "0009", "0010", "0011", "0012", "0013"))
+        await db.query(statement);
+      for (const statement of statements("0014", "0015")) await db.query(statement);
+      await db.query("set session_replication_role = replica");
+      const event = (id: string, seq: number, type: string, data: object) =>
+        db.query(
+          `insert into thread_event (id, thread_id, branch_id, seq, type, actor_kind, actor_user_id, data)
+           values ($1, 'T', 'B', $2, $3, 'agent', null, $4)`,
+          [id, seq, type, JSON.stringify(data)],
+        );
+      const source = { threadId: "T", name: "Digest", main: true };
+      const ada = { userId: "U1", name: "Ada", via: [] };
+      const requested = (callId: string, toolId: string, input: object, toolset?: string) => ({
+        runId: "R",
+        callId,
+        messageId: "",
+        toolId,
+        input,
+        risk: "normal",
+        waits: false,
+        ...(toolset && { toolset }),
+      });
+      await db.query(
+        `insert into webhook (id, thread_id, name, prompt, influence, status, token)
+         values ('W1', 'T', 'Deploys', 'Look', '[]', 'active', 'tok')`,
+      );
+      await event("n1", 1, "notification", {
+        kind: "trigger.fired",
+        source,
+        text: "Go",
+        people: [ada],
+        trigger: "S1",
+      });
+      await event("n2", 2, "notification", {
+        kind: "webhook.received",
+        source,
+        text: "Posted",
+        people: [],
+        trigger: "W1",
+      });
+      await event("n3", 3, "notification", {
+        kind: "change",
+        source,
+        text: "Paused",
+        people: [],
+        tray: "triggers",
+      });
+      await event("d1", 4, "tool.denied", { runId: "R", callId: "c0", reason: "stopped" });
+      await event(
+        "c1",
+        5,
+        "tool.requested",
+        requested("c1", "triggers.delete", { id: "W1" }, "Triggers"),
+      );
+      await event(
+        "c2",
+        6,
+        "tool.requested",
+        requested("c2", "triggers.delete", { id: "S1" }, "Triggers"),
+      );
+      await event(
+        "c3",
+        7,
+        "tool.requested",
+        requested("c3", "calls.start", { tool: "triggers.add_webhook", input: {} }),
+      );
+      await event("c4", 8, "tool.requested", requested("c4", "calls.status", { id: "c3" }));
+      for (const [id, seq, tool] of [
+        ["c1", 5, "triggers.delete"],
+        ["c2", 6, "triggers.delete"],
+        ["c3", 7, "calls.start"],
+        ["j3", 7, "triggers.add_webhook"],
+      ] as const) {
+        await db.query(
+          `insert into call (thread_id, id, branch_id, seq, run_id, tool_id, risk, status, background)
+           values ('T', $1, 'B', $2, 'R', $3, 'normal', 'completed', $4)`,
+          [id, seq, tool, id === "j3"],
+        );
+      }
+      await db.query(
+        `insert into tool_setting (organization_id, space_id, tool_id, policy_id)
+         values ('O', null, 'triggers.list', 'P'), ('O', 'S', 'triggers.delete', null), ('O', null, 'calls.start', 'P')`,
+      );
+      await db.query(
+        `insert into toolset_setting (organization_id, space_id, toolset_id, enabled)
+         values ('O', 'S', 'triggers', false), ('O', null, 'calls', true)`,
+      );
+      await db.query(
+        `insert into toolset_option (organization_id, space_id, toolset_id, option, enabled)
+         values ('O', null, 'triggers', 'x', true)`,
+      );
+      await db.query(
+        `insert into thread_tool (thread_id, tool_id, call_id, position) values ('T', 'triggers.list', 'c9', 0)`,
+      );
+      await db.query(
+        `insert into thread_background_seen (user_id, thread_id, kind, seen_at) values ('U1', 'T', 'triggers', now())`,
+      );
+      await db.query(
+        `insert into run (id, thread_id, branch_id, status, trigger_seq) values ('R', 'T', 'B', 'completed', 1)`,
+      );
+      // The rows above stand for real ones, so what the migration copies is not checked against
+      // what they point at either.
+      for (const statement of statements("0016")) await db.query(statement);
+      await db.query("set session_replication_role = default");
+
+      const data = async (id: string) =>
+        (await db.query(`select type, data from thread_event where id = $1`, [id])).rows[0];
+      expect(await data("n1")).toEqual({
+        type: "notice",
+        data: { kind: "schedule.fired", source, text: "Go", influence: [ada], scheduleId: "S1" },
+      });
+      expect((await data("n2")).data).toMatchObject({ kind: "webhook.received", webhookId: "W1" });
+      expect((await data("n2")).data).not.toHaveProperty("trigger");
+      expect((await data("n3")).data).toMatchObject({ tray: "schedules", influence: [] });
+      expect((await data("d1")).data).toMatchObject({ reason: "cancelled" });
+      expect((await data("c1")).data).toMatchObject({
+        toolId: "webhooks.delete",
+        toolset: "Webhooks",
+      });
+      expect((await data("c2")).data).toMatchObject({
+        toolId: "schedules.delete",
+        toolset: "Schedules",
+      });
+      expect((await data("c3")).data).toMatchObject({
+        toolId: "jobs.start",
+        input: { tool: "webhooks.add" },
+      });
+      expect((await data("c4")).data).toMatchObject({ toolId: "jobs.check" });
+      expect(
+        (await db.query(`select id, tool_id from call order by id`)).rows.map((row) => [
+          row.id,
+          row.tool_id,
+        ]),
+      ).toEqual([
+        ["c1", "webhooks.delete"],
+        ["c2", "schedules.delete"],
+        ["c3", "jobs.start"],
+        ["j3", "webhooks.add"],
+      ]);
+      expect(
+        (await db.query(`select space_id, tool_id, policy_id from tool_setting order by tool_id`))
+          .rows,
+      ).toEqual([
+        { space_id: null, tool_id: "jobs.start", policy_id: "P" },
+        { space_id: "S", tool_id: "schedules.delete", policy_id: null },
+        { space_id: null, tool_id: "schedules.list", policy_id: "P" },
+        { space_id: "S", tool_id: "webhooks.delete", policy_id: null },
+        { space_id: null, tool_id: "webhooks.list", policy_id: "P" },
+      ]);
+      expect(
+        (await db.query(`select toolset_id, enabled from toolset_setting order by toolset_id`))
+          .rows,
+      ).toEqual([
+        { toolset_id: "jobs", enabled: true },
+        { toolset_id: "schedules", enabled: false },
+        { toolset_id: "webhooks", enabled: false },
+      ]);
+      expect(
+        (await db.query(`select toolset_id from toolset_option order by toolset_id`)).rows,
+      ).toEqual([{ toolset_id: "schedules" }, { toolset_id: "webhooks" }]);
+      expect((await db.query(`select tool_id from thread_tool order by tool_id`)).rows).toEqual([
+        { tool_id: "schedules.list" },
+        { tool_id: "webhooks.list" },
+      ]);
+      expect((await db.query(`select kind from thread_activity_seen`)).rows).toEqual([
+        { kind: "schedules" },
+      ]);
+      expect((await db.query(`select woken_by_seq from run`)).rows).toEqual([{ woken_by_seq: 1 }]);
+    });
+  });
 });

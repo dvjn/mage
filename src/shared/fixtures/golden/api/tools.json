@@ -72,9 +72,8 @@
           "url": "https://example.com"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:06.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -100,7 +99,6 @@
           "url": "https://example.com"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:08.000Z",
         "state": "failed",
         "decision": null,
@@ -130,7 +128,6 @@
           "url": "https://example.com"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:10.000Z",
         "state": "failed",
         "decision": null,
@@ -158,9 +155,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:12.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "once",
@@ -204,9 +200,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:15.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "for_now",
@@ -244,9 +239,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:18.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "for_now",
@@ -285,9 +279,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:20.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -313,7 +306,6 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:23.000Z",
         "state": "denied",
         "decision": {
@@ -348,7 +340,6 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:25.000Z",
         "state": "stale",
         "decision": null,
@@ -362,7 +353,7 @@
       },
       {
         "kind": "tool",
-        "id": "c-stopped",
+        "id": "c-cancelled",
         "seq": 58,
         "runId": "r1",
         "messageId": "m1",
@@ -373,9 +364,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:27.000Z",
-        "state": "stopped",
+        "state": "cancelled",
         "decision": null,
         "output": null,
         "ms": null,
@@ -398,7 +388,6 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:29.000Z",
         "state": "skipped",
         "decision": {
@@ -433,7 +422,6 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:31.000Z",
         "state": "stale",
         "decision": {
@@ -476,9 +464,8 @@
           ]
         },
         "risk": "normal",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:34.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "once",
@@ -521,9 +508,8 @@
           "url": "https://example.com"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:38.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -553,9 +539,8 @@
           "url": "https://example.com"
         },
         "risk": "review",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:40.000Z",
-        "state": "stopped",
+        "state": "cancelled",
         "decision": null,
         "output": null,
         "ms": null,
@@ -578,9 +563,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:45.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -592,9 +576,9 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
-          "status": "done",
+        "work": {
+          "kind": "job",
+          "status": "completed",
           "startedAt": "2026-01-01T00:00:45.000Z",
           "endedAt": "2026-01-01T00:00:46.000Z",
           "canCancel": false
@@ -613,7 +597,6 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:47.000Z",
         "state": "failed",
         "decision": null,
@@ -627,8 +610,8 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
+        "work": {
+          "kind": "job",
           "status": "failed",
           "startedAt": "2026-01-01T00:00:47.000Z",
           "endedAt": "2026-01-01T00:00:48.000Z",
@@ -648,9 +631,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:49.000Z",
-        "state": "stopped",
+        "state": "cancelled",
         "decision": null,
         "output": null,
         "ms": null,
@@ -659,8 +641,8 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
+        "work": {
+          "kind": "job",
           "status": "cancelled",
           "startedAt": "2026-01-01T00:00:49.000Z",
           "endedAt": "2026-01-01T00:00:50.000Z",
@@ -680,9 +662,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:51.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "once",
@@ -710,9 +691,9 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
-          "status": "done",
+        "work": {
+          "kind": "job",
+          "status": "completed",
           "startedAt": "2026-01-01T00:00:51.000Z",
           "endedAt": "2026-01-01T00:00:53.000Z",
           "canCancel": false
@@ -731,7 +712,6 @@
           "url": "https://example.com/slow"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:54.000Z",
         "state": "denied",
         "decision": {
@@ -752,8 +732,8 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
+        "work": {
+          "kind": "job",
           "status": "cancelled",
           "startedAt": "2026-01-01T00:00:54.000Z",
           "endedAt": "2026-01-01T00:00:55.000Z",
@@ -794,9 +774,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:59.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -825,9 +804,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:01:00.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -839,9 +817,9 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
-          "status": "done",
+        "work": {
+          "kind": "job",
+          "status": "completed",
           "startedAt": "2026-01-01T00:01:00.000Z",
           "endedAt": "2026-01-01T00:01:03.000Z",
           "canCancel": false
@@ -927,9 +905,8 @@
           "url": "https://example.com"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:06.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -955,7 +932,6 @@
           "url": "https://example.com"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:08.000Z",
         "state": "failed",
         "decision": null,
@@ -985,7 +961,6 @@
           "url": "https://example.com"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:10.000Z",
         "state": "failed",
         "decision": null,
@@ -1013,9 +988,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:12.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "once",
@@ -1059,9 +1033,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:15.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "for_now",
@@ -1099,9 +1072,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:18.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "for_now",
@@ -1140,9 +1112,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:20.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -1168,7 +1139,6 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:23.000Z",
         "state": "denied",
         "decision": {
@@ -1203,7 +1173,6 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:25.000Z",
         "state": "stale",
         "decision": null,
@@ -1217,7 +1186,7 @@
       },
       {
         "kind": "tool",
-        "id": "c-stopped",
+        "id": "c-cancelled",
         "seq": 58,
         "runId": "r1",
         "messageId": "m1",
@@ -1228,9 +1197,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:27.000Z",
-        "state": "stopped",
+        "state": "cancelled",
         "decision": null,
         "output": null,
         "ms": null,
@@ -1253,7 +1221,6 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:29.000Z",
         "state": "skipped",
         "decision": {
@@ -1288,7 +1255,6 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:31.000Z",
         "state": "stale",
         "decision": {
@@ -1331,9 +1297,8 @@
           ]
         },
         "risk": "normal",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:34.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "once",
@@ -1376,9 +1341,8 @@
           "url": "https://example.com"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:38.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -1408,9 +1372,8 @@
           "url": "https://example.com"
         },
         "risk": "review",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:40.000Z",
-        "state": "stopped",
+        "state": "cancelled",
         "decision": null,
         "output": null,
         "ms": null,
@@ -1433,9 +1396,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:45.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -1447,9 +1409,9 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
-          "status": "done",
+        "work": {
+          "kind": "job",
+          "status": "completed",
           "startedAt": "2026-01-01T00:00:45.000Z",
           "endedAt": "2026-01-01T00:00:46.000Z",
           "canCancel": false
@@ -1468,7 +1430,6 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:47.000Z",
         "state": "failed",
         "decision": null,
@@ -1482,8 +1443,8 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
+        "work": {
+          "kind": "job",
           "status": "failed",
           "startedAt": "2026-01-01T00:00:47.000Z",
           "endedAt": "2026-01-01T00:00:48.000Z",
@@ -1503,9 +1464,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:49.000Z",
-        "state": "stopped",
+        "state": "cancelled",
         "decision": null,
         "output": null,
         "ms": null,
@@ -1514,8 +1474,8 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
+        "work": {
+          "kind": "job",
           "status": "cancelled",
           "startedAt": "2026-01-01T00:00:49.000Z",
           "endedAt": "2026-01-01T00:00:50.000Z",
@@ -1535,9 +1495,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:51.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "once",
@@ -1565,9 +1524,9 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
-          "status": "done",
+        "work": {
+          "kind": "job",
+          "status": "completed",
           "startedAt": "2026-01-01T00:00:51.000Z",
           "endedAt": "2026-01-01T00:00:53.000Z",
           "canCancel": false
@@ -1586,7 +1545,6 @@
           "url": "https://example.com/slow"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:54.000Z",
         "state": "denied",
         "decision": {
@@ -1607,8 +1565,8 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
+        "work": {
+          "kind": "job",
           "status": "cancelled",
           "startedAt": "2026-01-01T00:00:54.000Z",
           "endedAt": "2026-01-01T00:00:55.000Z",
@@ -1649,9 +1607,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:59.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -1680,9 +1637,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:01:00.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -1694,9 +1650,9 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
-          "status": "done",
+        "work": {
+          "kind": "job",
+          "status": "completed",
           "startedAt": "2026-01-01T00:01:00.000Z",
           "endedAt": "2026-01-01T00:01:03.000Z",
           "canCancel": false
@@ -1771,9 +1727,8 @@
           "url": "https://example.com"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:06.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -1799,7 +1754,6 @@
           "url": "https://example.com"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:08.000Z",
         "state": "failed",
         "decision": null,
@@ -1829,7 +1783,6 @@
           "url": "https://example.com"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:10.000Z",
         "state": "failed",
         "decision": null,
@@ -1857,9 +1810,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:12.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "once",
@@ -1903,9 +1855,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:15.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "for_now",
@@ -1943,9 +1894,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:18.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "for_now",
@@ -1984,9 +1934,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:20.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -2012,7 +1961,6 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:23.000Z",
         "state": "denied",
         "decision": {
@@ -2047,7 +1995,6 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:25.000Z",
         "state": "stale",
         "decision": null,
@@ -2061,7 +2008,7 @@
       },
       {
         "kind": "tool",
-        "id": "c-stopped",
+        "id": "c-cancelled",
         "seq": 58,
         "runId": "r1",
         "messageId": "m1",
@@ -2072,9 +2019,8 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:27.000Z",
-        "state": "stopped",
+        "state": "cancelled",
         "decision": null,
         "output": null,
         "ms": null,
@@ -2097,7 +2043,6 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:29.000Z",
         "state": "skipped",
         "decision": {
@@ -2132,7 +2077,6 @@
           "url": "https://example.com"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:31.000Z",
         "state": "stale",
         "decision": {
@@ -2175,9 +2119,8 @@
           ]
         },
         "risk": "normal",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:34.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "once",
@@ -2220,9 +2163,8 @@
           "url": "https://example.com"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:38.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -2252,9 +2194,8 @@
           "url": "https://example.com"
         },
         "risk": "review",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:40.000Z",
-        "state": "stopped",
+        "state": "cancelled",
         "decision": null,
         "output": null,
         "ms": null,
@@ -2277,9 +2218,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:45.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -2291,9 +2231,9 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
-          "status": "done",
+        "work": {
+          "kind": "job",
+          "status": "completed",
           "startedAt": "2026-01-01T00:00:45.000Z",
           "endedAt": "2026-01-01T00:00:46.000Z",
           "canCancel": false
@@ -2312,7 +2252,6 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:47.000Z",
         "state": "failed",
         "decision": null,
@@ -2326,8 +2265,8 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
+        "work": {
+          "kind": "job",
           "status": "failed",
           "startedAt": "2026-01-01T00:00:47.000Z",
           "endedAt": "2026-01-01T00:00:48.000Z",
@@ -2347,9 +2286,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:49.000Z",
-        "state": "stopped",
+        "state": "cancelled",
         "decision": null,
         "output": null,
         "ms": null,
@@ -2358,8 +2296,8 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
+        "work": {
+          "kind": "job",
           "status": "cancelled",
           "startedAt": "2026-01-01T00:00:49.000Z",
           "endedAt": "2026-01-01T00:00:50.000Z",
@@ -2379,9 +2317,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:51.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": {
           "allow": true,
           "scope": "once",
@@ -2409,9 +2346,9 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
-          "status": "done",
+        "work": {
+          "kind": "job",
+          "status": "completed",
           "startedAt": "2026-01-01T00:00:51.000Z",
           "endedAt": "2026-01-01T00:00:53.000Z",
           "canCancel": false
@@ -2430,7 +2367,6 @@
           "url": "https://example.com/slow"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:54.000Z",
         "state": "denied",
         "decision": {
@@ -2451,8 +2387,8 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
+        "work": {
+          "kind": "job",
           "status": "cancelled",
           "startedAt": "2026-01-01T00:00:54.000Z",
           "endedAt": "2026-01-01T00:00:55.000Z",
@@ -2488,9 +2424,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:59.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -2519,9 +2454,8 @@
           "url": "https://example.com/slow"
         },
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:01:00.000Z",
-        "state": "ran",
+        "state": "completed",
         "decision": null,
         "output": {
           "ok": true,
@@ -2533,9 +2467,9 @@
           "continued": true,
           "model": null
         },
-        "background": {
-          "kind": "call",
-          "status": "done",
+        "work": {
+          "kind": "job",
+          "status": "completed",
           "startedAt": "2026-01-01T00:01:00.000Z",
           "endedAt": "2026-01-01T00:01:03.000Z",
           "canCancel": false

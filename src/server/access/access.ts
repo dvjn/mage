@@ -23,7 +23,7 @@ import {
   type SpaceStore,
   type Spaces,
 } from "@/server/spaces/service.ts";
-import type { Thread, ThreadStore } from "@/server/threads/service.ts";
+import type { Thread, ThreadStore } from "@/server/threads/types.ts";
 import type { ThreadRole } from "@/shared/guests.ts";
 
 export interface AccessOptions {
@@ -181,7 +181,7 @@ export function createAccess(options: AccessOptions) {
     } else if (!read.can(action)) {
       throw new ServiceError(403, "This space is archived");
     }
-    return read as Reader & { via: Access };
+    return read as Reader & { via: Access; principal: Principal };
   }
 
   return {

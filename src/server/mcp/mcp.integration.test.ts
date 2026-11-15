@@ -1,10 +1,11 @@
 import { eq } from "drizzle-orm";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { modelToolNames } from "@/server/agent/tools.ts";
+import { modelToolNames } from "@/server/tools/registry.ts";
+import { createCipher } from "@/server/kernel/cipher.ts";
 import * as schema from "@/server/schema.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
-import type { Thread } from "@/server/threads/service.ts";
+import type { Thread } from "@/server/threads/types.ts";
 import type { ToolRow } from "@/shared/transcript.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
 import { expireLeases } from "@/server/testing/database.ts";
@@ -35,6 +36,7 @@ import {
   NOTES_INSTRUCTIONS,
 } from "../../../mock/mcp.ts";
 import { contentsOf, RESOURCE_TEXT_MAX, textLike } from "./resources.ts";
+import { createMcpCredentialStore } from "./store.ts";
 import {
   keptInstructions,
   mergeHeaders,
@@ -446,6 +448,42 @@ describe("OAuth", () => {
       for (const answer of answers) {
         expect(await answer.json()).toMatchObject({ status: "ok", error: null, toolCount: 3 });
       }
+    });
+
+    it("spends a rotating refresh token once when two renew at once with no server metadata kept", async () => {
+      const { workspace, other, id, spent, refresh } = await shared(2);
+      const store = createMcpCredentialStore(
+        workspace.database.db,
+        createCipher({ version: 1, key: Buffer.alloc(32, 7) }),
+      );
+      const kept = (await store.get(id, { kind: "shared" }))!;
+      const { discovery: _discovery, ...oauth } = kept.oauth!;
+      await store.put(id, { kind: "shared" }, { ...kept, oauth });
+
+      const answers = await Promise.all([refresh(workspace), refresh(other)]);
+
+      expect(spent).toHaveLength(1);
+      for (const answer of answers) {
+        expect(await answer.json()).toMatchObject({ status: "ok", error: null, toolCount: 3 });
+      }
+    });
+
+    it("lets go of its turn when the provider's answer to a renewal cannot be read", async () => {
+      const { workspace, refresh } = await shared();
+      const handle = workspace.mcpNetwork.handle;
+      workspace.mcpNetwork.handle = async (req) => {
+        const form = new URLSearchParams(await req.clone().text());
+        return new URL(req.url).pathname === "/token" && form.get("grant_type") === "refresh_token"
+          ? new Response("not tokens", { status: 200 })
+          : handle(req);
+      };
+
+      expect(await (await refresh(workspace)).json()).toMatchObject({ status: "needs_auth" });
+
+      const held = await workspace.database.db
+        .select({ owner: schema.mcpCredential.leaseOwner })
+        .from(schema.mcpCredential);
+      expect(held).toEqual([{ owner: null }]);
     });
 
     it("is renewed by another instance once the one renewing stops and its lease runs out", async () => {
@@ -877,7 +915,9 @@ describe("MCP tools in a thread", () => {
     expect(
       first.request.searchable?.find((tool) => tool.id === named("add_note"))?.inputSchema,
     ).toEqual(expect.objectContaining({ required: ["title"] }));
-    expect((await toolRows()).map((row) => [row.state, row.risk])).toEqual([["ran", "normal"]]);
+    expect((await toolRows()).map((row) => [row.state, row.risk])).toEqual([
+      ["completed", "normal"],
+    ]);
     expect(next.texts.at(-1)).toBe(
       `result ${named("add_note")}: {"ok":true,"value":{"id":"note-1","title":"Engines","words":2}}`,
     );
@@ -957,7 +997,7 @@ describe("MCP tools in a thread", () => {
     await post(ada, "Delete note-9");
     await calls(id("delete_note"), { id: "note-9" });
     await worker.idle();
-    expect((await toolRows()).map((row) => [row.state, row.risk])).toEqual([["pending", "ask"]]);
+    expect((await toolRows()).map((row) => [row.state, row.risk])).toEqual([["waiting", "ask"]]);
 
     mcpNetwork.up = false;
     const callId = (await toolRows())[0]!.id;
@@ -1003,7 +1043,7 @@ describe("MCP tools in a thread", () => {
       await post(ada, "Delete note-9");
       await calls(id("delete_note"), { id: "note-9" });
       await worker.idle();
-      expect((await toolRows())[0]?.state).toBe("pending");
+      expect((await toolRows())[0]?.state).toBe("waiting");
       const endpoint =
         scope === "org"
           ? `/mcp-servers/${server.id}/enabled`
@@ -1442,7 +1482,7 @@ describe("what the model calls a server's tools", () => {
     expect(first.tools).toContain("mcp.pad.add_note");
     expect(first.request.instructions).toContain("Scratchpad (`mcp__pad__*`):\n- mcp__pad__echo:");
     expect((await workspace.toolRows()).map((row) => [row.toolId, row.state])).toEqual([
-      [id("add_note"), "ran"],
+      [id("add_note"), "completed"],
     ]);
     expect(next.texts.filter((text) => text.startsWith("tool mcp.pad"))).toEqual([
       'tool mcp.pad.add_note: {"title":"T","body":"B"}',
@@ -1510,7 +1550,7 @@ describe("personal credentials", () => {
       'result mcp.notes.echo: {"ok":true,"value":{"text":"grace: hi"}}',
     );
     expect((await toolRows())[0]).toMatchObject({
-      state: "ran",
+      state: "completed",
       waits: false,
       ranAs: { name: "Grace Hopper" },
     });
@@ -1526,7 +1566,7 @@ describe("personal credentials", () => {
     await calls("mcp.notes.echo", { text: "hi" });
     await worker.idle();
     const [waiting] = await toolRows();
-    expect(waiting).toMatchObject({ state: "pending", waits: true });
+    expect(waiting).toMatchObject({ state: "waiting" });
     expect(rowIn(await detail(grace), waiting!.id)).toMatchObject({
       actions: ["allow", "allow_for_now", "deny"],
       connection: { serverId: server.id, kind: "headers", headers: ["authorization"] },
@@ -1546,7 +1586,10 @@ describe("personal credentials", () => {
     expect(next.texts.at(-1)).toBe(
       'result mcp.notes.echo: {"ok":true,"value":{"text":"grace: hi"}}',
     );
-    expect((await toolRows())[0]).toMatchObject({ state: "ran", ranAs: { name: "Grace Hopper" } });
+    expect((await toolRows())[0]).toMatchObject({
+      state: "completed",
+      ranAs: { name: "Grace Hopper" },
+    });
     expect(await workspace.connections(grace)).toMatchObject([
       { serverId: server.id, serverName: "Notes", spaceId: null, status: "ok" },
     ]);
@@ -1565,7 +1608,7 @@ describe("personal credentials", () => {
     await post(ada, "Say hi");
     await calls("mcp.notes.echo", { text: "hi" });
     await worker.idle();
-    expect((await toolRows())[0]).toMatchObject({ state: "pending", waits: true });
+    expect((await toolRows())[0]).toMatchObject({ state: "waiting" });
 
     expect((await decide(ada, (await toolRows())[0]!.id, "once")).status).toBe(200);
     const next = await model.next();
@@ -1573,7 +1616,7 @@ describe("personal credentials", () => {
     await worker.idle();
     expect(next.texts.at(-1)).toBe('result mcp.notes.echo: {"ok":true,"value":{"text":"ada: hi"}}');
     expect((await toolRows())[0]).toMatchObject({
-      state: "ran",
+      state: "completed",
       decision: { by: { name: "Ada Lovelace" } },
       ranAs: { name: "Ada Lovelace" },
     });
@@ -1630,7 +1673,7 @@ describe("personal credentials", () => {
       'result mcp.notes.echo: {"ok":true,"value":{"text":"grace: two"}}',
     );
     expect((await toolRows())[1]).toMatchObject({
-      state: "ran",
+      state: "completed",
       waits: false,
       standingOn: first.id,
       decision: { scope: "for_now", by: { name: "Grace Hopper" } },
@@ -1641,7 +1684,7 @@ describe("personal credentials", () => {
     await post(ada, "Say three");
     await calls("mcp.notes.echo", { text: "three" });
     await worker.idle();
-    expect((await toolRows())[2]).toMatchObject({ state: "pending", waits: true });
+    expect((await toolRows())[2]).toMatchObject({ state: "waiting" });
   });
 
   it("stop running for now once its giver's connection breaks", async () => {
@@ -1659,13 +1702,16 @@ describe("personal credentials", () => {
     expect((await workspace.decide(grace, (await toolRows())[0]!.id, "for_now")).status).toBe(200);
     (await model.next()).reply("Said.");
     await worker.idle();
-    expect((await toolRows())[0]).toMatchObject({ state: "ran", ranAs: { name: "Grace Hopper" } });
+    expect((await toolRows())[0]).toMatchObject({
+      state: "completed",
+      ranAs: { name: "Grace Hopper" },
+    });
 
     await api("DELETE", `/mcp-servers/${server.id}/connection`, grace.cookie);
     await post(grace, "Say two");
     await calls("mcp.notes.echo", { text: "two" });
     await worker.idle();
-    expect((await toolRows())[1]).toMatchObject({ state: "pending", waits: true });
+    expect((await toolRows())[1]).toMatchObject({ state: "waiting" });
   });
 
   it("never allow for now where every call asks", async () => {
@@ -1709,7 +1755,7 @@ describe("personal credentials", () => {
     await post(grace, "Again");
     await calls("mcp.notes.echo", { text: "again" });
     await worker.idle();
-    expect((await toolRows())[1]).toMatchObject({ state: "pending", waits: true });
+    expect((await toolRows())[1]).toMatchObject({ state: "waiting" });
   });
 
   it("are forgotten for whoever leaves the org, on its servers and its spaces'", async () => {
@@ -1890,7 +1936,12 @@ describe("MCP resources", () => {
     });
     expect(results[1]).toContain('"size":25,"note":"Binary content, not shown."');
     expect(results[2]).toContain("No server here named nope has resources. Those that do: notes.");
-    expect((await toolRows()).map((row) => row.state)).toEqual(["ran", "ran", "ran", "failed"]);
+    expect((await toolRows()).map((row) => row.state)).toEqual([
+      "completed",
+      "completed",
+      "completed",
+      "failed",
+    ]);
   });
 
   it("are offered only while a server that declares them has a tool on", async () => {
@@ -1931,7 +1982,10 @@ describe("MCP resources", () => {
     await worker.idle();
 
     expect(next.texts.at(-1)).toContain('"text":"grace"');
-    expect((await toolRows())[0]).toMatchObject({ state: "ran", ranAs: { name: "Grace Hopper" } });
+    expect((await toolRows())[0]).toMatchObject({
+      state: "completed",
+      ranAs: { name: "Grace Hopper" },
+    });
   });
 
   it("of a personal server wait for an approver with a connection, and run as them", async () => {
@@ -1944,7 +1998,7 @@ describe("MCP resources", () => {
     await calls("mcp_servers.read_resource", { server: "notes", uri: "notes://whoami" });
     await worker.idle();
     const [waiting] = await toolRows();
-    expect(waiting).toMatchObject({ state: "pending", waits: true });
+    expect(waiting).toMatchObject({ state: "waiting" });
     expect(rowIn(await detail(grace), waiting!.id)).toMatchObject({
       connection: { serverId: server.id, connected: false },
     });
@@ -1956,7 +2010,10 @@ describe("MCP resources", () => {
     await worker.idle();
 
     expect(next.texts.at(-1)).toContain('"text":"grace"');
-    expect((await toolRows())[0]).toMatchObject({ state: "ran", ranAs: { name: "Grace Hopper" } });
+    expect((await toolRows())[0]).toMatchObject({
+      state: "completed",
+      ranAs: { name: "Grace Hopper" },
+    });
   });
 
   it("listed from every server name a personal one rather than list it with someone's login", async () => {
@@ -1970,7 +2027,7 @@ describe("MCP resources", () => {
     next.reply("Listed.");
     await worker.idle();
 
-    expect((await toolRows())[0]).toMatchObject({ state: "ran", waits: false });
+    expect((await toolRows())[0]).toMatchObject({ state: "completed", waits: false });
     expect(next.texts.at(-1)).toContain('"resources":[]');
     expect(next.texts.at(-1)).toContain("name one to list its resources: notes.");
   });
@@ -2028,8 +2085,8 @@ describe("searching for MCP tools", () => {
     );
     expect((await toolRows(true)).map((row) => [row.toolId, row.state])).toEqual([
       [expect.stringContaining("/echo"), "failed"],
-      ["mcp_servers.search_tools", "ran"],
-      [expect.stringContaining("/echo"), "ran"],
+      ["mcp_servers.search_tools", "completed"],
+      [expect.stringContaining("/echo"), "completed"],
     ]);
   });
 
@@ -2067,7 +2124,7 @@ describe("searching for MCP tools", () => {
     step(await model.next(), [named("delete_note"), { id: "missing" }]);
     await worker.idle();
     const waiting = (await toolRows()).at(-1)!;
-    expect(waiting).toMatchObject({ state: "pending", waits: true });
+    expect(waiting).toMatchObject({ state: "waiting" });
     const stored = await db.select().from(schema.threadTool);
     expect(stored).toMatchObject([{ threadId: thread.id, toolId: waiting.toolId }]);
 
@@ -2190,7 +2247,11 @@ describe("what a tool call is called", () => {
     const { ada, api, server, tools, space, id, access, thread } = await mcpThread();
     const reader = await access.require(ada, thread.id);
     // What the call's row shows it as: its names, and what its toolset's presenter adds.
-    const call = async (toolId: string, input: unknown = {}, state: "ran" | "pending" = "ran") => {
+    const call = async (
+      toolId: string,
+      input: unknown = {},
+      state: "completed" | "waiting" = "completed",
+    ) => {
       const row = { id: "c", toolId, input, state } as ToolRow;
       return {
         ...(await tools.namesIn({ id: space.id, orgId: ada.orgId })(row)),
@@ -2215,7 +2276,7 @@ describe("what a tool call is called", () => {
       title: "Load",
       skill: "review",
     });
-    expect(await call("skills.load", { name: "review" }, "pending")).toMatchObject({
+    expect(await call("skills.load", { name: "review" }, "waiting")).toMatchObject({
       title: "Load",
       skill: "review",
     });

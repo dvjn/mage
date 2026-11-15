@@ -4,7 +4,7 @@
 import { type SQL, sql } from "drizzle-orm";
 import type { PgColumn } from "drizzle-orm/pg-core";
 
-import { subagent } from "@/server/agent/schema.ts";
+import { subagent } from "@/server/subagents/schema.ts";
 
 export function parentOf(threadId: PgColumn): SQL<string | null> {
   return sql<

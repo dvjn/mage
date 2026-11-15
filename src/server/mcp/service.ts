@@ -28,13 +28,14 @@ import * as z from "zod";
 
 import type { McpServerGuidance } from "@/server/execution/context.ts";
 import type {
+  AddedToolsets,
   AnyToolSpec,
   ToolContext,
   ToolOutput,
   ToolNames,
   Toolset,
   ToolSpec,
-} from "@/server/agent/tools.ts";
+} from "@/server/tools/registry.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
@@ -522,18 +523,21 @@ export function createMcpServers(options: McpServersOptions) {
     return (await settings.get(orgId)).spaceMcpServers;
   }
 
-  // The org's servers the space uses: those on, and not turned off in the space.
-  async function orgServersIn(space: Pick<Space, "id" | "orgId">) {
-    const set = await servers.inSpaceSettings(space.id);
-    return (await servers.inOrg(space.orgId)).filter(
-      (server) => server.enabled && set.get(server.id) !== false,
-    );
-  }
-
-  // The space's own servers the space uses: those on, while the org lets spaces have them.
-  async function ownServersIn(space: Pick<Space, "id" | "orgId">) {
-    if (!(await spacesMayAdd(space.orgId))) return [];
-    return (await servers.inSpace(space.id)).filter((server) => server.enabled);
+  // The org's servers and the space's own, and of them those the space uses: the org's that are
+  // on and not turned off in the space, then its own that are on, while the org lets spaces have
+  // them.
+  async function serversOf(space: Pick<Space, "id" | "orgId">) {
+    const [org, own, set, mayAdd] = await Promise.all([
+      servers.inOrg(space.orgId),
+      servers.inSpace(space.id),
+      servers.inSpaceSettings(space.id),
+      spacesMayAdd(space.orgId),
+    ]);
+    const used = [
+      ...org.filter((server) => server.enabled && set.get(server.id) !== false),
+      ...(mayAdd ? own.filter((server) => server.enabled) : []),
+    ];
+    return { org, own, used };
   }
 
   // One of the org's servers as the space sees it.
@@ -609,6 +613,9 @@ export function createMcpServers(options: McpServersOptions) {
       source: "mcp",
       prefix: `mcp.${server.slug}`,
       tools: server.tools.map((definition) => specOf(server, definition)),
+      ...(server.instructions && {
+        told: { text: server.instructions, cut: server.instructionsCut },
+      }),
     };
   }
 
@@ -714,7 +721,7 @@ export function createMcpServers(options: McpServersOptions) {
   // resources and have a tool on there.
   async function resourceServersIn(space: Pick<Space, "id" | "orgId">, toolsOn: ToolsOn) {
     const on = await toolsOn(space);
-    return [...(await orgServersIn(space)), ...(await ownServersIn(space))].filter(
+    return (await serversOf(space)).used.filter(
       (server) =>
         server.resources && server.tools.some((tool) => on(mcpToolId(server.id, tool.name))),
     );
@@ -725,8 +732,8 @@ export function createMcpServers(options: McpServersOptions) {
   // tools' calls do: the shared ones, or the own login of the person it runs as; one that names
   // none lists only the servers whose credentials are shared, since one call has one login.
   function resourceTools(toolsOn: ToolsOn): AnyToolSpec[] {
-    const usefulIn = async (space: Pick<Space, "id" | "orgId">) =>
-      (await resourceServersIn(space, toolsOn)).length > 0;
+    const usefulIn: ToolSpec["usefulIn"] = async (space, { rules }) =>
+      (await resourceServersIn(space, async () => (toolId) => !rules(toolId).off)).length > 0;
     const named = async (space: Pick<Space, "id" | "orgId">, slug: string) =>
       (await resourceServersIn(space, toolsOn)).find((server) => server.slug === slug);
     const missing = async (
@@ -1082,9 +1089,7 @@ export function createMcpServers(options: McpServersOptions) {
 
   // The servers the space uses that offer prompts, by their short names.
   async function promptServersIn(space: Pick<Space, "id" | "orgId">) {
-    return [...(await orgServersIn(space)), ...(await ownServersIn(space))].filter(
-      (server) => server.prompts.length > 0,
-    );
+    return (await serversOf(space)).used.filter((server) => server.prompts.length > 0);
   }
 
   return {
@@ -1419,32 +1424,30 @@ export function createMcpServers(options: McpServersOptions) {
       (await servers.inOrg(orgId)).length > 0 ||
       (!!spaceId && (await servers.inSpace(spaceId)).length > 0),
 
-    // What the servers the space uses say about their tools, for the agent's prompt: only those
-    // with a tool offered in the run, in the order their toolsets come.
-    async instructionsIn(
-      space: Pick<Space, "id" | "orgId">,
+    // What the servers among the toolsets say about their tools, for the agent's prompt: only
+    // those with a tool offered in the run, in the order their toolsets come.
+    instructionsIn(
+      sets: readonly Toolset[],
       offered: readonly Pick<AnyToolSpec, "name">[],
-    ): Promise<McpServerGuidance[]> {
+    ): McpServerGuidance[] {
       const names = new Set(offered.map((spec) => spec.name));
-      return [...(await orgServersIn(space)), ...(await ownServersIn(space))].flatMap((server) =>
-        server.instructions &&
-        server.tools.some((tool) => names.has(mcpToolId(server.id, tool.name)))
-          ? [
-              {
-                name: server.name,
-                prefix: `mcp.${server.slug}.*`,
-                text: server.instructions,
-                cut: server.instructionsCut,
-              },
-            ]
+      return sets.flatMap((set) =>
+        set.source === "mcp" && set.told && set.tools.some((tool) => names.has(tool.name))
+          ? [{ name: set.title, prefix: `${set.prefix}.*`, text: set.told.text, cut: set.told.cut }]
           : [],
       );
     },
 
     // The servers the space uses, as toolsets: the org's it did not turn off, then its own, while
-    // the org lets spaces have them; none that is off.
-    async toolsetsInSpace(space: Pick<Space, "id" | "orgId">): Promise<Toolset[]> {
-      return [...(await orgServersIn(space)), ...(await ownServersIn(space))].map(toolsetOf);
+    // the org lets spaces have them, none that is off; and every server its settings and its
+    // org's show.
+    async readIn(space: Pick<Space, "id" | "orgId">): Promise<AddedToolsets> {
+      const { org, own, used } = await serversOf(space);
+      return {
+        inSpace: used.map(toolsetOf),
+        forSpaceSettings: [...org, ...own].map(toolsetOf),
+        forOrgSettings: org.map(toolsetOf),
+      };
     },
   };
 }

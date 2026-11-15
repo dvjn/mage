@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import * as z from "zod";
 
 import { wholeWhereRead } from "@/server/execution/compaction.ts";
-import type { ToolSpec } from "@/server/agent/tools.ts";
+import type { ToolSpec } from "@/server/tools/registry.ts";
 import * as schema from "@/server/schema.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import type { ThreadDetail } from "@/shared/threads/detail.ts";

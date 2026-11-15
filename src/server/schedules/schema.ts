@@ -7,7 +7,7 @@ import { check, index, json, pgTable, text, uniqueIndex } from "drizzle-orm/pg-c
 import { at, NOW } from "@/server/db/columns.ts";
 import { machine } from "@/server/sync/machine.ts";
 import { thread } from "@/server/threads/schema.ts";
-import type { Steering } from "@/shared/threads/events.ts";
+import type { Influencer } from "@/shared/threads/events.ts";
 
 export const SCHEDULE_STATES = ["active", "paused", "completed", "deleted"] as const;
 
@@ -42,7 +42,7 @@ export const schedule = pgTable(
     // The note or prompt the agent is told when it fires.
     prompt: text("prompt").notNull(),
     // Whose words the model had read when it set it.
-    influence: json("influence").$type<Steering[]>().notNull(),
+    influence: json("influence").$type<Influencer[]>().notNull(),
     status: text("status", { enum: SCHEDULE_STATES }).notNull(),
     // When it next comes due: kept while paused, so a paused timer remembers its time.
     nextRunAt: at("next_run_at"),

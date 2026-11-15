@@ -5,9 +5,10 @@
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { ModelUsage } from "@/server/models/gateway.ts";
 import type { Models } from "@/server/models/service.ts";
+import { plainText } from "@/shared/plain-text.ts";
 import { addUsage } from "@/shared/usage.ts";
 
-import { type ThreadStore, titleFrom } from "./service.ts";
+import type { ThreadStore } from "./types.ts";
 import type { ThreadLog } from "./log.ts";
 
 export interface TitlesOptions {
@@ -26,6 +27,18 @@ const INSTRUCTIONS = [
   "Reply with a title of at most six words for the conversation that starts with the message you are given.",
   "Reply with the title alone: no quotes, no trailing punctuation, no Markdown.",
 ].join("\n");
+
+const TITLE_LENGTH = 60;
+
+// A thread's title from its first message: its text without markdown, on one line, cut to about
+// 60 characters.
+export function titleFrom(text: string) {
+  const line = plainText(text).replace(/\s+/g, " ").trim();
+  if (line.length <= TITLE_LENGTH) return line;
+  const cut = line.slice(0, TITLE_LENGTH - 1);
+  const space = cut.lastIndexOf(" ");
+  return `${(space > TITLE_LENGTH / 2 ? cut.slice(0, space) : cut).trimEnd()}…`;
+}
 
 // The model's answer as a title: its first line, without a label or quotes.
 export function cleanTitle(answer: string) {

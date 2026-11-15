@@ -125,7 +125,8 @@ describe("agent runs", () => {
     low.reply("Hi.");
     await worker.idle();
 
-    expect(usual.request.effort).toBeUndefined();
+    // A model that can think, asked for no effort, is asked for medium.
+    expect(usual.request.effort).toBe("medium");
     expect(low.request.effort).toBe("low");
   });
 
@@ -202,9 +203,11 @@ describe("agent runs", () => {
   });
 
   it("fails with a message when the thread has no model", async () => {
-    const { ada, org, db, thread, worker, post, transcript, runs, events, start } =
+    const { ada, models, db, thread, worker, post, transcript, runs, events, start } =
       await agentThread();
-    org.defaultModel = null;
+    // With no model listed, nothing can reply in its place.
+    await models.default(null);
+    await models.set([]);
     await db.execute(sql`update thread set model = null where id = ${thread.id}`);
     await start();
 

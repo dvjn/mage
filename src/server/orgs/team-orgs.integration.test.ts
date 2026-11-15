@@ -595,14 +595,13 @@ describe("renaming and deleting a team org", () => {
       "personal",
       "personal",
     ]);
-    for (const table of [
-      schema.orgGroup,
-      schema.orgInvite,
-      schema.threadInvite,
-      schema.connection,
-    ]) {
+    for (const table of [schema.orgGroup, schema.orgInvite, schema.threadInvite]) {
       expect(await db.select().from(table)).toEqual([]);
     }
+    // The other orgs keep their own connections.
+    expect(
+      (await db.select().from(schema.connection)).every((c) => c.organizationId !== orgId),
+    ).toBe(true);
     expect(
       (await db.select().from(schema.space)).every((space) => space.organizationId !== orgId),
     ).toBe(true);

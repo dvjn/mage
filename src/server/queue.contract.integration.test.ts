@@ -179,7 +179,7 @@ describe("a message to a busy agent", () => {
     );
     const rows = (await w.detail(w.ada, held)).rows;
     const message = rows.find((row) => row.kind === "human")!;
-    const task = rows.find((row) => row.kind === "relay")!;
+    const task = rows.find((row) => row.kind === "notice")!;
     expect(message.seq).toBe(task.seq);
   });
 
@@ -310,5 +310,57 @@ describe("what the agent is told", () => {
       "agent (completed): Done.",
     ]);
     expect((await w.shown()).waiting).toEqual([]);
+  });
+});
+
+describe("a person's post", () => {
+  it("names the thread when it is the first, and moves its author's read mark to it", async () => {
+    const w = await world();
+    expect((await w.detail()).thread).toMatchObject({ title: "Untitled", untitled: true });
+    await w.post(w.grace, "// Plans for the week");
+    const { thread } = await w.detail();
+    expect(thread).toMatchObject({ title: "// Plans for the week", untitled: false });
+    expect((await w.listed(w.grace)).standing.lastSeenSeq).toBe(thread.lastEventSeq);
+    expect((await w.listed(w.ada)).standing.lastSeenSeq).toBe(0);
+    await w.post(w.ada, "// And the next");
+    expect((await w.detail()).thread.title).toBe("// Plans for the week");
+  });
+
+  it("is refused in a retired subagent's thread", async () => {
+    const w = await world();
+    await w.post(w.ada, "Get help");
+    await w.asks(w.threadId, ["subagents.start", { name: "Helper", task: "Help" }]);
+    await w.answers(w.threadId, "Started.");
+    const helper = await w.subagentNamed("Helper");
+    await w.answers(helper, "Helped.");
+    await w.post(w.ada, "Let it go");
+    await w.asks(w.threadId, ["subagents.archive", { subagent: "Helper" }]);
+    await w.answers(w.threadId, "Archived.");
+    await w.settled();
+    expect(await w.post(w.ada, "Still there?", "steer", helper)).toEqual({
+      status: 409,
+      body: { error: "This subagent is archived" },
+    });
+  });
+
+  it("asking to compact is refused with nothing to compact, and an unknown command is refused", async () => {
+    const w = await world();
+    const send = async (name: string) => {
+      const res = await w.api("POST", `/threads/${w.threadId}/messages`, w.ada.cookie, {
+        text: `/${name}`,
+        mode: "steer",
+        command: { name, args: "" },
+      });
+      return { status: res.status, body: await res.json() };
+    };
+    expect(await send("compact")).toEqual({
+      status: 409,
+      body: { error: "There is nothing to compact yet" },
+    });
+    expect(await send("nothing-here")).toEqual({
+      status: 400,
+      body: { error: "There is no /nothing-here here" },
+    });
+    expect(w.modelCalls()).toBe(0);
   });
 });

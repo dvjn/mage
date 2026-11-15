@@ -4,7 +4,7 @@ import type { Db } from "@/server/db/db.ts";
 import type { DeltaBatch } from "@/shared/threads/events.ts";
 
 import { messageDelta } from "./schema.ts";
-import type { DeltaStore } from "./service.ts";
+import type { DeltaStore } from "./types.ts";
 
 // Pieces in order, each run of one reply's pieces of one part as one batch.
 function batched(rows: (typeof messageDelta.$inferSelect)[]) {

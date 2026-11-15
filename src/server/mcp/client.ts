@@ -280,6 +280,16 @@ async function refreshIn(url: string | URL, init: RequestInit | undefined, oauth
   return endpoint && new URL(endpoint).href === new URL(url).href ? spent : null;
 }
 
+// Whether a token endpoint's answer holds tokens: JSON with an access token and its type.
+async function tokensIn(res: Response) {
+  try {
+    const body = (await res.json()) as { access_token?: unknown; token_type?: unknown } | null;
+    return typeof body?.access_token === "string" && typeof body.token_type === "string";
+  } catch {
+    return false;
+  }
+}
+
 // A fetch that takes turns with other instances at renewing the tokens: the SDK renews inside its
 // transport's handling of a 401 and inside `auth()`, with no hook around it, but posts the refresh
 // through the fetch it is given. A refresh waits for the state's lease. Holding it, when the
@@ -315,7 +325,8 @@ function renewingInTurn(fetch: FetchLike, oauth: McpOAuthStore, flow: Flow): Fet
       }
       try {
         const res = await fetch(url, init);
-        if (res.ok) Object.assign(flow, { lease, spent });
+        // Tokens the SDK cannot read are never saved, so the turn is let go of here.
+        if (res.ok && (await tokensIn(res.clone()))) Object.assign(flow, { lease, spent });
         else await renewal.release(lease);
         return res;
       } catch (err) {

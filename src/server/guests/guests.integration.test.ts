@@ -7,7 +7,7 @@ import { ulid } from "ulid";
 
 import * as schema from "@/server/schema.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
-import { openInbox, openStream } from "@/server/testing/sse.ts";
+import { openFeed, openStream } from "@/server/testing/sse.ts";
 import { setup } from "@/server/testing/workspace.ts";
 
 type Workspace = ReturnType<typeof setup>;
@@ -223,13 +223,13 @@ describe("thread access", () => {
     await t.db
       .insert(schema.threadGuest)
       .values(many.map((user) => ({ threadId: t.thread.id, userId: user.id })));
-    const inbox = await openInbox(t.app, t.hedy.cookie);
+    const feed = await openFeed(t.app, t.hedy.cookie);
     expect((await t.api("DELETE", `/threads/${t.thread.id}`, t.ada.cookie)).status).toBe(200);
     for (;;) {
-      const { event, data } = await inbox.nextInbox();
+      const { event, data } = await feed.nextChange();
       if (event === "thread-gone" && data.threadId === t.thread.id) break;
     }
-    await inbox.close();
+    await feed.close();
   });
 
   it("lists the threads shared with a guest and finds them by title or place", async () => {

@@ -269,7 +269,7 @@ function tools() {
   ask("c-agent", { risk: "ask", waits: true });
   l.add("tool.approved", { runId: "r1", callId: "c-agent", scope: "once" });
   ran("c-agent", { value: undefined });
-  for (const reason of ["denied", "stale", "stopped", "skipped"]) {
+  for (const reason of ["denied", "stale", "cancelled", "skipped"]) {
     ask(`c-${reason}`, { risk: "ask", waits: true });
     l.add(
       "tool.denied",
@@ -296,7 +296,7 @@ function tools() {
   ran("c-large", { value: undefined, large: { size: 48_000 } });
   // A call still to be reviewed by someone outside the thread.
   ask("c-review", { risk: "review", waits: true });
-  l.add("tool.denied", { runId: "r1", callId: "c-review", reason: "stopped" });
+  l.add("tool.denied", { runId: "r1", callId: "c-review", reason: "cancelled" });
   // A decision on a call that is not there is left alone.
   l.add("tool.approved", { runId: "r1", callId: "c-missing", scope: "once" }, ADA);
   l.add("tool.ran", { runId: "r1", callId: "c-missing", ok: true, value: 1, ms: 1 });
@@ -328,7 +328,7 @@ function tools() {
     ms: 5,
   });
   job("j-cancelled");
-  l.add("tool.denied", { runId: "r1", callId: "j-cancelled", reason: "stopped" });
+  l.add("tool.denied", { runId: "r1", callId: "j-cancelled", reason: "cancelled" });
   job("j-approved", { risk: "ask", waits: true });
   l.add("tool.approved", { runId: "r1", callId: "j-approved", scope: "once" }, ADA);
   l.add("tool.ran", {
@@ -375,12 +375,12 @@ function tools() {
 function notices() {
   const l = log();
   const note = (kind: string, extra: object = {}, source: object = RESEARCHER) =>
-    l.add("notification", { kind, source, text: `${kind} happened`, people: [], ...extra });
+    l.add("notice", { kind, source, text: `${kind} happened`, influence: [], ...extra });
   const taken: string[] = [];
   taken.push(
     note("message", {
       text: "Here is what I found.",
-      people: [ADA_STEERED, GRACE_STEERED],
+      influence: [ADA_STEERED, GRACE_STEERED],
       to: "Main thread",
       actor: { kind: "agent", ...RESEARCHER },
       source: { ...RESEARCHER, callId: "send-1" },
@@ -390,7 +390,7 @@ function notices() {
       "message",
       {
         text: "Research the topic.",
-        people: [ADA_STEERED],
+        influence: [ADA_STEERED],
         to: "Researcher",
         task: { instructions: "Be brief.", fork: { callId: "start-1", seq: 12 } },
         actor: { kind: "agent", ...MAIN },
@@ -414,7 +414,7 @@ function notices() {
       {
         text: "Writer was stopped.",
         subagents: [{ threadId: "child-2", name: "Writer" }],
-        people: [GRACE_STEERED],
+        influence: [GRACE_STEERED],
       },
       WRITER,
     ),
@@ -443,7 +443,7 @@ function notices() {
       "call.ended",
       {
         text: "The call finished.",
-        people: [ADA_STEERED],
+        influence: [ADA_STEERED],
         actor: { kind: "source", label: "Fetch", type: "job" },
       },
       { ...MAIN, callId: "j-1" },
@@ -452,7 +452,7 @@ function notices() {
       "task.changed",
       {
         text: 'Ada Lovelace marked "Draft" done.',
-        people: [ADA_STEERED],
+        influence: [ADA_STEERED],
         actor: { kind: "person", userId: "ada", name: "Ada Lovelace" },
         change: {
           subject: { kind: "task", name: "Draft" },
@@ -465,21 +465,21 @@ function notices() {
       { ...MAIN, rowId: "task-1" },
     ),
     note(
-      "trigger.fired",
+      "schedule.fired",
       {
         text: "Daily digest: write today's digest.",
-        people: [ADA_STEERED],
-        trigger: "trigger-1",
+        influence: [ADA_STEERED],
+        scheduleId: "schedule-a",
         schedule: "Every day at 09:00",
         actor: { kind: "source", label: "Daily digest", type: "schedule" },
       },
       { ...MAIN, name: "Daily digest", callId: "schedule-1" },
     ),
     note(
-      "trigger.fired",
+      "schedule.fired",
       {
         text: "Wake-up: check the build.",
-        trigger: "trigger-2",
+        scheduleId: "schedule-b",
         actor: { kind: "source", label: "Wake-up", type: "wakeup" },
       },
       { ...MAIN, name: "Wake-up", callId: "wake-1" },
@@ -488,7 +488,7 @@ function notices() {
       "webhook.received",
       {
         text: 'Deploys was posted to.\n\nContent-Type: application/json\n\n{"ok":true}',
-        trigger: "trigger-3",
+        webhookId: "webhook-a",
         delivery: { contentType: "application/json", bytes: 11, signed: true },
         actor: { kind: "source", label: "Deploys", type: "webhook" },
       },
@@ -498,7 +498,7 @@ function notices() {
       "webhook.received",
       {
         text: "Deploys was posted to.",
-        trigger: "trigger-3",
+        webhookId: "webhook-a",
         delivery: { contentType: null, bytes: 0, signed: false },
       },
       { ...MAIN, name: "Deploys" },
@@ -523,10 +523,10 @@ function notices() {
       {
         text: "Ada Lovelace paused Daily digest.",
         wake: false,
-        people: [ADA_STEERED],
+        influence: [ADA_STEERED],
         actor: { kind: "person", userId: "ada", name: "Ada Lovelace" },
         change: { subject: { kind: "schedule", name: "Daily digest" }, action: "pause" },
-        tray: "triggers",
+        tray: "schedules",
       },
       MAIN,
     ),
@@ -733,17 +733,17 @@ function open() {
     { parts: text("Interrupt it"), quiet: false, mode: "interrupt", guest: true },
     GRACE,
   );
-  l.add("notification", {
+  l.add("notice", {
     kind: "call.ended",
     source: { ...MAIN, callId: "j-1" },
     text: "A call finished.",
-    people: [],
+    influence: [],
   });
-  l.add("notification", {
+  l.add("notice", {
     kind: "change",
     source: MAIN,
     text: "A task was added.",
-    people: [],
+    influence: [],
     wake: false,
   });
   return l.events;

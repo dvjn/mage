@@ -24,15 +24,15 @@ import {
   type Cause,
   type Delivery,
   type FailureKind,
-  type NotificationActor,
-  type NotificationKind,
-  type NotificationParts,
+  type NoticeActor,
+  type NoticeKind,
+  type NoticeParts,
   type SubagentTask,
   type ReplyPart,
   type ReplyStatus,
   type RunReason,
   type Sender,
-  type Steering,
+  type Influencer,
   threadEventSchema,
   type ToolRisk,
   type ToolScope,
@@ -107,17 +107,17 @@ export interface StopRow {
   by: string | null;
 }
 
-// Where a tool call stands: waiting for a decision or an answer, approved or answered and about to
-// run, denied, ran or failed, denied because its approval no longer held, left when its run ended,
-// or its questions skipped.
+// Where a tool call stands: waiting for a decision or an answer, ready to run (approved, answered
+// or needing neither), denied, completed or failed, denied because its approval no longer held,
+// cancelled when its run ended, or its questions skipped.
 export type ToolState =
-  | "pending"
-  | "allowed"
+  | "waiting"
+  | "ready"
   | "denied"
-  | "ran"
+  | "completed"
   | "failed"
   | "stale"
-  | "stopped"
+  | "cancelled"
   | "skipped";
 
 // A tool call the agent asked for.
@@ -201,18 +201,18 @@ export interface CompactionRow {
 // from, and the people whose words it carries, who count as steering what the agent here does with
 // it; with the call or the row there it came of, where known. A message from another agent, the
 // first of them in a subagent's thread its task, also says whom it went to.
-export interface RelayRow extends NotificationParts {
-  kind: "relay";
+export interface NoticeRow extends NoticeParts {
+  kind: "notice";
   // The notification's id.
   id: string;
   seq: number;
   postedAt: string;
-  type: NotificationKind;
+  type: NoticeKind;
   from: Sender;
-  actor?: NotificationActor;
+  actor?: NoticeActor;
   to?: string;
   text: string;
-  steeredBy: Steering[];
+  influence: Influencer[];
   task?: SubagentTask;
   call?: Cause;
   callIds?: string[];
@@ -248,7 +248,7 @@ export type TranscriptRow =
   | FailureRow
   | StopRow
   | CompactionRow
-  | RelayRow
+  | NoticeRow
   | LimitRow
   | ForkRow
   | RestoreRow
@@ -285,18 +285,15 @@ export interface ActiveRun {
 }
 
 // Another agent's message, waiting to be taken in.
-export type RelayMessage = Omit<RelayRow, "kind">;
+export type NoticeMessage = Omit<NoticeRow, "kind">;
 
 // The notifications that start the agent: those not made silent.
-export function waking(inbox: readonly RelayMessage[]) {
-  return inbox.filter((message) => !message.silent);
+export function waking(notices: readonly NoticeMessage[]) {
+  return notices.filter((message) => !message.silent);
 }
 
 export interface Transcript {
   rows: TranscriptRow[];
-  pending: PendingMessage[];
-  // Other agents' messages, waiting to be taken in.
-  inbox: RelayMessage[];
   run: ActiveRun | null;
   // The tokens every model call in the thread used.
   usage: Usage;
@@ -378,6 +375,8 @@ export interface TranscriptFold {
   add(event: AnyThreadEvent): void;
   // The transcript so far. Its rows are the fold's own, which later events change.
   transcript(): Transcript;
+  // The people's messages and the notices waiting to be taken in.
+  waiting(): { messages: PendingMessage[]; notices: NoticeMessage[] };
   changedAt(index: number): number;
   // The seq of the last event that changed the row itself, leaving its turn aside.
   touchedAt(index: number): number;
@@ -396,10 +395,10 @@ interface FoldState {
   changed: number[];
   touchedAt: number[];
   turns: (AgentTurn | null)[];
-  pending: Map<string, PendingMessage>;
-  inbox: Map<string, RelayMessage>;
+  waitingMessages: Map<string, PendingMessage>;
+  waitingNotices: Map<string, NoticeMessage>;
   // The silent notifications already shown, by id, until the agent takes them in.
-  silentRows: Map<string, RelayRow>;
+  silentRows: Map<string, NoticeRow>;
   replies: Map<string, AgentRow>;
   calls: Map<string, ToolRow>;
   run: ActiveRun | null;
@@ -418,8 +417,8 @@ export function createFold(from?: FoldState): TranscriptFold {
     changed: [],
     touchedAt: [],
     turns: [],
-    pending: new Map(),
-    inbox: new Map(),
+    waitingMessages: new Map(),
+    waitingNotices: new Map(),
     silentRows: new Map(),
     replies: new Map(),
     calls: new Map(),
@@ -429,7 +428,8 @@ export function createFold(from?: FoldState): TranscriptFold {
     people: new Map(),
     compacting: new Set(),
   };
-  const { rows, indexOf, changed, touchedAt, turns, pending, inbox, silentRows } = state;
+  const { rows, indexOf, changed, touchedAt, turns, waitingMessages, waitingNotices, silentRows } =
+    state;
   const { replies, calls, usage, people, compacting } = state;
   let { run, last } = state;
   const personOf = (userId: string): Person =>
@@ -444,10 +444,10 @@ export function createFold(from?: FoldState): TranscriptFold {
       reply.status = "interrupted";
       touch(reply.id);
     }
-    for (const id of pending.keys()) if (!keep.includes(id)) pending.delete(id);
+    for (const id of waitingMessages.keys()) if (!keep.includes(id)) waitingMessages.delete(id);
     for (const call of calls.values()) {
-      if (call.state !== "pending" && call.state !== "allowed") continue;
-      call.state = "stopped";
+      if (call.state !== "waiting" && call.state !== "ready") continue;
+      call.state = "cancelled";
       touch(call.id);
     }
   }
@@ -489,11 +489,11 @@ export function createFold(from?: FoldState): TranscriptFold {
           ...(event.data.command && { command: event.data.command }),
         };
         if (event.data.quiet) push({ kind: "human", ...message, quiet: true });
-        else pending.set(event.id, { ...message, mode: event.data.mode });
+        else waitingMessages.set(event.id, { ...message, mode: event.data.mode });
         break;
       }
       case "message.changed": {
-        const message = pending.get(event.data.messageId);
+        const message = waitingMessages.get(event.data.messageId);
         if (!message) break;
         if (event.data.parts) message.text = textOf(event.data.parts);
         if (event.data.mode) message.mode = event.data.mode;
@@ -501,14 +501,14 @@ export function createFold(from?: FoldState): TranscriptFold {
       }
       case "message.withdrawn":
       case "message.dropped":
-        pending.delete(event.data.messageId);
+        waitingMessages.delete(event.data.messageId);
         break;
-      case "notification": {
-        const { kind, source, people, to, task, actor } = event.data;
+      case "notice": {
+        const { kind, source, influence, to, task, actor } = event.data;
         const { text, subagents, when, error, last, delivery, schedule, tray, change } = event.data;
         const { callId, callIds, rowId, ...from } = source;
         const silent = event.data.wake === false;
-        const message: RelayMessage = {
+        const message: NoticeMessage = {
           id: event.id,
           seq: event.seq,
           postedAt: event.createdAt,
@@ -517,7 +517,7 @@ export function createFold(from?: FoldState): TranscriptFold {
           ...(actor && { actor }),
           ...(to !== undefined && { to }),
           text,
-          steeredBy: people,
+          influence,
           ...(task && { task }),
           ...(subagents && { subagents }),
           ...(when && { when }),
@@ -532,9 +532,9 @@ export function createFold(from?: FoldState): TranscriptFold {
           ...(rowId && { rowId }),
           ...(silent && { silent: true as const }),
         };
-        inbox.set(event.id, message);
+        waitingNotices.set(event.id, message);
         if (silent) {
-          const shown: RelayRow = { kind: "relay", ...message };
+          const shown: NoticeRow = { kind: "notice", ...message };
           silentRows.set(event.id, shown);
           push(shown);
         }
@@ -551,9 +551,9 @@ export function createFold(from?: FoldState): TranscriptFold {
         break;
       case "message.admitted":
         for (const id of event.data.messageIds) {
-          const relayed = inbox.get(id);
-          if (relayed) {
-            inbox.delete(id);
+          const told = waitingNotices.get(id);
+          if (told) {
+            waitingNotices.delete(id);
             // A silent one was shown when it was made; now it is read.
             const shown = silentRows.get(id);
             if (shown && indexOf.has(id)) {
@@ -562,12 +562,12 @@ export function createFold(from?: FoldState): TranscriptFold {
               touch(id);
               continue;
             }
-            push({ kind: "relay", ...relayed, seq: event.seq });
+            push({ kind: "notice", ...told, seq: event.seq });
             continue;
           }
-          const message = pending.get(id);
+          const message = waitingMessages.get(id);
           if (!message) continue;
-          pending.delete(id);
+          waitingMessages.delete(id);
           if (asksToCompact(message)) compacting.add(event.data.runId);
           const { mode: _mode, ...admitted } = message;
           push({ kind: "human", ...admitted, seq: event.seq, quiet: false });
@@ -662,7 +662,7 @@ export function createFold(from?: FoldState): TranscriptFold {
           risk,
           waits,
           requestedAt: event.createdAt,
-          state: "pending",
+          state: waits ? "waiting" : "ready",
           decision: null,
           output: null,
           ms: null,
@@ -674,9 +674,9 @@ export function createFold(from?: FoldState): TranscriptFold {
       case "tool.approved":
       case "tool.denied": {
         const call = calls.get(event.data.callId);
-        if (!call || (call.state !== "pending" && call.state !== "allowed")) break;
+        if (!call || (call.state !== "waiting" && call.state !== "ready")) break;
         if (event.type === "tool.approved") {
-          call.state = "allowed";
+          call.state = "ready";
         } else {
           call.state = event.data.reason === "denied" ? "denied" : event.data.reason;
         }
@@ -693,8 +693,8 @@ export function createFold(from?: FoldState): TranscriptFold {
       }
       case "tool.answered": {
         const call = calls.get(event.data.callId);
-        if (!call || call.state !== "pending" || event.actor.kind !== "user") break;
-        call.state = "allowed";
+        if (!call || call.state !== "waiting" || event.actor.kind !== "user") break;
+        call.state = "ready";
         call.answers = event.data.answers;
         call.decision = { allow: true, scope: "once", by: event.actor, seq: event.seq };
         touch(call.id);
@@ -709,7 +709,7 @@ export function createFold(from?: FoldState): TranscriptFold {
           call.standingOn = standing.id;
           call.decision = { ...standing.decision };
         }
-        call.state = event.data.ok ? "ran" : "failed";
+        call.state = event.data.ok ? "completed" : "failed";
         call.output = event.data.ok
           ? {
               ok: true,
@@ -837,11 +837,14 @@ export function createFold(from?: FoldState): TranscriptFold {
         run.compacting = compacting.has(runId);
         run.waitingOn =
           [...calls.values()].find(
-            (call) =>
-              call.runId === runId && !call.background && call.waits && call.state === "pending",
+            (call) => call.runId === runId && !call.background && call.state === "waiting",
           )?.id ?? null;
       }
-      return { rows, pending: [...pending.values()], inbox: [...inbox.values()], run, usage };
+      return { rows, run, usage };
+    },
+
+    waiting() {
+      return { messages: [...waitingMessages.values()], notices: [...waitingNotices.values()] };
     },
 
     changedAt(index) {
@@ -865,6 +868,15 @@ export function createFold(from?: FoldState): TranscriptFold {
       return createFold(structuredClone({ ...state, run, last }));
     },
   };
+}
+
+// The people's messages and the notices that wait to be taken in after the events, each as it
+// stands after them: what the queue's waiting inputs say, read from their events and the changes
+// made to them.
+export function waitingIn(events: readonly AnyThreadEvent[]) {
+  const fold = createFold();
+  for (const event of events) fold.add(event);
+  return fold.waiting();
 }
 
 export function transcriptOf(events: readonly AnyThreadEvent[]): Transcript {

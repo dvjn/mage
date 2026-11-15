@@ -81,8 +81,8 @@
       "turn": null
     }
   ],
-  "pending": [],
-  "inbox": [],
+  "waitingMessages": [],
+  "waitingNotices": [],
   "run": null,
   "usage": {
     "inputTokens": 5360,

@@ -1,6 +1,6 @@
 // Hints passed between requests, the agent worker and the server instances on one database: that a
 // thread has new events, reply pieces or call output, that it may have a run to start, that what
-// lists show of it changed, that an artifact changed. In this process they go through an event emitter; to the other
+// lists show of it changed, that an artifact or a connection's model list changed. In this process they go through an event emitter; to the other
 // instances, through Postgres notifications on one channel. What is sent inside a transaction goes
 // out only once it commits, here and to the others, and never when it rolls back. All of it is a
 // hint, carrying ids only: whoever hears it reads what changed for themselves, and reads again
@@ -13,13 +13,13 @@ import type { Logger } from "@/server/kernel/logger.ts";
 // A thread whose list entry may read differently now; with `read`, only that someone saw it up to
 // a seq; with `gone`, it was deleted from the space, whose members and its guests may hold it;
 // with `tasks`, only its task list changed; with `rows`, only what its rows show.
-export interface ActivityChange {
+export interface ThreadChange {
   threadId: string;
   tasks?: true;
   // Its rows read differently without a new event, as a schedule on one does when it is paused.
   rows?: true;
   // Only what its activity tray shows changed, as an owner deciding what the thread proposed does.
-  background?: true;
+  activity?: true;
   read?: { userId: string; seq: number };
   gone?: { spaceId: string };
 }
@@ -59,12 +59,15 @@ export interface Signals {
   // Calls `listener` with each woken thread until unsubscribed.
   onWake(listener: (threadId: string) => void): () => void;
   // Says what a thread holds for its readers may have changed.
-  activity(change: ActivityChange): void;
+  changed(change: ThreadChange): void;
   // Calls `listener` with each change until unsubscribed.
-  onActivity(listener: (change: ActivityChange) => void): () => void;
+  onChanged(listener: (change: ThreadChange) => void): () => void;
   // Says people left an org, so what names them may read differently.
   peopleLeft(): void;
   onPeopleLeft(listener: () => void): () => void;
+  // Says a connection's model list changed, so every instance reads it again.
+  catalogChanged(connectionId: string): void;
+  onCatalogChanged(listener: (connectionId: string) => void): () => void;
   // Says what happened to an artifact.
   artifactChanged(hint: ArtifactHint): void;
   // Calls `listener` with each hint about the artifact until unsubscribed.
@@ -75,13 +78,14 @@ export interface Signals {
 
 // The Postgres channel every signal goes through.
 export const CHANNEL = "signals";
-// Notifications carry under 8,000 bytes; a signal anywhere near that is not a hint.
+// A Postgres notify carries under 8,000 bytes; a signal anywhere near that is not a hint.
 const MAX_BYTES = 7000;
 
 // Thread ids are ULIDs, so no thread's channel is named as these are.
 const WAKE = "wake";
-const ACTIVITY = "activity";
+const CHANGED = "changed";
 const PEOPLE = "people";
+const CATALOG = "catalog";
 const GAP = "gap";
 const ARTIFACT = "artifact:";
 
@@ -113,8 +117,8 @@ export function createSignals(options: SignalsOptions) {
   // A signal too large for a notification is never refused: a smaller one goes in its place that
   // has whoever hears it read again, a thread's change cut to the thread, anything else a gap.
   function smaller(channel: string, payload: unknown): [string, unknown] {
-    if (channel === ACTIVITY) {
-      const { threadId, gone } = payload as ActivityChange;
+    if (channel === CHANGED) {
+      const { threadId, gone } = payload as ThreadChange;
       return [channel, { threadId, ...(gone && { gone: { spaceId: gone.spaceId } }) }];
     }
     return [GAP, null];
@@ -178,14 +182,18 @@ export function createSignals(options: SignalsOptions) {
       send(WAKE, threadId);
     },
     onWake: (listener: (threadId: string) => void) => on(WAKE, listener),
-    activity(change: ActivityChange) {
-      send(ACTIVITY, change);
+    changed(change: ThreadChange) {
+      send(CHANGED, change);
     },
-    onActivity: (listener: (change: ActivityChange) => void) => on(ACTIVITY, listener),
+    onChanged: (listener: (change: ThreadChange) => void) => on(CHANGED, listener),
     peopleLeft() {
       send(PEOPLE, null);
     },
     onPeopleLeft: (listener: () => void) => on(PEOPLE, listener),
+    catalogChanged(connectionId: string) {
+      send(CATALOG, connectionId);
+    },
+    onCatalogChanged: (listener: (connectionId: string) => void) => on(CATALOG, listener),
     artifactChanged(hint: ArtifactHint) {
       send(`${ARTIFACT}${hint.artifactId}`, hint);
     },

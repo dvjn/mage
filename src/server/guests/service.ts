@@ -17,7 +17,7 @@ import type {
   ListWindow,
   Thread,
   ThreadListFilter,
-} from "@/server/threads/service.ts";
+} from "@/server/threads/types.ts";
 import type { Directory } from "@/server/orgs/directory.ts";
 import type { PageParams, Page } from "@/shared/paging.ts";
 import type { Transact } from "@/server/sync/sync.ts";
@@ -175,8 +175,8 @@ export interface GuestsOptions {
   directory: Pick<Directory, "memberPage" | "roleIn" | "user" | "groupPage" | "linkedRole">;
   threads: Pick<ThreadStore, "eventsOfType">;
   transact: Transact;
-  // Tells the guest's inbox when their access begins or ends.
-  bus: Pick<Signals, "activity">;
+  // Tells the guest's feed when their access begins or ends.
+  signals: Pick<Signals, "changed">;
   // Where the app is served; invite links lead there.
   baseUrl: string;
   now?: () => Date;
@@ -210,7 +210,7 @@ function mayRevoke(access: Access, principal: Principal, madeBy: string | null) 
 }
 
 export function createGuests(options: GuestsOptions) {
-  const { access, guests, directory, threads, transact, bus, baseUrl } = options;
+  const { access, guests, directory, threads, transact, signals, baseUrl } = options;
   const now = options.now ?? (() => new Date());
 
   function pendingSummary(invite: ThreadInvite, canRevoke: boolean): PendingInvite {
@@ -346,7 +346,7 @@ export function createGuests(options: GuestsOptions) {
         accessUntil: span === null ? null : new Date(now().getTime() + span),
         role,
       });
-      bus.activity({ threadId });
+      signals.changed({ threadId });
     },
 
     // Lets everyone in a group of the thread's org in as guests for as long as asked, while they
@@ -370,7 +370,7 @@ export function createGuests(options: GuestsOptions) {
         accessUntil: span === null ? null : new Date(now().getTime() + span),
         role,
       });
-      bus.activity({ threadId });
+      signals.changed({ threadId });
     },
 
     // The space's members who have written in the thread, its guests, and its links not yet used.
@@ -437,7 +437,7 @@ export function createGuests(options: GuestsOptions) {
     async setOrgAccess(principal: Principal, threadId: string, orgAccess: OrgAccess) {
       const { thread } = await access.require(principal, threadId, "share");
       await guests.setOrgAccess(thread.rootThreadId ?? threadId, orgAccess);
-      bus.activity({ threadId });
+      signals.changed({ threadId });
     },
 
     // What an active guest may do in the thread.
@@ -448,7 +448,7 @@ export function createGuests(options: GuestsOptions) {
       );
       if (!guest) throw new ServiceError(404, "Guest not found");
       await guests.setRole(threadId, userId, role);
-      bus.activity({ threadId });
+      signals.changed({ threadId });
     },
 
     // What an active group of guests may do in the thread.
@@ -459,7 +459,7 @@ export function createGuests(options: GuestsOptions) {
         throw new ServiceError(404, "Group not found");
       }
       await guests.setGroupRole(root, groupId, role);
-      bus.activity({ threadId });
+      signals.changed({ threadId });
     },
 
     async revokeGroup(principal: Principal, threadId: string, groupId: string) {
@@ -477,7 +477,7 @@ export function createGuests(options: GuestsOptions) {
         );
       }
       await guests.revokeGroup(root, groupId, principal.userId, at);
-      bus.activity({ threadId });
+      signals.changed({ threadId });
     },
 
     // What whoever opens a link not yet used may do in the thread.
@@ -522,7 +522,7 @@ export function createGuests(options: GuestsOptions) {
         );
       }
       await guests.revoke(threadId, userId, principal.userId, at);
-      bus.activity({ threadId });
+      signals.changed({ threadId });
     },
 
     // Makes the principal a guest of the link's thread, or renews their access, and uses the link
@@ -564,7 +564,7 @@ export function createGuests(options: GuestsOptions) {
           role: holds ? wider(current.role, invite.role) : invite.role,
         });
       });
-      bus.activity({ threadId });
+      signals.changed({ threadId });
       return { threadId };
     },
   };

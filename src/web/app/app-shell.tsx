@@ -1,5 +1,5 @@
 // The signed-in app: the sidebar beside the current page, open or collapsed as it was last left,
-// and the thread search and the keyboard shortcuts dialog over both. It follows the person's inbox to keep thread lists current, and
+// and the thread search and the keyboard shortcuts dialog over both. It follows the person's feed to keep thread lists current, and
 // badges the tab's icon while a thread needs them.
 
 import { Outlet } from "@tanstack/react-router";
@@ -9,7 +9,7 @@ import { AppSidebar } from "@/web/app/app-sidebar";
 import { ShortcutsHelpProvider } from "@/web/shell/shortcuts-help";
 import { ThreadSearchProvider } from "@/web/threads/thread-search";
 import { SidebarInset, SidebarProvider } from "@/web/components/ui/sidebar";
-import { useInbox } from "@/web/threads/inbox";
+import { useThreadLists } from "@/web/threads/thread-lists";
 import { useNeedsYou } from "@/web/threads/needs-you";
 
 // The sidebar records whether it is open in this cookie each time it is toggled.
@@ -29,7 +29,7 @@ function TabMarker() {
 }
 
 export function AppShell() {
-  useInbox();
+  useThreadLists();
   return (
     <ShortcutsHelpProvider>
       <ThreadSearchProvider>

@@ -16,20 +16,20 @@ import type { Space, SpaceStore } from "@/server/spaces/service.ts";
 import { LeaseLost } from "@/server/sync/lease.ts";
 import type { AfterCommit, Sync } from "@/server/sync/sync.ts";
 import type { Append, ThreadLog } from "@/server/threads/log.ts";
-import type { NewEvent, Thread, ThreadStore } from "@/server/threads/service.ts";
-import type { Live } from "@/server/agent/live.ts";
-import { steeringOf } from "./influence.ts";
+import type { NewEvent, Thread, ThreadStore } from "@/server/threads/types.ts";
+import type { Live } from "@/server/calls/live.ts";
+import { influenceOf } from "./influence.ts";
 import { callRecords } from "./views.ts";
-import type { AnyToolSpec, ToolOutput, Tools, Toolset, ToolSpec } from "@/server/agent/tools.ts";
+import type { AnyToolSpec, ToolOutput, Tools, Toolset, ToolSpec } from "@/server/tools/registry.ts";
 import { valueForAgent } from "@/shared/mcp.ts";
 import { wireToolName } from "@/shared/tools.ts";
 import {
   BACKGROUND_LIMIT,
-  type BackgroundWork,
-  CALLS_TOOLSET,
-  type CallStatus as ShownStatus,
-  START_CALL,
-} from "@/shared/calls.ts";
+  type Work,
+  JOBS_TOOLSET,
+  type JobStatus as ShownStatus,
+  START_JOB,
+} from "@/shared/jobs.ts";
 import type { ToolRisk } from "@/shared/threads/events.ts";
 
 import { and, eq } from "drizzle-orm";
@@ -48,16 +48,16 @@ export const CALLS_GUIDANCE =
   "Start a tool call with jobs.start when it is slow or independent of what you do next; you get an id at once and its result arrives as a notification. Start several, keep working, and end your turn to wait rather than polling; use jobs.check only when a decision depends on it. Cancel what you no longer need with jobs.cancel.";
 
 // Where a job stands in the words its card, the tray and the agent read: waiting for a person or
-// to be launched is pending, and every way it was stopped before it ran is cancelled.
+// to be launched is waiting, and every way it was stopped before it ran is cancelled.
 export function shownStatus(status: CallStatus): ShownStatus {
   switch (status) {
     case "waiting":
     case "ready":
-      return "pending";
+      return "waiting";
     case "running":
       return "running";
     case "completed":
-      return "done";
+      return "completed";
     case "failed":
     case "interrupted":
       return status;
@@ -70,14 +70,14 @@ export function shownStatus(status: CallStatus): ShownStatus {
 export function callWork(
   row: Pick<CallRow, "status" | "createdAt" | "endedAt">,
   canPost: boolean,
-): BackgroundWork {
+): Work {
   const status = shownStatus(row.status);
   return {
-    kind: "call",
+    kind: "job",
     status,
     startedAt: row.createdAt.toISOString(),
     ...(row.endedAt && { endedAt: row.endedAt.toISOString() }),
-    canCancel: canPost && (status === "running" || status === "pending"),
+    canCancel: canPost && (status === "running" || status === "waiting"),
   };
 }
 
@@ -182,9 +182,9 @@ export function createJobs(options: JobsOptions) {
   }
 
   // Whose words steered the job: those the agent had read when it was asked for.
-  async function steeringOfJob(job: Pick<CallRow, "threadId" | "seq">) {
+  async function influenceOfJob(job: Pick<CallRow, "threadId" | "seq">) {
     const words = await queue.words(job.threadId);
-    return steeringOf(words.filter((word) => word.seq < job.seq));
+    return influenceOf(words.filter((word) => word.seq < job.seq));
   }
 
   // Tells the thread's agent how the job ended, once however often its end is recorded.
@@ -206,7 +206,7 @@ export function createJobs(options: JobsOptions) {
           source: { threadId: thread.id, name: title, main: true, callId: job.id },
           actor: { kind: "source", label: title, type: "job" },
           text,
-          people: await steeringOfJob(job),
+          influence: await influenceOfJob(job),
           ...(result && { last: result }),
         },
       },
@@ -309,7 +309,7 @@ export function createJobs(options: JobsOptions) {
           model: job.model,
           runAs,
           ...(approvedBy && { approvedBy }),
-          influence: await steeringOfJob(job),
+          influence: await influenceOfJob(job),
           signal: controller.signal,
           ...(options.live && {
             live: options.live.open(thread.id, job.id, async () =>
@@ -467,7 +467,7 @@ export function createJobs(options: JobsOptions) {
       toolId;
     const spec = (await tools.offered(space, thread)).find((one) => one.name === wanted);
     if (!spec) throw new ToolRefusal(`No tool is named ${toolId} here.`);
-    if (spec.name.startsWith(`${CALLS_TOOLSET}.`)) {
+    if (spec.name.startsWith(`${JOBS_TOOLSET}.`)) {
       throw new ToolRefusal("A background call cannot start another.");
     }
     if (spec.waitsFor === "answer") {
@@ -519,7 +519,7 @@ export function createJobs(options: JobsOptions) {
       await append({
         type: "tool.denied",
         actor: ACTOR,
-        data: { runId: job.runId, callId: job.id, reason: "stopped" },
+        data: { runId: job.runId, callId: job.id, reason: "cancelled" },
       });
       abortHere(job.threadId, job.id, "cancelled");
       return true;
@@ -589,8 +589,7 @@ export function createJobs(options: JobsOptions) {
   }
 
   const start: ToolSpec<{ tool: string; input?: Record<string, unknown> }> = {
-    name: START_CALL,
-    modelName: "jobs.start",
+    name: START_JOB,
     title: "Start",
     annotations: { readOnlyHint: false },
     movable: false,
@@ -660,8 +659,7 @@ export function createJobs(options: JobsOptions) {
   };
 
   const status: ToolSpec<{ id: string }> = {
-    name: "calls.status",
-    modelName: "jobs.check",
+    name: "jobs.check",
     title: "Status",
     annotations: { readOnlyHint: true },
     movable: false,
@@ -675,8 +673,7 @@ export function createJobs(options: JobsOptions) {
   };
 
   const list: ToolSpec<Record<string, never>> = {
-    name: "calls.list",
-    modelName: "jobs.list",
+    name: "jobs.list",
     title: "List",
     annotations: { readOnlyHint: true },
     movable: false,
@@ -703,8 +700,7 @@ export function createJobs(options: JobsOptions) {
   };
 
   const cancel: ToolSpec<{ id: string }> = {
-    name: "calls.cancel",
-    modelName: "jobs.cancel",
+    name: "jobs.cancel",
     title: "Cancel",
     annotations: { readOnlyHint: false },
     movable: false,
@@ -728,7 +724,7 @@ export function createJobs(options: JobsOptions) {
   return {
     toolset(): Toolset {
       return {
-        id: CALLS_TOOLSET,
+        id: JOBS_TOOLSET,
         title: "Background jobs",
         source: "builtin",
         description: "Tool calls that run in the background",

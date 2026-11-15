@@ -43,8 +43,7 @@ describe("a call that runs at once", () => {
       (running) => running,
     );
     expect(await callRow(w, ids[0]!)).toMatchObject({
-      state: "pending",
-      waits: false,
+      state: "ready",
       risk: "normal",
       canBackground: true,
     });
@@ -53,7 +52,7 @@ describe("a call that runs at once", () => {
     const told = await w.answers(w.threadId);
     expect(lastResult(told.texts)).toBe('result probe.wait: {"ok":true,"value":{"answer":42}}');
     await w.settled();
-    expect(await callRow(w, ids[0]!)).toMatchObject({ state: "ran", decision: null });
+    expect(await callRow(w, ids[0]!)).toMatchObject({ state: "completed", decision: null });
   });
 
   it("fails without a tool of that name, or with input the tool does not take", async () => {
@@ -78,8 +77,7 @@ describe("a call that needs approval", () => {
     const { w, callId } = await waitingCall();
     expect(w.modelCalls()).toBe(1);
     expect(await callRow(w, callId, w.ada)).toMatchObject({
-      state: "pending",
-      waits: true,
+      state: "waiting",
       risk: "ask",
       actions: ["allow", "deny"],
     });
@@ -96,7 +94,7 @@ describe("a call that needs approval", () => {
     expect(lastResult(told.texts)).toBe('result probe.guarded: {"ok":true,"value":{"did":"a"}}');
     await w.settled();
     expect(await callRow(w, callId)).toMatchObject({
-      state: "ran",
+      state: "completed",
       decision: { allow: true, scope: "once", by: { name: "Grace Hopper" } },
     });
     // A decision is made once.
@@ -181,8 +179,7 @@ describe("a call steered by someone who may not run its tool", () => {
   it("waits for someone who may, though its tool runs at once for them", async () => {
     const { w, callId } = await steered();
     expect(await callRow(w, callId)).toMatchObject({
-      state: "pending",
-      waits: true,
+      state: "waiting",
       risk: "normal",
       actions: ["allow", "allow_for_now", "deny"],
     });
@@ -199,8 +196,7 @@ describe("a call steered by someone who may not run its tool", () => {
     await w.answers(w.threadId);
     await w.settled();
     expect(await callRow(w, ids[0]!)).toMatchObject({
-      state: "ran",
-      waits: false,
+      state: "completed",
       standingOn: callId,
       decision: { allow: true, scope: "for_now", by: { name: "Ada Lovelace" } },
     });
@@ -229,7 +225,7 @@ describe("a call that asks questions", () => {
 
   it("waits for an answer from anyone who may post, and tells the model what they said", async () => {
     const { w, callId } = await asking();
-    expect(await callRow(w, callId, w.grace)).toMatchObject({ state: "pending", canAnswer: true });
+    expect(await callRow(w, callId, w.grace)).toMatchObject({ state: "waiting", canAnswer: true });
     expect((await callRow(w, callId, w.alan)).canAnswer).toBeFalsy();
     expect(
       await w.act(w.alan, "POST", `/tools/${callId}/answer`, { answers: { "Which one?": "Two" } }),
@@ -241,7 +237,7 @@ describe("a call that asks questions", () => {
     expect(lastResult(told.texts)).toContain('"Which one?":"Two"');
     await w.settled();
     expect(await callRow(w, callId)).toMatchObject({
-      state: "ran",
+      state: "completed",
       answers: { "Which one?": "Two" },
       decision: { by: { name: "Grace Hopper" } },
     });
@@ -271,14 +267,14 @@ describe("a job", () => {
       rows: [
         "Ada Lovelace: Start a job",
         "agent (completed): On it.",
-        "calls.start ran",
-        "probe.wait pending [running]",
+        "jobs.start completed",
+        "probe.wait ready [running]",
         "agent (completed): Started.",
       ],
       run: null,
     });
     expect(await w.activity()).toMatchObject([
-      { title: "Wait", work: { kind: "call", status: "running", canCancel: true } },
+      { title: "Wait", work: { kind: "job", status: "running", canCancel: true } },
     ]);
     expect((await w.activity(w.alan))[0]).toMatchObject({ work: { canCancel: false } });
 
@@ -289,7 +285,7 @@ describe("a job", () => {
     );
     await w.settled();
     expect((await w.shown()).rows.slice(3)).toEqual([
-      "probe.wait ran [done]",
+      "probe.wait completed [completed]",
       "agent (completed): Started.",
       expect.stringMatching(/^call\.ended: /),
       "agent (completed): Noted.",
@@ -308,7 +304,7 @@ describe("a job", () => {
     await w.settled();
     expect(w.tool.aborted).toEqual(["a"]);
     expect(w.modelCalls()).toBe(2);
-    expect((await w.shown()).rows).toContain("probe.wait stopped [cancelled]");
+    expect((await w.shown()).rows).toContain("probe.wait cancelled [cancelled]");
     expect(await w.act(w.grace, "POST", `/tools/${job!.rowId}/cancel`)).toBe(409);
   });
 
@@ -332,12 +328,12 @@ describe("a job", () => {
     expect(shown.rows).toEqual([
       "Ada Lovelace: Start and wait",
       "agent (completed): On it.",
-      "probe.wait ran",
-      "probe.wait pending [running]",
+      "probe.wait completed",
+      "probe.wait ready [running]",
       "agent (completed): Carrying on.",
     ]);
     const [job] = await w.activity();
-    expect(job).toMatchObject({ title: "Wait", work: { kind: "call", status: "running" } });
+    expect(job).toMatchObject({ title: "Wait", work: { kind: "job", status: "running" } });
     expect(job!.rowId).not.toBe(ids[0]);
 
     w.tool.finish("a", { answer: 42 });
@@ -354,7 +350,7 @@ describe("a job", () => {
     await w.settled();
     const [job] = await w.activity();
     expect(job).toMatchObject({
-      work: { kind: "approval", status: "pending", canDecide: true },
+      work: { kind: "decision", status: "waiting", canDecide: true },
       attention: "approval",
     });
     expect((await w.activity(w.alan))[0]).toMatchObject({ work: { canDecide: false } });
@@ -384,7 +380,7 @@ describe("a job", () => {
     const moved = await w.answers(w.threadId, "Carrying on.");
     expect(lastResult(moved.texts)).toMatch(/"movedToBackground":true/);
     await w.settled();
-    expect((await w.activity())[0]).toMatchObject({ work: { kind: "call", status: "running" } });
+    expect((await w.activity())[0]).toMatchObject({ work: { kind: "job", status: "running" } });
 
     w.tool.finish("a", { answer: 42 });
     const told = await w.answers(w.threadId, "Noted.");
@@ -398,13 +394,13 @@ describe("a job", () => {
     await w.asks(w.threadId, ["jobs.start", { tool: "probe.guarded", input: { label: "a" } }]);
     await w.answers(w.threadId, "Asked for.");
     await w.settled();
-    const job = (await w.activity()).find((item) => item.work.kind === "call")!;
-    expect(job.work.status).toBe("pending");
+    const job = (await w.activity()).find((item) => item.work.kind === "job")!;
+    expect(job.work.status).toBe("waiting");
     expect(await w.act(w.grace, "POST", `/tools/${job.rowId}/cancel`)).toBe(200);
     expect(await w.act(w.grace, "POST", `/tools/${job.rowId}/cancel`)).toBe(409);
     await w.settled();
     expect(w.modelCalls()).toBe(2);
-    expect((await w.shown()).rows).toContain("probe.guarded stopped [cancelled]");
+    expect((await w.shown()).rows).toContain("probe.guarded cancelled [cancelled]");
   });
 
   it("left running by a server that stopped is interrupted, and the agent is told", async () => {

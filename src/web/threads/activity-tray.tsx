@@ -19,7 +19,7 @@ import { createContext, type ReactNode, useContext, useEffect, useRef, useState 
 import { useQuery } from "@tanstack/react-query";
 
 import type { ToolScope } from "@/shared/threads/events.ts";
-import { type Attention, type BackgroundItem, type TrayKind, trayKindOf } from "@/shared/calls.ts";
+import { type Attention, type ActivityItem, type TrayKind, trayKindOf } from "@/shared/jobs.ts";
 import { Button } from "@/web/components/ui/button";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { useIsMobile } from "@/web/hooks/use-mobile";
@@ -45,7 +45,7 @@ const GROUPS: { id: Group; label: string; icon: ReactNode }[] = [
   { id: "tasks", label: "Tasks", icon: <ListChecksIcon /> },
   { id: "jobs", label: "Background jobs", icon: <WrenchIcon /> },
   { id: "subagents", label: "Subagents", icon: <BotIcon /> },
-  { id: "triggers", label: "Schedules", icon: <CalendarClockIcon /> },
+  { id: "schedules", label: "Schedules", icon: <CalendarClockIcon /> },
   { id: "webhooks", label: "Webhooks", icon: <WebhookIcon /> },
 ];
 
@@ -73,7 +73,7 @@ function tint(reason: Attention | undefined, running: boolean) {
 }
 
 // The most pressing reason among items: an approval, then a failure, then something about to fire.
-function pressing(items: BackgroundItem[]) {
+function pressing(items: ActivityItem[]) {
   return (["approval", "failed", "soon"] as const).find((reason) =>
     items.some((item) => item.attention === reason),
   );

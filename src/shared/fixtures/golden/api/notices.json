@@ -13,7 +13,7 @@
     },
     "rows": [
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e1",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:01.000Z",
@@ -35,7 +35,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e2",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:02.000Z",
@@ -64,7 +64,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e3",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:03.000Z",
@@ -92,7 +92,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e4",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:04.000Z",
@@ -115,7 +115,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e5",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:05.000Z",
@@ -136,7 +136,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e6",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:06.000Z",
@@ -166,7 +166,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e7",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:07.000Z",
@@ -188,7 +188,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e8",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:08.000Z",
@@ -208,7 +208,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e9",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:09.000Z",
@@ -242,11 +242,11 @@
         }
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e10",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:10.000Z",
-        "type": "trigger.fired",
+        "type": "schedule.fired",
         "from": {
           "threadId": "thread",
           "name": "Daily digest",
@@ -263,11 +263,11 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e11",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:11.000Z",
-        "type": "trigger.fired",
+        "type": "schedule.fired",
         "from": {
           "threadId": "thread",
           "name": "Wake-up",
@@ -283,7 +283,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e12",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:12.000Z",
@@ -308,7 +308,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e13",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:13.000Z",
@@ -356,7 +356,7 @@
         ]
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e19",
         "seq": 25,
         "postedAt": "2026-01-01T00:00:19.000Z",
@@ -372,7 +372,7 @@
           "name": "Ada Lovelace"
         },
         "text": "Ada Lovelace paused Daily digest.",
-        "tray": "triggers",
+        "tray": "schedules",
         "change": {
           "subject": {
             "kind": "schedule",
@@ -386,7 +386,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e20",
         "seq": 25,
         "postedAt": "2026-01-01T00:00:20.000Z",
@@ -417,7 +417,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e21",
         "seq": 25,
         "postedAt": "2026-01-01T00:00:21.000Z",
@@ -448,7 +448,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e22",
         "seq": 22,
         "postedAt": "2026-01-01T00:00:22.000Z",
@@ -543,7 +543,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e32",
         "seq": 32,
         "postedAt": "2026-01-01T00:00:32.000Z",
@@ -562,7 +562,7 @@
     ],
     "waiting": [
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e31",
         "seq": 31,
         "postedAt": "2026-01-01T00:00:31.000Z",
@@ -600,7 +600,7 @@
     },
     "rows": [
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e1",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:01.000Z",
@@ -622,7 +622,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e2",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:02.000Z",
@@ -651,7 +651,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e3",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:03.000Z",
@@ -679,7 +679,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e4",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:04.000Z",
@@ -702,7 +702,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e5",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:05.000Z",
@@ -723,7 +723,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e6",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:06.000Z",
@@ -753,7 +753,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e7",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:07.000Z",
@@ -775,7 +775,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e8",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:08.000Z",
@@ -795,7 +795,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e9",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:09.000Z",
@@ -829,11 +829,11 @@
         }
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e10",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:10.000Z",
-        "type": "trigger.fired",
+        "type": "schedule.fired",
         "from": {
           "threadId": "thread",
           "name": "Daily digest",
@@ -850,11 +850,11 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e11",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:11.000Z",
-        "type": "trigger.fired",
+        "type": "schedule.fired",
         "from": {
           "threadId": "thread",
           "name": "Wake-up",
@@ -870,7 +870,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e12",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:12.000Z",
@@ -895,7 +895,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e13",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:13.000Z",
@@ -941,7 +941,7 @@
         ]
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e19",
         "seq": 25,
         "postedAt": "2026-01-01T00:00:19.000Z",
@@ -957,7 +957,7 @@
           "name": "Ada Lovelace"
         },
         "text": "Ada Lovelace paused Daily digest.",
-        "tray": "triggers",
+        "tray": "schedules",
         "change": {
           "subject": {
             "kind": "schedule",
@@ -971,7 +971,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e20",
         "seq": 25,
         "postedAt": "2026-01-01T00:00:20.000Z",
@@ -1002,7 +1002,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e21",
         "seq": 25,
         "postedAt": "2026-01-01T00:00:21.000Z",
@@ -1033,7 +1033,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e22",
         "seq": 22,
         "postedAt": "2026-01-01T00:00:22.000Z",
@@ -1127,7 +1127,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e32",
         "seq": 32,
         "postedAt": "2026-01-01T00:00:32.000Z",
@@ -1146,7 +1146,7 @@
     ],
     "waiting": [
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e31",
         "seq": 31,
         "postedAt": "2026-01-01T00:00:31.000Z",
@@ -1184,7 +1184,7 @@
     },
     "rows": [
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e1",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:01.000Z",
@@ -1206,7 +1206,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e2",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:02.000Z",
@@ -1235,7 +1235,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e3",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:03.000Z",
@@ -1263,7 +1263,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e4",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:04.000Z",
@@ -1286,7 +1286,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e5",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:05.000Z",
@@ -1307,7 +1307,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e6",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:06.000Z",
@@ -1337,7 +1337,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e7",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:07.000Z",
@@ -1359,7 +1359,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e8",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:08.000Z",
@@ -1379,7 +1379,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e9",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:09.000Z",
@@ -1413,11 +1413,11 @@
         }
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e10",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:10.000Z",
-        "type": "trigger.fired",
+        "type": "schedule.fired",
         "from": {
           "threadId": "thread",
           "name": "Daily digest",
@@ -1434,11 +1434,11 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e11",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:11.000Z",
-        "type": "trigger.fired",
+        "type": "schedule.fired",
         "from": {
           "threadId": "thread",
           "name": "Wake-up",
@@ -1454,7 +1454,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e12",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:12.000Z",
@@ -1479,7 +1479,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e13",
         "seq": 15,
         "postedAt": "2026-01-01T00:00:13.000Z",
@@ -1521,7 +1521,7 @@
         }
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e19",
         "seq": 25,
         "postedAt": "2026-01-01T00:00:19.000Z",
@@ -1537,7 +1537,7 @@
           "name": "Ada Lovelace"
         },
         "text": "Ada Lovelace paused Daily digest.",
-        "tray": "triggers",
+        "tray": "schedules",
         "change": {
           "subject": {
             "kind": "schedule",
@@ -1551,7 +1551,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e20",
         "seq": 25,
         "postedAt": "2026-01-01T00:00:20.000Z",
@@ -1582,7 +1582,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e21",
         "seq": 25,
         "postedAt": "2026-01-01T00:00:21.000Z",
@@ -1613,7 +1613,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e22",
         "seq": 22,
         "postedAt": "2026-01-01T00:00:22.000Z",
@@ -1697,7 +1697,7 @@
         "turn": null
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e32",
         "seq": 32,
         "postedAt": "2026-01-01T00:00:32.000Z",
@@ -1716,7 +1716,7 @@
     ],
     "waiting": [
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e31",
         "seq": 31,
         "postedAt": "2026-01-01T00:00:31.000Z",

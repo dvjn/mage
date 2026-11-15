@@ -13,7 +13,7 @@ export interface CalledArtifact {
 
 // The artifact a call that published or updated one made, from its output.
 export function artifactOf(row: ToolRow): CalledArtifact | null {
-  if (row.state !== "ran" || row.output?.ok !== true) return null;
+  if (row.state !== "completed" || row.output?.ok !== true) return null;
   if (row.toolId !== ARTIFACT_TOOLS.publish && row.toolId !== ARTIFACT_TOOLS.update) return null;
   const value = row.output.value as { id?: unknown; version?: unknown; title?: unknown } | null;
   if (typeof value?.id !== "string" || typeof value.version !== "number") return null;

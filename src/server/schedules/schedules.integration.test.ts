@@ -1,16 +1,16 @@
 import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
-import { NOTIFICATIONS_HEADING } from "@/server/execution/context.ts";
+import { NOTICES_HEADING } from "@/server/execution/context.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { setup } from "@/server/testing/workspace.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
 import { eventSummary } from "@/server/threads/log.ts";
-import { describeCron } from "@/shared/triggers.ts";
+import { describeCron } from "@/shared/schedules.ts";
 import type { ToolRow } from "@/shared/transcript.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
-async function triggerThread() {
+async function scheduleThread() {
   const workspace = await agentThread();
   const { model, threadStore, thread } = workspace;
   const taken = new Set<Call>();
@@ -52,7 +52,7 @@ async function triggerThread() {
     return transcriptOf((await threadStore.eventsAfter(thread.id, 0)).map(eventSummary)).rows;
   }
 
-  // Sets triggers the way the agent does, and returns what the tool gave back.
+  // Sets timers and schedules the way the agent does, and returns what the tool gave back.
   async function set(...asked: [string, unknown][]) {
     await workspace.post(workspace.ada, "Set it up");
     await calls(thread.id, ...asked);
@@ -76,9 +76,9 @@ describe("describeCron", () => {
 
 describe("wake-up timers", () => {
   it("wake the agent once, with the note and the people who steered the call", async () => {
-    const t = await triggerThread();
+    const t = await scheduleThread();
     await t.start();
-    const set = await t.set(["triggers.wake_at", { in_seconds: 600, note: "Check the build" }]);
+    const set = await t.set(["schedules.wake_at", { in_seconds: 600, note: "Check the build" }]);
     expect(set.texts.at(-1)).toContain('"id"');
     await t.worker.idle();
 
@@ -92,9 +92,9 @@ describe("wake-up timers", () => {
     await t.worker.idle();
 
     // It was the notification that carried the people.
-    const relay = (await t.rowsOf()).find((row) => row.kind === "relay");
-    expect(relay).toMatchObject({ type: "trigger.fired" });
-    expect(relay?.kind === "relay" && relay.steeredBy.map((one) => one.name)).toEqual([
+    const notice = (await t.rowsOf()).find((row) => row.kind === "notice");
+    expect(notice).toMatchObject({ type: "schedule.fired" });
+    expect(notice?.kind === "notice" && notice.influence.map((one) => one.name)).toEqual([
       "Ada Lovelace",
     ]);
 
@@ -102,21 +102,21 @@ describe("wake-up timers", () => {
     t.clock.now = new Date(t.clock.now.getTime() + 60 * MINUTE);
     expect(await t.schedules.tick()).toBe(0);
     await t.post(t.ada, "What is set?");
-    await t.calls(t.thread.id, ["triggers.list", {}]);
+    await t.calls(t.thread.id, ["schedules.list", {}]);
     const listed = await t.answer(t.thread.id);
-    expect(listed.texts.at(-1)).toContain('"triggers":[]');
+    expect(listed.texts.at(-1)).toContain('"schedules":[]');
   });
 
   it("refuse a time that is unclear or has passed", async () => {
-    const t = await triggerThread();
+    const t = await scheduleThread();
     await t.start();
     await t.post(t.ada, "Set it up");
     await t.calls(
       t.thread.id,
-      ["triggers.wake_at", { note: "x" }],
-      ["triggers.wake_at", { in_seconds: 5, at: "2099-01-01T00:00:00Z", note: "x" }],
-      ["triggers.wake_at", { at: "2001-01-01T00:00:00Z", note: "x" }],
-      ["triggers.wake_at", { at: "soon", note: "x" }],
+      ["schedules.wake_at", { note: "x" }],
+      ["schedules.wake_at", { in_seconds: 5, at: "2099-01-01T00:00:00Z", note: "x" }],
+      ["schedules.wake_at", { at: "2001-01-01T00:00:00Z", note: "x" }],
+      ["schedules.wake_at", { at: "soon", note: "x" }],
     );
     const refused = (await t.answer(t.thread.id)).texts.join("\n");
     expect(refused).toContain("Give in_seconds or at");
@@ -127,11 +127,11 @@ describe("wake-up timers", () => {
 
 describe("schedules", () => {
   it("fire on their cron in their zone, and once for what was missed while down", async () => {
-    const t = await triggerThread();
+    const t = await scheduleThread();
     await t.start();
     t.clock.now = new Date("2030-01-07T08:59:00Z");
     await t.set([
-      "triggers.schedule",
+      "schedules.add",
       {
         name: "Digest",
         cron: "0 9 * * *",
@@ -146,7 +146,7 @@ describe("schedules", () => {
     expect(told.texts.at(-1)).toContain('Schedule "Digest" fired');
     expect(told.texts.at(-1)).toContain("Write the digest");
     await t.worker.idle();
-    expect((await t.rowsOf()).find((row) => row.kind === "relay")).toMatchObject({
+    expect((await t.rowsOf()).find((row) => row.kind === "notice")).toMatchObject({
       schedule: "Every day at 09:00",
     });
 
@@ -163,12 +163,12 @@ describe("schedules", () => {
   });
 
   it("are listed and deleted by the agent, and refuse a bad cron or zone", async () => {
-    const t = await triggerThread();
+    const t = await scheduleThread();
     await t.start();
     const bad = await t.set(
-      ["triggers.schedule", { name: "A", cron: "* * *", prompt: "x" }],
-      ["triggers.schedule", { name: "B", cron: "0 9 * * *", timezone: "Mars/Base", prompt: "x" }],
-      ["triggers.schedule", { name: "C", cron: "99 9 * * *", prompt: "x" }],
+      ["schedules.add", { name: "A", cron: "* * *", prompt: "x" }],
+      ["schedules.add", { name: "B", cron: "0 9 * * *", timezone: "Mars/Base", prompt: "x" }],
+      ["schedules.add", { name: "C", cron: "99 9 * * *", prompt: "x" }],
     );
     const refused = bad.texts.join("\n");
     expect(refused).toContain("needs five fields");
@@ -178,7 +178,7 @@ describe("schedules", () => {
 
     await t.post(t.ada, "Again");
     await t.calls(t.thread.id, [
-      "triggers.schedule",
+      "schedules.add",
       { name: "Daily", cron: "0 9 * * *", prompt: "Go" },
     ]);
     await t.answer(t.thread.id);
@@ -191,7 +191,7 @@ describe("schedules", () => {
     });
 
     await t.post(t.ada, "Remove it");
-    await t.calls(t.thread.id, ["triggers.list", {}], ["triggers.delete", { id: made!.id }]);
+    await t.calls(t.thread.id, ["schedules.list", {}], ["schedules.delete", { id: made!.id }]);
     const after = await t.answer(t.thread.id);
     expect(after.texts.join("\n")).toContain('"name":"Daily"');
     expect(after.texts.join("\n")).toContain(`"deleted":"${made!.id}"`);
@@ -201,21 +201,21 @@ describe("schedules", () => {
 
 describe("with several server instances", () => {
   async function due() {
-    const t = await triggerThread();
+    const t = await scheduleThread();
     await t.start();
-    await t.set(["triggers.wake_at", { in_seconds: 60, note: "Once only" }]);
+    await t.set(["schedules.wake_at", { in_seconds: 60, note: "Once only" }]);
     await t.worker.idle();
     t.clock.now = new Date(t.clock.now.getTime() + 2 * MINUTE);
     return t;
   }
 
-  it("fire a due trigger once, whichever instance looks first", async () => {
+  it("fire a due schedule once, whichever instance looks first", async () => {
     const t = await due();
     const other = t.schedulesFor();
     expect((await t.schedules.tick()) + (await other.tick())).toBe(1);
     expect((await other.tick()) + (await t.schedules.tick())).toBe(0);
     await t.answer(t.thread.id);
-    expect((await t.rowsOf()).filter((row) => row.kind === "relay")).toHaveLength(1);
+    expect((await t.rowsOf()).filter((row) => row.kind === "notice")).toHaveLength(1);
   });
 
   it("move a due one on once: a move on the row as it was read before loses", async () => {
@@ -228,11 +228,11 @@ describe("with several server instances", () => {
 
 describe("the card and its controls", () => {
   it("show a schedule's state, and people who may post pause, resume and delete it", async () => {
-    const t = await triggerThread();
+    const t = await scheduleThread();
     await t.start();
     t.clock.now = new Date("2030-01-07T08:00:00Z");
     await t.set([
-      "triggers.schedule",
+      "schedules.add",
       {
         name: "Digest",
         cron: "0 9 * * 1-5",
@@ -242,7 +242,7 @@ describe("the card and its controls", () => {
     ]);
     await t.worker.idle();
     const [made] = await t.schedules.inThread(t.thread.id);
-    const path = (action: string) => `/threads/${t.thread.id}/triggers/${made!.id}${action}`;
+    const path = (action: string) => `/threads/${t.thread.id}/schedules/${made!.id}${action}`;
 
     const card = async (canChange = true) => {
       const reader = await t.access.require(canChange ? t.ada : t.alan, t.thread.id);
@@ -280,26 +280,26 @@ describe("the card and its controls", () => {
   });
 
   it("tell the agent, without waking it, what a person did to them, and who", async () => {
-    const t = await triggerThread();
+    const t = await scheduleThread();
     await t.start();
     await t.set([
-      "triggers.schedule",
+      "schedules.add",
       { name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Go" },
     ]);
     await t.worker.idle();
     const [schedule] = await t.schedules.inThread(t.thread.id);
-    const base = `/threads/${t.thread.id}/triggers/${schedule!.id}`;
+    const base = `/threads/${t.thread.id}/schedules/${schedule!.id}`;
     const calls = t.model.calls.length;
     await t.api("POST", `${base}/pause`, t.grace.cookie);
     await t.api("POST", `${base}/resume`, t.grace.cookie);
     await t.api("DELETE", base, t.grace.cookie);
     await t.worker.idle();
     expect(t.model.calls.length).toBe(calls);
-    const told = (await t.rowsOf()).flatMap((row) => (row.kind === "relay" ? [row] : []));
+    const told = (await t.rowsOf()).flatMap((row) => (row.kind === "notice" ? [row] : []));
     expect(told.map((row) => [row.type, row.text, row.tray])).toEqual([
-      ["change", "Grace Hopper paused schedule Digest", "triggers"],
-      ["change", "Grace Hopper resumed schedule Digest", "triggers"],
-      ["change", "Grace Hopper deleted schedule Digest", "triggers"],
+      ["change", "Grace Hopper paused schedule Digest", "schedules"],
+      ["change", "Grace Hopper resumed schedule Digest", "schedules"],
+      ["change", "Grace Hopper deleted schedule Digest", "schedules"],
     ]);
     expect(told.map((row) => row.change)).toEqual([
       { subject: { kind: "schedule", name: "Digest" }, action: "pause" },
@@ -309,25 +309,25 @@ describe("the card and its controls", () => {
     await t.post(t.ada, "Go on");
     const next = await t.answer(t.thread.id);
     expect(next.texts.at(-1)).toBe(
-      `user: ${NOTIFICATIONS_HEADING}\n\n${told.map((row) => row.text).join("\n\n")}`,
+      `user: ${NOTICES_HEADING}\n\n${told.map((row) => row.text).join("\n\n")}`,
     );
   });
 
   it("shows on the tool call's row in the thread", async () => {
-    const t = await triggerThread();
+    const t = await scheduleThread();
     await t.start();
-    await t.set(["triggers.wake_at", { in_seconds: 600, note: "Look again" }]);
+    await t.set(["schedules.wake_at", { in_seconds: 600, note: "Look again" }]);
     await t.worker.idle();
     const res = await t.api("GET", `/threads/${t.thread.id}`, t.ada.cookie);
     const { rows } = (await res.json()) as {
       rows: {
         kind: string;
         toolId?: string;
-        background?: { kind: string; status: string };
+        work?: { kind: string; status: string };
       }[];
     };
-    const call = rows.find((row) => row.toolId === "triggers.wake_at");
-    expect(call?.background).toMatchObject({
+    const call = rows.find((row) => row.toolId === "schedules.wake_at");
+    expect(call?.work).toMatchObject({
       kind: "schedule",
       status: "scheduled",
     });
@@ -336,7 +336,7 @@ describe("the card and its controls", () => {
 
 describe("each change of where one stands", () => {
   // A timer due now, set by no call.
-  async function dueTimer(t: Awaited<ReturnType<typeof triggerThread>>, id = "timer-1") {
+  async function dueTimer(t: Awaited<ReturnType<typeof scheduleThread>>, id = "timer-1") {
     return t.scheduleStore.create({
       id,
       threadId: t.thread.id,
@@ -352,7 +352,7 @@ describe("each change of where one stands", () => {
   }
 
   it("is one guarded statement: what has moved already moves no more", async () => {
-    const t = await triggerThread();
+    const t = await scheduleThread();
     const timer = await dueTimer(t);
     expect(await t.scheduleStore.pause(timer.id)).toMatchObject({ status: "paused" });
     expect(await t.scheduleStore.pause(timer.id)).toBeNull();
@@ -370,18 +370,18 @@ describe("each change of where one stands", () => {
   });
 
   it("is told once when two people pause it at once", async () => {
-    const t = await triggerThread();
+    const t = await scheduleThread();
     const timer = await dueTimer(t);
     const pause = (who: { cookie: string }) =>
-      t.api("POST", `/threads/${t.thread.id}/triggers/${timer.id}/pause`, who.cookie);
+      t.api("POST", `/threads/${t.thread.id}/schedules/${timer.id}/pause`, who.cookie);
     const codes = (await Promise.all([pause(t.ada), pause(t.grace)])).map((res) => res.status);
     expect(codes).toEqual([200, 200]);
-    const changes = (await t.rowsOf()).filter((row) => row.kind === "relay");
+    const changes = (await t.rowsOf()).filter((row) => row.kind === "notice");
     expect(changes).toHaveLength(1);
   });
 
   it("leaves a row whose firing fails due, and fires the rest", async () => {
-    const t = await triggerThread();
+    const t = await scheduleThread();
     await t.db.execute(sql`set session_replication_role = replica`);
     await t.db.execute(sql`insert into schedule (id, thread_id, kind, name, prompt, influence,
                                                   status, next_run_at)
@@ -401,7 +401,7 @@ describe("each change of where one stands", () => {
   });
 
   it("finishes a schedule with no next time", async () => {
-    const t = await triggerThread();
+    const t = await scheduleThread();
     await t.scheduleStore.create({
       id: "past",
       threadId: t.thread.id,
@@ -424,13 +424,13 @@ describe("each change of where one stands", () => {
   });
 
   it("answers a deleted one's history as not found", async () => {
-    const t = await triggerThread();
+    const t = await scheduleThread();
     const timer = await dueTimer(t);
     expect(
-      (await t.api("DELETE", `/threads/${t.thread.id}/triggers/${timer.id}`, t.ada.cookie)).status,
+      (await t.api("DELETE", `/threads/${t.thread.id}/schedules/${timer.id}`, t.ada.cookie)).status,
     ).toBe(200);
     expect(
-      (await t.api("GET", `/threads/${t.thread.id}/triggers/${timer.id}/history`, t.ada.cookie))
+      (await t.api("GET", `/threads/${t.thread.id}/schedules/${timer.id}/history`, t.ada.cookie))
         .status,
     ).toBe(404);
   });
@@ -439,7 +439,7 @@ describe("each change of where one stands", () => {
 describe.skipIf(!process.env.TEST_DATABASE_URL)("on Postgres, against a firing", () => {
   for (const action of ["pause", "delete"] as const) {
     it(`a ${action} either comes before the timer goes off or after, never both`, async () => {
-      const t = await triggerThread();
+      const t = await scheduleThread();
       const other = setup({}, { database: t.database });
       await t.scheduleStore.create({
         id: "timer-1",
@@ -454,7 +454,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("on Postgres, against a firing",
         nextRunAt: new Date(Date.now() - 1000),
       });
       other.clock.now = new Date();
-      const path = `/threads/${t.thread.id}/triggers/timer-1${action === "pause" ? "/pause" : ""}`;
+      const path = `/threads/${t.thread.id}/schedules/timer-1${action === "pause" ? "/pause" : ""}`;
       const [fired, res] = await Promise.all([
         other.schedules.tick(),
         t.api(action === "pause" ? "POST" : "DELETE", path, t.ada.cookie),

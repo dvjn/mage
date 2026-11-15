@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { Tasks } from "@/server/agent/tasks.ts";
-import type { Triggers } from "@/server/triggers.ts";
-import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
-import type { ToolDecisions } from "@/server/agent/tools.ts";
+import type { Tasks } from "@/server/tasks/tasks.ts";
+import type { Schedules } from "@/server/schedules/schedules.ts";
+import type { Webhooks } from "@/server/webhooks/webhooks.ts";
+import type { ToolPolicies } from "@/server/tools/policies.ts";
+import type { ToolDecisions } from "@/server/tools/registry.ts";
 import { pingDatabase } from "@/server/db/db.ts";
 import { openStoreDatabase } from "@/server/testing/database.ts";
 import type { Guests } from "@/server/guests/service.ts";
@@ -18,7 +19,7 @@ import type { Orgs } from "@/server/orgs/service.ts";
 import type { Skills } from "@/server/skills/service.ts";
 import type { Artifacts } from "@/server/artifacts/service.ts";
 import type { Spaces } from "@/server/spaces/service.ts";
-import type { Threads } from "@/server/threads/service.ts";
+import type { Threads } from "@/server/threads/threads.ts";
 
 import { createApp } from "./app.ts";
 
@@ -58,7 +59,8 @@ describe("GET /api/health", () => {
       logger,
       signInOptions: { oidc: null },
       tasks: {} as Tasks,
-      triggers: {} as Triggers,
+      schedules: {} as Schedules,
+      webhooks: {} as Webhooks,
       pingDatabase: () => pingDatabase(db),
     }).request("/api/health");
     expect(res.status).toBe(200);
@@ -85,7 +87,8 @@ describe("GET /api/health", () => {
       logger,
       signInOptions: { oidc: null },
       tasks: {} as Tasks,
-      triggers: {} as Triggers,
+      schedules: {} as Schedules,
+      webhooks: {} as Webhooks,
       pingDatabase: () => Promise.resolve(false),
     }).request("/api/health");
     expect(res.status).toBe(503);

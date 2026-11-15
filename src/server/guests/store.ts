@@ -160,6 +160,16 @@ interface SharedRow extends StatusedRow {
 }
 
 export function createGuestStore(db: Db): GuestStore {
+  // The thread stamped as changed by the database's clock in the same statement that shares it,
+  // so the list feed, which asks by that stamp, finds it for whoever it now reaches.
+  const touched = (threadId: string) =>
+    db.$with("touched").as(
+      db
+        .update(thread)
+        .set({ updatedAt: sql`now()` })
+        .where(eq(thread.id, threadId))
+        .returning({ id: thread.id }),
+    );
   return {
     async find(threadId, userId): Promise<ThreadGuest | null> {
       return (
@@ -177,6 +187,7 @@ export function createGuestStore(db: Db): GuestStore {
       const renewed = { invitedBy, accessUntil, role, revokedAt: null, revokedBy: null };
       return (
         await db
+          .with(touched(threadId))
           .insert(threadGuest)
           .values({ threadId, userId, ...renewed })
           .onConflictDoUpdate({ target: [threadGuest.threadId, threadGuest.userId], set: renewed })
@@ -209,6 +220,7 @@ export function createGuestStore(db: Db): GuestStore {
       const renewed = { invitedBy, accessUntil, role, revokedAt: null, revokedBy: null };
       return (
         await db
+          .with(touched(threadId))
           .insert(threadGroupGuest)
           .values({ threadId, groupId, ...renewed })
           .onConflictDoUpdate({
@@ -309,7 +321,10 @@ export function createGuestStore(db: Db): GuestStore {
     },
 
     async setOrgAccess(threadId, orgAccess) {
-      await db.update(thread).set({ orgAccess }).where(eq(thread.id, threadId));
+      await db
+        .update(thread)
+        .set({ orgAccess, updatedAt: sql`now()` })
+        .where(eq(thread.id, threadId));
     },
 
     async revoke(threadId, userId, by, at) {

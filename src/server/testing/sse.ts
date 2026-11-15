@@ -1,4 +1,4 @@
-// Reads a thread's live stream, or a person's inbox stream, in the tests, one frame at a time.
+// Reads a thread's live stream, or a person's feed stream, in the tests, one frame at a time.
 
 import type { RowsUpdate } from "@/shared/threads/rows.ts";
 
@@ -31,16 +31,18 @@ export async function openStream(
   return { res, ...frames, nextRows };
 }
 
-// Opens the person's inbox stream and reads it one frame at a time.
-export async function openInbox(app: ReturnType<typeof setup>["app"], cookie: string) {
-  const res = await app.request("/api/v1/inbox/events", { headers: { Cookie: cookie } });
+// Opens the person's feed stream, in the org named when one is, and reads it one frame at a time.
+export async function openFeed(app: ReturnType<typeof setup>["app"], cookie: string, org?: string) {
+  const res = await app.request("/api/v1/threads/feed", {
+    headers: { Cookie: cookie, ...(org && { "X-Mage-Org": org }) },
+  });
   const frames = framesOf(res);
   // The next item, skipping heartbeats, with its kind and data.
-  async function nextInbox() {
+  async function nextChange() {
     const frame = await frames.nextItem();
     return { event: frame.event, data: JSON.parse(frame.data!) as Record<string, any> };
   }
-  return { res, ...frames, nextInbox };
+  return { res, ...frames, nextChange };
 }
 
 function framesOf(res: Response) {

@@ -14,7 +14,7 @@ async function surfaces(w: World, who: Person) {
   const rows = detail.rows.flatMap((row) => {
     if (row.kind !== "tool") return [];
     const own =
-      row.state === "pending" && row.waits
+      row.state === "waiting"
         ? [{ row: row.toolId, actions: row.actions ?? null, canAnswer: row.canAnswer ?? null }]
         : [];
     const below = row.subagentCall
@@ -43,7 +43,7 @@ async function surfaces(w: World, who: Person) {
     run: detail.run?.waiting ?? null,
     rows,
     tray,
-    list: { status: listed.status, canApprove: listed.activity.canApprove },
+    list: { status: listed.status, needsYou: listed.standing.needsYou },
   };
 }
 
@@ -63,14 +63,14 @@ describe("a call of the thread's own run that waits for a decision", () => {
         rows: [{ row: "probe.guarded", actions: ["allow", "deny"], canAnswer: null }],
         tray: [
           {
-            kind: "approval",
-            status: "pending",
+            kind: "decision",
+            status: "waiting",
             attention: "approval",
             canDecide: true,
             needs: null,
           },
         ],
-        list: { status: "waiting", canApprove: true },
+        list: { status: "waiting", needsYou: true },
       });
     }
     expect(await surfaces(w, w.alan)).toEqual({
@@ -78,7 +78,7 @@ describe("a call of the thread's own run that waits for a decision", () => {
       rows: [{ row: "probe.guarded", actions: [], canAnswer: null }],
       // The tray lists a decision only for those who may make it.
       tray: [],
-      list: { status: "paused", canApprove: false },
+      list: { status: "paused", needsYou: false },
     });
   });
 });
@@ -103,13 +103,13 @@ describe("a call of the thread's own run that waits for answers", () => {
       run: "answer",
       rows: [{ row: "thread.ask", actions: null, canAnswer: true }],
       tray: [],
-      list: { status: "waiting", canApprove: true },
+      list: { status: "waiting", needsYou: true },
     });
     expect(await surfaces(w, w.alan)).toEqual({
       run: "answer",
       rows: [{ row: "thread.ask", actions: null, canAnswer: false }],
       tray: [],
-      list: { status: "paused", canApprove: false },
+      list: { status: "paused", needsYou: false },
     });
   });
 });
@@ -128,15 +128,15 @@ describe("a job that waits for a decision", () => {
       // The tray lists the decision and the job it is for.
       tray: [
         {
-          kind: "approval",
-          status: "pending",
+          kind: "decision",
+          status: "waiting",
           attention: "approval",
           canDecide: true,
           needs: null,
         },
-        { kind: "call", status: "pending", attention: "approval", canDecide: true, needs: null },
+        { kind: "job", status: "waiting", attention: "approval", canDecide: true, needs: null },
       ],
-      list: { status: "waiting", canApprove: true },
+      list: { status: "waiting", needsYou: true },
     });
     // To someone who may not decide, a waiting job is not the agent paused: the thread reads as
     // any other with something new.
@@ -144,7 +144,7 @@ describe("a job that waits for a decision", () => {
       run: null,
       rows: [{ row: "probe.guarded", actions: [], canAnswer: null }],
       tray: [],
-      list: { status: "unread", canApprove: false },
+      list: { status: "unread", needsYou: false },
     });
   });
 });
@@ -171,7 +171,7 @@ describe("a subagent's call that waits for a decision", () => {
       rows: [
         {
           subagent: "Researcher",
-          needs: "approval",
+          needs: "decision",
           row: "probe.guarded",
           actions: ["allow", "deny"],
         },
@@ -179,29 +179,29 @@ describe("a subagent's call that waits for a decision", () => {
       tray: [
         {
           kind: "subagent",
-          status: "pending",
+          status: "waiting",
           attention: "approval",
           canDecide: true,
-          needs: "approval",
+          needs: "decision",
         },
       ],
       // The list's status takes the subagent's in; what it says of approving is of the thread's
       // own run alone.
-      list: { status: "waiting", canApprove: false },
+      list: { status: "waiting", needsYou: false },
     });
     expect(await surfaces(w, w.alan)).toEqual({
       run: null,
-      rows: [{ subagent: "Researcher", needs: "approval", row: "probe.guarded", actions: [] }],
+      rows: [{ subagent: "Researcher", needs: "decision", row: "probe.guarded", actions: [] }],
       tray: [
         {
           kind: "subagent",
-          status: "pending",
+          status: "waiting",
           attention: null,
           canDecide: false,
-          needs: "approval",
+          needs: "decision",
         },
       ],
-      list: { status: "paused", canApprove: false },
+      list: { status: "paused", needsYou: false },
     });
 
     // Decided from the subagent's own thread, where the call is.
@@ -243,13 +243,13 @@ describe("a subagent's call that waits for answers", () => {
       tray: [
         {
           kind: "subagent",
-          status: "pending",
+          status: "waiting",
           attention: "approval",
           canDecide: true,
           needs: "answer",
         },
       ],
-      list: { status: "waiting", canApprove: false },
+      list: { status: "waiting", needsYou: false },
     });
     expect(await surfaces(w, w.alan)).toEqual({
       run: null,
@@ -257,13 +257,13 @@ describe("a subagent's call that waits for answers", () => {
       tray: [
         {
           kind: "subagent",
-          status: "pending",
+          status: "waiting",
           attention: null,
           canDecide: false,
           needs: "answer",
         },
       ],
-      list: { status: "paused", canApprove: false },
+      list: { status: "paused", needsYou: false },
     });
   });
 });
@@ -289,13 +289,13 @@ describe("a subagent's job that waits for a decision", () => {
       run: null,
       rows: [],
       tray: [],
-      list: { status: "waiting", canApprove: false },
+      list: { status: "waiting", needsYou: false },
     });
     expect(await surfaces(w, w.alan)).toEqual({
       run: null,
       rows: [],
       tray: [],
-      list: { status: "unread", canApprove: false },
+      list: { status: "unread", needsYou: false },
     });
   });
 });

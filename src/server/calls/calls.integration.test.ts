@@ -6,13 +6,13 @@ import { sql } from "drizzle-orm";
 import { describe, expect, it, vi } from "vite-plus/test";
 import * as z from "zod";
 
-import type { ToolSpec } from "@/server/agent/tools.ts";
+import type { ToolSpec } from "@/server/tools/registry.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { expireLeases } from "@/server/testing/database.ts";
 import { deadlockOnce, setup } from "@/server/testing/workspace.ts";
-import { steeringIn, steeringOf } from "@/server/calls/influence.ts";
-import { latestAuthor } from "@/server/agent/tool-authority.ts";
-import { lastWriter } from "@/server/agent/tools.ts";
+import { influenceIn, influenceOf } from "@/server/calls/influence.ts";
+import { latestAuthor } from "@/server/tools/authority.ts";
+import { lastWriter } from "@/server/tools/registry.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
 // Tools for the tests: one that runs until finished by its label, writing to the thread first when
@@ -257,7 +257,7 @@ describe("a job's end written again", () => {
     expect(
       events.filter((one) => one.type === "tool.ran" && one.data.callId === job.id),
     ).toHaveLength(1);
-    expect(events.filter((one) => one.type === "notification")).toHaveLength(1);
+    expect(events.filter((one) => one.type === "notice")).toHaveLength(1);
     // Nothing of it is still held here, nor kept of what it printed.
     expect(t.logLines.filter((line) => JSON.stringify(line).includes("not recorded"))).toEqual([]);
     const kept = await t.db.execute(sql`select call_id from call_output`);
@@ -514,7 +514,7 @@ async function seeingThread(searching = false) {
   async function folded(before?: string) {
     const rows = transcriptOf(await t.events()).rows;
     const at = before ? rows.findIndex((row) => row.id === before) : -1;
-    return steeringIn(at === -1 ? rows : rows.slice(0, at));
+    return influenceIn(at === -1 ? rows : rows.slice(0, at));
   }
   return {
     ...t,
@@ -705,14 +705,14 @@ describe("whose words were before", () => {
       )
     ).rows[0]!.id;
     const ended = events.find(
-      (event) => event.type === "notification" && event.data.kind === "call.ended",
+      (event) => event.type === "notice" && event.data.kind === "call.ended",
     )!;
-    const told = ended.type === "notification" ? ended.data.people : [];
+    const told = ended.type === "notice" ? ended.data.influence : [];
     expect(start).toBeDefined();
     expect(told).toEqual([{ userId: t.ada.userId, name: "Ada Lovelace", via: [] }]);
     expect(t.seen[0]!.influence).toEqual(told);
     const rows = transcriptOf(events).rows;
-    const byFold = steeringIn(
+    const byFold = influenceIn(
       rows.slice(
         0,
         rows.findIndex((row) => row.id === job),
@@ -741,7 +741,7 @@ describe("whose words a restore leaves out", () => {
         source: { threadId: t.thread.id, name: "Helper", main: false },
         text: "Quietly",
         wake: false,
-        people: [{ userId: t.grace.userId, name: "Grace Hopper", via: [] }],
+        influence: [{ userId: t.grace.userId, name: "Grace Hopper", via: [] }],
       },
     });
     t.endJob();
@@ -767,7 +767,7 @@ describe("whose words a restore leaves out", () => {
     expect(words).not.toContain(`${asideSeq} Grace Hopper`);
     const taken = (await t.events()).filter((event) => event.type === "message.admitted").at(-1)!;
     expect(words).toContain(`${taken.seq} Grace Hopper`);
-    expect(steeringOf(await t.queue.words(t.thread.id))).toEqual(await t.folded());
+    expect(influenceOf(await t.queue.words(t.thread.id))).toEqual(await t.folded());
   });
 });
 

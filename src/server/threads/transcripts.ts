@@ -16,7 +16,7 @@ import type { Hooks } from "@/server/kernel/hooks.ts";
 import { createFold, type TranscriptFold, type TranscriptRow } from "@/shared/transcript.ts";
 
 import { eventSummary } from "./log.ts";
-import type { ThreadStore } from "./service.ts";
+import type { ThreadStore } from "./types.ts";
 
 export type Transcripts = ReturnType<typeof createTranscripts>;
 
@@ -28,21 +28,21 @@ interface Held {
 
 export function createTranscripts(
   threads: Pick<ThreadStore, "eventsAfter" | "eventAt" | "find" | "results">,
-  bus?: Pick<Signals, "peopleLeft" | "onPeopleLeft" | "onGap">,
+  signals?: Pick<Signals, "peopleLeft" | "onPeopleLeft" | "onGap">,
   hooks?: Pick<Hooks, "on">,
   // Whether the caller is inside a write.
   writing: () => boolean = () => false,
 ) {
   const held = new Map<string, { folds: Map<string, Held>; holders: number }>();
-  // Told through the bus, so every instance's folds go, whichever saw people leave.
+  // Told through the signals, so every instance's folds go, whichever saw people leave.
   hooks?.on("org.membersSettled", ({ left }) => {
-    if (left.length > 0) bus?.peopleLeft();
+    if (left.length > 0) signals?.peopleLeft();
   });
-  bus?.onPeopleLeft(() => {
+  signals?.onPeopleLeft(() => {
     for (const entry of held.values()) entry.folds.clear();
   });
   // So are they after a gap in what this instance heard, which may have missed people leaving.
-  bus?.onGap(() => {
+  signals?.onGap(() => {
     for (const entry of held.values()) entry.folds.clear();
   });
 

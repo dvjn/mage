@@ -7,8 +7,8 @@ type Detail = { thread: { model: string | null; effort: string | null }; default
 
 describe("a space's defaults", () => {
   it("are set by its owner to a model the org can use, and go back to the org's", async () => {
-    const { api, signUp, yourSpace, join, org } = setup();
-    org.models.push("claude/claude-big");
+    const { api, signUp, yourSpace, join, models } = setup();
+    await models.offer(["claude/claude-big"]);
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(ada.cookie);
     const grace = await join(
@@ -36,10 +36,10 @@ describe("a space's defaults", () => {
   });
 
   it("start new threads, before the org's, and later changes leave those threads be", async () => {
-    const { api, signUp, yourSpace, createThread, org } = setup();
-    org.models.push("claude/claude-big");
-    org.defaultModel = "codex/gpt-big";
-    org.defaultEffort = "low";
+    const { api, signUp, yourSpace, createThread, models } = setup();
+    await models.offer(["claude/claude-big"]);
+    await models.default("codex/gpt-big");
+    await models.effort("low");
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(ada.cookie);
 
@@ -61,9 +61,9 @@ describe("a space's defaults", () => {
 
 describe("a new thread", () => {
   it("starts on the model and effort chosen for it, which must be one the org can use", async () => {
-    const { api, signUp, yourSpace, org } = setup();
-    org.models.push("claude/claude-big");
-    org.defaultModel = "codex/gpt-big";
+    const { api, signUp, yourSpace, models } = setup();
+    await models.offer(["claude/claude-big"]);
+    await models.default("codex/gpt-big");
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(ada.cookie);
     const start = (body: object) => api("POST", `/spaces/${space.id}/threads`, ada.cookie, body);
@@ -78,8 +78,8 @@ describe("a new thread", () => {
 
 describe("a thread without a model or effort of its own", () => {
   it("follows its space's, then its org's, when the agent replies", async () => {
-    const { api, signUp, yourSpace, createThread, org, model, worker } = setup();
-    org.defaultModel = "codex/gpt-big";
+    const { api, signUp, yourSpace, createThread, models, model, worker } = setup();
+    await models.default("codex/gpt-big");
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(ada.cookie);
     const thread = await createThread(ada.cookie, space.id);
@@ -95,7 +95,7 @@ describe("a thread without a model or effort of its own", () => {
 
     try {
       await reply();
-      org.defaultEffort = "low";
+      await models.effort("low");
       await reply();
       await api("PATCH", `/spaces/${space.id}/defaults`, ada.cookie, { effort: "high" });
       await reply();
@@ -105,12 +105,13 @@ describe("a thread without a model or effort of its own", () => {
       await worker.stop();
     }
 
-    expect(efforts).toEqual([undefined, "low", "high", "medium"]);
+    // A model that can think, asked for no effort, is asked for medium.
+    expect(efforts).toEqual(["medium", "low", "high", "medium"]);
   });
 
   it("goes back to following the defaults when its model is cleared", async () => {
-    const { api, signUp, yourSpace, createThread, org } = setup();
-    org.defaultModel = "codex/gpt-big";
+    const { api, signUp, yourSpace, createThread, models } = setup();
+    await models.default("codex/gpt-big");
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(ada.cookie);
     const thread = await createThread(ada.cookie, space.id);
@@ -128,10 +129,10 @@ describe("a thread without a model or effort of its own", () => {
 
 describe("a thread whose model is turned off", () => {
   it("replies with its space's default, then its org's, and keeps its own for when it is back", async () => {
-    const { api, signUp, yourSpace, createThread, org, model, worker, runStore, threadStore } =
+    const { api, signUp, yourSpace, createThread, models, model, worker, runStore, threadStore } =
       setup();
-    org.defaultModel = "codex/gpt-big";
-    org.models.push("claude/own", "claude/space");
+    await models.default("codex/gpt-big");
+    await models.offer(["claude/own", "claude/space"]);
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(ada.cookie);
     await api("PATCH", `/spaces/${space.id}/defaults`, ada.cookie, { model: "claude/space" });
@@ -147,11 +148,11 @@ describe("a thread whose model is turned off", () => {
 
     await worker.start();
     try {
-      org.off = ["claude/own"];
+      await models.off(["claude/own"]);
       await reply();
-      org.off = ["claude/own", "claude/space"];
+      await models.off(["claude/own", "claude/space"]);
       await reply();
-      org.off = [];
+      await models.off([]);
       await reply();
     } finally {
       await worker.stop();
@@ -162,10 +163,10 @@ describe("a thread whose model is turned off", () => {
   });
 
   it("replies at the effort that goes with the model used, not its own", async () => {
-    const { api, signUp, yourSpace, createThread, org, model, worker } = setup();
-    org.defaultModel = "codex/gpt-big";
-    org.defaultEffort = "low";
-    org.models.push("claude/own", "claude/space");
+    const { api, signUp, yourSpace, createThread, models, model, worker } = setup();
+    await models.default("codex/gpt-big");
+    await models.effort("low");
+    await models.offer(["claude/own", "claude/space"]);
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(ada.cookie);
     await api("PATCH", `/spaces/${space.id}/defaults`, ada.cookie, {
@@ -189,9 +190,9 @@ describe("a thread whose model is turned off", () => {
     await worker.start();
     try {
       await reply();
-      org.off = ["claude/own"];
+      await models.off(["claude/own"]);
       await reply();
-      org.off = ["claude/own", "claude/space"];
+      await models.off(["claude/own", "claude/space"]);
       await reply();
     } finally {
       await worker.stop();
@@ -201,10 +202,10 @@ describe("a thread whose model is turned off", () => {
   });
 
   it("shows the model and effort that reply instead", async () => {
-    const { api, signUp, yourSpace, createThread, org } = setup();
-    org.defaultModel = "codex/gpt-big";
-    org.defaultEffort = "low";
-    org.models.push("claude/own", "claude/space");
+    const { api, signUp, yourSpace, createThread, models } = setup();
+    await models.default("codex/gpt-big");
+    await models.effort("low");
+    await models.offer(["claude/own", "claude/space"]);
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(ada.cookie);
     await api("PATCH", `/spaces/${space.id}/defaults`, ada.cookie, {
@@ -226,7 +227,7 @@ describe("a thread whose model is turned off", () => {
       defaults: { used: { ref: "claude/space", effort: "medium" } },
       model: { used: { ref: "claude/own" }, effort: "high" },
     });
-    org.off = ["claude/own", "claude/space"];
+    await models.off(["claude/own", "claude/space"]);
     expect(await detail()).toMatchObject({
       defaults: { used: { ref: "codex/gpt-big", effort: "low" } },
       model: { used: { ref: "codex/gpt-big" }, effort: "low" },
@@ -234,9 +235,9 @@ describe("a thread whose model is turned off", () => {
   });
 
   it("fails its run saying why when nothing it could use is on", async () => {
-    const { api, signUp, yourSpace, createThread, org, makeWorker, threadStore } = setup();
-    org.defaultModel = "codex/gpt-big";
-    org.off = ["codex/gpt-big"];
+    const { api, signUp, yourSpace, createThread, models, makeWorker, threadStore } = setup();
+    await models.default("codex/gpt-big");
+    await models.off(["codex/gpt-big"]);
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(ada.cookie);
     const thread = await createThread(ada.cookie, space.id);
@@ -268,9 +269,9 @@ describe("a thread whose model is turned off", () => {
 
 describe("a thread's defaults", () => {
   it("name the org's default while the space's is turned off", async () => {
-    const { api, signUp, yourSpace, createThread, org } = setup();
-    org.defaultModel = "codex/gpt-big";
-    org.models.push("claude/space");
+    const { api, signUp, yourSpace, createThread, models } = setup();
+    await models.default("codex/gpt-big");
+    await models.offer(["claude/space"]);
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(ada.cookie);
     await api("PATCH", `/spaces/${space.id}/defaults`, ada.cookie, { model: "claude/space" });
@@ -286,7 +287,7 @@ describe("a thread's defaults", () => {
       model: "claude/space",
       used: { ref: "claude/space" },
     });
-    org.off = ["claude/space"];
+    await models.off(["claude/space"]);
     expect(await defaults()).toMatchObject({
       model: "claude/space",
       used: { ref: "codex/gpt-big", name: "gpt-big" },

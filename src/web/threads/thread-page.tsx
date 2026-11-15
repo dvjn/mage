@@ -55,14 +55,14 @@ import { PageHeader, pageWidth } from "@/web/shell/page-header";
 import { rememberSpace } from "@/web/spaces/last-space";
 import { spacesQuery } from "@/web/spaces/queries";
 import { useThreadEvents } from "@/web/threads/event-stream";
-import { useMarkRead } from "@/web/threads/inbox";
+import { useMarkRead } from "@/web/threads/thread-lists";
 import {
   usePostMessage,
   useRetryRun,
   useStopRun,
   useThreadModel,
   useCancelBackground,
-  useTriggerActions,
+  useScheduleAndWebhookActions,
   useMoveToBackground,
   useToolAnswer,
   useToolDecision,
@@ -102,11 +102,11 @@ import { type ThreadAgent, ThreadAgentContext } from "@/web/threads/transcript/a
 import { rowActions } from "@/web/threads/transcript/row-actions";
 import {
   lineKey,
-  relayRunKey,
+  noticeRunKey,
   rowElementId,
   RowFocusContext,
 } from "@/web/threads/transcript/row-focus";
-import { BackgroundActionsContext } from "@/web/threads/transcript/background";
+import { BackgroundActionsContext } from "@/web/threads/transcript/job-actions";
 
 const threadRoute = getRouteApi("/_app/t/$threadId");
 
@@ -254,7 +254,7 @@ export function ThreadPage() {
       : entries.find((entry) => {
           if (entry.kind === "subagent" || entry.kind === "artifacts") return false;
           const last =
-            entry.kind === "calls" || entry.kind === "relays" ? entry.rows.at(-1)! : entry.row;
+            entry.kind === "calls" || entry.kind === "notices" ? entry.rows.at(-1)! : entry.row;
           return last.order >= newFromOrder;
         })?.key;
   const stoppedAt = useRef<HTMLDivElement>(null);
@@ -268,7 +268,7 @@ export function ThreadPage() {
   const answering = useToolAnswer(threadId);
   const backgrounding = useMoveToBackground(threadId);
   const cancelling = useCancelBackground(threadId);
-  const triggers = useTriggerActions(threadId);
+  const timed = useScheduleAndWebhookActions(threadId);
   const modelChange = useThreadModel(threadId);
   const subagent = detail.data?.subagent ?? null;
   const unarchiving = useUnarchiveSubagent(threadId, thread?.spaceId);
@@ -387,11 +387,18 @@ export function ThreadPage() {
     move: (callId: string) => backgrounding.mutateAsync(callId).catch(() => {}),
     cancel: (callId: string) => cancelling.mutateAsync(callId).catch(() => {}),
     schedule: {
-      pause: (id: string) => triggers.pause(id).catch(() => {}),
-      resume: (id: string) => triggers.resume(id).catch(() => {}),
-      remove: (id: string) => triggers.remove(id).catch(() => {}),
-      secret: (id: string, secret: string | null) => triggers.secret(id, secret).catch(() => {}),
-      deliveryHeader: (id: string, header: string | null) => triggers.deliveryHeader(id, header),
+      pause: (id: string) => timed.schedule.pause(id).catch(() => {}),
+      resume: (id: string) => timed.schedule.resume(id).catch(() => {}),
+      remove: (id: string) => timed.schedule.remove(id).catch(() => {}),
+    },
+    webhook: {
+      pause: (id: string) => timed.webhook.pause(id).catch(() => {}),
+      resume: (id: string) => timed.webhook.resume(id).catch(() => {}),
+      remove: (id: string) => timed.webhook.remove(id).catch(() => {}),
+      secret: (id: string, secret: string | null) =>
+        timed.webhook.secret(id, secret).catch(() => {}),
+      deliveryHeader: (id: string, header: string | null) =>
+        timed.webhook.deliveryHeader(id, header),
     },
   };
 
@@ -466,10 +473,10 @@ export function ThreadPage() {
       return;
     }
     setFocused(key);
-    toggleRows([target, relayRunKey(target), lineKey(target)], true);
+    toggleRows([target, noticeRunKey(target), lineKey(target)], true);
     // An agent's message starts open, and is kept here only once the reader closes it.
     const reached = rows.find((row) => row.id === target);
-    if (reached?.kind === "relay" && reached.type === "message") toggleRows([target], false);
+    if (reached?.kind === "notice" && reached.type === "message") toggleRows([target], false);
     highlightedAt.current = Date.now();
     setAcknowledged(undefined);
     setLit(target);
@@ -623,7 +630,7 @@ export function ThreadPage() {
         tools={tools}
         actionsFor={actionsFor}
         open={entry.kind === "calls" && entry.calls.some((call) => openRows.has(call.id))}
-        opened={entry.kind === "relays" ? openRows : undefined}
+        opened={entry.kind === "notices" ? openRows : undefined}
         onOpenChange={toggleRows}
       />
     </div>

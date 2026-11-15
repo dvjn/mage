@@ -151,4 +151,85 @@ describe("a reader following a thread", () => {
     const eve = await w.signUp("Eve Outsider", "eve@example.com");
     expect((await w.stream(eve, 0)).status).toBe(404);
   });
+
+  it("who is a guest whose access ends is told so at the next delivery, and sent no row after it", async () => {
+    // Beats seldom, so that what is written after the access ends comes before the next beat.
+    const w = await world({}, { heartbeatMs: 60_000 });
+    const hedy = await w.guest("Hedy Lamarr", "hedy@example.com");
+    const stream = await w.stream(hedy, (await w.detail()).thread.lastEventSeq);
+    expect(await w.act(w.ada, "DELETE", `/guests/${hedy.userId}`)).toBe(200);
+    await w.post(w.ada, "// After she left");
+    const sent: string[] = [];
+    for (let item = await stream.next(); ; item = await stream.next()) {
+      if (item.event === "access-ended") break;
+      if (item.event === "rows") sent.push(...words(item.data));
+    }
+    expect(sent).toEqual([]);
+    await expect(stream.next()).rejects.toThrow("stream ended");
+  });
+
+  it("is sent an event this instance did not hear of at its next beat, while no gap is told", async () => {
+    const w = await world();
+    const other = await w.deaf();
+    const stream = await w.stream(w.ada, (await w.detail()).thread.lastEventSeq);
+    await stream.until(1);
+    expect(
+      await other.act(w.grace, "POST", "/messages", { text: "// Unheard", mode: "steer" }),
+    ).toBe(202);
+    const sent = (await stream.until(5)).filter((item) => item.event === "rows");
+    expect(sent.flatMap((item) => words(item.data))).toEqual(["Grace Hopper: // Unheard"]);
+    expect((await w.shown()).rows).toEqual(["Grace Hopper: // Unheard"]);
+    await stream.close();
+  });
+
+  it("who opens it late is first sent the tasks, then the rows, a reply's pieces, a call's output, the activity and the thread", async () => {
+    const w = await world();
+    await w.post(w.ada, "Plan");
+    await w.asks(w.threadId, ["tasks.add", { tasks: [{ title: "First" }] }]);
+    await w.answers(w.threadId, "Planned.");
+    await w.post(w.ada, "Start a job");
+    await w.asks(w.threadId, ["jobs.start", { tool: "probe.wait", input: { label: "job" } }]);
+    await w.answers(w.threadId, "Started.");
+    await w.settled();
+    await w.tool.print("job", "printed\n");
+    await w.post(w.ada, "Go on");
+    const call = await w.next(w.threadId);
+    call.startStep();
+    call.delta("Writing");
+    await call.drained();
+    // Once another reader is sent the pieces, they are stored.
+    const watching = await w.stream(w.ada, 0);
+    await watching.nextOf("message-delta");
+    await watching.close();
+
+    const stream = await w.stream(w.grace, 0);
+    const first: string[] = [];
+    while (first.length < 6) first.push((await stream.next()).event);
+    expect(first).toEqual(["tasks", "rows", "message-delta", "tool-output", "activity", "thread"]);
+    await stream.close();
+
+    call.endStep();
+    call.end();
+    w.tool.finish("job", "done");
+    await w.answers(w.threadId, "Noted.");
+    await w.settled();
+  });
+});
+
+describe("a reader's list feed", () => {
+  it("is told of a thread that changed on an instance this one did not hear at its next beat, while no gap is told", async () => {
+    const w = await world();
+    const other = await w.deaf();
+    const feed = await w.feed(w.ada);
+    await feed.ready();
+    expect(
+      await other.act(w.grace, "POST", "/messages", { text: "// Unheard", mode: "steer" }),
+    ).toBe(202);
+    const told = await feed.nextThat(
+      (item) => item.event === "thread" && item.data.thread.id === w.threadId,
+    );
+    expect(told.data.thread.status).toBe("unread");
+    expect((await w.listed()).status).toBe("unread");
+    await feed.close();
+  });
 });

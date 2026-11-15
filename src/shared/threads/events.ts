@@ -93,7 +93,7 @@ export type ToolRisk = z.infer<typeof toolRiskSchema>;
 
 // Why a tool call did not run: someone denied it, the approval no longer held when it was to run,
 // the run ended first, or someone skipped the questions it asked.
-export const toolDenialSchema = z.enum(["denied", "stale", "stopped", "skipped"]);
+export const toolDenialSchema = z.enum(["denied", "stale", "cancelled", "skipped"]);
 
 // An approval for this call alone, or for later calls of the tool in the thread until input that
 // needs approval arrives.
@@ -103,13 +103,13 @@ export type ToolScope = z.infer<typeof toolScopeSchema>;
 
 // A person whose words steered an agent's message, and the agents those words came through on the
 // way, nearest the person first; none when they wrote in the sending agent's own thread.
-export const steeringSchema = z.object({
+export const influencerSchema = z.object({
   userId: z.string(),
   name: z.string(),
   via: z.array(z.string()),
 });
 
-export type Steering = z.infer<typeof steeringSchema>;
+export type Influencer = z.infer<typeof influencerSchema>;
 
 // The agent that sent a message: a subagent, by the name it was given, or the agent of the thread
 // that started the subagents, named as that thread was.
@@ -141,7 +141,7 @@ export type Cause = z.infer<typeof causeSchema>;
 // watch was set on went idle; that a call it started in the background ended; or that a person changed
 // a task given to it; that a timer or schedule it set went off; or that a webhook it made was posted to; or, quietly, that a
 // person or another agent changed something it owns or watches, or the thread's model or title.
-export const notificationKindSchema = z.enum([
+export const noticeKindSchema = z.enum([
   "message",
   "agent.ended",
   "agent.failed",
@@ -149,28 +149,28 @@ export const notificationKindSchema = z.enum([
   "agent.idle",
   "call.ended",
   "task.changed",
-  "trigger.fired",
+  "schedule.fired",
   "webhook.received",
   "change",
 ]);
 
-export type NotificationKind = z.infer<typeof notificationKindSchema>;
+export type NoticeKind = z.infer<typeof noticeKindSchema>;
 
 // What made a notification: the agent whose thread it came from, and the call or the row there it
 // came of, where there is one.
-export const notificationSourceSchema = senderSchema.extend({
+export const noticeSourceSchema = senderSchema.extend({
   callId: z.string().optional(),
   // The other calls whose watch this notice answers, when watches fired as one.
   callIds: z.array(z.string()).optional(),
   rowId: z.string().optional(),
 });
 
-export type NotificationSource = z.infer<typeof notificationSourceSchema>;
+export type NoticeSource = z.infer<typeof noticeSourceSchema>;
 
 // Who a notification is shown as coming from, in one standard form: a person who changed something,
 // an agent that sent a message or report or made a change, or no one, for an outside or system
 // event. Older notifications carry none.
-export const notificationActorSchema = z.discriminatedUnion("kind", [
+export const noticeActorSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("person"), userId: z.string(), name: z.string() }),
   z.object({
     kind: z.literal("agent"),
@@ -185,7 +185,7 @@ export const notificationActorSchema = z.discriminatedUnion("kind", [
   }),
 ]);
 
-export type NotificationActor = z.infer<typeof notificationActorSchema>;
+export type NoticeActor = z.infer<typeof noticeActorSchema>;
 
 // What a notification about subagents tells, apart from its text, so it can be shown as parts:
 // the subagents it is about, for an idle watch whether it waited for all of them, for a failure
@@ -215,13 +215,14 @@ export const changeSchema = z.object({
 
 export type Change = z.infer<typeof changeSchema>;
 
-export const notificationPartsSchema = z.object({
+export const noticePartsSchema = z.object({
   // For a change, what was done to what, so its card can be told in parts; older ones have text only.
   change: changeSchema.optional(),
   // For a change, the tray's kind of what changed, so its row can open there.
-  tray: z.enum(["tasks", "triggers", "webhooks"]).optional(),
-  // For a schedule that fired or a webhook that was posted to, its id, to list its history.
-  trigger: z.string().optional(),
+  tray: z.enum(["tasks", "schedules", "webhooks"]).optional(),
+  // For a schedule that fired, or a webhook that was posted to, its id, to list its history.
+  scheduleId: z.string().optional(),
+  webhookId: z.string().optional(),
   subagents: z.array(z.object({ threadId: z.string(), name: z.string() })).optional(),
   when: z.enum(["all_idle", "any_idle"]).optional(),
   error: z.string().optional(),
@@ -239,7 +240,7 @@ export const notificationPartsSchema = z.object({
     .optional(),
 });
 
-export type NotificationParts = z.infer<typeof notificationPartsSchema>;
+export type NoticeParts = z.infer<typeof noticePartsSchema>;
 
 // The most characters of JSON a tool's result takes in the log; a larger one is kept apart from it.
 export const LARGE_RESULT_CHARS = 16_000;
@@ -264,18 +265,18 @@ export const eventDataSchemas = {
   // Something the thread's agent is told, with everyone whose words it carries, who count as
   // steering what the agent does with it. It waits like a person's message until the agent takes
   // it in. A message names whom it was sent to, and the first in a subagent's thread is its task.
-  notification: z.object({
-    kind: notificationKindSchema,
-    source: notificationSourceSchema,
-    actor: notificationActorSchema.optional(),
+  notice: z.object({
+    kind: noticeKindSchema,
+    source: noticeSourceSchema,
+    actor: noticeActorSchema.optional(),
     text: z.string(),
-    people: z.array(steeringSchema),
+    influence: z.array(influencerSchema),
     to: z.string().optional(),
     task: subagentTaskSchema.optional(),
     // False for one that does not start the agent: it is shown at once and the agent reads it at
     // its next model call, or its next run.
     wake: z.boolean().optional(),
-    ...notificationPartsSchema.shape,
+    ...noticePartsSchema.shape,
   }),
   // The thread's subagents sent each other as many messages as they may; more are refused. With
   // the call first refused, in its subagent's thread.
@@ -430,7 +431,7 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("message.changed"),
   eventSchema("message.withdrawn"),
   eventSchema("message.dropped"),
-  eventSchema("notification"),
+  eventSchema("notice"),
   eventSchema("subagent.limited"),
   eventSchema("message.admitted"),
   eventSchema("message.started"),

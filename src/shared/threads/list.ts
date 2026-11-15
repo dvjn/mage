@@ -12,7 +12,7 @@ import { threadSchema } from "@/shared/threads/thread.ts";
 // message, a finished reply or a failed run) and who wrote it (null for the agent), its last run's
 // failure while nothing has run since, how far the reader has seen, and whether they may decide on
 // the call the run waits for.
-export const threadActivitySchema = z.object({
+export const threadStandingSchema = z.object({
   run: z
     .object({
       status: z.enum(["queued", "running", "waiting"]),
@@ -24,10 +24,10 @@ export const threadActivitySchema = z.object({
   lastNotableBy: z.string().nullable(),
   failed: z.object({ seq: z.number().int().positive(), error: z.string() }).nullable(),
   lastSeenSeq: z.number().int().nonnegative(),
-  canApprove: z.boolean(),
+  needsYou: z.boolean(),
 });
 
-export type ThreadActivity = z.infer<typeof threadActivitySchema>;
+export type ThreadStanding = z.infer<typeof threadStandingSchema>;
 
 // Who has written in a thread: the few who wrote most recently, whoever wrote last first, each
 // saying whether they last wrote as a guest of the thread, and how many have in all.
@@ -78,7 +78,7 @@ export const listedSubagentSchema = subagentSummarySchema.extend({
   updatedAt: z.iso.datetime(),
   shownModel: shownModelSchema.nullable(),
   participants: threadParticipantsSchema,
-  activity: threadActivitySchema,
+  standing: threadStandingSchema,
   status: threadStatusSchema,
 });
 
@@ -90,7 +90,7 @@ export type ListedSubagent = z.infer<typeof listedSubagentSchema>;
 export const threadListItemSchema = threadSchema.extend({
   shownModel: shownModelSchema.nullable(),
   participants: threadParticipantsSchema,
-  activity: threadActivitySchema,
+  standing: threadStandingSchema,
   status: threadStatusSchema,
   subagents: z.array(listedSubagentSchema).optional(),
 });

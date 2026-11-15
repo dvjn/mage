@@ -5,20 +5,20 @@
 import * as z from "zod";
 
 import { askAnswersSchema } from "@/shared/ask.ts";
-import { backgroundWorkSchema } from "@/shared/calls.ts";
+import { workSchema } from "@/shared/jobs.ts";
 import { subagentSummarySchema } from "@/shared/subagents.ts";
 import {
   deliverySchema,
   failureKindSchema,
-  notificationKindSchema,
-  notificationPartsSchema,
+  noticeKindSchema,
+  noticePartsSchema,
   subagentTaskSchema,
   replyStatusSchema,
   senderSchema,
   toolRiskSchema,
   toolScopeSchema,
   usageSchema,
-  notificationActorSchema,
+  noticeActorSchema,
 } from "@/shared/threads/events.ts";
 import { toolConnectionSchema } from "@/shared/tools.ts";
 
@@ -148,9 +148,19 @@ const callRowSchema = z.object({
   input: z.unknown(),
   // For a call that waits, the risk its tool's policy gives it now.
   risk: toolRiskSchema,
-  waits: z.boolean(),
   requestedAt: z.string(),
-  state: z.enum(["pending", "allowed", "denied", "ran", "failed", "stale", "stopped", "skipped"]),
+  state: z.enum([
+    "waiting",
+    "ready",
+    "denied",
+    "completed",
+    "failed",
+    "stale",
+    "cancelled",
+    "skipped",
+  ]),
+  // For a waiting call, whether it waits for a person's decision or for answers to its questions.
+  waitsFor: z.enum(["decision", "answer"]).optional(),
   decision: z
     .object({
       allow: z.boolean(),
@@ -176,7 +186,7 @@ const callRowSchema = z.object({
   ranAs: personSchema.optional(),
   standingOn: z.string().optional(),
   // For a call that runs in the background, its card.
-  background: backgroundWorkSchema.optional(),
+  work: workSchema.optional(),
   // Whether the reader may move the call, which is running or waits for approval, to the
   // background.
   canBackground: z.boolean().optional(),
@@ -188,7 +198,7 @@ const callRowSchema = z.object({
   connection: toolConnectionSchema.optional(),
   // For a waiting call that other agents' messages steered, everyone whose words steered it, and
   // the agents their words passed through on the way.
-  steering: z.array(z.object({ name: z.string(), via: z.array(z.string()) })).optional(),
+  influence: z.array(z.object({ name: z.string(), via: z.array(z.string()) })).optional(),
   // For a call that started a subagent, the subagent as it is now.
   subagent: subagentSummarySchema.optional(),
   // For a subagent call, where it had its effect, in the threads the reader may read.
@@ -252,15 +262,15 @@ const sentBySchema = z.object({
 // to, and the first of them is its task, with what the subagent was set to do beside it. Where the
 // reader may read the thread it came from, it links back: to the call that made it, with what the
 // call's tool is called and what the thread goes by, or to the row it came of.
-const relayRowSchema = z.object({
+const noticeRowSchema = z.object({
   ...rowFields,
-  kind: z.literal("relay"),
+  kind: z.literal("notice"),
   waiting: waitingMarkSchema.optional(),
   postedAt: z.string(),
-  type: notificationKindSchema,
+  type: noticeKindSchema,
   from: senderSchema,
   // Who it is shown as coming from; older notifications carry none.
-  actor: notificationActorSchema.optional(),
+  actor: noticeActorSchema.optional(),
   to: z.string().optional(),
   text: z.string(),
   task: subagentTaskSchema.optional(),
@@ -269,7 +279,7 @@ const relayRowSchema = z.object({
   // For a background call that ended, the call as the reader may read it where it was made.
   // Shown on its own, so it carries no place in this transcript.
   ran: callRowSchema.omit({ order: true, turn: true }).optional(),
-  ...notificationPartsSchema.shape,
+  ...noticePartsSchema.shape,
 });
 
 // The thread's subagents sent each other as many messages as they may, linking to the call first
@@ -313,7 +323,7 @@ export const shownRowSchema = z.discriminatedUnion("kind", [
   failureRowSchema,
   stopRowSchema,
   compactionRowSchema,
-  relayRowSchema,
+  noticeRowSchema,
   limitRowSchema,
   forkRowSchema,
   restoreRowSchema,
@@ -326,7 +336,7 @@ export type AgentRow = z.infer<typeof agentRowSchema>;
 export type ToolRow = z.infer<typeof toolRowSchema>;
 export type FailureRow = z.infer<typeof failureRowSchema>;
 export type CompactionRow = z.infer<typeof compactionRowSchema>;
-export type RelayRow = z.infer<typeof relayRowSchema>;
+export type NoticeRow = z.infer<typeof noticeRowSchema>;
 export type LimitRow = z.infer<typeof limitRowSchema>;
 export type ForkRow = z.infer<typeof forkRowSchema>;
 export type RestoreRow = z.infer<typeof restoreRowSchema>;
@@ -334,7 +344,7 @@ export type AgentTurn = z.infer<typeof agentTurnSchema>;
 
 // An input made for the agent that it has not taken in yet, whatever its kind: the row it will show
 // as, marked as waiting.
-export const waitingRowSchema = z.discriminatedUnion("kind", [humanRowSchema, relayRowSchema]);
+export const waitingRowSchema = z.discriminatedUnion("kind", [humanRowSchema, noticeRowSchema]);
 
 export type WaitingRow = z.infer<typeof waitingRowSchema>;
 

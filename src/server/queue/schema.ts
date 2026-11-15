@@ -17,7 +17,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { at, NOW } from "@/server/db/columns.ts";
-import type { Steering } from "@/shared/threads/events.ts";
+import type { Influencer } from "@/shared/threads/events.ts";
 import { machine } from "@/server/sync/machine.ts";
 import { thread, threadBranch } from "@/server/threads/schema.ts";
 
@@ -119,7 +119,7 @@ export const threadWord = pgTable(
     ord: integer("ord").notNull(),
     userId: text("user_id").notNull(),
     name: text("name"),
-    via: jsonb("via").$type<Steering["via"]>().notNull(),
+    via: jsonb("via").$type<Influencer["via"]>().notNull(),
     // For an answer, where the call it answers was asked for.
     callSeq: integer("call_seq"),
   },

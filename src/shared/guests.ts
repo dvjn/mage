@@ -7,7 +7,7 @@ import * as z from "zod";
 import { pageSchema } from "@/shared/paging.ts";
 import {
   shownModelSchema,
-  threadActivitySchema,
+  threadStandingSchema,
   threadStatusSchema,
   threadParticipantsSchema,
 } from "@/shared/threads/list.ts";
@@ -149,7 +149,7 @@ export const sharedThreadSchema = threadSchema.extend({
   accessUntil: z.iso.datetime().nullable(),
   shownModel: shownModelSchema.nullable(),
   participants: threadParticipantsSchema,
-  activity: threadActivitySchema,
+  standing: threadStandingSchema,
   status: threadStatusSchema,
 });
 

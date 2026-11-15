@@ -1,16 +1,16 @@
 // Writes to threads' event logs: appends events in one transaction, then tells the thread's
-// followers about each, so nothing is announced that was not stored, and people's inboxes that the
+// followers about each, so nothing is announced that was not stored, and people's feeds that the
 // thread may read differently now.
 
 import type { Sync, Transact } from "@/server/sync/sync.ts";
 import type { Signals } from "@/server/sync/signals.ts";
 import type { ThreadEventSummary } from "@/shared/threads/events.ts";
 
-import type { NewEvent, StoredEvent, ThreadStore } from "./service.ts";
+import type { NewEvent, StoredEvent, ThreadStore } from "./types.ts";
 
 export interface ThreadLogOptions {
   threads: Pick<ThreadStore, "append" | "lock">;
-  bus: Signals;
+  signals: Signals;
   transact: Transact;
   ordered: Sync["ordered"];
 }
@@ -43,7 +43,7 @@ export function eventSummary(event: StoredEvent): ThreadEventSummary {
 }
 
 export function createThreadLog(options: ThreadLogOptions) {
-  const { threads, bus, transact, ordered } = options;
+  const { threads, signals, transact, ordered } = options;
 
   return {
     // Runs `work` in one transaction with the events it appends, to the branch named or else the
@@ -67,9 +67,9 @@ export function createThreadLog(options: ThreadLogOptions) {
           return stored;
         });
         // Told as the write commits, and only if it does.
-        for (const event of appended) bus.publish(threadId, { kind: "event", seq: event.seq });
+        for (const event of appended) signals.publish(threadId, { kind: "event", seq: event.seq });
         // Run changes made in the write, such as waiting for a decision, show too.
-        bus.activity({ threadId });
+        signals.changed({ threadId });
         return result;
       });
       return { result, events: appended.map(eventSummary) };

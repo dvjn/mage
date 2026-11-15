@@ -10,45 +10,30 @@ import { rmSync } from "node:fs";
 import { eq, sql } from "drizzle-orm";
 import { afterEach, expect } from "vite-plus/test";
 
+import type { ArtifactPreviewer } from "@/server/artifacts/preview.ts";
 import type { RunWorkerOptions } from "@/server/execution/worker.ts";
 import type { AfterCommit } from "@/server/sync/sync.ts";
-import type { Toolset } from "@/server/agent/tools.ts";
+import type { Toolset } from "@/server/tools/registry.ts";
 import { compose, type Systems } from "@/server/compose.ts";
 import { createCipher } from "@/server/kernel/cipher.ts";
-import { ServiceError } from "@/server/kernel/errors.ts";
 import type { RunTraces } from "@/server/kernel/tracing.ts";
 import { createLogger } from "@/server/kernel/logger.ts";
-import type { Connections } from "@/server/models/connections.ts";
-import {
-  defaultsOf,
-  type Models,
-  type ModelList,
-  pickReplyModel,
-} from "@/server/models/service.ts";
 import type { OrgRole } from "@/server/orgs/directory.ts";
 import * as schema from "@/server/schema.ts";
 import { eventSummary } from "@/server/threads/log.ts";
-import { transcriptOf } from "@/shared/transcript.ts";
-import type { Space, SpaceRole } from "@/server/spaces/service.ts";
-import { type ModelPair, replyCandidates } from "@/shared/models.ts";
-import type { Effort } from "@/shared/threads/thread.ts";
+import { transcriptOf, waitingIn } from "@/shared/transcript.ts";
 
 import { createFixtures, gitStandIn } from "../../../mock/git.ts";
 import { mcpStandIn } from "../../../mock/mcp.ts";
 import { scimClient } from "../../../mock/directory.ts";
 import { openTestDatabase, type TestDatabase } from "./database.ts";
+import type { SpaceRole } from "@/server/spaces/service.ts";
 import { invariants } from "./invariants.ts";
-import { wordsIn } from "@/server/agent/tool-authority.ts";
-import { steeringIn, steeringOf } from "@/server/calls/influence.ts";
+import { wordsIn } from "@/server/tools/authority.ts";
+import { influenceIn, influenceOf } from "@/server/calls/influence.ts";
 import { createSeed, joinSpace, seedRoutes } from "./seed.ts";
+import { standInModels } from "./models.ts";
 import { scriptedModel } from "./scripted-model.ts";
-
-// Never called by these tests, but started and stopped with the server.
-const unusedConnections = {
-  start: async () => {},
-  stop: async () => {},
-} as unknown as Connections;
-const unusedModels = {} as Models;
 
 const baseUrl = "http://localhost:4783";
 export const ARTIFACT_ORIGIN = "http://localhost:4784";
@@ -149,17 +134,20 @@ async function rowsAgainstLogs({ db, queue, threadStore }: Systems) {
   const ids = (await db.execute<{ id: string }>(sql`select id from thread order by id`)).rows;
   const disagree: { threadId: string; rows: string[]; log: string[] }[] = [];
   for (const { id } of ids) {
-    const {
-      pending,
-      inbox,
-      rows: folded,
-    } = transcriptOf((await threadStore.eventsAfter(id, 0)).map(eventSummary));
-    const log = [...pending, ...inbox].map((input) => input.id).toSorted();
-    const rows = (await queue.waiting(id)).map((input) => input.id).toSorted();
+    const events = (await threadStore.eventsAfter(id, 0)).map(eventSummary);
+    const { rows: folded } = transcriptOf(events);
+    // What waits, by id with what it says: the fold of the whole log against the rows.
+    const { messages, notices } = waitingIn(events);
+    const log = [...messages, ...notices]
+      .map((input) => JSON.stringify([input.id, input]))
+      .toSorted();
+    const rows = (await queue.waiting(id))
+      .map((input) => JSON.stringify([input.id, input.message ?? input.notice ?? null]))
+      .toSorted();
     if (JSON.stringify(rows) !== JSON.stringify(log)) disagree.push({ threadId: id, rows, log });
     const words = await queue.words(id);
-    const byRows = [wordsKey(words), JSON.stringify(steeringOf(words))];
-    const byFold = [wordsKey(wordsIn(folded)), JSON.stringify(steeringIn(folded))];
+    const byRows = [wordsKey(words), JSON.stringify(influenceOf(words))];
+    const byFold = [wordsKey(wordsIn(folded)), JSON.stringify(influenceIn(folded))];
     if (JSON.stringify(byRows) !== JSON.stringify(byFold)) {
       disagree.push({ threadId: id, rows: byRows, log: byFold });
     }
@@ -185,9 +173,9 @@ async function rowsAgainstLogs({ db, queue, threadStore }: Systems) {
     const state =
       row?.kind !== "tool"
         ? "missing"
-        : row.state === "allowed" || (row.state === "pending" && !row.waits)
+        : row.state === "ready"
           ? "open"
-          : row.state === "pending"
+          : row.state === "waiting"
             ? "waiting"
             : "ended";
     const expected =
@@ -224,103 +212,20 @@ export function setup(
     testRoutes = true,
     // What ties runs' spans to what woke their threads; runs are not traced without it.
     traces = undefined as RunTraces | undefined,
+    // How often open streams beat, and check who may still read them.
+    heartbeatMs = 20,
+    // A browser artifacts are previewed in; none by default.
+    previewer = undefined as ArtifactPreviewer | undefined,
+    // Waited on before each call out of the instance: to a model, an MCP server, a git host or the
+    // web.
+    outside = undefined as (() => Promise<void>) | undefined,
+    // The web as the instance reaches it, providers' sign-in endpoints among it; unreachable when
+    // not given.
+    fetch: web = undefined as typeof fetch | undefined,
   } = {},
 ) {
   const shared = database ?? openTestDatabase();
   const logger = createLogger({ write() {} });
-  // The models the org can use, and its defaults.
-  const org = {
-    defaultModel: null as string | null,
-    defaultEffort: null as Effort | null,
-    models: ["codex/gpt-big"],
-    // Refs of models that take no effort.
-    plain: [] as string[],
-    // Refs turned off.
-    off: [] as string[],
-    // The slug each connection goes by in aliases, by the prefix of its refs.
-    slugs: {} as Record<string, string>,
-    titleModel: null as string | null,
-    automaticTitleModel: null as string | null,
-  };
-  const prefixOf = (ref: string) => ref.slice(0, ref.indexOf("/"));
-  const idOf = (ref: string) => ref.slice(ref.indexOf("/") + 1);
-  const canonical = (ref: string) => {
-    const prefix = Object.keys(org.slugs).find((one) => org.slugs[one] === prefixOf(ref));
-    return prefix ? `${prefix}/${idOf(ref)}` : ref;
-  };
-  const alias = (given: string) => {
-    const ref = canonical(given);
-    return `${org.slugs[prefixOf(ref)] ?? prefixOf(ref)}/${idOf(ref)}`;
-  };
-  const canonicalRef = async (_orgId: string, ref: string) => canonical(ref);
-  const aliasOf = async (_orgId: string, given: string) => alias(given);
-  // A ref's host by its prefix: the ChatGPT sign-in's, and an Anthropic key's, named `claude`.
-  const throughOf = (ref: string) =>
-    prefixOf(ref) === "codex" ? "ChatGPT" : prefixOf(ref) === "claude" ? "Anthropic" : null;
-  const modelLabels = async () => async (given: string) => {
-    const ref = canonical(given);
-    return throughOf(ref) && `${idOf(ref)} · ${throughOf(ref)}`;
-  };
-  const models = {
-    aliasOf,
-    canonicalRef,
-    modelLabels,
-    resolveModels: async (_orgId: string): Promise<ModelList> => ({
-      models: org.models
-        .filter((ref) => !org.off.includes(ref))
-        .map((ref) => ({
-          id: ref.slice(ref.indexOf("/") + 1),
-          ref,
-          alias: alias(ref),
-          name: ref.slice(ref.indexOf("/") + 1),
-          connectionId: ref.slice(0, ref.indexOf("/")),
-          host: "codex",
-          maker: "openai",
-          authKind: "oauth",
-          connectionLabel: "ChatGPT",
-          connectionName: null,
-          // Only a model said to take no effort says so.
-          ...(org.plain.includes(ref) && { reasoning: false }),
-        })),
-      errors: [],
-      turnedOff: [],
-    }),
-    defaultModel: async () => org.defaultModel,
-    defaults: async (space: Pick<Space, "defaultModel" | "defaultEffort">) =>
-      defaultsOf(space, org),
-    replyModel: (space: Pick<Space, "defaultModel" | "defaultEffort">, own: ModelPair) =>
-      replyModel(space, own),
-    availability: (_orgId: string, ref: string) =>
-      Promise.resolve({
-        ref,
-        name: ref.slice(ref.indexOf("/") + 1),
-        status: org.off.includes(ref) ? ("off" as const) : ("ok" as const),
-      }),
-    // A ref's maker and host by its prefix: the ChatGPT sign-in's models are OpenAI's, and those
-    // of an Anthropic key, named `claude`, Anthropic's.
-    shownModels: async () => (ref: string) => {
-      const prefix = ref.slice(0, ref.indexOf("/"));
-      const host = prefix === "codex" ? "codex" : prefix === "claude" ? "anthropic" : null;
-      const maker = host && (host === "codex" ? "openai" : "anthropic");
-      const connection = host && (host === "codex" ? "ChatGPT" : "Anthropic API key");
-      return { ref, name: ref.slice(ref.indexOf("/") + 1), maker, host, connection } as const;
-    },
-    requireModel: (_orgId: string, ref: string) =>
-      org.models.includes(ref)
-        ? Promise.resolve()
-        : Promise.reject(new ServiceError(400, `${ref} is not a model this org can use.`)),
-  };
-  // The model a run replies with, as the models service decides it, from the refs turned off.
-  function replyModel(space: Pick<Space, "defaultModel" | "defaultEffort">, own: ModelPair) {
-    return pickReplyModel(
-      replyCandidates(
-        own,
-        { model: space.defaultModel, effort: space.defaultEffort },
-        { model: org.defaultModel, effort: org.defaultEffort },
-      ),
-      (ref) => models.availability("", ref),
-    );
-  }
   // The stand-in MCP server, reached while it is up; anything else cannot be reached.
   const mcpNetwork = {
     up: true,
@@ -329,6 +234,7 @@ export function setup(
     requests: [] as Request[],
   };
   const mcpFetch = async (input: string | URL, init?: RequestInit) => {
+    await outside?.();
     const request = new Request(input, init);
     if (!mcpNetwork.up || new URL(request.url).origin !== MCP_ORIGIN) {
       throw new TypeError("fetch failed", { cause: { code: "ECONNREFUSED" } });
@@ -338,11 +244,19 @@ export function setup(
   };
   const model = scriptedModel();
   const titleModel = scriptedModel();
-  // The model refs threads were named with.
-  const titledWith: string[] = [];
   const logLines: object[] = [];
-  // A test sets the clock and runs ticks itself, as one more instance would with `triggersFor`.
+  // A test sets the clock and runs ticks itself, as one more instance would.
   const clock = { now: new Date() };
+  const cipher = createCipher({ version: 1, key: Buffer.alloc(32, 7) });
+  const providers = standInModels({
+    database: shared.of ?? shared,
+    ...(outside && { before: outside }),
+    db: shared.db,
+    cipher,
+    model,
+    titleModel,
+    now: () => clock.now,
+  });
   // Stands for the server stopping.
   const shutdown = new AbortController();
   const systems = compose({
@@ -358,32 +272,33 @@ export function setup(
       operatorEmails,
       fakeModels: false,
     },
-    cipher: createCipher({ version: 1, key: Buffer.alloc(32, 7) }),
+    cipher,
     logger,
-    fetch: () => Promise.reject(new TypeError("fetch failed")),
+    fetch: (async (input: string | URL | Request, init?: RequestInit) => {
+      await outside?.();
+      if (!web) throw new TypeError("fetch failed");
+      return web(input, init);
+    }) as typeof fetch,
     shutdown: shutdown.signal,
     ...(traces && { traces }),
+    ...(previewer && { previewer }),
     ports: {
-      models: { ...unusedModels, ...models },
-      runModels: { open: () => model.open(), replyModel },
-      connections: unusedConnections,
+      catalogs: providers.catalogs,
+      gateways: providers.gateways,
       mcpFetch: mcpFetch as typeof fetch,
-      gitFetch,
-      titleModels: titles && {
-        defaultModel: models.defaultModel,
-        chosenTitleModel: async () => org.titleModel,
-        automaticTitleModel: () => Promise.resolve(org.automaticTitleModel),
-        open: (_orgId, ref) => {
-          titledWith.push(ref);
-          return titleModel.open();
-        },
-      },
+      gitFetch: outside
+        ? ((async (input: string | URL | Request, init?: RequestInit) => {
+            await outside();
+            return gitFetch(input, init);
+          }) as typeof fetch)
+        : gitFetch,
     },
     options: {
       now: () => clock.now,
+      titles,
       toolsets,
       ...(liveAfterCommit && { liveAfterCommit }),
-      heartbeatMs: 20,
+      heartbeatMs,
       pingDatabase: () => Promise.resolve(true),
       worker: {
         flushMs: 1,
@@ -394,20 +309,29 @@ export function setup(
     },
   });
   opened.add(systems);
+  providers.attach(systems);
   const { app, spaceStore, db } = systems;
   // Subscriptions still open.
   const listening = {
     get count() {
-      return systems.bus.subscriptions();
+      return systems.signals.subscriptions();
     },
   };
+  // The workers made here, stopped as the test ends.
+  const workers = new Set<{ stop(): Promise<void> }>([systems.worker]);
   // A worker as a server process would start it, sharing this app's stores.
   function makeWorker(options: Partial<RunWorkerOptions> = {}) {
     const made = systems.makeWorker(options);
     working.add(made);
+    workers.add(made);
     return made;
   }
   working.add(systems.worker);
+  // Neither stopped nor checked as the test ends, as an instance that died is not.
+  function retire() {
+    opened.delete(systems);
+    for (const worker of workers) working.delete(worker);
+  }
 
   async function signUp(name: string, email: string) {
     const res = await app.request("/api/auth/sign-up/email", {
@@ -489,11 +413,13 @@ export function setup(
     database: shared,
     shutdown,
     scim,
-    org,
+    // The models the providers list and the org chooses, in place of the models service.
+    models: providers.knobs,
     model,
     titleModel,
-    titledWith,
+    titledWith: providers.titledWith,
     makeWorker,
+    retire,
     schedulesFor: systems.makeSchedules,
     logLines,
     listening,

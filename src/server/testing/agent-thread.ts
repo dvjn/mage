@@ -4,7 +4,7 @@
 import { expect, onTestFinished } from "vite-plus/test";
 
 import { eventSummary } from "@/server/threads/log.ts";
-import { transcriptOf } from "@/shared/transcript.ts";
+import { transcriptOf, waitingIn } from "@/shared/transcript.ts";
 
 import { setup } from "./workspace.ts";
 import { personLabel } from "@/shared/people.ts";
@@ -14,7 +14,7 @@ export async function agentThread(
   harness: Parameters<typeof setup>[1] = {},
 ) {
   const workspace = setup(options, harness);
-  workspace.org.defaultModel = "codex/gpt-big";
+  await workspace.models.default("codex/gpt-big");
   const ada = await workspace.signUp("Ada Lovelace", "ada@example.com");
   const space = await workspace.yourSpace(ada.cookie);
   const thread = await workspace.createThread(ada.cookie, space.id);
@@ -73,7 +73,7 @@ export async function agentThread(
     onTestFinished(() => worker.stop());
   }
   async function pending() {
-    return transcriptOf(await events()).pending.map(
+    return waitingIn(await events()).messages.map(
       (message) => `${personLabel(message.author)} (${message.mode}): ${message.text}`,
     );
   }

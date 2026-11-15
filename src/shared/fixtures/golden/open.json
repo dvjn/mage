@@ -43,7 +43,7 @@
       "risk": "normal",
       "waits": false,
       "requestedAt": "2026-01-01T00:00:06.000Z",
-      "state": "pending",
+      "state": "ready",
       "decision": null,
       "output": null,
       "ms": null,
@@ -67,7 +67,7 @@
       "risk": "ask",
       "waits": true,
       "requestedAt": "2026-01-01T00:00:07.000Z",
-      "state": "pending",
+      "state": "waiting",
       "decision": null,
       "output": null,
       "ms": null,
@@ -90,7 +90,7 @@
       "risk": "ask",
       "waits": true,
       "requestedAt": "2026-01-01T00:00:08.000Z",
-      "state": "pending",
+      "state": "waiting",
       "decision": null,
       "output": null,
       "ms": null,
@@ -118,7 +118,7 @@
       }
     },
     {
-      "kind": "relay",
+      "kind": "notice",
       "id": "e14",
       "seq": 14,
       "postedAt": "2026-01-01T00:00:14.000Z",
@@ -129,12 +129,12 @@
         "main": true
       },
       "text": "A task was added.",
-      "steeredBy": [],
+      "influence": [],
       "silent": true,
       "turn": null
     }
   ],
-  "pending": [
+  "waitingMessages": [
     {
       "id": "e10",
       "seq": 10,
@@ -176,7 +176,7 @@
       "mode": "interrupt"
     }
   ],
-  "inbox": [
+  "waitingNotices": [
     {
       "id": "e13",
       "seq": 13,
@@ -188,7 +188,7 @@
         "main": true
       },
       "text": "A call finished.",
-      "steeredBy": [],
+      "influence": [],
       "call": {
         "threadId": "thread",
         "callId": "j-1"
@@ -205,7 +205,7 @@
         "main": true
       },
       "text": "A task was added.",
-      "steeredBy": [],
+      "influence": [],
       "silent": true
     }
   ],

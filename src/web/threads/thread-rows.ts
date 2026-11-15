@@ -4,7 +4,7 @@
 // pages read so far and the live rows that arrived while it was on its way. Newer changes of a row
 // win, as its seq says. Another branch made current replaces them all.
 
-import type { BackgroundItem } from "@/shared/calls.ts";
+import type { ActivityItem } from "@/shared/jobs.ts";
 import type { ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
 import { ROWS_PAGE, type RowsPage, type RowsUpdate, type ShownRow } from "@/shared/threads/rows.ts";
 
@@ -59,17 +59,17 @@ export function withHead(detail: ThreadDetail, head: ThreadHead): ThreadDetail {
 
 // The detail with each background call's row showing the job as the dock's feed has it now, since
 // a job ends without its row changing.
-export function withBackground(detail: ThreadDetail, items: BackgroundItem[]): ThreadDetail {
+export function withBackground(detail: ThreadDetail, items: ActivityItem[]): ThreadDetail {
   const jobs = new Map(
-    items.filter((item) => item.work.kind === "call").map((item) => [item.rowId, item.work]),
+    items.filter((item) => item.work.kind === "job").map((item) => [item.rowId, item.work]),
   );
   let changed = false;
   const rows = detail.rows.map((row) => {
     if (row.kind !== "tool") return row;
-    const work = row.background ? jobs.get(row.id) : undefined;
-    if (!work || JSON.stringify(work) === JSON.stringify(row.background)) return row;
+    const work = row.work ? jobs.get(row.id) : undefined;
+    if (!work || JSON.stringify(work) === JSON.stringify(row.work)) return row;
     changed = true;
-    return { ...row, background: work };
+    return { ...row, work };
   });
   return changed ? { ...detail, rows } : detail;
 }

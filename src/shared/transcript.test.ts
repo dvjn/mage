@@ -30,7 +30,7 @@ describe("agentTurnOf", () => {
   });
 
   it("starts a new agent turn after received messages and notifications", () => {
-    const rows = [human, words, row("relay"), tool, row("relay"), thinking];
+    const rows = [human, words, row("notice"), tool, row("notice"), thinking];
     expect(rows.map((_, i) => agentTurnOf(rows, i)?.continued ?? null)).toEqual([
       null,
       false,
@@ -39,8 +39,8 @@ describe("agentTurnOf", () => {
       null,
       false,
     ]);
-    expect(agentTurnOf([row("relay"), words], 1)?.continued).toBe(false);
-    expect(agentTurnOf([words, row("relay"), human, thinking], 3)?.continued).toBe(false);
+    expect(agentTurnOf([row("notice"), words], 1)?.continued).toBe(false);
+    expect(agentTurnOf([words, row("notice"), human, thinking], 3)?.continued).toBe(false);
   });
 
   it("names the model of the turn's reply from its first call", () => {
@@ -199,11 +199,11 @@ describe("createFold", () => {
       parts: [{ type: "text", text: "Checking" }],
       status: "completed",
     });
-    add("notification", {
+    add("notice", {
       kind: "agent.ended",
       source: { threadId: "child", name: "Reviewer", main: false },
       text: "Reviewer ended its run without reporting.",
-      people: [],
+      influence: [],
       wake: false,
     });
     add("message.started", { runId: "r2", messageId: "second", model: "a/b" });
@@ -237,39 +237,39 @@ describe("createFold", () => {
     seq = 0;
     const fold = createFold();
     fold.add(
-      event("notification", {
+      event("notice", {
         kind: "message",
         source: { threadId: "h1", name: "Writer", main: false, callId: "c1" },
         text: "Draft one",
-        people: [],
+        influence: [],
         to: "agent",
       }),
     );
     fold.add(
-      event("notification", {
+      event("notice", {
         kind: "agent.ended",
         source: { threadId: "h2", name: "Critic", main: false, rowId: "r1" },
         text: "Critic ended its run without reporting.",
-        people: [{ userId: "ada", name: "Ada Lovelace", via: ["Agent", "Critic"] }],
+        influence: [{ userId: "ada", name: "Ada Lovelace", via: ["Agent", "Critic"] }],
       }),
     );
-    expect(fold.transcript().inbox).toHaveLength(2);
+    expect(fold.waiting().notices).toHaveLength(2);
     fold.add(event("message.admitted", { ...run, messageIds: ["e1", "e2"] }));
-    const { rows, inbox } = fold.transcript();
-    expect(inbox).toEqual([]);
+    const { rows } = fold.transcript();
+    expect(fold.waiting().notices).toEqual([]);
     expect(rows).toEqual([
       expect.objectContaining({
-        kind: "relay",
+        kind: "notice",
         type: "message",
         text: "Draft one",
         call: { threadId: "h1", callId: "c1" },
       }),
       expect.objectContaining({
-        kind: "relay",
+        kind: "notice",
         type: "agent.ended",
         from: { threadId: "h2", name: "Critic", main: false },
         rowId: "r1",
-        steeredBy: [{ userId: "ada", name: "Ada Lovelace", via: ["Agent", "Critic"] }],
+        influence: [{ userId: "ada", name: "Ada Lovelace", via: ["Agent", "Critic"] }],
       }),
     ]);
   });

@@ -33,7 +33,7 @@ export function useRowLit(rowId: string | undefined) {
 export const lineKey = (id: string) => `line:${id}`;
 
 // What a run of other agents' messages is held open by, for each of its messages.
-export const relayRunKey = (id: string) => `run:${id}`;
+export const noticeRunKey = (id: string) => `run:${id}`;
 
 // The element a row shows as, which a link to the row scrolls to.
 export const rowElementId = (id: string) => `row-${id}`;

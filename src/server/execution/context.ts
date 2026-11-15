@@ -20,11 +20,10 @@
 import type { Effort, ModelMessage, ModelToolResult } from "@/server/models/gateway.ts";
 import { valueForAgent } from "@/shared/mcp.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
-import { LOAD_SKILL } from "@/shared/skills.ts";
 import { SEND_SUBAGENT_MESSAGE } from "@/shared/subagents.ts";
 import { QUIET_PREFIX } from "@/shared/threads/events.ts";
 import { wireToolName } from "@/shared/tools.ts";
-import type { HumanRow, LimitRow, RelayRow, ToolRow, TranscriptRow } from "@/shared/transcript.ts";
+import type { HumanRow, LimitRow, NoticeRow, ToolRow, TranscriptRow } from "@/shared/transcript.ts";
 
 import { readOf } from "./compaction.ts";
 import { personLabel } from "@/shared/people.ts";
@@ -46,10 +45,10 @@ export function humanMessage(row: Pick<HumanRow, "author" | "text" | "command">)
 
 // A notification as the agent reads it: another agent's message named for its sender, the agent
 // that started this subagent or a subagent, and anything else as what it tells.
-export function notificationLine(row: Pick<RelayRow, "type" | "from" | "text" | "last">) {
+export function noticeLine(row: Pick<NoticeRow, "type" | "from" | "text" | "last">) {
   if (row.type === "call.ended")
     return row.last ? `${row.text}\n\nResult:\n\n${row.last}` : row.text;
-  if (row.type === "trigger.fired") return row.last ? `${row.text}:\n\n${row.last}` : row.text;
+  if (row.type === "schedule.fired") return row.last ? `${row.text}:\n\n${row.last}` : row.text;
   // What was posted came from outside and is no one's words, so it is fenced off as data.
   if (row.type === "webhook.received") {
     const payload = row.last ?? "";
@@ -64,15 +63,15 @@ export function notificationLine(row: Pick<RelayRow, "type" | "from" | "text" | 
 }
 
 // What heads the notifications the agent takes in together.
-export const NOTIFICATIONS_HEADING = "[Notifications] From agents and tools, not from a person.";
+export const NOTICES_HEADING = "[Notifications] From agents and tools, not from a person.";
 
 // The notifications the agent took in together, as one message.
-export function notificationsMessage(
-  rows: readonly Pick<RelayRow, "type" | "from" | "text">[],
+export function noticesMessage(
+  rows: readonly Pick<NoticeRow, "type" | "from" | "text">[],
 ): UserMessage {
   return {
     role: "user",
-    text: [NOTIFICATIONS_HEADING, ...rows.map(notificationLine)].join("\n\n"),
+    text: [NOTICES_HEADING, ...rows.map(noticeLine)].join("\n\n"),
   };
 }
 
@@ -153,6 +152,12 @@ export interface DeferredServerTools {
   tools: { name: string; description: string }[];
 }
 
+// A skill as the agent is told of it.
+export interface SkillLine {
+  name: string;
+  description: string;
+}
+
 // What the org and the space tell the agent, and the skills it may load there.
 export interface Guidance {
   org: string;
@@ -161,7 +166,9 @@ export interface Guidance {
   mcpServers?: McpServerGuidance[];
   // The servers' tools left out of the request until the agent turns them on, by server.
   deferredTools?: DeferredServerTools[];
-  skills?: { name: string; description: string }[];
+  // The skills the agent may load, after the line that says how, which names the tools it means
+  // as the model knows them.
+  skills?: { line: (named: (toolId: string) => string) => string; list: SkillLine[] };
   // What Mage's own toolsets on in the space tell it.
   toolsets?: ToolsetGuidance[];
   // Whether the agent is a subagent.
@@ -247,11 +254,11 @@ export function instructionsFor(guidance: Guidance = NO_GUIDANCE) {
       ].join("\n"),
     );
   }
-  if (guidance.skills?.length) {
+  if (guidance.skills?.list.length) {
     sections.push(
       [
-        `Skills: instructions for kinds of tasks. When a task matches one, load it with ${named(LOAD_SKILL)} before you start.`,
-        ...guidance.skills.map((skill) => `- ${skill.name}: ${skill.description}`),
+        guidance.skills.line(named),
+        ...guidance.skills.list.map((skill) => `- ${skill.name}: ${skill.description}`),
       ].join("\n"),
     );
   }
@@ -264,10 +271,10 @@ export const NOT_APPROVED = "This action was not approved.";
 function resultOf(row: ToolRow): ModelToolResult | null {
   const { id: callId, toolId } = row;
   switch (row.state) {
-    case "pending":
-    case "allowed":
+    case "waiting":
+    case "ready":
       return null;
-    case "ran":
+    case "completed":
     case "failed":
       if (!row.output) return null;
       return {
@@ -285,7 +292,7 @@ function resultOf(row: ToolRow): ModelToolResult | null {
 // A silent notification is shown where it was made but read where the agent took it in, so it
 // moves there, with those taken in together; one not taken in yet is not read.
 function placeSilent(rows: readonly TranscriptRow[]): TranscriptRow[] {
-  const silent = (row: TranscriptRow): row is RelayRow => row.kind === "relay" && !!row.silent;
+  const silent = (row: TranscriptRow): row is NoticeRow => row.kind === "notice" && !!row.silent;
   const placed: TranscriptRow[] = rows.filter((row) => !silent(row));
   for (const row of rows.filter(silent)) {
     if (row.taken === undefined) continue;
@@ -293,9 +300,9 @@ function placeSilent(rows: readonly TranscriptRow[]): TranscriptRow[] {
     const at = placed.findIndex(
       (other) =>
         other.seq > row.taken! ||
-        (other.kind === "relay" && other.seq === row.taken && other.postedAt > row.postedAt),
+        (other.kind === "notice" && other.seq === row.taken && other.postedAt > row.postedAt),
     );
-    const moved: RelayRow = { ...row, seq: row.taken };
+    const moved: NoticeRow = { ...row, seq: row.taken };
     placed.splice(at < 0 ? placed.length : at, 0, moved);
   }
   return placed;
@@ -329,14 +336,14 @@ export function contextOf(
   for (const [index, row] of rows.entries()) {
     if (row.kind === "human") {
       messages.push(humanMessage(row));
-    } else if (row.kind === "relay") {
+    } else if (row.kind === "notice") {
       // Those taken in together read as one.
       const before = rows[index - 1];
-      if (before?.kind === "relay" && before.seq === row.seq) continue;
+      if (before?.kind === "notice" && before.seq === row.seq) continue;
       const together = rows
         .slice(index)
-        .filter((other): other is RelayRow => other.kind === "relay" && other.seq === row.seq);
-      messages.push(notificationsMessage(together));
+        .filter((other): other is NoticeRow => other.kind === "notice" && other.seq === row.seq);
+      messages.push(noticesMessage(together));
     } else if (row.kind === "limit") {
       messages.push(limitMessage(row));
     } else if (row.kind === "agent" && row.status !== "streaming" && !row.retried) {

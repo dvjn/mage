@@ -34,10 +34,10 @@ test("a schedule the agent sets is a tool row and a card in the tray, where a pe
   await signUp(page);
   await write(
     page,
-    `^tool triggers.schedule ${JSON.stringify({ name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Write it" })}`,
+    `^tool schedules.add ${JSON.stringify({ name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Write it" })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
-  const call = page.getByRole("button", { name: /^Triggers › Schedule · Ran/ });
+  const call = page.getByRole("button", { name: /^Schedules › Schedule · Ran/ });
   await expect(call).toBeVisible();
   await call.click();
   await expect(call).toHaveAttribute("aria-expanded", "true");
@@ -55,7 +55,7 @@ test("a schedule the agent sets is a tool row and a card in the tray, where a pe
   await expect(card).toContainText("Paused");
   // A person's change is told to the agent in the transcript, and does not start it.
   await expect(
-    page.getByRole("article", { name: "Notification" }).filter({
+    page.getByRole("article", { name: "Notice" }).filter({
       hasText: /Digest\s*Paused/,
     }),
   ).toBeVisible();
@@ -75,7 +75,7 @@ test("a kind of the tray opens inline on a phone, capped at half the screen", as
   await signUp(page);
   await write(
     page,
-    `^tool triggers.schedule ${JSON.stringify({ name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Write it" })}`,
+    `^tool schedules.add ${JSON.stringify({ name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Write it" })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await page
@@ -100,16 +100,16 @@ test("a wake-up timer goes off and tells the thread", async ({ page }) => {
   await signUp(page);
   await write(
     page,
-    `^tool triggers.wake_at ${JSON.stringify({ in_seconds: 1, note: "Look again" })}`,
+    `^tool schedules.wake_at ${JSON.stringify({ in_seconds: 1, note: "Look again" })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   // The two servers of these journeys share a database, so the other may be the one that fires it;
   // its news reaches this page on a reload.
   await expect(async () => {
     await page.reload();
-    await expect(
-      page.getByRole("article", { name: "Notification" }).getByText("Wake-up"),
-    ).toBeVisible({ timeout: 2_000 });
+    await expect(page.getByRole("article", { name: "Notice" }).getByText("Wake-up")).toBeVisible({
+      timeout: 2_000,
+    });
   }).toPass({ timeout: 30_000 });
   // The agent reads the note and answers it.
   await expect(page.getByRole("article", { name: "Message from Agent" }).last()).toContainText(
@@ -117,14 +117,13 @@ test("a wake-up timer goes off and tells the thread", async ({ page }) => {
   );
 });
 
-// Skipped for now: passes alone, but misses its wait under the full suite's parallel load.
-test.fixme("tasks and a schedule share the strip, one kind open at a time, closed by Escape", async ({
+test("tasks and a schedule share the strip, one kind open at a time, closed by Escape", async ({
   page,
 }) => {
   await signUp(page);
   await write(
     page,
-    `^tool triggers.schedule ${JSON.stringify({ name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Write it" })}`,
+    `^tool schedules.add ${JSON.stringify({ name: "Digest", cron: "0 9 * * 1-5", timezone: "UTC", prompt: "Write it" })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await write(

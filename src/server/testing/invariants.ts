@@ -83,7 +83,7 @@ const RULES: { rule: string; broken: ReturnType<typeof sql> }[] = [
         from thread_event e
         full join thread_input i on i.id = e.id
        where (i.id is null
-              and (e.type = 'notification'
+              and (e.type = 'notice'
                    or (e.type = 'message' and coalesce((e.data->>'quiet')::boolean, false) = false)))
           or (i.id is not null and (e.id is null or e.thread_id <> i.thread_id or e.seq <> i.seq))`,
   },
@@ -124,7 +124,7 @@ const RULES: { rule: string; broken: ReturnType<typeof sql> }[] = [
        where i.source_call_id is not null and c.id is null`,
   },
   {
-    // A log copied in with no runs of its own names triggers it never had.
+    // A log copied in with no runs of its own names inputs that woke runs it never had.
     rule: "every input from a schedule or webhook of its own thread has that row",
     broken: sql`
       select i.id as input_id, i.origin_kind, i.origin_id
@@ -227,6 +227,52 @@ const RULES: { rule: string; broken: ReturnType<typeof sql> }[] = [
        where not exists (select 1 from subagent s
                           where s.thread_id = t.thread_id
                             and s.parent_thread_id = t.owner_thread_id)`,
+  },
+  {
+    rule: "an input is taken in at most once on a branch",
+    broken: sql`
+      select e.thread_id, e.branch_id, m.id as input_id, count(*) as times
+        from thread_event e
+        cross join lateral json_array_elements_text(e.data->'messageIds') as m(id)
+       where e.type = 'message.admitted'
+       group by e.thread_id, e.branch_id, m.id
+      having count(*) > 1`,
+  },
+  {
+    rule: "a call runs at most once",
+    broken: sql`
+      select thread_id, data->>'callId' as call_id, count(*) as times
+        from thread_event
+       where type = 'tool.ran'
+       group by thread_id, data->>'callId'
+      having count(*) > 1`,
+  },
+  {
+    rule: "a run ends at most once",
+    broken: sql`
+      select thread_id, data->>'runId' as run_id, count(*) as times
+        from thread_event
+       where type in ('run.completed', 'run.failed', 'run.cancelled')
+       group by thread_id, data->>'runId'
+      having count(*) > 1`,
+  },
+  {
+    rule: "a job's end is told at most once on a branch",
+    broken: sql`
+      select thread_id, branch_id, data->'source'->>'callId' as call_id, count(*) as times
+        from thread_event
+       where type = 'notice' and data->>'kind' = 'call.ended'
+       group by thread_id, branch_id, data->'source'->>'callId'
+      having count(*) > 1`,
+  },
+  {
+    rule: "a key makes at most one input on a branch",
+    broken: sql`
+      select thread_id, branch_id, key, count(*) as times
+        from thread_input
+       where key is not null
+       group by thread_id, branch_id, key
+      having count(*) > 1`,
   },
 ];
 

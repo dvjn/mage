@@ -11,7 +11,7 @@ import { transcriptOf } from "@/shared/transcript.ts";
 async function history() {
   const thread = await agentThread();
   const { ada, model, worker, post, start, api } = thread;
-  thread.org.models.push("codex/gpt-small");
+  await thread.models.offer(["codex/gpt-small"]);
   await start();
   async function exchange(who: { cookie: string }, text: string, reply: string) {
     await post(who, text);

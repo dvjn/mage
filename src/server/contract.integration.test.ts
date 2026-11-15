@@ -1,6 +1,7 @@
 // The contract with the web client, kept as a file so that any change to it shows as a diff: every
 // route the server answers, every schema the two share, and every event of the live streams.
 
+import { agentThread } from "@/server/testing/agent-thread.ts";
 import { describe, expect, it } from "vite-plus/test";
 import { z } from "zod";
 
@@ -69,6 +70,20 @@ describe("the contract with the web client", () => {
     const { schemas: shapes, idOf } = schemas();
     const contract = { routes: await routes(), streams: streams(idOf), schemas: shapes };
     await expect(`${JSON.stringify(contract, null, 2)}\n`).toMatchFileSnapshot(SNAPSHOT);
+  });
+
+  it("answers the paths it no longer has as not found", async () => {
+    const t = await agentThread();
+    for (const path of [
+      "/inbox/events",
+      `/threads/${t.thread.id}/background`,
+      `/threads/${t.thread.id}/triggers/x/history`,
+    ]) {
+      expect((await t.api("GET", path, t.ada.cookie)).status).toBe(404);
+    }
+    expect(
+      (await t.api("POST", `/threads/${t.thread.id}/background/seen`, t.ada.cookie, {})).status,
+    ).toBe(404);
   });
 
   it("has a route for every stream", async () => {

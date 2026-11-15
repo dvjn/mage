@@ -5,13 +5,13 @@ import * as schema from "@/server/schema.ts";
 import { setup } from "@/server/testing/workspace.ts";
 import type { ThreadDetail } from "@/shared/threads/detail.ts";
 
-import { titleFrom } from "./service.ts";
+import { titleFrom } from "./titles.ts";
 
 describe("threads", () => {
   it("starts untitled on the org's default model", async () => {
-    const { org, signUp, yourSpace, createThread } = setup();
+    const { models, signUp, yourSpace, createThread } = setup();
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
-    org.defaultModel = "codex/gpt-big";
+    await models.default("codex/gpt-big");
 
     const thread = await createThread(cookie, (await yourSpace(cookie)).id);
 
@@ -179,7 +179,7 @@ describe("event log", () => {
   });
 
   it("names a user who is gone as a former member", async () => {
-    const { db, threads, signUp, yourSpace, createThread, api } = setup();
+    const { db, views, posts, access, signUp, yourSpace, createThread, api } = setup();
     const ada = await signUp("Ada Lovelace", "ada@example.com");
     const grace = await signUp("Grace Hopper", "grace@example.com");
     const space = await yourSpace(ada.cookie);
@@ -193,12 +193,12 @@ describe("event log", () => {
       source: "direct",
     });
     const asGrace = { userId: grace.userId, orgId: ada.orgId, role: "member" as const };
-    await threads.postMessage(asGrace, thread.id, "Hi Ada");
+    await posts.message(await access.require(asGrace, thread.id, "post"), "Hi Ada");
     await api("POST", `/threads/${thread.id}/messages`, ada.cookie, { text: "Hi Grace" });
     await db.delete(schema.user).where(eq(schema.user.id, grace.userId));
 
     // Ada's first message was taken in; the two after it wait for the agent.
-    const { rows, waiting } = await threads.get(ada, thread.id);
+    const { rows, waiting } = await views.thread.detail(await access.require(ada, thread.id));
     const authors = [...rows, ...waiting].flatMap((row) =>
       row.kind === "human" ? [row.author] : [],
     );
@@ -326,8 +326,8 @@ describe("a space's thread list", () => {
   });
 
   it("shows each thread's model, its maker and host, its own or the default it follows", async () => {
-    const { api, org, signUp, yourSpace, createThread } = setup();
-    org.models.push("claude/claude-big");
+    const { api, models, signUp, yourSpace, createThread } = setup();
+    await models.offer(["claude/claude-big"]);
     const { cookie } = await signUp("Ada Lovelace", "ada@example.com");
     const space = await yourSpace(cookie);
     const own = await createThread(cookie, space.id);

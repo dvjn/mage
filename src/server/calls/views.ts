@@ -2,8 +2,8 @@
 // the request, with its input and what the tool was called, and the answers given, if any. Both
 // are read by seq, one statement for the calls at hand.
 
-import type { CallView } from "@/server/agent/tools.ts";
-import type { ThreadStore } from "@/server/threads/service.ts";
+import type { CallView } from "@/server/tools/registry.ts";
+import type { ThreadStore } from "@/server/threads/types.ts";
 import type { ToolRisk } from "@/shared/threads/events.ts";
 import type { ToolState } from "@/shared/transcript.ts";
 
@@ -17,17 +17,17 @@ export type CallRecord = CallView & {
   toolset?: string;
 };
 
-// Where the call stands as the thread's fold says it: approved or answered once a person decided
-// it and it has not ended; still waiting otherwise until it ends.
+// Where the call stands as the thread's fold says it: waiting for a person, ready to run until it
+// ends, then how it ended.
 function stateOf(row: CallRow): ToolState {
   switch (row.status) {
     case "waiting":
-      return "pending";
+      return "waiting";
     case "ready":
     case "running":
-      return row.decidedBy ? "allowed" : "pending";
+      return "ready";
     case "completed":
-      return "ran";
+      return "completed";
     case "failed":
     case "interrupted":
       return "failed";
@@ -38,7 +38,7 @@ function stateOf(row: CallRow): ToolState {
     case "stale":
       return "stale";
     case "cancelled":
-      return "stopped";
+      return "cancelled";
   }
 }
 

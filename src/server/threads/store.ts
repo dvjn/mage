@@ -19,7 +19,7 @@ import type {
   ThreadFacts,
   ThreadStore,
   ThreadWriters,
-} from "./service.ts";
+} from "./types.ts";
 import { parentOf } from "./parent.ts";
 
 // The events a reader is told about: a person's message, a finished reply and a failed run.
@@ -34,6 +34,10 @@ function ofBranch(branchId: SQL | string) {
 }
 
 // Whether the event `threadEvent` is one of its thread's current branch.
+// A thread's change is stamped by the database's clock, which the list feed asks what changed
+// since by, whatever the clock of the instance that wrote it says.
+const dbNow = sql`now()`;
+
 const ofCurrent = ofBranch(
   sql`(select t.current_branch_id from ${thread} t where t.id = ${threadEvent.threadId})`,
 );
@@ -212,6 +216,18 @@ export function createThreadStore(db: Db): ThreadStore {
       );
     },
 
+    async changesOf(threadId, messageIds, branchId) {
+      if (messageIds.length === 0) return [];
+      return await eventsWhere(
+        and(
+          eq(threadEvent.threadId, threadId),
+          eq(threadEvent.type, "message.changed"),
+          inArray(sql`${threadEvent.data}->>'messageId'`, [...messageIds]),
+          branchId ? ofBranch(branchId) : ofCurrent,
+        ),
+      );
+    },
+
     async sources(branchId) {
       return await db
         .select({
@@ -263,7 +279,7 @@ export function createThreadStore(db: Db): ThreadStore {
           .set({
             currentBranchId: branchId,
             lastMessageText: parts ? spokenText(parts) : null,
-            updatedAt: new Date(),
+            updatedAt: dbNow,
           })
           .where(eq(thread.id, threadId))
           .returning(columns)
@@ -272,6 +288,48 @@ export function createThreadStore(db: Db): ThreadStore {
 
     async find(id): Promise<Thread | null> {
       return (await db.select(columns).from(thread).where(eq(thread.id, id)).limit(1))[0] ?? null;
+    },
+
+    async changedSince({ spaceIds, threadIds, userId, since, heldAtMost }) {
+      const visible = [
+        ...(spaceIds.length > 0 ? [inArray(thread.spaceId, [...spaceIds])] : []),
+        ...(threadIds.length > 0
+          ? [inArray(sql`coalesce(${thread.rootThreadId}, ${thread.id})`, [...threadIds])]
+          : []),
+      ];
+      const seen = sql`(select max(r.seen_at) from thread_read r
+                         where r.thread_id = ${thread.id} and r.user_id = ${userId})`;
+      const changed = and(
+        visible.length > 0 ? or(...visible) : sql`false`,
+        sql`(${thread.updatedAt} >= ${since} or ${seen} >= ${since})`,
+      );
+      const row = (
+        await db.execute<{ changes: { id: string; stamp: string }[] | null; at: Date | string }>(
+          sql`select (select json_agg(json_build_object(
+                         'id', ${thread.id},
+                         'stamp', greatest(${thread.updatedAt}, ${seen})::text))
+                        from ${thread} where ${changed}) as changes,
+                     greatest(
+                       least(now(), (select min(xact_start) from pg_stat_activity
+                                      where datname = current_database()
+                                        and usename = current_user
+                                        and pid <> pg_backend_pid()
+                                        and backend_type = 'client backend')),
+                       now() - ${heldAtMost} * interval '1 millisecond') as at`,
+        )
+      ).rows[0]!;
+      return {
+        changes: new Map((row.changes ?? []).map(({ id, stamp }) => [id, stamp])),
+        at: new Date(row.at),
+      };
+    },
+
+    async findAll(ids) {
+      if (ids.length === 0) return [];
+      return await db
+        .select(columns)
+        .from(thread)
+        .where(inArray(thread.id, [...ids]));
     },
 
     async listInSpace(spaceId) {
@@ -475,7 +533,7 @@ export function createThreadStore(db: Db): ThreadStore {
       return (
         await db
           .update(thread)
-          .set({ ...changes, updatedAt: new Date() })
+          .set({ ...changes, updatedAt: dbNow })
           .where(eq(thread.id, id))
           .returning(columns)
       )[0] as Thread;
@@ -515,7 +573,7 @@ export function createThreadStore(db: Db): ThreadStore {
             .update(thread)
             .set({
               lastEventSeq: sql`${thread.lastEventSeq} + 1`,
-              updatedAt: new Date(),
+              updatedAt: dbNow,
               ...(title !== undefined && {
                 title: sql`coalesce(${thread.title}, ${title})`,
                 titleSource: sql`coalesce(${thread.titleSource}, 'message')`,
@@ -602,7 +660,7 @@ export function restoredPlace(branches: SQL | string) {
   return sql`
     update thread_branch b set (read_seq, read_ord) = (
       select p.seq, p.ord from (
-        select a.seq, i.n * 1000 + case when m.type = 'notification' then 999 else 0 end as ord
+        select a.seq, i.n * 1000 + case when m.type = 'notice' then 999 else 0 end as ord
           from thread_event m
           join thread_event a on a.thread_id = m.thread_id and a.type = 'message.admitted'
                              and a.seq <= b.fork_seq
@@ -622,7 +680,7 @@ export function restoredPlace(branches: SQL | string) {
                 or (e.type = 'tool.requested' and e.data->>'callId' = b.row_id)
                 or (e.type = 'message.started' and e.data->>'messageId' = b.row_id))
            and not (e.type = 'message' and coalesce((e.data->>'quiet')::boolean, false) = false)
-           and not (e.type = 'notification' and coalesce((e.data->>'wake')::boolean, true))
+           and not (e.type = 'notice' and coalesce((e.data->>'wake')::boolean, true))
            and exists (select 1 from thread_branch_source s
                         where s.branch_id = b.id and s.source_branch_id = e.branch_id
                           and (s.until_seq is null or e.seq <= s.until_seq))

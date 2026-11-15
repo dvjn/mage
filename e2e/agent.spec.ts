@@ -157,8 +157,7 @@ test("stop ends the reply where it is, and retry tries it again", async ({ page 
   await expect(stopped.getByRole("button", { name: "Retry" })).toBeHidden();
 });
 
-// Skipped for now: passes alone, but misses its wait under the full suite's parallel load.
-test.fixme("two people in one thread see each other's messages, steers and stops live", async ({
+test("two people in one thread see each other's messages, steers and stops live", async ({
   page,
   browser,
 }, testInfo) => {
@@ -227,10 +226,7 @@ test("one person stops the agent while a call waits for another's approval", asy
   const adaEmail = await signUp(page, "Ada Lovelace");
   const grace = await someoneElse(browser, testInfo.parallelIndex, "Grace Hopper");
   await joinSpaceOf(adaEmail, grace.email, "messager");
-  await startThread(
-    page,
-    '^tool triggers.add_webhook {"name":"Deploys","note":"Check the deploy"}',
-  );
+  await startThread(page, '^tool webhooks.add {"name":"Deploys","note":"Check the deploy"}');
   await grace.page.goto(page.url());
 
   // Both may decide it, and both see it wait.

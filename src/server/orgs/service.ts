@@ -11,7 +11,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Hooks } from "@/server/kernel/hooks.ts";
 import type { SpaceStore, Spaces } from "@/server/spaces/service.ts";
-import type { ThreadStore } from "@/server/threads/service.ts";
+import type { ThreadStore } from "@/server/threads/types.ts";
 import {
   type AgentName,
   type CreatedOrgInvite,
@@ -112,6 +112,8 @@ export interface OrgsOptions {
 
 declare module "@/server/kernel/hooks.ts" {
   interface HookEvents {
+    // A team org was made, with its creator as owner.
+    "org.created": { orgId: string; userId: string };
     // The org allows its members' own spaces again, or no longer does and they are archived.
     "org.personalSpacesChanged": { orgId: string; allowed: boolean };
     // The org's members were settled: some joined or came back, some left, or someone's role
@@ -280,6 +282,7 @@ export function createOrgs(options: OrgsOptions) {
         throw new ServiceError(403, "Only the server's operators can create organizations");
       }
       const org = await directory.createTeamOrg(name, account.userId);
+      await options.hooks?.run("org.created", { orgId: org.id, userId: account.userId });
       const general = await spaceStore.create({
         orgId: org.id,
         kind: "shared",

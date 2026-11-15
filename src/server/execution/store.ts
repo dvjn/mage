@@ -8,14 +8,14 @@ import type { Db } from "@/server/db/db.ts";
 import { leasesOn } from "@/server/sync/lease.ts";
 
 import { type Lease, LeaseLost, type Run, type RunStore } from "./worker.ts";
-import { run, runMachine } from "@/server/agent/schema.ts";
+import { run, runMachine } from "./schema.ts";
 
 const columns = {
   id: run.id,
   threadId: run.threadId,
   branchId: run.branchId,
   status: run.status,
-  triggerSeq: run.triggerSeq,
+  wokenBySeq: run.wokenBySeq,
   model: run.model,
   askedModel: run.askedModel,
   askedEffort: run.askedEffort,

@@ -18,7 +18,7 @@ import { jwtVerify, SignJWT } from "jose";
 import { ulid } from "ulid";
 import * as z from "zod";
 
-import type { Toolset, ToolSpec, ToolContext } from "@/server/agent/tools.ts";
+import type { Toolset, ToolSpec, ToolContext } from "@/server/tools/registry.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Directory } from "@/server/orgs/directory.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
@@ -28,7 +28,7 @@ import { spaceNameFor } from "@/shared/spaces.ts";
 import type { ThreadAccess } from "@/server/access/access.ts";
 import { type Page, PAGE_LIMIT } from "@/shared/paging.ts";
 import type { GuestStore } from "@/server/guests/service.ts";
-import type { ThreadStore } from "@/server/threads/service.ts";
+import type { ThreadStore } from "@/server/threads/types.ts";
 import {
   ARTIFACT_TOOLS,
   ARTIFACT_TOOLSET,
@@ -172,7 +172,7 @@ export interface ArtifactStore {
 export interface ArtifactsOptions {
   store: ArtifactStore;
   // Where open viewers, on whichever instance, hear of changes.
-  bus: Pick<Signals, "artifactChanged" | "subscribeArtifact" | "onGap">;
+  signals: Pick<Signals, "artifactChanged" | "subscribeArtifact" | "onGap">;
   threads: Pick<ThreadStore, "find">;
   spaceStore: Pick<SpaceStore, "find">;
   spaces: Pick<Spaces, "findVisible" | "can" | "require" | "isGone">;
@@ -286,7 +286,7 @@ export function createArtifacts(options: ArtifactsOptions) {
   const key = createHmac("sha256", options.secret).update(AUDIENCE).digest();
   // Viewers are told what changed by a hint, and read it themselves.
   function publish(event: ArtifactEvent) {
-    options.bus.artifactChanged(
+    options.signals.artifactChanged(
       event.type === "published"
         ? { type: "published", artifactId: event.artifactId, version: event.version }
         : { type: event.type, artifactId: event.artifactId },
@@ -1447,11 +1447,11 @@ export function createArtifacts(options: ArtifactsOptions) {
           })
           .catch(() => {});
       };
-      const stopHints = options.bus.subscribeArtifact(id, (hint) =>
+      const stopHints = options.signals.subscribeArtifact(id, (hint) =>
         tell(async () => [await eventOf(hint)]),
       );
       // After a gap in what this instance heard, the viewer is told the artifact as it now is.
-      const stopGaps = options.bus.onGap(() =>
+      const stopGaps = options.signals.onGap(() =>
         tell(async () => {
           const record = await store.find(id);
           if (!record) return [{ type: "deleted", artifactId: id }];

@@ -56,8 +56,7 @@ async function queueLibrary(page: Page) {
   await idle(page);
 }
 
-// Skipped for now: passes alone, but misses its wait under the full suite's parallel load.
-test.fixme("the agent starts subagents, who report back, go idle and can be resumed and archived", async ({
+test("the agent starts subagents, who report back, go idle and can be resumed and archived", async ({
   page,
 }) => {
   await signUp(page);
@@ -86,11 +85,11 @@ test.fixme("the agent starts subagents, who report back, go idle and can be resu
   ).toBeVisible();
 
   // An incoming message is a card that is open on what was said; system events use the same frame.
-  const relayed = transcript(page).getByRole("article", { name: "Message from Researcher" });
-  await expect(relayed).toContainText("Recommend BullMQ");
+  const told = transcript(page).getByRole("article", { name: "Message from Researcher" });
+  await expect(told).toContainText("Recommend BullMQ");
   await expect(
     transcript(page)
-      .getByRole("article", { name: "Notification" })
+      .getByRole("article", { name: "Notice" })
       .filter({ hasText: "Writer ended its run without reporting" }),
   ).toBeVisible();
   await idle(page);
@@ -163,13 +162,12 @@ test.fixme("the agent starts subagents, who report back, go idle and can be resu
   await expect(page.getByLabel("Message", { exact: true })).toBeEditable();
 });
 
-// Skipped for now: passes alone, but misses its wait under the full suite's parallel load.
-test.fixme("an agent whose turn ended is woken by its subagent's message", async ({ page }) => {
+test("an agent whose turn ended is woken by its subagent's message", async ({ page }) => {
   await signUp(page);
   await queueLibrary(page);
   await write(page, call("subagents.start", { name: "Writer", task: "Draft the notes" }));
   const ended = transcript(page)
-    .getByRole("article", { name: "Notification" })
+    .getByRole("article", { name: "Notice" })
     .filter({ hasText: "Writer ended its run without reporting" });
   await expect(ended).toBeVisible();
   await idle(page);
@@ -177,7 +175,7 @@ test.fixme("an agent whose turn ended is woken by its subagent's message", async
 
   // The notice shows its text and exposes its source on hover.
   await ended.getByRole("button", { name: "Show details" }).click();
-  await expect(transcript(page).getByRole("article", { name: "Notification" })).toContainText(
+  await expect(transcript(page).getByRole("article", { name: "Notice" })).toContainText(
     "I have read 1 message",
   );
   await ended.hover();
@@ -214,7 +212,7 @@ test("a watch on all idle wakes the agent once all its subagents are idle", asyn
     ].join("\n"),
   );
   const fired = transcript(page)
-    .getByRole("article", { name: "Notification" })
+    .getByRole("article", { name: "Notice" })
     .filter({ hasText: "All idle: Researcher, Writer" });
   // The notice lands once the parent's run that set the watch has taken it, which can take a while.
   await expect(fired).toHaveCount(1, { timeout: 20_000 });
@@ -222,10 +220,7 @@ test("a watch on all idle wakes the agent once all its subagents are idle", asyn
   await expect(fired).toHaveCount(1);
 });
 
-// Skipped for now: passes alone, but misses its wait under the full suite's parallel load.
-test.fixme("a send links to the message it delivered, which links back to the send", async ({
-  page,
-}) => {
+test("a send links to the message it delivered, which links back to the send", async ({ page }) => {
   await signUp(page);
   await queueLibrary(page);
   await write(
@@ -463,8 +458,7 @@ test("the agent goes by the name its org gives it, or its space's", async ({ pag
   ).toBeVisible();
 });
 
-// Skipped for now: passes alone, but misses its wait under the full suite's parallel load.
-test.fixme("a subagent's thread has its own activity tray, and its starter's card counts its tasks", async ({
+test("a subagent's thread has its own activity tray, and its starter's card counts its tasks", async ({
   page,
 }) => {
   await signUp(page);

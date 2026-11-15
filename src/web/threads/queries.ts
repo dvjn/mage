@@ -3,8 +3,8 @@ import { queryOptions } from "@tanstack/react-query";
 import { threadCommandsSchema } from "@/shared/threads/commands.ts";
 import { type ThreadDetail, threadDetailSchema } from "@/shared/threads/detail.ts";
 import { asideListSchema, shownBranchSchema } from "@/shared/threads/history.ts";
-import { backgroundListSchema } from "@/shared/calls.ts";
-import { triggerHistorySchema } from "@/shared/triggers.ts";
+import { activityListSchema } from "@/shared/jobs.ts";
+import { firedHistorySchema } from "@/shared/schedules-and-webhooks.ts";
 import { taskListSchema } from "@/shared/tasks.ts";
 import { threadSidebarSchema } from "@/shared/threads/list.ts";
 import { rowsPageSchema } from "@/shared/threads/rows.ts";
@@ -166,30 +166,37 @@ export function backgroundQuery(threadId: string) {
   return queryOptions({
     queryKey: ["threads", threadId, "background"],
     queryFn: async () => {
-      const res = await apiClient.v1.threads[":id"].background.$get({ param: { id: threadId } });
+      const res = await apiClient.v1.threads[":id"].activity.$get({ param: { id: threadId } });
       if (!res.ok) throw new Error("could not read the background work");
-      return backgroundListSchema.parse(await res.json());
+      return activityListSchema.parse(await res.json());
     },
   });
 }
 
 // One page of what a schedule fired or a webhook took, newest first; read when its list is opened.
 // `fired` is how many it has, which makes a new one read again.
-export function triggerHistoryQuery(
+export function firedHistoryQuery(
   threadId: string,
-  triggerId: string,
+  kind: "schedule" | "webhook",
+  id: string,
   offset: number,
   fired: number,
 ) {
   return queryOptions({
-    queryKey: ["threads", threadId, "triggers", triggerId, "history", offset, fired],
+    queryKey: ["threads", threadId, `${kind}s`, id, "history", offset, fired],
     queryFn: async () => {
-      const res = await apiClient.v1.threads[":id"].triggers[":triggerId"].history.$get({
-        param: { id: threadId, triggerId },
-        query: { offset },
-      });
+      const res =
+        kind === "schedule"
+          ? await apiClient.v1.threads[":id"].schedules[":scheduleId"].history.$get({
+              param: { id: threadId, scheduleId: id },
+              query: { offset },
+            })
+          : await apiClient.v1.threads[":id"].webhooks[":webhookId"].history.$get({
+              param: { id: threadId, webhookId: id },
+              query: { offset },
+            });
       if (!res.ok) throw new Error("could not read the history");
-      return triggerHistorySchema.parse(await res.json());
+      return firedHistorySchema.parse(await res.json());
     },
     placeholderData: (previous) => previous,
   });

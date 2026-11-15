@@ -37,7 +37,7 @@ export function ThreadArtifacts({
   const queryClient = useQueryClient();
   const artifacts = useQuery(threadArtifactsQuery(threadId));
   const finished = rows.filter(
-    (row) => row.kind === "tool" && row.state === "ran" && CHANGING.has(row.toolId),
+    (row) => row.kind === "tool" && row.state === "completed" && CHANGING.has(row.toolId),
   ).length;
   useEffect(() => {
     void queryClient.invalidateQueries({ queryKey: threadArtifactsQuery(threadId).queryKey });

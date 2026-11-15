@@ -7,7 +7,7 @@ import { index, integer, json, pgTable, text, uniqueIndex } from "drizzle-orm/pg
 import { at, bytes, NOW } from "@/server/db/columns.ts";
 import { machine } from "@/server/sync/machine.ts";
 import { thread } from "@/server/threads/schema.ts";
-import type { Steering } from "@/shared/threads/events.ts";
+import type { Influencer } from "@/shared/threads/events.ts";
 
 export const WEBHOOK_STATES = ["active", "paused", "deleted"] as const;
 
@@ -35,7 +35,7 @@ export const webhook = pgTable(
     // The note the agent is told with each post.
     prompt: text("prompt").notNull(),
     // Whose words the model had read when it made it.
-    influence: json("influence").$type<Steering[]>().notNull(),
+    influence: json("influence").$type<Influencer[]>().notNull(),
     status: text("status", { enum: WEBHOOK_STATES }).notNull(),
     // The unguessable address token, and the signing secret sealed by the cipher, when a person set
     // one.

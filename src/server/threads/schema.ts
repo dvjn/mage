@@ -142,39 +142,6 @@ export const threadBranchSource = pgTable(
   (table) => [primaryKey({ columns: [table.branchId, table.sourceBranchId] })],
 );
 
-// How far into a thread a person has seen: the seq of the newest event they saw there, and when.
-export const threadRead = pgTable(
-  "thread_read",
-  {
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    threadId: text("thread_id")
-      .notNull()
-      .references(() => thread.id, { onDelete: "cascade" }),
-    lastSeenSeq: integer("last_seen_seq").notNull(),
-    seenAt: at("seen_at").notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.userId, table.threadId] })],
-);
-
-// When a person last saw a kind of a thread's background work, so what ended before then no longer
-// shows to them.
-export const threadBackgroundSeen = pgTable(
-  "thread_background_seen",
-  {
-    userId: text("user_id")
-      .notNull()
-      .references(() => user.id, { onDelete: "cascade" }),
-    threadId: text("thread_id")
-      .notNull()
-      .references(() => thread.id, { onDelete: "cascade" }),
-    kind: text("kind").notNull(),
-    seenAt: at("seen_at").notNull(),
-  },
-  (table) => [primaryKey({ columns: [table.userId, table.threadId, table.kind] })],
-);
-
 // The text an agent reply has streamed so far, of its answer and its reasoning, one row per piece
 // the model sent, kept until the reply completes.
 export const messageDelta = pgTable(

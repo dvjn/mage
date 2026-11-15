@@ -4,7 +4,7 @@ import * as z from "zod";
 
 import {
   shownModelSchema,
-  threadActivitySchema,
+  threadStandingSchema,
   threadStatusSchema,
 } from "@/shared/threads/list.ts";
 import { threadSchema } from "@/shared/threads/thread.ts";
@@ -21,7 +21,7 @@ export const threadSearchResultSchema = threadSchema.extend({
   spaceName: z.string(),
   shared: z.boolean(),
   shownModel: shownModelSchema.nullable(),
-  activity: threadActivitySchema,
+  standing: threadStandingSchema,
   status: threadStatusSchema,
 });
 

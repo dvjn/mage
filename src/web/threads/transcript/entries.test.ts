@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import { ASK_TOOL } from "@/shared/ask.ts";
-import type { AgentRow, RelayRow, ShownRow, ToolRow } from "@/shared/threads/rows.ts";
+import type { AgentRow, NoticeRow, ShownRow, ToolRow } from "@/shared/threads/rows.ts";
 import { agentTurnOf, type TranscriptRow } from "@/shared/transcript.ts";
 import {
   transcriptEntries,
@@ -31,7 +31,7 @@ function call(id: string, overrides: Partial<ToolRow> = {}): ToolRow {
     risk: "auto",
     waits: false,
     requestedAt: "2026-11-01T00:00:00.000Z",
-    state: "ran",
+    state: "completed",
     decision: null,
     output: null,
     ms: null,
@@ -73,9 +73,9 @@ function human(id: string): ShownRow {
   };
 }
 
-function relay(id: string, type: RelayRow["type"] = "message"): ShownRow {
+function notice(id: string, type: NoticeRow["type"] = "message"): ShownRow {
   return {
-    kind: "relay",
+    kind: "notice",
     id,
     order: order++,
     seq: order,
@@ -91,14 +91,14 @@ function relay(id: string, type: RelayRow["type"] = "message"): ShownRow {
 const thought = (id: string) => step(id, { reasoning: "Thinking it over" });
 const reply = (id: string) => step(id, { text: "Done" });
 // A call that waits for answers, which shows as a card; one that waits for a decision is a line.
-const asking = (id: string) => call(id, { state: "pending", waits: true, toolId: ASK_TOOL });
+const asking = (id: string) => call(id, { state: "waiting", toolId: ASK_TOOL });
 // A step that only called tools, which shows as nothing.
 const silent = (id: string) => step(id, { turn: null });
 
 // Each entry as its key and, for a run, the ids it holds.
 function shape(rows: ShownRow[]) {
   return transcriptEntries(rows).map((entry) =>
-    entry.kind === "calls" || entry.kind === "relays"
+    entry.kind === "calls" || entry.kind === "notices"
       ? [entry.key, entry.rows.map((row) => row.id)]
       : [entry.key],
   );
@@ -118,12 +118,12 @@ describe("transcriptEntries", () => {
   });
 
   it("folds the calls that set up schedules and webhooks and background calls with the others", () => {
-    const work = (kind: "schedule" | "webhook" | "call") =>
-      ({ kind, status: "scheduled", startedAt: "", canCancel: false }) as ToolRow["background"];
+    const work = (kind: "schedule" | "webhook" | "job") =>
+      ({ kind, status: "scheduled", startedAt: "", canCancel: false }) as ToolRow["work"];
     const rows = [
-      call("c1", { turn: turn(false), background: work("schedule") }),
-      call("c2", { background: work("webhook") }),
-      call("c3", { background: work("call") }),
+      call("c1", { turn: turn(false), work: work("schedule") }),
+      call("c2", { work: work("webhook") }),
+      call("c3", { work: work("job") }),
     ];
     expect(shape(rows)).toEqual([["calls:c1", ["c1", "c2", "c3"]]]);
   });
@@ -162,11 +162,7 @@ describe("transcriptEntries", () => {
   });
 
   it("folds a call that waits for a decision with the others", () => {
-    const rows = [
-      call("c1", { turn: turn(false) }),
-      call("w1", { state: "pending", waits: true }),
-      call("c2"),
-    ];
+    const rows = [call("c1", { turn: turn(false) }), call("w1", { state: "waiting" }), call("c2")];
     expect(shape(rows)).toEqual([["calls:c1", ["c1", "w1", "c2"]]]);
   });
 
@@ -179,9 +175,9 @@ describe("transcriptEntries", () => {
     const rows = [
       call("c1", { turn: turn(false), state: "failed" }),
       call("c2", { state: "denied" }),
-      call("c3", { state: "stopped" }),
-      call("c4", { state: "allowed" }),
-      call("c5", { state: "pending" }),
+      call("c3", { state: "cancelled" }),
+      call("c4", { state: "ready" }),
+      call("c5", { state: "ready" }),
     ];
     const [entry] = transcriptEntries(rows);
     expect(entry?.kind === "calls" && entry.calls.map((row) => row.id)).toEqual([
@@ -220,20 +216,20 @@ describe("transcriptEntries", () => {
   it("keeps mixed incoming activity compact between full replies", () => {
     const rows = [
       step("r1", { text: "Waiting for the reviewers", turn: turn(false) }),
-      relay("m1"),
+      notice("m1"),
       call("list", { turn: turn(false) }),
-      relay("m2"),
-      relay("idle", "agent.idle"),
+      notice("m2"),
+      notice("idle", "agent.idle"),
       call("watch1", { turn: turn(false) }),
       call("watch2"),
       reply("r2"),
     ];
     expect(shape(rows)).toEqual([
       ["r1"],
-      ["relays:m1", ["m1"]],
+      ["notices:m1", ["m1"]],
       ["list"],
-      ["relays:m2", ["m2"]],
-      ["relays:idle", ["idle"]],
+      ["notices:m2", ["m2"]],
+      ["notices:idle", ["idle"]],
       ["calls:watch1", ["watch1", "watch2"]],
       ["r2"],
     ]);
@@ -243,21 +239,21 @@ describe("transcriptEntries", () => {
     const rows = [
       call("c1", { turn: turn(false) }),
       call("c2"),
-      relay("n1", "agent.idle"),
-      relay("m1"),
-      relay("m2"),
-      relay("m3"),
-      relay("n2", "agent.idle"),
-      relay("m4"),
+      notice("n1", "agent.idle"),
+      notice("m1"),
+      notice("m2"),
+      notice("m3"),
+      notice("n2", "agent.idle"),
+      notice("m4"),
       // The agent's next turn.
       step("r1", { text: "Done", turn: turn(false) }),
     ];
     expect(shape(rows)).toEqual([
       ["calls:c1", ["c1", "c2"]],
-      ["relays:n1", ["n1"]],
-      ["relays:m1", ["m1", "m2", "m3"]],
-      ["relays:n2", ["n2"]],
-      ["relays:m4", ["m4"]],
+      ["notices:n1", ["n1"]],
+      ["notices:m1", ["m1", "m2", "m3"]],
+      ["notices:n2", ["n2"]],
+      ["notices:m4", ["m4"]],
       ["r1"],
     ]);
   });
@@ -266,9 +262,9 @@ describe("transcriptEntries", () => {
     const raw = [
       human("h"),
       reply("r1"),
-      relay("m1"),
+      notice("m1"),
       call("archive"),
-      relay("n1", "agent.idle"),
+      notice("n1", "agent.idle"),
       reply("r2"),
     ];
     const rows = raw.map((row, i) => ({ ...row, turn: agentTurnOf(raw as TranscriptRow[], i) }));
@@ -276,9 +272,9 @@ describe("transcriptEntries", () => {
     expect(shape(rows)).toEqual([
       ["h"],
       ["r1"],
-      ["relays:m1", ["m1"]],
+      ["notices:m1", ["m1"]],
       ["archive"],
-      ["relays:n1", ["n1"]],
+      ["notices:n1", ["n1"]],
       ["r2"],
     ]);
     expect(
@@ -291,7 +287,7 @@ describe("transcriptEntries", () => {
   });
 
   it("opens the agent header after incoming activity even with cached continuation metadata", () => {
-    for (const incoming of [relay("incoming"), relay("incoming", "agent.idle")]) {
+    for (const incoming of [notice("incoming"), notice("incoming", "agent.idle")]) {
       const single = transcriptEntries([incoming, call("list")]);
       const last = single.at(-1)!;
       expect(last.kind === "row" && last.row.turn?.continued).toBe(false);
@@ -301,36 +297,36 @@ describe("transcriptEntries", () => {
   });
 
   it("keeps messages from different senders as separate top-level entries", () => {
-    const first = relay("m1");
-    const second = relay("m2");
-    if (second.kind !== "relay") throw new Error("Expected a relay");
+    const first = notice("m1");
+    const second = notice("m2");
+    if (second.kind !== "notice") throw new Error("Expected a notice");
     second.from = { threadId: "other", name: "Writer", main: false };
     expect(shape([first, second])).toEqual([
-      ["relays:m1", ["m1"]],
-      ["relays:m2", ["m2"]],
+      ["notices:m1", ["m1"]],
+      ["notices:m2", ["m2"]],
     ]);
   });
 
   it("folds other notifications with each other, apart from messages", () => {
     const rows = [
       human("h"),
-      relay("m1"),
-      relay("e1", "agent.ended"),
-      relay("e2", "agent.idle"),
-      relay("m2"),
+      notice("m1"),
+      notice("e1", "agent.ended"),
+      notice("e2", "agent.idle"),
+      notice("m2"),
     ];
     expect(shape(rows)).toEqual([
       ["h"],
-      ["relays:m1", ["m1"]],
-      ["relays:e1", ["e1", "e2"]],
-      ["relays:m2", ["m2"]],
+      ["notices:m1", ["m1"]],
+      ["notices:e1", ["e1", "e2"]],
+      ["notices:m2", ["m2"]],
     ]);
   });
 
   it("opens a turn with messages that follow none, and keeps their run's key as it grows", () => {
-    const first = [human("h"), relay("m1")];
-    const grown = [...first, relay("m2"), relay("n1", "agent.idle")];
-    expect(shape(grown)).toEqual([["h"], ["relays:m1", ["m1", "m2"]], ["relays:n1", ["n1"]]]);
+    const first = [human("h"), notice("m1")];
+    const grown = [...first, notice("m2"), notice("n1", "agent.idle")];
+    expect(shape(grown)).toEqual([["h"], ["notices:m1", ["m1", "m2"]], ["notices:n1", ["n1"]]]);
     expect(transcriptEntries(first)[1]?.key).toBe(transcriptEntries(grown)[1]?.key);
   });
 });
@@ -389,8 +385,8 @@ describe("transcriptTurns", () => {
     const rows = [
       human("h"),
       reply("r1"),
-      relay("m1"),
-      relay("n1", "agent.idle"),
+      notice("m1"),
+      notice("n1", "agent.idle"),
       step("r2", { text: "Again", turn: turn(false) }),
     ];
     expect(transcriptTurns(rows).map((each) => each.kind)).toEqual([
@@ -456,7 +452,7 @@ describe("transcriptTurns", () => {
   });
 
   it("shows none after a turn whose last step shows its own, or a human or incoming turn", () => {
-    expect(turns([human("h"), reply("r1"), relay("m1")]).map((each) => each[2])).toEqual([
+    expect(turns([human("h"), reply("r1"), notice("m1")]).map((each) => each[2])).toEqual([
       undefined,
       undefined,
       undefined,

@@ -42,7 +42,7 @@ test("a call started in the background folds with the call that started it, and 
     page.getByRole("button", { name: "2 tool calls · Background jobs, Thread" }),
   ).toBeVisible();
   // The agent is told, in a card that shows the call as its tool does.
-  const told = page.getByRole("article", { name: "Notification" });
+  const told = page.getByRole("article", { name: "Notice" });
   await expect(told).toContainText("Rename");
   await expect(told).toContainText("Done");
   // Its notification is the end of it: an ended job is not in the tray.

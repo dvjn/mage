@@ -52,21 +52,21 @@ function rowsOf() {
         risk: "normal",
         waits: false,
         requestedAt: "",
-        state: "ran",
+        state: "completed",
         decision: null,
         output: { ok: true, value: { turnedOn: ["mcp.notes.echo"] } },
         ms: 3,
       }),
-    relay: (text: string) =>
+    notice: (text: string) =>
       add({
-        kind: "relay",
+        kind: "notice",
         id: `n${++seq}`,
         seq,
         postedAt: "",
         type: "message",
         from: { threadId: "t2", name: "Researcher", main: false },
         text,
-        steeredBy: [],
+        influence: [],
       }),
     compaction: (firstKeptSeq: number, summary: string) =>
       add({
@@ -102,7 +102,10 @@ describe("the system prompt", () => {
       org: "",
       space: "",
       subagent: true,
-      skills: [{ name: "notes", description: "Taking notes" }],
+      skills: {
+        line: (named) => `Skills: when a task matches one, load it with ${named("skills.load")}.`,
+        list: [{ name: "notes", description: "Taking notes" }],
+      },
       mcpServers: [{ name: "Notes", prefix: "mcp.notes.*", text: "Title notes.", cut: false }],
       deferredTools: [
         {
@@ -125,7 +128,7 @@ describe("the agent's request", () => {
   it("reads a silent notification where the agent took it in, and not before", () => {
     const thread = rowsOf();
     thread.human(ada, "Plan the launch");
-    const quiet = thread.relay("Divya paused schedule Weekly check");
+    const quiet = thread.notice("Divya paused schedule Weekly check");
     Object.assign(quiet, { type: "change", silent: true });
     thread.agent("Here's the plan.");
     const heard = (rows: typeof thread.rows) =>
@@ -152,7 +155,7 @@ describe("the agent's request", () => {
       () => thread.human(ada, "And the budget?"),
       () => thread.human(bob, "Hi all"),
       () => thread.human(bob, "// psst", true),
-      () => thread.relay("Found 3 sources"),
+      () => thread.notice("Found 3 sources"),
     ]) {
       next();
       const later = contextOf(thread.rows, guidance);
@@ -217,7 +220,7 @@ describe("the agent's request", () => {
 
   it("gives every subagent the same system prompt, and its own framing as its first message", () => {
     const thread = rowsOf();
-    thread.relay("Compare queues");
+    thread.notice("Compare queues");
     const subagent = { ...guidance, subagent: true };
     const framing = framingMessage({ name: "Scout", parent: "Queues", instructions: "Cite." });
     const scout = contextOf(thread.rows, subagent, [framing]);

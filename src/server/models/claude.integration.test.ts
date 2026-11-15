@@ -1,13 +1,14 @@
 import { createOAuthAttempts } from "@/server/oauth/attempts.ts";
 import { createHash } from "node:crypto";
 
-import type { Tasks } from "@/server/agent/tasks.ts";
-import type { Triggers } from "@/server/triggers.ts";
+import type { Tasks } from "@/server/tasks/tasks.ts";
+import type { Schedules } from "@/server/schedules/schedules.ts";
+import type { Webhooks } from "@/server/webhooks/webhooks.ts";
 import { eq } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
-import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
-import type { ToolDecisions } from "@/server/agent/tools.ts";
+import type { ToolPolicies } from "@/server/tools/policies.ts";
+import type { ToolDecisions } from "@/server/tools/registry.ts";
 import { createApp } from "@/server/app.ts";
 import { openStoreDatabase } from "@/server/testing/database.ts";
 import type { Guests } from "@/server/guests/service.ts";
@@ -24,7 +25,7 @@ import * as schema from "@/server/schema.ts";
 import type { Skills } from "@/server/skills/service.ts";
 import type { Artifacts } from "@/server/artifacts/service.ts";
 import type { Spaces } from "@/server/spaces/service.ts";
-import type { Threads } from "@/server/threads/service.ts";
+import type { Threads } from "@/server/threads/threads.ts";
 
 import { createConnectionStore } from "./connection-store.ts";
 import { createCredentialStore } from "./credential-store.ts";
@@ -103,7 +104,8 @@ function setup() {
     logger,
     signInOptions: { oidc: null },
     tasks: {} as Tasks,
-    triggers: {} as Triggers,
+    schedules: {} as Schedules,
+    webhooks: {} as Webhooks,
     pingDatabase: () => Promise.resolve(true),
   });
 

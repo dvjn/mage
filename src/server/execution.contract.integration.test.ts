@@ -280,7 +280,7 @@ describe("stopping", () => {
       rows: [
         "Ada Lovelace: Do the guarded thing",
         "agent (completed): On it.",
-        "probe.guarded stopped",
+        "probe.guarded cancelled",
         "stopped by Ada Lovelace",
       ],
       waiting: [],
@@ -352,7 +352,7 @@ describe("stopping", () => {
     expect(left.rows.map(rowWords).slice(2)).toEqual([
       "Ada Lovelace: Do the guarded thing",
       "agent (completed): On it.",
-      "probe.guarded stopped",
+      "probe.guarded cancelled",
       "stopped by Ada Lovelace",
     ]);
     // The call is on a branch no longer current, where nothing is decided.
@@ -396,7 +396,7 @@ describe("stopping", () => {
       rows: [
         "Grace Hopper: Do the guarded thing",
         "agent (completed): On it.",
-        "probe.guarded stopped",
+        "probe.guarded cancelled",
         "stopped by null",
       ],
       run: null,
@@ -465,6 +465,98 @@ describe("stopping", () => {
   });
 });
 
+describe("a person's stop where the agent started subagents", () => {
+  // Has the thread's agent start two subagents, each of which starts on its task and is left
+  // writing; the starter's run is left writing too unless it is answered.
+  async function helped(answered: boolean) {
+    const w = await world();
+    await w.post(w.ada, "Get help");
+    await w.asks(
+      w.threadId,
+      ["subagents.start", { name: "One", task: "Task one" }],
+      ["subagents.start", { name: "Two", task: "Task two" }],
+    );
+    const own = await w.next(w.threadId);
+    if (answered) own.reply("Started.");
+    else {
+      own.startStep();
+      await own.drained();
+    }
+    const helpers = [await w.subagentNamed("One"), await w.subagentNamed("Two")];
+    const calls = [];
+    for (const helper of helpers) {
+      const call = await w.next(helper);
+      call.startStep();
+      call.delta("Helping");
+      await call.drained();
+      calls.push(call);
+    }
+    if (answered)
+      await eventually(
+        () => w.shown(),
+        (shown) => shown.run === null,
+      );
+    return { w, own, helpers, calls };
+  }
+
+  it("ends its own run and theirs, and the starter's agent is not told of theirs", async () => {
+    const { w, own, helpers, calls } = await helped(false);
+    expect(await w.act(w.ada, "POST", "/stop")).toBe(202);
+    await w.settled();
+    expect(own.signal.aborted).toBe(true);
+    expect(calls.map((call) => call.signal.aborted)).toEqual([true, true]);
+    expect((await w.shown()).rows.slice(-1)).toEqual(["stopped by Ada Lovelace"]);
+    for (const [index, helper] of helpers.entries()) {
+      expect(await w.shown(w.ada, helper)).toEqual({
+        rows: [
+          `message: Task ${["one", "two"][index]}`,
+          "agent (interrupted): Helping",
+          "stopped by Ada Lovelace",
+        ],
+        waiting: [],
+        run: null,
+      });
+    }
+    expect((await w.shown()).waiting).toEqual([]);
+    expect(w.waitsForModel()).toBe(false);
+  });
+
+  it("ends theirs while its own agent is idle", async () => {
+    const { w, helpers, calls } = await helped(true);
+    expect(await w.act(w.ada, "POST", "/stop")).toBe(202);
+    await w.settled();
+    expect(calls.map((call) => call.signal.aborted)).toEqual([true, true]);
+    for (const helper of helpers) expect((await w.shown(w.ada, helper)).run).toBeNull();
+    expect((await w.shown()).rows.at(-1)).toBe("agent (completed): Started.");
+  });
+
+  it("is refused when nothing runs, neither its own nor theirs", async () => {
+    const { w, helpers, calls } = await helped(true);
+    for (const call of calls) call.reply("Helped.");
+    for (const helper of helpers) {
+      await eventually(
+        () => w.shown(w.ada, helper),
+        (shown) => shown.run === null,
+      );
+    }
+    // The starter's agent is told of each, and answers.
+    for (;;) {
+      const { asked } = await eventually(
+        async () => ({ asked: w.waitsForModel(), shown: await w.shown() }),
+        ({ asked, shown }) => asked || (shown.run === null && shown.waiting.length === 0),
+      );
+      if (!asked) break;
+      await w.answers(w.threadId, "Noted.");
+    }
+    await w.settled();
+    const res = await w.api("POST", `/threads/${w.threadId}/stop`, w.ada.cookie);
+    expect({ status: res.status, body: await res.json() }).toEqual({
+      status: 409,
+      body: { error: "The agent is not replying" },
+    });
+  });
+});
+
 describe("trying again", () => {
   it("runs a failed run's input again, when a person asks", async () => {
     const w = await world();
@@ -515,7 +607,7 @@ describe("trying again", () => {
     await w.settled();
     const failure = (await w.detail()).rows.at(-1)!;
     const runId = failure.kind === "failure" ? failure.runId : "";
-    expect(await w.act(w.ada, "POST", `/triggers/${schedule.id}/pause`)).toBe(200);
+    expect(await w.act(w.ada, "POST", `/schedules/${schedule.id}/pause`)).toBe(200);
     await w.settled();
     expect(w.modelCalls()).toBe(3);
 
@@ -671,7 +763,7 @@ describe("trying again", () => {
     const call = await w.next(w.threadId);
     call.startStep();
     await call.drained();
-    expect(await w.act(w.ada, "POST", `/triggers/${schedule.id}/pause`)).toBe(200);
+    expect(await w.act(w.ada, "POST", `/schedules/${schedule.id}/pause`)).toBe(200);
     expect((await w.shown()).rows.at(-1)).toMatch(/^change: /);
 
     expect(await w.act(w.ada, "POST", "/history", { action: "retry", rowId: reply.id })).toBe(200);
@@ -697,7 +789,7 @@ describe("trying again", () => {
     call.startStep();
     await call.drained();
     expect(await w.hook(hook.url, "one")).toBe(200);
-    expect(await w.act(w.ada, "POST", `/triggers/${schedule.id}/pause`)).toBe(200);
+    expect(await w.act(w.ada, "POST", `/schedules/${schedule.id}/pause`)).toBe(200);
 
     expect(
       await w.act(w.ada, "POST", "/history", { action: "retry", rowId: reply.id, confirm: true }),
@@ -817,7 +909,7 @@ describe("trying again", () => {
 
   it("writes a reply again with another model, while retrying a failed run keeps the thread's", async () => {
     const w = await world();
-    w.offers("codex/gpt-small");
+    await w.offers("codex/gpt-small");
     await w.post(w.ada, "Hello");
     await w.answers(w.threadId, "Hi.");
     await w.settled();

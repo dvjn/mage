@@ -48,7 +48,7 @@
       "risk": "normal",
       "waits": false,
       "requestedAt": "2026-01-01T00:00:06.000Z",
-      "state": "ran",
+      "state": "completed",
       "decision": null,
       "output": {
         "ok": true,
@@ -129,7 +129,7 @@
       "risk": "ask",
       "waits": true,
       "requestedAt": "2026-01-01T00:00:12.000Z",
-      "state": "ran",
+      "state": "completed",
       "decision": {
         "allow": true,
         "scope": "once",
@@ -174,7 +174,7 @@
       "risk": "ask",
       "waits": true,
       "requestedAt": "2026-01-01T00:00:15.000Z",
-      "state": "ran",
+      "state": "completed",
       "decision": {
         "allow": true,
         "scope": "for_now",
@@ -213,7 +213,7 @@
       "risk": "ask",
       "waits": false,
       "requestedAt": "2026-01-01T00:00:18.000Z",
-      "state": "ran",
+      "state": "completed",
       "decision": {
         "allow": true,
         "scope": "for_now",
@@ -253,7 +253,7 @@
       "risk": "ask",
       "waits": true,
       "requestedAt": "2026-01-01T00:00:20.000Z",
-      "state": "ran",
+      "state": "completed",
       "decision": null,
       "output": {
         "ok": true,
@@ -325,7 +325,7 @@
     },
     {
       "kind": "tool",
-      "id": "c-stopped",
+      "id": "c-cancelled",
       "seq": 27,
       "runId": "r1",
       "messageId": "m1",
@@ -338,7 +338,7 @@
       "risk": "ask",
       "waits": true,
       "requestedAt": "2026-01-01T00:00:27.000Z",
-      "state": "stopped",
+      "state": "cancelled",
       "decision": null,
       "output": null,
       "ms": null,
@@ -438,7 +438,7 @@
       "risk": "normal",
       "waits": true,
       "requestedAt": "2026-01-01T00:00:34.000Z",
-      "state": "ran",
+      "state": "completed",
       "decision": {
         "allow": true,
         "scope": "once",
@@ -482,7 +482,7 @@
       "risk": "normal",
       "waits": false,
       "requestedAt": "2026-01-01T00:00:38.000Z",
-      "state": "ran",
+      "state": "completed",
       "decision": null,
       "output": {
         "ok": true,
@@ -513,7 +513,7 @@
       "risk": "review",
       "waits": true,
       "requestedAt": "2026-01-01T00:00:40.000Z",
-      "state": "stopped",
+      "state": "cancelled",
       "decision": null,
       "output": null,
       "ms": null,
@@ -538,7 +538,7 @@
       "risk": "normal",
       "waits": false,
       "requestedAt": "2026-01-01T00:00:45.000Z",
-      "state": "ran",
+      "state": "completed",
       "decision": null,
       "output": {
         "ok": true,
@@ -594,7 +594,7 @@
       "risk": "normal",
       "waits": false,
       "requestedAt": "2026-01-01T00:00:49.000Z",
-      "state": "stopped",
+      "state": "cancelled",
       "decision": null,
       "output": null,
       "ms": null,
@@ -619,7 +619,7 @@
       "risk": "ask",
       "waits": true,
       "requestedAt": "2026-01-01T00:00:51.000Z",
-      "state": "ran",
+      "state": "completed",
       "decision": {
         "allow": true,
         "scope": "once",
@@ -712,7 +712,7 @@
       "risk": "normal",
       "waits": false,
       "requestedAt": "2026-01-01T00:00:59.000Z",
-      "state": "ran",
+      "state": "completed",
       "decision": null,
       "output": {
         "ok": true,
@@ -743,7 +743,7 @@
       "risk": "normal",
       "waits": false,
       "requestedAt": "2026-01-01T00:01:00.000Z",
-      "state": "ran",
+      "state": "completed",
       "decision": null,
       "output": {
         "ok": true,
@@ -756,8 +756,8 @@
       }
     }
   ],
-  "pending": [],
-  "inbox": [],
+  "waitingMessages": [],
+  "waitingNotices": [],
   "run": null,
   "usage": {
     "inputTokens": 120,

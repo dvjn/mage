@@ -10,12 +10,15 @@ import { requestId, type RequestIdVariables } from "hono/request-id";
 
 import { artifactRoutes } from "@/server/artifacts/routes.ts";
 import type { Artifacts } from "@/server/artifacts/service.ts";
-import { toolRoutes } from "@/server/agent/routes.ts";
-import { taskRoutes } from "@/server/agent/task-routes.ts";
-import type { Tasks } from "@/server/agent/tasks.ts";
-import { hookRoutes, triggerRoutes, type Triggers } from "@/server/triggers.ts";
-import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
-import type { ToolDecisions } from "@/server/agent/tools.ts";
+import { toolRoutes } from "@/server/tools/routes.ts";
+import { taskRoutes } from "@/server/tasks/routes.ts";
+import type { Tasks } from "@/server/tasks/tasks.ts";
+import { scheduleRoutes } from "@/server/schedules/routes.ts";
+import type { Schedules } from "@/server/schedules/schedules.ts";
+import { hookRoutes, webhookRoutes } from "@/server/webhooks/routes.ts";
+import type { Webhooks } from "@/server/webhooks/webhooks.ts";
+import type { ToolPolicies } from "@/server/tools/policies.ts";
+import type { ToolDecisions } from "@/server/tools/registry.ts";
 import { guestRoutes } from "@/server/guests/routes.ts";
 import type { Guests } from "@/server/guests/service.ts";
 import { instructionRoutes } from "@/server/instructions/routes.ts";
@@ -37,13 +40,20 @@ import type { Skills } from "@/server/skills/service.ts";
 import { spaceRoutes } from "@/server/spaces/routes.ts";
 import type { Spaces } from "@/server/spaces/service.ts";
 import { threadRoutes } from "@/server/threads/routes.ts";
-import type { Threads } from "@/server/threads/service.ts";
+import { viewRoutes, type Views } from "@/server/views/routes.ts";
+import type { Threads } from "@/server/threads/threads.ts";
 import { ORG_NOT_FOUND, ORG_NOT_FOUND_CODE } from "@/shared/orgs.ts";
 import type { SignInOptions } from "@/shared/sign-in.ts";
 
 import type { ThreadAccess } from "@/server/access/access.ts";
 import type { Queue } from "@/server/queue/queue.ts";
 import type { Calls } from "@/server/calls/calls.ts";
+import type { Posts } from "@/server/queue/posts.ts";
+import type { Execution } from "@/server/execution/execution.ts";
+import type { Subagents } from "@/server/subagents/subagents.ts";
+import type { Asides } from "@/server/threads/asides.ts";
+import type { Branches } from "@/server/threads/branches.ts";
+import type { Commands } from "@/server/threads/commands.ts";
 
 import type { ApiEnv } from "./http.ts";
 
@@ -60,10 +70,20 @@ export interface AppOptions {
   spaces: Spaces;
   // Threads in those spaces and the ones shared with the user, and their events.
   threads: Threads;
+  // What readers are shown of threads; apps that serve no threads go without.
+  views?: Views;
   // Who may do what in a thread, and people's messages waiting for its agent; apps that serve no
   // threads go without.
   access?: Pick<ThreadAccess, "require">;
   queue?: Pick<Queue, "change" | "withdraw">;
+  // People's posts, a person's stop and retry, branches made from a row, side questions, the
+  // commands people may send, and bringing a retired subagent back.
+  posts?: Pick<Posts, "message" | "command">;
+  execution?: Pick<Execution, "stopBy" | "retry">;
+  branches?: Pick<Branches, "act" | "branchOf">;
+  asides?: Pick<Asides, "of" | "ask" | "followUp" | "stop">;
+  commands?: Pick<Commands, "inThread" | "inSpace">;
+  subagents?: Pick<Subagents, "unarchive">;
   // People's decisions on the agent's tool calls, and moving and stopping them.
   calls?: Pick<Calls, "decide" | "answer" | "toJob" | "cancel">;
   // Invite links to threads and the guests they let in.
@@ -72,8 +92,13 @@ export interface AppOptions {
   tools: ToolDecisions;
   // The tasks in threads' lists.
   tasks: Tasks;
-  // The timers and schedules in threads.
-  triggers: Triggers;
+  // The wake-up timers and schedules in threads.
+  schedules: Pick<Schedules, "history" | "pause" | "resume" | "remove">;
+  // The webhooks in threads.
+  webhooks: Pick<
+    Webhooks,
+    "history" | "pause" | "resume" | "remove" | "setSecret" | "setDeliveryHeader" | "deliver"
+  >;
   // The access policies orgs and spaces keep for their tools.
   toolPolicies: ToolPolicies;
   // The MCP servers orgs and spaces add, and authorizing Mage with them.
@@ -153,11 +178,13 @@ function createApi(options: AppOptions) {
     .route("/", orgRoutes({ ...options, tracing: !!options.traceRelay }))
     .route("/", modelRoutes(options))
     .route("/", spaceRoutes(options))
+    .route("/", viewRoutes(options))
     .route("/", threadRoutes(options))
     .route("/", guestRoutes(options))
     .route("/", toolRoutes(options))
     .route("/", taskRoutes(options))
-    .route("/", triggerRoutes(options))
+    .route("/", scheduleRoutes({ schedules: options.schedules, access: options.access! }))
+    .route("/", webhookRoutes({ webhooks: options.webhooks, access: options.access! }))
     .route("/", mcpRoutes(options))
     .route("/", instructionRoutes(options))
     .route("/", skillRoutes(options))
@@ -203,8 +230,8 @@ export function createApp(options: AppOptions): App {
   // Webhooks are posted to by outside services, with no login.
   app.route("/api", hookRoutes(options));
   app.route("/api", createApi(options));
-  const relay = options.traceRelay;
-  if (relay) {
+  const notice = options.traceRelay;
+  if (notice) {
     // Only from someone signed in.
     app.post(
       WEB_TRACES,
@@ -217,7 +244,7 @@ export function createApp(options: AppOptions): App {
         maxSize: WEB_TRACES_LIMIT,
         onError: (c) => c.json({ error: "Too many spans at once" }, 413),
       }),
-      (c) => relay(c.req.raw),
+      (c) => notice(c.req.raw),
     );
   }
   app.on(["GET", "POST"], "/api/auth/*", (c) => options.handleAuth(c.req.raw));

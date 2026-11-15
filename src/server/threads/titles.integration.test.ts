@@ -8,7 +8,7 @@ import { cleanTitle } from "./titles.ts";
 
 async function titledThread() {
   const workspace = setup({}, { titles: true });
-  workspace.org.defaultModel = "codex/gpt-big";
+  await workspace.models.default("codex/gpt-big");
   const ada = await workspace.signUp("Ada Lovelace", "ada@example.com");
   const space = await workspace.yourSpace(ada.cookie);
   const thread = await workspace.createThread(ada.cookie, space.id);
@@ -92,7 +92,7 @@ describe("thread titles", () => {
   });
 
   it("use the org's title model, else the automatic one, else the thread's model", async () => {
-    const { org, titleModel, titledWith, signUp, yourSpace, createThread, api, settled } =
+    const { models, titleModel, titledWith, signUp, yourSpace, createThread, api, settled } =
       await titledThread();
     const grace = await signUp("Grace Hopper", "grace@example.com");
     const space = await yourSpace(grace.cookie);
@@ -104,9 +104,11 @@ describe("thread titles", () => {
     }
 
     await nameOne();
-    org.automaticTitleModel = "claude/claude-haiku-5-5";
+    // A key whose host has a title model makes it the automatic one.
+    await models.offer(["claude/claude-haiku-5-5"], grace.orgId);
     await nameOne();
-    org.titleModel = "codex/gpt-mini";
+    await models.offer(["codex/gpt-mini"]);
+    await models.titleModel("codex/gpt-mini");
     await nameOne();
 
     expect(titledWith).toEqual(["codex/gpt-big", "claude/claude-haiku-5-5", "codex/gpt-mini"]);

@@ -1,4 +1,5 @@
 import { zipSync } from "fflate";
+import { skillsGuidance } from "@/server/skills/service.ts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { instructionsFor } from "@/server/execution/context.ts";
@@ -237,7 +238,7 @@ describe("the system prompt", () => {
     const prompt = instructionsFor({
       org: "Be brief.",
       space: "Use British spelling.",
-      skills: [{ name: "release-notes", description: "Write release notes" }],
+      skills: skillsGuidance([{ name: "release-notes", description: "Write release notes" }]),
     });
     expect(prompt.indexOf("- release-notes: Write release notes")).toBeGreaterThan(
       prompt.indexOf("British"),

@@ -32,7 +32,7 @@ export function ToolCall({
   subagent?: string;
 }) {
   const asked = row.toolId === ASK_TOOL ? askInputSchema.safeParse(row.input) : null;
-  if (asked?.success && row.state === "pending" && row.waits) {
+  if (asked?.success && row.state === "waiting") {
     return (
       <QuestionCard
         row={row}

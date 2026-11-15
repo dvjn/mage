@@ -171,8 +171,8 @@ async function read(page: Page, thread: string) {
 async function seenSeq(page: Page, thread: string) {
   const { spaceId } = (await read(page, thread)).thread;
   const res = await page.request.get(`/api/v1/spaces/${spaceId}/threads`);
-  const list = (await res.json()) as { id: string; activity: { lastSeenSeq: number } }[];
-  return list.find((item) => item.id === thread)?.activity.lastSeenSeq ?? 0;
+  const list = (await res.json()) as { id: string; standing: { lastSeenSeq: number } }[];
+  return list.find((item) => item.id === thread)?.standing.lastSeenSeq ?? 0;
 }
 
 // Waits for the reply to start, answering its seq.
@@ -331,8 +331,7 @@ test("a thread with many unread rows opens at its end, with the earlier unread o
   await expect(earlier).toHaveCount(0);
 });
 
-// Skipped for now: passes alone, but misses its wait under the full suite's parallel load.
-test.fixme("a row changes live at the end while the thread's earlier pages are read", async ({
+test("a row changes live at the end while the thread's earlier pages are read", async ({
   page,
 }) => {
   const email = await signUp(page, "Ada Lovelace");

@@ -7,7 +7,7 @@ import type { ShownRow } from "@/shared/threads/rows.ts";
 import type { ToolDefinition } from "@/shared/tools.ts";
 import { ArtifactCard } from "@/web/artifacts/artifact-card";
 import type { TranscriptEntry } from "@/web/threads/transcript/entries";
-import { RelayMessages } from "@/web/threads/transcript/relay-message";
+import { NoticeMessages } from "@/web/threads/transcript/notice-message";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
 import { ToolGroup } from "@/web/threads/transcript/tool-group";
@@ -17,7 +17,7 @@ interface Props {
   entry: TranscriptEntry;
   tools: ToolDefinition[] | undefined;
   actionsFor: (row: ShownRow) => RowActions;
-  // Whether a calls entry's calls are open, and the open rows of the relays it shows.
+  // Whether a calls entry's calls are open, and the open rows of the notices it shows.
   open: boolean;
   opened: ReadonlySet<string> | undefined;
   onOpenChange: (ids: string[], open: boolean) => void;
@@ -44,7 +44,7 @@ function sameEntry(a: TranscriptEntry, b: TranscriptEntry) {
         a.subagent.name === other.subagent.name
       );
     }
-    case "relays":
+    case "notices":
       return same(a.rows, (b as typeof a).rows);
     case "artifacts": {
       const other = b as typeof a;
@@ -80,9 +80,9 @@ export const EntryView = memo(
             }
           />
         );
-      case "relays":
+      case "notices":
         return (
-          <RelayMessages
+          <NoticeMessages
             rows={entry.rows}
             opened={opened ?? new Set()}
             onOpenChange={onOpenChange}

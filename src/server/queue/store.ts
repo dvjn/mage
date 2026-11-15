@@ -5,7 +5,8 @@
 import { and, asc, desc, eq, inArray, isNull, type SQL, sql } from "drizzle-orm";
 
 import type { Db } from "@/server/db/db.ts";
-import { run, subagent } from "@/server/agent/schema.ts";
+import { run } from "@/server/execution/schema.ts";
+import { subagent } from "@/server/subagents/schema.ts";
 import { user } from "@/server/orgs/schema.ts";
 import { thread, threadBranchSource } from "@/server/threads/schema.ts";
 
@@ -364,15 +365,17 @@ export function fillFromLog(threads: SQL | string) {
            case when e.type = 'message' then coalesce(e.data->>'mode', 'steer') end,
            case when e.type = 'message' then e.actor_user_id end,
            case when e.type = 'message' then 'person'
-                when e.data->>'kind' = 'trigger.fired' and e.data->>'trigger' is not null then 'schedule'
-                when e.data->>'kind' = 'webhook.received' and e.data->>'trigger' is not null then 'webhook'
+                when e.data->>'kind' = 'schedule.fired' and e.data->>'scheduleId' is not null then 'schedule'
+                when e.data->>'kind' = 'webhook.received' and e.data->>'webhookId' is not null then 'webhook'
                 when e.data->>'kind' = 'call.ended' and e.data->'source'->>'callId' is not null then 'job'
                 when e.data->'actor'->>'kind' = 'person' then 'person'
                 when e.data->'source'->>'threadId' <> e.thread_id then 'subagent'
                 else 'system' end,
            case when e.type = 'message' then e.actor_user_id
-                when e.data->>'kind' in ('trigger.fired', 'webhook.received')
-                     and e.data->>'trigger' is not null then e.data->>'trigger'
+                when e.data->>'kind' = 'schedule.fired' and e.data->>'scheduleId' is not null
+                     then e.data->>'scheduleId'
+                when e.data->>'kind' = 'webhook.received' and e.data->>'webhookId' is not null
+                     then e.data->>'webhookId'
                 when e.data->>'kind' = 'call.ended' and e.data->'source'->>'callId' is not null
                      then e.data->'source'->>'callId'
                 when e.data->'actor'->>'kind' = 'person' then e.data->'actor'->>'userId'
@@ -394,14 +397,14 @@ export function fillFromLog(threads: SQL | string) {
                    where f.thread_id = e.thread_id and f.branch_id = e.branch_id and f.seq > e.seq
                      and f.type in ('thread.forked', 'branch.started'))
                      then 'waiting'
-                when e.type = 'notification' and exists (
+                when e.type = 'notice' and exists (
                   select 1 from lineage l
                    where l.thread_id = e.thread_id and l.branch_id = e.branch_id
                      and (l.upto is null or e.seq <= l.upto)) then 'waiting'
                 else 'dropped' end as status
       ) st
      where ${where}
-       and (e.type = 'notification'
+       and (e.type = 'notice'
             or (e.type = 'message' and e.actor_kind = 'user' and e.actor_user_id is not null
                 and coalesce((e.data->>'quiet')::boolean, false) = false))
     on conflict do nothing`;
@@ -422,7 +425,7 @@ export function waitingOnCurrent(threads: SQL | string) {
       join thread_event e on e.thread_id = t.id and e.branch_id = s.source_branch_id
                          and (s.until_seq is null or e.seq <= s.until_seq)
       join thread_input i on i.thread_id = e.thread_id and i.id = e.id
-     where ${where} and e.type = 'notification'
+     where ${where} and e.type = 'notice'
        and not exists (
          select 1
            from thread_branch_source r
@@ -464,7 +467,7 @@ export function wordsFromLog(events: SQL | string) {
           from json_array_elements_text(case when e.type = 'message.admitted'
                                              then e.data->'messageIds' else '[]'::json end)
                with ordinality as i(id, n)
-          join thread_event m on m.id = i.id and m.type = 'notification'
+          join thread_event m on m.id = i.id and m.type = 'notice'
                              and (coalesce((m.data->>'wake')::boolean, true)
                                   -- one that does not wake, whose row a restore left out
                                   or exists (
@@ -472,7 +475,7 @@ export function wordsFromLog(events: SQL | string) {
                                       join thread_branch b on b.id = s.source_branch_id
                                      where s.branch_id = e.branch_id and b.read_seq is not null
                                        and m.seq > b.read_seq and m.seq <= b.fork_seq))
-          cross join lateral json_array_elements(coalesce(m.data->'people', '[]'::json))
+          cross join lateral json_array_elements(coalesce(m.data->'influence', '[]'::json))
                with ordinality as p(v, k)
         union all
         select 0, e.actor_user_id, null, '[]'::jsonb
@@ -487,13 +490,13 @@ export function wordsFromLog(events: SQL | string) {
                          and f.data->>'callId' = e.data->>'callId')))
         union all
         select p.k, p.v->>'userId', p.v->>'name', (p.v->'via')::jsonb
-          from json_array_elements(case when e.type = 'notification'
+          from json_array_elements(case when e.type = 'notice'
                                              and (e.data->>'wake')::boolean is false
-                                        then coalesce(e.data->'people', '[]'::json)
+                                        then coalesce(e.data->'influence', '[]'::json)
                                         else '[]'::json end)
                with ordinality as p(v, k)
       ) w
-     where e.type in ('message.admitted', 'message', 'tool.answered', 'notification')
+     where e.type in ('message.admitted', 'message', 'tool.answered', 'notice')
        and ${where}
     on conflict do nothing`;
 }

@@ -7,8 +7,31 @@ import pg from "pg";
 
 const FIRST_WAIT_MS = 500;
 const LONGEST_WAIT_MS = 5000;
+// How long a listening connection has to answer its check, or to connect and start listening,
+// before it counts as lost.
+const CHECK_MS = 3000;
 
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// What the work answers, or a failure once it takes longer than CHECK_MS.
+async function inTime<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("no answer")), CHECK_MS);
+  });
+  try {
+    return await Promise.race([work, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Closes the connection's socket at once, which ends the connection without a word to the server.
+function cut(client: pg.Client) {
+  (
+    client as unknown as { connection: { stream: { destroy(): void } } }
+  ).connection.stream.destroy();
+}
 
 export function listenAt(url: string) {
   // The connections listening now, for checking they still answer.
@@ -32,11 +55,17 @@ export function listenAt(url: string) {
       // An error on a connection is followed by its end.
       next.on("error", () => {});
       next.on("end", () => lost(next));
+      // A network that stalls while connecting answers nothing, so the attempt is cut in time.
       try {
-        await next.connect();
-        await next.query(`listen "${channel.replaceAll('"', '""')}"`);
+        await inTime(
+          (async () => {
+            await next.connect();
+            await next.query(`listen "${channel.replaceAll('"', '""')}"`);
+          })(),
+        );
       } catch (err) {
-        await next.end().catch(() => {});
+        cut(next);
+        await inTime(next.end()).catch(() => {});
         throw err;
       }
       client = next;
@@ -74,15 +103,16 @@ export function listenAt(url: string) {
     };
   }
 
-  // Makes sure each listening connection still answers; one that does not is closed, to be made
-  // again.
+  // Makes sure each listening connection still answers, in time; one that does not is cut, to be
+  // made again. A connection whose network stalled answers nothing and closes nothing, so it is
+  // cut at the socket rather than asked to end.
   listen.check = async () => {
     await Promise.all(
       [...open].map(async (client) => {
         try {
-          await client.query("select 1");
+          await inTime(client.query("select 1"));
         } catch {
-          await client.end().catch(() => {});
+          cut(client);
         }
       }),
     );

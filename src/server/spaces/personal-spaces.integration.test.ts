@@ -12,7 +12,7 @@ type Person = { userId: string; orgId: string; cookie: string };
 // Ada's team org with its General space, and Grace in it as a member.
 async function teamOrg() {
   const workspace = setup();
-  workspace.org.defaultModel = "codex/gpt-big";
+  await workspace.models.default("codex/gpt-big");
   const { api, signUp } = workspace;
   const signedUpAda = await signUp("Ada Lovelace", "ada@example.com");
   const res = await api("POST", "/orgs", signedUpAda.cookie, { name: "Analytical Engines" });

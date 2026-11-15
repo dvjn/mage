@@ -26,8 +26,8 @@ import {
   CollapsibleTrigger,
 } from "@/web/components/ui/collapsible";
 import { Spinner } from "@/web/components/ui/spinner";
-import { useElapsed } from "@/web/threads/transcript/background-card";
-import { CancelBackground, MoveToBackground } from "@/web/threads/transcript/background";
+import { useElapsed } from "@/web/threads/transcript/work-card";
+import { CancelBackground, MoveToBackground } from "@/web/threads/transcript/job-actions";
 import {
   lineKey,
   rowElementId,
@@ -36,7 +36,7 @@ import {
   useRowLit,
 } from "@/web/threads/transcript/row-focus";
 import { GIVES_WAY, ToolCrumb, useToolPath } from "@/web/threads/transcript/tool-crumb";
-import { isTrigger } from "@/web/threads/transcript/trigger-call";
+import { isScheduleOrWebhook } from "@/web/threads/transcript/schedule-or-webhook";
 import { displayName } from "@/web/lib/people.ts";
 
 // Where a subagent stands, in words.
@@ -49,7 +49,7 @@ export const SUBAGENT_STATES: Record<SubagentState, string> = {
 };
 
 // What a working subagent waits on, in words.
-export const SUBAGENT_NEEDS = { approval: "needs approval", answer: "asked a question" } as const;
+export const SUBAGENT_NEEDS = { decision: "needs approval", answer: "asked a question" } as const;
 
 // Where a subagent call had its effect, in words.
 const EFFECTS: Record<CallEffect["kind"], (name: string) => string> = {
@@ -82,7 +82,7 @@ export function ToolLine({
   let status: string;
   let who: string | undefined;
   switch (row.state) {
-    case "ran":
+    case "completed":
       icon = <CheckIcon className="text-foreground" />;
       status = row.answers ? "Answered" : "Ran";
       who = row.answers ? by && `by ${by}` : allowed;
@@ -102,7 +102,7 @@ export function ToolLine({
       status = "Denied";
       who = "the approval no longer held";
       break;
-    case "stopped":
+    case "cancelled":
       icon = <XIcon />;
       status = "Stopped";
       break;
@@ -112,7 +112,7 @@ export function ToolLine({
       who = by && `by ${by}`;
       break;
     default:
-      if (row.waits && row.state === "pending") {
+      if (row.state === "waiting") {
         icon = <HandIcon className="text-warning" />;
         status = "Waiting for approval";
       } else {
@@ -121,15 +121,15 @@ export function ToolLine({
       }
   }
   // A background call says where its job stands; its result is in the notification, not here.
-  const work = row.background && !isTrigger(row) ? row.background : null;
+  const work = row.work && !isScheduleOrWebhook(row) ? row.work : null;
   if (work) {
     who = undefined;
     switch (work.status) {
-      case "pending":
+      case "waiting":
         icon = <HandIcon className="text-warning" />;
         status = "Waiting for approval";
         break;
-      case "done":
+      case "completed":
         icon = <CheckIcon className="text-foreground" />;
         status = "Done";
         break;
@@ -167,7 +167,7 @@ export function ToolLine({
     .join(" · ");
   // A call that is running counts its time; a background call's is its job's.
   const waiting = status === "Waiting for approval";
-  const running = row.state === "allowed" || (row.state === "pending" && !row.waits);
+  const running = row.state === "ready";
   const elapsed = useElapsed(
     work ?? { startedAt: row.requestedAt, ...(!running && { endedAt: row.requestedAt }) },
   );

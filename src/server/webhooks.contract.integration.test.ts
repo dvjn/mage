@@ -45,7 +45,7 @@ describe("a webhook", () => {
     );
     await w.settled();
     expect(await hooks(w)).toMatchObject([{ fired: 1 }]);
-    const history = await w.history(w.ada, hook.id);
+    const history = await w.history(w.ada, "webhooks", hook.id);
     expect(history).toMatchObject({
       total: 1,
       entries: [{ delivery: { contentType: "application/json", bytes: 14, signed: false } }],
@@ -68,7 +68,7 @@ describe("a webhook", () => {
     expect(await w.hook(hook.url, '{"ref":"main"}', delivery)).toBe(200);
     await w.settled();
     expect(await hooks(w)).toMatchObject([{ fired: 1 }]);
-    expect((await w.history(w.ada, hook.id)).total).toBe(1);
+    expect((await w.history(w.ada, "webhooks", hook.id)).total).toBe(1);
     expect(
       (await w.shown()).rows.filter((row) => row.startsWith("webhook.received: ")),
     ).toHaveLength(1);
@@ -77,10 +77,10 @@ describe("a webhook", () => {
   it("with a signing secret takes only posts signed with it", async () => {
     const w = await world();
     const hook = await w.webhook("Deploys", "Check the deploy");
-    expect(await w.act(w.alan, "PUT", `/triggers/${hook.id}/secret`, { secret: "s3cret" })).toBe(
+    expect(await w.act(w.alan, "PUT", `/webhooks/${hook.id}/secret`, { secret: "s3cret" })).toBe(
       403,
     );
-    expect(await w.act(w.ada, "PUT", `/triggers/${hook.id}/secret`, { secret: "s3cret" })).toBe(
+    expect(await w.act(w.ada, "PUT", `/webhooks/${hook.id}/secret`, { secret: "s3cret" })).toBe(
       200,
     );
     expect(await hooks(w)).toMatchObject([{ signed: true }]);
@@ -90,11 +90,11 @@ describe("a webhook", () => {
     expect(await w.hook(hook.url, "{}", { secret: "s3cret" })).toBe(200);
     await w.answers(w.threadId, "Checked.");
     await w.settled();
-    expect((await w.history(w.ada, hook.id)).entries).toMatchObject([
+    expect((await w.history(w.ada, "webhooks", hook.id)).entries).toMatchObject([
       { delivery: { signed: true } },
     ]);
 
-    expect(await w.act(w.ada, "PUT", `/triggers/${hook.id}/secret`, { secret: null })).toBe(200);
+    expect(await w.act(w.ada, "PUT", `/webhooks/${hook.id}/secret`, { secret: null })).toBe(200);
     expect(await w.hook(hook.url, "{}")).toBe(200);
     await w.answers(w.threadId, "Checked.");
     await w.settled();
@@ -104,14 +104,14 @@ describe("a webhook", () => {
     const w = await world();
     const hook = await w.webhook("Deploys", "Check the deploy");
     const calls = w.modelCalls();
-    expect(await w.act(w.grace, "POST", `/triggers/${hook.id}/pause`)).toBe(200);
+    expect(await w.act(w.grace, "POST", `/webhooks/${hook.id}/pause`)).toBe(200);
     expect(await hooks(w)).toMatchObject([{ status: "paused" }]);
     expect(await w.hook(hook.url, "{}")).toBe(409);
-    expect(await w.act(w.grace, "POST", `/triggers/${hook.id}/resume`)).toBe(200);
+    expect(await w.act(w.grace, "POST", `/webhooks/${hook.id}/resume`)).toBe(200);
     expect(await w.hook(hook.url, "{}")).toBe(200);
     await w.answers(w.threadId, "Checked.");
     await w.settled();
-    expect(await w.act(w.ada, "DELETE", `/triggers/${hook.id}`)).toBe(200);
+    expect(await w.act(w.ada, "DELETE", `/webhooks/${hook.id}`)).toBe(200);
     expect(await hooks(w)).toEqual([]);
     expect(await w.hook(hook.url, "{}")).toBe(404);
     await w.settled();
@@ -134,7 +134,7 @@ describe("a webhook's posts", () => {
       await w.settled();
     }
     expect(await hooks(w)).toMatchObject([{ fired: 4 }]);
-    expect((await w.history(w.ada, hook.id)).total).toBe(4);
+    expect((await w.history(w.ada, "webhooks", hook.id)).total).toBe(4);
   });
 
   it("to a paused webhook are refused and leave its card as it was", async () => {
@@ -145,7 +145,7 @@ describe("a webhook's posts", () => {
     await w.settled();
     const card = async () => (await w.activity()).find((item) => item.work.webhook)!.work.webhook!;
     const before = await card();
-    expect(await w.act(w.ada, "POST", `/triggers/${hook.id}/pause`)).toBe(200);
+    expect(await w.act(w.ada, "POST", `/webhooks/${hook.id}/pause`)).toBe(200);
     expect(await w.hook(hook.url, "{}")).toBe(409);
     expect(await card()).toMatchObject({ fired: before.fired, lastFiredAt: before.lastFiredAt });
   });
@@ -169,7 +169,7 @@ describe("a webhook's delivery header", () => {
   it("is set by those who may post, and posts are then told apart by it alone", async () => {
     const w = await world();
     const hook = await w.webhook("Deploys", "Check the deploy");
-    const path = `/triggers/${hook.id}/delivery-header`;
+    const path = `/webhooks/${hook.id}/delivery-header`;
     expect(await w.act(w.alan, "PUT", path, { header: "X-Request-Id" })).toBe(403);
     expect(await w.act(w.ada, "PUT", path, { header: "not a header" })).toBe(400);
     expect(await w.act(w.ada, "PUT", path, { header: "X-Request-Id" })).toBe(200);

@@ -40,7 +40,7 @@ describe("a wake-up timer", () => {
     expect(told.texts.at(-1)).toContain("Check the build");
     await w.settled();
     expect((await w.shown()).rows.slice(-2)).toEqual([
-      expect.stringMatching(/^trigger\.fired: /),
+      expect.stringMatching(/^schedule\.fired: /),
       "agent (completed): Checked.",
     ]);
     expect(await w.later(HOUR)).toBe(0);
@@ -65,7 +65,7 @@ describe("a schedule", () => {
     await w.settled();
 
     expect(await scheduled(w)).toMatchObject([{ title: "Digest", status: "scheduled", fired: 2 }]);
-    const history = await w.history(w.ada, schedule.id);
+    const history = await w.history(w.ada, "schedules", schedule.id);
     expect(history).toMatchObject({ total: 2, offset: 0 });
     expect(history.entries).toHaveLength(2);
   });
@@ -85,15 +85,15 @@ describe("a schedule", () => {
     const { id } = await w.schedule("Digest", "0 * * * *", "Write the digest");
     const calls = w.modelCalls();
 
-    expect(await w.act(w.alan, "POST", `/triggers/${id}/pause`)).toBe(403);
-    expect(await w.act(w.grace, "POST", `/triggers/${id}/pause`)).toBe(200);
+    expect(await w.act(w.alan, "POST", `/schedules/${id}/pause`)).toBe(403);
+    expect(await w.act(w.grace, "POST", `/schedules/${id}/pause`)).toBe(200);
     expect(await scheduled(w)).toMatchObject([{ status: "paused" }]);
     expect(await w.later(3 * HOUR)).toBe(0);
     // Pausing what is paused, and resuming what runs, change nothing.
-    expect(await w.act(w.grace, "POST", `/triggers/${id}/pause`)).toBe(200);
+    expect(await w.act(w.grace, "POST", `/schedules/${id}/pause`)).toBe(200);
 
-    expect(await w.act(w.grace, "POST", `/triggers/${id}/resume`)).toBe(200);
-    expect(await w.act(w.grace, "POST", `/triggers/${id}/resume`)).toBe(200);
+    expect(await w.act(w.grace, "POST", `/schedules/${id}/resume`)).toBe(200);
+    expect(await w.act(w.grace, "POST", `/schedules/${id}/resume`)).toBe(200);
     expect(await scheduled(w)).toMatchObject([{ status: "scheduled" }]);
     // Its next time is counted from when it was resumed, with nothing owed for the pause.
     expect(await w.later(0)).toBe(0);
@@ -101,10 +101,10 @@ describe("a schedule", () => {
     await w.answers(w.threadId, "Written.");
     await w.settled();
 
-    expect(await w.act(w.ada, "DELETE", `/triggers/${id}`)).toBe(200);
+    expect(await w.act(w.ada, "DELETE", `/schedules/${id}`)).toBe(200);
     expect(await scheduled(w)).toEqual([]);
     expect(await w.later(3 * HOUR)).toBe(0);
-    expect(await w.act(w.ada, "DELETE", `/triggers/${id}`)).toBe(404);
+    expect(await w.act(w.ada, "DELETE", `/schedules/${id}`)).toBe(404);
 
     // None of that started the agent; it reads of each with what next does.
     expect(w.modelCalls()).toBe(calls + 1);
@@ -117,9 +117,9 @@ describe("a timer or schedule over its life", () => {
   it("fires at the next tick when a paused timer is resumed after its time has passed", async () => {
     const w = await world();
     const timer = await w.wakeUp(600, "Check the build");
-    expect(await w.act(w.ada, "POST", `/triggers/${timer.id}/pause`)).toBe(200);
+    expect(await w.act(w.ada, "POST", `/schedules/${timer.id}/pause`)).toBe(200);
     expect(await w.later(20 * MINUTE)).toBe(0);
-    expect(await w.act(w.ada, "POST", `/triggers/${timer.id}/resume`)).toBe(200);
+    expect(await w.act(w.ada, "POST", `/schedules/${timer.id}/resume`)).toBe(200);
     expect(await w.later(0)).toBe(1);
     await w.answers(w.threadId, "Checked.");
     await w.settled();
@@ -140,15 +140,15 @@ describe("a timer or schedule over its life", () => {
     ] as const) {
       const res = await w.api(
         method,
-        `/threads/${w.threadId}/triggers/${timer.id}${path}`,
+        `/threads/${w.threadId}/schedules/${timer.id}${path}`,
         w.ada.cookie,
       );
       expect(res.status).toBe(409);
       expect(await res.json()).toMatchObject({ error: "This timer has gone off" });
     }
     const other = await w.wakeUp(600, "Later");
-    expect(await w.act(w.ada, "DELETE", `/triggers/${other.id}`)).toBe(200);
-    expect(await w.act(w.ada, "DELETE", `/triggers/${other.id}`)).toBe(404);
+    expect(await w.act(w.ada, "DELETE", `/schedules/${other.id}`)).toBe(200);
+    expect(await w.act(w.ada, "DELETE", `/schedules/${other.id}`)).toBe(404);
   });
 
   // SC3
@@ -164,7 +164,7 @@ describe("a timer or schedule over its life", () => {
       w.json<{ total: number; offset: number; entries: { id: string; at: string }[] }>(
         await w.api(
           "GET",
-          `/threads/${w.threadId}/triggers/${schedule.id}/history?offset=${offset}`,
+          `/threads/${w.threadId}/schedules/${schedule.id}/history?offset=${offset}`,
           w.ada.cookie,
         ),
       );
@@ -186,14 +186,14 @@ describe("a timer or schedule over its life", () => {
     expect(await w.later(HOUR)).toBe(1);
     await w.answers(w.threadId, "Written.");
     await w.settled();
-    const before = await w.history(w.ada, schedule.id);
+    const before = await w.history(w.ada, "schedules", schedule.id);
     const last = (await w.detail()).rows.at(-1)!;
     const forked = await w.json<{ id: string }>(
       await w.api("POST", `/threads/${w.threadId}/fork`, w.ada.cookie, { rowId: last.id }),
     );
     expect(forked.id).not.toBe(w.threadId);
     await w.settled();
-    expect(await w.history(w.ada, schedule.id)).toEqual(before);
+    expect(await w.history(w.ada, "schedules", schedule.id)).toEqual(before);
     expect(await scheduled(w)).toMatchObject([{ fired: 1 }]);
   });
 
@@ -204,20 +204,17 @@ describe("a timer or schedule over its life", () => {
     await w.asks(
       w.threadId,
       ...Array.from({ length: 20 }, (_, index): [string, unknown] => [
-        "triggers.wake_at",
+        "schedules.wake_at",
         { in_seconds: 600 + index, note: `Timer ${index}` },
       ]),
     );
     await w.answers(w.threadId, "Set.");
     await w.settled();
     await w.post(w.ada, "One more");
-    await w.asks(w.threadId, [
-      "triggers.schedule",
-      { name: "More", cron: "0 * * * *", prompt: "x" },
-    ]);
+    await w.asks(w.threadId, ["schedules.add", { name: "More", cron: "0 * * * *", prompt: "x" }]);
     const told = await w.answers(w.threadId, "Refused.");
     expect(told.texts.at(-1)).toBe(
-      'result triggers.schedule: {"ok":false,"error":"This thread has 20 triggers. Delete some with triggers.delete first."}',
+      'result schedules.add: {"ok":false,"error":"This thread has 20 schedules and webhooks. Delete some with schedules.delete or webhooks.delete first."}',
     );
     await w.settled();
   });
@@ -227,12 +224,12 @@ describe("a timer or schedule over its life", () => {
     await w.webhook("Deploys", "Check the deploy");
     await w.post(w.ada, "Schedule it");
     await w.asks(w.threadId, [
-      "triggers.schedule",
+      "schedules.add",
       { name: "deploys", cron: "0 * * * *", prompt: "x" },
     ]);
     const told = await w.answers(w.threadId, "Refused.");
     expect(told.texts.at(-1)).toBe(
-      'result triggers.schedule: {"ok":false,"error":"A webhook named Deploys already exists here; pick another name."}',
+      'result schedules.add: {"ok":false,"error":"A webhook named Deploys already exists here; pick another name."}',
     );
     await w.settled();
   });

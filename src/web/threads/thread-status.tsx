@@ -11,7 +11,7 @@ import { HandIcon, LoaderCircleIcon, TriangleAlertIcon } from "lucide-react";
 
 import { ASK_TOOL } from "@/shared/ask.ts";
 import type { ThreadStatus } from "@/shared/thread-status.ts";
-import type { ThreadActivity } from "@/shared/threads/list.ts";
+import type { ThreadStanding } from "@/shared/threads/list.ts";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/web/components/ui/tooltip";
 import { useMinute } from "@/web/hooks/use-minute";
 
@@ -24,8 +24,8 @@ function minutesSince(iso: string) {
 }
 
 // What the glyph means: the status's word, then what there is to say about it; nothing for read.
-function tooltipOf(status: ThreadStatus, activity: ThreadActivity) {
-  const run = activity.run;
+function tooltipOf(status: ThreadStatus, standing: ThreadStanding) {
+  const run = standing.run;
   switch (status) {
     case "waiting":
       return `Waiting for you · since ${clock.format(new Date(run?.since ?? Date.now()))}`;
@@ -34,7 +34,7 @@ function tooltipOf(status: ThreadStatus, activity: ThreadActivity) {
         ? "Paused · waiting for someone to answer"
         : "Paused · waiting for someone to approve";
     case "failed":
-      return `Failed · ${activity.failed?.error || "The agent could not reply"}`;
+      return `Failed · ${standing.failed?.error || "The agent could not reply"}`;
     case "working":
       return run?.status === "queued" ? "Queued" : `Working · ${minutesSince(run?.since ?? "")}`;
     case "unread":
@@ -68,9 +68,9 @@ function Glyph({ status, size }: { status: ThreadStatus; size: string }) {
 }
 
 // What the status means in words, kept current; null for read.
-export function useStatusLabel(status: ThreadStatus, activity: ThreadActivity) {
+export function useStatusLabel(status: ThreadStatus, standing: ThreadStanding) {
   useMinute();
-  return tooltipOf(status, activity);
+  return tooltipOf(status, standing);
 }
 
 // The status as a dot for the corner of a model's mark, on a disc of the row's colour, given as
@@ -113,18 +113,18 @@ export function StatusDot({
 // with nothing new.
 export function StatusGlyph({
   status,
-  activity,
+  standing,
   size = "size-4",
   className,
 }: {
   status: ThreadStatus;
-  activity: ThreadActivity;
+  standing: ThreadStanding;
   // The glyph's box, as a size class.
   size?: string;
   className?: string;
 }) {
   useMinute();
-  const tooltip = tooltipOf(status, activity);
+  const tooltip = tooltipOf(status, standing);
   if (!tooltip) return null;
   const glyph = (
     <span role="img" aria-label={tooltip} className={cn("flex shrink-0", className)}>

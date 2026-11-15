@@ -20,8 +20,8 @@ import { type ReactNode, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "cn";
 
-import type { BackgroundItem } from "@/shared/calls.ts";
-import { HISTORY_PAGE } from "@/shared/triggers.ts";
+import type { ActivityItem } from "@/shared/jobs.ts";
+import { HISTORY_PAGE } from "@/shared/schedules-and-webhooks.ts";
 import type { ToolScope } from "@/shared/threads/events.ts";
 import { CopyButton } from "@/web/components/copy-button";
 import { NameDialog } from "@/web/components/name-dialog";
@@ -36,14 +36,14 @@ import { plural } from "@/web/lib/plural";
 import { fullTime, timeUntil } from "@/web/lib/time";
 import { PagerControl, pageHeight, usePager, usePublishPager } from "@/web/threads/pager";
 import { useStopRun } from "@/web/threads/mutations";
-import { threadQuery, triggerHistoryQuery } from "@/web/threads/queries";
-import { KINDS, useElapsed } from "@/web/threads/transcript/background-card";
-import { useBackgroundActions } from "@/web/threads/transcript/background";
+import { firedHistoryQuery, threadQuery } from "@/web/threads/queries";
+import { KINDS, useElapsed } from "@/web/threads/transcript/work-card";
+import { useBackgroundActions } from "@/web/threads/transcript/job-actions";
 import { ToolCard } from "@/web/threads/transcript/tool-card";
 import { RowLink, useGoToRow } from "@/web/threads/transcript/row-focus";
-import { TriggerControls } from "@/web/threads/transcript/trigger-controls";
+import { WorkControls } from "@/web/threads/transcript/work-controls";
 
-function Detail({ item }: { item: BackgroundItem }) {
+function Detail({ item }: { item: ActivityItem }) {
   useMinute();
   const { work } = item;
   const elapsed = useElapsed(work);
@@ -52,7 +52,7 @@ function Detail({ item }: { item: BackgroundItem }) {
     const { state, needs } = work.subagent;
     if (state === "working") {
       return needs ? (
-        <>Waiting for {needs === "approval" ? "approval" : "an answer"}</>
+        <>Waiting for {needs === "decision" ? "decision" : "an answer"}</>
       ) : (
         <>
           Working<span className="tabular-nums"> {elapsed}</span>
@@ -72,11 +72,11 @@ function Detail({ item }: { item: BackgroundItem }) {
       </>
     );
   }
-  if (work.kind === "approval") return <>Waiting for approval</>;
-  if (work.kind === "call") {
+  if (work.kind === "decision") return <>Waiting for approval</>;
+  if (work.kind === "job") {
     return (
       <>
-        {work.status === "pending" ? "Waiting" : "Running"}
+        {work.status === "waiting" ? "Waiting" : "Running"}
         <span className="tabular-nums"> {elapsed}</span>
       </>
     );
@@ -95,7 +95,7 @@ function Detail({ item }: { item: BackgroundItem }) {
 
 // The colour of an item's state: what needs the reader is amber, a failure red, what runs blue;
 // the rest is muted. The state is always said in words beside it.
-export function toneOf({ attention, work }: BackgroundItem) {
+export function toneOf({ attention, work }: ActivityItem) {
   if (attention === "failed") return "text-destructive";
   if (attention) return "text-warning";
   if (work.status === "running" || work.subagent?.state === "working") return "text-info";
@@ -104,7 +104,7 @@ export function toneOf({ attention, work }: BackgroundItem) {
 
 // What marks an item: a spinner while it runs, a hand while it waits for approval, its kind's icon
 // otherwise, coloured when it failed or fires soon.
-function Mark({ item }: { item: BackgroundItem }) {
+function Mark({ item }: { item: ActivityItem }) {
   const { work, attention } = item;
   if (work.status === "running") return <Spinner className="size-3.5 text-info" />;
   if (attention === "approval") {
@@ -176,8 +176,8 @@ function IconAction({
 
 // A webhook's own buttons: copy its URL, require a signature or change or remove the secret, and
 // name the header its deliveries carry their id in.
-function WebhookControls({ item }: { item: BackgroundItem }) {
-  const actions = useBackgroundActions()?.schedule;
+function WebhookControls({ item }: { item: ActivityItem }) {
+  const actions = useBackgroundActions()?.webhook;
   const [open, setOpen] = useState(false);
   const [naming, setNaming] = useState(false);
   const webhook = item.work.webhook!;
@@ -264,7 +264,7 @@ function WebhookControls({ item }: { item: BackgroundItem }) {
   );
 }
 
-function StopButton({ item }: { item: BackgroundItem }) {
+function StopButton({ item }: { item: ActivityItem }) {
   const stop = useStopRun(item.work.subagent!.threadId);
   return (
     <IconAction
@@ -276,7 +276,7 @@ function StopButton({ item }: { item: BackgroundItem }) {
   );
 }
 
-function CancelButton({ item }: { item: BackgroundItem }) {
+function CancelButton({ item }: { item: ActivityItem }) {
   const actions = useBackgroundActions();
   const [stopping, setStopping] = useState(false);
   if (!actions) return null;
@@ -294,7 +294,7 @@ function CancelButton({ item }: { item: BackgroundItem }) {
 }
 
 // The button that leads to the item's row in the transcript, when the loaded transcript has it.
-function useGoToMessage(item: BackgroundItem, threadId: string) {
+function useGoToMessage(item: ActivityItem, threadId: string) {
   const here = useQuery(threadQuery(threadId)).data?.rows.some((row) => row.id === item.rowId);
   const go = useGoToRow(threadId);
   if (item.work.subagent || !here) return null;
@@ -309,7 +309,7 @@ function size(bytes: number) {
 
 // What a schedule fired or a webhook took, newest first and a page at a time from the server, in a
 // dialog, each with the way to its notification in the transcript. Read only once it is opened.
-function TriggerHistory({
+function FiredHistory({
   threadId,
   id,
   name,
@@ -325,7 +325,9 @@ function TriggerHistory({
   onClose: () => void;
 }) {
   const [offset, setOffset] = useState(0);
-  const query = useQuery(triggerHistoryQuery(threadId, id, offset, fired));
+  const query = useQuery(
+    firedHistoryQuery(threadId, webhook ? "webhook" : "schedule", id, offset, fired),
+  );
   const history = query.data;
   const total = history?.total ?? fired;
   // The list keeps a page's height, so the dialog does not jump on a short last page or a load.
@@ -352,7 +354,7 @@ function TriggerHistory({
           history.entries.length === 0 ? (
             <p className="text-sm text-muted-foreground">{webhook ? "No deliveries" : "No runs"}</p>
           ) : (
-            <ul data-testid="trigger-history" className="flex flex-col" style={height}>
+            <ul data-testid="fired-history" className="flex flex-col" style={height}>
               {history.entries.map((entry) => (
                 <li key={entry.id}>
                   <RowLink
@@ -400,14 +402,14 @@ function ItemRow({
   facts,
   onReview,
 }: {
-  item: BackgroundItem;
+  item: ActivityItem;
   threadId: string;
   facts: string[];
   onReview: () => void;
 }) {
   const { work } = item;
   const goTo = useGoToMessage(item, threadId);
-  const trigger = work.schedule ?? work.webhook;
+  const set = work.schedule ?? work.webhook;
   const subagent = work.subagent;
   const review = item.attention === "approval";
   const [open, setOpen] = useState(false);
@@ -439,7 +441,7 @@ function ItemRow({
         <Detail item={item} />
       </span>
       <Group>
-        {trigger && fired > 0 && (
+        {set && fired > 0 && (
           <WithTooltip label={`History · ${fired}`}>
             <Button
               type="button"
@@ -469,13 +471,13 @@ function ItemRow({
           ))}
         {work.webhook && <WebhookControls item={item} />}
         {goTo}
-        {trigger?.canChange && <TriggerControls work={work} id={trigger.id} name={item.title} />}
+        {set?.canChange && <WorkControls work={work} id={set.id} name={item.title} />}
         {work.canCancel && (subagent ? <StopButton item={item} /> : <CancelButton item={item} />)}
       </Group>
-      {open && trigger && fired > 0 && (
-        <TriggerHistory
+      {open && set && fired > 0 && (
+        <FiredHistory
           threadId={threadId}
-          id={trigger.id}
+          id={set.id}
           name={item.title}
           fired={fired}
           webhook={!!work.webhook}
@@ -493,16 +495,16 @@ function ApprovalCard({
   threadId,
   decide,
 }: {
-  item: BackgroundItem;
+  item: ActivityItem;
   threadId: string;
   decide: (callId: string, allow: boolean, scope: ToolScope) => Promise<void>;
 }) {
   const detail = useQuery(threadQuery(threadId)).data;
   const goTo = useGoToMessage(item, threadId);
   const row = detail?.rows.find((one) => one.id === item.rowId);
-  if (!detail || row?.kind !== "tool" || row.state !== "pending") return null;
+  if (!detail || row?.kind !== "tool" || row.state !== "waiting") return null;
   return (
-    <div data-testid="tray-card" data-kind="approval" data-status="pending">
+    <div data-testid="tray-card" data-kind="decision" data-status="waiting">
       <ToolCard
         row={row}
         definition={detail.tools.find((tool) => tool.name === row.toolId)}
@@ -519,14 +521,14 @@ export function TrayItemCard({
   decide,
   onReview,
 }: {
-  item: BackgroundItem;
+  item: ActivityItem;
   threadId: string;
   decide: (callId: string, allow: boolean, scope: ToolScope) => Promise<void>;
   // Opens the calls waiting for a decision.
   onReview: () => void;
 }) {
   const { work } = item;
-  if (work.kind === "approval")
+  if (work.kind === "decision")
     return <ApprovalCard item={item} threadId={threadId} decide={decide} />;
   const { schedule } = work;
   const { tasks } = work.subagent ?? {};
@@ -554,7 +556,7 @@ export function TrayList({
   items,
   ...rest
 }: {
-  items: BackgroundItem[];
+  items: ActivityItem[];
   threadId: string;
   decide: (callId: string, allow: boolean, scope: ToolScope) => Promise<void>;
   onReview: () => void;

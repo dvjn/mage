@@ -15,19 +15,18 @@ import type { Reader, ThreadAccess } from "@/server/access/access.ts";
 import type { SpaceStore } from "@/server/spaces/service.ts";
 import type { Signals } from "@/server/sync/signals.ts";
 import { type Append, eventSummary, type ThreadLog } from "@/server/threads/log.ts";
-import type { ThreadStore } from "@/server/threads/service.ts";
-import type { Transcripts } from "@/server/threads/transcripts.ts";
-import type { Delivery, Steering, ThreadEventSummary } from "@/shared/threads/events.ts";
+import type { ThreadStore } from "@/server/threads/types.ts";
+import type { Delivery, Influencer, ThreadEventSummary } from "@/shared/threads/events.ts";
 import { personLabel } from "@/shared/people.ts";
 import {
   asksToCompact,
   type PendingMessage,
-  type RelayMessage,
+  type NoticeMessage,
   type SentCommand,
-  type Transcript,
+  waitingIn,
 } from "@/shared/transcript.ts";
 
-import { actorOf, type Notification } from "./notices.ts";
+import { actorOf, type Notice } from "./notices.ts";
 import type { INPUT_STATES, ORIGIN_KINDS } from "./schema.ts";
 import type { InputRow, QueueStore } from "./store.ts";
 
@@ -45,7 +44,7 @@ export type Input =
       guest?: boolean;
       command?: SentCommand;
     }
-  | { kind: "notice"; notice: Notification };
+  | { kind: "notice"; notice: Notice };
 
 export interface QueuedInput {
   id: string;
@@ -63,11 +62,11 @@ export interface QueuedInput {
   sourceCallId: string | null;
   // What it says as the fold reads it now; set while it waits.
   message?: PendingMessage;
-  notice?: RelayMessage;
+  notice?: NoticeMessage;
 }
 
 // Whose words the thread's agent read, where its log put them before it.
-export type Word = Steering & { seq: number };
+export type Word = Influencer & { seq: number };
 
 // The run that takes inputs in.
 export interface RunRef {
@@ -92,11 +91,10 @@ export interface EnqueueOptions {
 export interface QueueOptions {
   store: QueueStore;
   log: ThreadLog;
-  transcripts: Pick<Transcripts, "of">;
-  threads: Pick<ThreadStore, "find" | "eventAt" | "eventsAt">;
+  threads: Pick<ThreadStore, "find" | "eventAt" | "eventsAt" | "changesOf">;
   spaceStore: Pick<SpaceStore, "find">;
   access: Pick<ThreadAccess, "can">;
-  bus: Pick<Signals, "wake">;
+  signals: Pick<Signals, "wake">;
   // Whether the caller is inside a write already.
   inTransaction?: () => boolean;
 }
@@ -132,20 +130,24 @@ function originOf(threadId: string, input: Input): Origin {
 }
 
 export function createQueue(options: QueueOptions) {
-  const { store, log, transcripts, threads, spaceStore, access, bus } = options;
+  const { store, log, threads, spaceStore, access, signals } = options;
   const listeners: ((input: QueuedInput) => Promise<void>)[] = [];
 
-  // The rows with what each says, as the branch's fold reads it.
-  async function withContent(
-    rows: InputRow[],
-    threadId: string,
-    branchId?: string,
-    read?: Pick<Transcript, "pending" | "inbox">,
-  ) {
+  // The rows with what each says now: read from its event and, for a person's message, the
+  // changes made to it on the branch since.
+  async function withContent(rows: InputRow[], threadId: string, branchId?: string) {
     if (rows.length === 0) return [];
-    const { pending, inbox } = read ?? (await transcripts.of(threadId, branchId)).transcript();
-    const messages = new Map(pending.map((message) => [message.id, message]));
-    const notices = new Map(inbox.map((notice) => [notice.id, notice]));
+    const changed = rows.filter((row) => row.kind === "message").map((row) => row.id);
+    const events = [
+      ...(await threads.eventsAt(
+        threadId,
+        rows.map((row) => row.seq),
+      )),
+      ...(await threads.changesOf(threadId, changed, branchId)),
+    ].toSorted((one, other) => one.seq - other.seq);
+    const waiting = waitingIn(events.map(eventSummary));
+    const messages = new Map(waiting.messages.map((message) => [message.id, message]));
+    const notices = new Map(waiting.notices.map((notice) => [notice.id, notice]));
     return rows.map((row): QueuedInput => {
       const queued = queuedOf(row);
       const message = messages.get(row.id);
@@ -196,7 +198,7 @@ export function createQueue(options: QueueOptions) {
       const row = await store.find(inputId, branchId);
       const message =
         row?.threadId === threadId && row.status === "waiting" && row.kind === "message"
-          ? (await transcripts.of(threadId)).transcript().pending.find((one) => one.id === inputId)
+          ? (await withContent([row], threadId, branchId))[0]?.message
           : undefined;
       if (!message) throw new ServiceError(409, "The agent has already taken this message in");
       if (message.author.userId !== reader.principal.userId) {
@@ -204,7 +206,7 @@ export function createQueue(options: QueueOptions) {
       }
       await change(append, message, branchId);
     });
-    bus.wake(threadId);
+    signals.wake(threadId);
     return events[0]!;
   }
 
@@ -304,8 +306,8 @@ export function createQueue(options: QueueOptions) {
           const carried = await store.carried(threadId, left, branchId);
           for (const row of carried) {
             const event = await threads.eventAt(threadId, row.seq);
-            if (event?.type !== "notification") continue;
-            const copy = await append({ type: "notification", actor: AGENT, data: event.data });
+            if (event?.type !== "notice") continue;
+            const copy = await append({ type: "notice", actor: AGENT, data: event.data });
             await store.insert({
               id: copy.id,
               threadId,
@@ -330,7 +332,7 @@ export function createQueue(options: QueueOptions) {
             messages.map((row) => row.id),
             left,
           );
-          if (carried.length > 0) bus.wake(threadId);
+          if (carried.length > 0) signals.wake(threadId);
         },
         branchId,
       );
@@ -379,7 +381,7 @@ export function createQueue(options: QueueOptions) {
                     opts.title,
                   )
                 : await append({
-                    type: "notification",
+                    type: "notice",
                     actor: AGENT,
                     data: (() => {
                       const actor = actorOf(input.notice);
@@ -392,7 +394,7 @@ export function createQueue(options: QueueOptions) {
             if (
               input.kind === "message"
                 ? input.quiet
-                : input.notice.wake === false && input.notice.people.length > 0
+                : input.notice.wake === false && input.notice.influence.length > 0
             ) {
               await store.spoke(threadId, [stored.seq]);
             }
@@ -415,7 +417,7 @@ export function createQueue(options: QueueOptions) {
             });
             const queued = queuedOf(row);
             if (!opts.quietly) for (const listener of listeners) await listener(queued);
-            bus.wake(threadId);
+            signals.wake(threadId);
             return { event, input: queued, added: true };
           },
           opts.branchId,
@@ -461,13 +463,9 @@ export function createQueue(options: QueueOptions) {
     },
 
     // The inputs waiting on the branch, the thread's current one when none is named, oldest
-    // first, with what each says, read from the branch's transcript when the caller has it.
-    async waiting(
-      threadId: string,
-      branchId?: string,
-      read?: Pick<Transcript, "pending" | "inbox">,
-    ) {
-      return withContent(await store.waiting(threadId, branchId), threadId, branchId, read);
+    // first, with what each says.
+    async waiting(threadId: string, branchId?: string) {
+      return withContent(await store.waiting(threadId, branchId), threadId, branchId);
     },
 
     // Whether a person's message waits on the branch.
@@ -493,7 +491,7 @@ export function createQueue(options: QueueOptions) {
         total,
         entries: rows.flatMap((row) => {
           const event = bySeq.get(row.seq);
-          return event?.type === "notification"
+          return event?.type === "notice"
             ? [{ ...queuedOf(row), at: event.createdAt, notice: event.data }]
             : [];
         }),

@@ -15,18 +15,19 @@ import { ulid } from "ulid";
 import * as z from "zod";
 
 import type { Reader } from "@/server/access/access.ts";
-import type { Live } from "@/server/agent/live.ts";
+import type { Live } from "@/server/calls/live.ts";
 import type {
   AnyToolSpec,
   CallPresentation,
   DeferredTool,
   ModelNames,
+  SpaceTools,
   ToolContext,
   ToolNames,
   ToolOutput,
   Tools,
-} from "@/server/agent/tools.ts";
-import { lastWriter } from "@/server/agent/tools.ts";
+} from "@/server/tools/registry.ts";
+import { lastWriter } from "@/server/tools/registry.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import { contentRecorded, tracer } from "@/server/kernel/tracing.ts";
@@ -37,8 +38,8 @@ import { LeaseLost } from "@/server/sync/lease.ts";
 import type { Signals } from "@/server/sync/signals.ts";
 import type { AfterCommit, Sync } from "@/server/sync/sync.ts";
 import type { Append, ThreadLog } from "@/server/threads/log.ts";
-import type { Thread, ThreadStore } from "@/server/threads/service.ts";
-import { steeringOf } from "./influence.ts";
+import type { Thread, ThreadStore } from "@/server/threads/types.ts";
+import { influenceOf } from "./influence.ts";
 import { type AskAnswers, askInputSchema, answersProblem } from "@/shared/ask.ts";
 import type { ToolRisk, ToolScope } from "@/shared/threads/events.ts";
 import { wireToolName } from "@/shared/tools.ts";
@@ -68,11 +69,13 @@ export interface RunHold {
   ref: string | null;
 }
 
-// What the step that decides calls read of its thread and space at its start: the tools the
-// thread's agent may call. A change made during the step takes effect at the next.
+// What the step that decides calls read of its thread and space at its start: what the space had
+// of tools, and of them those the thread's agent may call. A change made during the step takes
+// effect at the next.
 export interface CallContext {
   thread: Thread;
   space: Space;
+  now: SpaceTools;
   offered: AnyToolSpec[];
 }
 
@@ -116,10 +119,10 @@ export interface WaitingCall {
 
 export interface CallsOptions {
   store: CallStore;
-  threads: Pick<ThreadStore, "find" | "eventsAt" | "lastRan" | "results">;
+  threads: Pick<ThreadStore, "find" | "findAll" | "eventsAt" | "lastRan" | "results">;
   spaceStore: Pick<SpaceStore, "find">;
   log: ThreadLog;
-  bus: Signals;
+  signals: Signals;
   queue: Pick<Queue, "enqueue" | "words" | "spoke">;
   logger: Logger;
   afterCommit: AfterCommit;
@@ -163,11 +166,11 @@ function messageOf(err: unknown) {
 
 // Whether a call has not been settled yet.
 function open(row: Pick<ToolRow, "state">) {
-  return row.state === "pending" || row.state === "allowed";
+  return row.state === "waiting" || row.state === "ready";
 }
 
 export function createCalls(options: CallsOptions) {
-  const { store, threads, spaceStore, log, bus, logger } = options;
+  const { store, threads, spaceStore, log, signals, logger } = options;
   const now = options.now ?? (() => new Date());
   const leaseMs = options.leaseMs ?? 30_000;
   const settledListeners: ((call: Call) => Promise<void>)[] = [];
@@ -197,7 +200,7 @@ export function createCalls(options: CallsOptions) {
 
   // A move asked of a call running here is acted on as soon as its thread is woken, as the
   // request wakes it; the keeper's beat finds one whose hint was missed.
-  bus.onWake((threadId) => {
+  signals.onWake((threadId) => {
     const here = [...running.values()].filter((one) => one.threadId === threadId);
     if (here.length === 0) return;
     void moveAsked(here).catch((err: unknown) => logger.error({ err }, "move not checked"));
@@ -256,7 +259,7 @@ export function createCalls(options: CallsOptions) {
       ctx: RequestContext,
     ) {
       const { run } = hold;
-      const { thread, space, offered, left, titles: named } = ctx;
+      const { thread, space, now, offered, left, titles: named } = ctx;
       return held(hold, async (append) => {
         const authority = authorityOf(run.threadId, run.branchId);
         const tools = options.tools;
@@ -268,7 +271,7 @@ export function createCalls(options: CallsOptions) {
           const parsed = spec && spec.input.safeParse(input);
           const ok = !!spec && !!parsed?.success;
           const risk: ToolRisk = ok
-            ? await tools.riskOf(space, spec, parsed.data, hold.ref)
+            ? await tools.riskOf(space, spec, parsed.data, hold.ref, now)
             : "normal";
           // A call that asks always waits for its answer.
           const answers = ok && spec.waitsFor === "answer";
@@ -284,6 +287,7 @@ export function createCalls(options: CallsOptions) {
                   toolId,
                   await spec.risk(parsed.data, { model: hold.ref, orgId: space.orgId }),
                   parsed.data,
+                  now,
                 )
               ).kind === "wait");
           const names = named(toolId);
@@ -340,7 +344,7 @@ export function createCalls(options: CallsOptions) {
     // longer holds or whose tool is gone; "wait" when none may and some wait for a person.
     async next(hold: RunHold, ctx: CallContext): Promise<Runnable | "wait" | null> {
       const { run } = hold;
-      const { thread, space, offered } = ctx;
+      const { thread, space, now, offered } = ctx;
       return held(hold, async (append) => {
         const authority = authorityOf(run.threadId, run.branchId);
         const rows = (await store.openFor(run.threadId, run.id))
@@ -364,20 +368,21 @@ export function createCalls(options: CallsOptions) {
           let approvedBy: string | undefined;
           if (spec && parsed?.success && spec.waitsFor === "answer") {
             // A call that asks runs once answered, while the answer holds.
-            if (call.state === "pending") {
+            if (call.state === "waiting" || !call.decision) {
               waiting = true;
               continue;
             }
-            allowed = await tools.answerHolds(call, await authority.words(), thread, space);
+            allowed = await tools.answerHolds(call, await authority.words(), thread, space, now);
           } else if (spec && parsed?.success) {
-            const risk = await tools.riskOf(space, spec, parsed.data, hold.ref);
-            if (call.state === "allowed") {
+            const risk = await tools.riskOf(space, spec, parsed.data, hold.ref, now);
+            if (call.state === "ready" && call.decision) {
               allowed = await tools.approvalHolds(
                 call,
                 await authority.words(),
                 thread,
                 space,
                 risk,
+                now,
               );
               approvedBy = call.decision?.by.userId;
               // An approved call runs with its approver's own login.
@@ -396,6 +401,7 @@ export function createCalls(options: CallsOptions) {
                 call.toolId,
                 declared,
                 parsed.data,
+                now,
               );
               allowed = decision.kind !== "wait";
               if (!allowed && call.waits) {
@@ -478,7 +484,7 @@ export function createCalls(options: CallsOptions) {
       let output: ToolOutput;
       let movedTo: string | null = null;
       // Whose words the model had read when it asked for the call.
-      const influence = steeringOf(await options.queue.words(run.threadId, run.branchId));
+      const influence = influenceOf(await options.queue.words(run.threadId, run.branchId));
       try {
         const work = context.with(trace.setSpan(context.active(), span), () =>
           options.tools.run(spec, input, {
@@ -622,7 +628,7 @@ export function createCalls(options: CallsOptions) {
         await append({
           type: "tool.denied",
           actor: ACTOR,
-          data: { runId: run.id, callId: call.id, reason: "stopped" },
+          data: { runId: run.id, callId: call.id, reason: "cancelled" },
         });
       }
     },
@@ -684,7 +690,7 @@ export function createCalls(options: CallsOptions) {
         return moved;
       });
       // The wake has the keeper sweep at once, here and elsewhere, which starts a job approved.
-      bus.wake(thread.id);
+      signals.wake(thread.id);
       return { runId: result.runId, event: events[0]! };
     },
 
@@ -730,7 +736,7 @@ export function createCalls(options: CallsOptions) {
         await settled(moved);
         return moved;
       });
-      bus.wake(thread.id);
+      signals.wake(thread.id);
       return { runId: result.runId, event: events[0]! };
     },
 
@@ -752,7 +758,7 @@ export function createCalls(options: CallsOptions) {
         if (!(await jobs.room(thread.id))) {
           throw new ServiceError(409, "This thread has too many background calls");
         }
-        if (call.state === "pending" && call.waits) {
+        if (call.state === "waiting") {
           // Waiting in a run nobody holds: it goes on as a job, and the run goes on.
           if (row.status !== "waiting") throw new ServiceError(409, "No longer needed");
           const id = ulid();
@@ -791,7 +797,7 @@ export function createCalls(options: CallsOptions) {
           throw new ServiceError(409, "This call is not running yet");
         }
       });
-      bus.wake(thread.id);
+      signals.wake(thread.id);
     },
 
     // Stops a job that runs or waits for a decision, as a person asked.
@@ -821,9 +827,17 @@ export function createCalls(options: CallsOptions) {
       const waiting = await store.waiting(threadIds);
       const found: WaitingCall[] = [];
       const byThread = Map.groupBy(waiting, (call) => call.threadId);
+      // Their threads, and each space they are in, read once for them all.
+      const threadsOf = new Map(
+        (await threads.findAll([...byThread.keys()])).map((thread) => [thread.id, thread]),
+      );
+      const spaces = new Map<string, Awaited<ReturnType<typeof spaceStore.find>>>();
       for (const [threadId, calls] of byThread) {
-        const thread = await threads.find(threadId);
-        const space = thread && (await spaceStore.find(thread.spaceId));
+        const thread = threadsOf.get(threadId);
+        if (thread && !spaces.has(thread.spaceId)) {
+          spaces.set(thread.spaceId, await spaceStore.find(thread.spaceId));
+        }
+        const space = thread && spaces.get(thread.spaceId);
         if (!thread || !space) continue;
         const records = await callRecords(threads, threadId, calls);
         const words = await options.queue.words(threadId);
@@ -885,7 +899,7 @@ export function createCalls(options: CallsOptions) {
     async start() {
       if (unsubscribe.length > 0) return;
       await jobs.start();
-      unsubscribe = [bus.onWake(() => void jobs.beat()), bus.onGap(() => void jobs.beat())];
+      unsubscribe = [signals.onWake(() => void jobs.beat()), signals.onGap(() => void jobs.beat())];
     },
 
     // A beat of the keeper now, as one comes on its own.

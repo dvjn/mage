@@ -9,10 +9,10 @@
 
 import { ASK_TOOL } from "@/shared/ask.ts";
 import { artifactOf, type CalledArtifact, cardsAfterReply } from "@/web/artifacts/call-artifacts";
-import type { AgentRow, AgentTurn, RelayRow, ShownRow, ToolRow } from "@/shared/threads/rows.ts";
+import type { AgentRow, AgentTurn, NoticeRow, ShownRow, ToolRow } from "@/shared/threads/rows.ts";
 
 // A row that shows on its own.
-export type OwnRow = Exclude<ShownRow, RelayRow>;
+export type OwnRow = Exclude<ShownRow, NoticeRow>;
 
 export type TranscriptEntry =
   | {
@@ -40,10 +40,10 @@ export type TranscriptEntry =
       subagent: { threadId: string; name: string };
     }
   | {
-      kind: "relays";
+      kind: "notices";
       // The run's first message, which stays its first as the run grows.
       key: string;
-      rows: RelayRow[];
+      rows: NoticeRow[];
     }
   | {
       // The artifacts a turn published or updated, as cards after its last row.
@@ -80,7 +80,7 @@ export function showsActions(row: AgentRow) {
 
 // A call that waits for answers shows as a card of its own; one that waits for a decision is a line.
 export function waitsAsCard(row: ToolRow) {
-  return row.state === "pending" && row.waits && row.toolId === ASK_TOOL;
+  return row.state === "waiting" && row.toolId === ASK_TOOL;
 }
 
 // A step of the agent's that only thought: its reasoning, with no text.
@@ -142,7 +142,7 @@ export function transcriptEntries(rows: readonly ShownRow[]): TranscriptEntry[] 
       if (
         (row.kind === "agent" || row.kind === "tool") &&
         row.turn?.continued &&
-        before?.kind === "relay"
+        before?.kind === "notice"
       )
         return { ...row, turn: { ...row.turn, continued: false } };
       return row;
@@ -152,17 +152,17 @@ export function transcriptEntries(rows: readonly ShownRow[]): TranscriptEntry[] 
   let i = 0;
   while (i < shown.length) {
     const row = shown[i]!;
-    if (row.kind === "relay") {
-      const relays = [row];
+    if (row.kind === "notice") {
+      const notices = [row];
       // Messages fold with messages, and other notifications with each other.
-      const kin = (other: ShownRow | undefined): other is RelayRow =>
-        other?.kind === "relay" &&
+      const kin = (other: ShownRow | undefined): other is NoticeRow =>
+        other?.kind === "notice" &&
         (other.type === "message") === (row.type === "message") &&
         (row.type !== "message" || other.from.threadId === row.from.threadId);
-      for (let later = shown[i + 1]; kin(later); later = shown[i + relays.length])
-        relays.push(later);
-      entries.push({ kind: "relays", key: `relays:${row.id}`, rows: relays });
-      i += relays.length;
+      for (let later = shown[i + 1]; kin(later); later = shown[i + notices.length])
+        notices.push(later);
+      entries.push({ kind: "notices", key: `notices:${row.id}`, rows: notices });
+      i += notices.length;
       continue;
     }
     if (!foldable(row)) {
@@ -217,7 +217,7 @@ export function transcriptTurns(
   for (const row of rows) {
     if (row.kind === "agent") step = row;
     // A job is no step's, though the run that asked for it is named on it.
-    else if (row.kind === "tool" && !row.background && step?.runId === row.runId) {
+    else if (row.kind === "tool" && !row.work && step?.runId === row.runId) {
       stepOf.set(row.id, step);
     }
   }
@@ -231,7 +231,7 @@ export function transcriptTurns(
     }
     const kind = turn
       ? "agent"
-      : entry.kind === "relays"
+      : entry.kind === "notices"
         ? "incoming"
         : entry.kind === "row" && entry.row.kind === "human"
           ? "human"

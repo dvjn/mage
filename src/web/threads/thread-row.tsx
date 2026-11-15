@@ -17,7 +17,7 @@ import { cn } from "cn";
 import type * as React from "react";
 
 import type { ThreadStatus } from "@/shared/thread-status.ts";
-import type { ShownModel, ThreadActivity, ThreadParticipants } from "@/shared/threads/list.ts";
+import type { ShownModel, ThreadStanding, ThreadParticipants } from "@/shared/threads/list.ts";
 import { meQuery } from "@/web/auth/queries";
 import { ShortTime } from "@/web/components/time";
 import { SidebarMenuButton, SidebarMenuItem } from "@/web/components/ui/sidebar";
@@ -38,7 +38,7 @@ type Listed = {
   updatedAt: string;
   shownModel: ShownModel | null;
   participants: ThreadParticipants;
-  activity: ThreadActivity;
+  standing: ThreadStanding;
   status: ThreadStatus;
 };
 
@@ -80,7 +80,7 @@ function RowTile({ thread, status, disc }: { thread: Listed; status: ThreadStatu
       </WithTooltip>
       <StatusGlyph
         status={status}
-        activity={thread.activity}
+        standing={thread.standing}
         size="size-3"
         className={cn(
           "absolute -right-1.5 -bottom-1.5 grid size-5 place-items-center rounded-full",
@@ -164,12 +164,12 @@ export function RowLead({
   thread,
   status,
 }: {
-  thread: Pick<Listed, "shownModel" | "activity">;
+  thread: Pick<Listed, "shownModel" | "standing">;
   status: ThreadStatus;
 }) {
   const model = thread.shownModel;
   const label = model ? modelLabel(model.name, model.connection) : "No model";
-  const statusLabel = useStatusLabel(status, thread.activity);
+  const statusLabel = useStatusLabel(status, thread.standing);
   return (
     <WithTooltip label={statusLabel ? `${statusLabel} · ${label}` : label}>
       {/* Last in the row for the menu button, which cuts its last span short; the dot sits past

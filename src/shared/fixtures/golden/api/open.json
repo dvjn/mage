@@ -67,9 +67,8 @@
         "toolset": "Web",
         "input": {},
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:06.000Z",
-        "state": "pending",
+        "state": "ready",
         "decision": null,
         "output": null,
         "ms": null,
@@ -93,19 +92,19 @@
           "path": "/tmp/x"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:07.000Z",
-        "state": "pending",
+        "state": "waiting",
         "decision": null,
         "output": null,
         "ms": null,
+        "waitsFor": "decision",
         "order": 3,
         "turn": {
           "continued": true,
           "model": "anthropic/claude-test"
         },
         "canBackground": true,
-        "steering": [
+        "influence": [
           {
             "name": "Ada Lovelace",
             "via": []
@@ -127,12 +126,12 @@
           "path": "/tmp/y"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:08.000Z",
-        "state": "pending",
+        "state": "waiting",
         "decision": null,
         "output": null,
         "ms": null,
+        "waitsFor": "decision",
         "order": 4,
         "turn": {
           "continued": true,
@@ -140,13 +139,13 @@
         },
         "title": "files.delete",
         "toolset": null,
-        "background": {
-          "kind": "call",
-          "status": "pending",
+        "work": {
+          "kind": "job",
+          "status": "waiting",
           "startedAt": "2026-01-01T00:00:08.000Z",
           "canCancel": true
         },
-        "steering": [
+        "influence": [
           {
             "name": "Ada Lovelace",
             "via": []
@@ -177,7 +176,7 @@
         }
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e14",
         "seq": 14,
         "postedAt": "2026-01-01T00:00:14.000Z",
@@ -260,7 +259,7 @@
         }
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e13",
         "seq": 13,
         "postedAt": "2026-01-01T00:00:13.000Z",
@@ -355,9 +354,8 @@
         "toolset": "Web",
         "input": {},
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:06.000Z",
-        "state": "pending",
+        "state": "ready",
         "decision": null,
         "output": null,
         "ms": null,
@@ -381,19 +379,19 @@
           "path": "/tmp/x"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:07.000Z",
-        "state": "pending",
+        "state": "waiting",
         "decision": null,
         "output": null,
         "ms": null,
+        "waitsFor": "decision",
         "order": 3,
         "turn": {
           "continued": true,
           "model": "anthropic/claude-test"
         },
         "canBackground": true,
-        "steering": [
+        "influence": [
           {
             "name": "Ada Lovelace",
             "via": []
@@ -415,12 +413,12 @@
           "path": "/tmp/y"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:08.000Z",
-        "state": "pending",
+        "state": "waiting",
         "decision": null,
         "output": null,
         "ms": null,
+        "waitsFor": "decision",
         "order": 4,
         "turn": {
           "continued": true,
@@ -428,13 +426,13 @@
         },
         "title": "files.delete",
         "toolset": null,
-        "background": {
-          "kind": "call",
-          "status": "pending",
+        "work": {
+          "kind": "job",
+          "status": "waiting",
           "startedAt": "2026-01-01T00:00:08.000Z",
           "canCancel": true
         },
-        "steering": [
+        "influence": [
           {
             "name": "Ada Lovelace",
             "via": []
@@ -465,7 +463,7 @@
         }
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e14",
         "seq": 14,
         "postedAt": "2026-01-01T00:00:14.000Z",
@@ -551,7 +549,7 @@
         }
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e13",
         "seq": 13,
         "postedAt": "2026-01-01T00:00:13.000Z",
@@ -635,9 +633,8 @@
         "toolset": "Web",
         "input": {},
         "risk": "normal",
-        "waits": false,
         "requestedAt": "2026-01-01T00:00:06.000Z",
-        "state": "pending",
+        "state": "ready",
         "decision": null,
         "output": null,
         "ms": null,
@@ -660,18 +657,18 @@
           "path": "/tmp/x"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:07.000Z",
-        "state": "pending",
+        "state": "waiting",
         "decision": null,
         "output": null,
         "ms": null,
+        "waitsFor": "decision",
         "order": 3,
         "turn": {
           "continued": true,
           "model": "anthropic/claude-test"
         },
-        "steering": [
+        "influence": [
           {
             "name": "Ada Lovelace",
             "via": []
@@ -690,12 +687,12 @@
           "path": "/tmp/y"
         },
         "risk": "ask",
-        "waits": true,
         "requestedAt": "2026-01-01T00:00:08.000Z",
-        "state": "pending",
+        "state": "waiting",
         "decision": null,
         "output": null,
         "ms": null,
+        "waitsFor": "decision",
         "order": 4,
         "turn": {
           "continued": true,
@@ -703,13 +700,13 @@
         },
         "title": "files.delete",
         "toolset": null,
-        "background": {
-          "kind": "call",
-          "status": "pending",
+        "work": {
+          "kind": "job",
+          "status": "waiting",
           "startedAt": "2026-01-01T00:00:08.000Z",
           "canCancel": false
         },
-        "steering": [
+        "influence": [
           {
             "name": "Ada Lovelace",
             "via": []
@@ -737,7 +734,7 @@
         }
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e14",
         "seq": 14,
         "postedAt": "2026-01-01T00:00:14.000Z",
@@ -816,7 +813,7 @@
         }
       },
       {
-        "kind": "relay",
+        "kind": "notice",
         "id": "e13",
         "seq": 13,
         "postedAt": "2026-01-01T00:00:13.000Z",

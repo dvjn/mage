@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import type { Tasks } from "@/server/agent/tasks.ts";
-import type { Triggers } from "@/server/triggers.ts";
-import type { ToolPolicies } from "@/server/agent/tool-policies.ts";
-import type { ToolDecisions } from "@/server/agent/tools.ts";
+import type { Tasks } from "@/server/tasks/tasks.ts";
+import type { Schedules } from "@/server/schedules/schedules.ts";
+import type { Webhooks } from "@/server/webhooks/webhooks.ts";
+import type { ToolPolicies } from "@/server/tools/policies.ts";
+import type { ToolDecisions } from "@/server/tools/registry.ts";
 import type { Guests } from "@/server/guests/service.ts";
 import type { Instructions } from "@/server/instructions/service.ts";
 import { createLogger } from "@/server/kernel/logger.ts";
@@ -17,7 +18,7 @@ import type { Orgs } from "@/server/orgs/service.ts";
 import type { Skills } from "@/server/skills/service.ts";
 import type { Artifacts } from "@/server/artifacts/service.ts";
 import type { Spaces } from "@/server/spaces/service.ts";
-import type { Threads } from "@/server/threads/service.ts";
+import type { Threads } from "@/server/threads/threads.ts";
 
 import { type AppOptions, createApp } from "./app.ts";
 
@@ -50,7 +51,8 @@ function app(identity: Identity, traceRelay?: AppOptions["traceRelay"]) {
     logger: createLogger({ write() {} }),
     signInOptions: { oidc: null },
     tasks: {} as Tasks,
-    triggers: {} as Triggers,
+    schedules: {} as Schedules,
+    webhooks: {} as Webhooks,
     pingDatabase: () => Promise.resolve(true),
     ...(traceRelay && { traceRelay }),
   });
@@ -59,7 +61,7 @@ function app(identity: Identity, traceRelay?: AppOptions["traceRelay"]) {
 // A collector that records what reached it.
 function collector() {
   const received: { url: string; type: string | null; body: string; auth: string | null }[] = [];
-  const relay = createTraceRelay({
+  const notice = createTraceRelay({
     url: "http://collector:4318/v1/traces",
     headers: { authorization: "Bearer collector-token" },
     fetch: async (url, init) => {
@@ -73,7 +75,7 @@ function collector() {
       return Response.json({ partialSuccess: {} });
     },
   });
-  return { relay, received };
+  return { notice, received };
 }
 
 function spans(type = "application/json") {
@@ -86,8 +88,8 @@ function spans(type = "application/json") {
 
 describe("POST /api/web/traces", () => {
   it("passes a signed-in person's spans on to the collector", async () => {
-    const { relay, received } = collector();
-    const res = await app(signedIn, relay).request("/api/web/traces", spans());
+    const { notice, received } = collector();
+    const res = await app(signedIn, notice).request("/api/web/traces", spans());
     expect(res.status).toBe(200);
     expect(received).toEqual([
       {
@@ -100,15 +102,15 @@ describe("POST /api/web/traces", () => {
   });
 
   it("refuses someone signed out", async () => {
-    const { relay, received } = collector();
-    const res = await app(signedOut, relay).request("/api/web/traces", spans());
+    const { notice, received } = collector();
+    const res = await app(signedOut, notice).request("/api/web/traces", spans());
     expect(res.status).toBe(401);
     expect(received).toEqual([]);
   });
 
   it("refuses what is not OTLP", async () => {
-    const { relay, received } = collector();
-    const res = await app(signedIn, relay).request("/api/web/traces", spans("text/plain"));
+    const { notice, received } = collector();
+    const res = await app(signedIn, notice).request("/api/web/traces", spans("text/plain"));
     expect(res.status).toBe(415);
     expect(received).toEqual([]);
   });

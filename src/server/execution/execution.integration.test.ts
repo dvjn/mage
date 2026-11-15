@@ -6,17 +6,17 @@ import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 import * as z from "zod";
 
-import type { ToolSpec } from "@/server/agent/tools.ts";
-import type { Notification } from "@/server/queue/notices.ts";
+import type { ToolSpec } from "@/server/tools/registry.ts";
+import type { Notice } from "@/server/queue/notices.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { deadlockOnce } from "@/server/testing/workspace.ts";
 
-function notice(text: string, wake = true): Notification {
+function notice(text: string, wake = true): Notice {
   return {
     kind: "agent.idle",
     source: { threadId: "elsewhere", name: "Watcher", main: false },
     text,
-    people: [],
+    influence: [],
     ...(!wake && { wake: false }),
   };
 }
@@ -54,7 +54,7 @@ async function engine() {
         event.id,
         event.type === "message"
           ? (event.data.parts[0] as { text: string }).text
-          : event.type === "notification"
+          : event.type === "notice"
             ? event.data.text
             : "",
       ]),
@@ -180,7 +180,7 @@ describe("the worker's pass", () => {
   it("leaves out a log copied in with no runs of its own", async () => {
     const e = await engine();
     await e.log.write(e.thread.id, async (append) =>
-      append({ type: "notification", actor: { kind: "agent" }, data: notice("Copied") }),
+      append({ type: "notice", actor: { kind: "agent" }, data: notice("Copied") }),
     );
     await e.queue.fromLog(e.thread.id);
     expect(await e.queue.stranded()).toEqual([]);

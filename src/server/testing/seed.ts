@@ -14,7 +14,8 @@ import { member, session, user } from "@/server/orgs/schema.ts";
 import { space, spaceMember } from "@/server/spaces/schema.ts";
 import type { SpaceRole } from "@/server/spaces/service.ts";
 import type { ThreadLog } from "@/server/threads/log.ts";
-import type { NewEvent, ThreadReadStore, ThreadStore } from "@/server/threads/service.ts";
+import type { NewEvent, ThreadStore } from "@/server/threads/types.ts";
+import type { ThreadReadStore } from "@/server/views/read-store.ts";
 import {
   type ActorSummary,
   type AnyThreadEvent,
@@ -68,7 +69,7 @@ export async function joinSpace(
 }
 
 // The keys that hold ids, or lists of them, besides `id`, `...Id` and `...Ids`.
-const ID_KEYS = new Set(["keep", "ranAs", "standingOn", "trigger"]);
+const ID_KEYS = new Set(["keep", "ranAs", "standingOn", "scheduleId", "webhookId"]);
 
 // The value with every id that is a key of `names` replaced by what it names, however deep: the
 // strings under a key that holds ids, so words in text stay as written.
@@ -203,7 +204,7 @@ export function createSeed({ db, threads, guests, reads, log, queue, calls }: Se
         }
       });
       await queue.fromLog(thread.id);
-      await reads.mark(home.userId, thread.id, input.count, new Date());
+      await reads.mark(home.userId, thread.id, input.count);
       return { threadId: thread.id };
     },
 

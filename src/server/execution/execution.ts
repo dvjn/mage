@@ -18,10 +18,12 @@ import type { Space, SpaceStore } from "@/server/spaces/service.ts";
 import type { Signals } from "@/server/sync/signals.ts";
 import type { AfterCommit } from "@/server/sync/sync.ts";
 import type { ThreadLog } from "@/server/threads/log.ts";
-import type { Thread, ThreadStore } from "@/server/threads/service.ts";
-import type { AnyToolSpec, SpaceTools } from "@/server/agent/tools.ts";
+import type { Thread, ThreadStore } from "@/server/threads/types.ts";
+import type { AnyToolSpec, SpaceTools } from "@/server/tools/registry.ts";
 import type { Effort } from "@/server/models/gateway.ts";
 import { asksToCompact } from "@/shared/transcript.ts";
+
+import { anythingToCompact } from "./compaction.ts";
 
 import type { Guidance } from "./context.ts";
 import {
@@ -62,10 +64,10 @@ export interface ExecutionOptions extends Omit<
 > {
   queue: Pick<Queue, "waiting" | "admission" | "stranded" | "onEnqueued" | "messageWaits">;
   calls: Pick<Calls, "request" | "next" | "run" | "closeFor" | "onSettled" | "waits">;
-  threads: Pick<ThreadStore, "find" | "eventAt">;
+  threads: Pick<ThreadStore, "find" | "eventAt" | "children">;
   spaceStore: Pick<SpaceStore, "find">;
   log: ThreadLog;
-  bus: Signals;
+  signals: Signals;
   afterCommit: AfterCommit;
   // Where execution hears that people may have lost a role in an org's spaces, that spaces were
   // archived or put in trash, or that an org is being deleted.
@@ -79,7 +81,7 @@ export interface ExecutionOptions extends Omit<
 export type Execution = ReturnType<typeof createExecution>;
 
 export function createExecution(options: ExecutionOptions) {
-  const { runs, queue, calls, threads, spaceStore, log, bus } = options;
+  const { runs, queue, calls, threads, spaceStore, log, signals } = options;
   const now = options.now ?? (() => new Date());
   const runsIn = options.runsIn ?? (async () => true);
   const contributions: Contribution[] = [];
@@ -134,7 +136,7 @@ export function createExecution(options: ExecutionOptions) {
             startRun(runs, append, {
               threadId,
               branchId,
-              triggerSeq: 0,
+              wokenBySeq: 0,
               createdBy: null,
               ...(after && { continuesRunId: after.id, reason: "queued_input" }),
               ...fields,
@@ -144,7 +146,7 @@ export function createExecution(options: ExecutionOptions) {
             await queue.admission.admit(run, compacts ? { ids: [compacts.id] } : "all");
           };
           if (input?.kind === "message") {
-            const run = await start({ triggerSeq: input.seq, createdBy: input.authorId });
+            const run = await start({ wokenBySeq: input.seq, createdBy: input.authorId });
             const sent = await threads.eventAt(threadId, input.seq);
             await admit(
               run,
@@ -160,7 +162,7 @@ export function createExecution(options: ExecutionOptions) {
           const first = messages.find((one) => one.delivery === "interrupt") ?? messages[0];
           if (first) {
             const run = await start({
-              triggerSeq: first.seq,
+              wokenBySeq: first.seq,
               createdBy: first.authorId,
               ...(after && {
                 reason: first.delivery === "interrupt" ? "interrupt" : "queued_input",
@@ -173,11 +175,11 @@ export function createExecution(options: ExecutionOptions) {
           const waking = notices.find((one) => one.wake);
           if (!waking) return null;
           if (!holdsStarter()) {
-            bus.wake(threadId);
+            signals.wake(threadId);
             return null;
           }
           if (!(await mayStart(threadId))) return null;
-          const run = await start({ triggerSeq: waking.seq });
+          const run = await start({ wokenBySeq: waking.seq });
           await admit(run);
           return run;
         },
@@ -188,11 +190,14 @@ export function createExecution(options: ExecutionOptions) {
   }
 
   // Asks the runs under way there to stop, in one transaction run again on a deadlock, and wakes
-  // their threads. A silent stop is not told to the thread that started a subagent's.
+  // their threads as it commits, so the stop and its wake are heard together. A silent stop is not
+  // told to the thread that started a subagent's.
   async function stop(target: StopTarget, by: string | null, opts: { silent?: boolean } = {}) {
-    const stopped = await options.transact(async () => runs.stop(target, by, !!opts.silent, now()));
-    for (const run of stopped) bus.wake(run.threadId);
-    return stopped;
+    return options.transact(async () => {
+      const stopped = await runs.stop(target, by, !!opts.silent, now());
+      for (const run of stopped) signals.wake(run.threadId);
+      return stopped;
+    });
   }
 
   // When people may have lost a role in an org's spaces, their waiting messages there are
@@ -226,7 +231,7 @@ export function createExecution(options: ExecutionOptions) {
     const run = await runs.find(call.runId);
     if (run?.status !== "waiting") return;
     if (await calls.waits({ id: run.id, threadId: run.threadId, branchId: run.branchId })) return;
-    if (await runs.resume(run.id)) bus.wake(run.threadId);
+    if (await runs.resume(run.id)) signals.wake(run.threadId);
   });
 
   // A worker as a server process starts it, sharing these stores; one more than this instance's
@@ -271,6 +276,29 @@ export function createExecution(options: ExecutionOptions) {
     advance,
     stop,
 
+    // Whether compacting the thread, asked for now, has something to do: a run under way to wait
+    // for, or earlier messages to summarise.
+    async compactable(threadId: string) {
+      if (await runs.active(threadId)) return true;
+      return anythingToCompact((await options.transcripts.of(threadId)).transcript().rows);
+    },
+
+    // A person's stop: the thread's run under way, and silently those of the subagents its agent
+    // started; the agent keeps what it has written. Refused when nothing was under way.
+    async stopBy(reader: Reader) {
+      const { thread } = reader;
+      const by = reader.principal.userId;
+      const own = (await stop({ threadId: thread.id }, by)).length > 0;
+      let theirs = false;
+      for (const child of await threads.children(thread.id)) {
+        // Only the subagents this thread's agent started, not theirs.
+        if (child.parentThreadId !== thread.id) continue;
+        if ((await stop({ threadId: child.id }, by, { silent: true })).length > 0) theirs = true;
+      }
+      if (!own && !theirs) throw new ServiceError(409, "The agent is not replying");
+      signals.changed({ threadId: thread.id });
+    },
+
     // Starts a run that tries the thread's last run again, when it failed or was stopped and
     // nothing has run since.
     async retry(reader: Reader, runId: string) {
@@ -284,13 +312,13 @@ export function createExecution(options: ExecutionOptions) {
         }
         await startRun(runs, append, {
           threadId: thread.id,
-          triggerSeq: last.triggerSeq,
+          wokenBySeq: last.wokenBySeq,
           createdBy: reader.principal.userId,
           continuesRunId: last.id,
           reason: "retry",
         });
       });
-      bus.wake(thread.id);
+      signals.wake(thread.id);
       return { event: events[0]! };
     },
 
@@ -301,7 +329,7 @@ export function createExecution(options: ExecutionOptions) {
       branchId: string,
       input: {
         by: string;
-        triggerSeq: number;
+        wokenBySeq: number;
         keep: readonly string[];
         message?: QueuedInput | null;
         asked?: { model: string; effort: Effort | null } | null;
@@ -314,7 +342,7 @@ export function createExecution(options: ExecutionOptions) {
             const run = await startRun(runs, append, {
               threadId,
               branchId,
-              triggerSeq: input.message?.seq ?? input.triggerSeq,
+              wokenBySeq: input.message?.seq ?? input.wokenBySeq,
               createdBy: input.by,
               reason: "rewrite",
               askedModel: input.asked?.model ?? null,

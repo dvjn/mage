@@ -17,7 +17,7 @@ import { Spinner } from "@/web/components/ui/spinner";
 import { useThreadAgent } from "@/web/threads/transcript/agent";
 import { ReplyReasoning } from "@/web/threads/transcript/agent-reply";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
-import { MoveToBackground } from "@/web/threads/transcript/background";
+import { MoveToBackground } from "@/web/threads/transcript/job-actions";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
 import { GIVES_WAY } from "@/web/threads/transcript/tool-crumb";
 
@@ -25,14 +25,13 @@ import { GIVES_WAY } from "@/web/threads/transcript/tool-crumb";
 const MISSES: [string, ToolRow["state"][]][] = [
   ["failed", ["failed"]],
   ["denied", ["denied", "stale"]],
-  ["stopped", ["stopped"]],
+  ["stopped", ["cancelled"]],
   ["skipped", ["skipped"]],
 ];
 
 // A call that waits for a decision, and one that is running.
-const waits = (call: ToolRow) => call.state === "pending" && call.waits;
-const running = (call: ToolRow) =>
-  call.state === "allowed" || (call.state === "pending" && !call.waits);
+const waits = (call: ToolRow) => call.state === "waiting";
+const running = (call: ToolRow) => call.state === "ready";
 
 // The run in words: how many calls, their toolsets in order, and how many of each that did not run.
 export function callsSummary(calls: ToolRow[]) {

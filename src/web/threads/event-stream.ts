@@ -15,7 +15,7 @@ import { useEffect, useState } from "react";
 
 import { threadHeadSchema } from "@/shared/threads/detail.ts";
 import { type DeltaBatch, deltaBatchSchema } from "@/shared/threads/events.ts";
-import { backgroundListSchema } from "@/shared/calls.ts";
+import { activityListSchema } from "@/shared/jobs.ts";
 import { taskListSchema } from "@/shared/tasks.ts";
 import { rowsUpdateSchema } from "@/shared/threads/rows.ts";
 import { sharedThreadsQuery } from "@/web/guests/queries";
@@ -114,8 +114,8 @@ export function useThreadEvents(threadId: string, ready: boolean) {
       const list = taskListSchema.safeParse(JSON.parse(message.data as string));
       if (list.success) queryClient.setQueryData(tasksQuery(threadId).queryKey, list.data);
     });
-    source.addEventListener("background", (message) => {
-      const list = backgroundListSchema.safeParse(JSON.parse(message.data as string));
+    source.addEventListener("activity", (message) => {
+      const list = activityListSchema.safeParse(JSON.parse(message.data as string));
       if (!list.success) return;
       queryClient.setQueryData(backgroundQuery(threadId).queryKey, list.data);
       // A job's row shows what the dock's card does, from this one feed.

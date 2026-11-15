@@ -7,16 +7,16 @@
 import * as z from "zod";
 
 import { tableQuerySchema } from "@/shared/paging.ts";
-import type { ThreadActivity, threadStatusSchema } from "@/shared/threads/list.ts";
+import type { ThreadStanding, threadStatusSchema } from "@/shared/threads/list.ts";
 
 export type ThreadStatus = z.infer<typeof threadStatusSchema>;
 
-export function statusOf(activity: ThreadActivity, me: string): ThreadStatus {
-  const { run, failed, lastSeenSeq } = activity;
-  if (run?.status === "waiting" && activity.canApprove) return "waiting";
+export function statusOf(standing: ThreadStanding, me: string): ThreadStatus {
+  const { run, failed, lastSeenSeq } = standing;
+  if (run?.status === "waiting" && standing.needsYou) return "waiting";
   if (failed && failed.seq > lastSeenSeq) return "failed";
   if (run) return run.status === "waiting" ? "paused" : "working";
-  if (activity.lastNotableSeq > lastSeenSeq && activity.lastNotableBy !== me) return "unread";
+  if (standing.lastNotableSeq > lastSeenSeq && standing.lastNotableBy !== me) return "unread";
   return "read";
 }
 

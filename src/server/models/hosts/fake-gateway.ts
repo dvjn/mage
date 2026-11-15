@@ -10,12 +10,7 @@ import { ulid } from "ulid";
 
 import { leads } from "@/server/execution/context.ts";
 import type { Catalog } from "@/server/models/catalog.ts";
-import {
-  type ModelGateway,
-  type ModelMessage,
-  type ModelToolCall,
-  ModelError,
-} from "@/server/models/gateway.ts";
+import { type ModelGateway, type ModelMessage, ModelError } from "@/server/models/gateway.ts";
 import { HOST_IDS, type HostId, hostOf } from "@/shared/hosts.ts";
 
 import { modelErrorOf } from "./ai-sdk-stream.ts";
@@ -48,43 +43,31 @@ export function createFakeGateway(): ModelGateway {
         ...(request.tools ?? []).map((tool) => tool.id),
         ...(request.toolsOn ?? []),
       ]);
-      for (let step = 0; step < request.maxSteps; step += 1) {
-        if (step > 0) {
-          const added = (await request.beforeStep?.()) ?? [];
-          if (added.length === 0) return;
-          for (const message of added) if (message.role !== "change") messages.push(message);
-        }
-        const plan = scriptStep({
-          instructions: request.instructions,
-          messages,
-          offered,
-          search: request.search ?? "tools.search",
-          isLead: leads,
-        });
-        if (plan.stall > 0) await delay(plan.stall, undefined, { signal });
-        if (plan.status) throw refusal(plan.status);
-        yield { type: "step-start" };
-        for (const text of plan.reasoning) {
-          await delay(PIECE_MS, undefined, { signal });
-          yield { type: "reasoning", text };
-        }
-        for (const text of plan.text) {
-          await delay(PIECE_MS, undefined, { signal });
-          yield { type: "delta", text };
-        }
-        if (plan.drop) throw new ModelError("network", "The connection closed mid-reply");
-        if (plan.fail !== null) throw new Error(plan.fail);
-        const calls: ModelToolCall[] = plan.calls.map(({ toolId, input }) => ({
-          callId: ulid(),
-          toolId,
-          input,
-        }));
-        for (const call of calls) yield { type: "tool-call", ...call };
-        messages.push({ role: "assistant", text: plan.text.join(""), toolCalls: calls });
-        yield { type: "step-end", usage: plan.usage };
-        // The calls run elsewhere; the request ends with them.
-        if (calls.length > 0) return;
+      // One step, as a provider's request ends with a step that makes no calls, and the calls
+      // run elsewhere. What arrives meanwhile is taken in by the model call after it.
+      const plan = scriptStep({
+        instructions: request.instructions,
+        messages,
+        offered,
+        search: request.search ?? "tools.search",
+        isLead: leads,
+      });
+      if (plan.stall > 0) await delay(plan.stall, undefined, { signal });
+      if (plan.status) throw refusal(plan.status);
+      yield { type: "step-start" };
+      for (const text of plan.reasoning) {
+        await delay(PIECE_MS, undefined, { signal });
+        yield { type: "reasoning", text };
       }
+      for (const text of plan.text) {
+        await delay(PIECE_MS, undefined, { signal });
+        yield { type: "delta", text };
+      }
+      if (plan.drop) throw new ModelError("network", "The connection closed mid-reply");
+      if (plan.fail !== null) throw new Error(plan.fail);
+      for (const { toolId, input } of plan.calls)
+        yield { type: "tool-call", callId: ulid(), toolId, input };
+      yield { type: "step-end", usage: plan.usage };
     },
   };
 }

@@ -106,14 +106,14 @@ describe("signals", () => {
     const { a, b } = await twoKernels();
     const heard: unknown[] = [];
     let gaps = 0;
-    b.signals.onActivity((change) => heard.push(change));
+    b.signals.onChanged((change) => heard.push(change));
     b.signals.onGap(() => (gaps += 1));
     // A change as one carrying hundreds of guests' ids would be.
     const gone = {
       spaceId: "s-1",
       guests: Array.from({ length: 300 }, (_, index) => `guest-${index}-0123456789abcdef`),
     };
-    a.signals.activity({ threadId: "t-1", gone });
+    a.signals.changed({ threadId: "t-1", gone });
     a.signals.wake("w".repeat(8000));
     await vi.waitFor(() => expect(heard).toEqual([{ threadId: "t-1", gone: { spaceId: "s-1" } }]));
     await vi.waitFor(() => expect(gaps).toBe(1));

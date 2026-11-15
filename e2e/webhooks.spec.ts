@@ -35,7 +35,7 @@ test("a webhook is a tool row and a card in the tray, takes a post, and a person
   await signUp(page);
   await write(
     page,
-    `^tool triggers.add_webhook ${JSON.stringify({ name: "Deploys", note: "Check the deploy" })}`,
+    `^tool webhooks.add ${JSON.stringify({ name: "Deploys", note: "Check the deploy" })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await page
@@ -43,7 +43,7 @@ test("a webhook is a tool row and a card in the tray, takes a post, and a person
     .getByRole("button", { name: "Allow", exact: true })
     .click();
   await expect(
-    page.getByRole("button", { name: /^Triggers › Add webhook · Ran · allowed by Ada Lovelace/ }),
+    page.getByRole("button", { name: /^Webhooks › Add webhook · Ran · allowed by Ada Lovelace/ }),
   ).toBeVisible();
   await page
     .getByRole("toolbar", { name: "Context" })
@@ -63,7 +63,7 @@ test("a webhook is a tool row and a card in the tray, takes a post, and a person
   await expect(card).not.toContainText("Last");
   // Its history is listed only once opened, newest first, with what each post said it was.
   const dialog = page.getByRole("dialog", { name: "Deploys history" });
-  const history = dialog.getByTestId("trigger-history");
+  const history = dialog.getByTestId("fired-history");
   await expect(dialog).toHaveCount(0);
   await card.getByRole("button", { name: "History, 2 deliveries" }).click();
   await expect(history.getByRole("listitem")).toHaveCount(2);
@@ -73,7 +73,7 @@ test("a webhook is a tool row and a card in the tray, takes a post, and a person
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   // Each post is told to the agent in a card of its own.
-  const told = page.getByRole("article", { name: "Notification" });
+  const told = page.getByRole("article", { name: "Notice" });
   await expect(told).toHaveCount(2);
   await expect(told.first()).toContainText("Deploys");
   await expect(told.first()).toContainText("Delivered");
@@ -104,10 +104,7 @@ test("a webhook is a tool row and a card in the tray, takes a post, and a person
 
 test("each delivery is its own notification that expands to its payload", async ({ page }) => {
   await signUp(page);
-  await write(
-    page,
-    `^tool triggers.add_webhook ${JSON.stringify({ name: "Deploys", note: "Look" })}`,
-  );
+  await write(page, `^tool webhooks.add ${JSON.stringify({ name: "Deploys", note: "Look" })}`);
   await page
     .getByRole("region", { name: "Approvals" })
     .getByRole("button", { name: "Allow", exact: true })
@@ -126,7 +123,7 @@ test("each delivery is its own notification that expands to its payload", async 
     page.request.post(url, { data: { ref: "main" } }),
     page.request.post(url, { data: { ref: "dev" } }),
   ]);
-  const deliveries = page.getByRole("article", { name: "Notification" });
+  const deliveries = page.getByRole("article", { name: "Notice" });
   await expect(deliveries).toHaveCount(2);
   await expect(page.getByText(/"ref": "(main|dev)"/)).toHaveCount(0);
   await deliveries
@@ -141,10 +138,7 @@ test("each delivery is its own notification that expands to its payload", async 
 
 test("a webhook's deliveries are listed a page at a time", async ({ page }) => {
   await signUp(page);
-  await write(
-    page,
-    `^tool triggers.add_webhook ${JSON.stringify({ name: "Deploys", note: "Look" })}`,
-  );
+  await write(page, `^tool webhooks.add ${JSON.stringify({ name: "Deploys", note: "Look" })}`);
   await page
     .getByRole("region", { name: "Approvals" })
     .getByRole("button", { name: "Allow", exact: true })
@@ -161,7 +155,7 @@ test("a webhook's deliveries are listed a page at a time", async ({ page }) => {
   }
   await card.getByRole("button", { name: "History, 12 deliveries" }).click();
   const dialog = page.getByRole("dialog", { name: "Deploys history" });
-  const history = dialog.getByTestId("trigger-history");
+  const history = dialog.getByTestId("fired-history");
   await expect(history.getByRole("listitem")).toHaveCount(10);
   await expect(dialog.getByTestId("pager")).toContainText("1–10 of 12");
   await expect(dialog.getByRole("button", { name: "Newer" })).toBeDisabled();
@@ -175,10 +169,7 @@ test("a webhook's deliveries are listed a page at a time", async ({ page }) => {
 
 test("a webhook takes a delivery once by the id header set on its card", async ({ page }) => {
   await signUp(page);
-  await write(
-    page,
-    `^tool triggers.add_webhook ${JSON.stringify({ name: "Deploys", note: "Look" })}`,
-  );
+  await write(page, `^tool webhooks.add ${JSON.stringify({ name: "Deploys", note: "Look" })}`);
   await page
     .getByRole("region", { name: "Approvals" })
     .getByRole("button", { name: "Allow", exact: true })
@@ -205,6 +196,6 @@ test("a webhook takes a delivery once by the id header set on its card", async (
   }
   await expect(card.getByRole("button", { name: "History, 1 delivery" })).toBeVisible();
   await expect(
-    page.getByRole("article", { name: "Notification" }).filter({ hasText: "Delivered" }),
+    page.getByRole("article", { name: "Notice" }).filter({ hasText: "Delivered" }),
   ).toHaveCount(1);
 });

@@ -2,27 +2,27 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import type { ThreadDetail } from "@/shared/threads/detail.ts";
-import type { Steering } from "@/shared/threads/events.ts";
+import type { Influencer } from "@/shared/threads/events.ts";
 
-import { NOTIFICATIONS_HEADING } from "@/server/execution/context.ts";
+import { NOTICES_HEADING } from "@/server/execution/context.ts";
 
-import { type Notification, silentChange } from "./notices.ts";
+import { type Notice, silentChange } from "./notices.ts";
 
 // A thread whose agent is sent notifications, as any feature sends them.
 async function notifiedThread() {
   const workspace = await agentThread();
   const { queue, thread } = workspace;
   const notices = {
-    send: async (threadId: string, notice: Notification) =>
+    send: async (threadId: string, notice: Notice) =>
       queue.enqueue(threadId, { kind: "notice", notice }),
   };
-  const note = (text: string, people: Steering[] = []): Notification => ({
+  const note = (text: string, people: Influencer[] = []): Notice => ({
     kind: "agent.idle",
     source: { threadId: thread.id, name: "Watcher", main: true },
     text,
-    people,
+    influence: people,
   });
-  const send = async (text: string, people?: Steering[]) =>
+  const send = async (text: string, people?: Influencer[]) =>
     notices.send(thread.id, note(text, people));
   const sendQuietly = async (by: string, text: string) =>
     notices.send(thread.id, silentChange(thread.id, by, text));
@@ -31,7 +31,7 @@ async function notifiedThread() {
 
 // What the model reads of notifications taken in together.
 function notified(...lines: string[]) {
-  return [NOTIFICATIONS_HEADING, ...lines].join("\n\n");
+  return [NOTICES_HEADING, ...lines].join("\n\n");
 }
 
 describe("notifications", () => {
@@ -43,7 +43,7 @@ describe("notifications", () => {
     expect(call.texts).toEqual([`user: ${notified("All idle: Researcher")}`]);
     call.reply("Noted.");
     await worker.idle();
-    expect(await transcript()).toEqual(["relay", "Agent (completed): Noted."]);
+    expect(await transcript()).toEqual(["notice", "Agent (completed): Noted."]);
     expect(await runs()).toEqual([expect.objectContaining({ status: "completed" })]);
   });
 
@@ -65,8 +65,8 @@ describe("notifications", () => {
     expect(await transcript()).toEqual([
       "Ada Lovelace: Go",
       "Agent (completed): Working.",
-      "relay",
-      "relay",
+      "notice",
+      "notice",
       "Agent (completed): Both noted.",
     ]);
   });
@@ -90,13 +90,13 @@ describe("notifications", () => {
     const forAda = await waitingFor(ada);
     expect(forAda.map((row) => [row.kind, row.waiting])).toEqual([
       ["human", { mode: "queue", can: ["edit", "mode", "remove"] }],
-      ["relay", { can: [] }],
+      ["notice", { can: [] }],
       ["human", { mode: "steer", can: [] }],
     ]);
     expect(forAda.map((row) => row.seq)).toEqual(
       forAda.map((row) => row.seq).toSorted((a, b) => a - b),
     );
-    expect(forAda[1]).toMatchObject({ kind: "relay", text: "Idle: Researcher" });
+    expect(forAda[1]).toMatchObject({ kind: "notice", text: "Idle: Researcher" });
     expect((await waitingFor(grace)).map((row) => row.waiting?.can)).toEqual([
       [],
       [],
@@ -161,7 +161,7 @@ describe("notifications", () => {
       if (tries > 2000) throw new Error("never waited");
       await new Promise((resolve) => setTimeout(resolve, 2));
     }
-    expect((await transcript()).at(-1)).toBe("thread.rename (pending)");
+    expect((await transcript()).at(-1)).toBe("thread.rename (waiting)");
   });
 
   describe("that are silent", () => {
@@ -173,7 +173,7 @@ describe("notifications", () => {
       await worker.idle();
       expect(model.calls).toHaveLength(0);
       expect(await runs()).toEqual([]);
-      expect(await transcript()).toEqual(["relay"]);
+      expect(await transcript()).toEqual(["notice"]);
 
       await post(ada, "Go");
       const call = await model.next();
@@ -185,7 +185,7 @@ describe("notifications", () => {
       await worker.idle();
       // Shown once, where it was made, and read once.
       expect(await transcript()).toEqual([
-        "relay",
+        "notice",
         "Ada Lovelace: Go",
         "Agent (completed): Noted.",
       ]);
@@ -223,6 +223,30 @@ describe("notifications", () => {
       expect((await runs()).map((run) => run.status)).toEqual(["completed"]);
     });
 
+    it("left during the last step do not keep the run going, and are read at the next run", async () => {
+      const { ada, model, worker, start, post, sendQuietly, runs } = await notifiedThread();
+      await start();
+      await post(ada, "Go");
+      const call = await model.next();
+      call.startStep();
+      call.delta("Working.");
+      await call.drained();
+      await sendQuietly("Divya", "Divya switched the model to codex/gpt-6-luna");
+      call.endStep();
+      call.end();
+      await worker.idle();
+      expect(model.calls).toHaveLength(1);
+      expect((await runs()).map((run) => run.status)).toEqual(["completed"]);
+
+      await post(ada, "Again");
+      const next = await model.next();
+      expect(next.texts.at(-1)).toBe(
+        `user: ${notified("Divya switched the model to codex/gpt-6-luna")}`,
+      );
+      next.reply("Ok.");
+      await worker.idle();
+    });
+
     it("left while a run ends do not start another", async () => {
       const { ada, model, worker, start, post, sendQuietly, runs } = await notifiedThread();
       await start();
@@ -237,10 +261,9 @@ describe("notifications", () => {
     });
 
     it("tell the agent who renamed the thread or switched its model, and start no run", async () => {
-      const { ada, grace, org, api, thread, model, worker, start, post, transcript } =
+      const { ada, grace, models, api, thread, model, worker, start, post, transcript } =
         await notifiedThread();
-      org.models.push("codex/gpt-6-luna");
-      org.slugs = { codex: "chatgpt" };
+      await models.offer(["codex/gpt-6-luna"]);
       await start();
       const patch = (who: { cookie: string }, body: object) =>
         api("PATCH", `/threads/${thread.id}`, who.cookie, body);
@@ -250,7 +273,7 @@ describe("notifications", () => {
       expect((await patch(ada, { model: "codex/gpt-6-luna" })).status).toBe(200);
       await worker.idle();
       expect(model.calls).toHaveLength(0);
-      expect(await transcript()).toEqual(["relay", "relay", "relay"]);
+      expect(await transcript()).toEqual(["notice", "notice", "notice"]);
       // The card names the model as people know it, never its ref.
       const read = await api("GET", `/threads/${thread.id}`, ada.cookie);
       const { rows } = (await read.json()) as {

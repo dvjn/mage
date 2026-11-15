@@ -14,7 +14,13 @@ function folded(events: readonly AnyThreadEvent[]) {
   const fold = createFold();
   for (const event of events) fold.add(event);
   const { rows, ...rest } = fold.transcript();
-  return { rows: rows.map((row, index) => ({ ...row, turn: fold.turnAt(index) })), ...rest };
+  const { messages, notices } = fold.waiting();
+  return {
+    rows: rows.map((row, index) => ({ ...row, turn: fold.turnAt(index) })),
+    waitingMessages: messages,
+    waitingNotices: notices,
+    ...rest,
+  };
 }
 
 describe("thread fixtures", () => {

@@ -18,7 +18,7 @@ import type { Models } from "@/server/models/service.ts";
 import type { Directory, Org, OrgRole } from "@/server/orgs/directory.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { OrgSettings, OrgSettingStore } from "@/server/orgs/service.ts";
-import type { ThreadStore } from "@/server/threads/service.ts";
+import type { ThreadStore } from "@/server/threads/types.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import type { PageParams, Page } from "@/shared/paging.ts";
 import {

@@ -9,7 +9,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 
 import type { AskAnswers } from "@/shared/ask.ts";
-import { backgroundListSchema, type TrayKind } from "@/shared/calls.ts";
+import { activityListSchema, type TrayKind } from "@/shared/jobs.ts";
 import type { CommandInput } from "@/shared/threads/commands.ts";
 import type { TaskChangeInput } from "@/shared/tasks.ts";
 import type { Delivery, ToolScope } from "@/shared/threads/events.ts";
@@ -193,12 +193,12 @@ export function useSeenBackground(threadId: string) {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: async (kind: TrayKind) => {
-      const res = await apiClient.v1.threads[":id"].background.seen.$post({
+      const res = await apiClient.v1.threads[":id"].activity.seen.$post({
         param: { id: threadId },
         json: { kind },
       });
       if (!res.ok) throw new Error(await errorOf(res));
-      return backgroundListSchema.parse(await res.json());
+      return activityListSchema.parse(await res.json());
     },
     onSuccess: (list) => queryClient.setQueryData(backgroundQuery(threadId).queryKey, list),
   });
@@ -348,8 +348,9 @@ export function useTaskActions(threadId: string) {
   };
 }
 
-// Pauses, resumes and deletes a timer, schedule or webhook, and sets a webhook's signing secret; where it stands arrives with the thread's rows.
-export function useTriggerActions(threadId: string) {
+// Pauses, resumes and deletes a timer or schedule, and a webhook, and sets a webhook's signing
+// secret and delivery header; where each stands arrives with the thread's rows.
+export function useScheduleAndWebhookActions(threadId: string) {
   const toast = useToast();
   const run = useMutation({
     mutationFn: async (work: () => Promise<Response>) => {
@@ -358,35 +359,28 @@ export function useTriggerActions(threadId: string) {
     },
     onError: (failed) => toast(failed.message),
   });
-  const trigger = (triggerId: string) => ({ param: { id: threadId, triggerId } });
+  const schedule = (scheduleId: string) => ({ param: { id: threadId, scheduleId } });
+  const webhook = (webhookId: string) => ({ param: { id: threadId, webhookId } });
+  const schedules = apiClient.v1.threads[":id"].schedules[":scheduleId"];
+  const webhooks = apiClient.v1.threads[":id"].webhooks[":webhookId"];
   return {
     pending: run.isPending,
-    pause: (triggerId: string) =>
-      run.mutateAsync(() =>
-        apiClient.v1.threads[":id"].triggers[":triggerId"].pause.$post(trigger(triggerId)),
-      ),
-    resume: (triggerId: string) =>
-      run.mutateAsync(() =>
-        apiClient.v1.threads[":id"].triggers[":triggerId"].resume.$post(trigger(triggerId)),
-      ),
-    remove: (triggerId: string) =>
-      run.mutateAsync(() =>
-        apiClient.v1.threads[":id"].triggers[":triggerId"].$delete(trigger(triggerId)),
-      ),
-    secret: (triggerId: string, secret: string | null) =>
-      run.mutateAsync(() =>
-        apiClient.v1.threads[":id"].triggers[":triggerId"].secret.$put({
-          ...trigger(triggerId),
-          json: { secret },
-        }),
-      ),
-    // Rejects with the server's refusal, for the dialog it was set in to show.
-    deliveryHeader: async (triggerId: string, header: string | null) => {
-      const res = await apiClient.v1.threads[":id"].triggers[":triggerId"]["delivery-header"].$put({
-        ...trigger(triggerId),
-        json: { header },
-      });
-      if (!res.ok) throw new Error(await errorOf(res));
+    schedule: {
+      pause: (id: string) => run.mutateAsync(() => schedules.pause.$post(schedule(id))),
+      resume: (id: string) => run.mutateAsync(() => schedules.resume.$post(schedule(id))),
+      remove: (id: string) => run.mutateAsync(() => schedules.$delete(schedule(id))),
+    },
+    webhook: {
+      pause: (id: string) => run.mutateAsync(() => webhooks.pause.$post(webhook(id))),
+      resume: (id: string) => run.mutateAsync(() => webhooks.resume.$post(webhook(id))),
+      remove: (id: string) => run.mutateAsync(() => webhooks.$delete(webhook(id))),
+      secret: (id: string, secret: string | null) =>
+        run.mutateAsync(() => webhooks.secret.$put({ ...webhook(id), json: { secret } })),
+      // Rejects with the server's refusal, for the dialog it was set in to show.
+      deliveryHeader: async (id: string, header: string | null) => {
+        const res = await webhooks["delivery-header"].$put({ ...webhook(id), json: { header } });
+        if (!res.ok) throw new Error(await errorOf(res));
+      },
     },
   };
 }

@@ -1,14 +1,24 @@
 // Where each tool call stands, from asked for to ended: one a run makes and waits on, and one that
 // runs beside the runs as a job. What it was asked and gave back, and who decided it, stay in its
-// events in the thread's log.
+// events in the thread's log. What a running call prints is kept for whoever watches it.
 
 import { sql } from "drizzle-orm";
-import { boolean, check, index, integer, pgTable, primaryKey, text } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  check,
+  index,
+  integer,
+  json,
+  pgTable,
+  primaryKey,
+  text,
+} from "drizzle-orm/pg-core";
 
 import { at, NOW } from "@/server/db/columns.ts";
 import { leaseColumns } from "@/server/sync/lease.ts";
 import { machine } from "@/server/sync/machine.ts";
 import { thread } from "@/server/threads/schema.ts";
+import type { LiveProgress } from "@/shared/threads/events.ts";
 
 export const CALL_STATES = [
   "ready",
@@ -96,4 +106,34 @@ export const call = pgTable(
     callMachine.check("call_status_check", table.status),
     check("call_waits_for_check", sql`${table.waitsFor} is null or ${table.status} = 'waiting'`),
   ],
+);
+
+// What a running tool call has printed so far, kept while it runs for whoever watches it, on any
+// instance: how many characters in all, and how far it says it has come. Dropped in the write that
+// records the call's result.
+export const callOutput = pgTable(
+  "call_output",
+  {
+    callId: text("call_id").primaryKey(),
+    threadId: text("thread_id")
+      .notNull()
+      .references(() => thread.id, { onDelete: "cascade" }),
+    total: integer("total").default(0).notNull(),
+    progress: json("progress").$type<LiveProgress>(),
+  },
+  (table) => [index("call_output_thread_idx").on(table.threadId)],
+);
+
+// The end of a running call's output, in the pieces it was stored in, each at the offset of its
+// first character in everything the call printed.
+export const callOutputChunk = pgTable(
+  "call_output_chunk",
+  {
+    callId: text("call_id")
+      .notNull()
+      .references(() => callOutput.callId, { onDelete: "cascade", onUpdate: "cascade" }),
+    offset: integer("offset").notNull(),
+    text: text("text").notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.callId, table.offset] })],
 );

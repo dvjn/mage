@@ -14,7 +14,7 @@ import { useModelNamer } from "@/web/threads/transcript/agent";
 function useCallTitle() {
   const nameOf = useModelNamer();
   return (row: ToolRow) => {
-    if (row.skill) return `${row.state === "ran" ? "Loaded" : "Load"} ${row.skill}`;
+    if (row.skill) return `${row.state === "completed" ? "Loaded" : "Load"} ${row.skill}`;
     if (row.subagentName) {
       return [row.title, row.subagentName, nameOf(row.model ?? null)].filter(Boolean).join(" · ");
     }

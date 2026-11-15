@@ -4,21 +4,21 @@
 
 import type {
   Change,
-  NotificationActor,
-  NotificationKind,
-  NotificationParts,
-  NotificationSource,
-  Steering,
+  NoticeActor,
+  NoticeKind,
+  NoticeParts,
+  NoticeSource,
+  Influencer,
   SubagentTask,
 } from "@/shared/threads/events.ts";
 
-export interface Notification extends NotificationParts {
-  kind: NotificationKind;
-  source: NotificationSource;
+export interface Notice extends NoticeParts {
+  kind: NoticeKind;
+  source: NoticeSource;
   // Who it is shown as coming from; for an agent's message or report, the agent it came from.
-  actor?: NotificationActor;
+  actor?: NoticeActor;
   text: string;
-  people: Steering[];
+  influence: Influencer[];
   // For a message, whom it was sent to, and for a subagent's first, its task.
   to?: string;
   task?: SubagentTask;
@@ -33,26 +33,26 @@ export function silentChange(
   threadId: string,
   by: string,
   text: string,
-  tray?: NotificationParts["tray"],
-  actor?: NotificationActor,
+  tray?: NoticeParts["tray"],
+  actor?: NoticeActor,
   change?: Change,
-): Notification {
+): Notice {
   return {
     kind: "change",
     source: { threadId, name: by, main: true },
     ...(actor && { actor }),
     ...(change && { change }),
     text,
-    people: [],
+    influence: [],
     wake: false,
     ...(tray && { tray }),
   };
 }
 
 // Another agent's messages and reports come from the agent they name as their source.
-const FROM_SOURCE: NotificationKind[] = ["message", "agent.ended", "agent.failed", "agent.stopped"];
+const FROM_SOURCE: NoticeKind[] = ["message", "agent.ended", "agent.failed", "agent.stopped"];
 
-export function actorOf(notification: Notification): NotificationActor | undefined {
+export function actorOf(notification: Notice): NoticeActor | undefined {
   if (notification.actor) return notification.actor;
   if (!FROM_SOURCE.includes(notification.kind)) return undefined;
   const { threadId, name, main } = notification.source;

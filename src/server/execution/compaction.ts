@@ -15,7 +15,7 @@
 import { ModelError, type ModelRequest, type ModelUsage } from "@/server/models/gateway.ts";
 import type { OpenModel } from "@/server/models/service.ts";
 import { addUsage } from "@/shared/usage.ts";
-import type { Actor, NewEvent } from "@/server/threads/service.ts";
+import type { Actor, NewEvent } from "@/server/threads/types.ts";
 import { valueForAgent } from "@/shared/mcp.ts";
 import {
   asksToCompact,
@@ -25,7 +25,7 @@ import {
   type TranscriptRow,
 } from "@/shared/transcript.ts";
 
-import { notificationLine } from "./context.ts";
+import { noticeLine } from "./context.ts";
 import { personLabel } from "@/shared/people.ts";
 
 // About how many tokens of the most recent conversation are kept word for word.
@@ -53,7 +53,7 @@ function resultOf(row: ToolRow) {
     return row.output.ok ? json(valueForAgent(row.output.value)) : `Error: ${row.output.error}`;
   }
   if (row.state === "skipped") return "Skipped.";
-  if (row.state === "pending" || row.state === "allowed") return null;
+  if (row.state === "waiting" || row.state === "ready") return null;
   return "Not run.";
 }
 
@@ -71,7 +71,7 @@ function rowTokens(row: TranscriptRow) {
       return readReply(row) ? tokensOf(row.text) : 0;
     case "tool":
       return tokensOf(json(row.input)) + tokensOf(resultOf(row) ?? "");
-    case "relay":
+    case "notice":
       return tokensOf(row.text);
     default:
       return 0;
@@ -118,7 +118,7 @@ export function readOf(rows: readonly TranscriptRow[]) {
 // Whether the agent reads the row as part of the conversation.
 function inConversation(row: TranscriptRow) {
   if (row.kind === "human") return !asksToCompact(row);
-  return row.kind === "tool" || row.kind === "relay" || readReply(row);
+  return row.kind === "tool" || row.kind === "notice" || readReply(row);
 }
 
 // Whether the agent reads anything word for word that a compaction could summarise.
@@ -179,8 +179,8 @@ export function conversationText(rows: readonly TranscriptRow[]) {
     if (row.kind === "human") {
       if (!asksToCompact(row))
         lines.push(`[${personLabel(row.author)}]: ${row.command?.text ?? row.text}`);
-    } else if (row.kind === "relay") {
-      lines.push(notificationLine(row));
+    } else if (row.kind === "notice") {
+      lines.push(noticeLine(row));
     } else if (row.kind === "agent") {
       if (readReply(row) && row.text) lines.push(`[Agent]: ${row.text}`);
     } else if (row.kind === "tool") {

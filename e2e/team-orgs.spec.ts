@@ -45,8 +45,7 @@ async function send(page: Page, text: string) {
   await page.getByLabel("Message", { exact: true }).press("Enter");
 }
 
-// Skipped for now: passes alone, but misses its wait under the full suite's parallel load.
-test.fixme("a team org: invites, groups, two orgs side by side, and removing a member", async ({
+test("a team org: invites, groups, two orgs side by side, and removing a member", async ({
   page,
   browser,
 }, testInfo) => {

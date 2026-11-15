@@ -4,7 +4,7 @@
 import { z } from "zod";
 
 import { artifactEventSchema } from "./artifacts.ts";
-import { backgroundListSchema } from "./calls.ts";
+import { activityListSchema } from "./jobs.ts";
 import { taskListSchema } from "./tasks.ts";
 import { threadHeadSchema } from "./threads/detail.ts";
 import { deltaBatchSchema, liveChunkSchema } from "./threads/events.ts";
@@ -22,15 +22,15 @@ export const STREAMS = {
       rows: rowsUpdateSchema,
       thread: threadHeadSchema,
       tasks: taskListSchema,
-      background: backgroundListSchema,
+      activity: activityListSchema,
       "message-delta": deltaBatchSchema,
       "tool-output": liveChunkSchema,
       "access-ended": accessEnded,
     },
   },
   // A person's thread lists.
-  inbox: {
-    path: "/v1/inbox/events",
+  feed: {
+    path: "/v1/threads/feed",
     events: {
       thread: z.object({ thread: threadListItemSchema, shared: z.boolean() }),
       "thread-read": z.object({ threadId: z.string(), seq: z.number() }),

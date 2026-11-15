@@ -5,17 +5,19 @@ import { sql } from "drizzle-orm";
 import { describe, expect, it } from "vite-plus/test";
 
 import { agentThread } from "@/server/testing/agent-thread.ts";
-import type { NotificationKind } from "@/shared/threads/events.ts";
+import { eventSummary } from "@/server/threads/log.ts";
+import type { NoticeKind } from "@/shared/threads/events.ts";
+import { waitingIn } from "@/shared/transcript.ts";
 
-import type { Notification } from "./notices.ts";
+import type { Notice } from "./notices.ts";
 import type { QueuedInput } from "./queue.ts";
 
-function notice(text: string, kind: NotificationKind = "agent.idle", wake = true): Notification {
+function notice(text: string, kind: NoticeKind = "agent.idle", wake = true): Notice {
   return {
     kind,
     source: { threadId: "elsewhere", name: "Watcher", main: false },
     text,
-    people: [],
+    influence: [],
     ...(!wake && { wake: false }),
   };
 }
@@ -62,7 +64,7 @@ describe("enqueue", () => {
     ]);
     expect(
       (await q.types()).filter((type) => type !== "run.created" && type !== "message.admitted"),
-    ).toEqual(["message", "notification", "notification"]);
+    ).toEqual(["message", "notice", "notice"]);
     expect(q.told).toHaveLength(3);
   });
 
@@ -89,13 +91,13 @@ describe("enqueue", () => {
     expect(again.event.id).toBe(first.event.id);
     await q.tell("Fired", true, { key: "schedule:1:b" });
     expect(await q.rows()).toHaveLength(2);
-    expect((await q.types()).filter((type) => type === "notification")).toHaveLength(2);
+    expect((await q.types()).filter((type) => type === "notice")).toHaveLength(2);
   });
 
   it("leaves nothing and wakes nobody when its transaction rolls back", async () => {
     const q = await queued();
     const woken: string[] = [];
-    const off = q.bus.onWake((id) => woken.push(id));
+    const off = q.signals.onWake((id) => woken.push(id));
     await expect(
       q.transact(async () => {
         await q.tell("Never");
@@ -316,7 +318,7 @@ describe("a new branch", () => {
   // A run under way on the current branch, so what is enqueued waits; and its end.
   async function held(q: Awaited<ReturnType<typeof queued>>) {
     const seq = (await q.threadStore.find(q.thread.id))!.lastEventSeq;
-    return q.runStore.create({ threadId: q.thread.id, triggerSeq: seq, createdBy: null });
+    return q.runStore.create({ threadId: q.thread.id, wokenBySeq: seq, createdBy: null });
   }
   async function ended(q: Awaited<ReturnType<typeof queued>>, run: { id: string }) {
     await q.log.write(q.thread.id, async (append) => {
@@ -351,12 +353,42 @@ describe("a new branch", () => {
     });
   });
 
+  it("says what waits on each branch as the branch's fold reads it, after changes", async () => {
+    const q = await queued();
+    const run = await held(q);
+    const read = (await q.tell("Read", false)).input!;
+    const before = (await q.message(q.grace, "Before")).input!;
+    await q.queue.change(await q.readerOf(q.grace), before.id, { text: "Before, changed" });
+    const { branch } = await branchAfter(q, read.seq);
+    // A run under way on the new branch, which "After" waits on to the end.
+    await held(q);
+    const after = (await q.message(q.grace, "After")).input!;
+    await q.queue.change(await q.readerOf(q.grace), after.id, {
+      text: "After, changed",
+      delivery: "queue",
+    });
+    await ended(q, run);
+    const said = async (branchId: string) =>
+      (await q.queue.waiting(q.thread.id, branchId)).map((input) => input.message ?? input.notice);
+    const folded = async (branchId: string) => {
+      const events = await q.threadStore.eventsAfter(q.thread.id, 0, branchId);
+      const { messages, notices } = waitingIn(events.map(eventSummary));
+      return [...messages, ...notices].toSorted((one, other) => one.seq - other.seq);
+    };
+
+    expect(await said(branch)).toEqual(await folded(branch));
+    expect(await said(branch)).toEqual([
+      expect.objectContaining({ text: "Read" }),
+      expect.objectContaining({ text: "After, changed", mode: "queue" }),
+    ]);
+  });
+
   it("has a notice waiting that the branch left took in after the fork point", async () => {
     const q = await queued();
     const read = (await q.tell("Read", false)).input!;
     const run = await q.runStore.create({
       threadId: q.thread.id,
-      triggerSeq: read.seq,
+      wokenBySeq: read.seq,
       createdBy: null,
     });
     await q.queue.admission.admit(run, "all");
@@ -418,7 +450,7 @@ describe("a new branch", () => {
     const types = (await q.threadStore.eventsAfter(q.thread.id, 0, branch)).map(
       (event) => event.type,
     );
-    expect(types.filter((type) => type === "notification")).toHaveLength(2);
+    expect(types.filter((type) => type === "notice")).toHaveLength(2);
   });
 
   it("holds a source made on the parent before the fork, at it, not after, and on a grandparent", async () => {
@@ -505,12 +537,12 @@ describe("a new branch", () => {
     expect(new Set(rows.map((row) => row.branch_id)).size).toBe(2);
   });
 
-  it("is told again what a trigger no call set sent, as a notice with no source", async () => {
+  it("is told again what a schedule no call set sent, as a notice with no source", async () => {
     const q = await queued();
     const mark = (await q.tell("Mark", false)).input!;
     const run = await held(q);
     await q.scheduleStore.create({
-      id: "trigger-1",
+      id: "wake-1",
       threadId: q.thread.id,
       kind: "once",
       name: "Wake",
@@ -552,7 +584,7 @@ describe("a new branch", () => {
     const run = await q.runStore.create({
       threadId: q.thread.id,
       branchId: branch,
-      triggerSeq: read.seq,
+      wokenBySeq: read.seq,
       createdBy: null,
     });
     await q.queue.admission.admit(run, "all");
@@ -589,7 +621,7 @@ describe("a log copied in", () => {
         data: { parts: text("Waits"), quiet: false, mode: "queue" },
       });
       const told = await append({
-        type: "notification",
+        type: "notice",
         actor: { kind: "agent" },
         data: notice("Told"),
       });
@@ -662,7 +694,7 @@ describe("history", () => {
     await q.log.write(q.thread.id, async (append) => {
       const copy = await append(
         {
-          type: "notification",
+          type: "notice",
           actor: { kind: "agent" },
           data: notice("Told", "agent.idle", false),
         },

@@ -12,24 +12,24 @@ import { ulid } from "ulid";
 import * as z from "zod";
 
 import type { Reader } from "@/server/access/access.ts";
-import type { AnyToolSpec, CallPresentation, ToolSpec } from "@/server/agent/tools.ts";
+import type { CallPresentation, Toolset, ToolSpec } from "@/server/tools/registry.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
-import { type Notification, silentChange } from "@/server/queue/notices.ts";
+import { type Notice, silentChange } from "@/server/queue/notices.ts";
 import type { Queue } from "@/server/queue/queue.ts";
 import type { Signals } from "@/server/sync/signals.ts";
 import type { Sync } from "@/server/sync/sync.ts";
-import type { BackgroundWork } from "@/shared/calls.ts";
+import type { Work } from "@/shared/jobs.ts";
 import type { ToolRow } from "@/shared/transcript.ts";
 import type { Change } from "@/shared/threads/events.ts";
 import {
+  ADD_SCHEDULE,
   describeCron,
-  HISTORY_PAGE,
-  SCHEDULE,
-  type TriggerHistory,
+  SCHEDULES_TOOLSET,
   WAKE_AT,
   WAKE_HORIZON,
-} from "@/shared/triggers.ts";
+} from "@/shared/schedules.ts";
+import { HISTORY_PAGE, type FiredHistory } from "@/shared/schedules-and-webhooks.ts";
 
 import { schedule } from "./schema.ts";
 import { dueWhere, type ScheduleRow, type ScheduleStore } from "./store.ts";
@@ -58,6 +58,10 @@ async function refusing(work: () => unknown) {
     throw err;
   }
 }
+
+// What the agent is told about them.
+export const SCHEDULES_GUIDANCE =
+  "Set a wake-up timer with schedules.wake_at to carry on later, or a recurring schedule with schedules.add (a five-field cron expression and a time zone). When one fires you get a notification with its note or prompt. Remove one with schedules.delete; see them with schedules.list.";
 
 // What setting one must pass first: room in the thread, and for a named one, a name of its own;
 // each answers why not, or null.
@@ -100,7 +104,7 @@ const DID = {
 export interface SchedulesOptions {
   store: ScheduleStore;
   queue: Pick<Queue, "enqueue" | "history" | "counts">;
-  bus: Pick<Signals, "activity">;
+  signals: Pick<Signals, "changed">;
   sync: Pick<Sync, "transact" | "claimDue" | "ticker">;
   logger: Logger;
   tickMs?: number;
@@ -110,12 +114,12 @@ export interface SchedulesOptions {
 export type Schedules = ReturnType<typeof createSchedules>;
 
 export function createSchedules(options: SchedulesOptions) {
-  const { store, queue, bus, logger } = options;
+  const { store, queue, signals, logger } = options;
   const { transact } = options.sync;
   const now = options.now ?? (() => new Date());
 
   function changed(threadId: string) {
-    bus.activity({ threadId, rows: true });
+    signals.changed({ threadId, rows: true });
   }
 
   // The name a card and the agent's changes go by: a timer's note, a schedule's name.
@@ -124,9 +128,9 @@ export function createSchedules(options: SchedulesOptions) {
   // Tells the thread's agent the row went off for the time it was due, once.
   async function fire(row: ScheduleRow, due: Date | null) {
     const once = row.kind === "once";
-    const notice: Notification = {
-      kind: "trigger.fired",
-      trigger: row.id,
+    const notice: Notice = {
+      kind: "schedule.fired",
+      scheduleId: row.id,
       source: { threadId: row.threadId, name: row.name, main: true },
       actor: {
         kind: "source",
@@ -134,7 +138,7 @@ export function createSchedules(options: SchedulesOptions) {
         type: once ? "wakeup" : "schedule",
       },
       text: once ? "Wake-up timer went off" : `Schedule "${row.name}" fired`,
-      people: row.influence,
+      influence: row.influence,
       last: row.prompt,
       ...(!once && row.cron && { schedule: describeCron(row.cron) }),
     };
@@ -212,7 +216,7 @@ export function createSchedules(options: SchedulesOptions) {
           row.threadId,
           who,
           `${who} ${verb} ${kind} ${name}`,
-          "triggers",
+          "schedules",
           { kind: "person", userId, name: who },
           { subject: { kind: "schedule", name }, action },
         ),
@@ -239,7 +243,7 @@ export function createSchedules(options: SchedulesOptions) {
     apply: (row: ScheduleRow) => Promise<ScheduleRow | null>,
   ) {
     const found = await changeable(reader, id);
-    if (!found) throw new ServiceError(404, "Trigger not found");
+    if (!found) throw new ServiceError(404, "Schedule not found");
     await transact(async () => {
       const moved = await apply(found);
       if (moved) {
@@ -248,10 +252,34 @@ export function createSchedules(options: SchedulesOptions) {
       }
       const current = await store.find(id);
       if (!current || current.status === "deleted")
-        throw new ServiceError(404, "Trigger not found");
+        throw new ServiceError(404, "Schedule not found");
       if (current.status === "completed") throw new ServiceError(409, "This timer has gone off");
     });
     changed(reader.thread.id);
+  }
+
+  // One as the agent reads it in a list.
+  function brief(row: ScheduleRow) {
+    return {
+      id: row.id,
+      kind: row.kind === "once" ? "wake_at" : "schedule",
+      name: row.name,
+      status: row.status,
+      ...(row.cron && { cron: row.cron, timezone: row.timezone }),
+      ...(row.nextRunAt && { next: row.nextRunAt.toISOString() }),
+      ...(row.lastFiredAt && { lastFired: row.lastFiredAt.toISOString() }),
+      prompt: row.prompt,
+    };
+  }
+
+  // Deletes the thread's one, as its agent asked; false when it is not there. One that went off
+  // stays as it is.
+  async function removeFor(threadId: string, id: string) {
+    const row = await store.find(id);
+    if (!row || row.threadId !== threadId || row.status === "deleted") return false;
+    if (row.status !== "completed") await store.remove(id);
+    changed(threadId);
+    return true;
   }
 
   return {
@@ -263,8 +291,9 @@ export function createSchedules(options: SchedulesOptions) {
 
     inThread: async (threadId: string) => store.inThread(threadId),
 
-    // The agent's tools: a timer and a schedule, set after the checks given.
-    tools(checks: SetChecks): AnyToolSpec[] {
+    // The agent's tools: a timer and a schedule, set after the checks given, and their list and
+    // delete; with the cards of what the calls set.
+    toolset(checks: SetChecks): Toolset {
       const wakeAt: ToolSpec<{ in_seconds?: number; at?: string; note: string }> = {
         name: WAKE_AT,
         modelName: WAKE_AT,
@@ -322,8 +351,8 @@ export function createSchedules(options: SchedulesOptions) {
 
       const recurring: ToolSpec<{ name: string; cron: string; timezone?: string; prompt: string }> =
         {
-          name: SCHEDULE,
-          modelName: SCHEDULE,
+          name: ADD_SCHEDULE,
+          modelName: ADD_SCHEDULE,
           title: "Schedule",
           annotations: { readOnlyHint: false },
           description:
@@ -358,32 +387,48 @@ export function createSchedules(options: SchedulesOptions) {
             });
           },
         };
-      return [wakeAt, recurring];
-    },
-
-    // One as the agent reads it in a list.
-    brief(row: ScheduleRow) {
+      const list: ToolSpec<Record<string, never>> = {
+        name: "schedules.list",
+        title: "List",
+        annotations: { readOnlyHint: true },
+        description: "This thread's wake-up timers and schedules, with when each goes off next.",
+        input: z.object({}).strict() as z.ZodType<Record<string, never>>,
+        risk: () => "normal",
+        run(_input, ctx) {
+          return refusing(async () => ({
+            schedules: (await store.inThread(ctx.threadId)).map(brief),
+          }));
+        },
+      };
+      const remove: ToolSpec<{ id: string }> = {
+        name: "schedules.delete",
+        title: "Delete",
+        annotations: { readOnlyHint: false },
+        description: "Delete a wake-up timer or schedule by its id.",
+        input: z.object({ id: z.string().min(1).meta({ title: "Id" }) }),
+        risk: () => "normal",
+        run({ id }, ctx) {
+          return refusing(async () => {
+            if (!(await removeFor(ctx.threadId, id))) {
+              throw new ToolRefusal(`No schedule has the id ${id}.`);
+            }
+            return { deleted: id };
+          });
+        },
+      };
       return {
-        id: row.id,
-        kind: row.kind === "once" ? "wake_at" : "schedule",
-        name: row.name,
-        status: row.status === "completed" ? "done" : row.status,
-        ...(row.cron && { cron: row.cron, timezone: row.timezone }),
-        ...(row.nextRunAt && { next: row.nextRunAt.toISOString() }),
-        ...(row.lastFiredAt && { lastFired: row.lastFiredAt.toISOString() }),
-        prompt: row.prompt,
+        id: SCHEDULES_TOOLSET,
+        title: "Schedules",
+        source: "builtin",
+        description: "What wakes the agent at a time: wake-up timers and schedules",
+        guidance: SCHEDULES_GUIDANCE,
+        tools: [wakeAt, recurring, list, remove],
+        present: async (reader, rows) => present(reader, rows),
       };
     },
 
-    // Deletes the thread's one, as its agent asked; false when it is not there. One that went off
-    // stays as it is.
-    async removeFor(threadId: string, id: string) {
-      const row = await store.find(id);
-      if (!row || row.threadId !== threadId || row.status === "deleted") return false;
-      if (row.status !== "completed") await store.remove(id);
-      changed(threadId);
-      return true;
-    },
+    brief,
+    removeFor,
 
     tick,
 
@@ -409,9 +454,9 @@ export function createSchedules(options: SchedulesOptions) {
       change(reader, id, "remove", async (row) => store.remove(row.id)),
 
     // A page of what it fired, newest first, for anyone who may read the thread.
-    async history(reader: Reader, id: string, offset: number): Promise<TriggerHistory> {
+    async history(reader: Reader, id: string, offset: number): Promise<FiredHistory> {
       const row = await changeable(reader, id);
-      if (!row) throw new ServiceError(404, "Trigger not found");
+      if (!row) throw new ServiceError(404, "Schedule not found");
       const { total, entries } = await queue.history(
         row.threadId,
         { kind: "schedule", id: row.id },
@@ -424,35 +469,37 @@ export function createSchedules(options: SchedulesOptions) {
       };
     },
 
-    // The cards of the timers and schedules the page's calls set, as the reader sees them.
-    async present(reader: Reader, rows: readonly ToolRow[]) {
-      const callIds = rows.map((row) => row.id);
-      const found = await store.ofCalls(reader.thread.id, callIds);
-      const fired =
-        found.length > 0
-          ? await queue.counts(reader.thread.id, ["schedule"])
-          : new Map<string, number>();
-      const byCall = new Map(found.map((row) => [row.callId, row]));
-      const canChange = reader.can("post");
-      return (row: ToolRow): CallPresentation | undefined => {
-        const made = byCall.get(row.id);
-        return made
-          ? { work: cardOf(made, fired.get(made.id) ?? 0, canChange), live: true }
-          : undefined;
-      };
-    },
+    present,
   };
+
+  // The cards of the timers and schedules the page's calls set, as the reader sees them.
+  async function present(reader: Reader, rows: readonly ToolRow[]) {
+    const callIds = rows.map((row) => row.id);
+    const found = await store.ofCalls(reader.thread.id, callIds);
+    const fired =
+      found.length > 0
+        ? await queue.counts(reader.thread.id, ["schedule"])
+        : new Map<string, number>();
+    const byCall = new Map(found.map((row) => [row.callId, row]));
+    const canChange = reader.can("post");
+    return (row: ToolRow): CallPresentation | undefined => {
+      const made = byCall.get(row.id);
+      return made
+        ? { work: cardOf(made, fired.get(made.id) ?? 0, canChange), live: true }
+        : undefined;
+    };
+  }
 }
 
 // The card of a timer or schedule, as the reader sees it.
-function cardOf(row: ScheduleRow, fired: number, canChange: boolean): BackgroundWork {
+function cardOf(row: ScheduleRow, fired: number, canChange: boolean): Work {
   const status =
     row.status === "active"
       ? ("scheduled" as const)
       : row.status === "paused"
         ? ("paused" as const)
         : row.status === "completed"
-          ? ("done" as const)
+          ? ("completed" as const)
           : ("cancelled" as const);
   return {
     kind: "schedule",

@@ -7,7 +7,7 @@ import { createRunTraces } from "@/server/kernel/tracing.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { queries } from "@/server/testing/tracing.ts";
 
-const MAX = { detail: 46, rows: 13, threadList: 60, tray: 49, run: 129 };
+const MAX = { detail: 41, rows: 12, threadList: 19, tray: 33, run: 108 };
 
 // Ada's space with twenty threads, and a thread of fifty notes.
 async function arranged() {
@@ -44,7 +44,7 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("queries of the paths people wai
     expect(await counted(`/threads/${t.notes}`)).toBeLessThanOrEqual(MAX.detail);
     expect(await counted(`/threads/${t.notes}/rows?before=40`)).toBeLessThanOrEqual(MAX.rows);
     expect(await counted(`/spaces/${t.space.id}/threads`)).toBeLessThanOrEqual(MAX.threadList);
-    expect(await counted(`/threads/${t.notes}/background`)).toBeLessThanOrEqual(MAX.tray);
+    expect(await counted(`/threads/${t.notes}/activity`)).toBeLessThanOrEqual(MAX.tray);
     // One message, one model step, no tools: what the run makes, not the post that woke it.
     await t.start();
     const run = await queries(async () => {

@@ -5,23 +5,23 @@
 
 import { createHmac } from "node:crypto";
 
-import { expect } from "vite-plus/test";
+import { expect, onTestFinished } from "vite-plus/test";
 import * as z from "zod";
 
-import type { LiveReporter } from "@/server/agent/live.ts";
+import type { LiveReporter } from "@/server/calls/live.ts";
 import * as schema from "@/server/schema.ts";
-import type { ToolSpec } from "@/server/agent/tools.ts";
-import type { BackgroundItem } from "@/shared/calls.ts";
+import type { ToolSpec } from "@/server/tools/registry.ts";
+import type { ActivityItem } from "@/shared/jobs.ts";
 import { STREAMS } from "@/shared/streams.ts";
 import type { ThreadDetail } from "@/shared/threads/detail.ts";
 import type { ThreadListItem } from "@/shared/threads/list.ts";
 import type { ShownRow, WaitingRow } from "@/shared/threads/rows.ts";
-import type { TriggerHistory } from "@/shared/triggers.ts";
+import type { FiredHistory } from "@/shared/schedules-and-webhooks.ts";
 
 import { agentThread } from "./agent-thread.ts";
 import { expireLeases } from "./database.ts";
 import type { Call } from "./scripted-model.ts";
-import { openStream } from "./sse.ts";
+import { openFeed, openStream } from "./sse.ts";
 import { setup } from "./workspace.ts";
 
 export type Person = { cookie: string; userId: string; orgId: string };
@@ -30,7 +30,7 @@ const MINUTE = 60_000;
 
 // Tools for the tests: one that runs until the test finishes it, by the label of its call, and
 // one that needs a person's approval and then answers at once.
-function probe() {
+export function probe() {
   const open = new Map<string, (output: { ok: true; value: unknown }) => void>();
   const aborted: string[] = [];
   const printing = new Map<string, LiveReporter>();
@@ -107,6 +107,8 @@ export async function world(
   const grace: Person = base.grace;
   const alan: Person = base.alan;
   await base.start();
+  // Streams that beat seldom end with the test rather than at their next beat.
+  if (harness.heartbeatMs) onTestFinished(() => base.shutdown.abort());
 
   const taken = new Set<Call>();
   let callCount = 0;
@@ -151,8 +153,8 @@ export async function world(
     },
 
     // Signs someone up into the thread's org without a place in its space, and has Ada add them
-    // to the thread as a guest.
-    async guest(name: string, email: string): Promise<Person> {
+    // to the thread as a guest, for good or for as long as said.
+    async guest(name: string, email: string, accessFor = "never"): Promise<Person> {
       const person = await base.signUp(name, email);
       await base.db.insert(schema.member).values({
         id: crypto.randomUUID(),
@@ -164,7 +166,7 @@ export async function world(
       });
       const res = await api("POST", `/threads/${thread}/guests`, ada.cookie, {
         userId: person.userId,
-        accessFor: "never",
+        accessFor,
       });
       if (res.status !== 200) throw new Error(`no guest: ${res.status} ${await res.text()}`);
       return { ...person, orgId: ada.orgId };
@@ -207,8 +209,8 @@ export async function world(
 
     // The thread's activity list as the reader's tray reads it.
     async activity(who: Person = ada, threadId = thread) {
-      const { items } = await json<{ items: BackgroundItem[] }>(
-        await api("GET", `/threads/${threadId}/background`, who.cookie),
+      const { items } = await json<{ items: ActivityItem[] }>(
+        await api("GET", `/threads/${threadId}/activity`, who.cookie),
       );
       return items;
     },
@@ -336,8 +338,60 @@ export async function world(
             if (item.event === event) return item;
           }
         },
+        // What it sends until it has beaten so many times.
+        async until(beats: number) {
+          const sent: ReturnType<typeof read>[] = [];
+          while (beats > 0) {
+            const frame = await stream.next();
+            if (frame.comment === "heartbeat") beats -= 1;
+            else if (frame.data) sent.push(read(frame));
+          }
+          return sent;
+        },
         async close() {
           await stream.close();
+        },
+      };
+    },
+
+    // Opens the reader's list feed, in the org named when one is. Answers a way to read what it
+    // sends, one event at a time, with its name and data, and a way to close it; it listens once
+    // `ready` is answered.
+    async feed(who: Person = ada, org?: string) {
+      const feed = await openFeed(base.app, who.cookie, org);
+      const read = (frame: { event?: string; data?: string }) => {
+        const event = frame.event as keyof typeof STREAMS.feed.events;
+        const schema = STREAMS.feed.events[event];
+        if (!schema) throw new Error(`the list feed sent an unknown event: ${frame.event}`);
+        return { event, data: schema.parse(JSON.parse(frame.data!)) as Record<string, any> };
+      };
+      return {
+        // Waits for its first beat, by which it listens.
+        async ready() {
+          while ((await feed.next()).comment !== "heartbeat");
+        },
+        async next() {
+          return read(await feed.nextItem());
+        },
+        // The next event that holds, passing over others.
+        async nextThat(holds: (item: ReturnType<typeof read>) => boolean) {
+          for (;;) {
+            const item = read(await feed.nextItem());
+            if (holds(item)) return item;
+          }
+        },
+        // What it sends until it has beaten so many times.
+        async until(beats: number) {
+          const sent: ReturnType<typeof read>[] = [];
+          while (beats > 0) {
+            const frame = await feed.next();
+            if (frame.comment === "heartbeat") beats -= 1;
+            else if (frame.data) sent.push(read(frame));
+          }
+          return sent;
+        },
+        async close() {
+          await feed.close();
         },
       };
     },
@@ -355,8 +409,8 @@ export async function world(
     },
 
     // Has the org's provider offer one more model.
-    offers(ref: string) {
-      base.org.models.push(ref);
+    async offers(ref: string) {
+      await base.models.offer([ref]);
     },
 
     // Another server instance on the same database, as a second process would be, reached over
@@ -365,6 +419,17 @@ export async function world(
       await base.sync.start();
       const other = setup({}, { database: base.database, toolsets: [tool.toolset] });
       await other.sync.start();
+      return {
+        async act(who: Person, method: string, path: string, body?: object, threadId = thread) {
+          return (await other.api(method, `/threads/${threadId}${path}`, who.cookie, body)).status;
+        },
+      };
+    },
+
+    // Another server instance on the same database, reached over HTTP, whose hints this one never
+    // hears, as when its notifications are lost without a gap being told. It runs nothing itself.
+    async deaf() {
+      const other = setup({}, { database: base.database, toolsets: [tool.toolset] });
       return {
         async act(who: Person, method: string, path: string, body?: object, threadId = thread) {
           return (await other.api(method, `/threads/${threadId}${path}`, who.cookie, body)).status;
@@ -495,19 +560,19 @@ export async function world(
     decide,
     // A webhook the agent made, with the address it is posted to.
     webhook: (name: string, note: string) =>
-      setUp<{ id: string; url: string }>("triggers.add_webhook", { name, note }, true),
+      setUp<{ id: string; url: string }>("webhooks.add", { name, note }, true),
     // A wake-up timer the agent set, to go off in so many seconds.
     wakeUp: (seconds: number, note: string) =>
-      setUp<{ id: string }>("triggers.wake_at", { in_seconds: seconds, note }),
+      setUp<{ id: string }>("schedules.wake_at", { in_seconds: seconds, note }),
     // What the schedule or webhook has fired, newest first, as its history lists it.
-    async history(who: Person, id: string) {
-      return json<TriggerHistory>(
-        await api("GET", `/threads/${thread}/triggers/${id}/history`, who.cookie),
+    async history(who: Person, kind: "schedules" | "webhooks", id: string) {
+      return json<FiredHistory>(
+        await api("GET", `/threads/${thread}/${kind}/${id}/history`, who.cookie),
       );
     },
     // A schedule the agent made, by cron expression.
     schedule: (name: string, cron: string, prompt: string) =>
-      setUp<{ id: string }>("triggers.schedule", { name, cron, prompt }),
+      setUp<{ id: string }>("schedules.add", { name, cron, prompt }),
   };
 }
 
@@ -521,8 +586,8 @@ export function rowWords(row: ShownRow): string {
     case "agent":
       return `agent (${row.status}): ${row.text}`;
     case "tool":
-      return `${row.toolId} ${row.state}${row.waits && row.state === "pending" ? " waits" : ""}${row.background ? ` [${row.background.status}]` : ""}`;
-    case "relay":
+      return `${row.toolId} ${row.state}${row.work ? ` [${row.work.status}]` : ""}`;
+    case "notice":
       return `${row.type}: ${row.text.split("\n")[0]}`;
     case "stop":
       return `stopped by ${row.by}`;

@@ -54,9 +54,9 @@ async function arranged() {
   await w.post(w.ada, "Set up");
   await w.asks(
     w.threadId,
-    ["triggers.wake_at", { in_seconds: 3600, note: "Check in" }],
-    ["triggers.schedule", { name: "Digest", cron: "0 9 * * *", prompt: "Digest" }],
-    ["triggers.schedule", { name: "Weekly", cron: "0 9 * * 1", prompt: "Weekly" }],
+    ["schedules.wake_at", { in_seconds: 3600, note: "Check in" }],
+    ["schedules.add", { name: "Digest", cron: "0 9 * * *", prompt: "Digest" }],
+    ["schedules.add", { name: "Weekly", cron: "0 9 * * 1", prompt: "Weekly" }],
     ["jobs.start", { tool: "probe.wait", input: { label: "running" } }],
     ["jobs.start", { tool: "probe.guarded", input: { label: "job-waits" } }],
     ["jobs.start", { tool: "probe.wait", input: { label: "ended" } }],
@@ -87,7 +87,7 @@ async function arranged() {
 
   await w.webhook("Deploys", "Check the deploy");
   const weekly = (await w.activity()).find((item) => item.title === "Weekly")!;
-  expect(await w.act(w.ada, "POST", `/triggers/${weekly.work.schedule!.id}/pause`)).toBe(200);
+  expect(await w.act(w.ada, "POST", `/schedules/${weekly.work.schedule!.id}/pause`)).toBe(200);
   await w.settled();
 
   await w.post(w.ada, "Tidy");
@@ -185,7 +185,7 @@ async function rows(w: World, who: Person) {
             present({
               id: row.id,
               toolId: row.toolId,
-              background: row.background ?? null,
+              background: row.work ?? null,
               subagent: row.subagent ?? null,
               subagentCall: row.subagentCall
                 ? {
@@ -244,7 +244,7 @@ const OWNER = {
     {
       rowId: "<id 1>",
       title: "Wait",
-      kind: "call",
+      kind: "job",
       status: "running",
       canDecide: null,
       canCancel: true,
@@ -254,8 +254,8 @@ const OWNER = {
     {
       rowId: "<id 2>",
       title: "Guarded",
-      kind: "approval",
-      status: "pending",
+      kind: "decision",
+      status: "waiting",
       canDecide: true,
       canCancel: false,
       attention: "approval",
@@ -264,8 +264,8 @@ const OWNER = {
     {
       rowId: "<id 2>",
       title: "Guarded",
-      kind: "call",
-      status: "pending",
+      kind: "job",
+      status: "waiting",
       canDecide: true,
       canCancel: true,
       attention: "approval",
@@ -284,8 +284,8 @@ const OWNER = {
     {
       rowId: "call-16",
       title: "Guarded",
-      kind: "approval",
-      status: "pending",
+      kind: "decision",
+      status: "waiting",
       canDecide: true,
       canCancel: false,
       attention: "approval",
@@ -295,7 +295,7 @@ const OWNER = {
       rowId: "<id 3>",
       title: "Worker",
       kind: "subagent",
-      status: "pending",
+      status: "waiting",
       canDecide: true,
       canCancel: true,
       attention: "approval",
@@ -340,7 +340,7 @@ const OWNER = {
     {
       title: "Worker",
       state: "working",
-      needs: "approval",
+      needs: "decision",
       tasks: null,
       waitingRow: "call-12",
       canCancel: true,
@@ -364,7 +364,7 @@ const OWNER = {
     },
     {
       id: "call-2",
-      toolId: "triggers.wake_at",
+      toolId: "schedules.wake_at",
       background: {
         kind: "schedule",
         status: "scheduled",
@@ -382,7 +382,7 @@ const OWNER = {
     },
     {
       id: "call-3",
-      toolId: "triggers.schedule",
+      toolId: "schedules.add",
       background: {
         kind: "schedule",
         status: "scheduled",
@@ -403,7 +403,7 @@ const OWNER = {
     },
     {
       id: "call-4",
-      toolId: "triggers.schedule",
+      toolId: "schedules.add",
       background: {
         kind: "schedule",
         status: "paused",
@@ -423,15 +423,15 @@ const OWNER = {
     },
     {
       id: "call-5",
-      toolId: "calls.start",
+      toolId: "jobs.start",
     },
     {
       id: "call-6",
-      toolId: "calls.start",
+      toolId: "jobs.start",
     },
     {
       id: "call-7",
-      toolId: "calls.start",
+      toolId: "jobs.start",
     },
     {
       id: "call-8",
@@ -440,7 +440,7 @@ const OWNER = {
         threadId: "<id 4>",
         name: "Worker",
         state: "working",
-        needs: "approval",
+        needs: "decision",
       },
       subagentCall: {
         id: "call-12",
@@ -502,7 +502,7 @@ const OWNER = {
       id: "<id 10>",
       toolId: "probe.wait",
       background: {
-        kind: "call",
+        kind: "job",
         status: "running",
         startedAt: "<time>",
         canCancel: true,
@@ -512,8 +512,8 @@ const OWNER = {
       id: "<id 11>",
       toolId: "probe.guarded",
       background: {
-        kind: "call",
-        status: "pending",
+        kind: "job",
+        status: "waiting",
         startedAt: "<time>",
         canCancel: true,
       },
@@ -523,8 +523,8 @@ const OWNER = {
       id: "<id 12>",
       toolId: "probe.wait",
       background: {
-        kind: "call",
-        status: "done",
+        kind: "job",
+        status: "completed",
         startedAt: "<time>",
         endedAt: "<time>",
         canCancel: false,
@@ -532,7 +532,7 @@ const OWNER = {
     },
     {
       id: "call-13",
-      toolId: "triggers.add_webhook",
+      toolId: "webhooks.add",
       background: {
         kind: "webhook",
         status: "listening",
@@ -616,7 +616,7 @@ const VIEWER = {
     {
       rowId: "<id 1>",
       title: "Wait",
-      kind: "call",
+      kind: "job",
       status: "running",
       canDecide: null,
       canCancel: false,
@@ -626,8 +626,8 @@ const VIEWER = {
     {
       rowId: "<id 2>",
       title: "Guarded",
-      kind: "approval",
-      status: "pending",
+      kind: "decision",
+      status: "waiting",
       canDecide: false,
       canCancel: false,
       attention: null,
@@ -636,8 +636,8 @@ const VIEWER = {
     {
       rowId: "<id 2>",
       title: "Guarded",
-      kind: "call",
-      status: "pending",
+      kind: "job",
+      status: "waiting",
       canDecide: false,
       canCancel: false,
       attention: null,
@@ -656,8 +656,8 @@ const VIEWER = {
     {
       rowId: "call-16",
       title: "Guarded",
-      kind: "approval",
-      status: "pending",
+      kind: "decision",
+      status: "waiting",
       canDecide: false,
       canCancel: false,
       attention: null,
@@ -667,7 +667,7 @@ const VIEWER = {
       rowId: "<id 3>",
       title: "Worker",
       kind: "subagent",
-      status: "pending",
+      status: "waiting",
       canDecide: false,
       canCancel: false,
       attention: null,
@@ -712,7 +712,7 @@ const VIEWER = {
     {
       title: "Worker",
       state: "working",
-      needs: "approval",
+      needs: "decision",
       tasks: null,
       waitingRow: "call-12",
       canCancel: false,
@@ -736,7 +736,7 @@ const VIEWER = {
     },
     {
       id: "call-2",
-      toolId: "triggers.wake_at",
+      toolId: "schedules.wake_at",
       background: {
         kind: "schedule",
         status: "scheduled",
@@ -754,7 +754,7 @@ const VIEWER = {
     },
     {
       id: "call-3",
-      toolId: "triggers.schedule",
+      toolId: "schedules.add",
       background: {
         kind: "schedule",
         status: "scheduled",
@@ -775,7 +775,7 @@ const VIEWER = {
     },
     {
       id: "call-4",
-      toolId: "triggers.schedule",
+      toolId: "schedules.add",
       background: {
         kind: "schedule",
         status: "paused",
@@ -795,15 +795,15 @@ const VIEWER = {
     },
     {
       id: "call-5",
-      toolId: "calls.start",
+      toolId: "jobs.start",
     },
     {
       id: "call-6",
-      toolId: "calls.start",
+      toolId: "jobs.start",
     },
     {
       id: "call-7",
-      toolId: "calls.start",
+      toolId: "jobs.start",
     },
     {
       id: "call-8",
@@ -812,7 +812,7 @@ const VIEWER = {
         threadId: "<id 4>",
         name: "Worker",
         state: "working",
-        needs: "approval",
+        needs: "decision",
       },
       subagentCall: {
         id: "call-12",
@@ -874,7 +874,7 @@ const VIEWER = {
       id: "<id 10>",
       toolId: "probe.wait",
       background: {
-        kind: "call",
+        kind: "job",
         status: "running",
         startedAt: "<time>",
         canCancel: false,
@@ -884,8 +884,8 @@ const VIEWER = {
       id: "<id 11>",
       toolId: "probe.guarded",
       background: {
-        kind: "call",
-        status: "pending",
+        kind: "job",
+        status: "waiting",
         startedAt: "<time>",
         canCancel: false,
       },
@@ -895,8 +895,8 @@ const VIEWER = {
       id: "<id 12>",
       toolId: "probe.wait",
       background: {
-        kind: "call",
-        status: "done",
+        kind: "job",
+        status: "completed",
         startedAt: "<time>",
         endedAt: "<time>",
         canCancel: false,
@@ -904,7 +904,7 @@ const VIEWER = {
     },
     {
       id: "call-13",
-      toolId: "triggers.add_webhook",
+      toolId: "webhooks.add",
       background: {
         kind: "webhook",
         status: "listening",
@@ -986,7 +986,7 @@ const GUEST = {
     {
       rowId: "<id 1>",
       title: "Wait",
-      kind: "call",
+      kind: "job",
       status: "running",
       canDecide: null,
       canCancel: true,
@@ -996,8 +996,8 @@ const GUEST = {
     {
       rowId: "<id 2>",
       title: "Guarded",
-      kind: "approval",
-      status: "pending",
+      kind: "decision",
+      status: "waiting",
       canDecide: true,
       canCancel: false,
       attention: "approval",
@@ -1006,8 +1006,8 @@ const GUEST = {
     {
       rowId: "<id 2>",
       title: "Guarded",
-      kind: "call",
-      status: "pending",
+      kind: "job",
+      status: "waiting",
       canDecide: true,
       canCancel: true,
       attention: "approval",
@@ -1026,8 +1026,8 @@ const GUEST = {
     {
       rowId: "call-16",
       title: "Guarded",
-      kind: "approval",
-      status: "pending",
+      kind: "decision",
+      status: "waiting",
       canDecide: true,
       canCancel: false,
       attention: "approval",
@@ -1037,7 +1037,7 @@ const GUEST = {
       rowId: "<id 3>",
       title: "Worker",
       kind: "subagent",
-      status: "pending",
+      status: "waiting",
       canDecide: true,
       canCancel: true,
       attention: "approval",
@@ -1082,7 +1082,7 @@ const GUEST = {
     {
       title: "Worker",
       state: "working",
-      needs: "approval",
+      needs: "decision",
       tasks: null,
       waitingRow: "call-12",
       canCancel: true,
@@ -1106,7 +1106,7 @@ const GUEST = {
     },
     {
       id: "call-2",
-      toolId: "triggers.wake_at",
+      toolId: "schedules.wake_at",
       background: {
         kind: "schedule",
         status: "scheduled",
@@ -1124,7 +1124,7 @@ const GUEST = {
     },
     {
       id: "call-3",
-      toolId: "triggers.schedule",
+      toolId: "schedules.add",
       background: {
         kind: "schedule",
         status: "scheduled",
@@ -1145,7 +1145,7 @@ const GUEST = {
     },
     {
       id: "call-4",
-      toolId: "triggers.schedule",
+      toolId: "schedules.add",
       background: {
         kind: "schedule",
         status: "paused",
@@ -1165,15 +1165,15 @@ const GUEST = {
     },
     {
       id: "call-5",
-      toolId: "calls.start",
+      toolId: "jobs.start",
     },
     {
       id: "call-6",
-      toolId: "calls.start",
+      toolId: "jobs.start",
     },
     {
       id: "call-7",
-      toolId: "calls.start",
+      toolId: "jobs.start",
     },
     {
       id: "call-8",
@@ -1182,7 +1182,7 @@ const GUEST = {
         threadId: "<id 4>",
         name: "Worker",
         state: "working",
-        needs: "approval",
+        needs: "decision",
       },
       subagentCall: {
         id: "call-12",
@@ -1244,7 +1244,7 @@ const GUEST = {
       id: "<id 10>",
       toolId: "probe.wait",
       background: {
-        kind: "call",
+        kind: "job",
         status: "running",
         startedAt: "<time>",
         canCancel: true,
@@ -1254,8 +1254,8 @@ const GUEST = {
       id: "<id 11>",
       toolId: "probe.guarded",
       background: {
-        kind: "call",
-        status: "pending",
+        kind: "job",
+        status: "waiting",
         startedAt: "<time>",
         canCancel: true,
       },
@@ -1265,8 +1265,8 @@ const GUEST = {
       id: "<id 12>",
       toolId: "probe.wait",
       background: {
-        kind: "call",
-        status: "done",
+        kind: "job",
+        status: "completed",
         startedAt: "<time>",
         endedAt: "<time>",
         canCancel: false,
@@ -1274,7 +1274,7 @@ const GUEST = {
     },
     {
       id: "call-13",
-      toolId: "triggers.add_webhook",
+      toolId: "webhooks.add",
       background: {
         kind: "webhook",
         status: "listening",
@@ -1339,7 +1339,7 @@ describe("a thread's activity", () => {
     const states = async (who: Person) =>
       (await w.activity(who)).map((item) => `${item.title} ${item.work.status}`);
     expect(await states(w.ada)).toEqual(["Researcher cancelled"]);
-    expect(await w.act(w.ada, "POST", "/background/seen", { kind: "subagents" })).toBe(200);
+    expect(await w.act(w.ada, "POST", "/activity/seen", { kind: "subagents" })).toBe(200);
     expect(await states(w.ada)).toEqual([]);
     expect(await states(w.grace)).toEqual(["Researcher cancelled"]);
   });
@@ -1355,5 +1355,54 @@ describe("a thread's activity", () => {
     expect(await read(w.ada)).toEqual(OWNER);
     expect(await read(w.alan)).toEqual(VIEWER);
     expect(await read(guest)).toEqual(GUEST);
+  });
+
+  it("shows on the start row of a subagent waiting on a decision its call, as each reader may decide it", async () => {
+    const w = await world();
+    const guest = await w.guest("Hedy Lamarr", "hedy@example.com");
+    await w.post(w.ada, "Get help");
+    await w.asks(w.threadId, ["subagents.start", { name: "Helper", task: "Help" }]);
+    await w.answers(w.threadId, "Started.");
+    const helper = await w.subagentNamed("Helper");
+    const { ids } = await w.asks(helper, ["probe.guarded", { label: "sub" }]);
+    await eventually(
+      () => w.shown(w.ada, helper),
+      (shown) => shown.run === "decision",
+    );
+    const below = async (who: Person) => {
+      const start = (await w.detail(who)).rows.find(
+        (row) => row.kind === "tool" && row.toolId === "subagents.start",
+      );
+      if (start?.kind !== "tool" || !start.subagentCall) return null;
+      const { id, toolId, state, waitsFor, risk, actions, connection } = start.subagentCall;
+      return {
+        id,
+        toolId,
+        state,
+        waitsFor,
+        risk,
+        actions: actions ?? null,
+        connection: connection ?? null,
+      };
+    };
+    const call = {
+      id: ids[0],
+      toolId: "probe.guarded",
+      state: "waiting",
+      waitsFor: "decision",
+      risk: "ask",
+    };
+    expect(await below(w.ada)).toEqual({ ...call, actions: ["allow", "deny"], connection: null });
+    expect(await below(w.alan)).toEqual({ ...call, actions: [], connection: null });
+    expect(await below(guest)).toEqual({ ...call, actions: ["allow", "deny"], connection: null });
+
+    expect(await w.decide(w.ada, ids[0]!, true, "once", helper)).toBe(200);
+    await w.answers(helper, "Helped.");
+    await eventually(
+      () => w.shown(w.ada, helper),
+      (shown) => shown.run === null,
+    );
+    await answered(w);
+    await w.settled();
   });
 });

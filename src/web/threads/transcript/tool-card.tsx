@@ -25,8 +25,8 @@ import {
 import { Badge } from "@/web/components/ui/badge";
 import { WithTooltip } from "@/web/components/with-tooltip";
 import { useConnectFlow } from "@/web/mcp/connect";
-import { MoveToBackground } from "@/web/threads/transcript/background";
-import { STATUSES } from "@/web/threads/transcript/background-card";
+import { MoveToBackground } from "@/web/threads/transcript/job-actions";
+import { STATUSES } from "@/web/threads/transcript/work-card";
 import { CardFrame } from "@/web/threads/transcript/card-frame";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { duration } from "@/web/threads/transcript/tool-line";
@@ -48,13 +48,13 @@ function allowingPath(callId: string, scope: ToolScope) {
 // A tool call waiting for a decision: the tool's breadcrumb under the hand, its input, and the
 // buttons to decide.
 // "Steered by Ada Lovelace, and Priya Nair via Critic → Writer".
-const steeredBy = new Intl.ListFormat("en", { type: "conjunction" });
+const influence = new Intl.ListFormat("en", { type: "conjunction" });
 
-function steeringSentence(steering: NonNullable<ToolRow["steering"]>) {
+function steeringSentence(steering: NonNullable<ToolRow["influence"]>) {
   const people = steering.map(({ name, via }) =>
     via.length > 0 ? `${name} via ${via.join(" → ")}` : name,
   );
-  return `Steered by ${steeredBy.format(people)}`;
+  return `Steered by ${influence.format(people)}`;
 }
 
 export function ToolCard({
@@ -126,13 +126,13 @@ export function ToolCard({
   }
   if (finished) {
     // How the job ended, from its own card where it has one.
-    const end = row.background?.status;
+    const end = row.work?.status;
     const ended =
       STATUSES[
         end === "failed" || end === "cancelled" || end === "interrupted"
           ? end
-          : row.state === "ran"
-            ? "done"
+          : row.state === "completed"
+            ? "completed"
             : "failed"
       ];
     return (
@@ -175,8 +175,8 @@ export function ToolCard({
           {menu}
         </span>
       </div>
-      {row.steering && (
-        <p className="text-xs text-muted-foreground">{steeringSentence(row.steering)}</p>
+      {row.influence && (
+        <p className="text-xs text-muted-foreground">{steeringSentence(row.influence)}</p>
       )}
       <div className="rounded-md bg-muted/20 px-3 py-2.5 text-xs text-muted-foreground">
         <ToolInput value={row.input} schema={definition?.inputSchema} />

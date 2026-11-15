@@ -7,7 +7,7 @@ import type { ToolDefinition } from "@/shared/tools.ts";
 import { FORMER_TOOL_IDS } from "@/shared/tools.ts";
 import type { TranscriptFold, TranscriptRow } from "@/shared/transcript.ts";
 
-import type { Branch } from "./service.ts";
+import type { Branch } from "./types.ts";
 import { findAsync } from "@/server/kernel/async.ts";
 
 // What a branch takes of another: its events up to `untilSeq`, all of them when null.
@@ -53,7 +53,7 @@ export function othersPast(
 
 // Whether the call changed something: it ran, and its tool does not say it only reads.
 export function changedSomething(row: TranscriptRow, definitions: readonly ToolDefinition[]) {
-  if (row.kind !== "tool" || row.state !== "ran") return false;
+  if (row.kind !== "tool" || row.state !== "completed") return false;
   const name = FORMER_TOOL_IDS[row.toolId] ?? row.toolId;
   const tool = definitions.find((definition) => definition.name === name);
   return tool?.annotations?.readOnlyHint !== true;

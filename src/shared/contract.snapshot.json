@@ -26,8 +26,9 @@
     "DELETE /api/v1/threads/:id/guests/:userId",
     "DELETE /api/v1/threads/:id/invites/:inviteId",
     "DELETE /api/v1/threads/:id/messages/:messageId",
+    "DELETE /api/v1/threads/:id/schedules/:scheduleId",
     "DELETE /api/v1/threads/:id/tasks/:taskId",
-    "DELETE /api/v1/threads/:id/triggers/:triggerId",
+    "DELETE /api/v1/threads/:id/webhooks/:webhookId",
     "GET /api/auth/*",
     "GET /api/health",
     "GET /api/mcp/oauth/callback",
@@ -43,7 +44,6 @@
     "GET /api/v1/connections/codex/attempts/:id",
     "GET /api/v1/directory/groups",
     "GET /api/v1/directory/people",
-    "GET /api/v1/inbox/events",
     "GET /api/v1/locate",
     "GET /api/v1/mcp-connections",
     "GET /api/v1/mcp-servers/:id",
@@ -86,17 +86,19 @@
     "GET /api/v1/spaces/:id/tools",
     "GET /api/v1/spaces/trash",
     "GET /api/v1/threads/:id",
+    "GET /api/v1/threads/:id/activity",
     "GET /api/v1/threads/:id/artifacts",
     "GET /api/v1/threads/:id/asides",
-    "GET /api/v1/threads/:id/background",
     "GET /api/v1/threads/:id/commands",
     "GET /api/v1/threads/:id/events",
     "GET /api/v1/threads/:id/guest-candidates",
     "GET /api/v1/threads/:id/people",
     "GET /api/v1/threads/:id/rows",
     "GET /api/v1/threads/:id/rows/:rowId/branch",
+    "GET /api/v1/threads/:id/schedules/:scheduleId/history",
     "GET /api/v1/threads/:id/tasks",
-    "GET /api/v1/threads/:id/triggers/:triggerId/history",
+    "GET /api/v1/threads/:id/webhooks/:webhookId/history",
+    "GET /api/v1/threads/feed",
     "GET /api/v1/threads/search",
     "GET /api/v1/tool-results/:id",
     "PATCH /api/auth/scim/v2/*",
@@ -149,10 +151,10 @@
     "POST /api/v1/spaces/:id/tool-policies",
     "POST /api/v1/spaces/mine",
     "POST /api/v1/spaces/trash/:id/restore",
+    "POST /api/v1/threads/:id/activity/seen",
     "POST /api/v1/threads/:id/asides",
     "POST /api/v1/threads/:id/asides/:asideId/messages",
     "POST /api/v1/threads/:id/asides/:asideId/stop",
-    "POST /api/v1/threads/:id/background/seen",
     "POST /api/v1/threads/:id/fork",
     "POST /api/v1/threads/:id/group-guests",
     "POST /api/v1/threads/:id/guests",
@@ -161,6 +163,8 @@
     "POST /api/v1/threads/:id/messages",
     "POST /api/v1/threads/:id/move",
     "POST /api/v1/threads/:id/retry",
+    "POST /api/v1/threads/:id/schedules/:scheduleId/pause",
+    "POST /api/v1/threads/:id/schedules/:scheduleId/resume",
     "POST /api/v1/threads/:id/stop",
     "POST /api/v1/threads/:id/summary-thread",
     "POST /api/v1/threads/:id/tasks",
@@ -169,9 +173,9 @@
     "POST /api/v1/threads/:id/tools/:callId/background",
     "POST /api/v1/threads/:id/tools/:callId/cancel",
     "POST /api/v1/threads/:id/tools/:callId/decision",
-    "POST /api/v1/threads/:id/triggers/:triggerId/pause",
-    "POST /api/v1/threads/:id/triggers/:triggerId/resume",
     "POST /api/v1/threads/:id/unarchive",
+    "POST /api/v1/threads/:id/webhooks/:webhookId/pause",
+    "POST /api/v1/threads/:id/webhooks/:webhookId/resume",
     "PUT /api/auth/scim/v2/*",
     "PUT /api/v1/artifacts/:id/groups/:groupId",
     "PUT /api/v1/artifacts/:id/guests",
@@ -207,8 +211,8 @@
     "PUT /api/v1/threads/:id/invites/:inviteId/role",
     "PUT /api/v1/threads/:id/org-access",
     "PUT /api/v1/threads/:id/read",
-    "PUT /api/v1/threads/:id/triggers/:triggerId/delivery-header",
-    "PUT /api/v1/threads/:id/triggers/:triggerId/secret"
+    "PUT /api/v1/threads/:id/webhooks/:webhookId/delivery-header",
+    "PUT /api/v1/threads/:id/webhooks/:webhookId/secret"
   ],
   "streams": {
     "thread": {
@@ -217,18 +221,18 @@
         "rows": "threads/rows.ts#rowsUpdateSchema",
         "thread": "threads/detail.ts#threadHeadSchema",
         "tasks": "tasks.ts#taskListSchema",
-        "background": "calls.ts#backgroundListSchema",
+        "activity": "jobs.ts#activityListSchema",
         "message-delta": "threads/events.ts#deltaBatchSchema",
         "tool-output": "threads/events.ts#liveChunkSchema",
         "access-ended": "stream:thread:access-ended"
       }
     },
-    "inbox": {
-      "path": "/v1/inbox/events",
+    "feed": {
+      "path": "/v1/threads/feed",
       "events": {
-        "thread": "stream:inbox:thread",
-        "thread-read": "stream:inbox:thread-read",
-        "thread-gone": "stream:inbox:thread-gone"
+        "thread": "stream:feed:thread",
+        "thread-read": "stream:feed:thread-read",
+        "thread-gone": "stream:feed:thread-gone"
       }
     },
     "artifact": {
@@ -1358,199 +1362,6 @@
         "answers"
       ]
     },
-    "calls.ts#attentionSchema": {
-      "$id": "calls.ts#attentionSchema",
-      "type": "string",
-      "enum": [
-        "approval",
-        "failed",
-        "soon"
-      ]
-    },
-    "calls.ts#backgroundItemSchema": {
-      "$id": "calls.ts#backgroundItemSchema",
-      "type": "object",
-      "properties": {
-        "rowId": {
-          "type": "string"
-        },
-        "title": {
-          "type": "string"
-        },
-        "work": {
-          "$ref": "calls.ts#backgroundWorkSchema"
-        },
-        "attention": {
-          "$ref": "calls.ts#attentionSchema"
-        },
-        "by": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "rowId",
-        "title",
-        "work"
-      ]
-    },
-    "calls.ts#backgroundKindSchema": {
-      "$id": "calls.ts#backgroundKindSchema",
-      "type": "string",
-      "enum": [
-        "call",
-        "schedule",
-        "webhook",
-        "subagent",
-        "approval"
-      ]
-    },
-    "calls.ts#backgroundListSchema": {
-      "$id": "calls.ts#backgroundListSchema",
-      "type": "object",
-      "properties": {
-        "items": {
-          "type": "array",
-          "items": {
-            "$ref": "calls.ts#backgroundItemSchema"
-          }
-        }
-      },
-      "required": [
-        "items"
-      ]
-    },
-    "calls.ts#backgroundSeenSchema": {
-      "$id": "calls.ts#backgroundSeenSchema",
-      "type": "object",
-      "properties": {
-        "kind": {
-          "$ref": "calls.ts#trayKindSchema"
-        }
-      },
-      "required": [
-        "kind"
-      ]
-    },
-    "calls.ts#backgroundWorkSchema": {
-      "$id": "calls.ts#backgroundWorkSchema",
-      "type": "object",
-      "properties": {
-        "kind": {
-          "$ref": "calls.ts#backgroundKindSchema"
-        },
-        "status": {
-          "$ref": "calls.ts#workStatusSchema"
-        },
-        "schedule": {
-          "$ref": "triggers.ts#scheduleWorkSchema"
-        },
-        "webhook": {
-          "$ref": "triggers.ts#webhookWorkSchema"
-        },
-        "subagent": {
-          "$ref": "calls.ts#subagentWorkSchema"
-        },
-        "canDecide": {
-          "type": "boolean"
-        },
-        "startedAt": {
-          "type": "string"
-        },
-        "endedAt": {
-          "type": "string"
-        },
-        "canCancel": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "kind",
-        "status",
-        "startedAt",
-        "canCancel"
-      ]
-    },
-    "calls.ts#callStatusSchema": {
-      "$id": "calls.ts#callStatusSchema",
-      "type": "string",
-      "enum": [
-        "pending",
-        "running",
-        "done",
-        "failed",
-        "cancelled",
-        "interrupted"
-      ]
-    },
-    "calls.ts#subagentWorkSchema": {
-      "$id": "calls.ts#subagentWorkSchema",
-      "type": "object",
-      "properties": {
-        "threadId": {
-          "type": "string"
-        },
-        "state": {
-          "$ref": "subagents.ts#subagentStateSchema"
-        },
-        "needs": {
-          "$ref": "subagents.ts#subagentNeedsSchema"
-        },
-        "tasks": {
-          "type": "object",
-          "properties": {
-            "done": {
-              "type": "integer",
-              "minimum": -9007199254740991,
-              "maximum": 9007199254740991
-            },
-            "total": {
-              "type": "integer",
-              "minimum": -9007199254740991,
-              "maximum": 9007199254740991
-            }
-          },
-          "required": [
-            "done",
-            "total"
-          ]
-        },
-        "waitingRow": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "threadId",
-        "state"
-      ]
-    },
-    "calls.ts#trayKindSchema": {
-      "$id": "calls.ts#trayKindSchema",
-      "type": "string",
-      "enum": [
-        "approvals",
-        "jobs",
-        "subagents",
-        "triggers",
-        "webhooks"
-      ]
-    },
-    "calls.ts#workStatusSchema": {
-      "$id": "calls.ts#workStatusSchema",
-      "type": "string",
-      "enum": [
-        "pending",
-        "running",
-        "done",
-        "failed",
-        "cancelled",
-        "interrupted",
-        "queued",
-        "idle",
-        "scheduled",
-        "listening",
-        "paused"
-      ]
-    },
     "connections.ts#apiErrorSchema": {
       "$id": "connections.ts#apiErrorSchema",
       "type": "object",
@@ -2188,8 +1999,8 @@
         "participants": {
           "$ref": "threads/list.ts#threadParticipantsSchema"
         },
-        "activity": {
-          "$ref": "threads/list.ts#threadActivitySchema"
+        "standing": {
+          "$ref": "threads/list.ts#threadStandingSchema"
         },
         "status": {
           "$ref": "threads/list.ts#threadStatusSchema"
@@ -2211,7 +2022,7 @@
         "accessUntil",
         "shownModel",
         "participants",
-        "activity",
+        "standing",
         "status"
       ]
     },
@@ -2509,6 +2320,199 @@
       "required": [
         "own",
         "org"
+      ]
+    },
+    "jobs.ts#activityItemSchema": {
+      "$id": "jobs.ts#activityItemSchema",
+      "type": "object",
+      "properties": {
+        "rowId": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "work": {
+          "$ref": "jobs.ts#workSchema"
+        },
+        "attention": {
+          "$ref": "jobs.ts#attentionSchema"
+        },
+        "by": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "rowId",
+        "title",
+        "work"
+      ]
+    },
+    "jobs.ts#activityListSchema": {
+      "$id": "jobs.ts#activityListSchema",
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "jobs.ts#activityItemSchema"
+          }
+        }
+      },
+      "required": [
+        "items"
+      ]
+    },
+    "jobs.ts#activitySeenSchema": {
+      "$id": "jobs.ts#activitySeenSchema",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "jobs.ts#trayKindSchema"
+        }
+      },
+      "required": [
+        "kind"
+      ]
+    },
+    "jobs.ts#attentionSchema": {
+      "$id": "jobs.ts#attentionSchema",
+      "type": "string",
+      "enum": [
+        "approval",
+        "failed",
+        "soon"
+      ]
+    },
+    "jobs.ts#jobStatusSchema": {
+      "$id": "jobs.ts#jobStatusSchema",
+      "type": "string",
+      "enum": [
+        "waiting",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "interrupted"
+      ]
+    },
+    "jobs.ts#subagentWorkSchema": {
+      "$id": "jobs.ts#subagentWorkSchema",
+      "type": "object",
+      "properties": {
+        "threadId": {
+          "type": "string"
+        },
+        "state": {
+          "$ref": "subagents.ts#subagentStateSchema"
+        },
+        "needs": {
+          "$ref": "subagents.ts#subagentNeedsSchema"
+        },
+        "tasks": {
+          "type": "object",
+          "properties": {
+            "done": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            },
+            "total": {
+              "type": "integer",
+              "minimum": -9007199254740991,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "done",
+            "total"
+          ]
+        },
+        "waitingRow": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "threadId",
+        "state"
+      ]
+    },
+    "jobs.ts#trayKindSchema": {
+      "$id": "jobs.ts#trayKindSchema",
+      "type": "string",
+      "enum": [
+        "approvals",
+        "jobs",
+        "subagents",
+        "schedules",
+        "webhooks"
+      ]
+    },
+    "jobs.ts#workKindSchema": {
+      "$id": "jobs.ts#workKindSchema",
+      "type": "string",
+      "enum": [
+        "job",
+        "schedule",
+        "webhook",
+        "subagent",
+        "decision"
+      ]
+    },
+    "jobs.ts#workSchema": {
+      "$id": "jobs.ts#workSchema",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "$ref": "jobs.ts#workKindSchema"
+        },
+        "status": {
+          "$ref": "jobs.ts#workStatusSchema"
+        },
+        "schedule": {
+          "$ref": "schedules.ts#scheduleWorkSchema"
+        },
+        "webhook": {
+          "$ref": "webhooks.ts#webhookWorkSchema"
+        },
+        "subagent": {
+          "$ref": "jobs.ts#subagentWorkSchema"
+        },
+        "canDecide": {
+          "type": "boolean"
+        },
+        "startedAt": {
+          "type": "string"
+        },
+        "endedAt": {
+          "type": "string"
+        },
+        "canCancel": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "kind",
+        "status",
+        "startedAt",
+        "canCancel"
+      ]
+    },
+    "jobs.ts#workStatusSchema": {
+      "$id": "jobs.ts#workStatusSchema",
+      "type": "string",
+      "enum": [
+        "waiting",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "interrupted",
+        "queued",
+        "idle",
+        "scheduled",
+        "listening",
+        "paused"
       ]
     },
     "mcp.ts#mcpAuthInputSchema": {
@@ -4985,6 +4989,132 @@
         }
       }
     },
+    "schedules-and-webhooks.ts#firedHistorySchema": {
+      "$id": "schedules-and-webhooks.ts#firedHistorySchema",
+      "type": "object",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "at": {
+                "type": "string"
+              },
+              "delivery": {
+                "type": "object",
+                "properties": {
+                  "contentType": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "bytes": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "signed": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "contentType",
+                  "bytes",
+                  "signed"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "at"
+            ]
+          }
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "entries",
+        "total",
+        "offset"
+      ]
+    },
+    "schedules.ts#scheduleKindSchema": {
+      "$id": "schedules.ts#scheduleKindSchema",
+      "type": "string",
+      "enum": [
+        "once",
+        "cron"
+      ]
+    },
+    "schedules.ts#scheduleStatusSchema": {
+      "$id": "schedules.ts#scheduleStatusSchema",
+      "type": "string",
+      "enum": [
+        "active",
+        "paused",
+        "completed",
+        "deleted"
+      ]
+    },
+    "schedules.ts#scheduleWorkSchema": {
+      "$id": "schedules.ts#scheduleWorkSchema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "schedules.ts#scheduleKindSchema"
+        },
+        "name": {
+          "type": "string"
+        },
+        "cron": {
+          "type": "string"
+        },
+        "words": {
+          "type": "string"
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "nextRunAt": {
+          "type": "string"
+        },
+        "lastFiredAt": {
+          "type": "string"
+        },
+        "fired": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "canChange": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "name",
+        "fired",
+        "canChange"
+      ]
+    },
     "sign-in.ts#signInOptionsSchema": {
       "$id": "sign-in.ts#signInOptionsSchema",
       "type": "object",
@@ -6293,7 +6423,7 @@
       "$id": "subagents.ts#subagentNeedsSchema",
       "type": "string",
       "enum": [
-        "approval",
+        "decision",
         "answer"
       ]
     },
@@ -7532,6 +7662,29 @@
         "gave_up"
       ]
     },
+    "threads/events.ts#influencerSchema": {
+      "$id": "threads/events.ts#influencerSchema",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "via": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "userId",
+        "name",
+        "via"
+      ]
+    },
     "threads/events.ts#largeResultSchema": {
       "$id": "threads/events.ts#largeResultSchema",
       "type": "object",
@@ -7639,8 +7792,8 @@
         "quiet"
       ]
     },
-    "threads/events.ts#notificationActorSchema": {
-      "$id": "threads/events.ts#notificationActorSchema",
+    "threads/events.ts#noticeActorSchema": {
+      "$id": "threads/events.ts#noticeActorSchema",
       "oneOf": [
         {
           "type": "object",
@@ -7715,8 +7868,8 @@
         }
       ]
     },
-    "threads/events.ts#notificationKindSchema": {
-      "$id": "threads/events.ts#notificationKindSchema",
+    "threads/events.ts#noticeKindSchema": {
+      "$id": "threads/events.ts#noticeKindSchema",
       "type": "string",
       "enum": [
         "message",
@@ -7726,13 +7879,13 @@
         "agent.idle",
         "call.ended",
         "task.changed",
-        "trigger.fired",
+        "schedule.fired",
         "webhook.received",
         "change"
       ]
     },
-    "threads/events.ts#notificationPartsSchema": {
-      "$id": "threads/events.ts#notificationPartsSchema",
+    "threads/events.ts#noticePartsSchema": {
+      "$id": "threads/events.ts#noticePartsSchema",
       "type": "object",
       "properties": {
         "change": {
@@ -7742,11 +7895,14 @@
           "type": "string",
           "enum": [
             "tasks",
-            "triggers",
+            "schedules",
             "webhooks"
           ]
         },
-        "trigger": {
+        "scheduleId": {
+          "type": "string"
+        },
+        "webhookId": {
           "type": "string"
         },
         "subagents": {
@@ -7809,8 +7965,8 @@
         }
       }
     },
-    "threads/events.ts#notificationSourceSchema": {
-      "$id": "threads/events.ts#notificationSourceSchema",
+    "threads/events.ts#noticeSourceSchema": {
+      "$id": "threads/events.ts#noticeSourceSchema",
       "type": "object",
       "properties": {
         "threadId": {
@@ -7911,29 +8067,6 @@
         "threadId",
         "name",
         "main"
-      ]
-    },
-    "threads/events.ts#steeringSchema": {
-      "$id": "threads/events.ts#steeringSchema",
-      "type": "object",
-      "properties": {
-        "userId": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        },
-        "via": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
-        }
-      },
-      "required": [
-        "userId",
-        "name",
-        "via"
       ]
     },
     "threads/events.ts#subagentTaskSchema": {
@@ -8199,27 +8332,27 @@
             },
             "type": {
               "type": "string",
-              "const": "notification"
+              "const": "notice"
             },
             "data": {
               "type": "object",
               "properties": {
                 "kind": {
-                  "$ref": "threads/events.ts#notificationKindSchema"
+                  "$ref": "threads/events.ts#noticeKindSchema"
                 },
                 "source": {
-                  "$ref": "threads/events.ts#notificationSourceSchema"
+                  "$ref": "threads/events.ts#noticeSourceSchema"
                 },
                 "actor": {
-                  "$ref": "threads/events.ts#notificationActorSchema"
+                  "$ref": "threads/events.ts#noticeActorSchema"
                 },
                 "text": {
                   "type": "string"
                 },
-                "people": {
+                "influence": {
                   "type": "array",
                   "items": {
-                    "$ref": "threads/events.ts#steeringSchema"
+                    "$ref": "threads/events.ts#influencerSchema"
                   }
                 },
                 "to": {
@@ -8238,11 +8371,14 @@
                   "type": "string",
                   "enum": [
                     "tasks",
-                    "triggers",
+                    "schedules",
                     "webhooks"
                   ]
                 },
-                "trigger": {
+                "scheduleId": {
+                  "type": "string"
+                },
+                "webhookId": {
                   "type": "string"
                 },
                 "subagents": {
@@ -8308,7 +8444,7 @@
                 "kind",
                 "source",
                 "text",
-                "people"
+                "influence"
               ]
             }
           },
@@ -9356,7 +9492,7 @@
       "enum": [
         "denied",
         "stale",
-        "stopped",
+        "cancelled",
         "skipped"
       ]
     },
@@ -9789,8 +9925,8 @@
         "toolset"
       ]
     },
-    "threads/inbox.ts#inboxItemSchema": {
-      "$id": "threads/inbox.ts#inboxItemSchema",
+    "threads/list-feed.ts#listChangeSchema": {
+      "$id": "threads/list-feed.ts#listChangeSchema",
       "oneOf": [
         {
           "type": "object",
@@ -9892,8 +10028,8 @@
         "participants": {
           "$ref": "threads/list.ts#threadParticipantsSchema"
         },
-        "activity": {
-          "$ref": "threads/list.ts#threadActivitySchema"
+        "standing": {
+          "$ref": "threads/list.ts#threadStandingSchema"
         },
         "status": {
           "$ref": "threads/list.ts#threadStatusSchema"
@@ -9908,7 +10044,7 @@
         "updatedAt",
         "shownModel",
         "participants",
-        "activity",
+        "standing",
         "status"
       ]
     },
@@ -9988,95 +10124,6 @@
         "connection"
       ]
     },
-    "threads/list.ts#threadActivitySchema": {
-      "$id": "threads/list.ts#threadActivitySchema",
-      "type": "object",
-      "properties": {
-        "run": {
-          "anyOf": [
-            {
-              "type": "object",
-              "properties": {
-                "status": {
-                  "type": "string",
-                  "enum": [
-                    "queued",
-                    "running",
-                    "waiting"
-                  ]
-                },
-                "since": {
-                  "type": "string",
-                  "format": "date-time",
-                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
-                },
-                "toolId": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "status",
-                "since"
-              ]
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "lastNotableSeq": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
-        },
-        "lastNotableBy": {
-          "type": [
-            "string",
-            "null"
-          ]
-        },
-        "failed": {
-          "anyOf": [
-            {
-              "type": "object",
-              "properties": {
-                "seq": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
-                },
-                "error": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "seq",
-                "error"
-              ]
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "lastSeenSeq": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
-        },
-        "canApprove": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "run",
-        "lastNotableSeq",
-        "lastNotableBy",
-        "failed",
-        "lastSeenSeq",
-        "canApprove"
-      ]
-    },
     "threads/list.ts#threadListItemSchema": {
       "$id": "threads/list.ts#threadListItemSchema",
       "type": "object",
@@ -10137,8 +10184,8 @@
         "participants": {
           "$ref": "threads/list.ts#threadParticipantsSchema"
         },
-        "activity": {
-          "$ref": "threads/list.ts#threadActivitySchema"
+        "standing": {
+          "$ref": "threads/list.ts#threadStandingSchema"
         },
         "status": {
           "$ref": "threads/list.ts#threadStatusSchema"
@@ -10162,7 +10209,7 @@
         "updatedAt",
         "shownModel",
         "participants",
-        "activity",
+        "standing",
         "status"
       ]
     },
@@ -10241,6 +10288,95 @@
       "required": [
         "threads",
         "total",
+        "needsYou"
+      ]
+    },
+    "threads/list.ts#threadStandingSchema": {
+      "$id": "threads/list.ts#threadStandingSchema",
+      "type": "object",
+      "properties": {
+        "run": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "queued",
+                    "running",
+                    "waiting"
+                  ]
+                },
+                "since": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+                },
+                "toolId": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "status",
+                "since"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastNotableSeq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "lastNotableBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "failed": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "seq": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "error": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "seq",
+                "error"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "lastSeenSeq": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "needsYou": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "run",
+        "lastNotableSeq",
+        "lastNotableBy",
+        "failed",
+        "lastSeenSeq",
         "needsYou"
       ]
     },
@@ -10915,23 +11051,27 @@
             "risk": {
               "$ref": "threads/events.ts#toolRiskSchema"
             },
-            "waits": {
-              "type": "boolean"
-            },
             "requestedAt": {
               "type": "string"
             },
             "state": {
               "type": "string",
               "enum": [
-                "pending",
-                "allowed",
+                "waiting",
+                "ready",
                 "denied",
-                "ran",
+                "completed",
                 "failed",
                 "stale",
-                "stopped",
+                "cancelled",
                 "skipped"
+              ]
+            },
+            "waitsFor": {
+              "type": "string",
+              "enum": [
+                "decision",
+                "answer"
               ]
             },
             "decision": {
@@ -11085,8 +11225,8 @@
             "standingOn": {
               "type": "string"
             },
-            "background": {
-              "$ref": "calls.ts#backgroundWorkSchema"
+            "work": {
+              "$ref": "jobs.ts#workSchema"
             },
             "canBackground": {
               "type": "boolean"
@@ -11103,7 +11243,7 @@
             "connection": {
               "$ref": "tools.ts#toolConnectionSchema"
             },
-            "steering": {
+            "influence": {
               "type": "array",
               "items": {
                 "type": "object",
@@ -11206,23 +11346,27 @@
                 "risk": {
                   "$ref": "threads/events.ts#toolRiskSchema"
                 },
-                "waits": {
-                  "type": "boolean"
-                },
                 "requestedAt": {
                   "type": "string"
                 },
                 "state": {
                   "type": "string",
                   "enum": [
-                    "pending",
-                    "allowed",
+                    "waiting",
+                    "ready",
                     "denied",
-                    "ran",
+                    "completed",
                     "failed",
                     "stale",
-                    "stopped",
+                    "cancelled",
                     "skipped"
+                  ]
+                },
+                "waitsFor": {
+                  "type": "string",
+                  "enum": [
+                    "decision",
+                    "answer"
                   ]
                 },
                 "decision": {
@@ -11376,8 +11520,8 @@
                 "standingOn": {
                   "type": "string"
                 },
-                "background": {
-                  "$ref": "calls.ts#backgroundWorkSchema"
+                "work": {
+                  "$ref": "jobs.ts#workSchema"
                 },
                 "canBackground": {
                   "type": "boolean"
@@ -11394,7 +11538,7 @@
                 "connection": {
                   "$ref": "tools.ts#toolConnectionSchema"
                 },
-                "steering": {
+                "influence": {
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -11438,7 +11582,6 @@
                 "toolset",
                 "input",
                 "risk",
-                "waits",
                 "requestedAt",
                 "state",
                 "decision",
@@ -11460,7 +11603,6 @@
             "toolset",
             "input",
             "risk",
-            "waits",
             "requestedAt",
             "state",
             "decision",
@@ -11757,7 +11899,7 @@
             },
             "kind": {
               "type": "string",
-              "const": "relay"
+              "const": "notice"
             },
             "waiting": {
               "$ref": "threads/rows.ts#waitingMarkSchema"
@@ -11766,13 +11908,13 @@
               "type": "string"
             },
             "type": {
-              "$ref": "threads/events.ts#notificationKindSchema"
+              "$ref": "threads/events.ts#noticeKindSchema"
             },
             "from": {
               "$ref": "threads/events.ts#senderSchema"
             },
             "actor": {
-              "$ref": "threads/events.ts#notificationActorSchema"
+              "$ref": "threads/events.ts#noticeActorSchema"
             },
             "to": {
               "type": "string"
@@ -11886,23 +12028,27 @@
                 "risk": {
                   "$ref": "threads/events.ts#toolRiskSchema"
                 },
-                "waits": {
-                  "type": "boolean"
-                },
                 "requestedAt": {
                   "type": "string"
                 },
                 "state": {
                   "type": "string",
                   "enum": [
-                    "pending",
-                    "allowed",
+                    "waiting",
+                    "ready",
                     "denied",
-                    "ran",
+                    "completed",
                     "failed",
                     "stale",
-                    "stopped",
+                    "cancelled",
                     "skipped"
+                  ]
+                },
+                "waitsFor": {
+                  "type": "string",
+                  "enum": [
+                    "decision",
+                    "answer"
                   ]
                 },
                 "decision": {
@@ -12056,8 +12202,8 @@
                 "standingOn": {
                   "type": "string"
                 },
-                "background": {
-                  "$ref": "calls.ts#backgroundWorkSchema"
+                "work": {
+                  "$ref": "jobs.ts#workSchema"
                 },
                 "canBackground": {
                   "type": "boolean"
@@ -12074,7 +12220,7 @@
                 "connection": {
                   "$ref": "tools.ts#toolConnectionSchema"
                 },
-                "steering": {
+                "influence": {
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -12116,7 +12262,6 @@
                 "toolset",
                 "input",
                 "risk",
-                "waits",
                 "requestedAt",
                 "state",
                 "decision",
@@ -12131,11 +12276,14 @@
               "type": "string",
               "enum": [
                 "tasks",
-                "triggers",
+                "schedules",
                 "webhooks"
               ]
             },
-            "trigger": {
+            "scheduleId": {
+              "type": "string"
+            },
+            "webhookId": {
               "type": "string"
             },
             "subagents": {
@@ -12772,7 +12920,7 @@
             },
             "kind": {
               "type": "string",
-              "const": "relay"
+              "const": "notice"
             },
             "waiting": {
               "$ref": "threads/rows.ts#waitingMarkSchema"
@@ -12781,13 +12929,13 @@
               "type": "string"
             },
             "type": {
-              "$ref": "threads/events.ts#notificationKindSchema"
+              "$ref": "threads/events.ts#noticeKindSchema"
             },
             "from": {
               "$ref": "threads/events.ts#senderSchema"
             },
             "actor": {
-              "$ref": "threads/events.ts#notificationActorSchema"
+              "$ref": "threads/events.ts#noticeActorSchema"
             },
             "to": {
               "type": "string"
@@ -12901,23 +13049,27 @@
                 "risk": {
                   "$ref": "threads/events.ts#toolRiskSchema"
                 },
-                "waits": {
-                  "type": "boolean"
-                },
                 "requestedAt": {
                   "type": "string"
                 },
                 "state": {
                   "type": "string",
                   "enum": [
-                    "pending",
-                    "allowed",
+                    "waiting",
+                    "ready",
                     "denied",
-                    "ran",
+                    "completed",
                     "failed",
                     "stale",
-                    "stopped",
+                    "cancelled",
                     "skipped"
+                  ]
+                },
+                "waitsFor": {
+                  "type": "string",
+                  "enum": [
+                    "decision",
+                    "answer"
                   ]
                 },
                 "decision": {
@@ -13071,8 +13223,8 @@
                 "standingOn": {
                   "type": "string"
                 },
-                "background": {
-                  "$ref": "calls.ts#backgroundWorkSchema"
+                "work": {
+                  "$ref": "jobs.ts#workSchema"
                 },
                 "canBackground": {
                   "type": "boolean"
@@ -13089,7 +13241,7 @@
                 "connection": {
                   "$ref": "tools.ts#toolConnectionSchema"
                 },
-                "steering": {
+                "influence": {
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -13131,7 +13283,6 @@
                 "toolset",
                 "input",
                 "risk",
-                "waits",
                 "requestedAt",
                 "state",
                 "decision",
@@ -13146,11 +13297,14 @@
               "type": "string",
               "enum": [
                 "tasks",
-                "triggers",
+                "schedules",
                 "webhooks"
               ]
             },
-            "trigger": {
+            "scheduleId": {
+              "type": "string"
+            },
+            "webhookId": {
               "type": "string"
             },
             "subagents": {
@@ -13296,8 +13450,8 @@
             }
           ]
         },
-        "activity": {
-          "$ref": "threads/list.ts#threadActivitySchema"
+        "standing": {
+          "$ref": "threads/list.ts#threadStandingSchema"
         },
         "status": {
           "$ref": "threads/list.ts#threadStatusSchema"
@@ -13316,7 +13470,7 @@
         "spaceName",
         "shared",
         "shownModel",
-        "activity",
+        "standing",
         "status"
       ]
     },
@@ -13832,8 +13986,8 @@
         "policy"
       ]
     },
-    "triggers.ts#hookDeliveryHeaderInputSchema": {
-      "$id": "triggers.ts#hookDeliveryHeaderInputSchema",
+    "webhooks.ts#hookDeliveryHeaderInputSchema": {
+      "$id": "webhooks.ts#hookDeliveryHeaderInputSchema",
       "type": "object",
       "properties": {
         "header": {
@@ -13852,8 +14006,8 @@
         "header"
       ]
     },
-    "triggers.ts#hookSecretInputSchema": {
-      "$id": "triggers.ts#hookSecretInputSchema",
+    "webhooks.ts#hookSecretInputSchema": {
+      "$id": "webhooks.ts#hookSecretInputSchema",
       "type": "object",
       "properties": {
         "secret": {
@@ -13872,135 +14026,8 @@
         "secret"
       ]
     },
-    "triggers.ts#scheduleWorkSchema": {
-      "$id": "triggers.ts#scheduleWorkSchema",
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "kind": {
-          "$ref": "triggers.ts#triggerKindSchema"
-        },
-        "name": {
-          "type": "string"
-        },
-        "cron": {
-          "type": "string"
-        },
-        "words": {
-          "type": "string"
-        },
-        "timezone": {
-          "type": "string"
-        },
-        "nextRunAt": {
-          "type": "string"
-        },
-        "lastFiredAt": {
-          "type": "string"
-        },
-        "fired": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
-        },
-        "canChange": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "id",
-        "kind",
-        "name",
-        "fired",
-        "canChange"
-      ]
-    },
-    "triggers.ts#triggerHistorySchema": {
-      "$id": "triggers.ts#triggerHistorySchema",
-      "type": "object",
-      "properties": {
-        "entries": {
-          "type": "array",
-          "items": {
-            "type": "object",
-            "properties": {
-              "id": {
-                "type": "string"
-              },
-              "at": {
-                "type": "string"
-              },
-              "delivery": {
-                "type": "object",
-                "properties": {
-                  "contentType": {
-                    "type": [
-                      "string",
-                      "null"
-                    ]
-                  },
-                  "bytes": {
-                    "type": "integer",
-                    "minimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "signed": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "contentType",
-                  "bytes",
-                  "signed"
-                ]
-              }
-            },
-            "required": [
-              "id",
-              "at"
-            ]
-          }
-        },
-        "total": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
-        },
-        "offset": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 9007199254740991
-        }
-      },
-      "required": [
-        "entries",
-        "total",
-        "offset"
-      ]
-    },
-    "triggers.ts#triggerKindSchema": {
-      "$id": "triggers.ts#triggerKindSchema",
-      "type": "string",
-      "enum": [
-        "once",
-        "cron",
-        "webhook"
-      ]
-    },
-    "triggers.ts#triggerStatusSchema": {
-      "$id": "triggers.ts#triggerStatusSchema",
-      "type": "string",
-      "enum": [
-        "active",
-        "paused",
-        "done",
-        "deleted"
-      ]
-    },
-    "triggers.ts#webhookWorkSchema": {
-      "$id": "triggers.ts#webhookWorkSchema",
+    "webhooks.ts#webhookWorkSchema": {
+      "$id": "webhooks.ts#webhookWorkSchema",
       "type": "object",
       "properties": {
         "id": {
@@ -14043,8 +14070,8 @@
       "type": "object",
       "properties": {}
     },
-    "stream:inbox:thread": {
-      "$id": "stream:inbox:thread",
+    "stream:feed:thread": {
+      "$id": "stream:feed:thread",
       "type": "object",
       "properties": {
         "thread": {
@@ -14059,8 +14086,8 @@
         "shared"
       ]
     },
-    "stream:inbox:thread-read": {
-      "$id": "stream:inbox:thread-read",
+    "stream:feed:thread-read": {
+      "$id": "stream:feed:thread-read",
       "type": "object",
       "properties": {
         "threadId": {
@@ -14075,8 +14102,8 @@
         "seq"
       ]
     },
-    "stream:inbox:thread-gone": {
-      "$id": "stream:inbox:thread-gone",
+    "stream:feed:thread-gone": {
+      "$id": "stream:feed:thread-gone",
       "type": "object",
       "properties": {
         "threadId": {

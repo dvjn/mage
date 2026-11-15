@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { skillsGuidance } from "@/server/skills/service.ts";
 import { instructionsFor } from "@/server/execution/context.ts";
 import type { Instructions, SpaceInstructions } from "@/shared/instructions.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
@@ -58,7 +59,7 @@ describe("the system prompt", () => {
           tools: [{ name: "mcp.notes.find", description: "Find notes" }],
         },
       ],
-      skills: [{ name: "triage", description: "Sort issues" }],
+      skills: skillsGuidance([{ name: "triage", description: "Sort issues" }]),
     });
     const order = [
       "You are the agent",

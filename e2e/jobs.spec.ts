@@ -54,7 +54,7 @@ async function tray(page: Page, kind: string) {
 
 // What the agent is told when a job ends, as its card in the transcript.
 function told(page: Page) {
-  return transcript(page).getByRole("article", { name: "Notification" });
+  return transcript(page).getByRole("article", { name: "Notice" });
 }
 
 test("a running call moved to the background goes on as a job, and the agent is told when it ends", async ({
@@ -104,7 +104,7 @@ test("a job that needs approval is decided from the tray of the thread that star
   await signUp(page);
   await write(
     page,
-    `^tool jobs.start ${JSON.stringify({ tool: "triggers.add_webhook", input: { name: "Deploys", note: "Check the deploy" } })}`,
+    `^tool jobs.start ${JSON.stringify({ tool: "webhooks.add", input: { name: "Deploys", note: "Check the deploy" } })}`,
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   // The run does not wait for it.

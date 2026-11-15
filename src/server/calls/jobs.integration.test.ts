@@ -4,14 +4,14 @@ import * as z from "zod";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { expireLeases } from "@/server/testing/database.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
-import { BACKGROUND_LIMIT } from "@/shared/calls.ts";
-import type { ThreadFollowItem } from "@/server/threads/service.ts";
+import { BACKGROUND_LIMIT } from "@/shared/jobs.ts";
+import type { ThreadFollowItem } from "@/server/views/thread.ts";
 import type { LiveChunk } from "@/shared/threads/events.ts";
 import { EDITORS } from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
-import type { LiveReporter } from "@/server/agent/live.ts";
-import type { ToolSpec } from "@/server/agent/tools.ts";
+import type { LiveReporter } from "@/server/calls/live.ts";
+import type { ToolSpec } from "@/server/tools/registry.ts";
 
 // A tool that runs until the test finishes it, by the label of its call.
 function probe() {
@@ -128,7 +128,7 @@ describe("background calls", () => {
     expect(record).toMatchObject({ status: "running", tool_id: "probe.wait" });
     expect(
       (await t.tools()).map((row) => `${row.toolId} ${row.state}${row.background ? " bg" : ""}`),
-    ).toEqual(["calls.start ran", "probe.wait pending bg"]);
+    ).toEqual(["jobs.start completed", "probe.wait ready bg"]);
 
     t.tool.finish("a", { answer: 42 });
     const told = await t.replies("Noted.");
@@ -137,8 +137,8 @@ describe("background calls", () => {
     expect(told.texts.at(-1)).toContain('Result:\n\n{"answer":42}');
     expect((await t.records())[0]).toMatchObject({ status: "completed" });
     expect((await t.tools()).map((row) => `${row.toolId} ${row.state}`)).toEqual([
-      "calls.start ran",
-      "probe.wait ran",
+      "jobs.start completed",
+      "probe.wait completed",
     ]);
   });
 
@@ -159,9 +159,9 @@ describe("background calls", () => {
     expect(next.texts.join("\n")).toContain(`"id":"${id}"`);
     expect(t.tool.aborted).toEqual(["a"]);
     expect((await t.records())[0]).toMatchObject({ status: "cancelled" });
-    expect((await t.rows()).filter((row) => row.kind === "relay")).toEqual([]);
+    expect((await t.rows()).filter((row) => row.kind === "notice")).toEqual([]);
     expect((await t.tools()).find((row) => row.toolId === "probe.wait")).toMatchObject({
-      state: "stopped",
+      state: "cancelled",
     });
   });
 
@@ -216,7 +216,7 @@ describe("background calls", () => {
     expect((await t.records())[0]).toMatchObject({ status: "waiting" });
     expect((await t.tools()).at(-1)).toMatchObject({
       id,
-      state: "pending",
+      state: "waiting",
       waits: true,
       background: true,
     });
@@ -233,7 +233,10 @@ describe("background calls", () => {
     const told = await t.replies("Noted.");
     await t.worker.idle();
     expect(told.texts.at(-1)).toContain("finished");
-    expect((await t.tools()).at(-1)).toMatchObject({ state: "ran", decision: { allow: true } });
+    expect((await t.tools()).at(-1)).toMatchObject({
+      state: "completed",
+      decision: { allow: true },
+    });
   });
 
   it("end as denied when the approval is refused, telling the agent", async () => {
@@ -285,8 +288,8 @@ describe("background calls", () => {
     );
     expect(job).toMatchObject({ status: "running" });
     expect((await t.tools()).map((row) => `${row.state}${row.background ? " bg" : ""}`)).toEqual([
-      "ran",
-      "pending bg",
+      "completed",
+      "ready bg",
     ]);
     // The run is over; the call is not.
     expect((await t.runs()).map((run) => run.status)).toEqual(["completed"]);
@@ -299,7 +302,7 @@ describe("background calls", () => {
     expect((await t.records())[0]).toMatchObject({ status: "completed" });
     // What it gave back is in the log, on its own row.
     expect((await t.tools()).find((row) => row.id === job.id)).toMatchObject({
-      state: "ran",
+      state: "completed",
       output: { ok: true, value: "late" },
     });
   });
@@ -322,7 +325,7 @@ describe("background calls", () => {
     await t.asks(["probe.wait", { label: "a" }]);
     await t.worker.idle();
     const callId = (await t.tools())[0]!.id;
-    expect((await t.tools())[0]).toMatchObject({ state: "pending", waits: true });
+    expect((await t.tools())[0]).toMatchObject({ state: "waiting" });
 
     expect((await t.callApi(`${callId}/background`)).status).toBe(200);
     const carried = await t.replies("Carrying on.");
@@ -332,8 +335,8 @@ describe("background calls", () => {
       `result probe.wait: {"ok":true,"value":{"movedToBackground":true,"callId":"${record.id}"}}`,
     );
     expect((await t.tools()).map((row) => `${row.state}${row.background ? " bg" : ""}`)).toEqual([
-      "ran",
-      "pending bg",
+      "completed",
+      "waiting bg",
     ]);
 
     expect(
@@ -378,13 +381,13 @@ describe("background calls", () => {
 
     const shown = async () => {
       const res = await t.api("GET", `/threads/${t.thread.id}`, t.ada.cookie);
-      const body = (await res.json()) as { rows: { id: string; background?: unknown }[] };
-      return body.rows.find((row) => row.id === id)?.background;
+      const body = (await res.json()) as { rows: { id: string; work?: unknown }[] };
+      return body.rows.find((row) => row.id === id)?.work;
     };
-    expect(await shown()).toMatchObject({ kind: "call", status: "running", canCancel: true });
+    expect(await shown()).toMatchObject({ kind: "job", status: "running", canCancel: true });
     expect((await t.callApi(`${id}/cancel`, t.alan)).status).toBe(403);
     expect((await t.callApi(`${id}/cancel`)).status).toBe(200);
-    expect(await shown()).toMatchObject({ kind: "call", status: "cancelled", canCancel: false });
+    expect(await shown()).toMatchObject({ kind: "job", status: "cancelled", canCancel: false });
     expect((await t.callApi(`${id}/cancel`)).status).toBe(409);
   });
 
@@ -401,8 +404,11 @@ describe("background calls", () => {
       sent.flatMap((item): LiveChunk[] => (item.kind === "live" ? [item.live] : []));
 
     const early: ThreadFollowItem[] = [];
-    const stopEarly = await t.threads.follow(asAda, t.thread.id, Number.MAX_SAFE_INTEGER, (item) =>
-      early.push(item),
+    const { stop: stopEarly } = await t.views.thread.follow(
+      asAda,
+      t.thread.id,
+      Number.MAX_SAFE_INTEGER,
+      (item) => item !== "ended" && early.push(item),
     );
     t.tool.live("a").output("one\n");
     t.tool.live("a").progress({ progress: 1, total: 2, message: "Half" });
@@ -412,8 +418,11 @@ describe("background calls", () => {
 
     // Someone who starts following now gets what was printed so far, once.
     const late: ThreadFollowItem[] = [];
-    const stopLate = await t.threads.follow(asAda, t.thread.id, Number.MAX_SAFE_INTEGER, (item) =>
-      late.push(item),
+    const { stop: stopLate } = await t.views.thread.follow(
+      asAda,
+      t.thread.id,
+      Number.MAX_SAFE_INTEGER,
+      (item) => item !== "ended" && late.push(item),
     );
     await t.until(() => chunksOf(late).length > 0);
     expect(chunksOf(late)).toEqual([

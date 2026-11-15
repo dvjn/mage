@@ -15,6 +15,7 @@ import { pricingOf } from "./model-data.ts";
 import { pricedUsage } from "./usage.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { OrgSettings, OrgSettingStore } from "@/server/orgs/service.ts";
+import type { Signals } from "@/server/sync/signals.ts";
 import type { Space, SpaceStore } from "@/server/spaces/service.ts";
 import { connectionLabel, connectionName } from "@/shared/connections.ts";
 import { type HostId, HOSTS, hostOf, isHost } from "@/shared/hosts.ts";
@@ -124,6 +125,9 @@ export interface ModelsOptions {
   spaces: Pick<SpaceStore, "withDefaultModel">;
   // Streams replies for the connections of each host.
   gateways: Record<HostId, ModelGateway>;
+  // Tells the other instances a connection's list changed, and hears them tell it; without it,
+  // each instance's lists last their hour.
+  signals?: Pick<Signals, "catalogChanged" | "onCatalogChanged" | "onGap">;
   logger: Logger;
   now?: () => Date;
 }
@@ -135,6 +139,15 @@ export interface OpenModel {
 }
 
 export type Models = ReturnType<typeof createModels>;
+
+// An org's models as one request reads them: its spaces' defaults and their threads' reply models.
+export interface OrgModels {
+  defaults(space: Pick<Space, "defaultModel" | "defaultEffort">): Defaults;
+  replyModel(
+    space: Pick<Space, "defaultModel" | "defaultEffort">,
+    own: ModelPair,
+  ): Promise<ReplyModel | null>;
+}
 
 const CACHE_MS = 60 * 60 * 1000;
 
@@ -178,6 +191,10 @@ export function createModels(options: ModelsOptions) {
   const now = options.now ?? (() => new Date());
   // Each connection's list, by connection, with its org, so one org's lists never drop another's.
   const cache = new Map<string, { orgId: string; at: number; models: CatalogModel[] }>();
+  // A list changed on another instance is read again here at its next use; after a gap in what
+  // this instance heard, every list is.
+  options.signals?.onCatalogChanged((connectionId) => cache.delete(connectionId));
+  options.signals?.onGap(() => cache.clear());
 
   async function listOf(orgId: string, connection: Connection, refresh: boolean) {
     const { id, host } = connection;
@@ -185,6 +202,8 @@ export function createModels(options: ModelsOptions) {
     if (!refresh && cached && now().getTime() - cached.at < CACHE_MS) return cached.models;
     try {
       const models = await tokens.withFreshToken(orgId, id, (token) => catalogs[host].list(token));
+      // Told before it is kept, as this instance hears what it tells too.
+      if (refresh) options.signals?.catalogChanged(id);
       cache.set(id, { orgId, at: now().getTime(), models });
       return models;
     } catch (err) {
@@ -267,7 +286,15 @@ export function createModels(options: ModelsOptions) {
 
   // The one place that decides which models exist for an org.
   async function resolveModels(orgId: string, { refresh = false } = {}): Promise<ModelList> {
-    const list = await connections.list(orgId);
+    return resolveFrom(orgId, await connections.list(orgId), refresh);
+  }
+
+  // The org's models, from its connections as read.
+  async function resolveFrom(
+    orgId: string,
+    list: Connection[],
+    refresh: boolean,
+  ): Promise<ModelList> {
     const slugs = connectionSlugs(list);
     const ids = new Set(list.map((c) => c.id));
     for (const [id, cached] of cache) {
@@ -317,13 +344,21 @@ export function createModels(options: ModelsOptions) {
   // itself); a model of a provider whose list cannot be read is taken to be ok. Decided from the
   // same lists as everything else.
   async function availability(orgId: string, ref: string): Promise<ModelAvailability> {
-    const { models, errors, turnedOff } = await resolveModels(orgId);
+    const list = await connections.list(orgId);
+    return availabilityIn(await resolveFrom(orgId, list, false), list, ref);
+  }
+
+  function availabilityIn(
+    { models, errors, turnedOff }: ModelList,
+    list: Connection[],
+    ref: string,
+  ): ModelAvailability {
     const found = models.find((model) => model.ref === ref);
     if (found) return { ref, name: found.name, status: "ok" };
     const off = turnedOff.find((model) => model.ref === ref);
     if (off) return { ref, name: off.name, status: "off" };
     const { connectionId, modelId } = parseModelRef(ref);
-    const connection = await connectionOf(orgId, connectionId);
+    const connection = namedBy(list, connectionId);
     const unread = !!connection && errors.some((e) => e.connectionId === connection.id);
     return { ref, name: modelId, status: unread ? "ok" : "unavailable" };
   }
@@ -334,21 +369,56 @@ export function createModels(options: ModelsOptions) {
     space: Pick<Space, "orgId" | "defaultModel" | "defaultEffort">,
     own: ModelPair,
   ): Promise<ReplyModel | null> {
-    const org = await settings.get(space.orgId);
+    return replyIn(space, own, await settings.get(space.orgId), {
+      availability: async (ref) => availability(space.orgId, ref),
+      models: async () => resolveModels(space.orgId),
+    });
+  }
+
+  async function replyIn(
+    space: Pick<Space, "defaultModel" | "defaultEffort">,
+    own: ModelPair,
+    org: Pick<OrgSettings, "defaultModel" | "defaultEffort">,
+    read: { availability(ref: string): Promise<ModelAvailability>; models(): Promise<ModelList> },
+  ): Promise<ReplyModel | null> {
     const picked = await pickReplyModel(
       replyCandidates(
         own,
         { model: space.defaultModel, effort: space.defaultEffort },
         { model: org.defaultModel, effort: org.defaultEffort },
       ),
-      (ref) => availability(space.orgId, ref),
+      async (ref) => read.availability(ref),
     );
     if (picked?.used) return picked;
     // The org default gone too: the first model still on, in the list's order.
-    const first = (await resolveModels(space.orgId)).models[0];
+    const first = (await read.models()).models[0];
     if (!first) return picked;
     const used = { ref: first.ref, name: first.name, status: "ok" as const };
     return { chosen: picked?.chosen ?? used, used, effort: null };
+  }
+
+  // What one request reads of an org's models, once: its settings, given when already read, and
+  // its connections and their lists, read when first asked; for the defaults and the reply models
+  // of its spaces' threads.
+  async function inOrg(orgId: string, given?: OrgSettings): Promise<OrgModels> {
+    const org = given ?? (await settings.get(orgId));
+    let loaded: Promise<{ list: Connection[]; models: ModelList }> | undefined;
+    const load = () =>
+      (loaded ??= (async () => {
+        const list = await connections.list(orgId);
+        return { list, models: await resolveFrom(orgId, list, false) };
+      })());
+    const read = {
+      availability: async (ref: string) => {
+        const { list, models } = await load();
+        return availabilityIn(models, list, ref);
+      },
+      models: async () => (await load()).models,
+    };
+    return {
+      defaults: (space) => defaultsOf(space, org),
+      replyModel: async (space, own) => replyIn(space, own, org, read),
+    };
   }
 
   // Throws unless the ref names a model the org can use right now.
@@ -419,9 +489,10 @@ export function createModels(options: ModelsOptions) {
     canonicalRef,
     aliasOf,
 
-    // Forgets the connection's list, as when where its requests go changed.
+    // Forgets the connection's list, as when where its requests go changed, on every instance.
     invalidate(connectionId: string) {
       cache.delete(connectionId);
+      options.signals?.catalogChanged(connectionId);
     },
 
     // Adds the connection once its host, or the proxy given for it, lists models with what it was
@@ -588,6 +659,8 @@ export function createModels(options: ModelsOptions) {
         return `${listed?.name ?? modelId} · ${through}`;
       };
     },
+
+    inOrg,
 
     async defaults(
       space: Pick<Space, "orgId" | "defaultModel" | "defaultEffort">,
