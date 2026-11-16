@@ -4,6 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import { createLogger } from "@/server/kernel/logger.ts";
 import { openTestDatabase } from "@/server/testing/database.ts";
 
+import { createThreadLog } from "@/server/threads/log.ts";
+
 import { createSync } from "./sync.ts";
 
 // An error as the driver gives it for a deadlock, or as drizzle wraps one.
@@ -252,5 +254,104 @@ describe("transactions", () => {
     expect(stats.insideCalls).toBe(0);
     await transact(async () => void call(1));
     expect(stats.insideCalls).toBe(1);
+  });
+
+  it("roll back the whole transaction when joined work fails, though its caller went on", async () => {
+    const { add, notes, transact, join, stats } = await setup();
+    await expect(
+      transact(async () => {
+        await add("outer");
+        await join(async () => {
+          await add("joined");
+          throw new Error("no");
+        }).catch(() => {});
+        await add("after");
+      }),
+    ).rejects.toThrow("no");
+    expect(await notes()).toEqual([]);
+    expect(stats.failedJoins).toBe(1);
+    // Outside any transaction, joined work is a transaction of its own.
+    await expect(
+      join(async () => {
+        await add("alone");
+        throw new Error("no");
+      }),
+    ).rejects.toThrow("no");
+    expect(await notes()).toEqual([]);
+  });
+
+  it("give the joined failure, not the statements it aborted, and run again when it was a deadlock", async () => {
+    const { add, notes, transact, join, db } = await setup();
+    // A statement that fails aborts the transaction, so the next one is refused.
+    await expect(
+      transact(async () => {
+        await add("outer");
+        await join(async () => db.execute(sql`select * from missing_table`)).catch(() => {});
+        await add("after");
+      }),
+    ).rejects.toThrow(/missing_table/);
+    expect(await notes()).toEqual([]);
+    let attempts = 0;
+    await transact(async () => {
+      attempts += 1;
+      await join(async () => {
+        if (attempts === 1) throw deadlock();
+      }).catch(() => {});
+      await add(`attempt ${attempts}`);
+    });
+    expect(attempts).toBe(2);
+    expect(await notes()).toEqual(["attempt 2"]);
+  });
+
+  it("keep joined work's after-commit steps and signals for the outermost commit", async () => {
+    const { add, notes, transact, join, afterCommit, signals } = await setup();
+    const ran: string[] = [];
+    const heard: string[] = [];
+    signals.subscribe("t1", (hint) => heard.push(hint.kind));
+    await transact(async () => {
+      await join(async () => {
+        await add("joined");
+        afterCommit(() => ran.push("joined"));
+        signals.publish("t1", { kind: "event", seq: 1 });
+      });
+      expect(ran).toEqual([]);
+    });
+    expect(await notes()).toEqual(["joined"]);
+    expect(ran).toEqual(["joined"]);
+    await expect.poll(() => heard).toContain("event");
+  });
+
+  it("make a thread's write a savepoint unless the transaction holds the thread already", async () => {
+    const sync = await setup();
+    const { add, notes, transact, ordered } = sync;
+    const log = createThreadLog({
+      threads: { append: async () => ({}) as never, lock: async () => {} },
+      signals: sync.signals,
+      transact,
+      join: sync.join,
+      ordered,
+      holds: sync.holds,
+    });
+    const failing = (threadId: string) =>
+      log
+        .write(threadId, async () => {
+          await add(`in ${threadId}`);
+          throw new Error("no");
+        })
+        .catch(() => {});
+    await transact(async () => {
+      await ordered("thread", ["held"], async () => {});
+      await add("outer");
+      await failing("other");
+    });
+    expect(await notes()).toEqual(["outer"]);
+    await expect(
+      transact(async () => {
+        await ordered("thread", ["held"], async () => {});
+        await add("again");
+        await failing("held");
+      }),
+    ).rejects.toThrow("no");
+    expect(await notes()).toEqual(["outer"]);
   });
 });

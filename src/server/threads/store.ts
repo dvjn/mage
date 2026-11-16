@@ -1,5 +1,4 @@
 import { and, asc, desc, eq, gt, inArray, isNull, or, type SQL, sql } from "drizzle-orm";
-import { alias } from "drizzle-orm/pg-core";
 import { ulid } from "ulid";
 
 import type { Db } from "@/server/db/db.ts";
@@ -340,6 +339,8 @@ export function createThreadStore(db: Db): ThreadStore {
         .orderBy(desc(thread.updatedAt), desc(thread.id));
     },
 
+    // Read per thread from its newest events back, so the cost follows the threads listed rather
+    // than the length of their logs.
     async facts(threadIds) {
       const facts = new Map<string, ThreadFacts>();
       if (threadIds.length === 0) return facts;
@@ -347,55 +348,40 @@ export function createThreadStore(db: Db): ThreadStore {
         NOTABLE.map((kind) => sql`${kind}`),
         sql`, `,
       );
-      const latest = db
-        .select({
-          threadId: threadEvent.threadId,
-          notable: sql<
-            number | null
-          >`max(case when ${threadEvent.type} in (${kinds}) then ${threadEvent.seq} end)`.as(
-            "notable",
-          ),
-          failed: sql<
-            number | null
-          >`max(case when ${threadEvent.type} = 'run.failed' then ${threadEvent.seq} end)`.as(
-            "failed",
-          ),
-          created: sql<
-            number | null
-          >`max(case when ${threadEvent.type} = 'run.created' then ${threadEvent.seq} end)`.as(
-            "created",
-          ),
-        })
-        .from(threadEvent)
-        .where(and(inArray(threadEvent.threadId, threadIds), ofCurrent))
-        .groupBy(threadEvent.threadId)
-        .as("latest");
-      const notableEvent = alias(threadEvent, "notable_event");
-      const failedEvent = alias(threadEvent, "failed_event");
-      const rows = await db
-        .select({
-          threadId: latest.threadId,
-          notable: latest.notable,
-          notableBy: notableEvent.actorUserId,
-          failed: latest.failed,
-          created: latest.created,
-          failure: failedEvent.data,
-        })
-        .from(latest)
-        .leftJoin(
-          notableEvent,
-          and(eq(notableEvent.threadId, latest.threadId), eq(notableEvent.seq, latest.notable)),
-        )
-        .leftJoin(
-          failedEvent,
-          and(eq(failedEvent.threadId, latest.threadId), eq(failedEvent.seq, latest.failed)),
-        );
-      for (const row of rows) {
-        const failedLast = row.failed !== null && row.failed > (row.created ?? 0);
-        facts.set(row.threadId, {
-          notable: row.notable === null ? null : { seq: row.notable, by: row.notableBy },
+      const newest = (types: SQL, columns: SQL) =>
+        sql`(select ${columns} from ${threadEvent}
+              where ${threadEvent.threadId} = t.id and ${threadEvent.type} in (${types}) and ${ofCurrent}
+              order by ${threadEvent.seq} desc limit 1)`;
+      const rows = await db.execute<{
+        thread_id: string;
+        notable: number | null;
+        notable_by: string | null;
+        run_seq: number | null;
+        run_type: string | null;
+        run_data: unknown;
+      }>(sql`
+        select t.id as thread_id, n.seq as notable, n.actor_user_id as notable_by,
+               r.seq as run_seq, r.type as run_type, r.data as run_data
+          from unnest(${sql`array[${sql.join(
+            threadIds.map((id) => sql`${id}`),
+            sql`, `,
+          )}]::text[]`}) as t(id)
+          left join lateral ${newest(kinds, sql`${threadEvent.seq}, ${threadEvent.actorUserId}`)} n on true
+          left join lateral ${newest(
+            sql`'run.failed', 'run.created'`,
+            sql`${threadEvent.seq}, ${threadEvent.type}, ${threadEvent.data}`,
+          )} r on true
+         where n.seq is not null or r.seq is not null`);
+      for (const row of rows.rows) {
+        // A run that failed after the last one began.
+        const failedLast = row.run_type === "run.failed";
+        facts.set(row.thread_id, {
+          notable: row.notable === null ? null : { seq: row.notable, by: row.notable_by },
           failed: failedLast
-            ? { seq: row.failed!, error: (row.failure as { error?: string } | null)?.error ?? "" }
+            ? {
+                seq: row.run_seq!,
+                error: (row.run_data as { error?: string } | null)?.error ?? "",
+              }
             : null,
         });
       }
@@ -614,6 +600,21 @@ export function createThreadStore(db: Db): ThreadStore {
           eq(threadEvent.threadId, threadId),
           gt(threadEvent.seq, after),
           branchId ? ofBranch(branchId) : ofCurrent,
+        ),
+      );
+    },
+
+    async eventsAfterEach(froms, type) {
+      if (froms.length === 0) return [];
+      return eventsWhere(
+        and(
+          type ? eq(threadEvent.type, type) : undefined,
+          or(
+            ...froms.map(({ threadId, after }) =>
+              and(eq(threadEvent.threadId, threadId), gt(threadEvent.seq, after)),
+            ),
+          ),
+          ofCurrent,
         ),
       );
     },

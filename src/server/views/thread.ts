@@ -12,7 +12,7 @@
 import type { Subagents } from "@/server/subagents/subagents.ts";
 import { influenceParts } from "@/server/calls/influence.ts";
 import type { Queue, QueuedInput } from "@/server/queue/queue.ts";
-import type { CallPresentation, Tools } from "@/server/tools/registry.ts";
+import type { CallPresentation, CallStates, Tools } from "@/server/tools/registry.ts";
 
 import type { Signals, ThreadHint } from "@/server/sync/signals.ts";
 import type { Models } from "@/server/models/service.ts";
@@ -62,7 +62,7 @@ import type { Activity } from "./activity.ts";
 import { threadSummary } from "@/server/threads/threads.ts";
 
 export interface ThreadViewsOptions {
-  access: Pick<ThreadAccess, "can" | "of" | "require" | "reader">;
+  access: Pick<ThreadAccess, "can" | "canRead" | "of" | "require" | "reader">;
   threads: ThreadStore;
   deltas: Pick<DeltaStore, "inThread" | "from">;
   models: Pick<Models, "inOrg" | "modelLabels">;
@@ -82,7 +82,10 @@ export interface ThreadViewsOptions {
   // tracing is off.
   runTrace?: (runId: string) => string | undefined;
   // The agent's tools, for each reader's level for them.
-  tools: Pick<Tools, "shownTo" | "movable" | "connectionFor" | "namesIn" | "present">;
+  tools: Pick<
+    Tools,
+    "shownTo" | "movable" | "connectionFor" | "namesIn" | "present" | "callStatesFor"
+  >;
   // The subagents threads' agents start, when given.
   subagents?: Pick<Subagents, "find" | "summaryOf">;
   // The thread's task list, when given.
@@ -118,6 +121,9 @@ interface Page {
   agentName: string;
   // What each tool call is called where it shows.
   names: ReturnType<Tools["namesIn"]>;
+  // The calls' states as the reader sees them, the space's tools read once for every page of the
+  // request.
+  states: CallStates;
   // What each call of the branch shows the reader beyond its row, read once for them all.
   present(row: TranscriptToolRow): Promise<CallPresentation>;
   // The thread's calls that wait for a person, by id, with whether the reader may act on each.
@@ -125,7 +131,7 @@ interface Page {
   // Other threads' transcripts read for this reader's rows, each read once.
   folds: Map<string, TranscriptFold>;
   // Another thread when the reader may read it, else null; each read once for the page.
-  readable(threadId: string): Promise<Thread | null>;
+  readable: (threadId: string) => Promise<Thread | null>;
   // What the thread's own agent goes by: its subagent's label, or the agent's name; read once.
   ownName(): Promise<string>;
   // The branch read, what they may do from its rows and which of them have versions.
@@ -294,10 +300,14 @@ export function createThreadViews(options: ThreadViewsOptions) {
     return { piecesOf, unfollow };
   }
 
-  // Whether the principal may still read the thread.
-  async function readableThread(principal: AccessReader["principal"], id: string) {
+  // Whether the principal may still read the thread, from what was read of them for this page.
+  async function readableThread(
+    principal: AccessReader["principal"],
+    id: string,
+    read?: AccessReader,
+  ) {
     const thread = await threads.find(id);
-    return thread && (await access.can(principal, thread, "read")) ? thread : null;
+    return thread && (await access.canRead(principal, thread, read)) ? thread : null;
   }
 
   // What the person may do in the thread, from what was read of them before it when given.
@@ -324,6 +334,10 @@ export function createThreadViews(options: ThreadViewsOptions) {
     branchId = thread.currentBranchId,
     rows?: readonly TranscriptRow[],
     given?: AccessReader,
+    // The page of the same request this one is read for, whose reads it shares.
+    within?: Page,
+    // The calls' states as the request reads them, when it read some already.
+    known?: CallStates,
   ): Promise<Page> {
     const read = given ?? (await access.reader(principal, thread));
     const { space } = read;
@@ -333,6 +347,8 @@ export function createThreadViews(options: ThreadViewsOptions) {
     let presented: Promise<(row: TranscriptToolRow) => CallPresentation> | undefined;
     let waitingCalls: Promise<Map<string, WaitingCall>> | undefined;
     const readables = new Map<string, Promise<Thread | null>>();
+    const states = within?.states ?? known ?? tools.callStatesFor(read);
+    const sameSpace = !!within && within.space?.id === space?.id;
     let ownName: Promise<string> | undefined;
     const agentName =
       space && read.settings ? agentNameFrom(space, read.settings) : DEFAULT_AGENT_NAME;
@@ -344,23 +360,26 @@ export function createThreadViews(options: ThreadViewsOptions) {
       space,
       can,
       agentName,
-      names: tools.namesIn(space),
+      names: sameSpace ? within!.names : tools.namesIn(space),
+      states,
       present: async (row) =>
         (presented ??= tools.present(read, toolRowsOf(viewed))).then((present) => present(row)),
       waitingCalls: async () =>
         (waitingCalls ??= (async () =>
           new Map(
-            ((await needs.of(principal, [thread.id])).get(thread.id) ?? []).map((one) => [
-              one.call.id,
-              one,
-            ]),
+            (
+              (await needs.of({ userId: principal.userId, states }, [thread.id])).get(thread.id) ??
+              []
+            ).map((one) => [one.call.id, one]),
           ))()),
       folds: new Map(),
-      readable: async (id) => {
-        const known = readables.get(id) ?? readableThread(principal, id);
-        readables.set(id, known);
-        return known;
-      },
+      readable:
+        within?.readable ??
+        (async (id) => {
+          const known = readables.get(id) ?? readableThread(principal, id, read);
+          readables.set(id, known);
+          return known;
+        }),
       ownName: async () =>
         (ownName ??= (async () => (await subagents?.find(thread.id))?.name ?? agentName)()),
       history: await branches.historyOf(principal, thread, read, can, branchId, viewed),
@@ -410,7 +429,7 @@ export function createThreadViews(options: ThreadViewsOptions) {
         transcript.run?.id === row.runId &&
         reader.can.post &&
         !!space &&
-        (await tools.movable(row, space));
+        (await tools.movable(row, space, await reader.states.toolsOf(space)));
       const state = row.state === "waiting" ? (await reader.waitingCalls()).get(row.id) : null;
       const { background: _flag, waits: _waits, moved: _moved, ...plain } = row;
       const call = {
@@ -435,7 +454,13 @@ export function createThreadViews(options: ThreadViewsOptions) {
       const waiting = { ...call, ...(influence && { influence }) };
       if (state.waitsFor === "answer") return { ...waiting, canAnswer: may };
       const { risk } = state;
-      const connection = await tools.connectionFor(space, row.toolId, userId, row.input);
+      const connection = await tools.connectionFor(
+        space,
+        row.toolId,
+        userId,
+        row.input,
+        await reader.states.toolsOf(space),
+      );
       const forNow = risk === "normal" ? (["allow_for_now"] as const) : [];
       return {
         ...waiting,
@@ -587,7 +612,7 @@ export function createThreadViews(options: ThreadViewsOptions) {
     if (index === -1) return null;
     // Read as the starter's reader, whose access to it is the starter's.
     const read = { ...reader.read, thread };
-    const page = await pageOf(reader.principal, thread, undefined, transcript.rows, read);
+    const page = await pageOf(reader.principal, thread, undefined, transcript.rows, read, reader);
     const shown = await shownRow(fold, transcript, index, page);
     return shown.kind === "tool" && shown.state === "waiting" ? shown : null;
   }
@@ -599,6 +624,7 @@ export function createThreadViews(options: ThreadViewsOptions) {
     principal: AccessReader["principal"],
     thread: Thread,
     read: AccessReader & { via: Access },
+    states?: CallStates,
   ): Promise<ThreadHead> {
     const { space, via } = read;
     // The thread's own org decides, whoever reads it; its models are read once for all three.
@@ -611,7 +637,14 @@ export function createThreadViews(options: ThreadViewsOptions) {
     // How they come to the thread was read in its space's org when that is theirs.
     const sameOrg = !!space && principal.orgId === space.orgId;
     const shown =
-      space && (await tools.shownTo(principal.userId, thread, space, sameOrg ? via : undefined));
+      space &&
+      (await tools.shownTo(
+        principal.userId,
+        thread,
+        space,
+        sameOrg ? via : undefined,
+        states && (await states.person(thread, space)),
+      ));
     return {
       ...(subagent && { subagent }),
       agentName: space && read.settings ? agentNameFrom(space, read.settings) : DEFAULT_AGENT_NAME,
@@ -651,14 +684,23 @@ export function createThreadViews(options: ThreadViewsOptions) {
     async detail(read: AccessReader & { via: Access }, branchId?: string): Promise<ThreadDetail> {
       const { thread, principal } = read;
       const id = thread.id;
-      const head = await headOf(principal, thread, read);
+      const states = tools.callStatesFor(read);
+      const head = await headOf(principal, thread, read, states);
       // Read after the models, which wait on providers, so the rows are the newest.
       const latest = (await threads.find(id)) ?? thread;
       const branch = await branches.branchIn(latest, branchId);
       const current = branch === latest.currentBranchId;
       const fold = await transcripts.of(id, branch);
       const transcript = fold.transcript();
-      const reader = await pageOf(principal, latest, branch, transcript.rows, read);
+      const reader = await pageOf(
+        principal,
+        latest,
+        branch,
+        transcript.rows,
+        read,
+        undefined,
+        states,
+      );
       const seen = (await reads.seen(principal.userId, [id])).get(id) ?? 0;
       // A subagent's thread has nothing new in it, and opens at its newest.
       const from =

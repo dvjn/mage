@@ -221,6 +221,12 @@ export interface ThreadStore {
   // The events of the branch, the thread's current one when none is named, with seq above
   // `after`, in order.
   eventsAfter(threadId: string, after: number, branchId?: string): Promise<StoredEvent[]>;
+  // The events of each thread's current branch after its seq, of the type when given, read
+  // together, in order.
+  eventsAfterEach(
+    froms: readonly { threadId: string; after: number }[],
+    type?: string,
+  ): Promise<StoredEvent[]>;
   // The thread's current branch's events of the type, in order.
   eventsOfType(threadId: string, type: StoredEvent["type"]): Promise<StoredEvent[]>;
   // The thread's event with the seq, in whichever branch.

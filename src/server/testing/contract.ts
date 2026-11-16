@@ -146,6 +146,8 @@ export async function world(
     threadId: thread,
     api,
     json,
+    // The access rule, for tests that count how often it reads a reader.
+    access: base.access,
 
     // Signs someone else up, outside the thread's space.
     async signUp(name: string, email: string): Promise<Person> {

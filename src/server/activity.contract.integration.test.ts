@@ -7,6 +7,7 @@
 
 import { describe, it } from "vite-plus/test";
 
+import { answered, busyThread } from "@/server/testing/busy-thread.ts";
 import { eventually, expect, type Person, type World, world } from "@/server/testing/contract.ts";
 
 // Ids as they first appear, numbered, so what is read compares whatever ids the run made.
@@ -22,96 +23,6 @@ function stable(value: unknown) {
   ) as unknown;
 }
 
-// The model's last result in the call, parsed.
-function lastValue(texts: readonly string[]) {
-  const text = texts.findLast((one) => one.startsWith("result "))!;
-  return (JSON.parse(text.replace(/^result [^:]+: /, "")) as { value: any }).value;
-}
-
-// Answers the thread's agent until nothing runs or waits there.
-async function answered(w: World) {
-  for (;;) {
-    const shown = await eventually(
-      async () => ({ asked: w.waitsForModel(), shown: await w.shown() }),
-      ({ asked, shown }) => asked || (shown.run === null && shown.waiting.length === 0),
-    );
-    if (!shown.asked) return;
-    await w.answers(w.threadId, "Noted.");
-  }
-}
-
-async function arranged() {
-  const w = await world();
-  await w.post(w.ada, "Plan");
-  await w.asks(w.threadId, [
-    "tasks.add",
-    { tasks: [{ title: "Rest well" }, { title: "Rest more" }] },
-  ]);
-  const planned = await w.answers(w.threadId, "Planned.");
-  const taskIds = (lastValue(planned.texts).tasks as { id: string }[]).map((task) => task.id);
-  await w.settled();
-
-  await w.post(w.ada, "Set up");
-  await w.asks(
-    w.threadId,
-    ["schedules.wake_at", { in_seconds: 3600, note: "Check in" }],
-    ["schedules.add", { name: "Digest", cron: "0 9 * * *", prompt: "Digest" }],
-    ["schedules.add", { name: "Weekly", cron: "0 9 * * 1", prompt: "Weekly" }],
-    ["jobs.start", { tool: "probe.wait", input: { label: "running" } }],
-    ["jobs.start", { tool: "probe.guarded", input: { label: "job-waits" } }],
-    ["jobs.start", { tool: "probe.wait", input: { label: "ended" } }],
-    ["subagents.start", { name: "Worker", task: "Work" }],
-    ["subagents.start", { name: "Idle", task: "Rest", tasks: [taskIds[0]] }],
-    ["subagents.start", { name: "Gone", task: "Leave" }],
-    ["skills.load", { name: "page-design" }],
-  );
-  await w.answers(w.threadId, "Set up.");
-  const worker = await w.subagentNamed("Worker");
-  const idle = await w.subagentNamed("Idle");
-  const gone = await w.subagentNamed("Gone");
-  await w.asks(worker, ["probe.guarded", { label: "sub" }]);
-  await eventually(
-    () => w.shown(w.ada, worker),
-    (shown) => shown.run === "decision",
-  );
-  // The task given to it is a notice its first run takes in with its task.
-  await w.answers(idle, "Resting.");
-  await w.answers(gone, "Gone.");
-  await answered(w);
-  await eventually(
-    () => w.tool.running("ended"),
-    (running) => running,
-  );
-  w.tool.finish("ended", { done: true });
-  await answered(w);
-
-  await w.webhook("Deploys", "Check the deploy");
-  const weekly = (await w.activity()).find((item) => item.title === "Weekly")!;
-  expect(await w.act(w.ada, "POST", `/schedules/${weekly.work.schedule!.id}/pause`)).toBe(200);
-  await w.settled();
-
-  await w.post(w.ada, "Tidy");
-  await w.asks(
-    w.threadId,
-    ["subagents.archive", { subagent: "Gone" }],
-    ["subagents.send", { to: "Idle", text: "Hello" }],
-  );
-  await w.answers(w.threadId, "Tidied.");
-  await w.answers(idle, "Hi back.");
-  await answered(w);
-
-  await w.post(w.ada, "Guard");
-  await w.asks(w.threadId, ["probe.guarded", { label: "main" }]);
-  await eventually(
-    () => w.shown(),
-    (shown) => shown.run === "decision",
-  );
-  await w.settled();
-  const guest = await w.guest("Joan Clarke", "joan@example.com");
-  return { w, guest };
-}
-
-// The tray as the reader sees it.
 async function tray(w: World, who: Person) {
   return stable(
     (await w.activity(who)).map((item) => ({
@@ -1345,7 +1256,7 @@ describe("a thread's activity", () => {
   });
 
   it("shows each reader the same tray and rows", async () => {
-    const { w, guest } = await arranged();
+    const { w, guest } = await busyThread();
     const read = async (who: Person) => ({
       tray: await tray(w, who),
       cards: await cards(w, who),

@@ -26,7 +26,7 @@ import type {
   ToolOutput,
   Tools,
 } from "@/server/tools/registry.ts";
-import { lastWriter } from "@/server/tools/registry.ts";
+import { type CallStates, lastWriter } from "@/server/tools/registry.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import { contentRecorded, tracer } from "@/server/kernel/tracing.ts";
@@ -137,6 +137,7 @@ export interface CallsOptions {
     | "fromServers"
     | "run"
     | "callState"
+    | "callStates"
     | "connectionFor"
     | "asks"
     | "movable"
@@ -782,7 +783,7 @@ export function createCalls(options: CallsOptions) {
 
     // The calls of the threads that wait for a person, each with whether the reader may act on it.
     async waitingOn(
-      reader: { userId: string },
+      reader: { userId: string; states?: CallStates },
       threadIds: readonly string[],
     ): Promise<WaitingCall[]> {
       const waiting = await store.waiting(threadIds);
@@ -793,6 +794,8 @@ export function createCalls(options: CallsOptions) {
         (await threads.findAll([...byThread.keys()])).map((thread) => [thread.id, thread]),
       );
       const spaces = new Map<string, Awaited<ReturnType<typeof spaceStore.find>>>();
+      // The tools of each space and the reader in each thread tree, read once for them all.
+      const states = reader.states ?? options.tools.callStates(reader.userId);
       for (const [threadId, calls] of byThread) {
         const thread = threadsOf.get(threadId);
         if (thread && !spaces.has(thread.spaceId)) {
@@ -805,14 +808,7 @@ export function createCalls(options: CallsOptions) {
         for (const call of calls) {
           const row = records.get(call.id);
           if (!row) continue;
-          const state = await options.tools.callState(
-            reader.userId,
-            row,
-            words,
-            thread,
-            space,
-            call.model,
-          );
+          const state = await states.of(row, words, thread, space, call.model);
           found.push({
             call,
             row,

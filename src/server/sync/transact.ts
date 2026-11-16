@@ -18,11 +18,13 @@ export type Transact = <T>(work: () => Promise<T>) => Promise<T>;
 export type AfterCommit = (run: () => void) => void;
 
 // Counts of what a test wants to see none of, or few: transactions run again, locks taken out of
-// order, and calls that must not run in a transaction made inside one.
+// order, calls that must not run in a transaction made inside one, and transactions rolled back
+// because work joined to them failed though its caller went on.
 export interface SyncStats {
   retries: number;
   outOfOrder: number;
   insideCalls: number;
+  failedJoins: number;
 }
 
 // A transaction under way, or a savepoint of one.
@@ -41,6 +43,9 @@ export interface Unit {
   held: Map<string, string[]>;
   // The unit this one is a savepoint of.
   parent?: Unit;
+  // What failed in work joined to this transaction, which then rolls back whatever its work did
+  // with the error.
+  failed?: { error: unknown };
 }
 
 // The row locks of the scope the unit holds, its own and those of the units it is a savepoint of.
@@ -113,7 +118,19 @@ export function createTransactor(root: Db, options: TransactorOptions) {
       const result = await parent.transaction(async (tx) => {
         unit.tx = tx as unknown as Db;
         try {
-          const result = await units.run(unit, work);
+          let result: T;
+          try {
+            result = await units.run(unit, work);
+          } catch (err) {
+            // What failed after joined work failed, as a statement refused once its failure
+            // aborted the transaction, follows from that: its error is what the caller hears.
+            if (unit.failed && err !== unit.failed.error) stats.failedJoins += 1;
+            throw unit.failed ? unit.failed.error : err;
+          }
+          if (unit.failed) {
+            stats.failedJoins += 1;
+            throw unit.failed.error;
+          }
           if (!outer && options.beforeCommit && unit.queued.length > 0) {
             await options.beforeCommit(unit.queued, unit.tx);
           }
@@ -153,6 +170,22 @@ export function createTransactor(root: Db, options: TransactorOptions) {
     }
   };
 
+  // Runs the work as part of the transaction under way with no savepoint of its own, for work that
+  // must not be partly kept: if it fails, the outermost transaction rolls back with its error even
+  // when a caller goes on past it. Outside any transaction it is a transaction of its own.
+  const join: Transact = async (work) => {
+    const unit = current();
+    if (!unit) return transact(work);
+    try {
+      return await work();
+    } catch (error) {
+      let root = unit;
+      while (root.parent) root = root.parent;
+      root.failed ??= { error };
+      throw error;
+    }
+  };
+
   const afterCommit: AfterCommit = (run) => {
     const unit = current();
     if (unit) unit.after.push(run);
@@ -176,6 +209,7 @@ export function createTransactor(root: Db, options: TransactorOptions) {
   return {
     db,
     transact,
+    join,
     afterCommit,
     current,
     // Whether the caller is inside a transaction, which may read what others cannot see yet.

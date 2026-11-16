@@ -83,6 +83,14 @@ export interface Reader {
   canInSpace(action: SpaceAction): boolean;
 }
 
+// Whether two threads are read alike: those of one tree in one space, a subagent's as its starter's.
+export function readAlike(one: Thread, other: Thread) {
+  return (
+    (one.rootThreadId ?? one.id) === (other.rootThreadId ?? other.id) &&
+    one.spaceId === other.spaceId
+  );
+}
+
 export function createAccess(options: AccessOptions) {
   const { spaceStore, spaces, threads, guests, directory, settings } = options;
   const now = options.now ?? (() => new Date());
@@ -196,6 +204,13 @@ export function createAccess(options: AccessOptions) {
 
     async can(who: Who, thread: Thread, action: ThreadAction) {
       return (await reader(who, thread)).can(action);
+    },
+
+    // Whether they may read the thread; from what was read of them before another, when given and
+    // that one is read alike.
+    async canRead(who: Who, thread: Thread, known?: Pick<Reader, "thread" | "can">) {
+      if (known && readAlike(known.thread, thread)) return known.can("read");
+      return (await reader(who, thread)).can("read");
     },
   };
 }

@@ -1717,6 +1717,136 @@ describe("watches on subagents", () => {
     );
     expect(idle).toHaveLength(1);
   });
+
+  it("are read by the pass only once their subagents' state can fire them", async () => {
+    const workspace = await subagentThread();
+    const { ada, post, thread, start, calls, answer, callIn, subagentNamed, until } = workspace;
+    await start();
+    await post(ada, "Go");
+    await calls(
+      thread.id,
+      ["subagents.start", { name: "Scout", task: "Work" }],
+      ["subagents.start", { name: "Busy", task: "Work" }],
+    );
+    await answer(thread.id, "Started.");
+    const scout = await subagentNamed("Scout");
+    const busy = await subagentNamed("Busy");
+    await answer(scout, "Done.");
+    const working = await callIn(busy);
+    workspace.keepAnswering(thread.id);
+    await until(async () => (await workspace.subagents.summaryOf(scout))?.state === "idle");
+    const watch = async (id: string, until: string, subjects: string[]) => {
+      await workspace.db.execute(
+        sql`insert into thread_watch (id, thread_id, owner_id, kind, until, call_id)
+            values (${id}, ${thread.id}, ${thread.id}, 'subagents', ${until}, null)`,
+      );
+      for (const subject of subjects) {
+        await workspace.db.execute(
+          sql`insert into thread_watch_subject (watch_id, subject_id) values (${id}, ${subject})`,
+        );
+      }
+    };
+    await watch("w-all", "all_idle", [scout, busy]);
+    await watch("w-busy", "any_idle", [busy]);
+    await watch("w-any", "any_idle", [scout, busy]);
+    const due = async () => (await workspace.watches.due("subagents")).map((one) => one.id);
+    expect(await due()).toEqual(["w-any"]);
+    expect(await workspace.subagents.checkWatches()).toBe(1);
+    expect(await due()).toEqual([]);
+    // The run's end fires the rest, each once, and the pass then has none to read.
+    working.reply("Done.");
+    await until(async () => (await workspace.watches.on(thread.id, "subagents")).length === 0);
+    expect(await due()).toEqual([]);
+    expect(await workspace.subagents.checkWatches()).toBe(0);
+  });
+});
+
+describe("where subagents stand", () => {
+  it("read together, as each read alone, in every state", async () => {
+    const toolset = {
+      id: "held",
+      title: "Held",
+      source: "builtin" as const,
+      tools: [
+        {
+          name: "held.ask",
+          title: "Ask",
+          description: "Needs approval.",
+          input: z.object({}).strict(),
+          risk: () => "ask" as const,
+          run: async () => ({ ok: true as const, value: null }),
+        } satisfies ToolSpec<Record<string, never>>,
+      ],
+    };
+    const workspace = await subagentThread({}, { toolsets: [toolset] });
+    const { ada, post, thread, start, calls, answer, callIn, subagentNamed, until } = workspace;
+    await start();
+    await post(ada, "Go");
+    // At most four run at once, so each set started stays within that.
+    const id: Record<string, string> = {};
+    const startAll = async (...names: string[]) => {
+      await calls(
+        thread.id,
+        ...names.map((name): [string, unknown] => ["subagents.start", { name, task: "Work" }]),
+      );
+      await answer(thread.id, "Started.");
+      for (const name of names) id[name] = await subagentNamed(name);
+    };
+    const state = async (name: string) => (await workspace.subagents.summaryOf(id[name]!))?.state;
+    await startAll("Idle", "Gone", "Halted", "Asking");
+    for (const name of ["Idle", "Gone"]) {
+      await answer(id[name]!, "Done.");
+      await until(async () => (await state(name)) === "idle");
+    }
+    await workspace.db.execute(
+      sql`update subagent set archived_at = now() where thread_id = ${id.Gone!}`,
+    );
+    await callIn(id.Halted!);
+    expect((await workspace.api("POST", `/threads/${id.Halted}/stop`, ada.cookie)).status).toBe(
+      202,
+    );
+    await until(async () => (await state("Halted")) === "stopped");
+    await calls(id.Asking!, ["held.ask", {}]);
+    await until(
+      async () => (await workspace.subagents.summaryOf(id.Asking!))?.needs === "decision",
+    );
+    await post(ada, "More");
+    await startAll("Busy", "Busier", "Waits");
+    await callIn(id.Busy!);
+    await callIn(id.Busier!);
+    await answer(id.Waits!, "Done.");
+    await until(async () => (await state("Waits")) === "idle");
+    await post(ada, "One more");
+    await startAll("Busiest");
+    await callIn(id.Busiest!);
+    // Four run now, so a message to an idle one waits.
+    await post(ada, "Ping");
+    await calls(thread.id, ["subagents.send", { to: "Waits", text: "One more" }]);
+    await until(async () => (await state("Waits")) === "queued");
+
+    const records = await workspace.subagentStore.ofParents([thread.id]);
+    const together = await workspace.subagents.summariesOf(records);
+    const alone = await Promise.all(
+      records.map(async (one) => workspace.subagents.summaryOf(one.threadId)),
+    );
+    expect(together).toEqual(alone);
+    expect(together.map((one) => [one.name, one.state, one.needs ?? null])).toEqual([
+      ["Idle", "idle", null],
+      ["Gone", "archived", null],
+      ["Halted", "stopped", null],
+      ["Asking", "working", "decision"],
+      ["Busy", "working", null],
+      ["Busier", "working", null],
+      ["Waits", "queued", null],
+      ["Busiest", "working", null],
+    ]);
+    for (const name of ["Asking", "Busy", "Busier", "Busiest"]) {
+      await workspace.api("POST", `/threads/${id[name]}/stop`, ada.cookie);
+    }
+    workspace.keepAnswering(id.Waits!);
+    workspace.keepAnswering(thread.id);
+    await workspace.worker.idle();
+  });
 });
 
 describe("a subagent's needs", () => {

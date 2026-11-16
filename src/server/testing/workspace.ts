@@ -96,14 +96,19 @@ afterEach(async () => {
   // What waits for each thread's agent by its rows is what its log says waits.
   const disagree = (await Promise.all(all.map(async (systems) => rowsAgainstLogs(systems)))).flat();
   expect(disagree).toEqual([]);
-  const { outOfOrder, insideCalls } = all.reduce(
+  const { outOfOrder, insideCalls, failedJoins } = all.reduce(
     (sum, { sync }) => ({
       outOfOrder: sum.outOfOrder + sync.stats.outOfOrder,
       insideCalls: sum.insideCalls + sync.stats.insideCalls,
+      failedJoins: sum.failedJoins + sync.stats.failedJoins,
     }),
-    { outOfOrder: 0, insideCalls: 0 },
+    { outOfOrder: 0, insideCalls: 0, failedJoins: 0 },
   );
-  expect({ outOfOrder, insideCalls }).toEqual({ outOfOrder: 0, insideCalls: 0 });
+  expect({ outOfOrder, insideCalls, failedJoins }).toEqual({
+    outOfOrder: 0,
+    insideCalls: 0,
+    failedJoins: 0,
+  });
 });
 
 // A step that fails the transaction it runs in, the first time only, as a deadlock does: the

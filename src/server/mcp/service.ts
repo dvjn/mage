@@ -42,6 +42,7 @@ import type { Logger } from "@/server/kernel/logger.ts";
 import type { OAuthAttempts } from "@/server/oauth/attempts.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { OrgSettingStore } from "@/server/orgs/service.ts";
+import type { OrgRead } from "@/server/tools/registry.ts";
 import type { Space, Spaces } from "@/server/spaces/service.ts";
 import type { Lease } from "@/server/sync/lease.ts";
 import {
@@ -519,19 +520,19 @@ export function createMcpServers(options: McpServersOptions) {
     };
   }
 
-  async function spacesMayAdd(orgId: string) {
-    return (await settings.get(orgId)).spaceMcpServers;
+  async function spacesMayAdd(orgId: string, org?: OrgRead) {
+    return (await (org?.() ?? settings.get(orgId))).spaceMcpServers;
   }
 
   // The org's servers and the space's own, and of them those the space uses: the org's that are
   // on and not turned off in the space, then its own that are on, while the org lets spaces have
   // them.
-  async function serversOf(space: Pick<Space, "id" | "orgId">) {
+  async function serversOf(space: Pick<Space, "id" | "orgId">, given?: OrgRead) {
     const [org, own, set, mayAdd] = await Promise.all([
       servers.inOrg(space.orgId),
       servers.inSpace(space.id),
       servers.inSpaceSettings(space.id),
-      spacesMayAdd(space.orgId),
+      spacesMayAdd(space.orgId, given),
     ]);
     const used = [
       ...org.filter((server) => server.enabled && set.get(server.id) !== false),
@@ -1441,8 +1442,8 @@ export function createMcpServers(options: McpServersOptions) {
     // The servers the space uses, as toolsets: the org's it did not turn off, then its own, while
     // the org lets spaces have them, none that is off; and every server its settings and its
     // org's show.
-    async readIn(space: Pick<Space, "id" | "orgId">): Promise<AddedToolsets> {
-      const { org, own, used } = await serversOf(space);
+    async readIn(space: Pick<Space, "id" | "orgId">, given?: OrgRead): Promise<AddedToolsets> {
+      const { org, own, used } = await serversOf(space, given);
       return {
         inSpace: used.map(toolsetOf),
         forSpaceSettings: [...org, ...own].map(toolsetOf),

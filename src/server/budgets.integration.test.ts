@@ -5,9 +5,19 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { createRunTraces } from "@/server/kernel/tracing.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
+import { busyThread, subagentsWaiting } from "@/server/testing/busy-thread.ts";
 import { queries } from "@/server/testing/tracing.ts";
 
-const MAX = { detail: 41, rows: 12, threadList: 19, tray: 33, run: 108 };
+const MAX = {
+  detail: 39,
+  rows: 12,
+  threadList: 19,
+  tray: 31,
+  run: 93,
+  // A thread with every kind of background work, as its owner and as a guest read it.
+  busyTray: { owner: 85, guest: 98 },
+  busyDetail: { owner: 108, guest: 133 },
+};
 
 // Ada's space with twenty threads, and a thread of fifty notes.
 async function arranged() {
@@ -54,5 +64,33 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("queries of the paths people wai
     }, "run");
     expect(run.count).toBeGreaterThan(0);
     expect(run.count).toBeLessThanOrEqual(MAX.run);
+  });
+
+  it("of a busy thread stay within their budgets, for its owner and a guest", async () => {
+    const { w, guest } = await busyThread();
+    for (const [name, who] of [
+      ["owner", w.ada],
+      ["guest", guest],
+    ] as const) {
+      const tray = await queries(() => w.activity(who));
+      expect(tray.count).toBeLessThanOrEqual(MAX.busyTray[name]);
+      const detail = await queries(() => w.detail(who));
+      expect(detail.count).toBeLessThanOrEqual(MAX.busyDetail[name]);
+    }
+  });
+
+  it("read tools, policies and access as often however many subagents wait", async () => {
+    const tables = ["tool_policy", "mcp_server", "tool_setting", "space_member"];
+    // Statements naming each table, in the tray and in the detail.
+    const counted = async (subagents: number) => {
+      const w = await subagentsWaiting(subagents);
+      const { texts: tray } = await queries(() => w.activity());
+      const { texts: detail } = await queries(() => w.detail());
+      const naming = (texts: string[], table: string) =>
+        texts.filter((text) => new RegExp(`\\b${table}\\b`).test(text)).length;
+      return tables.map((table) => [table, naming(tray, table), naming(detail, table)]);
+    };
+    // Four is as many as run at once.
+    expect(await counted(4)).toEqual(await counted(2));
   });
 });

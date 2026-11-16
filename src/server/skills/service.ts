@@ -15,6 +15,7 @@ import * as z from "zod";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { OrgSettingStore } from "@/server/orgs/service.ts";
+import type { OrgRead } from "@/server/tools/registry.ts";
 import type { Space, Spaces } from "@/server/spaces/service.ts";
 import type { AnyToolSpec, SpaceTools, Toolset, ToolSpec } from "@/server/tools/registry.ts";
 import type { Guidance, SkillLine } from "@/server/execution/context.ts";
@@ -253,8 +254,8 @@ export function createSkills(options: SkillsOptions) {
   const { skills, git, archives, spaces, settings, logger } = options;
   const now = options.now ?? (() => new Date());
 
-  async function spacesMayAdd(orgId: string) {
-    return (await settings.get(orgId)).spaceSkills;
+  async function spacesMayAdd(orgId: string, org?: OrgRead) {
+    return (await (org?.() ?? settings.get(orgId))).spaceSkills;
   }
 
   // The scope the principal manages: the org's for its owners, or a space's for its managers.
@@ -364,7 +365,10 @@ export function createSkills(options: SkillsOptions) {
     };
   }
 
-  async function spaceSkills(space: Pick<Space, "id" | "orgId">): Promise<SpaceSkills> {
+  async function spaceSkills(
+    space: Pick<Space, "id" | "orgId">,
+    given?: OrgRead,
+  ): Promise<SpaceSkills> {
     const org = { orgId: space.orgId, spaceId: null };
     const own = { orgId: space.orgId, spaceId: space.id };
     const builtin = await builtinOf(space.orgId);
@@ -379,12 +383,12 @@ export function createSkills(options: SkillsOptions) {
         ...builtinSwitches,
       ]),
       skillSwitches: new Map([...(await skills.spaceSkillSettings(space.id)), ...builtinSwitches]),
-      allowed: await spacesMayAdd(space.orgId),
+      allowed: await spacesMayAdd(space.orgId, given),
     };
   }
 
-  async function effectiveIn(space: Pick<Space, "id" | "orgId">) {
-    return effectiveSkills(await spaceSkills(space));
+  async function effectiveIn(space: Pick<Space, "id" | "orgId">, org?: OrgRead) {
+    return effectiveSkills(await spaceSkills(space, org));
   }
 
   async function snapshotOf(parsed: ParsedSource, token: string | null) {

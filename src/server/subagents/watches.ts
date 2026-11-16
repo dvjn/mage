@@ -2,7 +2,7 @@
 // with the subjects they wait on, share one limit, and end as they fire; each kind says when its
 // own fire. Ending is one conditional delete, so a watch fires once whoever checks it.
 
-import { and, count, eq, inArray } from "drizzle-orm";
+import { and, count, eq, inArray, sql } from "drizzle-orm";
 
 import type { Db } from "@/server/db/db.ts";
 
@@ -64,6 +64,37 @@ export function createWatchStore(db: Db) {
           .select()
           .from(threadWatch)
           .where(and(eq(threadWatch.ownerId, ownerId), eq(threadWatch.kind, kind)))
+          .orderBy(threadWatch.createdAt, threadWatch.id),
+      );
+    },
+
+    // The open watches on subagents that their subjects' state can satisfy now, oldest first: one
+    // with a subject that is idle, and for all_idle none that is not. A subject is idle once
+    // archived, or with no run under way and nothing waiting to start one on its current branch;
+    // one that is no subagent counts as neither.
+    async due(kind: "subagents"): Promise<Watch[]> {
+      const busy = (subject: ReturnType<typeof sql>) => sql`(
+        a.archived_at is null and (
+          exists (select 1 from run r join thread t on t.id = r.thread_id
+                   where r.thread_id = ${subject} and r.branch_id = t.current_branch_id
+                     and r.status in ('queued', 'running', 'waiting'))
+          or exists (select 1 from thread_input i join thread t on t.id = i.thread_id
+                      where i.thread_id = ${subject} and i.branch_id = t.current_branch_id
+                        and i.status = 'waiting' and (i.kind = 'message' or i.wake))))`;
+      const subjects = (idle: boolean) => sql`exists (
+        select 1 from thread_watch_subject s join subagent a on a.thread_id = s.subject_id
+         where s.watch_id = ${threadWatch.id} and ${idle ? sql`not` : sql``} ${busy(sql`s.subject_id`)})`;
+      return withSubjects(
+        await db
+          .select()
+          .from(threadWatch)
+          .where(
+            and(
+              eq(threadWatch.kind, kind),
+              subjects(true),
+              sql`(${threadWatch.until} <> 'all_idle' or not ${subjects(false)})`,
+            ),
+          )
           .orderBy(threadWatch.createdAt, threadWatch.id),
       );
     },

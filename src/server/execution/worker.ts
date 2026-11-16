@@ -149,6 +149,9 @@ export interface RunStore {
   latest(threadId: string): Promise<Run | null>;
   // The queued, running or waiting run of the thread's current branch.
   active(threadId: string): Promise<Run | null>;
+  // The same, and the newest, of each thread's current branch, for the threads named.
+  activeOnCurrent(threadIds: string[]): Promise<Run[]>;
+  latestIn(threadIds: string[]): Promise<Run[]>;
   // The branch's queued, running or waiting run.
   activeOn(branchId: string): Promise<Run | null>;
   // The threads with a queued, running or waiting run.

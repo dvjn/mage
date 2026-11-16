@@ -103,6 +103,25 @@ export function createQueueStore(db: Db) {
       return found.length > 0;
     },
 
+    // Of the threads named, those with an input that starts the agent waiting on their current
+    // branch.
+    async wakesIn(threadIds: readonly string[]) {
+      if (threadIds.length === 0) return [];
+      const rows = await db
+        .selectDistinct({ threadId: threadInput.threadId })
+        .from(threadInput)
+        .innerJoin(thread, eq(thread.id, threadInput.threadId))
+        .where(
+          and(
+            inArray(threadInput.threadId, [...threadIds]),
+            eq(threadInput.branchId, thread.currentBranchId),
+            eq(threadInput.status, "waiting"),
+            waking,
+          ),
+        );
+      return rows.map((row) => row.threadId);
+    },
+
     // Threads with an input that starts the agent waiting on their current branch and no run under
     // way there; not a log copied in with no runs of its own, which waits for whatever starts it
     // next, nor a retired subagent's. A subagent's thread held back before its first run counts.

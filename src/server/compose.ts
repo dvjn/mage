@@ -77,7 +77,7 @@ import { createGitReader } from "@/server/skills/git.ts";
 import { createSkills } from "@/server/skills/service.ts";
 import { createSkillStore } from "@/server/skills/store.ts";
 import { createZipReader } from "@/server/skills/zip.ts";
-import { agentNameIn, createSpaces } from "@/server/spaces/service.ts";
+import { agentNameFrom, agentNameIn, createSpaces } from "@/server/spaces/service.ts";
 import { createSpaceStore } from "@/server/spaces/store.ts";
 import { createAccess } from "@/server/access/access.ts";
 import { createDeltaStore } from "@/server/threads/delta-store.ts";
@@ -245,7 +245,14 @@ export function compose(deps: ComposeDeps) {
   const runStore = createRunStore(db);
   const deltaStore = createDeltaStore(db);
   const signals = sync.signals;
-  const log = createThreadLog({ threads: threadStore, signals, transact, ordered: sync.ordered });
+  const log = createThreadLog({
+    threads: threadStore,
+    signals,
+    transact,
+    join: sync.join,
+    ordered: sync.ordered,
+    holds: sync.holds,
+  });
   const spaces = createSpaces({
     spaces: spaceStore,
     threads: threadStore,
@@ -268,6 +275,7 @@ export function compose(deps: ComposeDeps) {
   const toolPolicyStore = createToolPolicyStore(db);
   // The tools each system registers below, in the order of the model's tools.
   const tools = createTools({
+    orgSettings: async (orgId) => settingStore.get(orgId),
     settings: toolSettings,
     policies: toolPolicyStore,
     directory,
@@ -505,7 +513,11 @@ export function compose(deps: ComposeDeps) {
     guidance: async (_space, offered, _thread, now) => ({ skills: skills.listFor(offered, now) }),
   });
   execution.contribute({
-    guidance: async (space) => ({ agentName: await agentNameIn(settingStore, space) }),
+    guidance: async (space, _offered, _thread, now) => ({
+      agentName: now.org
+        ? agentNameFrom(space, await now.org())
+        : await agentNameIn(settingStore, space),
+    }),
   });
   execution.contribute({
     guidance: async (space, _offered, _thread, now) => ({
@@ -766,6 +778,7 @@ export function compose(deps: ComposeDeps) {
     tools,
     subagents,
     subagentStore,
+    watches,
     tasks,
     queue,
     calls,

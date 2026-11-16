@@ -24,7 +24,7 @@ import type { Reads } from "./reads.ts";
 export interface ActivityOptions {
   threads: Pick<ThreadStore, "findAll">;
   transcripts: Pick<Transcripts, "of">;
-  tools: Pick<Tools, "namesIn" | "present">;
+  tools: Pick<Tools, "namesIn" | "present" | "callStatesFor">;
   needs: Pick<Needs, "of">;
   reads: Pick<Reads, "activitySeen" | "markActivity">;
   subagents?: Pick<Subagents, "ofParents">;
@@ -63,11 +63,13 @@ export function createActivity(options: ActivityOptions) {
     };
     const { rows } = (await transcripts.of(thread.id)).transcript();
     const present = await tools.present(reader, toolRowsOf(rows));
+    // The space's tools and the reader as they reach this thread tree, read once for its calls
+    // and its subagents'.
+    const states = tools.callStatesFor(reader);
     const waiting = new Map(
-      ((await needs.of(principal, [thread.id])).get(thread.id) ?? []).map((one) => [
-        one.call.id,
-        one,
-      ]),
+      (
+        (await needs.of({ userId: principal.userId, states }, [thread.id])).get(thread.id) ?? []
+      ).map((one) => [one.call.id, one]),
     );
     for (const [index, row] of rows.entries()) {
       if (row.kind !== "tool") continue;
@@ -121,7 +123,7 @@ export function createActivity(options: ActivityOptions) {
       .map(({ record }) => record.threadId);
     const waitingIn =
       needing.length > 0
-        ? await waitingOn.of(principal, needing)
+        ? await waitingOn.of({ userId: principal.userId, states }, needing)
         : new Map<string, WaitingCall[]>();
     // A subagent's thread is read and posted in as its starter's is.
     const mayPost = reader.can("post");

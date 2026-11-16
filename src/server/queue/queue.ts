@@ -475,6 +475,7 @@ export function createQueue(options: QueueOptions) {
 
     // Whether an input that starts the agent waits on the branch.
     wakes: async (threadId: string, branchId?: string) => store.wakes(threadId, branchId),
+    wakesIn: async (threadIds: readonly string[]) => store.wakesIn(threadIds),
 
     // Threads whose agent has an input to start on and no run under way.
     stranded: async () => store.stranded(),

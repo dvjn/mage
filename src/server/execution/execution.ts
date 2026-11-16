@@ -40,7 +40,14 @@ export type { Run, RunStatus, RunWorker, StopTarget } from "./worker.ts";
 // What other systems read of runs.
 export type RunReads = Pick<
   RunStore,
-  "find" | "latest" | "active" | "activeOn" | "activeIn" | "activeInSpace"
+  | "find"
+  | "latest"
+  | "latestIn"
+  | "active"
+  | "activeOn"
+  | "activeOnCurrent"
+  | "activeIn"
+  | "activeInSpace"
 >;
 export { LeaseLost, RunFailure } from "./worker.ts";
 

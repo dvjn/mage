@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { agentThread } from "@/server/testing/agent-thread.ts";
+import { busyThread } from "@/server/testing/busy-thread.ts";
 
 describe("a reader", () => {
   it("is read once for a thread's detail, its rows and its tray", async () => {
@@ -28,6 +29,25 @@ describe("a reader", () => {
     expect(await count(`/threads/${t.thread.id}`)).toBe(1);
     expect(await count(`/threads/${t.thread.id}/rows?before=2`)).toBe(1);
     expect(await count(`/threads/${t.thread.id}/activity`)).toBe(1);
+  });
+
+  it("is read once for a busy thread's detail and tray, its subagents' threads read as its own", async () => {
+    const { w, guest } = await busyThread();
+    const resolves = [
+      vi.spyOn(w.access, "require"),
+      vi.spyOn(w.access, "reader"),
+      vi.spyOn(w.access, "of"),
+    ];
+    const count = async (read: () => Promise<unknown>) => {
+      for (const spy of resolves) spy.mockClear();
+      await read();
+      return resolves.reduce((sum, spy) => sum + spy.mock.calls.length, 0);
+    };
+    expect(await count(() => w.detail(w.ada))).toBe(1);
+    expect(await count(() => w.activity(w.ada))).toBe(1);
+    // A guest from another org is read once more, as the space's org would see them.
+    expect(await count(() => w.detail(guest))).toBe(2);
+    expect(await count(() => w.activity(guest))).toBe(2);
   });
 
   it("is read once for a stream's first delivery of rows and tray", async () => {

@@ -106,6 +106,25 @@ export function createRunStore(db: Db): RunStore {
       return (await db.select(columns).from(run).where(eq(run.id, id)).limit(1))[0] ?? null;
     },
 
+    async latestIn(threadIds) {
+      if (threadIds.length === 0) return [];
+      return await db
+        .selectDistinctOn([run.threadId], columns)
+        .from(run)
+        .innerJoin(thread, eq(thread.id, run.threadId))
+        .where(and(inArray(run.threadId, threadIds), inCurrent))
+        .orderBy(run.threadId, desc(run.createdAt), desc(run.id));
+    },
+
+    async activeOnCurrent(threadIds) {
+      if (threadIds.length === 0) return [];
+      return await db
+        .select(columns)
+        .from(run)
+        .innerJoin(thread, eq(thread.id, run.threadId))
+        .where(and(inArray(run.threadId, threadIds), inArray(run.status, ACTIVE), inCurrent));
+    },
+
     async latest(threadId) {
       return (
         (

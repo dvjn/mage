@@ -542,7 +542,9 @@ export function createModels(options: ModelsOptions) {
     async open(orgId: string, ref: string): Promise<OpenModel> {
       const { connectionId: prefix, modelId: model } = parseModelRef(ref);
       if (!prefix || !model) throw new ModelError("model", `${ref} is not a model ref.`);
-      const connection = await connectionOf(orgId, prefix);
+      // Its connection, and the slug that connection goes by, from one read of the org's.
+      const list = await connections.list(orgId);
+      const connection = namedBy(list, prefix);
       if (!connection) {
         const needs = isHost(prefix)
           ? `a ${HOSTS[prefix].label} connection`
@@ -550,10 +552,9 @@ export function createModels(options: ModelsOptions) {
         throw new ModelError("auth", `${ref} needs ${needs}. Add one in Model providers.`);
       }
       // A list that cannot be read leaves the model's reasoning unknown.
-      const list = await listOf(orgId, connection, false).catch(() => []);
-      const listed = (await withChoices(connection, list, await slugIn(orgId, connection))).find(
-        (m) => m.id === model,
-      );
+      const catalog = await listOf(orgId, connection, false).catch(() => []);
+      const slug = connectionSlugs(list).get(connection.id) ?? connection.id;
+      const listed = (await withChoices(connection, catalog, slug)).find((m) => m.id === model);
       if (listed && !listed.enabled) throw new ModelTurnedOff(listed.name);
       const gateway = gateways[connection.host];
       return {

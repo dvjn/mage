@@ -12,7 +12,10 @@ export interface ThreadLogOptions {
   threads: Pick<ThreadStore, "append" | "lock">;
   signals: Signals;
   transact: Transact;
+  // Inside a transaction, its work with no savepoint of its own.
+  join?: Transact;
   ordered: Sync["ordered"];
+  holds?: Sync["holds"];
 }
 
 export type ThreadLog = ReturnType<typeof createThreadLog>;
@@ -44,6 +47,10 @@ export function eventSummary(event: StoredEvent): ThreadEventSummary {
 
 export function createThreadLog(options: ThreadLogOptions) {
   const { threads, signals, transact, ordered } = options;
+  // A write inside a transaction that already holds every thread it locks joins it; else it is a
+  // transaction, or a savepoint, of its own.
+  const held = (ids: string[]) =>
+    !!options.holds && ids.every((id) => options.holds!("thread", id));
 
   return {
     // Runs `work` in one transaction with the events it appends, to the branch named or else the
@@ -57,7 +64,8 @@ export function createThreadLog(options: ThreadLogOptions) {
       also: string[] = [],
     ) {
       let appended: StoredEvent[] = [];
-      const result = await transact(async () => {
+      const run = options.join && held([threadId, ...also]) ? options.join : transact;
+      const result = await run(async () => {
         appended = [];
         // Writes to one thread take turns, so what one reads of it holds until it is done.
         await ordered("thread", [threadId, ...also], async (ids) => threads.lock(ids));

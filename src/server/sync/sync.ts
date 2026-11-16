@@ -32,7 +32,7 @@ export function createSync(deps: {
   instanceId?: string;
 }) {
   const instanceId = deps.instanceId ?? ulid();
-  const stats: SyncStats = { retries: 0, outOfOrder: 0, insideCalls: 0 };
+  const stats: SyncStats = { retries: 0, outOfOrder: 0, insideCalls: 0, failedJoins: 0 };
   const transactor = createTransactor(deps.db, {
     logger: deps.logger,
     stats,
@@ -44,7 +44,7 @@ export function createSync(deps: {
       );
     },
   });
-  const { db, transact, afterCommit, inTransaction, ordered, holds, outside } = transactor;
+  const { db, transact, join, afterCommit, inTransaction, ordered, holds, outside } = transactor;
   const signals = createSignals({
     instanceId,
     logger: deps.logger,
@@ -97,6 +97,7 @@ export function createSync(deps: {
     instanceId,
     db,
     transact,
+    join,
     afterCommit,
     inTransaction,
     ordered,

@@ -61,7 +61,8 @@ async function write(page: Page, text: string) {
 
 test("a message gets a streamed reply from the agent", async ({ page }) => {
   await signUp(page, "Ada Lovelace");
-  await startThread(page, "How do engines compute?");
+  // Slow enough that the reply is still being written when the page shows it.
+  await startThread(page, "How do engines compute? Slowly");
 
   await expect(agentWriting(page)).toBeVisible();
   await expect(replies(page)).toHaveText(/I have read 1 message, and so the engine/);
@@ -164,12 +165,14 @@ test("two people in one thread see each other's messages, steers and stops live"
   const adaEmail = await signUp(page, "Ada Lovelace");
   const grace = await someoneElse(browser, testInfo.parallelIndex, "Grace Hopper");
   await joinSpaceOf(adaEmail, grace.email, "messager");
-  await startThread(page, "Tell me slowly");
+  // Long enough that Grace's message lands while the first reply is still being written.
+  await startThread(page, "Tell me very slowly");
   await grace.page.goto(page.url());
 
-  await expect(transcript(grace.page)).toContainText("Tell me slowly");
+  await expect(transcript(grace.page)).toContainText("Tell me very slowly");
   await expect(agentWriting(grace.page)).toBeVisible();
-  await write(grace.page, "Mention looms too, slowly");
+  // Long enough that Grace's stop lands while the second reply is still being written.
+  await write(grace.page, "Mention looms too, very slowly");
   await grace.page.getByLabel("Message", { exact: true }).press("Enter");
   await expect(page.getByRole("list", { name: "Waiting messages" })).toContainText("Grace Hopper");
   await expect(replies(page).nth(1)).toContainText("I have read 2 messages", AFTER_SLOW_REPLY);

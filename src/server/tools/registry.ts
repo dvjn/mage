@@ -6,6 +6,7 @@
 // all its spaces; a space adds an extra rule of its own on top, or turns a tool off there, and sets
 // its own toolsets' tools as it likes.
 
+import type { OrgSettings } from "@/server/orgs/service.ts";
 import { filterAsync } from "@/server/kernel/async.ts";
 import { createHash } from "node:crypto";
 
@@ -198,7 +199,7 @@ export interface Toolset {
   usefulIn?: UseTest;
   // What its test of use and what it tells the agent read of a space, read once with the space's
   // tools and handed to both.
-  load?: (space: { id: string; orgId: string }) => Promise<unknown>;
+  load?: (space: { id: string; orgId: string }, org?: OrgRead) => Promise<unknown>;
   // For one of Mage's own, the options orgs and spaces may turn on, each off until they do.
   options?: { id: string; title: string }[];
   // One of Mage's own whose tools are all fixed, and whose guidance is always given where it is of
@@ -226,6 +227,13 @@ export interface CallPresentation {
 // What one page's calls show, by row.
 export type Presenter = (row: ToolRow) => CallPresentation | undefined;
 
+// What decides a call's state of the space's tools: every tool it may have called, and the rules on
+// each.
+export type CallTools = Pick<SpaceTools, "every" | "rules">;
+
+// Calls' states read for one reader across a request.
+export type CallStates = ReturnType<ReturnType<typeof createTools>["callStates"]>;
+
 // What a space has of tools at one moment: its toolsets, and what applies to each tool.
 export interface SpaceTools {
   sets: Toolset[];
@@ -235,6 +243,8 @@ export interface SpaceTools {
   every: AnyToolSpec[];
   // What each toolset that loads something read, by its id.
   loaded: ReadonlyMap<string, unknown>;
+  // The org's settings, read once for all the step reads of them.
+  org?: OrgRead;
 }
 
 // What orgs and spaces add to one space's tools, read together: the toolsets it uses, and those
@@ -270,7 +280,7 @@ function fixedIn(toolset: Toolset, spec: AnyToolSpec) {
 // The toolsets that come and go with what orgs and spaces add, such as their MCP servers: those
 // the org offers every space, and those one space has: the org's it did not turn off, and its own.
 export interface ScopedToolsets {
-  readIn(space: { id: string; orgId: string }): Promise<AddedToolsets>;
+  readIn(space: { id: string; orgId: string }, org?: OrgRead): Promise<AddedToolsets>;
   // Settings include servers that are off so their permissions can be reviewed before enabling.
   forOrgSettings(orgId: string): Promise<Toolset[]>;
   forSpaceSettings(space: { id: string; orgId: string }): Promise<Toolset[]>;
@@ -472,7 +482,12 @@ export interface ModelNames {
   fromModel: (name: string) => string | undefined;
 }
 
+// The org's settings, read when first asked and once for whatever reads them together.
+export type OrgRead = () => Promise<OrgSettings>;
+
 export interface ToolsOptions {
+  // The org's own settings, as what the space's tools read of them is read once with them.
+  orgSettings?: (orgId: string) => Promise<OrgSettings>;
   settings: ToolSettingStore;
   policies: Pick<ToolPolicyStore, "inOrg">;
   directory: Pick<Directory, "groupIdsOf">;
@@ -586,7 +601,7 @@ export function createTools(options: ToolsOptions) {
   }
 
   // Every tool the space may have called, on or off, fixed ones among them.
-  async function everyIn(space: Pick<Space, "id" | "orgId">, now?: SpaceTools) {
+  async function everyIn(space: Pick<Space, "id" | "orgId">, now?: Pick<SpaceTools, "every">) {
     return now?.every ?? specsOf([...toolsets, ...(await scoped.forSpaceSettings(space))]);
   }
 
@@ -679,11 +694,16 @@ export function createTools(options: ToolsOptions) {
   // What the space has of tools now, read once for what is asked of them together: its toolsets,
   // what applies to each tool, what orgs and spaces add, and what the toolsets that load read.
   async function toolsIn(space: Pick<Space, "id" | "orgId">): Promise<SpaceTools> {
-    const added = await scoped.readIn(space);
+    let read: Promise<OrgSettings> | undefined;
+    const org = options.orgSettings
+      ? () => (read ??= options.orgSettings!(space.orgId))
+      : undefined;
+    const added = await scoped.readIn(space, org);
     const rules = await rulesIn(space, added.forOrgSettings);
     const loaded = new Map<string, unknown>();
-    for (const set of toolsets) if (set.load) loaded.set(set.id, await set.load(space));
+    for (const set of toolsets) if (set.load) loaded.set(set.id, await set.load(space, org));
     return {
+      ...(org && { org }),
       sets: await usedIn(space, added, rules, loaded),
       rules,
       added,
@@ -737,7 +757,7 @@ export function createTools(options: ToolsOptions) {
     row: Pick<ToolRow, "toolId" | "input" | "risk">,
     space: Pick<Space, "id" | "orgId">,
     model: string | null = null,
-    now?: SpaceTools,
+    now?: CallTools,
   ): Promise<ToolRisk> {
     const spec = (await everyIn(space, now)).find((tool) => tool.name === row.toolId);
     const parsed = spec?.input.safeParse(row.input);
@@ -745,21 +765,31 @@ export function createTools(options: ToolsOptions) {
   }
 
   // Whether the call waits for an answer rather than a decision.
-  async function asks(row: Pick<ToolRow, "toolId">, space: Pick<Space, "id" | "orgId">) {
-    const spec = (await everyIn(space)).find((tool) => tool.name === row.toolId);
+  async function asks(
+    row: Pick<ToolRow, "toolId">,
+    space: Pick<Space, "id" | "orgId">,
+    now?: Pick<SpaceTools, "every">,
+  ) {
+    const spec = (await everyIn(space, now)).find((tool) => tool.name === row.toolId);
     return spec?.waitsFor === "answer";
   }
 
   // Whether a call of the tool may move to the background: any but those that say not and those
   // that ask, as far as the space knows the tool.
-  async function movable(row: Pick<ToolRow, "toolId">, space: Pick<Space, "id" | "orgId">) {
-    const spec = (await everyIn(space)).find((tool) => tool.name === row.toolId);
+  async function movable(
+    row: Pick<ToolRow, "toolId">,
+    space: Pick<Space, "id" | "orgId">,
+    now?: Pick<SpaceTools, "every">,
+  ) {
+    const spec = (await everyIn(space, now)).find((tool) => tool.name === row.toolId);
     return spec?.movable !== false && spec?.waitsFor !== "answer";
   }
 
   // Where the call stands for the person: whether it waits on people, for a decision or for
   // answers, and whether they may act on it now: approve or deny it, or answer or skip its
   // questions. Every screen and action asks this, so they agree.
+  // `read`, when given, holds what was read already for other calls: the space's tools and the
+  // person as they reach the thread.
   async function callState(
     userId: string,
     row: CallView,
@@ -767,17 +797,66 @@ export function createTools(options: ToolsOptions) {
     thread: Thread,
     space: Space,
     model: string | null,
+    read?: { now: CallTools; person: () => Promise<Person> },
   ): Promise<CallState> {
-    const risk = await riskForCall(row, space, model);
+    const now = read?.now ?? (await callTools(space));
+    const risk = await riskForCall(row, space, model, now);
     if (row.state !== "waiting") return { waitsFor: null, canAct: false, risk };
-    const waitsFor = (await asks(row, space)) ? "answer" : "decision";
+    const waitsFor = (await asks(row, space, now)) ? "answer" : "decision";
     const canAct = (waitsFor === "answer" ? mayAnswer : mayApprove)(
-      await personIn(userId, thread, space),
-      (await rulesIn(space))(row.toolId).rule,
+      await (read?.person() ?? personIn(userId, thread, space)),
+      now.rules(row.toolId).rule,
       risk,
       lastWriter(words),
     );
     return { waitsFor, canAct, risk };
+  }
+
+  // What a call's state is decided with of the space's tools: every tool it may have called and
+  // the rules on each, without what only the agent's own requests need.
+  async function callTools(space: Pick<Space, "id" | "orgId">): Promise<CallTools> {
+    const added = await scoped.readIn(space);
+    return {
+      every: specsOf([...toolsets, ...added.forSpaceSettings]),
+      rules: await rulesIn(space, added.forOrgSettings),
+    };
+  }
+
+  // Calls' states as one reader sees them across a request: each space's tools read once, and the
+  // reader as they reach each thread tree read once, a subagent's thread as its starter's. `known`
+  // is how they reach one tree, when already read in its space's org.
+  function callStates(userId: string, known?: { tree: string; via: Access | null }) {
+    const spaces = new Map<string, Promise<CallTools>>();
+    const people = new Map<string, Promise<Person>>();
+    const toolsOf = (space: Pick<Space, "id" | "orgId">) => {
+      const found = spaces.get(space.id) ?? callTools(space);
+      spaces.set(space.id, found);
+      return found;
+    };
+    const person = (thread: Thread, space: Space) => {
+      const tree = thread.rootThreadId ?? thread.id;
+      const found =
+        people.get(tree) ??
+        personIn(userId, thread, space, tree === known?.tree ? known.via : undefined);
+      people.set(tree, found);
+      return found;
+    };
+    return {
+      toolsOf,
+      person,
+      async of(
+        row: CallView,
+        words: readonly Word[],
+        thread: Thread,
+        space: Space,
+        model: string | null,
+      ) {
+        return callState(userId, row, words, thread, space, model, {
+          now: await toolsOf(space),
+          person: async () => person(thread, space),
+        });
+      },
+    };
   }
 
   // The words the model read, messages and answers, each with whether its writer can post now and
@@ -1004,6 +1083,17 @@ export function createTools(options: ToolsOptions) {
     },
     riskForCall,
     callState,
+    callStates,
+    // The calls' states as the reader of a thread sees them, how they reach its tree already read
+    // when the access rule read it in its space's org.
+    callStatesFor(read: Pick<Reader, "principal" | "space" | "thread" | "via">) {
+      const sameOrg = !!read.space && read.principal.orgId === read.space.orgId;
+      return callStates(
+        read.principal.userId,
+        sameOrg ? { tree: read.thread.rootThreadId ?? read.thread.id, via: read.via } : undefined,
+      );
+    },
+    callTools,
     rulesIn,
 
     // The person's own connection that a call of the tool with this input would run with, for a
@@ -1013,8 +1103,9 @@ export function createTools(options: ToolsOptions) {
       toolId: string,
       userId: string,
       input: unknown,
+      now?: Pick<SpaceTools, "every">,
     ): Promise<ToolConnection | null> {
-      const spec = (await everyIn(space)).find((tool) => tool.name === toolId);
+      const spec = (await everyIn(space, now)).find((tool) => tool.name === toolId);
       const parsed = spec?.input.safeParse(input);
       if (!spec?.connection || !parsed?.success) return null;
       return (await (await spec.connection(parsed.data, space))?.(userId)) ?? null;
@@ -1027,8 +1118,9 @@ export function createTools(options: ToolsOptions) {
       thread: Thread,
       space: Space,
       via?: Access | null,
+      read?: Person,
     ): Promise<{ levels: Record<string, ToolLevel>; definitions: ToolDefinition[] }> {
-      const person = await personIn(userId, thread, space, via);
+      const person = read ?? (await personIn(userId, thread, space, via));
       const { rules, sets } = await toolsIn(space);
       return {
         levels: Object.fromEntries(

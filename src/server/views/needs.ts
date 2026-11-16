@@ -13,6 +13,9 @@ export interface NeedsOptions {
 
 export type Needs = ReturnType<typeof createNeeds>;
 
+// Who the calls are read for, with what was read already for their other calls in the request.
+type WaitReader = Parameters<Calls["waitingOn"]>[0];
+
 export function createNeeds(options: NeedsOptions) {
   const { calls } = options;
 
@@ -60,8 +63,8 @@ export function createNeeds(options: NeedsOptions) {
   }
 
   // The calls of the threads that wait for a person, by thread, in the order they were asked for.
-  async function waitingIn(userId: string, threadIds: readonly string[]) {
-    const found = (await calls?.waitingOn({ userId }, threadIds)) ?? [];
+  async function waitingIn(reader: WaitReader, threadIds: readonly string[]) {
+    const found = (await calls?.waitingOn(reader, threadIds)) ?? [];
     return Map.groupBy(
       found.toSorted((a, b) => a.row.seq - b.row.seq),
       (one) => one.call.threadId,
@@ -76,8 +79,7 @@ export function createNeeds(options: NeedsOptions) {
   return {
     // The calls of the threads that wait for a person, by thread, in the order they were asked
     // for, each with whether the reader may act on it.
-    of: async (reader: { userId: string }, threadIds: readonly string[]) =>
-      waitingIn(reader.userId, threadIds),
+    of: async (reader: WaitReader, threadIds: readonly string[]) => waitingIn(reader, threadIds),
     standing: runActivity,
     runWaitsOn,
     waitsFor: callWaitsFor,
