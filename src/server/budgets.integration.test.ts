@@ -5,7 +5,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { createRunTraces } from "@/server/kernel/tracing.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
-import { busyThread, subagentsWaiting } from "@/server/testing/busy-thread.ts";
+import { busyThread, subagentsIdle, subagentsWaiting } from "@/server/testing/busy-thread.ts";
 import { queries } from "@/server/testing/tracing.ts";
 
 const MAX = {
@@ -17,6 +17,10 @@ const MAX = {
   // A thread with every kind of background work, as its owner and as a guest read it.
   busyTray: { owner: 85, guest: 98 },
   busyDetail: { owner: 108, guest: 133 },
+  // What a page of forty rows reads beyond one of ten: the other threads its rows name.
+  longPageMore: 18,
+  // A guest's list feed over two hundred shared threads.
+  guestFeed: { flush: 1618, recheck: 1418 },
 };
 
 // Ada's space with twenty threads, and a thread of fifty notes.
@@ -92,5 +96,62 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("queries of the paths people wai
     };
     // Four is as many as run at once.
     expect(await counted(4)).toEqual(await counted(2));
+  });
+
+  it("of a long page read no more than a short page's and a few for the threads it names", async () => {
+    const { w } = await busyThread();
+    const detail = await w.detail();
+    const total = (detail.before ?? 0) + detail.rows.length;
+    const page = async (limit: number) =>
+      queries(async () => {
+        const res = await w.api(
+          "GET",
+          `/threads/${w.threadId}/rows?before=${total}&limit=${limit}`,
+          w.ada.cookie,
+        );
+        return ((await res.json()) as { rows: { kind: string; state?: string }[] }).rows;
+      });
+    const ten = await page(10);
+    const forty = await page(40);
+    // The whole thread, its calls, notices and the call that waits among them.
+    expect(forty.result.length).toBe(total);
+    expect(forty.result.some((row) => row.kind === "notice")).toBe(true);
+    expect(forty.result.some((row) => row.state === "waiting")).toBe(true);
+    expect(forty.count).toBeLessThanOrEqual(ten.count + MAX.longPageMore);
+  });
+
+  it("of a tray read as often for twelve idle subagents as for three", async () => {
+    const counted = async (count: number) => {
+      const w = await subagentsIdle(count);
+      return (await queries(() => w.activity())).count;
+    };
+    expect(await counted(12)).toBeLessThanOrEqual(await counted(3));
+  });
+
+  it("of a guest's list feed over two hundred shared threads stay where they are measured", async () => {
+    const t = await agentThread();
+    const seed = async (body: object) =>
+      t.app.request("/api/test/seed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    await seed({ threads: { email: "ada@example.com", count: 200, prefix: "Shared" } });
+    const hedy = await t.signUp("Hedy Lamarr", "hedy@example.com");
+    await seed({ shareThreads: { ownerEmail: "ada@example.com", guestEmail: "hedy@example.com" } });
+    const shared = (await t.threadStore.listInSpace(t.space.id)).map((thread) => thread.id);
+    const told = new Set<string>();
+    const feed = await t.views.lists.feed(hedy, (item) => {
+      if (item.kind === "thread") told.add(item.thread.id);
+    });
+    const flush = await queries(async () => {
+      for (const threadId of shared) t.signals.changed({ threadId });
+      while (told.size < shared.length) await new Promise((resolve) => setTimeout(resolve, 5));
+    });
+    const recheck = await queries(() => feed.recheck());
+    feed.stop();
+    // The feed still checks a guest's threads one by one, so these grow with the threads shared.
+    expect(flush.count).toBeLessThanOrEqual(MAX.guestFeed.flush);
+    expect(recheck.count).toBeLessThanOrEqual(MAX.guestFeed.recheck);
   });
 });

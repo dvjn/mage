@@ -4,6 +4,8 @@
 // migrated template, so the tests also run where statements go over several connections at once.
 
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import path from "node:path";
 
 import { PGlite } from "@electric-sql/pglite";
 import { sql } from "drizzle-orm";
@@ -27,6 +29,15 @@ declare module "vite-plus/test" {
 }
 
 let snapshot: Blob | undefined;
+// PGlite's code and files, read and compiled once for every database the process opens.
+let engine: { pgliteWasmModule: WebAssembly.Module; fsBundle: Blob } | undefined;
+function engineOf() {
+  const dist = path.dirname(createRequire(import.meta.url).resolve("@electric-sql/pglite"));
+  return {
+    pgliteWasmModule: new WebAssembly.Module(readFileSync(path.join(dist, "pglite.wasm"))),
+    fsBundle: new Blob([readFileSync(path.join(dist, "pglite.data"))]),
+  };
+}
 const closing = new Set<() => Promise<void>>();
 
 export interface TestDatabase {
@@ -69,7 +80,8 @@ export function openTestDatabase(): TestDatabase {
   const server = process.env.TEST_DATABASE_URL;
   if (server) return onServer(server);
   snapshot ??= new Blob([readFileSync(inject("databaseSnapshot"))]);
-  const client = new PGlite({ loadDataDir: snapshot });
+  engine ??= engineOf();
+  const client = new PGlite({ loadDataDir: snapshot, ...engine });
   closing.add(() => client.close());
   // One connection, which every listener shares, and never loses.
   const listen: Listen = async (channel, onMessage) => {

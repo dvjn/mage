@@ -117,3 +117,23 @@ export async function subagentsWaiting(count: number) {
   await w.settled();
   return w;
 }
+
+// A thread whose agent started `count` subagents, each idle once it answered its task; started
+// four at a time, as many as run at once.
+export async function subagentsIdle(count: number) {
+  const w = await world();
+  const names = Array.from({ length: count }, (_, i) => `Helper${i + 1}`);
+  for (let at = 0; at < names.length; at += 4) {
+    const batch = names.slice(at, at + 4);
+    await w.post(w.ada, "Get help");
+    await w.asks(
+      w.threadId,
+      ...batch.map((name): [string, unknown] => ["subagents.start", { name, task: "Help" }]),
+    );
+    await w.answers(w.threadId, "Started.");
+    for (const name of batch) await w.answers(await w.subagentNamed(name), "Helped.");
+    await answered(w);
+  }
+  await w.settled();
+  return w;
+}
