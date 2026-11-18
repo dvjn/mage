@@ -167,6 +167,9 @@ export interface ToolSpec<I = unknown> {
   waitsFor?: "answer";
   // The tool that searches the tools a run leaves out of its requests, which it is given.
   deferral?: "search";
+  // A tool whose calls make calls of their own, as a script does; one never runs under another
+  // call of it, in its run or in the background.
+  makesCalls?: true;
   // For a tool whose calls run with the own login of the person they run as: each person's
   // connection a call with this input would go with, or null for a call that goes with shared
   // credentials, as when the input names a server whose credentials are shared. Such a call runs
@@ -496,6 +499,9 @@ export interface ModelNames {
   // Whether the space has a tool by the id, offered now or not.
   known: (id: string) => boolean;
 }
+
+// People as tools' rules see them in one thread, each read once for calls judged together.
+export type People = Map<string, Promise<Person>>;
 
 // The org's settings, read when first asked and once for whatever reads them together.
 export type OrgRead = () => Promise<OrgSettings>;
@@ -884,18 +890,26 @@ export function createTools(options: ToolsOptions) {
 
   // The words the model read, messages and answers, each with whether its writer can post now and
   // whether they may use the tool directly under the rule.
-  async function influenceOf(words: readonly Word[], thread: Thread, space: Space, rule: ToolRule) {
-    const people = new Map<string, Person>();
+  async function influenceOf(
+    words: readonly Word[],
+    thread: Thread,
+    space: Space,
+    rule: ToolRule,
+    people: People = new Map(),
+  ) {
     const influence: Influence[] = [];
     for (const { seq, userId } of words) {
-      let person = people.get(userId);
-      if (!person) {
-        person = await personIn(userId, thread, space);
-        people.set(userId, person);
-      }
+      const person = await personOnce(people, userId, thread, space);
       influence.push({ seq, userId, canPost: person.canPost, canUse: canUse(person, rule) });
     }
     return influence;
+  }
+
+  // The person as the rule sees them, read once for whatever is judged together.
+  async function personOnce(people: People, userId: string, thread: Thread, space: Space) {
+    const found = people.get(userId) ?? personIn(userId, thread, space);
+    people.set(userId, found);
+    return found;
   }
 
   // What each tool the space may have called is called now, with its toolset, those called under
@@ -1237,6 +1251,8 @@ export function createTools(options: ToolsOptions) {
       declared: ToolRisk,
       input: unknown,
       now?: SpaceTools,
+      // The people read already for calls judged together in the thread.
+      people: People = new Map(),
     ): Promise<Decision> {
       const { rule } = (now?.rules ?? (await rulesIn(space)))(toolId);
       const spec = (await everyIn(space, now)).find((tool) => tool.name === toolId);
@@ -1248,14 +1264,19 @@ export function createTools(options: ToolsOptions) {
           .map(async (vouch) => ({
             atSeq: vouch.seq,
             by: vouch.by,
-            eligible: mayApprove(await personIn(vouch.by, thread, space), rule, "normal", null),
+            eligible: mayApprove(
+              await personOnce(people, vouch.by, thread, space),
+              rule,
+              "normal",
+              null,
+            ),
             callId: vouch.callId,
           })),
       );
       return decide({
         declared,
         rule,
-        influence: await influenceOf(words, thread, space, rule),
+        influence: await influenceOf(words, thread, space, rule, people),
         standing,
         ...(connection && {
           connected: async (userId: string) => (await connection(userId)).connected,

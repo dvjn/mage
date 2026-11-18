@@ -84,6 +84,7 @@ const WEBHOOK_TOOLS = ["webhooks.add", "webhooks.list", "webhooks.delete"];
 const MEMORY_TOOLS = ["memory.save", "memory.search"];
 const MEMORY_MODEL_TOOLS = ["space.save_memory", "space.search_memory"];
 const JOB_TOOLS = ["jobs.start", "jobs.check", "jobs.list", "jobs.cancel"];
+const SCRIPT_TOOLS = ["scripts.run"];
 
 // The tools the agent has for artifacts, whose toolset is on unless turned off; previews need a
 // browser, which these tests go without.
@@ -541,6 +542,7 @@ describe("tool calls", () => {
       ...SKILL_TOOLS,
       ...SUBAGENT_TOOLS,
       ...JOB_TOOLS,
+      ...SCRIPT_TOOLS,
       ...TASK_MODEL_TOOLS,
       ...SCHEDULE_TOOLS,
       ...WEBHOOK_TOOLS,
@@ -854,6 +856,7 @@ describe("tool calls", () => {
       ...SKILL_TOOLS,
       ...SUBAGENT_TOOLS,
       ...JOB_TOOLS,
+      ...SCRIPT_TOOLS,
       ...TASK_MODEL_TOOLS,
       ...SCHEDULE_TOOLS,
       ...WEBHOOK_TOOLS,
@@ -873,6 +876,7 @@ describe("tool calls", () => {
       ...SKILL_TOOLS,
       ...SUBAGENT_TOOLS,
       ...JOB_TOOLS,
+      ...SCRIPT_TOOLS,
       ...TASK_MODEL_TOOLS,
       ...SCHEDULE_TOOLS,
       ...WEBHOOK_TOOLS,
@@ -1307,6 +1311,7 @@ describe("built-in toolset switches", () => {
       ...SKILL_TOOLS,
       ...SUBAGENT_TOOLS,
       ...CALL_TOOLS,
+      ...SCRIPT_TOOLS,
       ...TASK_TOOLS,
       ...SCHEDULE_TOOLS,
       ...WEBHOOK_TOOLS,

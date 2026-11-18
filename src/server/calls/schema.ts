@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  foreignKey,
   index,
   integer,
   json,
@@ -14,7 +15,7 @@ import {
   text,
 } from "drizzle-orm/pg-core";
 
-import { at, NOW } from "@/server/db/columns.ts";
+import { at, bytes, NOW } from "@/server/db/columns.ts";
 import { leaseColumns } from "@/server/sync/lease.ts";
 import { machine } from "@/server/sync/machine.ts";
 import { thread } from "@/server/threads/schema.ts";
@@ -43,6 +44,8 @@ export const callMachine = machine({
     deny: { from: ["waiting"], to: "denied" },
     skip: { from: ["waiting"], to: "skipped" },
     start: { from: ["ready"], to: "running" },
+    // A script paused at a call that waits for a person, to start again once it is decided.
+    pause: { from: ["running"], to: "ready" },
     goStale: { from: ["ready", "waiting"], to: "stale" },
     complete: { from: ["running"], to: "completed" },
     fail: { from: ["running"], to: "failed" },
@@ -83,6 +86,8 @@ export const call = pgTable(
     // For a job an older log made of a call moved to the background, that call's id; a call moved
     // now keeps its own.
     movedFrom: text("moved_from"),
+    // The call that made it, as a script makes the calls it runs and a start makes a job.
+    parentId: text("parent_id"),
     decidedBy: text("decided_by"),
     decidedAt: at("decided_at"),
     // Where the decision or the answer is in the thread's log.
@@ -103,6 +108,9 @@ export const call = pgTable(
     index("call_open_idx")
       .on(table.threadId, table.runId)
       .where(sql`${table.status} in ('ready', 'waiting', 'running')`),
+    index("call_parent_idx")
+      .on(table.threadId, table.parentId)
+      .where(sql`${table.parentId} is not null`),
     callMachine.check("call_status_check", table.status),
     check("call_waits_for_check", sql`${table.waitsFor} is null or ${table.status} = 'waiting'`),
   ],
@@ -136,4 +144,29 @@ export const callOutputChunk = pgTable(
     text: text("text").notNull(),
   },
   (table) => [primaryKey({ columns: [table.callId, table.offset] })],
+);
+
+// A script paused at the calls it waits on for a person: where it stood, as its sandbox dumped it,
+// what it had printed, and those calls. Taken once, by the start that resumes it.
+export const scriptPause = pgTable(
+  "script_pause",
+  {
+    threadId: text("thread_id").notNull(),
+    callId: text("call_id").notNull(),
+    snapshot: bytes("snapshot").notNull(),
+    printed: text("printed").notNull(),
+    // The calls it waits on, each by the sandbox's id for it.
+    waiting: json("waiting")
+      .$type<{ future: number; callId: string }[]>()
+      .default(sql`'[]'::json`)
+      .notNull(),
+    createdAt: at("created_at").default(NOW).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.threadId, table.callId] }),
+    foreignKey({
+      columns: [table.threadId, table.callId],
+      foreignColumns: [call.threadId, call.id],
+    }).onDelete("cascade"),
+  ],
 );

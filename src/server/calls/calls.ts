@@ -10,7 +10,7 @@
 // the tools' authority over the call's row, whose words the thread's agent read and the vouches
 // its branch holds, all read inside the write they guard.
 
-import { context, SpanStatusCode, trace } from "@opentelemetry/api";
+import { context, trace } from "@opentelemetry/api";
 import * as z from "zod";
 
 import type { Reader } from "@/server/access/access.ts";
@@ -25,27 +25,30 @@ import type {
   ToolNames,
   ToolOutput,
   Tools,
+  People,
+  Vouch,
 } from "@/server/tools/registry.ts";
 import { type CallStates, lastWriter } from "@/server/tools/registry.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
-import { contentRecorded, tracer } from "@/server/kernel/tracing.ts";
 import type { ModelToolCall } from "@/server/models/gateway.ts";
-import type { Queue } from "@/server/queue/queue.ts";
+import type { Queue, Word } from "@/server/queue/queue.ts";
 import type { Space, SpaceStore } from "@/server/spaces/service.ts";
 import { LeaseLost } from "@/server/sync/lease.ts";
 import type { Signals } from "@/server/sync/signals.ts";
 import type { AfterCommit, Sync } from "@/server/sync/sync.ts";
 import type { Append, ThreadLog } from "@/server/threads/log.ts";
-import type { Thread, ThreadStore } from "@/server/threads/types.ts";
+import type { NewEvent, Thread, ThreadStore } from "@/server/threads/types.ts";
 import { influenceOf } from "./influence.ts";
 import { type AskAnswers, askInputSchema, answersProblem } from "@/shared/ask.ts";
-import type { ToolRisk, ToolScope } from "@/shared/threads/events.ts";
+import type { EventDataMap, ToolRisk, ToolScope } from "@/shared/threads/events.ts";
 import { notOnYet } from "@/server/tools/search.ts";
 import { wireToolName } from "@/shared/tools.ts";
 import type { ToolRow } from "@/shared/transcript.ts";
 
 import { callWork, createJobs } from "./jobs.ts";
+import { approvedNow, CallPaused, judge, ranData, spanEnded, toolSpan } from "./lifecycle.ts";
+import { createScripts } from "./scripts.ts";
 import type { CallStatus } from "./schema.ts";
 import type { CallRow, CallStore } from "./store.ts";
 import { type CallRecord, callRecords } from "./views.ts";
@@ -129,9 +132,11 @@ export interface CallsOptions {
   afterCommit: AfterCommit;
   tools: Pick<
     Tools,
+    | "toolsIn"
     | "offered"
     | "evaluate"
     | "approvalHolds"
+    | "rulesIn"
     | "answerHolds"
     | "riskOf"
     | "namesNow"
@@ -159,6 +164,16 @@ export interface CallsOptions {
 }
 
 export type Calls = ReturnType<typeof createCalls>;
+
+// What a call is judged again with: its thread and space, their tools now, the model it is judged
+// under, and the authority of its branch.
+interface Judging {
+  thread: Thread;
+  space: Space;
+  now: SpaceTools;
+  model: string | null;
+  authority: { words(): Promise<Word[]>; vouches(): Promise<Vouch[]>; people: People };
+}
 
 const ACTOR = { kind: "agent" } as const;
 
@@ -204,6 +219,50 @@ export function createCalls(options: CallsOptions) {
     beat: async () => moveAsked([...running.values()]),
   });
 
+  const scripts = createScripts({
+    threads,
+    spaceStore,
+    logger,
+    tools: options.tools,
+    now,
+    // What a script's calls are judged with, and how they are recorded.
+    steps: {
+      words: async (threadId, branchId) => options.queue.words(threadId, branchId),
+      vouches: async (threadId, branchId) => store.vouches(threadId, branchId),
+      judge: async (ask) => judge(options.tools, ask),
+      requested: async (row) => (await store.insert([row]))[0]!,
+      ran,
+      async pause(threadId, callId, kept) {
+        const paused = await store.pause(threadId, callId, kept);
+        // What it printed is kept with where it stood; a reporter starts afresh as it goes on.
+        if (paused) await options.live?.end(callId);
+        return paused;
+      },
+      async resumeOf(threadId, callId) {
+        const pause = await store.takePause(threadId, callId);
+        const made = await store.made(threadId, callId);
+        const rows = await store.findAll(
+          threadId,
+          (pause?.waiting ?? []).map((one) => one.callId),
+        );
+        const records = await callRecords(threads, threadId, rows);
+        const byId = new Map(rows.map((row) => [row.id, row]));
+        const waitedOn = new Map<number, { row: Call; record: CallRecord }>();
+        for (const { future, callId: id } of pause?.waiting ?? []) {
+          const row = byId.get(id);
+          const record = records.get(id);
+          if (row && record) waitedOn.set(future, { row, record });
+        }
+        return { pause, made: made.count, waitedOn };
+      },
+      start: async (threadId, callId) => store.start(threadId, callId),
+      allow: async (threadId, callId) => store.allow(threadId, callId, null, "once"),
+      cancelBelow: async (append, threadId, ids) => jobs.cancelBelow(append, threadId, ids, false),
+      drop: async (append, call, reason) => unrun(append, call, reason),
+      approvedNow: async (ask) => approvedNow(options.tools, ask),
+    },
+  });
+
   // A move asked of a call running here is acted on as soon as its thread is woken, as the
   // request wakes it; the keeper's beat finds one whose hint was missed.
   signals.onWake((threadId) => {
@@ -231,6 +290,8 @@ export function createCalls(options: CallsOptions) {
     return {
       words: async () => (words ??= options.queue.words(threadId, branchId)),
       vouches: async () => (vouches ??= store.vouches(threadId, branchId)),
+      // Each person read once for the calls judged together.
+      people: new Map() as People,
     };
   }
 
@@ -239,6 +300,83 @@ export function createCalls(options: CallsOptions) {
     const row = await store.onCurrent(threadId, callId);
     const record = row && (await callRecords(threads, threadId, [row])).get(callId);
     return row && record ? { row, record } : null;
+  }
+
+  // Records a run's call's result, and ends its row as it says.
+  async function ran(
+    append: (event: NewEvent) => Promise<unknown>,
+    threadId: string,
+    data: EventDataMap["tool.ran"],
+  ) {
+    await append({ type: "tool.ran", actor: ACTOR, data });
+    await (data.ok ? store.complete : store.fail)(threadId, data.callId);
+  }
+
+  // Whether the waiting call still waits for a person, judged again as things stand: one that
+  // came to need nobody is let run by whatever starts it, the run or the call that made it, in
+  // the write that starts it. Nothing is written here. One that asks always waits for its answer.
+  async function stillWaits(call: CallRecord, offered: readonly AnyToolSpec[], judging: Judging) {
+    const spec = offered.find((one) => one.name === call.toolId);
+    const parsed = spec?.input.safeParse(call.input);
+    if (!spec || !parsed?.success || spec.waitsFor === "answer") return true;
+    const { authority } = judging;
+    const decision = await judge(options.tools, {
+      words: await authority.words(),
+      vouches: await authority.vouches(),
+      thread: judging.thread,
+      space: judging.space,
+      spec,
+      input: parsed.data,
+      model: judging.model,
+      now: judging.now,
+      people: authority.people,
+    });
+    return decision.kind === "wait";
+  }
+
+  // The jobs paused at calls of their own that no longer need anyone, judged together as things
+  // stand; nothing is written, the job lets them run as it goes on.
+  async function freedJobs(threadId: string) {
+    const waiting = await store.waitingUnderJobs(threadId);
+    if (waiting.length === 0) return [];
+    const thread = await threads.find(threadId);
+    const space = thread && (await spaceStore.find(thread.spaceId));
+    if (!thread || !space) return [];
+    const now = await options.tools.toolsIn(space);
+    const offered = await options.tools.offered(space, thread, now);
+    const records = await callRecords(threads, threadId, waiting);
+    const authority = authorityOf(threadId, thread.currentBranchId);
+    const held = new Set<string>();
+    for (const row of waiting) {
+      const record = records.get(row.id);
+      const judging = { thread, space, now, model: row.model, authority };
+      if (!record || (await stillWaits(record, offered, judging))) held.add(row.parentId!);
+    }
+    return [...new Set(waiting.map((row) => row.parentId!))].filter((id) => !held.has(id));
+  }
+
+  // Ends an open call that will not run, saying why, inside the write under way; a paused script
+  // drops where it stood.
+  async function unrun(
+    append: (event: NewEvent) => Promise<unknown>,
+    call: { threadId: string; id: string; runId: string; toolId: string },
+    reason: "stale" | "cancelled",
+    // Whether what it made ends here too; the caller ending many ends theirs together.
+    below = true,
+  ) {
+    const ended =
+      reason === "stale"
+        ? await store.goStale(call.threadId, call.id)
+        : await store.cancel(call.threadId, call.id);
+    if (!ended) return;
+    await options.live?.end(call.id);
+    await append({
+      type: "tool.denied",
+      actor: ACTOR,
+      data: { runId: call.runId, callId: call.id, reason },
+    });
+    // And what it made, but for jobs, which run on.
+    if (below) await jobs.cancelBelow(append, call.threadId, [call.id], false);
   }
 
   // A write for the run, made only while the caller holds it.
@@ -285,16 +423,17 @@ export function createCalls(options: CallsOptions) {
             ok &&
             (answers ||
               (
-                await tools.evaluate(
-                  await authority.words(),
-                  await authority.vouches(),
+                await judge(tools, {
+                  words: await authority.words(),
+                  vouches: await authority.vouches(),
                   thread,
                   space,
-                  toolId,
-                  await spec.risk(parsed.data, { model: hold.ref, orgId: space.orgId }),
-                  parsed.data,
+                  spec,
+                  input: parsed.data,
+                  model: hold.ref,
                   now,
-                )
+                  people: authority.people,
+                })
               ).kind === "wait");
           const names = named(toolId);
           const requested = await append({
@@ -353,16 +492,26 @@ export function createCalls(options: CallsOptions) {
       const { thread, space, now, offered } = ctx;
       return held(hold, async (append) => {
         const authority = authorityOf(run.threadId, run.branchId);
-        const rows = (await store.openFor(run.threadId, run.id))
-          .filter((row) => !row.background)
-          .toSorted((a, b) => a.seq - b.seq);
-        const records = await callRecords(threads, run.threadId, rows);
-        const calls = rows.flatMap((row) => {
-          const record = records.get(row.id);
-          return record && open(record) ? [record] : [];
-        });
-        const tools = options.tools;
         let waiting = false;
+        const tools = options.tools;
+        const left = (await store.openFor(run.threadId, run.id)).filter((row) => !row.background);
+        const records = await callRecords(threads, run.threadId, left);
+        const judging = { thread, space, now, model: hold.ref, authority };
+        // A call another made is the caller's to run; one that still waits holds its caller paused.
+        const paused = new Set<string>();
+        for (const row of left) {
+          const record = records.get(row.id);
+          if (!row.parentId || row.status !== "waiting" || !record) continue;
+          if (await stillWaits(record, offered, judging)) paused.add(row.parentId);
+        }
+        if (paused.size > 0) waiting = true;
+        const calls = left
+          .filter((row) => !row.parentId && !paused.has(row.id))
+          .toSorted((a, b) => a.seq - b.seq)
+          .flatMap((row) => {
+            const record = records.get(row.id);
+            return record && open(record) ? [record] : [];
+          });
         for (const call of calls) {
           const spec = offered.find((one) => one.name === call.toolId);
           const parsed = spec && spec.input.safeParse(call.input);
@@ -380,35 +529,32 @@ export function createCalls(options: CallsOptions) {
             }
             allowed = await tools.answerHolds(call, await authority.words(), thread, space, now);
           } else if (spec && parsed?.success) {
-            const risk = await tools.riskOf(space, spec, parsed.data, hold.ref, now);
-            if (call.state === "ready" && call.decision) {
-              allowed = await tools.approvalHolds(
-                call,
-                await authority.words(),
+            const { decision } = call;
+            if (call.state === "ready" && decision) {
+              const approved = await approvedNow(tools, {
+                call: { ...call, decision },
+                words: await authority.words(),
                 thread,
                 space,
-                risk,
-                now,
-              );
-              approvedBy = call.decision?.by.userId;
-              // An approved call runs with its approver's own login.
-              if (await spec.connection?.(parsed.data, space))
-                runAs = call.decision?.by.userId ?? null;
-            } else {
-              const declared = await spec.risk(parsed.data, {
+                spec,
+                input: parsed.data,
                 model: hold.ref,
-                orgId: space.orgId,
+                now,
               });
-              const decision = await tools.evaluate(
-                await authority.words(),
-                await authority.vouches(),
+              allowed = !!approved;
+              if (approved) ({ runAs, approvedBy } = approved);
+            } else {
+              const decision = await judge(tools, {
+                words: await authority.words(),
+                vouches: await authority.vouches(),
                 thread,
                 space,
-                call.toolId,
-                declared,
-                parsed.data,
+                spec,
+                input: parsed.data,
+                model: hold.ref,
                 now,
-              );
+                people: authority.people,
+              });
               allowed = decision.kind !== "wait";
               if (!allowed && call.waits) {
                 waiting = true;
@@ -417,7 +563,9 @@ export function createCalls(options: CallsOptions) {
               if (decision.kind !== "wait") runAs = decision.runAs ?? null;
               if (decision.kind === "standing") standingOn = decision.callId;
               // One that waited and no longer needs anyone stands ready, decided by nobody.
-              if (allowed && call.waits) await store.allow(run.threadId, call.id, null, "once");
+              if (allowed && call.state === "waiting") {
+                await store.allow(run.threadId, call.id, null, "once");
+              }
             }
           }
           if (allowed) {
@@ -430,12 +578,7 @@ export function createCalls(options: CallsOptions) {
               ...(approvedBy && { approvedBy }),
             };
           }
-          await store.goStale(run.threadId, call.id);
-          await append({
-            type: "tool.denied",
-            actor: ACTOR,
-            data: { runId: run.id, callId: call.id, reason: "stale" },
-          });
+          await unrun(append, { ...call, threadId: run.threadId }, "stale");
         }
         return waiting ? ("wait" as const) : null;
       });
@@ -472,14 +615,7 @@ export function createCalls(options: CallsOptions) {
       if (!thread || !space) throw new LeaseLost(`run ${run.id}`);
       // The search for left-out tools is given them, and turns them on for the rest of the thread.
       const deferral = spec.deferral === "search" ? await env.deferral() : null;
-      const span = tracer.startSpan(`execute_tool ${call.toolId}`, {
-        attributes: {
-          "gen_ai.operation.name": "execute_tool",
-          "gen_ai.tool.name": call.toolId,
-          "gen_ai.tool.call.id": call.id,
-          ...(contentRecorded() && { "gen_ai.tool.call.arguments": JSON.stringify(input) }),
-        },
-      });
+      const span = toolSpan(call.toolId, call.id, input);
       // The call has a stop of its own, which the run's stop reaches until it is moved.
       const controller = new AbortController();
       const stopCall = () => controller.abort(env.signal.reason);
@@ -571,6 +707,11 @@ export function createCalls(options: CallsOptions) {
           span.end();
           throw err;
         }
+        // Paused, it stays open and is not recorded.
+        if (err instanceof CallPaused) {
+          span.end();
+          return;
+        }
         logger.warn({ err, runId: run.id, toolId: call.toolId }, "tool failed");
         output = { ok: false, error: messageOf(err) };
       } finally {
@@ -580,31 +721,17 @@ export function createCalls(options: CallsOptions) {
           options.live?.close(call.id);
         }
       }
-      span.setAttribute("tool.outcome", output.ok ? "ok" : "error");
-      if (!output.ok) span.setStatus({ code: SpanStatusCode.ERROR });
-      if (contentRecorded()) {
-        const result = JSON.stringify(output.ok ? output.value : output.error);
-        if (result) span.setAttribute("gen_ai.tool.call.result", result);
-      }
-      span.end();
+      spanEnded(span, output);
       if (job) return;
       const ms = Math.max(0, now().getTime() - started);
       await held(hold, async (append) => {
         // What it printed while it ran goes as its result is recorded.
         await options.live?.end(call.id);
-        await append({
-          type: "tool.ran",
-          actor: ACTOR,
-          data: {
-            runId: run.id,
-            callId: call.id,
-            ms,
-            ...(output.ok ? { ok: true, value: output.value } : { ok: false, error: output.error }),
-            ...(output.ranAs && { ranAs: output.ranAs }),
-            ...(standingOn && { standingOn }),
-          },
-        });
-        await (output.ok ? store.complete : store.fail)(run.threadId, call.id);
+        await ran(
+          append,
+          run.threadId,
+          ranData(run.id, call.id, output, ms, { ...(standingOn && { standingOn }) }),
+        );
       });
     },
 
@@ -613,14 +740,15 @@ export function createCalls(options: CallsOptions) {
       const left = await store.openFor(run.threadId, run.id);
       if (left.length === 0) return;
       for (const call of left.toSorted((a, b) => a.seq - b.seq)) {
-        await store.cancel(run.threadId, call.id);
-        await options.live?.end(call.id);
-        await append({
-          type: "tool.denied",
-          actor: ACTOR,
-          data: { runId: run.id, callId: call.id, reason: "cancelled" },
-        });
+        await unrun(append, call, "cancelled", false);
       }
+      // And what they made, but for jobs, which run on past the run.
+      await jobs.cancelBelow(
+        append,
+        run.threadId,
+        left.map((call) => call.id),
+        false,
+      );
     },
 
     // Approves or denies a call waiting for a decision. The first decision wins; a call that no
@@ -677,6 +805,11 @@ export function createCalls(options: CallsOptions) {
           await jobs.notify(moved, "was denied.");
         }
         await settled(moved);
+        // A job paused at calls that the decision leaves needing nobody goes on, as a run would.
+        const freed = await freedJobs(thread.id);
+        options.afterCommit(() => {
+          for (const id of freed) void jobs.proceed(thread.id, id).catch(() => {});
+        });
         return moved;
       });
       // The wake has the keeper sweep at once, here and elsewhere, which starts a job approved.
@@ -742,7 +875,7 @@ export function createCalls(options: CallsOptions) {
         if (!found) throw new ServiceError(404, "Tool call not found");
         const { row, record: call } = found;
         if (!open(call)) throw new ServiceError(409, "This call is no longer running");
-        if (row.background || !(await options.tools.movable(call, space))) {
+        if (row.background || call.within || !(await options.tools.movable(call, space))) {
           throw new ServiceError(409, "This call cannot move to the background");
         }
         if (call.state === "waiting") {
@@ -777,9 +910,25 @@ export function createCalls(options: CallsOptions) {
       return store.find(threadId, callId);
     },
 
-    // Whether one of the run's own calls waits for a person.
+    // Whether one of the run's own calls still waits for a person, as judged now.
     async waits(run: RunRef) {
-      return (await store.openFor(run.threadId, run.id)).some((call) => call.status === "waiting");
+      const waiting = (await store.openFor(run.threadId, run.id)).filter(
+        (call) => call.status === "waiting" && !call.background,
+      );
+      if (waiting.length === 0) return false;
+      const thread = await threads.find(run.threadId);
+      const space = thread && (await spaceStore.find(thread.spaceId));
+      if (!thread || !space) return true;
+      const now = await options.tools.toolsIn(space);
+      const offered = await options.tools.offered(space, thread, now);
+      const records = await callRecords(threads, run.threadId, waiting);
+      const authority = authorityOf(run.threadId, run.branchId);
+      for (const row of waiting) {
+        const record = records.get(row.id);
+        const judging = { thread, space, now, model: row.model, authority };
+        if (!record || (await stillWaits(record, offered, judging))) return true;
+      }
+      return false;
     },
 
     // The calls of the threads that wait for a person, as their rows say.
@@ -834,6 +983,7 @@ export function createCalls(options: CallsOptions) {
     jobsIn: async (threadId: string) => store.jobs(threadId),
 
     toolset: () => jobs.toolset(),
+    scriptsToolset: () => scripts.toolset(),
 
     // A job's card, on whichever call it is, as the reader sees it: the thread's jobs read once.
     async present(reader: Reader, rows: readonly ToolRow[]) {
@@ -866,11 +1016,12 @@ export function createCalls(options: CallsOptions) {
     // A beat of the keeper now, as one comes on its own.
     beat: async () => jobs.beat(),
 
-    // Stops the jobs running here and lets them go.
+    // Stops the jobs running here and lets them go, and closes the scripts' sandbox.
     async stop() {
       for (const off of unsubscribe) off();
       unsubscribe = [];
       await jobs.stop();
+      await scripts.stop();
     },
   };
 }

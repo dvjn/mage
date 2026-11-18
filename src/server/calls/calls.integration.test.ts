@@ -13,6 +13,7 @@ import { deadlockOnce, setup } from "@/server/testing/workspace.ts";
 import { influenceIn, influenceOf } from "@/server/calls/influence.ts";
 import { latestAuthor } from "@/server/tools/authority.ts";
 import { lastWriter } from "@/server/tools/registry.ts";
+import { EDITORS } from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
 // Tools for the tests: one that runs until finished by its label, writing to the thread first when
@@ -131,6 +132,45 @@ describe("a run's calls", () => {
     expect((await t.api("POST", `/threads/${t.thread.id}/stop`, t.ada.cookie)).status).toBe(202);
     await t.worker.idle();
     expect((await t.statuses())[guarded!]).toBe("cancelled");
+  });
+
+  it("judged again after a decision stay waiting, written by nobody until they start", async () => {
+    const t = await callThread();
+    const policy = async (fields: { users: string[]; approvers: string[] }) =>
+      t.toolPolicyStore.create({
+        orgId: t.ada.orgId,
+        spaceId: null,
+        name: "Sign-off",
+        color: "orange",
+        use: "some",
+        independent: false,
+        ...fields,
+      });
+    const signOff = await policy({ users: [`user:${t.grace.userId}`], approvers: [EDITORS] });
+    await t.toolSettings.setInOrg(t.ada.orgId, ["probe.wait"], signOff.id);
+    await t.post(t.ada, "Twice");
+    const [d0, d1] = await t.asks(["probe.wait", { label: "0" }], ["probe.wait", { label: "1" }]);
+    await t.worker.idle();
+    expect(await t.statuses()).toEqual({ [d0!]: "waiting", [d1!]: "waiting" });
+    await t.worker.stop();
+    expect((await t.act(`${d0}/decision`, t.ada, { allow: true, scope: "for_now" })).status).toBe(
+      200,
+    );
+    // Covered by Ada's vouch, the other is not let run until something starts it.
+    expect((await t.statuses())[d1!]).toBe("waiting");
+    // Only Grace may approve from now on, so Ada's vouch no longer holds.
+    const graceOnly = await policy({ users: [], approvers: [`user:${t.grace.userId}`] });
+    await t.toolSettings.setInOrg(t.ada.orgId, ["probe.wait"], graceOnly.id);
+    await t.worker.start();
+    await t.worker.idle();
+    expect((await t.act(`${d1}/decision`, t.grace, { allow: true, scope: "once" })).status).toBe(
+      200,
+    );
+    await until(() => t.tool.running("1"));
+    t.tool.finish("1");
+    (await t.model.next()).reply("Done.");
+    await t.worker.idle();
+    expect(await t.statuses()).toEqual({ [d0!]: "stale", [d1!]: "completed" });
   });
 
   it("are decided once: a second decision, or a denial after an approval, changes nothing", async () => {

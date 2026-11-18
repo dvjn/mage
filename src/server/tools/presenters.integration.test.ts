@@ -110,6 +110,7 @@ describe("the registry", () => {
       "mcp_servers",
       "subagents",
       "jobs",
+      "scripts",
       "tasks",
       "schedules",
       "webhooks",

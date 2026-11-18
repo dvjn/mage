@@ -185,6 +185,10 @@ const callRowSchema = z.object({
   ms: z.number().nullable(),
   ranAs: personSchema.optional(),
   standingOn: z.string().optional(),
+  // For a call another made, as a script or a job's start, that call, and how deep the call sits
+  // under the first that no other made.
+  parent: z.object({ id: z.string(), title: z.string() }).optional(),
+  depth: z.number().int().positive().optional(),
   // For a call that runs in the background, its card.
   work: workSchema.optional(),
   // Whether the reader may move the call, which is running or waits for approval, to the

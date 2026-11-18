@@ -521,6 +521,7 @@ export function compose(deps: ComposeDeps) {
   );
   tools.register(subagents.toolset());
   tools.register(calls.toolset());
+  tools.register(calls.scriptsToolset());
   tools.register(tasks.toolset());
   tools.register(schedules.toolset(setRule));
   tools.register(webhooks.toolset(setRule));

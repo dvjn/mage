@@ -11,6 +11,18 @@ describe("laying out a tool's value", () => {
     expect(layoutOf(["a", 1, null])).toEqual({ kind: "chips", items: ["a", 1, null] });
   });
 
+  it("shows text the schema says is source code as code in its language", () => {
+    expect(layoutOf("print(1)", { type: "string", contentMediaType: "text/x-python" })).toEqual({
+      kind: "code",
+      text: "print(1)",
+      language: "python",
+    });
+    expect(layoutOf("plain", { type: "string", contentMediaType: "text/plain" })).toEqual({
+      kind: "text",
+      text: "plain",
+    });
+  });
+
   it("labels fields by their schema in its order and keeps other keys after", () => {
     const schema = {
       type: "object",

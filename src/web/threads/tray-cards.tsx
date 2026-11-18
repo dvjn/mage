@@ -508,6 +508,7 @@ function ApprovalCard({
         definition={detail.tools.find((tool) => tool.name === row.toolId)}
         decide={row.actions?.length ? (allow, scope) => decide(row.id, allow, scope) : undefined}
         menu={goTo}
+        threadId={threadId}
       />
     </div>
   );

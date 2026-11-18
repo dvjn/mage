@@ -595,6 +595,208 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("an instance that dies", () => {
     // The reply cut short is told once; its retry's, written at once, comes as its row.
     expect(pieces).toEqual(["Gears"]);
   });
+
+  it("mid-script has the script and its call cancelled by another, the tool run once and never again", async () => {
+    const tool = probe();
+    const [wait, ...rest] = tool.toolset.tools;
+    const ran = vi.fn(wait!.run.bind(wait));
+    const toolset = { ...tool.toolset, tools: [{ ...wait!, run: ran }, ...rest] };
+    const [a, b] = await instances(2, { toolsets: [toolset] });
+    await a.start();
+    await a.post(a.ada, "Wait in a script");
+    const call = await a.model.next();
+    call.startStep();
+    call.toolCall("script", "scripts.run", {
+      code: 'await call_tool("probe__wait", {"label": "a"})\nawait call_tool("probe__wait", {"label": "b"})',
+    });
+    call.endStep();
+    call.end();
+    await vi.waitFor(() => expect(tool.running("a")).toBe(true));
+    await kill(a);
+    await expireLeases(b.db, "run");
+    await b.worker.recover();
+    await b.worker.start();
+    (await b.model.next()).reply("It was cut short.");
+    await b.worker.idle();
+
+    expect(ran).toHaveBeenCalledTimes(1);
+    const calls = await b.db.execute<{ tool_id: string; status: string }>(
+      sql`select tool_id, status from call where thread_id = ${a.thread.id} order by seq`,
+    );
+    expect(calls.rows).toEqual([
+      { tool_id: "scripts.run", status: "cancelled" },
+      { tool_id: "probe.wait", status: "cancelled" },
+    ]);
+    const runs = await b.db.execute<{ status: string; attempt: number }>(
+      sql`select status, attempt from run where thread_id = ${a.thread.id} order by attempt`,
+    );
+    expect(runs.rows.map((run) => [run.status, run.attempt])).toEqual([
+      ["failed", 1],
+      ["completed", 2],
+    ]);
+  });
+});
+
+describe.skipIf(!process.env.TEST_DATABASE_URL)("an instance that dies resuming a script", () => {
+  it("at the call approved has nothing run twice, the script and the call cancelled by another", async () => {
+    const tool = probe();
+    const [wait, guarded, slow] = tool.toolset.tools;
+    const ran = vi.fn(slow!.run.bind(slow));
+    const toolset = { ...tool.toolset, tools: [wait!, guarded!, { ...slow!, run: ran }] };
+    const [a, b] = await instances(2, { toolsets: [toolset] });
+    await a.start();
+    await a.post(a.ada, "Wait for approval in a script");
+    const call = await a.model.next();
+    call.startStep();
+    call.toolCall("script", "scripts.run", {
+      code: 'await call_tool("probe__guarded_wait", {"label": "a"})\n"done"',
+    });
+    call.endStep();
+    call.end();
+    await a.worker.idle();
+    const waiting = await a.db.execute<{ id: string }>(
+      sql`select id from call where thread_id = ${a.thread.id} and status = 'waiting'`,
+    );
+    const approved = await a.api(
+      "POST",
+      `/threads/${a.thread.id}/tools/${waiting.rows[0]!.id}/decision`,
+      a.ada.cookie,
+      { allow: true, scope: "once" },
+    );
+    expect(approved.status).toBe(200);
+    await vi.waitFor(() => expect(tool.running("a")).toBe(true));
+    await kill(a);
+    await expireLeases(b.db, "run");
+    await b.worker.recover();
+    await b.worker.start();
+    (await b.model.next()).reply("It was cut short.");
+    await b.worker.idle();
+
+    expect(ran).toHaveBeenCalledTimes(1);
+    const calls = await b.db.execute<{ tool_id: string; status: string }>(
+      sql`select tool_id, status from call where thread_id = ${a.thread.id} order by seq`,
+    );
+    expect(calls.rows).toEqual([
+      { tool_id: "scripts.run", status: "cancelled" },
+      { tool_id: "probe.guarded_wait", status: "cancelled" },
+    ]);
+    const pauses = await b.db.execute(
+      sql`select call_id from script_pause where thread_id = ${a.thread.id}`,
+    );
+    expect(pauses.rows).toEqual([]);
+  });
+});
+
+describe.skipIf(!process.env.TEST_DATABASE_URL)(
+  "an instance that dies resuming a background script",
+  () => {
+    it("at the call approved has nothing run twice, the job interrupted and its call cancelled", async () => {
+      const tool = probe();
+      const [wait, guarded, slow] = tool.toolset.tools;
+      const ran = vi.fn(slow!.run.bind(slow));
+      const toolset = { ...tool.toolset, tools: [wait!, guarded!, { ...slow!, run: ran }] };
+      const [a, b] = await instances(2, { toolsets: [toolset] });
+      await a.start();
+      await a.post(a.ada, "In the background");
+      const call = await a.model.next();
+      call.startStep();
+      call.toolCall("j1", "jobs.start", {
+        tool: "scripts__run",
+        input: { code: 'await call_tool("probe__guarded_wait", {"label": "a"})\n"done"' },
+      });
+      call.endStep();
+      call.end();
+      (await a.model.next()).reply("Started.");
+      await a.worker.idle();
+      await vi.waitFor(async () => {
+        const waiting = await a.db.execute(
+          sql`select id from call where thread_id = ${a.thread.id} and status = 'waiting'`,
+        );
+        expect(waiting.rows).toHaveLength(1);
+      });
+      const waiting = await a.db.execute<{ id: string }>(
+        sql`select id from call where thread_id = ${a.thread.id} and status = 'waiting'`,
+      );
+      const approved = await a.api(
+        "POST",
+        `/threads/${a.thread.id}/tools/${waiting.rows[0]!.id}/decision`,
+        a.ada.cookie,
+        { allow: true, scope: "once" },
+      );
+      expect(approved.status).toBe(200);
+      await vi.waitFor(() => expect(tool.running("a")).toBe(true));
+      await kill(a);
+      await expireLeases(b.db, "call");
+      await b.calls.recover();
+      await b.worker.start();
+      (await b.model.next()).reply("It was cut short.");
+      await b.worker.idle();
+
+      expect(ran).toHaveBeenCalledTimes(1);
+      const calls = await b.db.execute<{ tool_id: string; status: string }>(
+        sql`select tool_id, status from call where thread_id = ${a.thread.id} order by seq`,
+      );
+      expect(calls.rows).toEqual([
+        { tool_id: "jobs.start", status: "completed" },
+        { tool_id: "scripts.run", status: "interrupted" },
+        { tool_id: "probe.guarded_wait", status: "cancelled" },
+      ]);
+      const ends = await b.db.execute<{ id: string }>(
+        sql`select data->>'callId' as id from thread_event
+           where thread_id = ${a.thread.id} and type in ('tool.ran', 'tool.denied')`,
+      );
+      const ended = ends.rows.map((row) => row.id);
+      expect(new Set(ended).size).toBe(ended.length);
+      const pauses = await b.db.execute(sql`select call_id from script_pause`);
+      expect(pauses.rows).toEqual([]);
+    });
+  },
+);
+
+describe.skipIf(!process.env.TEST_DATABASE_URL)("an instance that dies mid-chain", () => {
+  it("has the script and its call cancelled and the job it started interrupted, each once, nothing run again", async () => {
+    const tool = probe();
+    const [wait, ...rest] = tool.toolset.tools;
+    const ran = vi.fn(wait!.run.bind(wait));
+    const toolset = { ...tool.toolset, tools: [{ ...wait!, run: ran }, ...rest] };
+    const [a, b] = await instances(2, { toolsets: [toolset] });
+    await a.start();
+    await a.post(a.ada, "Chain");
+    const call = await a.model.next();
+    call.startStep();
+    call.toolCall("script", "scripts.run", {
+      code: 'await call_tool("jobs__start", {"tool": "probe__wait", "input": {"label": "a"}})\nawait call_tool("probe__wait", {"label": "b"})',
+    });
+    call.endStep();
+    call.end();
+    await vi.waitFor(() => expect(tool.running("a") && tool.running("b")).toBe(true));
+    await kill(a);
+    await expireLeases(b.db, "run");
+    await expireLeases(b.db, "call");
+    await b.worker.recover();
+    await b.calls.recover();
+    await b.worker.start();
+    (await b.model.next()).reply("It was cut short.");
+    await b.worker.idle();
+
+    expect(ran).toHaveBeenCalledTimes(2);
+    const calls = await b.db.execute<{ tool_id: string; status: string }>(
+      sql`select tool_id, status from call where thread_id = ${a.thread.id} order by seq`,
+    );
+    expect(calls.rows).toEqual([
+      { tool_id: "scripts.run", status: "cancelled" },
+      { tool_id: "jobs.start", status: "completed" },
+      // The job outlives the run, ended by its own lease running out.
+      { tool_id: "probe.wait", status: "interrupted" },
+      { tool_id: "probe.wait", status: "cancelled" },
+    ]);
+    const ends = await b.db.execute<{ id: string }>(
+      sql`select data->>'callId' as id from thread_event
+           where thread_id = ${a.thread.id} and type in ('tool.ran', 'tool.denied')`,
+    );
+    const ended = ends.rows.map((row) => row.id);
+    expect(new Set(ended).size).toBe(ended.length);
+  });
 });
 
 describe.skipIf(!process.env.TEST_DATABASE_URL)("an instance that dies sweeping", () => {

@@ -387,6 +387,38 @@ export function createThreadViews(options: ThreadViewsOptions) {
     };
   }
 
+  // The calls that made a call waiting for a person, read once for each transcript.
+  const waitingUnder = new WeakMap<Transcript, Set<string>>();
+  function callersWaiting(transcript: Transcript) {
+    let found = waitingUnder.get(transcript);
+    if (!found) {
+      found = new Set(
+        transcript.rows.flatMap((row) =>
+          row.kind === "tool" && row.within && row.state === "waiting" ? [row.within] : [],
+        ),
+      );
+      waitingUnder.set(transcript, found);
+    }
+    return found;
+  }
+
+  // The call that made a call, as its row names it, and how deep the call sits under the first
+  // call no other made; read from the rows held, the parent of one past them being unknown.
+  function callerOf(fold: TranscriptFold, transcript: Transcript, parentId: string) {
+    const at = (id: string) => {
+      const row = transcript.rows[fold.indexOf(id)];
+      return row?.kind === "tool" ? row : null;
+    };
+    const caller = at(parentId);
+    let depth = 1;
+    const seen = new Set([parentId]);
+    for (let up = caller?.within; up && !seen.has(up); up = at(up)?.within) {
+      seen.add(up);
+      depth += 1;
+    }
+    return { call: { id: parentId, title: caller?.title ?? caller?.toolId ?? "" }, depth };
+  }
+
   // The row at `index` as the reader sees it: with its place, the last event that changed it, its
   // turn, for a call what its tool is called, and what they may do from it. A call waiting for a decision says what they may decide,
   // none while it waits on others, under the risk its tool's policy gives it now, with their own
@@ -421,19 +453,27 @@ export function createThreadViews(options: ThreadViewsOptions) {
       const effects = shownBy.effects ?? [];
       // A call its run is running, or that waits for a decision in it, may move to the background,
       // for whoever can post here.
+      // A call paused at one it made that waits for a person waits as that one does, and stays
+      // where it is until that is decided.
+      const paused = row.state === "ready" && callersWaiting(transcript).has(row.id);
       const running = row.state === "ready";
       const waitingInRun = row.state === "waiting";
       const movable =
         (running || waitingInRun) &&
+        !paused &&
         !row.background &&
+        !row.within &&
         transcript.run?.id === row.runId &&
         reader.can.post &&
         !!space &&
         (await tools.movable(row, space, await reader.states.toolsOf(space)));
       const state = row.state === "waiting" ? (await reader.waitingCalls()).get(row.id) : null;
-      const { background: _flag, waits: _waits, moved: _moved, ...plain } = row;
+      const { background: _flag, waits: _waits, moved: _moved, within, ...plain } = row;
+      const parent = within ? callerOf(fold, transcript, within) : null;
       const call = {
         ...plain,
+        ...(paused && { state: "waiting" as const, waitsFor: "decision" as const }),
+        ...(parent && { parent: parent.call, depth: parent.depth }),
         ...(row.state === "waiting" && { waitsFor: state?.waitsFor ?? ("decision" as const) }),
         ...place,
         ...(await reader.names(row)),

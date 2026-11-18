@@ -9,7 +9,7 @@ import type { PgUpdateSetSource } from "drizzle-orm/pg-core";
 import type { Db } from "@/server/db/db.ts";
 import { type Lease, leasesOn } from "@/server/sync/lease.ts";
 
-import { call, type CallStatus, callMachine, OPEN_CALL_STATES } from "./schema.ts";
+import { call, type CallStatus, callMachine, OPEN_CALL_STATES, scriptPause } from "./schema.ts";
 
 export type CallRow = typeof call.$inferSelect;
 export type NewCallRow = Pick<
@@ -25,7 +25,7 @@ export type NewCallRow = Pick<
   | "background"
   | "seq"
 > &
-  Partial<Pick<CallRow, "model">>;
+  Partial<Pick<CallRow, "model" | "parentId">>;
 
 // The right to carry out a running job, held by one server instance.
 export interface CallLease extends Lease {
@@ -47,6 +47,12 @@ function leftOutByRestore(branchId: SQL, seq: SQL | AnyColumn) {
                join thread_branch b on b.id = a.source_branch_id
               where a.branch_id = ${branchId} and b.read_seq is not null
                 and ${seq} > b.read_seq and ${seq} <= b.fork_seq`;
+}
+
+// Whether the call is a job paused at a call of its own that waits for a person.
+export function pausedOn(threadId: SQL | AnyColumn, id: SQL | AnyColumn) {
+  return sql`exists (select 1 from call w where w.thread_id = ${threadId} and w.parent_id = ${id}
+                                         and w.status = 'waiting')`;
 }
 
 export function createCallStore(db: Db) {
@@ -73,6 +79,19 @@ export function createCallStore(db: Db) {
   }
 
   const ended = () => ({ endedAt: sql`clock_timestamp()` });
+
+  // Ends a call that may be a paused script before it ran to its end, dropping where it stood
+  // with it. One that completes or fails runs first, which takes its saved state.
+  async function end(...args: Parameters<typeof move>) {
+    const [threadId, id] = args;
+    const moved = await move(...args);
+    if (moved) {
+      await db
+        .delete(scriptPause)
+        .where(and(eq(scriptPause.threadId, threadId), eq(scriptPause.callId, id)));
+    }
+    return moved;
+  }
 
   return {
     async insert(rows: (NewCallRow & { lease?: { owner: string; leaseMs: number } })[]) {
@@ -118,12 +137,24 @@ export function createCallStore(db: Db) {
     },
 
     // The thread's jobs, newest first.
+    // The thread's jobs, newest first, each with whether it is paused at a call of its own that
+    // waits for a person.
     async jobs(threadId: string) {
-      return await db
-        .select()
+      const rows = await db
+        .select({ row: call, paused: sql<boolean>`${pausedOn(call.threadId, call.id)}` })
         .from(call)
         .where(and(eq(call.threadId, threadId), eq(call.background, true)))
         .orderBy(desc(call.createdAt), desc(call.id));
+      return rows.map(({ row, paused }) => ({ ...row, paused: row.status === "ready" && paused }));
+    },
+
+    // What a paused script had printed, where it is paused.
+    async pausedPrinted(threadId: string, id: string) {
+      const [row] = await db
+        .select({ printed: scriptPause.printed })
+        .from(scriptPause)
+        .where(and(eq(scriptPause.threadId, threadId), eq(scriptPause.callId, id)));
+      return row?.printed ?? null;
     },
 
     // How many of the thread's jobs run; those waiting for a person or for a turn hold no place.
@@ -143,13 +174,19 @@ export function createCallStore(db: Db) {
         .select({ id: call.id })
         .from(call)
         .where(
-          and(eq(call.threadId, threadId), eq(call.background, true), eq(call.status, "ready")),
+          and(
+            eq(call.threadId, threadId),
+            eq(call.background, true),
+            eq(call.status, "ready"),
+            sql`not ${pausedOn(call.threadId, call.id)}`,
+          ),
         )
         .limit(1);
       return rows.length > 0;
     },
 
-    // The run's calls that have not ended, leaving out jobs.
+    // The run's calls that have not ended, leaving out jobs and what a job made, as the calls of
+    // a script moved to the background.
     async openFor(threadId: string, runId: string) {
       return await db
         .select()
@@ -160,6 +197,14 @@ export function createCallStore(db: Db) {
             eq(call.runId, runId),
             eq(call.background, false),
             inArray(call.status, [...OPEN_CALL_STATES]),
+            sql`not exists (
+              with recursive up(id, parent_id, background) as (
+                select p.id, p.parent_id, p.background from call p
+                 where p.thread_id = ${call.threadId} and p.id = ${call.parentId}
+                union all
+                select p.id, p.parent_id, p.background from call p join up on p.id = up.parent_id
+                 where p.thread_id = ${call.threadId})
+              select 1 from up where up.background)`,
           ),
         );
     },
@@ -231,6 +276,128 @@ export function createCallStore(db: Db) {
     start: async (threadId: string, id: string) =>
       move(threadId, id, "start", { startedAt: sql`clock_timestamp()` }),
 
+    // Pauses a running script where its sandbox stood, to start again once the call it waits on
+    // is decided.
+    async pause(
+      threadId: string,
+      id: string,
+      kept: { snapshot: Buffer; printed: string; waiting: { future: number; callId: string }[] },
+    ) {
+      // A job's lease goes with it, taken again by the start that resumes it.
+      const paused = await move(threadId, id, "pause", leases.release());
+      if (!paused) return null;
+      await db.insert(scriptPause).values({ threadId, callId: id, ...kept });
+      return paused;
+    },
+
+    // The calls by their ids.
+    async findAll(threadId: string, ids: readonly string[]) {
+      if (ids.length === 0) return [];
+      return await db
+        .select()
+        .from(call)
+        .where(and(eq(call.threadId, threadId), inArray(call.id, [...ids])));
+    },
+
+    // Where the paused script stood, taken once by the start that resumes it.
+    async takePause(threadId: string, id: string) {
+      return (
+        (
+          await db
+            .delete(scriptPause)
+            .where(and(eq(scriptPause.threadId, threadId), eq(scriptPause.callId, id)))
+            .returning({
+              snapshot: scriptPause.snapshot,
+              printed: scriptPause.printed,
+              waiting: scriptPause.waiting,
+            })
+        )[0] ?? null
+      );
+    },
+
+    // Cancels every open call the calls made, and those they made in turn, in one statement; the
+    // calls cancelled. Without `jobs`, a job among them, and all under it, is left to run on.
+    async cancelBelow(threadId: string, ids: readonly string[], jobs: boolean) {
+      if (ids.length === 0) return [];
+      const kept = jobs ? sql`` : sql`and not c.background`;
+      const below = sql`with recursive below(id) as (
+          select c.id from call c
+           where c.thread_id = ${threadId} ${kept} and c.parent_id in (${sql.join(
+             ids.map((id) => sql`${id}`),
+             sql`, `,
+           )})
+          union
+          select c.id from call c join below b on c.parent_id = b.id
+           where c.thread_id = ${threadId} ${kept})
+        select id from below`;
+      const cancelled = await db
+        .update(call)
+        .set({ ...callMachine.to("cancel"), waitsFor: null, ...ended(), ...leases.release() })
+        .where(
+          and(
+            eq(call.threadId, threadId),
+            sql`${call.id} in (${below})`,
+            callMachine.from("cancel", call.status),
+          ),
+        )
+        .returning();
+      if (cancelled.length > 0) {
+        await db.delete(scriptPause).where(
+          and(
+            eq(scriptPause.threadId, threadId),
+            inArray(
+              scriptPause.callId,
+              cancelled.map((one) => one.id),
+            ),
+          ),
+        );
+      }
+      return cancelled;
+    },
+
+    // Whether the call, or one that made it or made that in turn, is of the tool.
+    async underOf(threadId: string, id: string, toolId: string) {
+      const rows = await db.execute(sql`
+        with recursive up(id, parent_id, tool_id) as (
+          select c.id, c.parent_id, c.tool_id from call c
+           where c.thread_id = ${threadId} and c.id = ${id}
+          union all
+          select c.id, c.parent_id, c.tool_id from call c join up on c.id = up.parent_id
+           where c.thread_id = ${threadId})
+        select 1 from up where tool_id = ${toolId} limit 1`);
+      return rows.rows.length > 0;
+    },
+
+    // The calls waiting for a person that jobs paused at, with the job each is under.
+    async waitingUnderJobs(threadId: string) {
+      return await db
+        .select()
+        .from(call)
+        .where(
+          and(
+            eq(call.threadId, threadId),
+            eq(call.status, "waiting"),
+            sql`exists (select 1 from call p where p.thread_id = ${call.threadId}
+                           and p.id = ${call.parentId} and p.background and p.status = 'ready')`,
+          ),
+        );
+    },
+
+    async dropPause(threadId: string, id: string) {
+      await db
+        .delete(scriptPause)
+        .where(and(eq(scriptPause.threadId, threadId), eq(scriptPause.callId, id)));
+    },
+
+    // How many calls the call made.
+    async made(threadId: string, parentId: string) {
+      const [row] = await db
+        .select({ count: sql<number>`count(*)::int` })
+        .from(call)
+        .where(and(eq(call.threadId, threadId), eq(call.parentId, parentId)));
+      return { count: row?.count ?? 0 };
+    },
+
     // Runs a job that waited, held by the owner; null when it no longer stands ready.
     startJob: async (threadId: string, id: string, owner: string, leaseMs: number) =>
       move(threadId, id, "start", {
@@ -239,7 +406,7 @@ export function createCallStore(db: Db) {
       }),
 
     goStale: async (threadId: string, id: string) =>
-      move(threadId, id, "goStale", { waitsFor: null, ...ended() }),
+      end(threadId, id, "goStale", { waitsFor: null, ...ended() }),
 
     complete: async (threadId: string, id: string) =>
       move(threadId, id, "complete", { waitsFor: null, ...ended() }),
@@ -259,7 +426,7 @@ export function createCallStore(db: Db) {
 
     // A running job nobody holds any more, unless another found it first.
     interrupt: async (threadId: string, id: string) =>
-      move(
+      end(
         threadId,
         id,
         "interrupt",
@@ -268,7 +435,7 @@ export function createCallStore(db: Db) {
       ),
 
     cancel: async (threadId: string, id: string) =>
-      move(threadId, id, "cancel", { waitsFor: null, ...ended(), ...leases.release() }),
+      end(threadId, id, "cancel", { waitsFor: null, ...ended(), ...leases.release() }),
 
     // Asks the holder of the running call to move it to the background; null when it is not a
     // run's call running now, or a move was asked already.
@@ -392,6 +559,7 @@ export function fillFromLog(threads: SQL, oldJobs = false) {
       select distinct on (e.thread_id, e.data->>'callId')
              e.thread_id, e.data->>'callId' as id, e.branch_id, e.data->>'runId' as run_id,
              e.data->>'toolId' as tool_id, coalesce(e.data->>'risk', 'normal') as risk,
+             e.data->>'within' as parent_id,
              coalesce((e.data->>'background')::boolean, false) as background,
              coalesce((e.data->>'waits')::boolean, false) as waits, e.seq, e.created_at
         from thread_event e
@@ -439,7 +607,8 @@ export function fillFromLog(threads: SQL, oldJobs = false) {
        where e.type in ('run.completed', 'run.failed', 'run.cancelled') and ${threads}
     )
     insert into call (thread_id, id, branch_id, seq, run_id, tool_id, risk, status, waits_for,
-                      background, model, moved_from, lease_owner, lease_expires_at, lease_epoch,
+                      background, model, moved_from, parent_id, lease_owner, lease_expires_at,
+                      lease_epoch,
                       decided_by, decided_at, decided_seq, scope, created_at, started_at, ended_at)
     select r.thread_id, r.id, r.branch_id, r.seq, r.run_id, r.tool_id, r.risk, s.status,
            case when s.status = 'waiting'
@@ -447,6 +616,7 @@ export function fillFromLog(threads: SQL, oldJobs = false) {
            s.background,
            (select u.model from run u where u.id = r.run_id),
            (select m.from_id from moved m where m.thread_id = r.thread_id and m.id = r.id limit 1),
+           r.parent_id,
            case when s.status = 'running' then s.lease_owner end,
            case when s.status = 'running' then s.lease_expires_at end,
            coalesce(s.lease_epoch, 0),

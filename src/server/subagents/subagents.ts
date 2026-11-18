@@ -771,8 +771,9 @@ export function createSubagents(options: SubagentsOptions) {
   async function detailOf(subagent: SubagentRecord, named: (toolId: string) => string) {
     const read = await transcript(subagent.threadId);
     const summary = await summaryOf(subagent);
+    // A script's calls are the script's.
     const steps = read.rows
-      .filter((row) => row.kind === "tool")
+      .flatMap((row) => (row.kind === "tool" && !row.within ? [row] : []))
       .slice(-5)
       .map((row) => ({ tool: named(row.toolId), state: row.state }));
     return {

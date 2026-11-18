@@ -831,4 +831,41 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("migrations on existing data", (
       expect((await db.query(`select woken_by_seq from run`)).rows).toEqual([{ woken_by_seq: 1 }]);
     });
   });
+
+  it("name on each call a script made the script, as its request in the log does", async () => {
+    await scratch(async (db) => {
+      const before = Array.from({ length: 19 }, (_, n) => String(n).padStart(4, "0"));
+      for (const statement of statements(...before)) await db.query(statement);
+      await db.query("set session_replication_role = replica");
+      await db.query(
+        `insert into call (thread_id, id, branch_id, seq, run_id, tool_id, risk, status, background)
+         values ('T', 'S', 'B', 1, 'R', 'scripts.run', 'normal', 'completed', false),
+                ('T', 'C', 'B', 2, 'R', 'probe.wait', 'normal', 'completed', false)`,
+      );
+      await db.query(
+        `insert into thread_event (id, thread_id, branch_id, seq, type, actor_kind, data)
+         values ('e1', 'T', 'B', 1, 'tool.requested', 'agent', $1),
+                ('e2', 'T', 'B', 2, 'tool.requested', 'agent', $2)`,
+        [
+          JSON.stringify({ runId: "R", callId: "S", messageId: "m", toolId: "scripts.run" }),
+          JSON.stringify({
+            runId: "R",
+            callId: "C",
+            messageId: "",
+            toolId: "probe.wait",
+            within: "S",
+          }),
+        ],
+      );
+      await db.query("set session_replication_role = default");
+
+      for (const statement of statements("0019")) await db.query(statement);
+
+      const calls = await db.query(`select id, parent_id from call order by seq`);
+      expect(calls.rows).toEqual([
+        { id: "S", parent_id: null },
+        { id: "C", parent_id: "S" },
+      ]);
+    });
+  });
 });

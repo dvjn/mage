@@ -59,6 +59,8 @@ describe("agent runs", () => {
     expect(request.instructions).toContain("jobs__start");
     expect(request.instructions).toContain("thread__add_tasks");
     expect(request.instructions).toContain("space__save_memory");
+    expect(request.instructions).toContain("scripts__run");
+    expect(offered.map((tool) => tool.id)).toContain("scripts.run");
     expect(offered.find((tool) => tool.id === "thread.set_model")?.description).toContain(
       "thread__list_models",
     );

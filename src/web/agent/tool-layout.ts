@@ -1,8 +1,8 @@
 // How a tool call's input or output is laid out, from the value's shape and its JSON Schema: plain
-// values as text, numbers, yes or no and none; a list of plain values as chips; a list of objects as
-// a table whose columns follow the schema and then every other key; any other object or list as a
-// tree of labelled entries. Each layout covers one level, and what sits under it is laid out only
-// when it shows. A call's output is laid out by what it returned: why it failed, text as Markdown
+// values as text, numbers, yes or no and none; text the schema says is code as code; a list of
+// plain values as chips; a list of objects as a table whose columns follow the schema and then
+// every other key; any other object or list as a tree of labelled entries. Each layout covers one
+// level, and what sits under it is laid out only when it shows. A call's output is laid out by what it returned: why it failed, text as Markdown
 // (or its value, when the text is JSON), MCP's content parts one by one, or its value.
 
 import { contentPartsOf } from "@/shared/mcp.ts";
@@ -26,6 +26,7 @@ export interface Column {
 
 export type ValueLayout =
   | { kind: "text"; text: string }
+  | { kind: "code"; text: string; language: string }
   | { kind: "number"; value: number }
   | { kind: "boolean"; value: boolean }
   | { kind: "none" }
@@ -98,9 +99,18 @@ export function entriesOf(value: Record<string, unknown>, schema?: JsonSchema): 
   }));
 }
 
+// The language of text the schema says is source code, by its media type, as text/x-python.
+function languageOf(schema: JsonSchema | undefined) {
+  const type = concrete(schema)?.contentMediaType;
+  return typeof type === "string" ? /^text\/x-([\w-]+)$/.exec(type)?.[1] : undefined;
+}
+
 export function layoutOf(value: unknown, schema?: JsonSchema): ValueLayout {
   if (value === null || value === undefined) return { kind: "none" };
-  if (typeof value === "string") return { kind: "text", text: value };
+  if (typeof value === "string") {
+    const language = languageOf(schema);
+    return language ? { kind: "code", text: value, language } : { kind: "text", text: value };
+  }
   if (typeof value === "number") return { kind: "number", value };
   if (typeof value === "boolean") return { kind: "boolean", value };
   if (Array.isArray(value)) {

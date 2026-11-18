@@ -22,10 +22,16 @@ function useCallTitle() {
   };
 }
 
+// What goes before a call's own name: the call that made it, where another did, and its tool's
+// server.
+function parentOf(row: ToolRow) {
+  return [row.parent?.title, row.toolset].filter(Boolean).join(" › ") || undefined;
+}
+
 // What a tool is called, in words: its server's name before its own where it has a server.
 export function useToolPath() {
   const titleOf = useCallTitle();
-  return (row: ToolRow) => [row.toolset, titleOf(row)].filter(Boolean).join(" › ");
+  return (row: ToolRow) => [parentOf(row), titleOf(row)].filter(Boolean).join(" › ");
 }
 
 // An item of a flex row that grows from nothing into the room its siblings leave, up to its own
@@ -67,7 +73,7 @@ export function Crumb({
 export function ToolCrumb({ row, className }: { row: ToolRow; className?: string }) {
   const titleOf = useCallTitle();
   return (
-    <Crumb parent={row.toolset} className={className}>
+    <Crumb parent={parentOf(row)} className={className}>
       {titleOf(row)}
     </Crumb>
   );

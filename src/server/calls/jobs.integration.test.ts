@@ -184,7 +184,7 @@ describe("background calls", () => {
     const refused = await t.replies("No.");
     await t.worker.idle();
     expect(refused.texts.join("\n")).toContain("cannot run in the background");
-    expect(refused.texts.join("\n")).toContain("cannot start another");
+    expect(refused.texts.join("\n")).toContain("jobs__list cannot run in the background");
     expect(refused.texts.join("\n")).toContain("The input is not valid");
   });
 

@@ -257,6 +257,12 @@ function Value({ layout, depth = 0 }: { layout: ValueLayout; depth?: number }) {
   switch (layout.kind) {
     case "text":
       return <LongText text={layout.text} />;
+    case "code":
+      return (
+        <div className="max-h-80 w-full min-w-0 overflow-auto">
+          <MessageResponse>{fenced(layout.text, layout.language)}</MessageResponse>
+        </div>
+      );
     case "number":
       return <span className="text-foreground tabular-nums">{layout.value}</span>;
     case "boolean":

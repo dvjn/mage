@@ -15,6 +15,8 @@ export type CallRecord = CallView & {
   requestedAt: string;
   title?: string;
   toolset?: string;
+  // For a call a script made, the script's call.
+  within?: string;
 };
 
 // Where the call stands as the thread's fold says it: waiting for a person, ready to run until it
@@ -60,7 +62,7 @@ export async function callRecords(
     if (requested?.type !== "tool.requested") continue;
     const decided = row.decidedSeq === null ? undefined : events.get(row.decidedSeq);
     const answers = decided?.type === "tool.answered" ? decided.data.answers : undefined;
-    const { input, waits, title, toolset } = requested.data;
+    const { input, waits, title, toolset, within } = requested.data;
     records.set(row.id, {
       id: row.id,
       seq: row.seq,
@@ -73,6 +75,7 @@ export async function callRecords(
       waits: !!waits,
       ...(title && { title }),
       ...(toolset && { toolset }),
+      ...(within && { within }),
       ...(answers && { answers }),
       decision:
         row.decidedBy && row.decidedSeq !== null

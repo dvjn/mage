@@ -1,0 +1,1 @@
+ALTER TABLE "script_pause" ADD COLUMN "waiting" json DEFAULT '[]'::json NOT NULL;

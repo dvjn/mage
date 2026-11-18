@@ -207,6 +207,8 @@ export function ToolLine({
       open={focus ? focus.opened.has(lineKey(row.id)) : undefined}
       onOpenChange={focus ? (open) => focus.onOpenChange([lineKey(row.id)], open) : undefined}
       className={cn("rounded-md text-xs text-muted-foreground", lit && "attention")}
+      // A call another made sits under it, a step in for each level.
+      style={row.depth ? { paddingLeft: `${row.depth * 1.25}rem` } : undefined}
     >
       {subagent ? (
         <div className="flex items-center gap-2">

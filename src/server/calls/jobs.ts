@@ -9,7 +9,6 @@
 import { ulid } from "ulid";
 import * as z from "zod";
 
-import { findAsync } from "@/server/kernel/async.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { Queue } from "@/server/queue/queue.ts";
 import type { Space, SpaceStore } from "@/server/spaces/service.ts";
@@ -19,6 +18,8 @@ import type { Append, ThreadLog } from "@/server/threads/log.ts";
 import type { NewEvent, Thread, ThreadStore } from "@/server/threads/types.ts";
 import type { Live } from "@/server/calls/live.ts";
 import { influenceOf } from "./influence.ts";
+import { approvedNow, CallPaused, judge, ranData } from "./lifecycle.ts";
+import { callableIn, ToolRefusal, toolNamed } from "./resolve.ts";
 import { callRecords } from "./views.ts";
 import type {
   AnyToolSpec,
@@ -29,7 +30,6 @@ import type {
   ToolSpec,
 } from "@/server/tools/registry.ts";
 import { valueForAgent } from "@/shared/mcp.ts";
-import { notOnYet } from "@/server/tools/search.ts";
 import { type ToolText, wireToolName } from "@/shared/tools.ts";
 import {
   BACKGROUND_LIMIT,
@@ -46,7 +46,7 @@ import type { ToolRisk } from "@/shared/threads/events.ts";
 import { and, eq, sql } from "drizzle-orm";
 
 import { call, type CallStatus } from "./schema.ts";
-import type { CallLease, CallRow, CallStore } from "./store.ts";
+import { type CallLease, type CallRow, type CallStore, pausedOn } from "./store.ts";
 
 // How many approved jobs one sweep takes up at most.
 const READY_BATCH = 20;
@@ -60,7 +60,9 @@ export const CALLS_GUIDANCE: ToolText = (named) =>
 
 // Where a job stands in the words its card, the tray and the agent read: waiting for a person,
 // queued for its turn to run, and every way it was stopped before it ran is cancelled.
-export function shownStatus(status: CallStatus): ShownStatus {
+export function shownStatus(status: CallStatus, paused = false): ShownStatus {
+  // One paused at a call of its own waits for the person that call waits for.
+  if (paused) return "waiting";
   switch (status) {
     case "waiting":
       return "waiting";
@@ -80,10 +82,10 @@ export function shownStatus(status: CallStatus): ShownStatus {
 
 // A job as its card and the tray show it, and whether the reader may stop it.
 export function callWork(
-  row: Pick<CallRow, "status" | "createdAt" | "startedAt" | "endedAt">,
+  row: Pick<CallRow, "status" | "createdAt" | "startedAt" | "endedAt"> & { paused?: boolean },
   canPost: boolean,
 ): Work {
-  const status = shownStatus(row.status);
+  const status = shownStatus(row.status, row.paused);
   return {
     kind: "job",
     status,
@@ -94,9 +96,6 @@ export function callWork(
     canCancel: canPost && (status === "running" || status === "waiting" || status === "queued"),
   };
 }
-
-// A call the tool refuses, with what the model is told.
-class ToolRefusal extends Error {}
 
 async function refusing<T>(
   work: () => T | Promise<T>,
@@ -134,6 +133,7 @@ export interface JobsOptions {
   afterCommit: AfterCommit;
   tools: Pick<
     Tools,
+    | "toolsIn"
     | "offered"
     | "evaluate"
     | "approvalHolds"
@@ -243,13 +243,7 @@ export function createJobs(options: JobsOptions) {
     await append({
       type: "tool.ran",
       actor: ACTOR,
-      data: {
-        runId: job.runId,
-        callId: job.id,
-        ms,
-        ...(output.ok ? { ok: true, value: output.value } : { ok: false, error: output.error }),
-        ...extra,
-      },
+      data: ranData(job.runId, job.id, output, ms, extra),
     });
   }
 
@@ -292,6 +286,12 @@ export function createJobs(options: JobsOptions) {
     void work.then(
       async (output) => end(job, output, started, extra),
       async (err: unknown) => {
+        // Paused, it waits for its call's decision, held by nobody until the sweep resumes it.
+        if (err instanceof CallPaused) {
+          live.delete(key(job.threadId, job.id));
+          options.live?.close(job.id);
+          return;
+        }
         logger.warn({ err, callId: job.id, toolId: job.toolId }, "background call failed");
         await end(job, { ok: false, error: messageOf(err) }, started, extra);
       },
@@ -368,6 +368,8 @@ export function createJobs(options: JobsOptions) {
           });
           await notify(job, "was interrupted: the server stopped while it ran.");
           abortHere(job.threadId, job.id, "interrupted");
+          // Its own calls end with it; jobs it started run on.
+          await cancelBelow(append, job.threadId, [job.id], false);
         });
       } catch (err) {
         logger.warn({ err, callId: job.id }, "interrupted call not recorded");
@@ -406,6 +408,8 @@ export function createJobs(options: JobsOptions) {
         actor: ACTOR,
         data: { runId: job.runId, callId: job.id, reason: "stale" },
       });
+      // Its own calls end with it, as a paused script's waiting one; jobs it started run on.
+      await cancelBelow(append, job.threadId, [job.id], false);
       await notify(job, how);
     });
   }
@@ -463,7 +467,7 @@ export function createJobs(options: JobsOptions) {
       go.input,
       go.judged.runAs,
       go.judged.extra,
-      go.row.decision?.by.userId,
+      go.judged.kind === "run" ? go.judged.approvedBy : undefined,
     );
   }
 
@@ -482,7 +486,8 @@ export function createJobs(options: JobsOptions) {
               select r.thread_id, r.id,
                      row_number() over (partition by r.thread_id
                                         order by coalesce(r.decided_at, r.created_at), r.id) as turn
-                from call r where r.background and r.status = 'ready') q
+                from call r where r.background and r.status = 'ready'
+                                and not ${pausedOn(sql`r.thread_id`, sql`r.id`)}) q
              where q.turn <= ${BACKGROUND_LIMIT} - (
                select count(*) from call x
                 where x.thread_id = q.thread_id and x.background and x.status = 'running'))`,
@@ -503,30 +508,15 @@ export function createJobs(options: JobsOptions) {
 
   // The tool the agent may call by this name, for a job.
   async function specFor(thread: Thread, space: Pick<Space, "id" | "orgId">, toolId: string) {
-    const tools = options.tools;
-    const wanted =
-      (await tools.modelNames(space)).fromModel(toolId) ??
-      (
-        await findAsync(
-          await tools.offered(space, thread),
-          async (one) =>
-            one.name === toolId ||
-            wireToolName((await tools.modelNames(space)).toModel(one.name)) === toolId,
-        )
-      )?.name ??
-      toolId;
-    const spec = (await tools.offered(space, thread)).find((one) => one.name === wanted);
-    if (!spec) throw new ToolRefusal(`No tool is named ${toolId} here.`);
-    if (spec.name.startsWith(`${JOBS_TOOLSET}.`)) {
-      throw new ToolRefusal("A background call cannot start another.");
-    }
+    const callable = await callableIn(options.tools, thread, space);
+    const spec = toolNamed(callable, toolId);
     if (spec.waitsFor === "answer") {
       throw new ToolRefusal("A tool that asks cannot run in the background.");
     }
-    const names = await tools.modelNames(space);
-    const left = (await tools.fromServers(space, names)).some((tool) => tool.id === spec.name);
-    if (left && !(await tools.turnedOn(thread.id)).some((tool) => tool.id === spec.name)) {
-      throw new ToolRefusal(notOnYet(spec.name, names.toModel));
+    if (spec.movable === false) {
+      throw new ToolRefusal(
+        `${wireToolName(callable.names.toModel(spec.name))} cannot run in the background.`,
+      );
     }
     return spec;
   }
@@ -540,15 +530,22 @@ export function createJobs(options: JobsOptions) {
   async function summaryOf(job: CallRow) {
     const { thread, space } = await contextOf(job.threadId);
     const output = await outputOf(job);
-    // What a running job has printed so far, its end cut to the cap, and how far it has come.
-    const printed = job.status === "running" ? await options.live?.of(job.id) : null;
+    // What a running job has printed so far, its end cut to the cap, and how far it has come; a
+    // paused one, what it printed before it paused.
+    const paused = job.status === "ready" ? await store.pausedPrinted(job.threadId, job.id) : null;
+    const printed =
+      job.status === "running"
+        ? await options.live?.of(job.id)
+        : paused !== null
+          ? { text: paused }
+          : null;
     return {
       id: job.id,
       tool: wireToolName((await options.tools.modelNames(space)).toModel(job.toolId)),
-      status: shownStatus(job.status),
+      status: shownStatus(job.status, paused !== null),
       ...(output?.ok && { result: resultText(output) }),
       ...(output && !output.ok && { error: output.error }),
-      ...(printed?.progress && { progress: printed.progress }),
+      ...(printed && "progress" in printed && printed.progress && { progress: printed.progress }),
       ...(printed?.text && { output: printed.text.slice(-RESULT_CHARS) }),
       startedAt: job.startedAt?.toISOString() ?? null,
       ...(job.endedAt && { endedAt: job.endedAt.toISOString() }),
@@ -568,10 +565,33 @@ export function createJobs(options: JobsOptions) {
         data: { runId: job.runId, callId: job.id, reason: "cancelled" },
       });
       abortHere(job.threadId, job.id, "cancelled");
+      await cancelBelow(append, job.threadId, [job.id], true);
       options.afterCommit(() => void keeper.beat());
       return true;
     });
     return result;
+  }
+
+  // Cancels what the calls made, and what that made in turn, inside the write that ends them: none
+  // of it runs on, here or on another instance, and none of it is run again. Background work
+  // outlives what stops its maker unless `jobs` says it goes too, as when a job itself is
+  // cancelled.
+  async function cancelBelow(
+    append: (event: NewEvent) => Promise<unknown>,
+    threadId: string,
+    ids: readonly string[],
+    jobs: boolean,
+  ) {
+    const below = await store.cancelBelow(threadId, ids, jobs);
+    for (const call of below.toSorted((a, b) => a.seq - b.seq)) {
+      await options.live?.end(call.id);
+      await append({
+        type: "tool.denied",
+        actor: ACTOR,
+        data: { runId: call.runId, callId: call.id, reason: "cancelled" },
+      });
+      if (call.background) abortHere(threadId, call.id, "cancelled");
+    }
   }
 
   // Makes the job's row and its request in the log, inside the thread's write.
@@ -590,6 +610,8 @@ export function createJobs(options: JobsOptions) {
       names?: { title?: string; toolset?: string | null } | null;
       // The model it is judged under.
       model: string | null;
+      // The call that started it.
+      parentId: string;
     },
   ) {
     const { names } = job;
@@ -605,6 +627,7 @@ export function createJobs(options: JobsOptions) {
         risk: job.risk,
         waits: job.status === "waiting",
         background: true,
+        within: job.parentId,
         ...(names?.title && { title: names.title }),
         ...(names?.toolset && { toolset: names.toolset }),
       },
@@ -622,6 +645,7 @@ export function createJobs(options: JobsOptions) {
         seq: requested.seq,
         model: job.model,
         background: true,
+        parentId: job.parentId,
         ...(job.status === "running" && { lease: { owner, leaseMs } }),
       },
     ]);
@@ -647,7 +671,7 @@ export function createJobs(options: JobsOptions) {
     beforeSeq?: number;
     row?: CallView;
   }): Promise<
-    | { kind: "run"; runAs: string | null; extra: { standingOn?: string } }
+    | { kind: "run"; runAs: string | null; approvedBy?: string; extra: { standingOn?: string } }
     | { kind: "wait" }
     | { kind: "lapsed" }
   > {
@@ -657,20 +681,19 @@ export function createJobs(options: JobsOptions) {
       (word) => beforeSeq === undefined || word.seq < beforeSeq,
     );
     if (row?.decision) {
-      const risk = await tools.riskOf(space, spec, input, model);
-      if (!(await tools.approvalHolds(row, words, thread, space, risk))) return { kind: "lapsed" };
-      const own = await spec.connection?.(input, space);
-      return { kind: "run", runAs: own ? row.decision.by.userId : null, extra: {} };
+      const call = { ...row, decision: row.decision };
+      const approved = await approvedNow(tools, { call, words, thread, space, spec, input, model });
+      return approved ? { kind: "run", ...approved, extra: {} } : { kind: "lapsed" };
     }
-    const decision = await tools.evaluate(
+    const decision = await judge(tools, {
       words,
-      await store.vouches(thread.id, branchId),
+      vouches: await store.vouches(thread.id, branchId),
       thread,
       space,
-      spec.name,
-      await spec.risk(input, { model, orgId: space.orgId }),
+      spec,
       input,
-    );
+      model,
+    });
     if (decision.kind === "wait") return { kind: "wait" };
     return {
       kind: "run",
@@ -695,6 +718,10 @@ export function createJobs(options: JobsOptions) {
         refusing(async () => {
           const { thread, space } = await contextOf(ctx.threadId);
           const spec = await specFor(thread, space, input.tool);
+          // A script started from a script would make calls past its maker's cap, with no end.
+          if (spec.makesCalls && (await store.underOf(ctx.threadId, ctx.callId, spec.name))) {
+            throw new ToolRefusal("A script cannot start another, in the background or not.");
+          }
           const parsed = spec.input.safeParse(input.input ?? {});
           if (!parsed.success) {
             throw new ToolRefusal(`The input is not valid: ${z.prettifyError(parsed.error)}`);
@@ -718,6 +745,7 @@ export function createJobs(options: JobsOptions) {
               branchId: (await threads.find(thread.id))?.currentBranchId ?? thread.currentBranchId,
               id,
               runId: ctx.runId,
+              parentId: ctx.callId,
               toolId: spec.name,
               input: parsed.data,
               risk,
@@ -737,7 +765,7 @@ export function createJobs(options: JobsOptions) {
           }
           return {
             id,
-            status: shownStatus(job.status),
+            status: shownStatus(job.status, false),
             ...(job.status === "ready" && {
               queued: `This thread has ${BACKGROUND_LIMIT} background calls running; it starts when one ends.`,
             }),
@@ -823,7 +851,9 @@ export function createJobs(options: JobsOptions) {
     },
 
     requested,
+    proceed,
     cancel: cancelJob,
+    cancelBelow,
     notify,
     follow,
     fenced,

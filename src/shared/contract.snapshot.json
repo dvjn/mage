@@ -9384,6 +9384,9 @@
                 "background": {
                   "type": "boolean",
                   "const": true
+                },
+                "within": {
+                  "type": "string"
                 }
               },
               "required": [
@@ -11449,6 +11452,26 @@
             "standingOn": {
               "type": "string"
             },
+            "parent": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "title"
+              ]
+            },
+            "depth": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
             "work": {
               "$ref": "jobs.ts#workSchema"
             },
@@ -11743,6 +11766,26 @@
                 },
                 "standingOn": {
                   "type": "string"
+                },
+                "parent": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title"
+                  ]
+                },
+                "depth": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
                 },
                 "work": {
                   "$ref": "jobs.ts#workSchema"
@@ -12425,6 +12468,26 @@
                 },
                 "standingOn": {
                   "type": "string"
+                },
+                "parent": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title"
+                  ]
+                },
+                "depth": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
                 },
                 "work": {
                   "$ref": "jobs.ts#workSchema"
@@ -13449,6 +13512,26 @@
                 },
                 "standingOn": {
                   "type": "string"
+                },
+                "parent": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "title"
+                  ]
+                },
+                "depth": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
                 },
                 "work": {
                   "$ref": "jobs.ts#workSchema"

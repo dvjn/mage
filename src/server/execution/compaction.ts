@@ -73,7 +73,7 @@ function rowTokens(row: TranscriptRow) {
     case "agent":
       return readReply(row) ? tokensOf(row.text) : 0;
     case "tool":
-      return tokensOf(json(row.input)) + tokensOf(resultOf(row) ?? "");
+      return row.within ? 0 : tokensOf(json(row.input)) + tokensOf(resultOf(row) ?? "");
     case "notice":
       return tokensOf(row.text);
     default:
@@ -121,7 +121,7 @@ export function readOf(rows: readonly TranscriptRow[]) {
 // Whether the agent reads the row as part of the conversation.
 function inConversation(row: TranscriptRow) {
   if (row.kind === "human") return !asksToCompact(row);
-  return row.kind === "tool" || row.kind === "notice" || readReply(row);
+  return (row.kind === "tool" && !row.within) || row.kind === "notice" || readReply(row);
 }
 
 // Whether the agent reads anything word for word that a compaction could summarise.
@@ -191,7 +191,7 @@ export function conversationText(
       lines.push(noticeLine(row));
     } else if (row.kind === "agent") {
       if (readReply(row) && row.text) lines.push(`[Agent]: ${row.text}`);
-    } else if (row.kind === "tool") {
+    } else if (row.kind === "tool" && !row.within) {
       lines.push(`[Agent called tool]: ${named(row.toolId)} ${json(row.input)}`);
       const result = resultOf(row);
       if (result !== null) {

@@ -157,6 +157,8 @@ export interface ToolRow {
   // Where a call its run asked for went on in the background, keeping its id: the event that moved
   // it and when.
   moved?: { seq: number; at: string };
+  // The call that made it, as a script or a job's start; it belongs to no reply.
+  within?: string;
   // Whose own login it ran with, for a tool that uses one.
   ranAs?: Person;
   // For a call that ran on a standing approval, the call that approval was given on; `decision`
@@ -651,8 +653,8 @@ export function createFold(from?: FoldState): TranscriptFold {
         break;
       }
       case "tool.requested": {
-        const { runId, callId, messageId, toolId, input, risk, waits, title, toolset, background } =
-          event.data;
+        const { runId, callId, messageId, toolId, input, risk, waits, title, toolset } = event.data;
+        const { background, within } = event.data;
         const call: ToolRow = {
           kind: "tool",
           id: callId,
@@ -663,6 +665,7 @@ export function createFold(from?: FoldState): TranscriptFold {
           ...(title && { title }),
           ...(toolset && { toolset }),
           ...(background && { background }),
+          ...(within && { within }),
           input,
           risk,
           waits,

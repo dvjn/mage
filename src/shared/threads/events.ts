@@ -374,6 +374,9 @@ export const eventDataSchemas = {
     // A call the agent started in the background: it has no reply of its own and runs on after the
     // run that started it.
     background: z.literal(true).optional(),
+    // The call that made it, as a script makes the calls it runs and a start makes a job. It has
+    // no reply of its own, and the model never reads it.
+    within: z.string().optional(),
   }),
   // The actor approved the call.
   "tool.approved": z.object({ runId: z.string(), callId: z.string(), scope: toolScopeSchema }),

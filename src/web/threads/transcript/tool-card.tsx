@@ -4,8 +4,8 @@
 // who may not decide sees Allow and Deny disabled and the card marked paused. A call that runs with
 // its approver's own login asks an approver with no working connection to connect first, then
 // applies their choice; a sign-in that leaves the page applies it on the way back. Where other
-// agents' messages steered the call, the card says whose words they carried. Also a call that
-// ended, as a card without choices.
+// agents' messages steered the call, the card says whose words they carried; where another call
+// made it, as a script, a link to that call's row. Also a call that ended, as a card without choices.
 
 import { cn } from "cn";
 import { HandIcon, WrenchIcon } from "lucide-react";
@@ -29,6 +29,7 @@ import { MoveToBackground } from "@/web/threads/transcript/activity-actions";
 import { STATUSES } from "@/web/threads/transcript/work-card";
 import { CardFrame } from "@/web/threads/transcript/card-frame";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
+import { RowLink } from "@/web/threads/transcript/row-focus";
 import { duration } from "@/web/threads/transcript/tool-line";
 import { ToolCrumb } from "@/web/threads/transcript/tool-crumb";
 
@@ -65,8 +66,11 @@ export function ToolCard({
   finished,
   open,
   onOpenChange,
+  threadId,
 }: {
   row: ToolRow;
+  // The thread the call is in, for the link to the script that made it.
+  threadId?: string;
   definition: ToolDefinition | undefined;
   decide?: RowActions["decide"];
   // A menu beside the tool.
@@ -175,6 +179,15 @@ export function ToolCard({
           {menu}
         </span>
       </div>
+      {row.parent && threadId && (
+        <RowLink
+          threadId={threadId}
+          rowId={row.parent.id}
+          className="self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        >
+          Show caller
+        </RowLink>
+      )}
       {row.influence && (
         <p className="text-xs text-muted-foreground">{influenceSentence(row.influence)}</p>
       )}
