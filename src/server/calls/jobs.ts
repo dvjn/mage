@@ -554,14 +554,18 @@ export function createJobs(options: JobsOptions) {
   }
 
   // Stops the job: it runs no more and tells nobody. Run elsewhere, the instance running it stops
-  // it once its lease no longer holds. False when it had ended already.
-  async function cancelJob(job: Pick<CallRow, "threadId" | "id" | "runId">) {
+  // it once its lease no longer holds. False when it had ended already. A person who stops it is on
+  // record as its canceller; else the agent is.
+  async function cancelJob(
+    job: Pick<CallRow, "threadId" | "id" | "runId">,
+    by: string | null = null,
+  ) {
     const { result } = await log.write(job.threadId, async (append) => {
       if (!(await store.cancel(job.threadId, job.id))) return false;
       await options.live?.end(job.id);
       await append({
         type: "tool.denied",
-        actor: ACTOR,
+        actor: by ? { kind: "user", userId: by } : ACTOR,
         data: { runId: job.runId, callId: job.id, reason: "cancelled" },
       });
       abortHere(job.threadId, job.id, "cancelled");

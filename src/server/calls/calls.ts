@@ -903,7 +903,8 @@ export function createCalls(options: CallsOptions) {
     async cancel(reader: Reader, callId: string) {
       const job = await store.find(reader.thread.id, callId);
       if (!job?.background) throw new ServiceError(404, "Call not found");
-      if (!(await jobs.cancel(job))) throw new ServiceError(409, "This call has ended");
+      if (!(await jobs.cancel(job, reader.principal.userId)))
+        throw new ServiceError(409, "This call has ended");
     },
 
     async find(threadId: string, callId: string) {

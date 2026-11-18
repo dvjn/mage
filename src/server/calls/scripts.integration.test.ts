@@ -794,6 +794,77 @@ describe("a script", () => {
       ["probe.guarded", "cancelled"],
     ]);
     expect(await t.pauses()).toBe(0);
+    // A person's cancel is no decision on the job, as it runs or once its rows are made again.
+    const shown = async () => (await t.calls()).find((row) => row.id === job);
+    expect(await shown()).toMatchObject({ state: "cancelled" });
+    expect((await shown())?.decision).toBeNull();
+    await t.db.execute(sql`delete from call where thread_id = ${t.thread.id}`);
+    await t.callStore.fromLog(t.thread.id);
+    const [row] = (
+      await t.db.execute<{ decided_by: string | null }>(
+        sql`select decided_by from call where thread_id = ${t.thread.id} and id = ${job}`,
+      )
+    ).rows;
+    expect(row).toEqual({ decided_by: null });
+  });
+
+  // A background script that pauses for approval while the run that started it still goes on;
+  // its job's id and the call's, with the run's next model step still to answer.
+  async function pausedUnderRun(t: Awaited<ReturnType<typeof scriptThread>>) {
+    await t.post(t.ada, "In the background");
+    const start = await t.model.next();
+    start.startStep();
+    start.toolCall("j1", "jobs.start", {
+      tool: "scripts__run",
+      input: { code: 'r = await call_tool("probe__guarded", {"label": "x"})\nr["did"]' },
+    });
+    start.endStep();
+    start.end();
+    const after = await t.model.next();
+    await t.until(async () => (await t.stored()).some((row) => row.status === "waiting"));
+    await t.sweep();
+    const rows = await t.stored();
+    return {
+      after,
+      job: rows.find((row) => row.tool_id === "scripts.run")!.id,
+      waiting: rows.find((row) => row.status === "waiting")!.id,
+    };
+  }
+
+  // Allowed, the paused job goes on and its result reaches the agent.
+  async function finishes(t: Awaited<ReturnType<typeof scriptThread>>, waiting: string) {
+    expect((await t.decide(waiting, true)).status).toBe(200);
+    const told = await t.replies("Done.");
+    await t.worker.idle();
+    expect(told.texts.at(-1)).toContain('"result":"x"');
+    expect(t.guarded).toHaveBeenCalledTimes(1);
+    expect(await t.pauses()).toBe(0);
+  }
+
+  it("in the background, paused, outlives the run that started it ending", async () => {
+    const t = await scriptThread();
+    const { after, job, waiting } = await pausedUnderRun(t);
+    after.reply("Started.");
+    await t.worker.idle();
+    await t.sweep();
+    expect((await t.runs()).map((run) => run.status)).toEqual(["completed"]);
+    const rows = new Map((await t.stored()).map((row) => [row.id, row.status]));
+    expect([rows.get(job), rows.get(waiting)]).toEqual(["ready", "waiting"]);
+    expect(await t.pauses()).toBe(1);
+    await finishes(t, waiting);
+  });
+
+  it("in the background, paused, outlives the run that started it being stopped", async () => {
+    const t = await scriptThread();
+    const { job, waiting } = await pausedUnderRun(t);
+    await t.execution.stop({ threadId: t.thread.id }, t.ada.userId);
+    await t.worker.idle();
+    await t.sweep();
+    expect((await t.runs()).map((run) => run.status)).toEqual(["cancelled"]);
+    const rows = new Map((await t.stored()).map((row) => [row.id, row.status]));
+    expect([rows.get(job), rows.get(waiting)]).toEqual(["ready", "waiting"]);
+    expect(await t.pauses()).toBe(1);
+    await finishes(t, waiting);
   });
 
   it("in the background shows the job check it waits while paused, and all it printed", async () => {

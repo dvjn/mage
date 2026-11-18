@@ -96,6 +96,13 @@ async function callThread() {
     );
     return rows.rows[0]?.count ?? 0;
   }
+  // Who cancelled the call, as its log says.
+  async function cancelledBy(id: string) {
+    const denied = (await events()).find(
+      (event) => event.type === "tool.denied" && event.data.callId === id,
+    );
+    return denied?.actor;
+  }
   function callApi(path: string, who: { cookie: string } = ada, body?: object) {
     return api("POST", `/threads/${thread.id}/tools/${path}`, who.cookie, body);
   }
@@ -110,6 +117,7 @@ async function callThread() {
     until,
     running,
     callApi,
+    cancelledBy,
     worker,
   };
 }
@@ -170,6 +178,8 @@ describe("background calls", () => {
     expect((await t.tools()).find((row) => row.toolId === "probe.wait")).toMatchObject({
       state: "cancelled",
     });
+    // The agent cancelled it.
+    expect(await t.cancelledBy(id)).toEqual({ kind: "agent" });
   });
 
   it("refuse tools that ask and calls of their own", async () => {
@@ -545,6 +555,8 @@ describe("background calls", () => {
     expect((await t.callApi(`${id}/cancel`)).status).toBe(200);
     expect(await shown()).toMatchObject({ kind: "job", status: "cancelled", canCancel: false });
     expect((await t.callApi(`${id}/cancel`)).status).toBe(409);
+    // The person who cancelled it is on record.
+    expect(await t.cancelledBy(id)).toMatchObject({ kind: "user", userId: t.ada.userId });
   });
 
   it("print for those who follow the thread, and give someone who comes later the end", async () => {

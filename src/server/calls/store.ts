@@ -620,10 +620,11 @@ export function fillFromLog(threads: SQL, oldJobs = false) {
            case when s.status = 'running' then s.lease_owner end,
            case when s.status = 'running' then s.lease_expires_at end,
            coalesce(s.lease_epoch, 0),
-           coalesce(d.actor_user_id, case when x.type = 'tool.denied' then x.actor_user_id end),
-           coalesce(d.created_at, case when x.type = 'tool.denied' and x.actor_user_id is not null
+           -- A person's denial or skip decides the call; their cancel of a job does not.
+           coalesce(d.actor_user_id, case when x.reason <> 'cancelled' then x.actor_user_id end),
+           coalesce(d.created_at, case when x.reason <> 'cancelled' and x.actor_user_id is not null
                                        then x.created_at end),
-           coalesce(d.seq, case when x.type = 'tool.denied' and x.actor_user_id is not null
+           coalesce(d.seq, case when x.reason <> 'cancelled' and x.actor_user_id is not null
                                 then x.seq end),
            case when d.scope in ('once', 'for_now') then d.scope
                 when d.id is not null then 'once' end,

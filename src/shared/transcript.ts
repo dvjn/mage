@@ -688,7 +688,9 @@ export function createFold(from?: FoldState): TranscriptFold {
         } else {
           call.state = event.data.reason === "denied" ? "denied" : event.data.reason;
         }
-        if (event.actor.kind === "user") {
+        // A person's approval, denial or skip is a decision; their cancel of a job is not.
+        const decides = event.type === "tool.approved" || event.data.reason !== "cancelled";
+        if (event.actor.kind === "user" && decides) {
           call.decision = {
             allow: event.type === "tool.approved",
             scope: event.type === "tool.approved" ? event.data.scope : "once",
