@@ -42,7 +42,8 @@ export type PartLayout =
   | { kind: "other"; label: string };
 
 export type OutputLayout =
-  | { kind: "error"; text: string }
+  // Preformatted where its lines are laid out as code, as a traceback's, to keep as they are.
+  | { kind: "error"; text: string; preformatted: boolean }
   | { kind: "markdown"; text: string }
   | { kind: "parts"; parts: PartLayout[] }
   | { kind: "value"; layout: ValueLayout };
@@ -204,7 +205,9 @@ export function outputLayoutOf(
   output: { ok: true; value: unknown } | { ok: false; error: string },
   schema?: JsonSchema,
 ): OutputLayout {
-  if (!output.ok) return { kind: "error", text: output.error };
+  if (!output.ok) {
+    return { kind: "error", text: output.error, preformatted: /^(?: {2}|\t)/m.test(output.error) };
+  }
   const { value } = output;
   if (typeof value === "string") return textLayout(value, schema);
   const parts = contentPartsOf(value);

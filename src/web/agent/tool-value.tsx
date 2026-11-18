@@ -317,8 +317,14 @@ function Output({ layout }: { layout: OutputLayout }) {
       return (
         <Alert variant="destructive" role={undefined} className="text-xs">
           <XIcon />
-          <AlertDescription className="break-words whitespace-pre-wrap">
-            {layout.text}
+          {/* Code keeps its lines and scrolls across inside the box, as a code value does; prose
+              wraps. */}
+          <AlertDescription className="min-w-0 break-words whitespace-pre-wrap">
+            {layout.preformatted ? (
+              <Value layout={{ kind: "code", text: layout.text, language: "text" }} />
+            ) : (
+              layout.text
+            )}
           </AlertDescription>
         </Alert>
       );

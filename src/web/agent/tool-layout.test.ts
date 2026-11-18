@@ -101,7 +101,17 @@ describe("laying out a call's output", () => {
     expect(outputLayoutOf({ ok: false, error: "No folder" })).toEqual({
       kind: "error",
       text: "No folder",
+      preformatted: false,
     });
+  });
+
+  it("keeps the lines of an error laid out as code, as a traceback's", () => {
+    const traceback =
+      'Traceback (most recent call last):\n  File "main.py", line 1, in <module>\n    x = 1 / 0\n        ~~^~~\nZeroDivisionError: division by zero';
+    expect(outputLayoutOf({ ok: false, error: traceback })).toMatchObject({ preformatted: true });
+    expect(
+      outputLayoutOf({ ok: false, error: "The tool failed.\nTry again later." }),
+    ).toMatchObject({ preformatted: false });
   });
 
   it("shows text as Markdown, and JSON text as its value", () => {
