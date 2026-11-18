@@ -38,7 +38,13 @@ import type { EventDataMap, ToolRisk } from "@/shared/threads/events.ts";
 import type { ToolText } from "@/shared/tools.ts";
 
 import { CallPaused, ranData, spanEnded, toolSpan } from "./lifecycle.ts";
-import { createPython, PythonError, PythonPause, SCRIPT_CALLS } from "./python.ts";
+import {
+  createPython,
+  PythonError,
+  PythonPause,
+  SCRIPT_CALLS,
+  SCRIPT_SLEEP_SECS,
+} from "./python.ts";
 import { callableIn, ToolRefusal, toolNamed } from "./resolve.ts";
 import type { CallRow, NewCallRow } from "./store.ts";
 import type { CallRecord } from "./views.ts";
@@ -54,7 +60,7 @@ export const SCRIPTS_GUIDANCE: ToolText = (named) =>
     `Call a tool directly to look at a short result or to change something. Use ${named(RUN_SCRIPT)} for exact calculations and deterministic checks, to chain several tool calls in one Python script rather than one by one, and to filter, count, parse, compare or combine results, as when you need only a few fields or a count from a large result. Only what the script returns and prints comes back to you.`,
     `- Call a tool with \`await ${CALL_TOOL}("name", {...})\`, by the name you call it, up to ${SCRIPT_CALLS} calls a script; it gives the tool's result. Run independent calls at once with \`await asyncio.gather(...)\`, catching each call's errors inside its own task, as gather does not return them. A call that needs approval pauses the script until someone decides, then runs, or raises PermissionError where denied. Other failures raise NameError, ValueError, TypeError or RuntimeError, and calls already made are not undone.`,
     "- Write the script against named inputs and pass their values in `inputs`, so the same script runs again with others.",
-    `- A long script can run in the background with ${named(START_JOB)}; what it prints is what ${named(CHECK_JOB)} shows of it as it runs.`,
+    `- A long script can run in the background with ${named(START_JOB)}; what it prints is what ${named(CHECK_JOB)} shows of it as it runs. To poll, sleep between checks with \`await asyncio.sleep(seconds)\`, up to ${SCRIPT_SLEEP_SECS / 60} minutes a script.`,
     "- The last expression is the result: return the smallest thing that answers, not whole results to read. print() for notes. Dates and times come back as ISO 8601 text.",
     "- The sandbox runs a subset of Python, with json, re, math, datetime, collections, itertools and decimal, and no network or files. Tools that ask people questions and the tool search cannot be called from it.",
   ].join("\n");

@@ -258,4 +258,60 @@ describe("python in the sandbox", () => {
     expect(outcome).toMatchObject({ ok: true, value: 20 });
     expect(most).toBe(SCRIPT_PARALLEL);
   });
+
+  it("sleeps with time.sleep and asyncio.sleep, the time asleep not counted toward its limit", async () => {
+    const started = Date.now();
+    const outcome = await python.run({
+      code: "import asyncio, time\ntime.sleep(0.6)\nawait asyncio.sleep(0.6)\n'woke'",
+      functions: {},
+    });
+    expect(outcome).toMatchObject({ ok: true, value: "woke" });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(1200);
+  });
+
+  it("runs a call it gathers with a sleep while it sleeps", async () => {
+    let ranAt = 0;
+    const started = Date.now();
+    const outcome = await python.run({
+      code: "import asyncio\n(await asyncio.gather(asyncio.sleep(0.5), work()))[1]",
+      functions: {
+        work: async () => {
+          ranAt = Date.now() - started;
+          return "done";
+        },
+      },
+    });
+    expect(outcome).toMatchObject({ ok: true, value: "done" });
+    expect(ranAt).toBeLessThan(400);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(500);
+  });
+
+  it("stops at once when asked, while it sleeps either way", async () => {
+    for (const code of ["import time\ntime.sleep(30)", "import asyncio\nawait asyncio.sleep(30)"]) {
+      const stop = new AbortController();
+      setTimeout(() => stop.abort(), 100);
+      const started = Date.now();
+      const outcome = await python.run({ code, functions: {}, signal: stop.signal });
+      expect(outcome).toMatchObject({ ok: false, error: "The script was stopped." });
+      expect(Date.now() - started).toBeLessThan(900);
+    }
+  });
+
+  it("refuses a sleep past what it may sleep in all, before sleeping", async () => {
+    const short = createPython({ maxFeedDurationSecs: 1 }, { sleepSecs: 1 });
+    try {
+      const started = Date.now();
+      const outcome = await short.run({
+        code: "import asyncio, time\ntime.sleep(0.5)\nawait asyncio.sleep(0.6)",
+        functions: {},
+      });
+      expect(outcome).toMatchObject({
+        ok: false,
+        error: expect.stringContaining("RuntimeError: A script sleeps at most 1 seconds in all"),
+      });
+      expect(Date.now() - started).toBeLessThan(900);
+    } finally {
+      await short.close();
+    }
+  });
 });

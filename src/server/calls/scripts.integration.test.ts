@@ -1028,6 +1028,29 @@ describe("a script", () => {
     expect((await t.runs()).map((run) => run.status)).toEqual(["cancelled"]);
   });
 
+  it("sleeps holding no lock of its thread, and stops at once with its run while asleep", async () => {
+    const t = await scriptThread();
+    await t.post(t.ada, "Sleep");
+    await t.script("import time\ntime.sleep(30)");
+    await t.until(async () => (await t.stored()).some((row) => row.status === "running"));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    // The thread takes a message meanwhile.
+    await t.post(t.ada, "Still there?");
+    const started = Date.now();
+    await t.execution.stop({ threadId: t.thread.id }, t.ada.userId);
+    await t.until(async () => (await t.stored()).every((row) => row.status !== "running"));
+    expect(Date.now() - started).toBeLessThan(2000);
+    // The message waiting starts the next run.
+    await t.replies("Here.");
+    await t.worker.idle();
+    const [script] = await t.calls();
+    expect(script).toMatchObject({
+      state: "failed",
+      output: { ok: false, error: "The script was stopped." },
+    });
+    expect((await t.runs()).map((run) => run.status)).toEqual(["cancelled", "completed"]);
+  });
+
   it("holds a tool turned off while it runs from its next call", async () => {
     const t = await scriptThread();
     await t.post(t.ada, "Twice");

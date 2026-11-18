@@ -2,7 +2,8 @@
 // script runs to its end under fixed limits, with nothing of the host but the functions it is
 // given, each awaitable: a call starts on the host as it is made, so those a script gathers run
 // at once, and is answered as the script awaits it. What it prints is gathered. Values cross as
-// JSON. A stop kills its worker at once. A call may pause the script instead of answering: once
+// JSON. It sleeps on the host, holding its worker but nothing else. A stop kills its worker at once,
+// asleep or not. A call may pause the script instead of answering: once
 // every call it waits on waits so, it is dumped where it stands, to go on later in any worker
 // with those calls answered there.
 
@@ -20,8 +21,8 @@ import {
   type Snapshot,
 } from "@pydantic/monty";
 
-// The limits every script runs under: memory, time (paused on the host is not counted) and calls
-// of the host's functions.
+// The limits every script runs under: memory, time (paused on the host, as asleep, is not counted)
+// and turns to the host, each call and each sleep one.
 export const SCRIPT_LIMITS = {
   maxMemory: 256 * 1024 * 1024,
   maxFeedDurationSecs: 60,
@@ -34,6 +35,11 @@ export const SCRIPT_CALLS = 1000;
 
 // The most of a script's calls that run at once; more wait their turn.
 export const SCRIPT_PARALLEL = 8;
+
+// The most seconds a script sleeps in all, from its start or its last pause to its end: enough for
+// a background script to poll something for minutes, while one asleep holds one of the instance's
+// few workers, so not for long. A sleep past it fails before it starts.
+export const SCRIPT_SLEEP_SECS = 600;
 
 // How many scripts run at once on an instance, each in a worker of its own: at most this many
 // times the memory limit.
@@ -75,6 +81,10 @@ type Settled =
   | { error: PythonError }
   | { pause: unknown }
   | { fatal: unknown };
+
+// The host's sleeps, as the sandbox calls them, each given its seconds.
+const SLEEP = "time.sleep";
+const ASYNC_SLEEP = "asyncio.sleep";
 
 // Told to a script that made a call and never awaited it.
 const UNAWAITED =
@@ -172,9 +182,16 @@ export type Python = ReturnType<typeof createPython>;
 
 export function createPython(
   limits: ResourceLimits = SCRIPT_LIMITS,
-  given: { workers?: number; checkoutSecs?: number; pauseBytes?: number; parallel?: number } = {},
+  given: {
+    workers?: number;
+    checkoutSecs?: number;
+    pauseBytes?: number;
+    parallel?: number;
+    sleepSecs?: number;
+  } = {},
 ) {
   const pooled = {
+    sleepSecs: given.sleepSecs ?? SCRIPT_SLEEP_SECS,
     parallel: given.parallel ?? SCRIPT_PARALLEL,
     workers: given.workers ?? SCRIPT_WORKERS,
     checkoutSecs: given.checkoutSecs ?? CHECKOUT_SECS,
@@ -198,7 +215,8 @@ export function createPython(
         pool = null;
         throw err;
       });
-      const checkout = (await pool).checkout({ limits });
+      // Sleeps come to the host, to be woken by a stop and to let gathered calls go on meanwhile.
+      const checkout = (await pool).checkout({ limits, osPolicy: { sleep: "call_host" } });
       const aborted = new Promise<null>((resolve) => {
         if (signal?.aborted) resolve(null);
         signal?.addEventListener("abort", () => resolve(null), { once: true });
@@ -286,6 +304,34 @@ export function createPython(
             });
           started.set(id, outcome);
         };
+        // Seconds slept so far; a sleep that would go past the cap raises instead. A sleep ends
+        // early at a stop, which the loop then finds.
+        let slept = 0;
+        const sleep = async (args: unknown[]) => {
+          const secs = args[0];
+          if (typeof secs !== "number" || Number.isNaN(secs)) {
+            throw new PythonError("TypeError", "sleep takes a number of seconds.");
+          }
+          if (secs < 0) throw new PythonError("ValueError", "sleep length must be non-negative");
+          if (slept + secs > pooled.sleepSecs) {
+            throw new PythonError(
+              "RuntimeError",
+              `A script sleeps at most ${pooled.sleepSecs} seconds in all; this sleep would go past it.`,
+            );
+          }
+          slept += secs;
+          return new Promise<null>((wake) => {
+            const timer = setTimeout(() => wake(null), secs * 1000);
+            signal?.addEventListener(
+              "abort",
+              () => {
+                clearTimeout(timer);
+                wake(null);
+              },
+              { once: true },
+            );
+          });
+        };
         drain = async () => {
           const left = [...started.keys()].filter((id) => !delivered.has(id));
           await Promise.all(left.map(async (id) => started.get(id)));
@@ -307,6 +353,37 @@ export function createPython(
               : await snapshot.resume();
           } else if (snapshot instanceof FunctionSnapshot) {
             const call = snapshot;
+            if (call.isOsFunction && call.functionName === SLEEP) {
+              try {
+                await sleep(call.args);
+              } catch (err) {
+                if (!(err instanceof PythonError)) throw err;
+                snapshot = await call.resumeError(err);
+                continue;
+              }
+              if (signal?.aborted) throw signal.reason;
+              snapshot = await call.resume(null);
+              continue;
+            }
+            if (call.isOsFunction && call.functionName === ASYNC_SLEEP) {
+              // As a call of the host's, but holding no place of the calls': gathered beside
+              // others, they run meanwhile.
+              const id = call.callId;
+              const asleep = sleep(call.args).then(
+                (value): Settled => ({ value }),
+                (err: unknown): Settled =>
+                  err instanceof PythonError ? { error: err } : { fatal: err },
+              );
+              started.set(
+                id,
+                asleep.then((done) => {
+                  settled.set(id, done);
+                  return done;
+                }),
+              );
+              snapshot = await call.resumeFuture();
+              continue;
+            }
             if (call.isOsFunction) {
               snapshot = await call.resumeNotHandled();
               continue;
