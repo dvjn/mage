@@ -4,6 +4,8 @@
 // who changes a task given to an agent tells that agent, as the person whose words it carries. An
 // agent may also watch tasks, to be told once when one is done or changes by someone else.
 
+import { type ToolText, wireToolName } from "@/shared/tools.ts";
+import { START_SUBAGENT } from "@/shared/subagents.ts";
 import { ulid } from "ulid";
 import * as z from "zod";
 
@@ -26,6 +28,11 @@ import {
   type TaskStatus,
   TASK_LIMIT,
   TASKS_TOOLSET,
+  ADD_TASKS,
+  ARCHIVE_TASKS,
+  LIST_TASKS,
+  LIST_TASKS_MODEL_NAME,
+  WATCH_TASKS,
   taskStatusSchema,
   titleSchema,
 } from "@/shared/tasks.ts";
@@ -75,8 +82,8 @@ export interface TaskStore {
 }
 
 // What the agent is told about them.
-export const TASKS_GUIDANCE =
-  "Keep a task list for work in several steps: add the steps with thread.add_tasks, set each to doing when you start it and done when it is finished. People can check off and edit tasks too, and a change to a task given to you arrives as a notice. Tasks can be given to you, a subagent or a person who has written in the thread; a subagent sharing your list sees its own tasks unless it asks for all; a subagent is an assignee once started, so plan tasks first, then start subagents with their task ids. To wait on someone else's task, watch it with thread.watch_tasks and end your turn: you are told once when it is done or changed, so do not list the tasks again to check. When a block of work is complete, archive its done tasks with thread.archive_tasks so the list shows only current work. Keep titles short.";
+export const TASKS_GUIDANCE: ToolText = (named) =>
+  `Keep a task list for work in several steps: add the steps with ${named(ADD_TASKS)}, set each to doing when you start it and done when it is finished. People can check off and edit tasks too, and a change to a task given to you arrives as a notice. Tasks can be given to you, a subagent or a person who has written in the thread; a subagent sharing your list sees its own tasks unless it asks for all; a subagent is an assignee once started, so plan tasks first, then start subagents with their task ids. To wait on someone else's task, watch it with ${named(WATCH_TASKS)} and end your turn: you are told once when it is done or changed, so do not list the tasks again to check. When a block of work is complete, archive its done tasks with ${named(ARCHIVE_TASKS)} so the list shows only current work. Keep titles short.`;
 
 export interface TasksOptions {
   tasks: TaskStore;
@@ -223,7 +230,11 @@ export function createTasks(options: TasksOptions) {
 
   // The assignee a name the agent gave stands for: agent, a live subagent of the list's owner, or a
   // person who wrote in the thread and may post in it, by name or id.
-  async function resolve(ownerId: string, label: string): Promise<TaskAssignee> {
+  async function resolve(
+    ownerId: string,
+    label: string,
+    toolName: (toolId: string) => string,
+  ): Promise<TaskAssignee> {
     if (sameName(label, "agent")) return { kind: "agent" };
     const live = await liveSubagents(ownerId);
     const found = live.find((one) => sameName(one.name, label));
@@ -247,7 +258,7 @@ export function createTasks(options: TasksOptions) {
       ...writers.filter((one) => one.canPost).map((one) => `${one.name} (${one.userId})`),
     ].join(", ");
     throw new ToolRefusal(
-      `${label} is not an assignee. Assignees: ${names}. A subagent becomes an assignee once started, by its name; give it tasks at start with subagents.start tasks.`,
+      `${label} is not an assignee. Assignees: ${names}. A subagent becomes an assignee once started, by its name; give it tasks at start with ${toolName(START_SUBAGENT)} tasks.`,
     );
   }
 
@@ -289,8 +300,8 @@ export function createTasks(options: TasksOptions) {
   }
 
   const list: ToolSpec<{ all?: boolean; archived?: boolean }> = {
-    name: "tasks.list",
-    modelName: "thread.list_tasks",
+    name: LIST_TASKS,
+    modelName: LIST_TASKS_MODEL_NAME,
     title: "List",
     annotations: { readOnlyHint: true },
     description:
@@ -324,7 +335,7 @@ export function createTasks(options: TasksOptions) {
   };
 
   const add: ToolSpec<{ tasks: { title: string; assignee?: string }[] }> = {
-    name: "tasks.add",
+    name: ADD_TASKS,
     modelName: "thread.add_tasks",
     title: "Add",
     annotations: { readOnlyHint: false },
@@ -362,7 +373,7 @@ export function createTasks(options: TasksOptions) {
               threadId: ownerId,
               title: task.title,
               status: "todo" as const,
-              assignee: task.assignee ? await resolve(ownerId, task.assignee) : own,
+              assignee: task.assignee ? await resolve(ownerId, task.assignee, ctx.named) : own,
               createdBy: by,
               updatedBy: by,
             })),
@@ -402,7 +413,9 @@ export function createTasks(options: TasksOptions) {
         const next = await tasks.update(record.id, {
           ...(input.status && { status: input.status }),
           ...(input.title && { title: input.title }),
-          ...(input.assignee !== undefined && { assignee: await resolve(ownerId, input.assignee) }),
+          ...(input.assignee !== undefined && {
+            assignee: await resolve(ownerId, input.assignee, ctx.named),
+          }),
           updatedBy: by,
           updatedAt: now(),
         });
@@ -456,7 +469,7 @@ export function createTasks(options: TasksOptions) {
   };
 
   const archive: ToolSpec<{ ids?: string[] }> = {
-    name: "tasks.archive",
+    name: ARCHIVE_TASKS,
     modelName: "thread.archive_tasks",
     title: "Archive",
     annotations: { readOnlyHint: false },
@@ -502,7 +515,7 @@ export function createTasks(options: TasksOptions) {
   };
 
   const watch: ToolSpec<{ ids?: string[]; until?: "done" | "changed" }> = {
-    name: "tasks.watch",
+    name: WATCH_TASKS,
     modelName: "thread.watch_tasks",
     title: "Watch",
     annotations: { readOnlyHint: false },
@@ -689,7 +702,7 @@ export function createTasks(options: TasksOptions) {
         action: "assign",
         to: assignee.name,
       },
-      text: `${who} gave you task "${record.title}". The task list is now shared with you: read it with thread.list_tasks and mark the task as doing and done.`,
+      text: `${who} gave you task "${record.title}". The task list is now shared with you: read it with ${wireToolName(LIST_TASKS_MODEL_NAME)} and mark the task as doing and done.`,
       influence: byThread ? await peopleOf(byThread) : [],
     });
   }

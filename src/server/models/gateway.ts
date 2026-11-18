@@ -39,6 +39,8 @@ export interface ModelToolResult {
   callId: string;
   toolId: string;
   output: { ok: true; value: unknown } | { ok: false; error: string };
+  // For a tool search's result, the searchable tools it found, which are on from it, new or not.
+  tools?: string[];
 }
 
 // What changed in the thread at a point in its conversation, for a provider that takes it there

@@ -41,6 +41,7 @@ import type { Thread, ThreadStore } from "@/server/threads/types.ts";
 import { influenceOf } from "./influence.ts";
 import { type AskAnswers, askInputSchema, answersProblem } from "@/shared/ask.ts";
 import type { ToolRisk, ToolScope } from "@/shared/threads/events.ts";
+import { notOnYet } from "@/server/tools/search.ts";
 import { wireToolName } from "@/shared/tools.ts";
 import type { ToolRow } from "@/shared/transcript.ts";
 
@@ -102,6 +103,7 @@ export interface Runnable {
 export interface CallEnv {
   signal: AbortSignal;
   threadRequest: NonNullable<ToolContext["threadRequest"]>;
+  named: ToolContext["named"];
   deferral: () => Promise<{ all: DeferredTool[]; on: ReadonlySet<string> }>;
   turnOn: (callId: string, ids: string[]) => Promise<void>;
 }
@@ -134,6 +136,7 @@ export interface CallsOptions {
     | "riskOf"
     | "namesNow"
     | "modelNames"
+    | "textNamer"
     | "fromServers"
     | "run"
     | "callState"
@@ -331,10 +334,10 @@ export function createCalls(options: CallsOptions) {
               callId,
               ok: false,
               error: unsearched
-                ? `${wireToolName(ctx.names.toModel(unsearched.name))} is not on yet. Search for it or select it with tools.search first.`
+                ? notOnYet(unsearched.id, ctx.names.toModel)
                 : spec
                   ? `The input is not valid: ${z.prettifyError(parsed!.error!)}`
-                  : `No tool is named ${toolId} here.`,
+                  : `No tool is named ${wireToolName(ctx.names.toModel(toolId))} here.`,
               ms: 0,
             },
           });
@@ -519,6 +522,7 @@ export function createCalls(options: CallsOptions) {
             }),
             ...(call.answers && { answers: call.answers }),
             threadRequest: env.threadRequest,
+            named: env.named,
             ...(deferral && {
               deferred: {
                 tools: deferral.all,
@@ -670,7 +674,7 @@ export function createCalls(options: CallsOptions) {
           : await store.deny(thread.id, callId, userId, decided.seq);
         if (!moved) throw new ServiceError(409, "Already decided");
         if (moved.background && !decision.allow) {
-          await jobs.notify(moved, `Background call ${callId} (${moved.toolId}) was denied.`);
+          await jobs.notify(moved, "was denied.");
         }
         await settled(moved);
         return moved;

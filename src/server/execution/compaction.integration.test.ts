@@ -146,6 +146,12 @@ describe("what a summary is written from", () => {
         "[Tool result]: Not run.",
       ].join("\n"),
     );
+    // Each tool as the model calls it, where the names are known.
+    expect(
+      conversationText([rows[2]!], (id) => (id === "thread.rename" ? "thread.title" : id)),
+    ).toBe(
+      `[Agent called tool]: thread__title {"title":"Engines"}\n[Tool result]: ${"x".repeat(RESULT_CHARS)} (cut short)`,
+    );
     expect(summaryRequest("Before.", [human(1, "Hi")], "the plan")).toBe(
       "The summary so far:\nBefore.\n\nThe conversation since:\n[Ada]: Hi\n\nKeep in particular: the plan",
     );
@@ -275,6 +281,33 @@ describe("compacting a thread", () => {
     expect(await pending()).toEqual([]);
   });
 
+  it("by the agent's tool, its own prompt naming tools as the model calls them", async () => {
+    const { ada, post, model, worker, start } = await agentThread();
+    await start();
+    await post(ada, "One");
+    const renaming = await model.next();
+    renaming.startStep();
+    renaming.toolCall("call-1", "thread.rename", { title: "Engines" });
+    renaming.endStep();
+    renaming.end();
+    (await model.next()).reply("First.");
+    await worker.idle();
+    await post(ada, "Two");
+    const asking = await model.next();
+    asking.startStep();
+    asking.toolCall("call-2", "thread.compact", {});
+    asking.endStep();
+    asking.end();
+    const own = await model.next();
+    expect(own.request).not.toHaveProperty("toolName");
+    own.fail(new ModelError("model", "400 prompt is too long"));
+    const fallback = await model.next();
+    expect(fallback.texts[0]).toContain('[Agent called tool]: thread__rename {"title":"Engines"}');
+    fallback.reply("Ada said one.");
+    (await model.next()).reply("Done.");
+    await worker.idle();
+  });
+
   it("by the agent's tool, after which the run goes on from the summary", async () => {
     const { ada, post, model, worker, start, transcript } = await agentThread();
     await start();
@@ -338,12 +371,18 @@ describe("compacting a thread", () => {
     await worker.idle();
 
     await post(ada, "Two");
+    const renaming = await model.next();
+    renaming.startStep();
+    renaming.toolCall("call-2", "thread.rename", { title: "Engines" });
+    renaming.endStep();
+    renaming.end();
     (await model.next()).reply("Second.");
     await worker.idle();
     expect((await compactCommand(api, thread.id, ada)).status).toBe(202);
     (await model.next()).fail(new ModelError("model", "400 prompt is too long"));
     const fallback = await model.next();
     expect(fallback.texts[0]).toMatch(/^user: The summary so far:\nAda said one\./);
+    expect(fallback.texts[0]).toContain('[Agent called tool]: thread__rename {"title":"Engines"}');
     fallback.reply("Ada said two.");
     await worker.idle();
   });

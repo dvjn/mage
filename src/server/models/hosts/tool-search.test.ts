@@ -366,3 +366,234 @@ describe("Other models' tool search", () => {
     expectAppended(bodies.map(({ body }) => functionNames(body)));
   });
 });
+
+// One stream as server-sent events.
+function sse(events: object[]) {
+  const body = events
+    .map(
+      (event) => `event: ${(event as { type: string }).type}\ndata: ${JSON.stringify(event)}\n\n`,
+    )
+    .join("");
+  return new Response(body, { headers: { "Content-Type": "text/event-stream" } });
+}
+
+// A Responses reply that calls each tool named.
+function responsesCalls(names: string[]) {
+  const response = { id: "resp_1", created_at: 1760000000, model: "gpt" };
+  const items = names.map((name, index) => ({
+    type: "function_call",
+    id: `fc_${index}`,
+    call_id: `call_${index + 2}`,
+    name,
+    arguments: "{}",
+  }));
+  return [
+    { type: "response.created", sequence_number: 0, response },
+    ...items.flatMap((item, output_index) => [
+      {
+        type: "response.output_item.added",
+        sequence_number: 1,
+        output_index,
+        item: { ...item, arguments: "", status: "in_progress" },
+      },
+      {
+        type: "response.output_item.done",
+        sequence_number: 2,
+        output_index,
+        item: { ...item, status: "completed" },
+      },
+    ]),
+    {
+      type: "response.completed",
+      sequence_number: 3,
+      response: {
+        ...response,
+        usage: {
+          input_tokens: 10,
+          output_tokens: 2,
+          input_tokens_details: { cached_tokens: 0 },
+          output_tokens_details: { reasoning_tokens: 0 },
+        },
+      },
+    },
+  ];
+}
+
+// A Messages reply that calls each tool named.
+function messagesCalls(names: string[]) {
+  return [
+    {
+      type: "message_start",
+      message: {
+        id: "msg_1",
+        type: "message",
+        role: "assistant",
+        model: "claude",
+        content: [],
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 1 },
+      },
+    },
+    ...names.flatMap((name, index) => [
+      {
+        type: "content_block_start",
+        index,
+        content_block: { type: "tool_use", id: `toolu_${index}`, name, input: {} },
+      },
+      {
+        type: "content_block_delta",
+        index,
+        delta: { type: "input_json_delta", partial_json: "{}" },
+      },
+      { type: "content_block_stop", index },
+    ]),
+    {
+      type: "message_delta",
+      delta: { stop_reason: "tool_use", stop_sequence: null },
+      usage: { output_tokens: 2 },
+    },
+    { type: "message_stop" },
+  ];
+}
+
+// A later run of the thread, woken by a notice after the search turned a tool on.
+const later: Omit<ModelRequest, "model"> = {
+  ...after,
+  messages: [
+    ...after.messages,
+    { role: "assistant", text: "Started it." },
+    { role: "user", text: "[Notice] The call ended." },
+  ],
+};
+
+describe("A tool turned on by an earlier search, called by its name", () => {
+  it.each([
+    {
+      how: "Codex's own tool search",
+      gateway: createCodexGateway,
+      token: { access: "access-token", accountId: "account-1" },
+      model: "gpt-6.1-terra",
+      reply: responsesCalls,
+    },
+    {
+      how: "the OpenAI API's own tool search",
+      gateway: createOpenAIKeyGateway,
+      token: { access: "sk-key", accountId: null },
+      model: "gpt-6-luna",
+      reply: responsesCalls,
+    },
+    {
+      how: "an OpenAI model without tool search",
+      gateway: createOpenAIKeyGateway,
+      token: { access: "sk-key", accountId: null },
+      model: "gpt-5.2",
+      reply: responsesCalls,
+    },
+    {
+      how: "Claude with tools added mid-conversation",
+      gateway: createAnthropicKeyGateway,
+      token: { access: "sk-ant", accountId: null },
+      model: "claude-haiku-5-5",
+      reply: messagesCalls,
+    },
+    {
+      how: "Claude loading tools from the search's result",
+      gateway: createAnthropicKeyGateway,
+      token: { access: "sk-ant", accountId: null },
+      model: "claude-haiku-4-5-20251001",
+      reply: messagesCalls,
+    },
+  ])(
+    "is known by its id on $how, as is one not turned on",
+    async ({ gateway, token, model, reply }) => {
+      const fetchFn = (async () =>
+        sse(reply(["mcp__notes__add", "mcp__notes__echo"]))) as typeof fetch;
+
+      const events = [];
+      const stream = gateway(fetchFn).stream(
+        token,
+        { ...later, model },
+        new AbortController().signal,
+      );
+      for await (const event of stream) events.push(event);
+
+      expect(events.flatMap((event) => (event.type === "tool-call" ? [event.toolId] : []))).toEqual(
+        ["mcp.notes.add", "mcp.notes.echo"],
+      );
+    },
+  );
+});
+
+describe("A search that finds a tool already on", () => {
+  // The later run searches again and finds the tool turned on before; nothing new is turned on.
+  const again: Omit<ModelRequest, "model"> = {
+    ...later,
+    messages: [
+      ...later.messages,
+      {
+        role: "assistant",
+        text: "",
+        toolCalls: [{ callId: "call_5", toolId: SEARCH, input: { select: ["mcp__notes__add"] } }],
+      },
+      {
+        role: "tool",
+        results: [
+          {
+            callId: "call_5",
+            toolId: SEARCH,
+            output: { ok: true, value: { turnedOn: [] } },
+            tools: ["mcp.notes.add"],
+          },
+        ],
+      },
+    ],
+  };
+
+  // The body of the request for the later run.
+  async function bodyOf(
+    gateway: (fetchFn: typeof fetch) => ModelGateway,
+    token: ModelToken,
+    model: string,
+  ) {
+    const { fetchFn, requests } = refusingFetch();
+    const events = gateway(fetchFn).stream(
+      token,
+      { ...again, model },
+      new AbortController().signal,
+    );
+    await expect(
+      (async () => {
+        for await (const _ of events);
+      })(),
+    ).rejects.toThrow();
+    return requests[0]!.body;
+  }
+
+  it("gives it back again on Codex's own tool search", async () => {
+    const body = await bodyOf(
+      createCodexGateway,
+      { access: "access-token", accountId: "account-1" },
+      "gpt-6.1-terra",
+    );
+
+    const outputs = (body.input as { type?: string; tools?: { name: string }[] }[])
+      .filter((item) => item.type === "tool_search_output")
+      .map((item) => item.tools!.map((tool) => tool.name));
+    expect(outputs).toEqual([["mcp__notes__add"], ["mcp__notes__add"]]);
+  });
+
+  it("refers to it again on Claude loading tools from the search's result", async () => {
+    const body = await bodyOf(
+      createAnthropicKeyGateway,
+      { access: "sk-ant", accountId: null },
+      "claude-haiku-4-5-20251001",
+    );
+
+    const results = (unmarked(body.messages) as unknown as { content: { content?: unknown }[] }[])
+      .flatMap((message) => message.content)
+      .filter((part) => "content" in part)
+      .map((part) => part.content);
+    expect(results).toEqual([REFERRED, REFERRED]);
+  });
+});

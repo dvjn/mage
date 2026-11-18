@@ -6,6 +6,8 @@ import * as z from "zod";
 // The toolset and the tool the agent makes them with.
 export const WEBHOOKS_TOOLSET = "webhooks";
 export const ADD_WEBHOOK = "webhooks.add";
+export const LIST_WEBHOOKS = "webhooks.list";
+export const DELETE_WEBHOOK = "webhooks.delete";
 
 // Where a webhook receives posts, under the API but outside what needs a login; the token after it
 // is the whole of the address's secrecy.

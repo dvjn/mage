@@ -100,6 +100,7 @@ import { createTitles } from "@/server/threads/titles.ts";
 import type { HostId } from "@/shared/hosts.ts";
 import { DEFAULT_AGENT_NAME } from "@/shared/orgs.ts";
 import { CHOOSE_MODELS, SUBAGENTS_TOOLSET } from "@/shared/subagents.ts";
+import { wireToolName } from "@/shared/tools.ts";
 
 import { createSchedules } from "@/server/schedules/schedules.ts";
 import { createScheduleStore } from "@/server/schedules/store.ts";
@@ -163,6 +164,8 @@ export interface ComposeDeps {
     heartbeatMs?: number;
     pingDatabase?: () => Promise<boolean>;
     testRoutes?: (deps: SeedDeps) => Hono;
+    // Whether text for the model that names a tool no space has fails, rather than being logged.
+    strictToolNames?: boolean;
   };
 }
 
@@ -281,6 +284,10 @@ export function compose(deps: ComposeDeps) {
     directory,
     access,
     threadTools: createThreadToolStore(db),
+    unknownName: (toolId) => {
+      if (deps.options?.strictToolNames) throw new Error(`Text for the model names ${toolId}`);
+      deps.logger.warn({ toolId }, "text for the model names a tool that is not there");
+    },
   });
   const mcpServerStore = createMcpServerStore(db);
   const mcp = createMcpServers({
@@ -439,6 +446,11 @@ export function compose(deps: ComposeDeps) {
     queue,
     stop: async (target, by, opts) => execution.stop(target, by, opts),
     watches,
+    toolNames: async (spaceId) => {
+      const space = await spaceStore.find(spaceId);
+      const names = space ? await tools.modelNames(space) : null;
+      return (id) => wireToolName(names?.toModel(id) ?? id);
+    },
   });
   const tasks = createTasks({
     tasks: createTaskStore(db),

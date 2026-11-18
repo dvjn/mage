@@ -232,3 +232,17 @@ export const WIRE_NAME_MAX = 64;
 export function wireToolName(name: string) {
   return name.replaceAll(".", "__").replace(/[^a-zA-Z0-9_-]/g, "_");
 }
+
+// Text for the model that may name tools: as it is, or written with each tool's name for the model
+// by its id.
+export type ToolText = string | ((named: (toolId: string) => string) => string);
+
+export function textOf(text: ToolText, named: (toolId: string) => string) {
+  return typeof text === "string" ? text : text(named);
+}
+
+// The start of a toolset's tools' names as the model knows them, from `<namespace>` or
+// `<namespace>.*`.
+export function wirePrefix(prefix: string) {
+  return `${wireToolName(prefix.replace(/\.\*$/, ""))}__*`;
+}

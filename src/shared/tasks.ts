@@ -5,6 +5,12 @@ import * as z from "zod";
 
 // The tools the agent keeps the list with.
 export const TASKS_TOOLSET = "tasks";
+export const LIST_TASKS = "tasks.list";
+export const ADD_TASKS = "tasks.add";
+export const ARCHIVE_TASKS = "tasks.archive";
+export const WATCH_TASKS = "tasks.watch";
+// What the model calls the list's reader, for text made outside a run.
+export const LIST_TASKS_MODEL_NAME = "thread.list_tasks";
 
 // How many tasks a list holds, and how many one call adds.
 export const TASK_LIMIT = 50;

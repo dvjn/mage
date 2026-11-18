@@ -29,12 +29,16 @@ import type {
   ToolSpec,
 } from "@/server/tools/registry.ts";
 import { valueForAgent } from "@/shared/mcp.ts";
-import { wireToolName } from "@/shared/tools.ts";
+import { notOnYet } from "@/server/tools/search.ts";
+import { type ToolText, wireToolName } from "@/shared/tools.ts";
 import {
   BACKGROUND_LIMIT,
   type Work,
   JOBS_TOOLSET,
   type JobStatus as ShownStatus,
+  CANCEL_JOB,
+  CHECK_JOB,
+  LIST_JOBS,
   START_JOB,
 } from "@/shared/jobs.ts";
 import type { ToolRisk } from "@/shared/threads/events.ts";
@@ -51,8 +55,8 @@ const READY_BATCH = 20;
 export const RESULT_CHARS = 20_000;
 
 // What the agent is told about them.
-export const CALLS_GUIDANCE =
-  "Start a tool call with jobs.start when it is slow or independent of what you do next; you get an id at once and its result arrives as a notice. Start several, keep working, and end your turn to wait rather than polling; use jobs.check only when a decision depends on it. Cancel what you no longer need with jobs.cancel.";
+export const CALLS_GUIDANCE: ToolText = (named) =>
+  `Start a tool call with ${named(START_JOB)} when it is slow or independent of what you do next; you get an id at once and its result arrives as a notice. Start several, keep working, and end your turn to wait rather than polling; use ${named(CHECK_JOB)} only when a decision depends on it. Cancel what you no longer need with ${named(CANCEL_JOB)}.`;
 
 // Where a job stands in the words its card, the tray and the agent read: waiting for a person,
 // queued for its turn to run, and every way it was stopped before it ran is cancelled.
@@ -136,6 +140,7 @@ export interface JobsOptions {
     | "riskOf"
     | "namesNow"
     | "modelNames"
+    | "textNamer"
     | "fromServers"
     | "run"
     | "turnedOn"
@@ -199,16 +204,18 @@ export function createJobs(options: JobsOptions) {
     return influenceOf(words.filter((word) => word.seq < job.seq));
   }
 
-  // Tells the thread's agent how the job ended, once however often its end is recorded.
+  // Tells the thread's agent how the job ended, once however often its end is recorded, naming
+  // the call by its id and its tool's title.
   async function notify(
     job: Pick<CallRow, "threadId" | "id" | "toolId" | "seq">,
-    text: string,
+    how: string,
     result?: string,
   ) {
     const thread = await threads.find(job.threadId);
     const space = thread && (await spaceStore.find(thread.spaceId));
     if (!thread || !space) return;
     const title = await titleOf(space, job.toolId);
+    const text = `Background call ${job.id} (${title}) ${how}`;
     await queue.enqueue(
       thread.id,
       {
@@ -261,12 +268,7 @@ export function createJobs(options: JobsOptions) {
       await log.write(job.threadId, async (append) => {
         if (!(await store.finish(held.lease, output.ok ? "completed" : "failed"))) return;
         await recordRan(job, append, output, ms, extra);
-        const { space } = await contextOf(job.threadId);
-        await notify(
-          job,
-          `Background call ${job.id} (${await titleOf(space, job.toolId)}) ${output.ok ? "finished" : "failed"}`,
-          resultText(output),
-        );
+        await notify(job, output.ok ? "finished" : "failed", resultText(output));
         // Its place goes to the oldest job queued for one, here or on another instance.
         options.afterCommit(() => void keeper.beat());
       });
@@ -331,6 +333,7 @@ export function createJobs(options: JobsOptions) {
           runAs,
           ...(approvedBy && { approvedBy }),
           influence: await influenceOfJob(job),
+          named: options.tools.textNamer(await options.tools.modelNames(space)),
           signal: controller.signal,
           ...(options.live && {
             live: options.live.open(thread.id, job.id, async () => holds(lease)),
@@ -363,10 +366,7 @@ export function createJobs(options: JobsOptions) {
             ok: false,
             error: "The server stopped while the call ran.",
           });
-          await notify(
-            job,
-            `Background call ${job.id} (${job.toolId}) was interrupted: the server stopped while it ran.`,
-          );
+          await notify(job, "was interrupted: the server stopped while it ran.");
           abortHere(job.threadId, job.id, "interrupted");
         });
       } catch (err) {
@@ -398,7 +398,7 @@ export function createJobs(options: JobsOptions) {
   });
 
   // A job standing ready goes stale, if it still stands ready, and the agent is told why.
-  async function goStale(job: CallRow, text: string) {
+  async function goStale(job: CallRow, how: string) {
     await log.write(job.threadId, async (append) => {
       if (!(await store.goStale(job.threadId, job.id))) return;
       await append({
@@ -406,7 +406,7 @@ export function createJobs(options: JobsOptions) {
         actor: ACTOR,
         data: { runId: job.runId, callId: job.id, reason: "stale" },
       });
-      await notify(job, text);
+      await notify(job, how);
     });
   }
 
@@ -418,7 +418,7 @@ export function createJobs(options: JobsOptions) {
       const job = await store.find(threadId, callId);
       if (!job?.background || job.status !== "ready") return null;
       const stale = async (why: string) => {
-        await goStale(job, `Background call ${callId} (${job.toolId}) was not started: ${why}`);
+        await goStale(job, `was not started: ${why}`);
         return null;
       };
       const thread = await threads.find(threadId);
@@ -523,13 +523,10 @@ export function createJobs(options: JobsOptions) {
     if (spec.waitsFor === "answer") {
       throw new ToolRefusal("A tool that asks cannot run in the background.");
     }
-    const left = (await tools.fromServers(space, await tools.modelNames(space))).some(
-      (tool) => tool.id === spec.name,
-    );
+    const names = await tools.modelNames(space);
+    const left = (await tools.fromServers(space, names)).some((tool) => tool.id === spec.name);
     if (left && !(await tools.turnedOn(thread.id)).some((tool) => tool.id === spec.name)) {
-      throw new ToolRefusal(
-        `${toolId} is not on yet. Search for it or select it with tools.search first.`,
-      );
+      throw new ToolRefusal(notOnYet(spec.name, names.toModel));
     }
     return spec;
   }
@@ -547,8 +544,7 @@ export function createJobs(options: JobsOptions) {
     const printed = job.status === "running" ? await options.live?.of(job.id) : null;
     return {
       id: job.id,
-      tool: await titleOf(space, job.toolId),
-      toolId: job.toolId,
+      tool: wireToolName((await options.tools.modelNames(space)).toModel(job.toolId)),
       status: shownStatus(job.status),
       ...(output?.ok && { result: resultText(output) }),
       ...(output && !output.ok && { error: output.error }),
@@ -752,7 +748,7 @@ export function createJobs(options: JobsOptions) {
   };
 
   const status: ToolSpec<{ id: string }> = {
-    name: "jobs.check",
+    name: CHECK_JOB,
     title: "Status",
     annotations: { readOnlyHint: true },
     movable: false,
@@ -766,7 +762,7 @@ export function createJobs(options: JobsOptions) {
   };
 
   const list: ToolSpec<Record<string, never>> = {
-    name: "jobs.list",
+    name: LIST_JOBS,
     title: "List",
     annotations: { readOnlyHint: true },
     movable: false,
@@ -793,7 +789,7 @@ export function createJobs(options: JobsOptions) {
   };
 
   const cancel: ToolSpec<{ id: string }> = {
-    name: "jobs.cancel",
+    name: CANCEL_JOB,
     title: "Cancel",
     annotations: { readOnlyHint: false },
     movable: false,

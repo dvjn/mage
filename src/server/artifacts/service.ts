@@ -774,8 +774,10 @@ export function createArtifacts(options: ArtifactsOptions) {
     );
   }
 
-  function missing(id: string) {
-    return failed(`No artifact ${id} in this space. artifact.list shows its artifacts.`);
+  function missing(id: string, named: ToolContext["named"]) {
+    return failed(
+      `No artifact ${id} in this space. ${named(ARTIFACT_TOOLS.list)} shows its artifacts.`,
+    );
   }
 
   async function summaryOf(record: ArtifactRecord) {
@@ -876,10 +878,10 @@ export function createArtifacts(options: ArtifactsOptions) {
     risk: () => "normal",
     async run(input, ctx) {
       const record = await ownArtifact(input.id, ctx);
-      if (!record) return missing(input.id);
+      if (!record) return missing(input.id, ctx.named);
       if (!(await withinGuestBounds(record, ctx))) return outOfBounds();
       const current = await store.version(record.id, record.version);
-      if (!current) return missing(input.id);
+      if (!current) return missing(input.id, ctx.named);
       if (input.basedOn !== undefined && input.basedOn !== record.version) {
         return failed(
           `Version ${record.version} is the latest; you built on ${input.basedOn}. Merge your change into it and update again with basedOn ${record.version}. Its page:\n\n${current.html}`,
@@ -914,7 +916,7 @@ export function createArtifacts(options: ArtifactsOptions) {
           removed,
         }),
       );
-      if (!added) return missing(input.id);
+      if (!added) return missing(input.id, ctx.named);
       if ("stale" in added) {
         return failed(`Version ${added.stale} was published meanwhile. Read it and update again.`);
       }
@@ -939,7 +941,7 @@ export function createArtifacts(options: ArtifactsOptions) {
     risk: () => "normal",
     async run({ id, version }, ctx) {
       const record = await ownArtifact(id, ctx);
-      if (!record) return missing(id);
+      if (!record) return missing(id, ctx.named);
       if (!(await withinGuestBounds(record, ctx))) return outOfBounds();
       const page = await store.version(record.id, version ?? record.version);
       if (!page) return failed(`${id} has no version ${version}.`);
@@ -1011,7 +1013,7 @@ export function createArtifacts(options: ArtifactsOptions) {
     risk: () => "normal",
     async run({ id, version }, ctx) {
       const record = await ownArtifact(id, ctx);
-      if (!record) return missing(id);
+      if (!record) return missing(id, ctx.named);
       if (!previewer) return failed("Previews are not available on this server.");
       if (version !== undefined && !(await store.version(record.id, version))) {
         return failed(`${id} has no version ${version}.`);

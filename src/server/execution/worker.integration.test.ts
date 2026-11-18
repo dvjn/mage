@@ -5,6 +5,7 @@ import { ModelError } from "@/server/models/gateway.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 import { threadDetailSchema } from "@/shared/threads/detail.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
+import { namedOtherwise } from "@/server/testing/named-tools.ts";
 import { expireLeases } from "@/server/testing/database.ts";
 
 import { LeaseLost } from "./worker.ts";
@@ -36,6 +37,30 @@ describe("agent runs", () => {
     expect(call.texts).toEqual(["user: [Ada Lovelace] How do engines compute?"]);
     expect(call.request.instructions).toContain("You are the agent in a thread");
     expect(call.request.sessionId).toBe(thread.id);
+  });
+
+  it("names tools in the prompt and in tools' descriptions only as the model calls them", async () => {
+    const { ada, model, worker, post, start, space, tools } = await agentThread();
+    const inSpace = { id: space.id, orgId: ada.orgId };
+    await start();
+
+    await post(ada, "Hello");
+    const call = await model.next();
+    call.reply("Hi.");
+    await worker.idle();
+
+    const { request } = call;
+    const offered = [...(request.tools ?? []), ...(request.searchable ?? [])];
+    expect(namedOtherwise(request, await tools.ids(inSpace))).toEqual([]);
+    // Text naming a tool the space does not have fails here, and is logged on a server.
+    const named = tools.textNamer(await tools.modelNames(inSpace));
+    expect(named("thread.set_model")).toBe("thread__set_model");
+    expect(() => named("thread.nope")).toThrow("Text for the model names thread.nope");
+    expect(request.instructions).toContain("jobs__start");
+    expect(request.instructions).toContain("thread__add_tasks");
+    expect(offered.find((tool) => tool.id === "thread.set_model")?.description).toContain(
+      "thread__list_models",
+    );
   });
 
   it("names the model on each reply and counts its tokens, and the thread's in total", async () => {

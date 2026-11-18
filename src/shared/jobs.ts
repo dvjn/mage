@@ -10,6 +10,9 @@ import { webhookWorkSchema } from "./webhooks.ts";
 // The tools the agent starts, checks and stops them with.
 export const JOBS_TOOLSET = "jobs";
 export const START_JOB = "jobs.start";
+export const CHECK_JOB = "jobs.check";
+export const LIST_JOBS = "jobs.list";
+export const CANCEL_JOB = "jobs.cancel";
 
 // How many background calls a thread has running at once; more wait their turn, and those waiting
 // for approval hold no place.

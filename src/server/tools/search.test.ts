@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { closest, lineOf, parametersOf, rank, resolve } from "./search.ts";
+import { closest, foundIn, lineOf, parametersOf, rank, resolve } from "./search.ts";
 import type { DeferredTool } from "./registry.ts";
 
 function tool(prefix: string, own: string, description: string, inputSchema = {}): DeferredTool {
@@ -32,6 +32,7 @@ describe("searching", () => {
     expect(rank(tools, "github commits")[0]?.name).toBe("mcp.github.list_commits");
     expect(rank(tools, "keyword").map((found) => found.name)).toEqual(["mcp.github.search_issues"]);
     expect(rank(tools, "mcp.notes.add_note")[0]?.name).toBe("mcp.notes.add_note");
+    expect(rank(tools, "mcp__notes__add_note")[0]?.name).toBe("mcp.notes.add_note");
     expect(rank(tools, "weather")).toEqual([]);
     expect(rank(tools, "note", 1)).toHaveLength(1);
   });
@@ -45,9 +46,24 @@ describe("searching", () => {
   });
 
   it("suggests the closest names for one that matches none", () => {
-    expect(closest(tools, "add_nte")).toEqual(["mcp.notes.add_note"]);
-    expect(closest(tools, "mcp.github.create_issues")[0]).toBe("mcp.github.create_issue");
+    expect(closest(tools, "add_nte")).toEqual(["mcp__notes__add_note"]);
+    expect(closest(tools, "mcp.github.create_issues")[0]).toBe("mcp__github__create_issue");
+    expect(closest(tools, "mcp__github__create_issues")[0]).toBe("mcp__github__create_issue");
     expect(closest(tools, "something else entirely")).toEqual([]);
+  });
+
+  it("reads the tools a search's output gives as on, by id, whether or not they were on before", () => {
+    const output = {
+      ok: true as const,
+      value: {
+        selected: [{ name: "mcp__notes__add_note" }],
+        matches: [{ name: "mcp__notes__add_note" }, { name: "mcp__github__create_issue" }],
+        server: { name: "notes", tools: [{ name: "mcp__notes__delete_note" }] },
+        turnedOn: [],
+      },
+    };
+    expect(foundIn(output, tools)).toEqual(["mcp.notes/add_note", "mcp.github/create_issue"]);
+    expect(foundIn({ ok: false, error: "no" }, tools)).toEqual([]);
   });
 
   it("sums up what a tool takes and does in short", () => {

@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { describe, expect, it, onTestFinished, vi } from "vite-plus/test";
 
 import { agentThread } from "@/server/testing/agent-thread.ts";
+import { namedOtherwise } from "@/server/testing/named-tools.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
 import { eventSummary } from "@/server/threads/log.ts";
 import type { ActivityItem } from "@/shared/jobs.ts";
@@ -994,6 +995,24 @@ describe("subagents", () => {
     );
   });
 
+  it("are told of tools only by the names their model calls them", async () => {
+    const workspace = await subagentThread();
+    const { ada, post, thread, start, calls, answer, callIn, subagentNamed, space, tools } =
+      workspace;
+    await start();
+    await post(ada, "Go");
+    await calls(thread.id, ["subagents.start", { name: "Writer", task: "Write" }]);
+    await answer(thread.id);
+    workspace.keepAnswering(thread.id);
+    const first = await callIn(await subagentNamed("Writer"));
+    first.reply("Written.");
+    await workspace.worker.idle();
+
+    expect(first.request.instructions).toContain("subagents__send");
+    const ids = await tools.ids({ id: space.id, orgId: ada.orgId });
+    expect(namedOtherwise(first.request, ids)).toEqual([]);
+  });
+
   it("message the others started with them, and read only theirs", async () => {
     const workspace = await subagentThread();
     const { ada, post, thread, start, calls, answer, callIn, subagentNamed, rowsOf } = workspace;
@@ -1008,6 +1027,7 @@ describe("subagents", () => {
     workspace.keepAnswering(thread.id);
     const writer = await subagentNamed("Writer");
     const critic = await subagentNamed("Critic");
+    await calls(writer, ["thread.rename", { title: "Draft" }]);
     (await callIn(writer)).reply("Waiting for notes.");
     await calls(
       critic,
@@ -1028,8 +1048,12 @@ describe("subagents", () => {
       ok: false,
       error: "No live subagent is labelled Critic. Subagents: Writer.",
     });
-    const listed = outputs[2]?.ok ? (outputs[2].value as { subagents: { name: string }[] }) : null;
+    const listed = outputs[2]?.ok
+      ? (outputs[2].value as { subagents: { name: string; steps: unknown[] }[] })
+      : null;
     expect(listed?.subagents.map((subagent) => subagent.name)).toEqual(["Writer"]);
+    // Its steps name each tool as the model calls it, never by its id.
+    expect(listed?.subagents[0]?.steps).toEqual([{ tool: "thread__rename", state: "completed" }]);
     // Each side counts the messages between them.
   });
 
@@ -1620,7 +1644,7 @@ describe("a subagent's calls", () => {
     const failed = (await rowsOf(subagentId)).find(
       (row): row is ToolRow => row.kind === "tool" && row.toolId === "subagents.start",
     );
-    expect(failed?.output).toEqual({ ok: false, error: "No tool is named subagents.start here." });
+    expect(failed?.output).toEqual({ ok: false, error: "No tool is named subagents__start here." });
     keepAnswering(thread.id);
     await answer(subagentId, "Looked.");
     await workspace.worker.idle();

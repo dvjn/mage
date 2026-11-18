@@ -17,6 +17,7 @@ import type { OpenModel } from "@/server/models/service.ts";
 import { addUsage } from "@/shared/usage.ts";
 import type { Actor, NewEvent } from "@/server/threads/types.ts";
 import { valueForAgent } from "@/shared/mcp.ts";
+import { wireToolName } from "@/shared/tools.ts";
 import {
   asksToCompact,
   type CompactionRow,
@@ -174,8 +175,13 @@ export function cutOf(rows: readonly TranscriptRow[], keep = KEEP_TOKENS): numbe
 }
 
 // The conversation as the summary is written from it: each person's words, the agent's replies, its
-// calls and what they gave back, as plain labelled lines.
-export function conversationText(rows: readonly TranscriptRow[]) {
+// calls and what they gave back, as plain labelled lines; each tool by the name the model calls it,
+// where `toolName` says.
+export function conversationText(
+  rows: readonly TranscriptRow[],
+  toolName?: (toolId: string) => string,
+) {
+  const named = (id: string) => (toolName ? wireToolName(toolName(id)) : id);
   const lines: string[] = [];
   for (const row of rows) {
     if (row.kind === "human") {
@@ -186,7 +192,7 @@ export function conversationText(rows: readonly TranscriptRow[]) {
     } else if (row.kind === "agent") {
       if (readReply(row) && row.text) lines.push(`[Agent]: ${row.text}`);
     } else if (row.kind === "tool") {
-      lines.push(`[Agent called tool]: ${row.toolId} ${json(row.input)}`);
+      lines.push(`[Agent called tool]: ${named(row.toolId)} ${json(row.input)}`);
       const result = resultOf(row);
       if (result !== null) {
         const cut = result.length > RESULT_CHARS;
@@ -211,16 +217,25 @@ export function summaryRequest(
   previous: string | null,
   rows: readonly TranscriptRow[],
   focus = "",
+  toolName?: (toolId: string) => string,
 ) {
   return [
     ...(previous ? [`The summary so far:\n${previous}`] : []),
-    `${previous ? "The conversation since" : "The conversation"}:\n${conversationText(rows)}`,
+    `${previous ? "The conversation since" : "The conversation"}:\n${conversationText(rows, toolName)}`,
     ...(focus ? [`Keep in particular: ${focus}`] : []),
   ].join("\n\n");
 }
 
-// What the thread's next model call would send: its system prompt, messages, effort and tools.
-export type ThreadRequest = Omit<ModelRequest, "model" | "maxSteps" | "beforeStep">;
+// What the thread's next model call would send: its system prompt, messages, effort and tools,
+// with the name the model calls each tool by, from its id, for text written from the thread.
+export type ThreadRequest = Omit<ModelRequest, "model" | "maxSteps" | "beforeStep"> & {
+  toolName?: (toolId: string) => string;
+};
+
+// The thread's request as the model is sent it.
+export function modelPart({ toolName: _toolName, ...request }: ThreadRequest) {
+  return request;
+}
 
 // The ask appended to the thread's own request: what to summarise, up to the person's message the
 // kept part starts with, if any, and how.
@@ -266,7 +281,7 @@ export function compactionRequest(
     focus,
   });
   return {
-    ...thread,
+    ...modelPart(thread),
     messages: [...thread.messages, { role: "user", text: ask }],
     maxSteps: 1,
     answerOnly: true,
@@ -346,7 +361,15 @@ async function summaryUpTo(input: {
     {
       instructions: SUMMARY_INSTRUCTIONS,
       messages: [
-        { role: "user", text: summaryRequest(previous, rows.slice(keptFrom(rows), at), focus) },
+        {
+          role: "user",
+          text: summaryRequest(
+            previous,
+            rows.slice(keptFrom(rows), at),
+            focus,
+            input.request?.toolName,
+          ),
+        },
       ],
       maxSteps: 1,
       sessionId: `${threadId}:compact`,

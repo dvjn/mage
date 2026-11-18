@@ -414,7 +414,7 @@ describe("a job", () => {
     await w.crashJobs();
     const told = await w.answers(w.threadId, "Noted.");
     expect(told.texts.at(-1)).toMatch(
-      /Background call \S+ \(probe\.wait\) was interrupted: the server stopped while it ran\.$/,
+      /Background call \S+ \(Wait\) was interrupted: the server stopped while it ran\.$/,
     );
     await w.settled();
     expect((await w.shown()).rows).toContain("probe.wait failed [interrupted]");

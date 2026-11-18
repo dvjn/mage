@@ -114,11 +114,13 @@ describe("the system prompt", () => {
           tools: [{ name: "mcp.notes.echo", description: "Say it back" }],
         },
       ],
-      toolName: (id) => (id === "skills.load" ? "skills.load_1a2b3c" : id),
+      toolName: (id) =>
+        ({ "skills.load": "skills.load_1a2b3c", "mcp_servers.search_tools": "tools.search" })[id] ??
+        id,
     });
     expect(prompt).toContain("with subagents__send,");
     expect(prompt).toContain("load it with skills__load_1a2b3c");
-    expect(prompt).toContain("MCP tools to turn on with tools.search before calling them:");
+    expect(prompt).toContain("MCP tools to turn on with tools__search before calling them:");
     expect(prompt).toContain("From Notes (`mcp__notes__*`):\nTitle notes.");
     expect(prompt).toContain("Notes (`mcp__notes__*`):\n- mcp__notes__echo: Say it back");
   });

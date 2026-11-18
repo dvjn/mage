@@ -7,6 +7,7 @@
 // was down happen once, and the next time is worked out from then. A person pauses, resumes or
 // deletes one in one guarded statement, and the agent is told of it, quietly, in the same write.
 
+import type { ToolText } from "@/shared/tools.ts";
 import { Cron } from "croner";
 import { ulid } from "ulid";
 import * as z from "zod";
@@ -24,6 +25,8 @@ import type { ToolRow } from "@/shared/transcript.ts";
 import type { Change } from "@/shared/threads/events.ts";
 import {
   ADD_SCHEDULE,
+  DELETE_SCHEDULE,
+  LIST_SCHEDULES,
   describeCron,
   SCHEDULES_TOOLSET,
   WAKE_AT,
@@ -60,13 +63,13 @@ async function refusing(work: () => unknown) {
 }
 
 // What the agent is told about them.
-export const SCHEDULES_GUIDANCE =
-  "Set a wake-up timer with schedules.wake_at to carry on later, or a recurring schedule with schedules.add (a five-field cron expression and a time zone). When one fires you get a notice with its note or prompt. Remove one with schedules.delete; see them with schedules.list.";
+export const SCHEDULES_GUIDANCE: ToolText = (named) =>
+  `Set a wake-up timer with ${named(WAKE_AT)} to carry on later, or a recurring schedule with ${named(ADD_SCHEDULE)} (a five-field cron expression and a time zone). When one fires you get a notice with its note or prompt. Remove one with ${named(DELETE_SCHEDULE)}; see them with ${named(LIST_SCHEDULES)}.`;
 
 // What setting one must pass first: room in the thread, and for a named one, a name of its own;
 // each answers why not, or null.
 export interface SetChecks {
-  room(threadId: string): Promise<string | null>;
+  room(threadId: string, named: (toolId: string) => string): Promise<string | null>;
   unique(threadId: string, name: string): Promise<string | null>;
 }
 
@@ -330,7 +333,7 @@ export function createSchedules(options: SchedulesOptions) {
             if (when.getTime() - start.getTime() > WAKE_HORIZON * 1000) {
               throw new ToolRefusal("That is more than a year ahead.");
             }
-            await refuseIf(checks.room(ctx.threadId));
+            await refuseIf(checks.room(ctx.threadId, ctx.named));
             const row = await store.create({
               id: ulid(),
               threadId: ctx.threadId,
@@ -368,7 +371,7 @@ export function createSchedules(options: SchedulesOptions) {
             return refusing(async () => {
               const timezone = input.timezone ?? "UTC";
               const next = checkCron(input.cron, timezone, now());
-              await refuseIf(checks.room(ctx.threadId));
+              await refuseIf(checks.room(ctx.threadId, ctx.named));
               await refuseIf(checks.unique(ctx.threadId, input.name));
               const row = await store.create({
                 id: ulid(),
@@ -388,7 +391,7 @@ export function createSchedules(options: SchedulesOptions) {
           },
         };
       const list: ToolSpec<Record<string, never>> = {
-        name: "schedules.list",
+        name: LIST_SCHEDULES,
         title: "List",
         annotations: { readOnlyHint: true },
         description: "This thread's wake-up timers and schedules, with when each goes off next.",
@@ -401,7 +404,7 @@ export function createSchedules(options: SchedulesOptions) {
         },
       };
       const remove: ToolSpec<{ id: string }> = {
-        name: "schedules.delete",
+        name: DELETE_SCHEDULE,
         title: "Delete",
         annotations: { readOnlyHint: false },
         description: "Delete a wake-up timer or schedule by its id.",

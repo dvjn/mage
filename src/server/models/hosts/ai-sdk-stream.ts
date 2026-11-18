@@ -5,8 +5,9 @@
 // providers accept, and back. Tools go in the order given. What changed in the thread at a point in
 // its conversation goes there as a system message to a provider that takes it so, and otherwise
 // into the request's own settings. A provider that turns tools on from a search's results is given
-// back, by each search, the tools it turned on, so the tools sent stay the same; one with a tool
-// search of its own is offered it in place of the request's search tool. For a provider that caches
+// back, by each search, the tools it found or turned on, so the tools sent stay the same; one with a
+// tool search of its own is offered it in place of the request's search tool. Calls come back by
+// tool id whether the tool was sent or a search's result loaded it. For a provider that caches
 // a prompt only up to where it is marked, the request is marked after its tools and system prompt,
 // at the agent's last reply and at its last message. A request for an answer only keeps its tools,
 // and is sent with no tool to be chosen only where that keeps the provider's prompt cache.
@@ -71,8 +72,8 @@ export interface ToolSearch {
 }
 
 // The search for a request to a provider that turns tools on from its results: the search tool, the
-// searchable tools by id, the tools each search turned on, by its call, and those turned on by a call
-// the messages no longer hold.
+// searchable tools by id, the tools each search found or turned on, by its call, and those turned on
+// by a call the messages no longer hold, which are sent with the request's tools instead.
 interface Searched {
   search: ToolSearch;
   toolId: string;
@@ -100,7 +101,7 @@ function bySearch(request: ModelRequest, search: ToolSearch, toolId: string) {
       const found = message.results.find((result) => result.toolId === toolId);
       if (found) {
         last = found.callId;
-        searched.loaded.set(last, []);
+        searched.loaded.set(last, [...(found.tools ?? [])]);
       }
     }
     if (message.role === "change" && message.tools) {
@@ -208,11 +209,12 @@ function sdkMessages(
   });
 }
 
-// What a search gives back to a provider that turns tools on from it, with the tools it turned on.
+// What a search gives back to a provider that turns tools on from it, with the tools it found or
+// turned on, those already on among them, so a repeated search still gives them.
 function searchOutput(searched: Searched, result: ModelToolResult) {
-  const tools = (searched.loaded.get(result.callId) ?? []).flatMap(
-    (id) => searched.byId.get(id) ?? [],
-  );
+  const tools = [...new Set(searched.loaded.get(result.callId))]
+    .filter((id) => !searched.left.includes(id))
+    .flatMap((id) => searched.byId.get(id) ?? []);
   return searched.search.output(result.output, tools);
 }
 
@@ -410,8 +412,13 @@ export async function* streamReply(
     ? bySearch(request, options.search!, request.search!)
     : { searched: undefined, messages: request.messages };
   const sent = toolsSent(request, changes, searched);
-  // The tools by the names the model knows them by.
-  const ids = new Map(sent.map(({ tool }) => [toolName(tool.id), tool.id]));
+  // Every tool by the name the model knows it by, sent or not: a search's result may load one.
+  const ids = new Map(
+    [...(request.tools ?? []), ...(request.searchable ?? [])].map((tool) => [
+      toolName(tool.id),
+      tool.id,
+    ]),
+  );
   const tools: ToolSet = Object.fromEntries(
     sent.map(({ tool, providerOptions }) => [
       toolName(tool.id),
@@ -436,7 +443,7 @@ export async function* streamReply(
     ...(changes && { allowSystemInMessages: true }),
     ...(options.providerOptions && { providerOptions: options.providerOptions }),
     // Sent in the order given.
-    ...(ids.size > 0 && { tools, toolOrder: [...ids.keys()] }),
+    ...(sent.length > 0 && { tools, toolOrder: sent.map(({ tool }) => toolName(tool.id)) }),
     ...(request.answerOnly && options.toolChoiceCached && { toolChoice: "none" as const }),
     // A step with tool calls ends the request: the calls run elsewhere.
     stopWhen: [

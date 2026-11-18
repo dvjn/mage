@@ -5,6 +5,7 @@ import { modelToolNames } from "@/server/tools/registry.ts";
 import { createCipher } from "@/server/kernel/cipher.ts";
 import * as schema from "@/server/schema.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
+import { namedOtherwise } from "@/server/testing/named-tools.ts";
 import type { Thread } from "@/server/threads/types.ts";
 import type { ToolRow } from "@/shared/transcript.ts";
 import type { Call } from "@/server/testing/scripted-model.ts";
@@ -2044,6 +2045,22 @@ describe("searching for MCP tools", () => {
     call.end();
   }
 
+  it("names every tool in the prompt and in tools' descriptions only as the model calls them", async () => {
+    const { ada, post, model, worker, start, space, tools } = await mcpThread();
+    await start();
+
+    await post(ada, "Hello");
+    const first = await model.next();
+    first.reply("Hi.");
+    await worker.idle();
+
+    expect(first.request.instructions).toContain(NOTES_INSTRUCTIONS);
+    expect(first.request.searchable?.length).toBeGreaterThan(0);
+    const ids = await tools.ids({ id: space.id, orgId: ada.orgId });
+    expect(ids.some((id) => id.startsWith("mcp:"))).toBe(true);
+    expect(namedOtherwise(first.request, ids)).toEqual([]);
+  });
+
   it("leaves the tools out, names them in the prompt, and turns on those a query finds", async () => {
     const { ada, post, model, worker, start, named, toolRows } = await mcpThread();
     await start();
@@ -2067,9 +2084,9 @@ describe("searching for MCP tools", () => {
     );
     const second = await model.next();
     expect(second.texts.slice(-2)[0]).toContain(
-      `${wireToolName(named("echo"))} is not on yet. Search for it or select it with tools.search first.`,
+      `${wireToolName(named("echo"))} is not on yet. Search for it or select it with tools__search first.`,
     );
-    expect(second.texts.at(-1)).toContain(`"turnedOn":["${named("echo")}"]`);
+    expect(second.texts.at(-1)).toContain(`"turnedOn":["${wireToolName(named("echo"))}"]`);
     expect(second.texts.at(-1)).toContain('"parameters":"text: string"');
     expect(second.tools).toContain(named("echo"));
     expect(second.tools).not.toContain(named("add_note"));
@@ -2105,9 +2122,9 @@ describe("searching for MCP tools", () => {
     await worker.idle();
 
     const [selected, listed] = next.texts.slice(-2);
-    expect(selected).toContain(`"turnedOn":["${named("add_note")}"]`);
+    expect(selected).toContain(`"turnedOn":["${wireToolName(named("add_note"))}"]`);
     expect(selected).toContain(
-      `"unknown":[{"name":"mcp.notes.delete_nte","didYouMean":["${named("delete_note")}"]}]`,
+      `"unknown":[{"name":"mcp.notes.delete_nte","didYouMean":["${wireToolName(named("delete_note"))}"]}]`,
     );
     expect(listed).toContain('"server":{"name":"Notes","tools":[');
     expect(listed).toContain(`"turnedOn":[]`);
@@ -2141,11 +2158,21 @@ describe("searching for MCP tools", () => {
     resumed.reply("Gone already.");
     await worker.idle();
 
-    // The next run keeps them.
+    // The next run keeps them, and a search there that finds one again gives it back.
     await post(ada, "Again");
     const next = await model.next();
     expect(next.tools).toContain(named("delete_note"));
-    next.reply("Hi.");
+    step(next, ["mcp_servers.search_tools", { select: [wireToolName(named("delete_note"))] }]);
+    const searched = await model.next();
+    const found = searched.request.messages
+      .flatMap((message) => (message.role === "tool" ? message.results : []))
+      .filter((result) => result.toolId === "tools.search")
+      .map((result) => result.tools);
+    expect(found).toEqual([[named("delete_note")], [named("delete_note")]]);
+    expect(searched.texts.at(-1)).toContain(
+      `"selected":[{"name":"${wireToolName(named("delete_note"))}"`,
+    );
+    searched.reply("Hi.");
     await worker.idle();
   });
 

@@ -23,6 +23,7 @@ import type { AskAnswers } from "@/shared/ask.ts";
 import { mcpToolOf } from "@/shared/mcp.ts";
 import type { Influencer, ToolRisk, ToolScope } from "@/shared/threads/events.ts";
 import {
+  textOf,
   toolIdNow,
   TOOL_OFF,
   WIRE_NAME_MAX,
@@ -36,6 +37,7 @@ import {
   type PolicyUse,
   type ToolLevel,
   type ToolsetSource,
+  type ToolText,
 } from "@/shared/tools.ts";
 import type { ToolRow } from "@/shared/transcript.ts";
 import type { Work } from "@/shared/jobs.ts";
@@ -120,6 +122,8 @@ export interface ToolContext {
   };
   // What the thread's next model call would send, for a tool that asks the thread's model.
   threadRequest?: () => Promise<ThreadRequest>;
+  // The name the model calls a tool by, from its id, for text the tool gives it.
+  named: (toolId: string) => string;
   // Aborted once the run is to stop, for a tool that waits.
   signal?: AbortSignal;
   // Where a tool that takes long says what it prints and how far it has come, for the people
@@ -137,8 +141,8 @@ export interface ToolSpec<I = unknown> {
   // What the model calls it, when not its id.
   modelName?: string;
   title?: string;
-  // What the model reads; the same for everyone.
-  description: string;
+  // What the model reads; the same for everyone, but for the names of tools it gives.
+  description: ToolText;
   input: z.ZodType<I>;
   // What it takes and gives back as JSON Schemas, for a tool that defines them so rather than
   // with `input` and `output`; `input` then only checks the shape.
@@ -188,7 +192,7 @@ export interface Toolset {
   // What it is for, where settings show it without tools.
   description?: string;
   // What the agent is told while it is on in the thread's space.
-  guidance?: string;
+  guidance?: ToolText;
   // What an MCP server says about its own tools, in its words: what it sent, and whether it was
   // cut to fit Mage's cap.
   told?: { text: string; cut: boolean };
@@ -365,12 +369,12 @@ export interface ToolPolicyStore {
   delete(id: string): Promise<void>;
 }
 
-// The tool as MCP defines one.
+// The tool as MCP defines one, naming other tools by their ids.
 export function definitionOf(spec: AnyToolSpec): ToolDefinition {
   return {
     name: spec.name,
     ...(spec.title && { title: spec.title }),
-    description: spec.description,
+    description: textOf(spec.description, (id) => id),
     inputSchema:
       spec.inputSchema ?? (z.toJSONSchema(spec.input, { io: "input" }) as Record<string, unknown>),
     ...(spec.outputSchema && { outputSchema: spec.outputSchema }),
@@ -440,12 +444,17 @@ function choiceInWords(schema: Record<string, unknown>) {
 
 // The tool as the model is told about it: its id, what it does, and what it takes, without the
 // labels its schema carries for people; choices between whole inputs move into the description.
-export function modelToolOf(spec: AnyToolSpec): ModelTool {
+// Other tools it names are named by `named`.
+export function modelToolOf(
+  spec: AnyToolSpec,
+  named: (toolId: string) => string = wireToolName,
+): ModelTool {
   const schema = unlabelled(definitionOf(spec).inputSchema) as Record<string, unknown>;
   const choice = choiceInWords(schema);
+  const description = textOf(spec.description, named);
   return {
     id: spec.name,
-    description: choice ? `${choice}\n\n${spec.description}` : spec.description,
+    description: choice ? `${choice}\n\n${description}` : description,
     inputSchema: Object.fromEntries(
       Object.entries(schema).filter(([key]) => !(key in TOP_LEVEL_CHOICES)),
     ),
@@ -480,6 +489,8 @@ export function modelToolNames(tools: readonly { id: string; name: string }[]) {
 export interface ModelNames {
   toModel: (id: string) => string;
   fromModel: (name: string) => string | undefined;
+  // Whether the space has a tool by the id, offered now or not.
+  known: (id: string) => boolean;
 }
 
 // The org's settings, read when first asked and once for whatever reads them together.
@@ -494,6 +505,8 @@ export interface ToolsOptions {
   access: Pick<ThreadAccess, "of">;
   // The tools each thread turned on by searching for them.
   threadTools: ThreadToolStore;
+  // Told of an id that text for the model names but no tool has.
+  unknownName?: (toolId: string) => void;
 }
 
 export type Tools = ReturnType<typeof createTools>;
@@ -1048,7 +1061,7 @@ export function createTools(options: ToolsOptions) {
                 name: names.toModel(spec.name),
                 server: toolset.title,
                 prefix: toolset.prefix ?? "",
-                description: spec.description,
+                description: textOf(spec.description, (id) => id),
                 inputSchema: definitionOf(spec).inputSchema,
               })),
       );
@@ -1079,6 +1092,15 @@ export function createTools(options: ToolsOptions) {
       return {
         toModel: (id) => names.get(id) ?? id,
         fromModel: (name) => ids.get(name),
+        known: (id) => names.has(id),
+      };
+    },
+
+    // The name the model calls a tool by in text written for it, as providers spell it.
+    textNamer(names: ModelNames) {
+      return (id: string) => {
+        if (!names.known(id)) options.unknownName?.(id);
+        return wireToolName(names.toModel(id));
       };
     },
     riskForCall,
@@ -1188,9 +1210,9 @@ export function createTools(options: ToolsOptions) {
       }));
     },
 
-    // The tools as the model is told about them.
-    forModel(tools: AnyToolSpec[]): ModelTool[] {
-      return tools.map(modelToolOf);
+    // The tools as the model is told about them, naming other tools as `named` does.
+    forModel(tools: AnyToolSpec[], named?: (toolId: string) => string): ModelTool[] {
+      return tools.map((spec) => modelToolOf(spec, named));
     },
 
     // Whether a call of the tool, with the risk the tool itself declares for it, runs now, on a

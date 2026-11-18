@@ -158,6 +158,12 @@ describe("background calls", () => {
     await t.worker.idle();
 
     expect(next.texts.join("\n")).toContain(`"id":"${id}"`);
+    // Status and list name the tool as the model calls it.
+    const [checked, listed] = next.texts.slice(-3);
+    for (const text of [checked!, listed!]) {
+      expect(text).toContain('"tool":"probe__wait"');
+      expect(text).not.toContain("probe.wait");
+    }
     expect(t.tool.aborted).toEqual(["a"]);
     expect((await t.records())[0]).toMatchObject({ status: "cancelled" });
     expect((await t.rows()).filter((row) => row.kind === "notice")).toEqual([]);
@@ -409,7 +415,7 @@ describe("background calls", () => {
     );
     const told = await t.replies("Noted.");
     await t.worker.idle();
-    expect(told.texts.at(-1)).toContain("was denied");
+    expect(told.texts.at(-1)).toContain(`Background call ${id} (Wait) was denied.`);
     expect((await t.records())[0]).toMatchObject({ status: "denied" });
   });
 
@@ -514,7 +520,8 @@ describe("background calls", () => {
     await t.calls.recover();
     const told = await t.replies("Noted.");
     await t.worker.idle();
-    expect(told.texts.at(-1)).toContain("was interrupted");
+    const { id } = (await t.records())[0]!;
+    expect(told.texts.at(-1)).toContain(`Background call ${id} (Wait) was interrupted`);
     expect((await t.records())[0]).toMatchObject({ status: "interrupted" });
     expect((await t.tools()).at(-1)).toMatchObject({ state: "failed" });
   });

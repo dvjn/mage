@@ -214,7 +214,7 @@ describe("a timer or schedule over its life", () => {
     await w.asks(w.threadId, ["schedules.add", { name: "More", cron: "0 * * * *", prompt: "x" }]);
     const told = await w.answers(w.threadId, "Refused.");
     expect(told.texts.at(-1)).toBe(
-      'result schedules.add: {"ok":false,"error":"This thread has 20 schedules and webhooks. Delete some with schedules.delete or webhooks.delete first."}',
+      'result schedules.add: {"ok":false,"error":"This thread has 20 schedules and webhooks. Delete some with schedules__delete or webhooks__delete first."}',
     );
     await w.settled();
   });

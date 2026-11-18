@@ -5,6 +5,7 @@ import { ulid } from "ulid";
 import * as schema from "@/server/schema.ts";
 
 import type { AnyToolSpec, ToolContext } from "@/server/tools/registry.ts";
+import { wireToolName } from "@/shared/tools.ts";
 import { openTestDatabase, type TestDatabase } from "@/server/testing/database.ts";
 import { ARTIFACT_ORIGIN, setup } from "@/server/testing/workspace.ts";
 import {
@@ -106,6 +107,7 @@ async function team({
       actor: { kind: "agent" },
       model: null,
       runAs: null,
+      named: wireToolName,
       write: async (work) => work(async () => ({ seq: 0 })),
     }) as ToolContext;
   async function call(
@@ -375,10 +377,14 @@ describe("publishing and updating", () => {
       return spec.run(spec.input.parse(input), {
         threadId: away.id,
         spaceId: elsewhere.id,
+        named: wireToolName,
         write: (work: (append: () => void) => unknown) => work(() => {}),
       } as never);
     };
-    expect(await asAway(ARTIFACT_TOOLS.read, { id })).toMatchObject({ ok: false });
+    expect(await asAway(ARTIFACT_TOOLS.read, { id })).toEqual({
+      ok: false,
+      error: `No artifact ${id} in this space. artifact__list shows its artifacts.`,
+    });
     expect(await asAway(ARTIFACT_TOOLS.update, { id, html: "<title>X</title>" })).toMatchObject({
       ok: false,
     });

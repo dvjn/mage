@@ -57,7 +57,7 @@ import type { EventDataMap, ReplyPart, ReplyStatus, RunReason } from "@/shared/t
 import { asksToCompact, type TranscriptRow } from "@/shared/transcript.ts";
 
 import type { CallContext, Calls, RequestContext, RunHold } from "@/server/calls/calls.ts";
-import { compact, type ThreadRequest, wholeWhereRead } from "./compaction.ts";
+import { compact, modelPart, type ThreadRequest, wholeWhereRead } from "./compaction.ts";
 import {
   contextOf,
   type Guidance,
@@ -66,7 +66,7 @@ import {
   NO_GUIDANCE,
   noticesMessage,
 } from "./context.ts";
-import { deferredByServer } from "@/server/tools/search.ts";
+import { deferredByServer, foundIn } from "@/server/tools/search.ts";
 import type {
   AnyToolSpec,
   DeferredTool,
@@ -215,6 +215,7 @@ export interface RunWorkerOptions {
     | "offered"
     | "forModel"
     | "modelNames"
+    | "textNamer"
     | "fromServers"
     | "namesNow"
     | "searchTool"
@@ -315,7 +316,11 @@ function namedFor(message: ModelMessage, toModel: (id: string) => string): Model
     case "tool":
       return {
         ...message,
-        results: message.results.map((result) => ({ ...result, toolId: toModel(result.toolId) })),
+        results: message.results.map((result) => ({
+          ...result,
+          toolId: toModel(result.toolId),
+          ...(result.tools && { tools: result.tools.map(toModel) }),
+        })),
       };
     case "change":
       return message.tools ? { ...message, tools: message.tools.map(toModel) } : message;
@@ -336,6 +341,8 @@ interface RunContext {
   available: AnyToolSpec[];
   deferral: { all: DeferredTool[]; on: Set<string>; turnedOn: ToolOn[]; left: DeferredTool[] };
   names: ModelNames;
+  // The name the model calls a tool by in text written for it.
+  named: (toolId: string) => string;
   // What each tool is called now, read once the step asks for calls.
   titles?: (toolId: string) => ToolNames | null;
   guidance: Guidance;
@@ -837,6 +844,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       await calls.run(next, holdOf(execution), {
         signal: execution.controller.signal,
         threadRequest: request,
+        named: ctx.named,
         deferral: async () => deferralOf(run.threadId, space, now),
         turnOn: async (callId, ids) =>
           write(lease, run, async () => tools.turnOn(run.threadId, callId, ids)),
@@ -864,6 +872,7 @@ export function createRunWorker(options: RunWorkerOptions) {
     const now = await tools.toolsIn(space);
     const offered = await offeredIn(space, thread, now);
     const deferral = await deferralOf(thread.id, space, now);
+    const names = await tools.modelNames(space, now);
     const available = offered.filter(
       (spec) => spec.deferral !== "search" || deferral.all.length > 0,
     );
@@ -874,7 +883,8 @@ export function createRunWorker(options: RunWorkerOptions) {
       offered,
       available,
       deferral,
-      names: await tools.modelNames(space, now),
+      names,
+      named: tools.textNamer(names),
       guidance: await guidance(space, available, thread, now),
       before: await before(thread),
     };
@@ -887,13 +897,13 @@ export function createRunWorker(options: RunWorkerOptions) {
     effort: Thread["effort"],
     runId?: string,
   ): Promise<ThreadRequest> {
-    const { thread, available, deferral, names } = ctx;
+    const { thread, available, deferral, names, named } = ctx;
     const searchable = new Set(deferral.all.map((tool) => tool.id));
     const { instructions, messages, firstEffort } = contextOf(
       await whole(rows),
       {
         ...ctx.guidance,
-        toolName: names.toModel,
+        toolName: named,
         ...(deferral.all.length && { deferredTools: deferredByServer(deferral.all) }),
       },
       ctx.before,
@@ -901,10 +911,23 @@ export function createRunWorker(options: RunWorkerOptions) {
       effort,
     );
     const forModel = (specs: AnyToolSpec[]) =>
-      tools.forModel(specs).map((tool) => ({ ...tool, id: names.toModel(tool.id) }));
+      tools.forModel(specs, named).map((tool) => ({ ...tool, id: names.toModel(tool.id) }));
+    const search = tools.searchTool();
+    // Each search's result with the tools it found, so a host can give them back with it.
+    const withFound = (message: ModelMessage): ModelMessage =>
+      message.role === "tool"
+        ? {
+            ...message,
+            results: message.results.map((result) =>
+              result.toolId === search
+                ? { ...result, tools: foundIn(result.output, deferral.all) }
+                : result,
+            ),
+          }
+        : message;
     return {
       instructions,
-      messages: messages.map((message) => namedFor(message, names.toModel)),
+      messages: messages.map((message) => namedFor(withFound(message), names.toModel)),
       sessionId: thread.id,
       ...(runId && { runId }),
       ...(effort && { effort }),
@@ -912,7 +935,8 @@ export function createRunWorker(options: RunWorkerOptions) {
       tools: forModel(available.filter((spec) => !searchable.has(spec.name))),
       searchable: forModel(available.filter((spec) => searchable.has(spec.name))),
       toolsOn: deferral.turnedOn.map((tool) => names.toModel(tool.id)),
-      search: names.toModel(tools.searchTool() ?? ""),
+      search: names.toModel(search ?? ""),
+      toolName: names.toModel,
     };
   }
 
@@ -1008,7 +1032,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       let messageId = "";
       const stream = model.model.stream(
         {
-          ...(await threadRequest(execution, ctx, model)),
+          ...modelPart(await threadRequest(execution, ctx, model)),
           maxSteps: maxSteps - steps,
           beforeStep: async () => boundary(execution, false, reply),
         },

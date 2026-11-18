@@ -302,6 +302,7 @@ export function setup(
       now: () => clock.now,
       titles,
       toolsets,
+      strictToolNames: true,
       ...(liveAfterCommit && { liveAfterCommit }),
       heartbeatMs,
       pingDatabase: () => Promise.resolve(true),

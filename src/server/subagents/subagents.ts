@@ -51,6 +51,7 @@ import type {
 } from "@/shared/threads/events.ts";
 import { type Effort, effortSchema, UNTITLED } from "@/shared/threads/thread.ts";
 import { toolIdNow } from "@/shared/tools.ts";
+import { LIST_MODELS } from "@/shared/models.ts";
 import type { QueuedInput } from "@/server/queue/queue.ts";
 import type { AgentRow, NoticeRow, ToolRow, TranscriptRow } from "@/shared/transcript.ts";
 
@@ -159,6 +160,8 @@ export interface SubagentsOptions {
   queue: Pick<Queue, "enqueue" | "waiting" | "wakes" | "wakesIn">;
   // Agents waiting on subagents, as on tasks.
   watches: Pick<WatchStore, "add" | "on" | "setIn" | "count" | "end" | "open" | "due">;
+  // The name the model calls each of a space's tools by, from its id.
+  toolNames?: (spaceId: string) => Promise<(toolId: string) => string>;
   now?: () => Date;
 }
 
@@ -763,14 +766,15 @@ export function createSubagents(options: SubagentsOptions) {
     return all.filter((subagent) => labels.some((label) => known(subagent, label)));
   }
 
-  // What listing tells of a subagent: where it stands, what it said last and its latest calls.
-  async function detailOf(subagent: SubagentRecord) {
+  // What listing tells of a subagent: where it stands, what it said last and its latest calls, each
+  // by the tool's name for the model.
+  async function detailOf(subagent: SubagentRecord, named: (toolId: string) => string) {
     const read = await transcript(subagent.threadId);
     const summary = await summaryOf(subagent);
     const steps = read.rows
       .filter((row) => row.kind === "tool")
       .slice(-5)
-      .map((row) => ({ tool: row.toolId, state: row.state }));
+      .map((row) => ({ tool: named(row.toolId), state: row.state }));
     return {
       id: subagent.threadId,
       name: subagent.name,
@@ -797,7 +801,7 @@ export function createSubagents(options: SubagentsOptions) {
       .meta({ title: "Fork", description: "Start it from a copy of this conversation" }),
     model: z.string().min(1).optional().meta({
       title: "Model",
-      description: "An exact ref from thread.list_models; yours when not given",
+      description: "An exact model ref; yours when not given",
     }),
     effort: effortSchema.optional().meta({ title: "Effort", description: "Yours when not given" }),
     tasks: z.array(z.string().min(1)).min(1).optional().meta({
@@ -924,8 +928,8 @@ export function createSubagents(options: SubagentsOptions) {
     name: START_SUBAGENT,
     title: "Start",
     annotations: { readOnlyHint: false },
-    description:
-      "Start a subagent on a task in its own thread; returns at once. It sees only its task and instructions, plus this conversation with fork. Model and effort default to yours; others only where allowed.",
+    description: (named) =>
+      `Start a subagent on a task in its own thread; returns at once. It sees only its task and instructions, plus this conversation with fork. Model and effort default to yours; others only where allowed, a model by its ref from ${named(LIST_MODELS)}.`,
     input: startInput,
     risk: () => "normal",
     async run(input, ctx) {
@@ -1010,13 +1014,15 @@ export function createSubagents(options: SubagentsOptions) {
         const parentId = me?.parentThreadId ?? ctx.threadId;
         const others = (all: SubagentRecord[]) =>
           all.filter((one) => one.threadId !== me?.threadId);
-        if (!subagent) return { subagents: await mapAsync(others(await live(parentId)), detailOf) };
+        const named = (await options.toolNames?.(ctx.spaceId)) ?? ((id: string) => id);
+        const detail = async (one: SubagentRecord) => detailOf(one, named);
+        if (!subagent) return { subagents: await mapAsync(others(await live(parentId)), detail) };
         // A label used again picks the newest that had it.
         const found = others(await subagents.ofParents([parentId])).findLast((one) =>
           known(one, subagent),
         );
         if (!found) throw new ToolRefusal(`No subagent is labelled ${subagent}.`);
-        return { subagents: [await detailOf(found)] };
+        return { subagents: [await detail(found)] };
       });
     },
   };

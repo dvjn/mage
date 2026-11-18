@@ -5,6 +5,8 @@
 import type { Schedules } from "@/server/schedules/schedules.ts";
 import type { Webhooks } from "@/server/webhooks/webhooks.ts";
 import { SCHEDULES_AND_WEBHOOKS_LIMIT } from "@/shared/schedules-and-webhooks.ts";
+import { DELETE_SCHEDULE } from "@/shared/schedules.ts";
+import { DELETE_WEBHOOK } from "@/shared/webhooks.ts";
 
 export function createSetRule(deps: {
   schedules: Pick<Schedules, "inThread">;
@@ -23,9 +25,9 @@ export function createSetRule(deps: {
   }
 
   return {
-    async room(threadId: string) {
+    async room(threadId: string, named: (toolId: string) => string) {
       return (await live(threadId)).length >= SCHEDULES_AND_WEBHOOKS_LIMIT
-        ? `This thread has ${SCHEDULES_AND_WEBHOOKS_LIMIT} schedules and webhooks. Delete some with schedules.delete or webhooks.delete first.`
+        ? `This thread has ${SCHEDULES_AND_WEBHOOKS_LIMIT} schedules and webhooks. Delete some with ${named(DELETE_SCHEDULE)} or ${named(DELETE_WEBHOOK)} first.`
         : null;
     },
     // A live one's name is its own in the thread, whatever the case.

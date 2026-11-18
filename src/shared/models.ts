@@ -9,6 +9,10 @@ import { MAKER_IDS } from "@/shared/makers.ts";
 import { modelPricingSchema } from "@/shared/model-pricing.ts";
 import { type Effort, effortSchema } from "@/shared/threads/thread.ts";
 
+// The tools the agent lists the org's models and changes its thread's model with.
+export const LIST_MODELS = "thread.list_models";
+export const SET_MODEL = "thread.set_model";
+
 export const modelSchema = z.object({
   ref: z.string(),
   id: z.string(),

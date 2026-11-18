@@ -8,7 +8,7 @@
 import * as z from "zod";
 
 import { MCP_OWN_TOOLSET } from "@/shared/mcp.ts";
-import { type JsonSchema, wireToolName } from "@/shared/tools.ts";
+import { type JsonSchema, wirePrefix, wireToolName } from "@/shared/tools.ts";
 
 import type {
   AnyToolSpec,
@@ -77,7 +77,8 @@ function ownName(tool: Pick<DeferredTool, "name" | "prefix">) {
 // server's, least for its description; a query that is its exact name matches best of all.
 function scoreOf(tool: DeferredTool, query: string, terms: readonly string[]) {
   const lower = query.trim().toLowerCase();
-  if (lower === tool.name.toLowerCase() || lower === ownName(tool).toLowerCase()) return 1_000;
+  const names = [tool.name, wireToolName(tool.name), ownName(tool)];
+  if (names.some((name) => name.toLowerCase() === lower)) return 1_000;
   const own = wordsOf(ownName(tool));
   const server = wordsOf(`${tool.server} ${tool.prefix}`);
   const described = wordsOf(tool.description);
@@ -141,27 +142,28 @@ export function resolve(tools: readonly DeferredTool[], name: string) {
   return own.length === 1 ? own[0]! : null;
 }
 
-// The names closest to one that matched none, closest first.
+// The names closest to one that matched none, closest first, as the model calls them.
 export function closest(tools: readonly DeferredTool[], name: string, limit = 3) {
   const lower = name.trim().toLowerCase();
   return tools
     .map((tool) => ({
       tool,
       by: Math.min(
-        distance(lower, tool.name.toLowerCase()),
-        distance(lower, ownName(tool).toLowerCase()),
+        ...[tool.name, wireToolName(tool.name), ownName(tool)].map((one) =>
+          distance(lower, one.toLowerCase()),
+        ),
       ),
     }))
     .filter(({ tool, by }) => by <= Math.max(3, Math.floor(ownName(tool).length / 3)))
     .sort((a, b) => a.by - b.by || a.tool.name.localeCompare(b.tool.name))
     .slice(0, limit)
-    .map(({ tool }) => tool.name);
+    .map(({ tool }) => wireToolName(tool.name));
 }
 
-// A tool as a search gives it back: enough to call it once it is on.
+// A tool as a search gives it back: enough to call it once it is on, by the name the model calls it.
 function found(tool: DeferredTool) {
   return {
-    name: tool.name,
+    name: wireToolName(tool.name),
     server: tool.server,
     description: lineOf(tool.description),
     parameters: parametersOf(tool.inputSchema),
@@ -213,15 +215,18 @@ const searchInput = z
     message: "Give a query, tools to select, or a server",
   }) as z.ZodType<SearchInput>;
 
-// The server a name means: by its name or its tools' prefix, in any case, with or without mcp.
+// The server a name means: by its name or its tools' prefix, in any case, as providers spell it,
+// with or without mcp.
 function serverOf(tools: readonly DeferredTool[], name: string) {
-  const lower = name.trim().toLowerCase().replace(/\.\*$/, "");
-  return tools.find(
-    (tool) =>
-      tool.server.toLowerCase() === lower ||
-      tool.prefix.toLowerCase() === lower ||
-      tool.prefix.toLowerCase() === `mcp.${lower}`,
-  );
+  const lower = name
+    .trim()
+    .toLowerCase()
+    .replace(/(\.|__)\*$/, "");
+  const wire = wireToolName(lower);
+  return tools.find((tool) => {
+    const prefix = wireToolName(tool.prefix.toLowerCase());
+    return tool.server.toLowerCase() === lower || prefix === wire || prefix === `mcp__${wire}`;
+  });
 }
 
 async function search(
@@ -249,7 +254,9 @@ async function search(
   if (input.server) {
     const server = serverOf(tools, input.server);
     if (!server) {
-      const names = [...new Set(tools.map((tool) => `${tool.server} (${tool.prefix})`))];
+      const names = [
+        ...new Set(tools.map((tool) => `${tool.server} (${wirePrefix(tool.prefix)})`)),
+      ];
       return {
         ok: false,
         error: `No server here is called ${input.server}. The servers: ${names.join(", ")}.`,
@@ -262,7 +269,7 @@ async function search(
   }
   const ids = [...new Set(turnOn.map((tool) => tool.id))];
   if (ids.length) await deferred.turnOn(ids);
-  const now = turnOn.filter((tool) => !on.has(tool.id)).map((tool) => tool.name);
+  const now = turnOn.filter((tool) => !on.has(tool.id)).map((tool) => wireToolName(tool.name));
   return {
     ok: true,
     value: {
@@ -271,6 +278,20 @@ async function search(
       ...(ids.length > 0 && { note: "Tools turned on can be called from your next step." }),
     },
   };
+}
+
+// The tools a search's output gives as on, new or not: those it selected or matched, by id.
+export function foundIn(output: ToolOutput, tools: readonly DeferredTool[]) {
+  if (!output.ok || typeof output.value !== "object" || !output.value) return [];
+  const value = output.value as { selected?: { name: string }[]; matches?: { name: string }[] };
+  const names = [...(value.selected ?? []), ...(value.matches ?? [])].map((one) => one.name);
+  return [...new Set(names.flatMap((name) => resolve(tools, name)?.id ?? []))];
+}
+
+// What a call of a tool still left out is told, with both tools named as the model calls them.
+export function notOnYet(toolId: string, toModel: (id: string) => string) {
+  const named = (id: string) => wireToolName(toModel(id));
+  return `${named(toolId)} is not on yet. Search for it or select it with ${named(TOOL_SEARCH)} first.`;
 }
 
 // Searching for the MCP tools a run leaves out, and turning them on; of use where the space uses

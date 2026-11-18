@@ -268,7 +268,7 @@ describe("tasks", () => {
     const text = refused.texts.at(-1)!;
     expect(text).toContain("GitHub is not an assignee");
     expect(text).toContain("once started");
-    expect(text).toContain("subagents.start tasks");
+    expect(text).toContain("subagents__start tasks");
   });
 
   it("are shared with a subagent that is given a task, which hears of it", async () => {

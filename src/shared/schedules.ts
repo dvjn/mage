@@ -8,6 +8,8 @@ import * as z from "zod";
 export const SCHEDULES_TOOLSET = "schedules";
 export const WAKE_AT = "schedules.wake_at";
 export const ADD_SCHEDULE = "schedules.add";
+export const LIST_SCHEDULES = "schedules.list";
+export const DELETE_SCHEDULE = "schedules.delete";
 
 // The furthest ahead a wake-up timer may be set, in seconds.
 export const WAKE_HORIZON = 366 * 24 * 60 * 60;

@@ -14,6 +14,8 @@ import type { SpaceStore } from "@/server/spaces/service.ts";
 import type { ThreadStore } from "@/server/threads/types.ts";
 import type { Transcripts } from "@/server/threads/transcripts.ts";
 import { effortSchema } from "@/shared/threads/thread.ts";
+import { START_SUBAGENT } from "@/shared/subagents.ts";
+import { LIST_MODELS, SET_MODEL } from "@/shared/models.ts";
 
 import { askTool } from "@/server/calls/ask.ts";
 import { compact as compactThread, wholeWhereRead } from "@/server/execution/compaction.ts";
@@ -90,11 +92,11 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
   };
 
   const listModels: ToolSpec<Record<string, never>> = {
-    name: "thread.list_models",
+    name: LIST_MODELS,
     title: "List models",
     annotations: { readOnlyHint: true },
-    description:
-      "List the enabled models available to this org, with exact refs for thread.set_model and subagents.start. Use these refs rather than guessing model names. Reports connections whose catalogs could not be read; a listed model is not a guarantee that inference will succeed.",
+    description: (named) =>
+      `List the enabled models available to this org, with exact refs for ${named(SET_MODEL)} and ${named(START_SUBAGENT)}. Use these refs rather than guessing model names. Reports connections whose catalogs could not be read; a listed model is not a guarantee that inference will succeed.`,
     input: z.object({}).strict() as z.ZodType<Record<string, never>>,
     risk: () => "normal",
     async run(_input, ctx) {
@@ -138,11 +140,11 @@ export function createSystemTools(options: SystemToolsOptions): Toolset {
   };
 
   const setModel: ToolSpec<{ model: string; effort: "low" | "medium" | "high" | null }> = {
-    name: "thread.set_model",
+    name: SET_MODEL,
     title: "Change model",
     annotations: { readOnlyHint: false },
-    description:
-      "Use a ref from thread.list_models. Set this thread's model and effort together; null effort is the model's default. Applies from your next step.",
+    description: (named) =>
+      `Use a ref from ${named(LIST_MODELS)}. Set this thread's model and effort together; null effort is the model's default. Applies from your next step.`,
     input: z.object({
       model: z.string().min(1).meta({ title: "Model", description: "A model ref" }),
       effort: effortSchema.nullable().meta({ title: "Effort" }),

@@ -8,7 +8,7 @@ import { asc, eq, inArray, and } from "drizzle-orm";
 import { ulid } from "ulid";
 
 import type { ThreadAccess } from "@/server/access/access.ts";
-import type { ThreadRequest } from "@/server/execution/compaction.ts";
+import { modelPart, type ThreadRequest } from "@/server/execution/compaction.ts";
 import type { Db } from "@/server/db/db.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
@@ -158,7 +158,7 @@ export function asideRequest(
         },
   );
   return {
-    ...thread,
+    ...modelPart(thread),
     messages: [...thread.messages, ...messages],
     maxSteps: 1,
     answerOnly: true,
