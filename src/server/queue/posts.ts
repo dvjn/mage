@@ -2,7 +2,8 @@
 // with what the agent reads for it. A message that is not quiet starts the agent when it is idle;
 // while a run is under way it waits to steer that run or to start the next one, and an interrupt
 // also asks the run under way to stop. A retired subagent's thread takes no posts, the first post
-// names an untitled thread, and whoever hears of posts does so in the write that stores them.
+// names an untitled thread and brings the notices that open it ahead of it, and whoever hears of
+// posts does so in the write that stores them.
 
 import type { Reader, ThreadAccess } from "@/server/access/access.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
@@ -15,13 +16,14 @@ import { BTW, COMPACT, type CommandInput } from "@/shared/threads/commands.ts";
 import { type Delivery, QUIET_PREFIX } from "@/shared/threads/events.ts";
 import type { SentCommand } from "@/shared/transcript.ts";
 
+import type { Notice } from "./notices.ts";
 import type { Queue } from "./queue.ts";
 
 export interface PostsOptions {
   queue: Pick<Queue, "enqueue">;
   access: Pick<ThreadAccess, "require">;
   log: ThreadLog;
-  threads: Pick<ThreadStore, "find">;
+  threads: Pick<ThreadStore, "find" | "hasMessage">;
   // Whether compacting the thread, asked for now, has something to do.
   compactable: (threadId: string) => Promise<boolean>;
   // Whether the thread is a retired subagent's, which nobody posts in.
@@ -41,11 +43,16 @@ export interface PostsOptions {
 // What hears of a person's post, in the write that stores it.
 export type PostListener = (post: { by: string; threadId: string; seq: number }) => Promise<void>;
 
+// A notice a thread's first message brings ahead of it, or none: read before the write that stores
+// the message, and told in that write unless another message came first.
+export type Opening = (thread: Thread) => Promise<Notice | null>;
+
 export type Posts = ReturnType<typeof createPosts>;
 
 export function createPosts(options: PostsOptions) {
   const { queue, access, log, threads, compactable, retired, expand, titles } = options;
   const listeners: PostListener[] = [];
+  const openings: Opening[] = [];
 
   async function post(
     principal: Pick<Principal, "userId" | "orgId">,
@@ -57,9 +64,17 @@ export function createPosts(options: PostsOptions) {
   ) {
     if (await retired(thread)) throw new ServiceError(409, "This subagent is archived");
     const quiet = !command && text.startsWith(QUIET_PREFIX);
+    const opening = (await threads.hasMessage(thread.id))
+      ? []
+      : (await Promise.all(openings.map(async (open) => open(thread)))).filter(
+          (notice) => notice !== null,
+        );
     let first = false;
     const { result: event } = await log.write(thread.id, async () => {
       first = (await threads.find(thread.id))?.title === null;
+      if (opening.length > 0 && !(await threads.hasMessage(thread.id))) {
+        for (const notice of opening) await queue.enqueue(thread.id, { kind: "notice", notice });
+      }
       const { event } = await queue.enqueue(
         thread.id,
         {
@@ -127,6 +142,11 @@ export function createPosts(options: PostsOptions) {
     // Hears of every post, inside the write that stores it.
     onPosted(listener: PostListener) {
       listeners.push(listener);
+    },
+
+    // Adds a notice threads' first messages bring ahead of them.
+    opens(opening: Opening) {
+      openings.push(opening);
     },
   };
 }

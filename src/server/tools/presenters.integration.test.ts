@@ -113,6 +113,7 @@ describe("the registry", () => {
       "tasks",
       "schedules",
       "webhooks",
+      "memory",
       "artifact",
     ];
     expect(toolsets).toEqual(registered.filter((id) => toolsets.includes(id)));

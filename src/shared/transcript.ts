@@ -508,7 +508,8 @@ export function createFold(from?: FoldState): TranscriptFold {
         break;
       case "notice": {
         const { kind, source, influence, to, task, actor } = event.data;
-        const { text, subagents, when, error, last, delivery, schedule, tray, change } = event.data;
+        const { text, subagents, when, error, last, delivery, schedule, tray, change, memory } =
+          event.data;
         const { callId, callIds, rowId, ...from } = source;
         const silent = event.data.wake === false;
         const message: NoticeMessage = {
@@ -530,6 +531,7 @@ export function createFold(from?: FoldState): TranscriptFold {
           ...(schedule && { schedule }),
           ...(tray && { tray }),
           ...(change && { change }),
+          ...(memory && { memory }),
           ...(callId && { call: { threadId: source.threadId, callId } }),
           ...(callIds && { callIds }),
           ...(rowId && { rowId }),

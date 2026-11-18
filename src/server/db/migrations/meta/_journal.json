@@ -127,6 +127,13 @@
       "when": 1794762970747,
       "tag": "0017_singleton",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1794958490631,
+      "tag": "0018_memory",
+      "breakpoints": true
     }
   ]
 }

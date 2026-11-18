@@ -50,6 +50,7 @@ import type { ThreadToolStore } from "./thread-tool-store.ts";
 import type { ToolsetGuidance } from "@/server/execution/context.ts";
 import {
   type Approval,
+  ASKING,
   canPostIn,
   canUse,
   decide,
@@ -153,6 +154,9 @@ export interface ToolSpec<I = unknown> {
   annotations?: Record<string, unknown>;
   // One always on where it is of use: no switch turns it off and no policy applies to it.
   fixed?: boolean;
+  // For a tool whose every call waits for approval while the org sets no policy on it; a policy
+  // set there replaces this.
+  byDefault?: "ask";
   // Whether a space has any use for it now; always, when not given. Tools may share one.
   usefulIn?: UseTest;
   // False for a tool whose calls never move to the background, as those that start, check and stop
@@ -672,15 +676,20 @@ export function createTools(options: ToolsOptions) {
   }
 
   // What applies to each tool in the space. The org's tools take the org's policy, or are open
-  // when it set none, with the space's extra rule on top; the space's own take the space's
-  // policy, or are open. Off in either is off. A policy that is gone, or not the scope's to use,
-  // lets nobody use the tool and nobody approve it. Fixed tools are always open.
+  // when it set none (asking, for a tool that asks by default), with the space's extra rule on
+  // top; the space's own take the space's policy, or are open. Off in either is off. A policy that
+  // is gone, or not the scope's to use, lets nobody use the tool and nobody approve it. Fixed
+  // tools are always open.
   async function rulesIn(
     space: Pick<Space, "id" | "orgId">,
     forOrgSettings?: Toolset[],
   ): Promise<(toolId: string) => ToolRules> {
     const orgSets = forOrgSettings ?? (await scoped.forOrgSettings(space.orgId));
-    const orgTools = new Set(specsOf([...settable(), ...orgSets]).map((spec) => spec.name));
+    const orgSpecs = specsOf([...settable(), ...orgSets]);
+    const orgTools = new Set(orgSpecs.map((spec) => spec.name));
+    const asking = new Set(
+      orgSpecs.filter((spec) => spec.byDefault === "ask").map((spec) => spec.name),
+    );
     const org = await settings.inOrg(space.orgId);
     const own = await settings.inSpace(space.id);
     const byId = new Map((await policies.inOrg(space.orgId)).map((policy) => [policy.id, policy]));
@@ -697,7 +706,8 @@ export function createTools(options: ToolsOptions) {
       const inOrg = fromOrg ? org.get(toolId) : undefined;
       const inSpace = own.get(toolId);
       const rules: Rule[] = [];
-      if (fromOrg) rules.push(inOrg && inOrg !== TOOL_OFF ? policyRule(inOrg, false) : OPEN);
+      const unset = asking.has(toolId) ? ASKING : OPEN;
+      if (fromOrg) rules.push(inOrg && inOrg !== TOOL_OFF ? policyRule(inOrg, false) : unset);
       if (inSpace && inSpace !== TOOL_OFF) rules.push(policyRule(inSpace, true));
       else if (!fromOrg) rules.push(OPEN);
       return { off: inOrg === TOOL_OFF || inSpace === TOOL_OFF, rule: ruleFor(rules) };
@@ -955,6 +965,7 @@ export function createTools(options: ToolsOptions) {
       tools: tools.map((spec) => ({
         definition: definitionOf(spec),
         fixed: !!(toolset.fixed || spec.fixed),
+        ...(spec.byDefault && { byDefault: spec.byDefault }),
       })),
     };
   }
@@ -1360,12 +1371,12 @@ export function createToolDecisions(options: ToolDecisionsOptions) {
   ): ToolsetSetting[] {
     return toolsets.map((toolset) => ({
       ...toolset,
-      tools: toolset.tools.map(({ definition, fixed }) => ({
+      tools: toolset.tools.map(({ definition, fixed, byDefault }) => ({
         id: definition.name,
         definition,
         ...(fixed
           ? { orgPolicy: null, policy: null, fixed }
-          : assignmentsOf(definition.name, toolset.scope)),
+          : { ...assignmentsOf(definition.name, toolset.scope), ...(byDefault && { byDefault }) }),
       })),
     }));
   }

@@ -4,14 +4,15 @@
 // when it is not the primary space, or with its threads when it is a team member's own, and the
 // agent's instructions there), Members for a shared space,
 // the agent's Tools and MCPs there, with one table of MCP servers, the org's that the space may
-// turn off for itself beside its own, and a page for each of its own, and its Skills. They are
+// turn off for itself beside its own, and a page for each of its own, its Skills, and the Memory the
+// agent keeps there. They are
 // there only for those who manage it (its owners, and a team org's owners). A team org's owner who manages a space without being in it reads its threads once
 // they give themselves a role in it.
 
 import { AllowPublicArtifacts } from "@/web/artifacts/public-setting";
 import { useQuery } from "@tanstack/react-query";
 import { getRouteApi, Navigate, Outlet, useNavigate } from "@tanstack/react-router";
-import { Settings2Icon, FileTextIcon, UsersIcon, WrenchIcon } from "lucide-react";
+import { BrainIcon, Settings2Icon, FileTextIcon, UsersIcon, WrenchIcon } from "lucide-react";
 import { useEffect } from "react";
 
 import { namedForPerson, type SpaceSummary } from "@/shared/spaces.ts";
@@ -20,6 +21,7 @@ import { SpaceMembers } from "@/web/spaces/space-members";
 import { EFFORT_LABELS, EffortField, modelName, ModelField } from "@/web/models/default-fields";
 import { SpaceInstructions } from "@/web/instructions/instructions";
 import { SpaceSkills } from "@/web/skills/pages";
+import { SpaceMemory } from "@/web/memory/space-memory";
 import { SettingsCard, SettingsTitle } from "@/web/shell/settings-page";
 import { PressLink } from "@/web/components/press-link";
 import { SettingsShell, settingsNavLink } from "@/web/shell/settings-shell";
@@ -211,6 +213,12 @@ export function SpaceSettingsShell() {
               Skills
             </PressLink>
           </li>
+          <li className="shrink-0">
+            <PressLink to="/s/$spaceId/settings/memory" params={params} className={settingsNavLink}>
+              <BrainIcon className="size-4" />
+              Memory
+            </PressLink>
+          </li>
         </>
       }
     >
@@ -256,6 +264,13 @@ export function SpaceSkillsPage() {
   const { space } = useSettingsSpace();
   if (!space) return null;
   return <SpaceSkills spaceId={space.id} />;
+}
+
+// What the agent keeps for the space's later threads.
+export function SpaceMemoryPage() {
+  const { space } = useSettingsSpace();
+  if (!space) return null;
+  return <SpaceMemory spaceId={space.id} />;
 }
 
 // The agent's tools in the space's threads.

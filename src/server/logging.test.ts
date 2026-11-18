@@ -14,6 +14,7 @@ import type { Models } from "@/server/models/service.ts";
 import type { Groups } from "@/server/orgs/groups.ts";
 import type { Identity } from "@/server/orgs/identity.ts";
 import type { Orgs } from "@/server/orgs/service.ts";
+import type { Memory } from "@/server/memory/memory.ts";
 import type { Skills } from "@/server/skills/service.ts";
 import type { Artifacts } from "@/server/artifacts/service.ts";
 import type { Spaces } from "@/server/spaces/service.ts";
@@ -53,6 +54,7 @@ describe("request logging", () => {
       mcp: {} as McpServers,
       instructions: {} as Instructions,
       skills: {} as Skills,
+      memory: {} as Memory,
       artifacts: {} as Artifacts,
       logger,
       signInOptions: { oidc: null },

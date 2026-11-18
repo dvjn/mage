@@ -3,7 +3,8 @@
 // The skills that ship with the product, as one source every org has. Their text is bundled into
 // the server from the builtin/ folder, so nothing is read from disk at runtime and nothing is
 // stored: only the switches on them are, by the ids given here. They are listed first so a skill
-// of the same name written or added by an org or a space replaces one.
+// of the same name written or added by an org or a space replaces one. Their text names tools as
+// {{tool:<id>}}, written as whoever reads it knows each tool.
 
 import { discoverSkills } from "./discovery.ts";
 import type { Skill, SkillSource } from "./service.ts";
@@ -18,6 +19,13 @@ export function builtinSkillId(name: string) {
 
 export function isBuiltinId(id: string) {
   return id === BUILTIN_SOURCE_ID || id.startsWith(PREFIX);
+}
+
+const TOOL_REF = /\{\{tool:([a-z0-9_.]+)\}\}/g;
+
+// A built-in skill's text with each tool it names written by `named`.
+export function namingTools(text: string, named: (toolId: string) => string) {
+  return text.replace(TOOL_REF, (_ref, id: string) => named(id));
 }
 
 const texts = import.meta.glob("./builtin/**/*.md", {

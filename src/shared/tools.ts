@@ -155,6 +155,8 @@ export const toolSettingSchema = z.object({
   policy: toolAssignmentSchema,
   // Always on, with no policy.
   fixed: z.boolean().optional(),
+  // Every call waits for approval while the org sets no policy on it.
+  byDefault: z.literal("ask").optional(),
 });
 
 export type ToolSetting = z.infer<typeof toolSettingSchema>;

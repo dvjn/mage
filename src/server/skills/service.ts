@@ -43,7 +43,13 @@ import {
   type SkillFile,
 } from "@/shared/skills.ts";
 
-import { BUILTIN_SOURCE_ID, builtinSkills, builtinSource, isBuiltinId } from "./builtin.ts";
+import {
+  BUILTIN_SOURCE_ID,
+  builtinSkills,
+  builtinSource,
+  isBuiltinId,
+  namingTools,
+} from "./builtin.ts";
 import { discoverSkills, type FoundSkill, readSkillFile } from "./discovery.ts";
 import { GitError, type GitReader, type GitSnapshot } from "./git.ts";
 import { ArchiveError, type ArchiveReader } from "./zip.ts";
@@ -144,6 +150,8 @@ export interface SkillsOptions {
   spaces: Pick<Spaces, "require">;
   settings: Pick<OrgSettingStore, "get" | "setSpaceSkills">;
   logger: Logger;
+  // What the model calls each of the space's tools, for the built-in skills that name them.
+  toolNames?: (space: Pick<Space, "id" | "orgId">) => Promise<(toolId: string) => string>;
   now?: () => Date;
 }
 
@@ -391,6 +399,18 @@ export function createSkills(options: SkillsOptions) {
     return effectiveSkills(await spaceSkills(space, org));
   }
 
+  // The skill's instructions as the agent in the space reads them, naming tools as `named` does
+  // when given.
+  async function instructionsOf(
+    space: Pick<Space, "id" | "orgId">,
+    skill: Skill,
+    named?: (toolId: string) => string,
+  ) {
+    if (skill.sourceId !== BUILTIN_SOURCE_ID) return skill.body;
+    const naming = named ?? (options.toolNames ? await options.toolNames(space) : (id) => id);
+    return namingTools(skill.body, naming);
+  }
+
   async function snapshotOf(parsed: ParsedSource, token: string | null) {
     try {
       return await git.snapshot({ url: parsed.url, ref: parsed.ref, token }, parsed.subpath);
@@ -535,6 +555,7 @@ export function createSkills(options: SkillsOptions) {
 
   return {
     effectiveIn,
+    instructionsOf,
 
     // The skills on in the space, as the agent's prompt lists them, when it can load them: those
     // its tools read.
@@ -634,7 +655,8 @@ export function createSkills(options: SkillsOptions) {
           (candidate) => candidate.id === id,
         );
         if (!skill) throw new ServiceError(404, NOT_FOUND);
-        return { ...skillSummary(skill), body: skill.body, files: skill.files };
+        const body = namingTools(skill.body, (toolId) => toolId);
+        return { ...skillSummary(skill), body, files: skill.files };
       }
       const skill = await skills.find(id);
       if (!skill || skill.orgId !== principal.orgId) throw new ServiceError(404, NOT_FOUND);
@@ -846,7 +868,7 @@ export function createSkills(options: SkillsOptions) {
             value: {
               name: skill.name,
               description: skill.description,
-              instructions: skill.body,
+              instructions: await instructionsOf(space, skill, ctx.named),
               files: skill.files.map((file) => file.path),
             },
           });

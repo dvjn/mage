@@ -26,6 +26,7 @@ export function AssignmentLabel({
   extra,
   inherited,
   mixed,
+  asks,
 }: {
   value: string | null;
   // In a space on the org's tools, nothing set means following the org's policy.
@@ -33,6 +34,8 @@ export function AssignmentLabel({
   // The org's policy followed, when the tools share one.
   inherited?: string | null;
   mixed?: boolean;
+  // The tools ask for approval while nothing is set.
+  asks?: boolean;
 }) {
   const { byId } = usePolicies();
   if (mixed) return <span className="truncate text-muted-foreground">Mixed</span>;
@@ -48,7 +51,7 @@ export function AssignmentLabel({
     return (
       <>
         <AssignmentDot value={inherited} />
-        <span className="truncate">Default · {nameOf(inherited, byId)}</span>
+        <span className="truncate">Default · {nameOf(inherited, byId, asks)}</span>
       </>
     );
   }
@@ -56,7 +59,7 @@ export function AssignmentLabel({
     return (
       <>
         <PolicyDot kind="unset" />
-        <span className="truncate">Open</span>
+        <span className="truncate">{nameOf(null, byId, asks)}</span>
       </>
     );
   }
@@ -91,11 +94,14 @@ export function PolicyPicker({
   mixed = false,
   extra = false,
   inherited,
+  asks = false,
   target,
 }: {
   label: string;
   value: string | null;
   mixed?: boolean;
+  // The tools ask for approval while nothing is set.
+  asks?: boolean;
   // In a space on the org's tools: the first entry follows the org's policy, and another is
   // added on top of it.
   extra?: boolean;
@@ -109,7 +115,7 @@ export function PolicyPicker({
   // On the org's tools, what a choice comes to with the org's policy under it.
   const applied =
     known && value !== null && !mixed
-      ? `With the organization's ${nameOf(inherited, byId)}: ${summaryOf(effectiveRule(inherited, value, byId))}`
+      ? `With the organization's ${nameOf(inherited, byId, asks)}: ${summaryOf(effectiveRule(inherited, value, byId, asks))}`
       : undefined;
   return (
     <DropdownMenu>
@@ -126,7 +132,13 @@ export function PolicyPicker({
         }
       >
         <span className="flex min-w-0 items-center gap-1.5">
-          <AssignmentLabel value={value} extra={extra} inherited={inherited} mixed={mixed} />
+          <AssignmentLabel
+            value={value}
+            extra={extra}
+            inherited={inherited}
+            mixed={mixed}
+            asks={asks}
+          />
         </span>
         <ChevronDownIcon className="text-muted-foreground" />
       </DropdownMenuTrigger>
@@ -144,7 +156,7 @@ export function PolicyPicker({
               name="Default"
               summary={
                 known
-                  ? `Organization: ${nameOf(inherited, byId)}`
+                  ? `Organization: ${nameOf(inherited, byId, asks)}`
                   : "Each tool follows the organization's policy"
               }
             />
@@ -152,8 +164,8 @@ export function PolicyPicker({
             <PickerItem
               value={UNSET}
               dot={<PolicyDot kind="unset" />}
-              name="Open"
-              summary="Anyone can use, no approval"
+              name={nameOf(null, byId, asks)}
+              summary={asks ? "Every call needs approval" : "Anyone can use, no approval"}
             />
           )}
           <DropdownMenuSeparator />

@@ -155,6 +155,13 @@ describe("thread commands", () => {
         tag: "Skill",
       },
       {
+        name: "reflect",
+        description: expect.any(String),
+        argumentHint: null,
+        kind: "skill",
+        tag: "Skill",
+      },
+      {
         name: "notes:greet",
         description: "Greet someone by name.",
         argumentHint: "<name> [tone]",
@@ -174,7 +181,14 @@ describe("thread commands", () => {
       expect(res.status).toBe(200);
       return ((await res.json()) as ThreadCommand[]).map((command) => command.name);
     };
-    expect(await list(ada)).toEqual(["charts", "diagrams", "page-design", "pirate", "notes:greet"]);
+    expect(await list(ada)).toEqual([
+      "charts",
+      "diagrams",
+      "page-design",
+      "pirate",
+      "reflect",
+      "notes:greet",
+    ]);
     expect(await list(alan)).toEqual([]);
   });
 

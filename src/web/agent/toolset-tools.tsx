@@ -104,9 +104,10 @@ function ToolGroup({
   // The picker sets only the tools not always on.
   const settable = tools.filter((tool) => !tool.fixed);
   const values = new Set(settable.map((tool) => tool.policy));
-  // Mixed when the group's tools differ.
+  // Mixed when the group's tools differ, in what they are set to or in what nothing set means.
   const value = values.size === 1 ? [...values][0]! : null;
   const inherited = new Set(settable.map((tool) => tool.orgPolicy));
+  const asking = new Set(settable.map((tool) => tool.byDefault === "ask"));
   if (shown.length === 0) return null;
   return (
     <div role="group" aria-label={name}>
@@ -118,9 +119,10 @@ function ToolGroup({
           <PolicyPicker
             label={extra ? `${name} policy in this space` : `${name} policy`}
             value={value}
-            mixed={values.size > 1}
+            mixed={values.size > 1 || asking.size > 1}
             extra={extra}
             inherited={inherited.size === 1 ? [...inherited][0]! : undefined}
+            asks={asking.has(true)}
             target={{ toolIds: settable.map((tool) => tool.id), label: target }}
           />
         ) : (
@@ -182,6 +184,7 @@ function ToolRow({ tool, extra }: { tool: ToolSetting; extra: boolean }) {
           value={tool.policy}
           extra={extra}
           inherited={tool.orgPolicy}
+          asks={tool.byDefault === "ask"}
           target={{ toolIds: [tool.id], label }}
         />
       )}

@@ -19,6 +19,7 @@
     "DELETE /api/v1/skill-sources/:id",
     "DELETE /api/v1/skills/:id",
     "DELETE /api/v1/spaces/:id",
+    "DELETE /api/v1/spaces/:id/memory/:entryId",
     "DELETE /api/v1/spaces/:id/tool-policies/:policyId",
     "DELETE /api/v1/spaces/trash/:id",
     "DELETE /api/v1/threads/:id",
@@ -78,6 +79,7 @@
     "GET /api/v1/spaces/:id/instructions",
     "GET /api/v1/spaces/:id/mcp-servers",
     "GET /api/v1/spaces/:id/members",
+    "GET /api/v1/spaces/:id/memory",
     "GET /api/v1/spaces/:id/skills",
     "GET /api/v1/spaces/:id/threads",
     "GET /api/v1/spaces/:id/threads/page",
@@ -3414,6 +3416,159 @@
         "user",
         "org",
         "role"
+      ]
+    },
+    "memory.ts#memoryEntrySchema": {
+      "$id": "memory.ts#memoryEntrySchema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "memory.ts#memoryTypeSchema"
+        },
+        "topic": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "thread": {
+          "anyOf": [
+            {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "title": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "title"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "approvedBy": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "savedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "topic",
+        "text",
+        "thread",
+        "approvedBy",
+        "savedAt"
+      ]
+    },
+    "memory.ts#memoryNoticeEntrySchema": {
+      "$id": "memory.ts#memoryNoticeEntrySchema",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "type": {
+          "$ref": "memory.ts#memoryTypeSchema"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "text"
+      ]
+    },
+    "memory.ts#memoryNoticeSchema": {
+      "$id": "memory.ts#memoryNoticeSchema",
+      "type": "object",
+      "properties": {
+        "topics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "topic": {
+                "type": "string"
+              },
+              "entries": {
+                "type": "array",
+                "items": {
+                  "$ref": "memory.ts#memoryNoticeEntrySchema"
+                }
+              }
+            },
+            "required": [
+              "topic",
+              "entries"
+            ]
+          }
+        },
+        "more": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "moreTopics": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "topics",
+        "more"
+      ]
+    },
+    "memory.ts#memoryTypeSchema": {
+      "$id": "memory.ts#memoryTypeSchema",
+      "type": "string",
+      "enum": [
+        "fact",
+        "decision",
+        "preference",
+        "procedure",
+        "failure",
+        "tool_quirk"
+      ]
+    },
+    "memory.ts#spaceMemorySchema": {
+      "$id": "memory.ts#spaceMemorySchema",
+      "type": "object",
+      "properties": {
+        "entries": {
+          "type": "array",
+          "items": {
+            "$ref": "memory.ts#memoryEntrySchema"
+          }
+        },
+        "canForget": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "entries",
+        "canForget"
       ]
     },
     "model-pricing.ts#modelPricingSchema": {
@@ -7885,7 +8040,8 @@
         "task.changed",
         "schedule.fired",
         "webhook.received",
-        "change"
+        "change",
+        "memory"
       ]
     },
     "threads/events.ts#noticePartsSchema": {
@@ -7966,6 +8122,9 @@
             "bytes",
             "signed"
           ]
+        },
+        "memory": {
+          "$ref": "memory.ts#memoryNoticeSchema"
         }
       }
     },
@@ -8442,6 +8601,9 @@
                     "bytes",
                     "signed"
                   ]
+                },
+                "memory": {
+                  "$ref": "memory.ts#memoryNoticeSchema"
                 }
               },
               "required": [
@@ -12405,6 +12567,9 @@
                 "bytes",
                 "signed"
               ]
+            },
+            "memory": {
+              "$ref": "memory.ts#memoryNoticeSchema"
             }
           },
           "required": [
@@ -13426,6 +13591,9 @@
                 "bytes",
                 "signed"
               ]
+            },
+            "memory": {
+              "$ref": "memory.ts#memoryNoticeSchema"
             }
           },
           "required": [
@@ -14039,6 +14207,10 @@
         },
         "fixed": {
           "type": "boolean"
+        },
+        "byDefault": {
+          "type": "string",
+          "const": "ask"
         }
       },
       "required": [

@@ -39,6 +39,7 @@ import {
   SpaceMembersPage,
   SpaceMcpServer,
   SpaceSettingsShell,
+  SpaceMemoryPage,
   SpaceSkillsPage,
   SpaceTools,
 } from "@/web/spaces/space-settings";
@@ -211,6 +212,12 @@ const spaceSkillsRoute = createRoute({
   getParentRoute: () => spaceSettingsRoute,
   path: "/skills",
   component: SpaceSkillsPage,
+});
+
+const spaceMemoryRoute = createRoute({
+  getParentRoute: () => spaceSettingsRoute,
+  path: "/memory",
+  component: SpaceMemoryPage,
 });
 
 const spaceToolsRoute = createRoute({
@@ -390,6 +397,7 @@ export function createAppRouter(queryClient: QueryClient) {
           spaceMembersRoute,
           spaceToolsRoute,
           spaceSkillsRoute,
+          spaceMemoryRoute,
           spaceMcpServerRoute,
         ]),
         draftRoute,

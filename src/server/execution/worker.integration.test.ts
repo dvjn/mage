@@ -58,6 +58,7 @@ describe("agent runs", () => {
     expect(() => named("thread.nope")).toThrow("Text for the model names thread.nope");
     expect(request.instructions).toContain("jobs__start");
     expect(request.instructions).toContain("thread__add_tasks");
+    expect(request.instructions).toContain("space__save_memory");
     expect(offered.find((tool) => tool.id === "thread.set_model")?.description).toContain(
       "thread__list_models",
     );

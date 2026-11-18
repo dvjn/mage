@@ -7,6 +7,8 @@ import { createRunTraces } from "@/server/kernel/tracing.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { busyThread, subagentsIdle, subagentsWaiting } from "@/server/testing/busy-thread.ts";
 import { queries } from "@/server/testing/tracing.ts";
+import { createMemoryStore } from "@/server/memory/store.ts";
+import { SAVE_MEMORY, SEARCH_MEMORY } from "@/shared/memory.ts";
 
 const MAX = {
   detail: 39,
@@ -21,6 +23,8 @@ const MAX = {
   longPageMore: 18,
   // A guest's list feed over two hundred shared threads.
   guestFeed: { flush: 1618, recheck: 1418 },
+  // A thread's opening notice of a space's memory.
+  memoryNotice: 19,
 };
 
 // Ada's space with twenty threads, and a thread of fifty notes.
@@ -153,5 +157,83 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("queries of the paths people wai
     // The feed still checks a guest's threads one by one, so these grow with the threads shared.
     expect(flush.count).toBeLessThanOrEqual(MAX.guestFeed.flush);
     expect(recheck.count).toBeLessThanOrEqual(MAX.guestFeed.recheck);
+  });
+
+  it("of a space's memory stay the same however many entries, topics and threads it has", async () => {
+    const t = await arranged();
+    const store = createMemoryStore(t.db);
+    const threads = await t.threadStore.listInSpace(t.space.id);
+    const thread = (await t.threadStore.find(t.notes))!;
+    const tools = t.memory.toolset().tools;
+    const run = (id: string, input: object, callId: string) =>
+      tools
+        .find((spec) => spec.name === id)!
+        .run(input, {
+          threadId: thread.id,
+          spaceId: t.space.id,
+          orgId: t.ada.orgId,
+          runId: "run",
+          callId,
+          actor: { kind: "agent" },
+          model: null,
+          runAs: null,
+          influence: [],
+          named: (toolId: string) => toolId,
+          write: () => Promise.reject(new Error("no writes")),
+        });
+    // Adds an entry from each of the threads from the first to the last, each under a topic of
+    // its own, then counts what each path reads.
+    const counted = async (first: number, last: number) => {
+      for (const from of threads.slice(first, last)) {
+        await store.create({
+          id: from.id,
+          spaceId: t.space.id,
+          type: "fact",
+          topic: `Topic ${from.id}`,
+          text: `From ${from.title}`,
+          threadId: from.id,
+          callId: from.id,
+          influence: [],
+          approvedBy: t.ada.userId,
+          supersedesId: null,
+        });
+      }
+      const list = await queries(() => t.get(`/spaces/${t.space.id}/memory`));
+      const reads = (texts: string[]) => texts.filter((text) => /memory_entry/.test(text)).length;
+      const replaced = threads[first]!.id;
+      return {
+        list: list.count,
+        listReads: reads(list.texts),
+        notice: (await queries(() => t.memory.opening(thread))).count,
+        search: (await queries(() => run(SEARCH_MEMORY, { query: "from" }, `s${last}`))).count,
+        save: (
+          await queries(() =>
+            run(SAVE_MEMORY, { type: "fact", topic: "Deploys", text: "Tuesdays." }, `a${last}`),
+          )
+        ).count,
+        replace: (
+          await queries(() =>
+            run(
+              SAVE_MEMORY,
+              { type: "fact", topic: "Deploys", text: "Wednesdays.", replaces: replaced },
+              `r${last}`,
+            ),
+          )
+        ).count,
+        forget: (
+          await queries(() =>
+            t.memory.forget(t.ada, t.space.id, threads[first + 1]?.id ?? replaced),
+          )
+        ).count,
+      };
+    };
+    // A space without memory pays the one read of its entries.
+    expect((await queries(() => t.memory.opening(thread))).count).toBe(1);
+    const few = await counted(0, 2);
+    // With entries, the space and its tools, read once.
+    expect(few.notice).toBeLessThanOrEqual(MAX.memoryNotice);
+    // The list is one read of memory beyond the space check.
+    expect(few.listReads).toBe(1);
+    expect(await counted(2, 10)).toEqual(few);
   });
 });

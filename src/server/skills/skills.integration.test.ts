@@ -23,7 +23,7 @@ import { type Skill, type SkillSource, effectiveSkills, type SpaceSkills } from 
 import { discoverSkills, readSkillFile } from "./discovery.ts";
 import { commitTo, createRepo, GIT_TOKEN } from "../../../mock/git.ts";
 
-const BUILTIN = ["charts", "diagrams", "page-design"];
+const BUILTIN = ["charts", "diagrams", "page-design", "reflect"];
 
 const AGENT_SKILLS = `${GIT_ORIGIN}/acme/agent-skills.git`;
 
@@ -465,6 +465,7 @@ describe("skills by scope", () => {
       "diagrams",
       "local",
       "page-design",
+      "reflect",
     ]);
     await json(await api("PUT", "/org/skills/space-skills", ada.cookie, { allowed: false }));
     expect((await skills.effectiveIn(here)).map((skill) => skill.name)).toEqual(BUILTIN);
@@ -503,7 +504,7 @@ describe("the agent", () => {
     expect(results[0]).toContain('"files":["templates/notes.md"]');
     expect(results[1]).toContain("What's new");
     expect(results[2]).toContain(
-      "No skill named haiku is on here. The skills here: charts, diagrams, page-design, release-notes.",
+      "No skill named haiku is on here. The skills here: charts, diagrams, page-design, reflect, release-notes.",
     );
     expect((await events()).filter((event) => event.type === "tool.ran")).toHaveLength(3);
   });
@@ -654,7 +655,7 @@ describe("uploaded skills", () => {
 describe("built-in skills", () => {
   const names = (skills: { name: string }[]) => skills.map((skill) => skill.name);
 
-  it("are one source of three skills, on by default, in the org and in every space", async () => {
+  it("are one source of four skills, on by default, in the org and in every space", async () => {
     const { api, ada, space } = await team();
     const org = await json<OrgSkillList>(await api("GET", "/org/skills", ada.cookie));
     const [builtin] = org.sources;
@@ -681,7 +682,7 @@ describe("built-in skills", () => {
     await json(
       await api("PUT", `/spaces/${space.id}/skills/builtin:charts`, ada.cookie, { enabled: false }),
     );
-    expect(names(await skills.effectiveIn(here))).toEqual(["diagrams", "page-design"]);
+    expect(names(await skills.effectiveIn(here))).toEqual(["diagrams", "page-design", "reflect"]);
     expect(names(await skills.effectiveIn(elsewhere))).toEqual(BUILTIN);
     await json(
       await api("PUT", `/spaces/${space.id}/skill-sources/builtin`, ada.cookie, { enabled: false }),
@@ -694,7 +695,7 @@ describe("built-in skills", () => {
     await json(
       await api("PUT", "/skills/builtin:diagrams/enabled", ada.cookie, { enabled: false }),
     );
-    expect(names(await skills.effectiveIn(here))).toEqual(["page-design"]);
+    expect(names(await skills.effectiveIn(here))).toEqual(["page-design", "reflect"]);
     const refused = await api("PUT", `/spaces/${space.id}/skills/builtin:diagrams`, ada.cookie, {
       enabled: true,
     });

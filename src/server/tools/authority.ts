@@ -39,6 +39,10 @@ export const OPEN: Rule = { use: "everyone", users: [], approvers: [], independe
 // What applies in place of a policy that is gone: nobody uses it, and nobody approves.
 export const NOBODY: Rule = { use: "none", users: [], approvers: [], independent: false };
 
+// What applies to a tool that asks by default while nothing is set on it: every call waits for
+// anyone who can post.
+export const ASKING: Rule = { use: "none", users: [], approvers: [EDITORS], independent: false };
+
 // The one rule a tool is used under in a space, from the org's policy and the space's extra rule.
 // Each list of keys must name a person for them to count: a user uses the tool directly only when
 // every rule that limits its users names them, and approves only when every rule that asks for

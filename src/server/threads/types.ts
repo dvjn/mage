@@ -227,6 +227,8 @@ export interface ThreadStore {
     froms: readonly { threadId: string; after: number }[],
     type?: string,
   ): Promise<StoredEvent[]>;
+  // Whether the thread's current branch holds a person's message, an aside among them.
+  hasMessage(threadId: string): Promise<boolean>;
   // The thread's current branch's events of the type, in order.
   eventsOfType(threadId: string, type: StoredEvent["type"]): Promise<StoredEvent[]>;
   // The thread's event with the seq, in whichever branch.

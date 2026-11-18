@@ -81,6 +81,8 @@ const TASK_MODEL_TOOLS = [
 ];
 const SCHEDULE_TOOLS = ["schedules.wake_at", "schedules.add", "schedules.list", "schedules.delete"];
 const WEBHOOK_TOOLS = ["webhooks.add", "webhooks.list", "webhooks.delete"];
+const MEMORY_TOOLS = ["memory.save", "memory.search"];
+const MEMORY_MODEL_TOOLS = ["space.save_memory", "space.search_memory"];
 const JOB_TOOLS = ["jobs.start", "jobs.check", "jobs.list", "jobs.cancel"];
 
 // The tools the agent has for artifacts, whose toolset is on unless turned off; previews need a
@@ -542,6 +544,7 @@ describe("tool calls", () => {
       ...TASK_MODEL_TOOLS,
       ...SCHEDULE_TOOLS,
       ...WEBHOOK_TOOLS,
+      ...MEMORY_MODEL_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
     expect((await threadStore.find(thread.id))?.title).toBe("Engines");
@@ -854,6 +857,7 @@ describe("tool calls", () => {
       ...TASK_MODEL_TOOLS,
       ...SCHEDULE_TOOLS,
       ...WEBHOOK_TOOLS,
+      ...MEMORY_MODEL_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
 
@@ -872,6 +876,7 @@ describe("tool calls", () => {
       ...TASK_MODEL_TOOLS,
       ...SCHEDULE_TOOLS,
       ...WEBHOOK_TOOLS,
+      ...MEMORY_MODEL_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
   });
@@ -1305,6 +1310,7 @@ describe("built-in toolset switches", () => {
       ...TASK_TOOLS,
       ...SCHEDULE_TOOLS,
       ...WEBHOOK_TOOLS,
+      ...MEMORY_TOOLS,
       ...ARTIFACT_TOOL_LIST,
     ]);
     const changeWhileOff = await api("PATCH", `/spaces/${space.id}/tools`, ada.cookie, {

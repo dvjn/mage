@@ -35,6 +35,8 @@ import type { Groups } from "@/server/orgs/groups.ts";
 import type { Identity } from "@/server/orgs/identity.ts";
 import { orgRoutes } from "@/server/orgs/routes.ts";
 import type { Orgs } from "@/server/orgs/service.ts";
+import { memoryRoutes } from "@/server/memory/routes.ts";
+import type { Memory } from "@/server/memory/memory.ts";
 import { skillRoutes } from "@/server/skills/routes.ts";
 import type { Skills } from "@/server/skills/service.ts";
 import { spaceRoutes } from "@/server/spaces/routes.ts";
@@ -107,6 +109,8 @@ export interface AppOptions {
   instructions: Instructions;
   // The skills orgs and spaces give the agent.
   skills: Skills;
+  // What the agent keeps in each space's memory.
+  memory: Pick<Memory, "inSpace" | "forget">;
   // The pages the agent publishes, who views them, and their sharing.
   artifacts: Artifacts;
   // The orgs people are in, their members and invites, and creating team orgs.
@@ -188,6 +192,7 @@ function createApi(options: AppOptions) {
     .route("/", mcpRoutes(options))
     .route("/", instructionRoutes(options))
     .route("/", skillRoutes(options))
+    .route("/", memoryRoutes(options))
     .route("/", artifactRoutes(options));
 }
 

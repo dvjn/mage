@@ -22,6 +22,7 @@ import { createAuth, createIdentity } from "@/server/orgs/auth.ts";
 import type { Groups } from "@/server/orgs/groups.ts";
 import type { Orgs } from "@/server/orgs/service.ts";
 import * as schema from "@/server/schema.ts";
+import type { Memory } from "@/server/memory/memory.ts";
 import type { Skills } from "@/server/skills/service.ts";
 import type { Artifacts } from "@/server/artifacts/service.ts";
 import type { Spaces } from "@/server/spaces/service.ts";
@@ -100,6 +101,7 @@ function setup() {
     mcp: {} as McpServers,
     instructions: {} as Instructions,
     skills: {} as Skills,
+    memory: {} as Memory,
     artifacts: {} as Artifacts,
     logger,
     signInOptions: { oidc: null },

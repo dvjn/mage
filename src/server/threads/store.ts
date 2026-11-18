@@ -619,6 +619,15 @@ export function createThreadStore(db: Db): ThreadStore {
       );
     },
 
+    async hasMessage(threadId) {
+      const found = await db
+        .select({ seq: threadEvent.seq })
+        .from(threadEvent)
+        .where(and(eq(threadEvent.threadId, threadId), eq(threadEvent.type, "message"), ofCurrent))
+        .limit(1);
+      return found.length > 0;
+    },
+
     async eventsOfType(threadId, type) {
       return eventsWhere(
         and(eq(threadEvent.threadId, threadId), eq(threadEvent.type, type), ofCurrent),

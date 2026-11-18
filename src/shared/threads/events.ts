@@ -6,6 +6,7 @@
 import * as z from "zod";
 
 import { askAnswersSchema } from "@/shared/ask.ts";
+import { memoryNoticeSchema } from "@/shared/memory.ts";
 import { effortSchema } from "@/shared/threads/thread.ts";
 import { usageSchema } from "@/shared/usage.ts";
 
@@ -140,7 +141,8 @@ export type Cause = z.infer<typeof causeSchema>;
 // a run without sending its starter anything, failed, or was stopped; or that the subagents a
 // watch was set on went idle; that a call it started in the background ended; or that a person changed
 // a task given to it; that a timer or schedule it set went off; or that a webhook it made was posted to; or, quietly, that a
-// person or another agent changed something it owns or watches, or the thread's model or title.
+// person or another agent changed something it owns or watches, or the thread's model or title;
+// or, quietly as a thread starts, what its space's memory holds.
 export const noticeKindSchema = z.enum([
   "message",
   "agent.ended",
@@ -152,6 +154,7 @@ export const noticeKindSchema = z.enum([
   "schedule.fired",
   "webhook.received",
   "change",
+  "memory",
 ]);
 
 export type NoticeKind = z.infer<typeof noticeKindSchema>;
@@ -238,6 +241,8 @@ export const noticePartsSchema = z.object({
       signed: z.boolean(),
     })
     .optional(),
+  // For the space's memory, its entries by topic.
+  memory: memoryNoticeSchema.optional(),
 });
 
 export type NoticeParts = z.infer<typeof noticePartsSchema>;

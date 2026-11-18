@@ -13,7 +13,7 @@ import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
 import { BTW, COMPACT, type CommandInput, type ThreadCommand } from "@/shared/threads/commands.ts";
 
 export interface CommandsOptions {
-  skills: Pick<Skills, "effectiveIn">;
+  skills: Pick<Skills, "effectiveIn" | "instructionsOf">;
   prompts: Pick<McpServers, "promptsIn" | "runPrompt">;
   access: Pick<ThreadAccess, "require">;
   spaces: Pick<Spaces, "require" | "can">;
@@ -148,7 +148,9 @@ export function createCommands(options: CommandsOptions) {
         const skill = (await skills.effectiveIn(space)).find(
           (found) => found.name === command.name,
         );
-        return skill ? skillText(skill, command.args, typed) : null;
+        if (!skill) return null;
+        const body = await skills.instructionsOf(space, skill);
+        return skillText({ ...skill, body }, command.args, typed);
       }
       const slug = command.name.slice(0, at);
       const name = command.name.slice(at + 1);

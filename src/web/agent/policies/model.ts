@@ -34,10 +34,16 @@ const OPEN: Shown = {
   independent: false,
 };
 
-// What a tool set to the assignment is under: open when nothing is set, nobody when the policy is
-// gone.
-export function shownOf(assignment: string | null, byId: Map<string, ToolPolicy>): Shown {
-  if (assignment === null) return OPEN;
+// What a tool set to the assignment is under: open when nothing is set, or asking anyone who can
+// edit the thread for a tool that asks by default; nobody when the policy is gone.
+export function shownOf(
+  assignment: string | null,
+  byId: Map<string, ToolPolicy>,
+  asks = false,
+): Shown {
+  if (assignment === null) {
+    return asks ? { ...OPEN, use: "none", approvers: [EDITORS_IDENTITY] } : OPEN;
+  }
   if (assignment === TOOL_OFF) return { ...OPEN, off: true };
   const policy = byId.get(assignment);
   if (!policy)
@@ -112,8 +118,8 @@ export function summaryOf(rule: Shown) {
 
 export const UNSET = "unset";
 
-export function nameOf(value: string | null, byId: Map<string, ToolPolicy>) {
-  if (value === null) return "Open";
+export function nameOf(value: string | null, byId: Map<string, ToolPolicy>, asks = false) {
+  if (value === null) return asks ? "Ask" : "Open";
   if (value === TOOL_OFF) return "Off";
   return byId.get(value)?.name ?? "Removed policy";
 }
@@ -123,8 +129,9 @@ export function effectiveRule(
   orgPolicy: string | null,
   extra: string | null,
   byId: Map<string, ToolPolicy>,
+  asks = false,
 ) {
-  return combine(shownOf(orgPolicy, byId), extra === null ? null : shownOf(extra, byId));
+  return combine(shownOf(orgPolicy, byId, asks), extra === null ? null : shownOf(extra, byId));
 }
 
 // A policy as the dialog edits it.

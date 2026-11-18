@@ -1,0 +1,25 @@
+---
+name: reflect
+description: Review this thread and keep what later threads in this space would need in its memory. Run it when a piece of work is done.
+---
+
+# Reflect
+
+Look back over this thread and keep what a later thread in this space would need. Work through the sections in order.
+
+## Memory
+
+1. Know what is kept already: read the space memory notice at the start of the thread, if there is one, and search with {{tool:memory.search}} for the topics this thread touched.
+2. Pick out what is worth keeping:
+   - corrections people made to you, or to what memory said
+   - decisions, with their reason
+   - preferences: how the people here want things done
+   - procedures that worked, in a few steps
+   - failures, with their cause and fix
+   - tool quirks: what a tool did that was not obvious
+3. Leave out trivia, what holds only for this thread, and what memory already has.
+4. Save each with {{tool:memory.save}}: one short entry, the type that fits, and a topic memory already has where one fits. When it corrects or updates an entry, set replaces to that entry's id rather than adding a duplicate.
+
+## Finish
+
+List what you saved, a line each; a save may wait for someone to approve it. If nothing was worth keeping, say so in one line.

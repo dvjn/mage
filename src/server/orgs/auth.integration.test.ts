@@ -13,6 +13,7 @@ import { createLogger } from "@/server/kernel/logger.ts";
 import type { McpServers } from "@/server/mcp/service.ts";
 import type { Connections } from "@/server/models/connections.ts";
 import type { Models } from "@/server/models/service.ts";
+import type { Memory } from "@/server/memory/memory.ts";
 import type { Skills } from "@/server/skills/service.ts";
 import type { Artifacts } from "@/server/artifacts/service.ts";
 import type { Spaces } from "@/server/spaces/service.ts";
@@ -54,6 +55,7 @@ function setup(options: Pick<AuthOptions, "oidc"> = {}, db = openStoreDatabase()
     mcp: {} as McpServers,
     instructions: {} as Instructions,
     skills: {} as Skills,
+    memory: {} as Memory,
     artifacts: {} as Artifacts,
     logger,
     signInOptions,

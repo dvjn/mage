@@ -5,6 +5,7 @@ import { Link } from "@tanstack/react-router";
 import {
   BellIcon,
   BotIcon,
+  BrainIcon,
   CalendarClockIcon,
   ClockIcon,
   ExternalLinkIcon,
@@ -32,6 +33,7 @@ import { ToolCard } from "@/web/threads/transcript/tool-card";
 import { ChangeTitle } from "@/web/threads/transcript/change-title";
 import { Crumb } from "@/web/threads/transcript/tool-crumb";
 import { OWN_MARK, type Source } from "@/web/threads/transcript/source-card";
+import { MemoryTopics } from "@/web/memory/memory-topics";
 
 interface Opened {
   opened: ReadonlySet<string>;
@@ -142,6 +144,7 @@ export function NoticeMessage({
     </span>
   ));
   const webhook = row.type === "webhook.received";
+  const memory = row.type === "memory";
   const fired = row.type === "schedule.fired";
   const wake = fired && row.text.startsWith("Wake-up");
   const ending = row.type.startsWith("agent.");
@@ -303,8 +306,11 @@ export function NoticeMessage({
       : row.type === "task.changed" || row.type === "change"
         ? tray?.kind
         : undefined;
-  const name = webhook || (fired && !wake) ? row.from.name : wake ? "Wake-up" : shownTitle;
-  const icon = wake ? (
+  const name =
+    webhook || memory || (fired && !wake) ? row.from.name : wake ? "Wake-up" : shownTitle;
+  const icon = memory ? (
+    <BrainIcon />
+  ) : wake ? (
     <ClockIcon />
   ) : message || ending ? (
     <BotIcon />
@@ -335,6 +341,12 @@ export function NoticeMessage({
       >
         {error && <p className="text-sm break-words whitespace-pre-wrap">{error}</p>}
         {delivered && <Delivery row={row} />}
+        {row.memory && (
+          <>
+            <MemoryTopics topics={row.memory.topics} />
+            {row.memory.more > 0 && <p>{row.memory.more} more</p>}
+          </>
+        )}
         {fired && (!!row.schedule || !!row.last) && (
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1">
             {row.schedule && (

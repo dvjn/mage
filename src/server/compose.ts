@@ -106,6 +106,9 @@ import { createSchedules } from "@/server/schedules/schedules.ts";
 import { createScheduleStore } from "@/server/schedules/store.ts";
 import { createWebhookStore } from "@/server/webhooks/store.ts";
 import { createWebhooks } from "@/server/webhooks/webhooks.ts";
+import { createMemory } from "@/server/memory/memory.ts";
+import { createMemoryStore } from "@/server/memory/store.ts";
+import { MEMORY_TOOLSET } from "@/shared/memory.ts";
 
 import { createApp } from "./app.ts";
 import { createSetRule } from "./schedules-and-webhooks.ts";
@@ -289,6 +292,10 @@ export function compose(deps: ComposeDeps) {
       deps.logger.warn({ toolId }, "text for the model names a tool that is not there");
     },
   });
+  // What the model calls each of a space's tools, as text it reads writes them.
+  const modelNamesIn = async (space: { id: string; orgId: string }) => {
+    return tools.textNamer(await tools.modelNames(space));
+  };
   const mcpServerStore = createMcpServerStore(db);
   const mcp = createMcpServers({
     attempts,
@@ -314,6 +321,7 @@ export function compose(deps: ComposeDeps) {
     spaces,
     settings: settingStore,
     logger,
+    toolNames: modelNamesIn,
   });
   // Threads' transcripts, folded once for the agent and the people reading them.
   const transcripts = createTranscripts(threadStore, signals, hooks, sync.inTransaction);
@@ -384,6 +392,21 @@ export function compose(deps: ComposeDeps) {
   });
   // What setting a schedule or a webhook must pass, across both kinds.
   const setRule = createSetRule({ schedules, webhooks });
+  const memory = createMemory({
+    store: createMemoryStore(db),
+    spaces,
+    spaceStore,
+    transact,
+    memoryTools: async (space) => {
+      const now = await tools.toolsIn(space);
+      const memory = now.sets.find((set) => set.id === MEMORY_TOOLSET)?.tools ?? [];
+      return {
+        on: new Set(memory.filter((spec) => !now.rules(spec.name).off).map((spec) => spec.name)),
+        named: tools.textNamer(await tools.modelNames(space, now)),
+      };
+    },
+    ...(options.now && { now: options.now }),
+  });
   // Previews need a browser, which servers without one go without.
   const artifacts = createArtifacts({
     store: createArtifactStore(db),
@@ -501,10 +524,11 @@ export function compose(deps: ComposeDeps) {
   tools.register(tasks.toolset());
   tools.register(schedules.toolset(setRule));
   tools.register(webhooks.toolset(setRule));
+  tools.register(memory.toolset());
   tools.register(artifacts.toolset());
   for (const toolset of options.toolsets ?? []) tools.register(toolset);
   tools.register({
-    readIn: async (space) => mcp.readIn(space),
+    readIn: async (space, org) => mcp.readIn(space, org),
     forOrgSettings: async (orgId) => mcp.toolsetsForOrgSettings(orgId),
     forSpaceSettings: async (space) => mcp.toolsetsForSpaceSettings(space),
     named: async (toolId) => mcp.named(toolId),
@@ -591,6 +615,8 @@ export function compose(deps: ComposeDeps) {
   const reads = createReads({ store: readStore, signals });
   // The author has seen what they posted.
   posts.onPosted(async (post) => reads.posted(post));
+  // A thread opens with what its space's memory holds.
+  posts.opens(async (thread) => memory.opening(thread));
   const branches = createBranches({
     threads: threadStore,
     transcripts,
@@ -715,6 +741,7 @@ export function compose(deps: ComposeDeps) {
     mcp,
     instructions,
     skills,
+    memory,
     artifacts,
     guests: createGuests({
       access,
@@ -807,6 +834,7 @@ export function compose(deps: ComposeDeps) {
     instructions,
     skills,
     skillStore,
+    memory,
     artifacts,
     orgs,
     spaceSweep: sweep,
