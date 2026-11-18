@@ -226,6 +226,13 @@ export function createScripts(options: ScriptsOptions) {
       }
       // Calls made so far, toward the cap, whichever instance made them.
       let made = resumed.made;
+      // Records each call once the one made before it is recorded, so gathered calls keep their order.
+      let recorded: Promise<unknown> = Promise.resolve();
+      const recordInTurn: typeof ctx.write = async (work) => {
+        const turn = recorded.then(async () => ctx.write(work));
+        recorded = turn.catch(() => {});
+        return turn;
+      };
       const callable = await callableIn(tools, thread, space);
       const titles = await tools.namesNow(space, callable.now);
       const branchId = thread.currentBranchId;
@@ -333,7 +340,7 @@ export function createScripts(options: ScriptsOptions) {
         }
         const input: unknown = parsed?.success ? parsed.data : given;
         const toolId = spec?.name ?? callable.names.fromModel(name) ?? name;
-        const judged = await ctx.write(
+        const judged = await recordInTurn(
           async (append): Promise<{ waiting: Waiting } | { decision: Decision } | null> => {
             let risk: ToolRisk = "normal";
             let decision: Decision | null = null;

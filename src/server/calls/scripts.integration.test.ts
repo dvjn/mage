@@ -532,6 +532,9 @@ describe("a script", () => {
     expect(next.texts.at(-1)).toBe(
       'result scripts.run: {"ok":true,"value":{"result":["a","b","c","d"]}}',
     );
+    // Recorded in the order the script made them.
+    const [, ...inner] = await t.calls();
+    expect(inner.map((row) => row.input)).toEqual(labels.map((label) => ({ label })));
   });
 
   it("pauses with the calls gathered beside one that waits settled, and runs none of them again", async () => {
