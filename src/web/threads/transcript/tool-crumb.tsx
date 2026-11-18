@@ -22,16 +22,17 @@ function useCallTitle() {
   };
 }
 
-// What goes before a call's own name: the call that made it, where another did, and its tool's
-// server.
-function parentOf(row: ToolRow) {
-  return [row.parent?.title, row.toolset].filter(Boolean).join(" › ") || undefined;
+// What goes before a call's own name: the call that made it, where another did and the call does
+// not show under it, and its tool's server.
+function parentOf(row: ToolRow, nested = false) {
+  return [!nested && row.parent?.title, row.toolset].filter(Boolean).join(" › ") || undefined;
 }
 
 // What a tool is called, in words: its server's name before its own where it has a server.
 export function useToolPath() {
   const titleOf = useCallTitle();
-  return (row: ToolRow) => [parentOf(row), titleOf(row)].filter(Boolean).join(" › ");
+  return (row: ToolRow, nested = false) =>
+    [parentOf(row, nested), titleOf(row)].filter(Boolean).join(" › ");
 }
 
 // An item of a flex row that grows from nothing into the room its siblings leave, up to its own
@@ -70,10 +71,19 @@ export function Crumb({
 }
 
 // What a tool is called, as a breadcrumb: its server's name before its own where it has a server.
-export function ToolCrumb({ row, className }: { row: ToolRow; className?: string }) {
+export function ToolCrumb({
+  row,
+  className,
+  nested,
+}: {
+  row: ToolRow;
+  className?: string;
+  // Shown under the call that made it.
+  nested?: boolean;
+}) {
   const titleOf = useCallTitle();
   return (
-    <Crumb parent={parentOf(row)} className={className}>
+    <Crumb parent={parentOf(row, nested)} className={className}>
       {titleOf(row)}
     </Crumb>
   );

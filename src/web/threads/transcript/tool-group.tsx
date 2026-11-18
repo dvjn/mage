@@ -1,54 +1,33 @@
-// A run of the agent's tool calls folded into one line: how many calls, the toolsets they came
-// from and what did not run, and how many messages the subagents they started sent each other, and
-// the state that needs most notice: a call waiting for a decision, then one running. It opens on
-// who sent those messages to whom, and the calls' own lines and the thinking between them.
+// A run of the agent's tool calls folded into one line: how many of the agent's own calls, the
+// toolsets they came from and what did not run, a job judged by where it stands, and the state that
+// needs most notice, of those calls and the calls under them: a call waiting for a decision, then
+// one running. It opens on the calls' own lines and the thinking between them, and stays open while
+// a call in it or under it waits for a decision.
 
 import { cn } from "cn";
-import { CheckIcon, ChevronRightIcon, HandIcon, SkipForwardIcon, XIcon } from "lucide-react";
+import { ChevronRightIcon } from "lucide-react";
 
 import type { AgentRow, AgentTurn, ToolRow } from "@/shared/threads/rows.ts";
-import { FORMER_TOOL_IDS, type ToolDefinition } from "@/shared/tools.ts";
+import type { ToolDefinition } from "@/shared/tools.ts";
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/web/components/ui/collapsible";
-import { Spinner } from "@/web/components/ui/spinner";
 import { useThreadAgent } from "@/web/threads/transcript/agent";
 import { ReplyReasoning } from "@/web/threads/transcript/agent-reply";
+import { missesOf } from "@/shared/call-outcome.ts";
+import { runStanding } from "@/web/threads/transcript/call-tree";
 import { TranscriptRowFrame } from "@/web/threads/transcript/row-frame";
 import { MoveToBackground } from "@/web/threads/transcript/activity-actions";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
 import { GIVES_WAY } from "@/web/threads/transcript/tool-crumb";
-
-// What the calls that did not run are counted as, in this order.
-const MISSES: [string, ToolRow["state"][]][] = [
-  ["failed", ["failed"]],
-  ["denied", ["denied", "stale"]],
-  ["stopped", ["cancelled"]],
-  ["skipped", ["skipped"]],
-];
-
-// The states of a call that did not run as asked.
-const FAILED: ToolRow["state"][] = ["failed", "denied", "stale", "cancelled"];
-
-// A call that waits for a decision, and one that is running.
-const waits = (call: ToolRow) => call.state === "waiting";
-const running = (call: ToolRow) => call.state === "ready";
-
-// The run in words: how many calls, their toolsets in order, and how many of each that did not run.
-export function callsSummary(calls: ToolRow[]) {
-  const toolsets = [...new Set(calls.map((call) => call.toolset).filter(Boolean))].join(", ");
-  const misses = MISSES.map(([label, states]) => {
-    const count = calls.filter((call) => states.includes(call.state)).length;
-    return count > 0 ? `${count} ${label}` : null;
-  }).filter((miss) => miss !== null);
-  return { count: `${calls.length} tool calls`, toolsets, misses };
-}
+import { counted, definitionOf, StandingIcon } from "@/web/threads/transcript/tool-line";
 
 export function ToolGroup({
   rows,
   calls,
+  under,
   turn,
   tools,
   open,
@@ -56,6 +35,8 @@ export function ToolGroup({
 }: {
   rows: (ToolRow | AgentRow)[];
   calls: ToolRow[];
+  // The calls under them at every depth.
+  under: ToolRow[];
   turn: AgentTurn;
   tools: ToolDefinition[];
   // Held by the page, so that it stays as the run grows or earlier rows are read.
@@ -63,33 +44,28 @@ export function ToolGroup({
   onOpenChange: (open: boolean) => void;
 }) {
   const { self } = useThreadAgent();
-  // The most urgent state a call is in: waiting for a decision, then running, then failed.
-  const waiting = calls.some(waits);
-  const current = waiting ? undefined : calls.findLast(running);
-  const { count, toolsets, misses } = callsSummary(calls);
-  const failed = calls.some((call) => FAILED.includes(call.state));
-  const skipped = calls.some((call) => call.state === "skipped");
-  const status = waiting ? "Waiting for approval" : current ? "Running" : null;
+  const { standing, outcomes } = runStanding(calls, under);
+  // The agent's own call running now, which may move to the background.
+  const current = standing === "running" ? calls.findLast((call) => call.state === "ready") : null;
+  const count = counted(calls.length, "tool call");
+  const toolsets = [...new Set(calls.map((call) => call.toolset).filter(Boolean))].join(", ");
+  const misses = missesOf(outcomes);
+  const waiting = standing === "waiting";
+  const status = waiting ? "Waiting for approval" : standing === "running" ? "Running" : null;
   const label = [count, toolsets, status, ...misses].filter(Boolean).join(" · ");
   const group = (
-    <Collapsible open={open} onOpenChange={onOpenChange} className="text-xs text-muted-foreground">
+    <Collapsible
+      open={open || waiting}
+      onOpenChange={onOpenChange}
+      className="text-xs text-muted-foreground"
+    >
       <div className="flex items-center gap-2">
         <CollapsibleTrigger
           aria-label={label}
           className="group/tool flex w-full items-center gap-1.5 rounded-md py-0.5 text-left hover:text-foreground [&>svg]:size-3.5 [&>svg]:shrink-0"
         >
           <ChevronRightIcon className="transition-transform group-data-[panel-open]/tool:rotate-90" />
-          {waiting ? (
-            <HandIcon className="text-warning" />
-          ) : current ? (
-            <Spinner />
-          ) : failed ? (
-            <XIcon />
-          ) : skipped ? (
-            <SkipForwardIcon />
-          ) : (
-            <CheckIcon className="text-foreground" />
-          )}
+          <StandingIcon standing={standing} />
           <span className="flex min-w-0 flex-1 items-center gap-1">
             <span className="shrink-0 font-medium">{count}</span>
             {toolsets && <span className={GIVES_WAY}>· {toolsets}</span>}
@@ -107,11 +83,11 @@ export function ToolGroup({
             <ToolCall
               key={row.id}
               row={row}
-              definition={tools.find(
-                (tool) => tool.name === (FORMER_TOOL_IDS[row.toolId] ?? row.toolId),
-              )}
+              definition={definitionOf(tools, row)}
               turn={row.turn ?? turn}
               framed
+              under={under}
+              tools={tools}
             />
           ) : (
             <ReplyReasoning key={row.id} row={row} />

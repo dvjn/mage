@@ -21,9 +21,14 @@ export function ToolCall({
   turn,
   framed,
   subagent,
+  under,
+  tools,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
+  // The calls under it at every depth, and the tools' definitions they show by.
+  under?: readonly ToolRow[];
+  tools?: readonly ToolDefinition[];
   answer?: RowActions["answer"];
   turn: AgentTurn;
   // Inside a run of calls, which carries the turn's header.
@@ -45,11 +50,11 @@ export function ToolCall({
   }
   if (asked?.success && row.answers) {
     const line = framed ? (
-      <ToolLine row={row} definition={definition} />
+      <ToolLine row={row} definition={definition} under={under} tools={tools} />
     ) : turn.continued ? (
-      <ToolLine row={row} definition={definition} />
+      <ToolLine row={row} definition={definition} under={under} tools={tools} />
     ) : (
-      <ToolOpening row={row} definition={definition} turn={turn} />
+      <ToolOpening row={row} definition={definition} turn={turn} under={under} tools={tools} />
     );
     return (
       <div className="flex flex-col gap-1">
@@ -62,11 +67,11 @@ export function ToolCall({
   }
   const artifact = artifactOf(row);
   const line = framed ? (
-    <ToolLine row={row} definition={definition} />
+    <ToolLine row={row} definition={definition} under={under} tools={tools} />
   ) : !turn.continued ? (
-    <ToolOpening row={row} definition={definition} turn={turn} />
+    <ToolOpening row={row} definition={definition} turn={turn} under={under} tools={tools} />
   ) : (
-    <ToolLine row={row} definition={definition} />
+    <ToolLine row={row} definition={definition} under={under} tools={tools} />
   );
   if (!artifact) return line;
   return (

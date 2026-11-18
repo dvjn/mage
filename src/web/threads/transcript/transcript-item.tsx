@@ -4,7 +4,8 @@
 // versions of what came after, and a labelled placeholder for an event this client does not know
 // yet.
 
-import { FORMER_TOOL_IDS, type ToolDefinition } from "@/shared/tools.ts";
+import type { ToolRow } from "@/shared/threads/rows.ts";
+import type { ToolDefinition } from "@/shared/tools.ts";
 import { Time } from "@/web/components/time";
 import { AgentReply } from "@/web/threads/transcript/agent-reply";
 import { CompactionDivider } from "@/web/threads/transcript/compaction-divider";
@@ -16,6 +17,7 @@ import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { VersionSwitcher } from "@/web/threads/transcript/row-history";
 import { RowLink } from "@/web/threads/transcript/row-focus";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
+import { definitionOf } from "@/web/threads/transcript/tool-line";
 import { displayName } from "@/web/lib/people.ts";
 
 export function TranscriptItem({
@@ -23,6 +25,7 @@ export function TranscriptItem({
   actions = {},
   tools = [],
   endsTurn = false,
+  under,
 }: {
   row: OwnRow;
   // Whether the row is the agent reply that ends its turn, which shows the turn's actions.
@@ -31,6 +34,8 @@ export function TranscriptItem({
   // The tools' definitions, by which their calls' input and output show, those made under a
   // tool's former id too.
   tools?: ToolDefinition[];
+  // For a call, the calls under it at every depth.
+  under?: readonly ToolRow[];
 }) {
   switch (row.kind) {
     case "human":
@@ -43,11 +48,11 @@ export function TranscriptItem({
       return (
         <ToolCall
           row={row}
-          definition={tools.find(
-            (tool) => tool.name === (FORMER_TOOL_IDS[row.toolId] ?? row.toolId),
-          )}
+          definition={definitionOf(tools, row)}
           answer={actions.answer}
           turn={row.turn ?? { continued: false, model: null }}
+          under={under}
+          tools={tools}
         />
       );
     case "failure":

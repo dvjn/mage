@@ -6,7 +6,12 @@ import * as z from "zod";
 
 import { subagentSummarySchema } from "@/shared/subagents.ts";
 import { shownBranchSchema } from "@/shared/threads/history.ts";
-import { shownRowSchema, shownRunSchema, waitingRowSchema } from "@/shared/threads/rows.ts";
+import {
+  callersSchema,
+  shownRowSchema,
+  shownRunSchema,
+  waitingRowSchema,
+} from "@/shared/threads/rows.ts";
 import { effortSchema, threadSchema } from "@/shared/threads/thread.ts";
 import { toolDefinitionSchema } from "@/shared/tools.ts";
 
@@ -98,6 +103,8 @@ export const threadDetailSchema = threadHeadSchema.extend({
   branch: shownBranchSchema,
   // The newest rows, in order, reaching back to `newFrom`, or at most a page further than usual.
   rows: z.array(shownRowSchema),
+  // The calls before the rows that made calls among them, as a script its calls.
+  callers: callersSchema,
   // The place of the first row given, to read the rows before it; null when they start the thread.
   before: z.number().int().nonnegative().nullable(),
   // The first row the reader had not seen that is not their own nor a reply still being written.

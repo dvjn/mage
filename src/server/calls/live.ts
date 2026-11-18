@@ -52,6 +52,8 @@ interface Reporting {
   timer?: ReturnType<typeof setTimeout>;
   // The storing of its pieces, one after another, so they are kept and told in order.
   storing: Promise<void>;
+  // Nothing of it is stored yet, though what an earlier opening kept may be.
+  fresh: boolean;
 }
 
 // The last characters of the text, up to the cap.
@@ -102,6 +104,13 @@ export function createLive(options: LiveOptions) {
     const stored = await transact(async () => {
       await ordered("thread", [call.threadId], async ([id]) => store.lock(id!));
       if (reporting.get(call.callId) !== call || !(await call.here())) return false;
+      // A call opened anew, as a paused script going on, replaces what was kept of it before.
+      if (call.fresh) {
+        await store.remove(call.callId);
+        afterCommit(() => {
+          call.fresh = false;
+        });
+      }
       await store.write(call.threadId, call.callId, {
         total,
         ...(progress && { progress }),
@@ -154,6 +163,7 @@ export function createLive(options: LiveOptions) {
         changed: false,
         sentAt: 0,
         storing: Promise.resolve(),
+        fresh: true,
       };
       reporting.set(callId, call);
       const mine = () => reporting.get(call.callId) === call;
@@ -184,6 +194,25 @@ export function createLive(options: LiveOptions) {
     close(callId: string) {
       const call = reporting.get(callId);
       if (call) forget(call);
+    },
+
+    // Keeps all the call printed as it pauses, in place of the pieces stored, which may lack the
+    // last; inside the write that pauses it. Told to followers once written.
+    async keep(threadId: string, callId: string, printed: string) {
+      await store.remove(callId);
+      if (printed) {
+        const kept = capped(printed);
+        await store.write(threadId, callId, {
+          total: printed.length,
+          piece: { offset: printed.length - kept.length, text: kept },
+          keepFrom: keptFrom(printed.length),
+        });
+      }
+      afterCommit(() => {
+        const call = reporting.get(callId);
+        if (call) forget(call);
+        if (printed) signals.publish(threadId, { kind: "live", callId });
+      });
     },
 
     // Drops what the call printed: inside the write that records its result, so it never shows

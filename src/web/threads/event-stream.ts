@@ -2,19 +2,24 @@
 // stream from the newest event already cached, merges in the rows each new event changed, as the
 // reader sees them, with the messages waiting and the run under way, takes the thread as the server
 // now has it once it is renamed, moved or set to another model, and gathers the pieces of each
-// reply still being written; another branch made current replaces the rows, and the older
-// branches read are read again. The browser reconnects on its own and resumes after the last event it
-// saw; the server sends each reply's pieces again from the start, and the ones already here are
-// skipped. A lost stream asks whether the server answers at all; when it does not, the app is
+// reply still being written and what each running call printed so far; another branch made current
+// replaces the rows, and the older branches read are read again. The browser reconnects on its own
+// and resumes after the last event it saw; the server sends each reply's pieces again from the
+// start, and the ones already here are skipped. A lost stream asks whether the server answers at all; when it does not, the app is
 // offline. When the server says the reader's guest access has ended, following stops and the
 // thread is read again, which tells them so. While tracing, each run and its reply's first piece
 // are told to it.
 
 import { useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 
 import { threadHeadSchema } from "@/shared/threads/detail.ts";
-import { type DeltaBatch, deltaBatchSchema } from "@/shared/threads/events.ts";
+import {
+  type DeltaBatch,
+  deltaBatchSchema,
+  type LiveChunk,
+  liveChunkSchema,
+} from "@/shared/threads/events.ts";
 import { activityListSchema } from "@/shared/jobs.ts";
 import { taskListSchema } from "@/shared/tasks.ts";
 import { rowsUpdateSchema } from "@/shared/threads/rows.ts";
@@ -51,12 +56,46 @@ export function withPieces(
   return next;
 }
 
-// The text so far of each reply in progress, by message id, and whether the stream is lost and
-// being reconnected while the server answers. Once it is back, the thread is read again.
+// What a running call printed so far, from character `start` of all it printed.
+export interface Printed {
+  start: number;
+  text: string;
+}
+
+// The calls with what the chunk adds to what they printed; a chunk past a gap starts afresh.
+export function withPrinted(
+  printed: ReadonlyMap<string, Printed>,
+  { callId, offset, text }: LiveChunk,
+): ReadonlyMap<string, Printed> {
+  if (!text) return printed;
+  const current = printed.get(callId);
+  const next = new Map(printed);
+  if (!current || offset < current.start || offset > current.start + current.text.length) {
+    next.set(callId, { start: offset, text });
+  } else {
+    next.set(callId, {
+      start: current.start,
+      text: current.text.slice(0, offset - current.start) + text,
+    });
+  }
+  return next;
+}
+
+// What each running call of the thread open printed so far, by call id.
+export const PrintedContext = createContext<ReadonlyMap<string, Printed>>(new Map());
+
+export function usePrinted(callId: string) {
+  return useContext(PrintedContext).get(callId)?.text;
+}
+
+// The text so far of each reply in progress, by message id, what each running call printed, and
+// whether the stream is lost and being reconnected while the server answers. Once it is back, the
+// thread is read again.
 export function useThreadEvents(threadId: string, ready: boolean) {
   const queryClient = useQueryClient();
   const online = useOnline();
   const [streaming, setStreaming] = useState<ReadonlyMap<string, Streaming>>(new Map());
+  const [printed, setPrinted] = useState<ReadonlyMap<string, Printed>>(new Map());
   const [reconnecting, setReconnecting] = useState(false);
   // What was streamed and lost belongs to one reading of one thread; a new one starts empty, set
   // while rendering rather than after it.
@@ -65,6 +104,7 @@ export function useThreadEvents(threadId: string, ready: boolean) {
   if (readingNow !== reading) {
     setReadingNow(reading);
     setStreaming(new Map());
+    setPrinted(new Map());
     setReconnecting(false);
   }
 
@@ -136,11 +176,15 @@ export function useThreadEvents(threadId: string, ready: boolean) {
       setStreaming((current) => withPieces(current, batch.data));
       pieceShown(threadId, batch.data.part ?? "text");
     });
+    source.addEventListener("tool-output", (message) => {
+      const chunk = liveChunkSchema.safeParse(JSON.parse(message.data as string));
+      if (chunk.success) setPrinted((current) => withPrinted(current, chunk.data));
+    });
     return () => {
       closed = true;
       source.close();
     };
   }, [queryClient, threadId, ready, online]);
 
-  return { streaming, reconnecting };
+  return { streaming, printed, reconnecting };
 }

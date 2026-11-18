@@ -97,8 +97,9 @@ test("a job is cancelled from the tray, and the agent is not told", async ({ pag
   const jobs = await tray(page, "Jobs");
   await jobs.filter({ hasText: "Count" }).getByRole("button", { name: "Cancel" }).click();
   await expect(page.getByRole("toolbar", { name: "Context" })).toHaveCount(0);
+  // The job shows in place of the Start that made it.
   await expect(
-    transcript(page).getByRole("button", { name: /2 tool calls · .*Counter · 1 stopped/ }),
+    transcript(page).getByRole("button", { name: /^Counter › Count.* · Cancelled/ }),
   ).toBeVisible();
   await expect(told(page)).toHaveCount(0);
   await expect(replies(page)).toHaveCount(4);
@@ -156,7 +157,7 @@ test("a job that needs approval is decided from the tray of the thread that star
   await expect(card).toHaveCount(0);
 });
 
-test("a call started in the background folds with the call that started it, and tells the agent when it is done", async ({
+test("a call started in the background shows in place of the call that started it, and tells the agent when it is done", async ({
   page,
 }) => {
   await signUp(page);
@@ -166,9 +167,14 @@ test("a call started in the background folds with the call that started it, and 
   );
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   await expect(page.locator("[data-slot=breadcrumb-page]")).toHaveText("Looms");
-  await expect(
-    page.getByRole("button", { name: "2 tool calls · Background jobs, Thread" }),
-  ).toBeVisible();
+  const job = transcript(page).getByRole("button", { name: /^Thread › Rename.* · Done/ });
+  await expect(job).toBeVisible();
+  await expect(transcript(page).getByRole("button", { name: /Start/ })).toHaveCount(0);
+  await job.click();
+  await expect(transcript(page).getByRole("region", { name: "Input" })).toContainText(
+    "thread.rename",
+  );
+  await expect(transcript(page).getByRole("region", { name: "Output" })).toContainText("job");
   // The agent is told, in a card that shows the call as its tool does.
   const notice = told(page);
   await expect(notice).toContainText("Rename");

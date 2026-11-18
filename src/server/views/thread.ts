@@ -35,6 +35,7 @@ import {
   type RowVersions,
   type ShownRow,
   type ShownRun,
+  type ToolRow,
   type WaitingAction,
   type WaitingRow,
 } from "@/shared/threads/rows.ts";
@@ -528,6 +529,37 @@ export function createThreadViews(options: ThreadViewsOptions) {
     return { ...row, ...place };
   }
 
+  // The calls that made calls among the rows at the indexes, at every level above them, where
+  // they are not among those rows, as the reader sees them: a page's rows nest under them however
+  // far back they are, without the rows between.
+  async function callersOf(
+    fold: TranscriptFold,
+    transcript: Transcript,
+    indexes: readonly number[],
+    reader: Page,
+  ) {
+    const given = new Set(indexes);
+    const found = new Set<number>();
+    for (const index of indexes) {
+      let here = index;
+      let row = transcript.rows[here];
+      // A caller always comes before the calls it made.
+      while (row?.kind === "tool" && row.within) {
+        const at = fold.indexOf(row.within);
+        if (at === -1 || at >= here || found.has(at)) break;
+        if (!given.has(at)) found.add(at);
+        here = at;
+        row = transcript.rows[at];
+      }
+    }
+    const callers: ToolRow[] = [];
+    for (const at of [...found].sort((a, b) => a - b)) {
+      const shown = await shownRow(fold, transcript, at, reader);
+      if (shown.kind === "tool") callers.push(shown);
+    }
+    return callers.length > 0 ? { callers } : {};
+  }
+
   // A notice as the reader sees it: named as people know things, and linking back to where
   // it came from in the threads they may read.
   async function shownNotice(
@@ -751,11 +783,13 @@ export function createThreadViews(options: ThreadViewsOptions) {
       for (let index = start; index < total; index++) {
         rows.push(await shownRow(fold, transcript, index, reader));
       }
+      const indexes = Array.from({ length: total - start }, (_, offset) => start + offset);
       return {
         ...head,
         thread: { ...head.thread, lastEventSeq: Math.max(head.thread.lastEventSeq, fold.last) },
         branch: { id: branch, current },
         rows,
+        ...(await callersOf(fold, transcript, indexes, reader)),
         before: start > 0 ? start : null,
         newFrom: from === -1 ? null : transcript.rows[from]!.id,
         earlierUnread: unreadBefore(transcript, from, start, principal.userId),
@@ -798,8 +832,10 @@ export function createThreadViews(options: ThreadViewsOptions) {
         rows.push(await shownRow(fold, transcript, index, reader));
       }
       const from = unreadFrom === undefined ? -1 : fold.indexOf(unreadFrom);
+      const indexes = Array.from({ length: end - start }, (_, offset) => start + offset);
       return {
         rows,
+        ...(await callersOf(fold, transcript, indexes, reader)),
         before: start > 0 ? start : null,
         earlierUnread: unreadBefore(transcript, from, start, principal.userId),
       };
@@ -889,12 +925,14 @@ export function createThreadViews(options: ThreadViewsOptions) {
             able.set(shown.id, ableOf(shown));
             rows.push(shown);
           }
+          const indexes = Array.from({ length: total - start }, (_, offset) => start + offset);
           last = fold.last;
           to({
             kind: "rows",
             update: {
               seq: last,
               rows,
+              ...(await callersOf(fold, transcript, indexes, reader)),
               waiting,
               run,
               reset: { branch: { id: branch, current: true }, before: start > 0 ? start : null },
@@ -904,6 +942,7 @@ export function createThreadViews(options: ThreadViewsOptions) {
         }
         const live = await liveIndexes(transcript, reader);
         const rows: ShownRow[] = [];
+        const sent: number[] = [];
         for (const [index, row] of transcript.rows.entries()) {
           const changed = fold.changedAt(index) > last;
           // What the reader may do from a row, and its versions, change as rows come after it.
@@ -916,13 +955,18 @@ export function createThreadViews(options: ThreadViewsOptions) {
           if (!changed && !unable && !live.has(index) && !told.has(row.id)) continue;
           const shown = await shownRow(fold, transcript, index, reader);
           const parts = readerPartsOf(shown);
-          if (changed || unable || told.get(row.id) !== parts) rows.push(shown);
+          if (changed || unable || told.get(row.id) !== parts) {
+            rows.push(shown);
+            sent.push(index);
+          }
           if (live.has(index)) told.set(row.id, parts);
           else told.delete(row.id);
         }
         if (fold.last <= last && rows.length === 0) return;
         last = Math.max(last, fold.last);
-        to({ kind: "rows", update: { seq: last, rows, waiting, run } });
+        // A call new here comes with the calls above it, which the reader may not have read yet.
+        const callers = await callersOf(fold, transcript, sent, reader);
+        to({ kind: "rows", update: { seq: last, rows, ...callers, waiting, run } });
       }
       // What was sent already is skipped; a piece wholly sent still tells the progress.
       function sendOutput(chunk: LiveChunk, to: (item: ThreadFollowItem) => void = deliver) {

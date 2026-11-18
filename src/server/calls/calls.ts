@@ -152,7 +152,7 @@ export interface CallsOptions {
     | "turnedOn"
   >;
   // Where running calls say what they print, for the people watching; nowhere when not given.
-  live?: Pick<Live, "open" | "close" | "end" | "of" | "moved">;
+  live?: Pick<Live, "open" | "close" | "end" | "keep" | "of" | "moved">;
   instanceId: string;
   keeper: Sync["keeper"];
   transact: Sync["transact"];
@@ -234,8 +234,8 @@ export function createCalls(options: CallsOptions) {
       ran,
       async pause(threadId, callId, kept) {
         const paused = await store.pause(threadId, callId, kept);
-        // What it printed is kept with where it stood; a reporter starts afresh as it goes on.
-        if (paused) await options.live?.end(callId);
+        // What it printed stays for those watching while it waits; it prints it again as it goes on.
+        if (paused) await options.live?.keep(threadId, callId, kept.printed);
         return paused;
       },
       async resumeOf(threadId, callId) {

@@ -32,30 +32,42 @@ function transcript(page: Page) {
   return page.getByRole("log", { name: "Events" });
 }
 
-test("a script's calls show under it as calls of their own, and its code as Python", async ({
+test("a script shows its code and output first, and its calls grouped by tool behind one line", async ({
   page,
 }) => {
   await signUp(page);
-  const code =
-    'info = await call_tool("thread__info", {})\nprint("people", len(info["people"]))\ninfo["title"]';
+  const code = [
+    'info = await call_tool("thread__info", {})',
+    'again = await call_tool("thread__info", {})',
+    'print("people", len(info["people"]))',
+    'info["title"]',
+  ].join("\n");
   await write(page, `^tool scripts.run ${JSON.stringify({ code })}`);
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
 
-  // The script and the call it made fold into one run of calls.
-  const group = transcript(page).getByRole("button", { name: /^2 tool calls/ });
-  await expect(group).toBeVisible();
-  await group.click();
-  const script = transcript(page).getByRole("button", { name: /Scripts › Run script · Ran/ });
-  const inner = transcript(page).getByRole("button", {
-    name: /Run script › Thread › Details · Ran/,
+  // The script is the agent's one call; its calls are counted on it, not shown beside it.
+  const script = transcript(page).getByRole("button", {
+    name: /^Scripts › Run script · Ran · 2 calls$/,
   });
   await expect(script).toBeVisible();
-  await expect(inner).toBeVisible();
+  await expect(transcript(page).getByRole("button", { name: /Details · Ran/ })).toHaveCount(0);
 
-  // The script's code shows as code.
+  // Its code shows as code, and what it printed as its output.
   await script.click();
   const input = transcript(page).getByRole("region", { name: "Input" }).first();
   await expect(input.locator("pre")).toContainText('await call_tool("thread__info", {})');
+  await expect(transcript(page).getByRole("region", { name: "Output" }).first()).toContainText(
+    "people 1",
+  );
+
+  // Its calls open grouped by tool, and each on its own input and output.
+  await transcript(page).getByRole("button", { name: "2 tool calls" }).click();
+  const details = transcript(page).getByRole("button", { name: "Thread › Details · ×2" });
+  await details.click();
+  const calls = transcript(page).getByRole("button", { name: /^Thread › Details · Ran/ });
+  await expect(calls).toHaveCount(2);
+  await calls.first().click();
+  await expect(transcript(page).getByRole("region", { name: "Output" })).toHaveCount(2);
 });
 
 test("a script pauses at a call that needs approval, and goes on once it is allowed from the card", async ({
@@ -63,6 +75,7 @@ test("a script pauses at a call that needs approval, and goes on once it is allo
 }) => {
   await signUp(page);
   const code = [
+    'print("checked the deploy")',
     'await call_tool("webhooks__add", {"name": "Deploys", "note": "Check the deploy"})',
     '"added"',
   ].join("\n");
@@ -71,9 +84,20 @@ test("a script pauses at a call that needs approval, and goes on once it is allo
   const card = page.getByRole("region", { name: "Approvals" }).getByTestId("tray-card");
   await expect(card).toContainText("Run script");
   await expect(card.getByRole("link", { name: "Show caller" })).toBeVisible();
+  // The waiting call shows without opening anything, once, among the script's calls.
+  await expect(
+    transcript(page).getByRole("button", {
+      name: /^Webhooks › Add webhook · Waiting for approval/,
+    }),
+  ).toHaveCount(1);
+  // What it printed before it paused shows, read afresh too.
+  const soFar = transcript(page).getByRole("region", { name: "Output so far" });
+  await expect(soFar).toContainText("checked the deploy");
+  await page.reload();
+  await expect(soFar).toContainText("checked the deploy");
   await card.getByRole("button", { name: "Allow", exact: true }).click();
   await expect(
-    transcript(page).getByRole("button", { name: /^2 tool calls · Scripts, Webhooks$/ }),
+    transcript(page).getByRole("button", { name: /^Scripts › Run script · Ran · 1 call$/ }),
   ).toBeVisible();
   await expect(transcript(page)).toContainText('"result":"added"');
 });

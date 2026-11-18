@@ -2,11 +2,18 @@
 // newer than the newest here is added in its place, and one before the rows here is left out until
 // its page is read; a page of earlier rows goes before the first here. A fresh read keeps the earlier
 // pages read so far and the live rows that arrived while it was on its way. Newer changes of a row
-// win, as its seq says. Another branch made current replaces them all.
+// win, as its seq says. Another branch made current replaces them all. The calls above the rows
+// that made calls among them are kept apart, and changed as the rows are.
 
 import type { ActivityItem } from "@/shared/jobs.ts";
 import type { ThreadDetail, ThreadHead } from "@/shared/threads/detail.ts";
-import { ROWS_PAGE, type RowsPage, type RowsUpdate, type ShownRow } from "@/shared/threads/rows.ts";
+import {
+  ROWS_PAGE,
+  type RowsPage,
+  type RowsUpdate,
+  type ShownRow,
+  type ToolRow,
+} from "@/shared/threads/rows.ts";
 
 // The rows with the changed ones in: each replacing the row with its id unless that one is newer,
 // or, with `ties` false, as new; or added when it comes after every row here; in order. Live rows
@@ -31,6 +38,35 @@ export function withChangedRows(rows: ShownRow[], changed: ShownRow[], ties = tr
   return added ? next.toSorted((a, b) => a.order - b.order) : next;
 }
 
+// The callers with the given ones in, and with the rows given that change one of them; each
+// replacing the one with its id unless that one is newer.
+export function withCallers(
+  callers: readonly ToolRow[] | undefined,
+  given: readonly ToolRow[] | undefined,
+  rows: readonly ShownRow[] = [],
+): ToolRow[] | undefined {
+  const known = new Map((callers ?? []).map((row) => [row.id, row]));
+  const changed = [
+    ...(given ?? []),
+    ...rows.filter((row): row is ToolRow => row.kind === "tool" && known.has(row.id)),
+  ];
+  if (changed.length === 0) return callers ? [...callers] : undefined;
+  for (const row of changed) {
+    const here = known.get(row.id);
+    if (!here || here.seq <= row.seq) known.set(row.id, row);
+  }
+  return [...known.values()].sort((a, b) => a.order - b.order);
+}
+
+// The rows with the callers that are not among them, in order: what the transcript shows.
+export function rowsWithCallers(rows: ShownRow[], callers: readonly ToolRow[] | undefined) {
+  if (!callers?.length) return rows;
+  const held = new Set(rows.map((row) => row.id));
+  const apart = callers.filter((row) => !held.has(row.id));
+  if (apart.length === 0) return rows;
+  return [...apart, ...rows].sort((a, b) => a.order - b.order);
+}
+
 // The detail with what the live stream sent: the changed rows, the waiting messages and the run,
 // and the newest event it reaches; or, once another branch is current, its rows in place of all.
 export function withUpdate(detail: ThreadDetail, update: RowsUpdate): ThreadDetail {
@@ -40,6 +76,7 @@ export function withUpdate(detail: ThreadDetail, update: RowsUpdate): ThreadDeta
     ...detail,
     thread: { ...detail.thread, lastEventSeq },
     rows: reset ? update.rows : withChangedRows(detail.rows, update.rows),
+    callers: reset ? update.callers : withCallers(detail.callers, update.callers, update.rows),
     ...(reset && {
       branch: reset.branch,
       before: reset.before,
@@ -81,6 +118,7 @@ export function withEarlier(detail: ThreadDetail, page: RowsPage): ThreadDetail 
   return {
     ...detail,
     rows: [...earlier, ...detail.rows],
+    callers: withCallers(detail.callers, page.callers, page.rows),
     before: page.before,
     earlierUnread: page.earlierUnread,
   };
@@ -123,6 +161,7 @@ export function withFreshRead(fetched: ThreadDetail, shown: ThreadDetail): Threa
   return {
     ...fetched,
     rows,
+    callers: withCallers(fetched.callers, shown.callers),
     before,
     earlierUnread,
     ...(live && {

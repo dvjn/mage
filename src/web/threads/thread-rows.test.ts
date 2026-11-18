@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ThreadDetail } from "@/shared/threads/detail.ts";
-import { ROWS_PAGE, type ShownRow } from "@/shared/threads/rows.ts";
+import { ROWS_PAGE, type ShownRow, type ToolRow } from "@/shared/threads/rows.ts";
 import {
+  rowsWithCallers,
   withChangedRows,
   withEarlier,
   withFreshRead,
   withLatestPage,
   withUpdate,
 } from "@/web/threads/thread-rows.ts";
+import { transcriptEntries } from "@/web/threads/transcript/entries.ts";
 
 function row(order: number, seq = order + 1, text = `Note ${order}`): ShownRow {
   return {
@@ -138,5 +140,56 @@ describe("withFreshRead", () => {
     const merged = withFreshRead(fetched, shown);
 
     expect(merged).toBe(fetched);
+  });
+});
+
+describe("the calls above the rows", () => {
+  const tool = (id: string, order: number, seq: number, parent?: string): ToolRow =>
+    ({
+      kind: "tool",
+      id,
+      order,
+      seq,
+      turn: { continued: true, model: null },
+      runId: "run",
+      messageId: "m",
+      toolId: "fetch",
+      title: "Fetch",
+      toolset: null,
+      input: {},
+      risk: "normal",
+      requestedAt: "2026-11-01T00:00:00.000Z",
+      state: "ready",
+      decision: null,
+      output: null,
+      ms: null,
+      ...(parent && { parent: { id: parent, title: "Run script" }, depth: 1 }),
+    }) as ToolRow;
+
+  it("nest a call arriving live under its caller above the page, and change as it does", () => {
+    const script = tool("script", 0, 1);
+    const held = { ...detail([tool("a", 100, 101, "script")], 100), callers: [script] };
+    const live = withUpdate(held, {
+      seq: 102,
+      rows: [tool("b", 101, 102, "script")],
+      callers: [script],
+      waiting: [],
+      run: null,
+    });
+    const shown = rowsWithCallers(live.rows, live.callers);
+    expect(shown.map((one) => one.id)).toEqual(["script", "a", "b"]);
+    const entries = transcriptEntries(shown);
+    expect(entries).toHaveLength(1);
+    const [entry] = entries;
+    expect(entry?.kind === "row" && entry.under?.map((one) => one.id)).toEqual(["a", "b"]);
+    // The script ending changes it where it is kept, above the page.
+    const ended = withUpdate(live, {
+      seq: 103,
+      rows: [{ ...script, seq: 103, state: "completed" }],
+      waiting: [],
+      run: null,
+    });
+    expect(ended.callers?.[0]).toMatchObject({ id: "script", state: "completed" });
+    expect(ended.rows.map((one) => one.id)).toEqual(["a", "b"]);
   });
 });

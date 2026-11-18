@@ -390,6 +390,8 @@ describe("a script", () => {
       ["probe.guarded", "waiting"],
     ]);
     expect(await t.pauses()).toBe(1);
+    // What it printed, just before it paused too, stays for those watching while it waits.
+    expect(await t.shown(id)).toBe("before\n");
     const [, inner] = await t.calls();
     expect(inner).toMatchObject({ within: id, waits: true, state: "waiting" });
 
@@ -403,6 +405,7 @@ describe("a script", () => {
     expect((await t.stored()).map((row) => row.status)).toEqual(["completed", "completed"]);
     expect(await t.pauses()).toBe(0);
     expect((await t.runs()).map((run) => run.status)).toEqual(["completed"]);
+    expect(await t.shown(id)).toBe("");
   });
 
   it("calls tools by name after it pauses, whether it looked them up before or after", async () => {
@@ -1448,5 +1451,60 @@ describe("the scripts guidance", () => {
     const more = /^\+(\d+) more.*\(list_tools\(\)\)$/.exec(lines.at(-1)!);
     expect(more).not.toBeNull();
     expect(lines.length - 1 + Number(more![1])).toBe(total);
+  });
+});
+
+describe("a page of a script's rows", () => {
+  it("comes with the calls above it that made calls in it, alone, from three levels down", async () => {
+    const t = await scriptThread();
+    await t.post(t.ada, "Many");
+    const id = await t.script(
+      [
+        "for i in range(100):",
+        '    await call_tool("probe__echo", {"a": "x"})',
+        'await call_tool("jobs__start", {"tool": "probe__wait", "input": {"label": "a"}})',
+        '"started"',
+      ].join("\n"),
+    );
+    await t.until(() => t.tool.running("a"));
+    await t.replies();
+    await t.worker.idle();
+    const read = async (path: string) =>
+      (await (await t.api("GET", path, t.ada.cookie)).json()) as {
+        rows: { id: string; order: number; toolId?: string }[];
+        callers?: { id: string }[];
+        before: number | null;
+        thread: { lastEventSeq: number };
+      };
+    const first = await read(`/threads/${t.thread.id}`);
+    expect(
+      (
+        await t.api("PUT", `/threads/${t.thread.id}/read`, t.ada.cookie, {
+          seq: first.thread.lastEventSeq,
+        })
+      ).status,
+    ).toBe(200);
+    const newest = await read(`/threads/${t.thread.id}`);
+    expect(newest.rows).toHaveLength(60);
+    // The script is far above the page: it comes alone, not the rows between.
+    expect(newest.callers?.map((row) => row.id)).toEqual([id]);
+    const job = newest.rows.find((row) => row.toolId === "probe.wait")!;
+    const start = newest.rows.find((row) => row.toolId === "jobs.start")!;
+    const deep = await read(`/threads/${t.thread.id}/rows?before=${job.order + 1}&limit=1`);
+    expect(deep.rows.map((row) => row.id)).toEqual([job.id]);
+    expect(deep.callers?.map((row) => row.id)).toEqual([id, start.id]);
+    const older = await read(`/threads/${t.thread.id}/rows?before=${newest.before}&limit=20`);
+    expect(older.callers?.map((row) => row.id)).toEqual([id]);
+    const reaching = await read(
+      `/threads/${t.thread.id}/rows?before=${newest.before}&limit=5&at=${older.rows[3]!.id}`,
+    );
+    expect(reaching.rows[0]!.id).toBe(older.rows[3]!.id);
+    expect(reaching.callers?.map((row) => row.id)).toEqual([id]);
+    const whole = await read(`/threads/${t.thread.id}/rows?before=${newest.before}`);
+    expect(whole.rows.some((row) => row.id === id)).toBe(true);
+    expect(whole.callers).toBeUndefined();
+    t.tool.finish("a", 1);
+    await t.replies();
+    await t.worker.idle();
   });
 });

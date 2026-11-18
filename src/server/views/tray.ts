@@ -2,6 +2,7 @@
 // A background job leaves when it ends, its notice in the transcript being the record of it;
 // the other finished kinds stay until a reader has seen them, so a failure nobody saw is not lost.
 
+import { failedWork } from "@/shared/call-outcome.ts";
 import type { Attention, Work, WorkStatus } from "@/shared/jobs.ts";
 import type { SubagentNeeds, SubagentState } from "@/shared/subagents.ts";
 
@@ -12,7 +13,7 @@ export function attentionOf(work: Work, now: Date): Attention | undefined {
   // What waits on a person asks only the readers who may decide or answer it, and keeps asking
   // whether or not its kind was opened.
   if (work.status === "waiting") return work.canDecide ? "approval" : undefined;
-  if (work.status === "failed" || work.status === "interrupted") return "failed";
+  if (failedWork(work.status)) return "failed";
   const next = work.schedule?.nextRunAt;
   if (work.status === "scheduled" && next) {
     const ahead = new Date(next).getTime() - now.getTime();

@@ -11,6 +11,7 @@ import { NoticeMessages } from "@/web/threads/transcript/notice-message";
 import type { RowActions } from "@/web/threads/transcript/row-actions";
 import { ToolCall } from "@/web/threads/transcript/tool-call";
 import { ToolGroup } from "@/web/threads/transcript/tool-group";
+import { definitionOf } from "@/web/threads/transcript/tool-line";
 import { TranscriptItem } from "@/web/threads/transcript/transcript-item";
 
 interface Props {
@@ -30,11 +31,22 @@ const same = (a: readonly unknown[], b: readonly unknown[]) =>
 function sameEntry(a: TranscriptEntry, b: TranscriptEntry) {
   if (a.kind !== b.kind || a.key !== b.key) return false;
   switch (a.kind) {
-    case "row":
-      return a.row === (b as typeof a).row && a.endsTurn === (b as typeof a).endsTurn;
+    case "row": {
+      const other = b as typeof a;
+      return (
+        a.row === other.row &&
+        a.endsTurn === other.endsTurn &&
+        same(a.under ?? [], other.under ?? [])
+      );
+    }
     case "calls": {
       const other = b as typeof a;
-      return same(a.rows, other.rows) && same(a.calls, other.calls) && a.turn === other.turn;
+      return (
+        same(a.rows, other.rows) &&
+        same(a.calls, other.calls) &&
+        same(a.under, other.under) &&
+        a.turn === other.turn
+      );
     }
     case "subagent": {
       const other = b as typeof a;
@@ -69,6 +81,7 @@ export const EntryView = memo(
           <ToolGroup
             rows={entry.rows}
             calls={entry.calls}
+            under={entry.under}
             turn={entry.turn}
             tools={tools ?? []}
             open={open}
@@ -101,7 +114,7 @@ export const EntryView = memo(
         return (
           <ToolCall
             row={entry.row}
-            definition={tools?.find((tool) => tool.name === entry.row.toolId)}
+            definition={definitionOf(tools, entry.row)}
             turn={{ continued: false, model: null }}
             subagent={entry.subagent.name}
             answer={actions.answer}
@@ -115,6 +128,7 @@ export const EntryView = memo(
             tools={tools}
             actions={actionsFor(entry.row)}
             endsTurn={entry.endsTurn}
+            under={entry.under}
           />
         );
     }

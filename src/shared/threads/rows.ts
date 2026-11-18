@@ -369,9 +369,14 @@ export type ShownRun = z.infer<typeof shownRunSchema>;
 // changed, whole, and what waits for the agent and the run as they now are.
 // Once another branch is current, the update starts it afresh: its rows are the branch's newest,
 // in place of every row before, and `reset` says where earlier ones are read from.
+// The calls that made calls among the rows given, at every level above them, where they are not
+// among those rows themselves; sent apart, since they may come long before them.
+export const callersSchema = z.array(toolRowSchema).optional();
+
 export const rowsUpdateSchema = z.object({
   seq: z.number().int().nonnegative(),
   rows: z.array(shownRowSchema),
+  callers: callersSchema,
   waiting: z.array(waitingRowSchema),
   run: shownRunSchema.nullable(),
   reset: z
@@ -399,6 +404,7 @@ export const rowsQuerySchema = z.object({
 // how many rows before them are new to the reader, from the row `unreadFrom` names.
 export const rowsPageSchema = z.object({
   rows: z.array(shownRowSchema),
+  callers: callersSchema,
   before: z.number().int().nonnegative().nullable(),
   earlierUnread: z.number().int().nonnegative(),
 });

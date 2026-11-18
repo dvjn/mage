@@ -11,15 +11,19 @@ import { ToolLine } from "@/web/threads/transcript/tool-line";
 export function ToolOpening({
   row,
   definition,
+  under,
+  tools,
 }: {
   row: ToolRow;
   definition: ToolDefinition | undefined;
   turn: AgentTurn;
+  under?: readonly ToolRow[];
+  tools?: readonly ToolDefinition[];
 }) {
   const { self } = useThreadAgent();
   return (
     <TranscriptRowFrame author={self.name} at={row.requestedAt} label={`Message from ${self.name}`}>
-      <ToolLine row={row} definition={definition} />
+      <ToolLine row={row} definition={definition} under={under} tools={tools} />
     </TranscriptRowFrame>
   );
 }

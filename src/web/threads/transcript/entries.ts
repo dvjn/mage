@@ -5,11 +5,14 @@
 // agent's calls in a row fold into one entry. A call that waits for a decision is a line like any
 // other; its decision is made in the activity tray. A subagent's call that waits for answers shows
 // as its card right after the entry with the line that started the subagent.
-// Received messages and notices are turns of their own, outside the receiving agent's turn.
+// Received messages and notices are turns of their own, outside the receiving agent's turn. A call
+// another call made, as a script's or a job's, shows under the agent's own call that led to it,
+// where that call is held; it neither counts in nor breaks a run of calls.
 
 import { ASK_TOOL } from "@/shared/ask.ts";
 import { artifactOf, type CalledArtifact, cardsAfterReply } from "@/web/artifacts/call-artifacts";
 import type { AgentRow, AgentTurn, NoticeRow, ShownRow, ToolRow } from "@/shared/threads/rows.ts";
+import { callsUnder, descendantsOf } from "@/web/threads/transcript/call-tree";
 
 // A row that shows on its own.
 export type OwnRow = Exclude<ShownRow, NoticeRow>;
@@ -22,6 +25,8 @@ export type TranscriptEntry =
       // Set by transcriptTurns on the agent reply that ends a finished turn, which then shows the
       // turn's one actions toolbar.
       endsTurn?: boolean;
+      // For a call, the calls under it at every depth.
+      under?: ToolRow[];
     }
   | {
       kind: "calls";
@@ -30,6 +35,8 @@ export type TranscriptEntry =
       // The calls and the steps that only thought between them, in order.
       rows: (ToolRow | AgentRow)[];
       calls: ToolRow[];
+      // The calls under them at every depth.
+      under: ToolRow[];
       turn: AgentTurn;
     }
   | {
@@ -110,10 +117,11 @@ function turnOf(entry: TranscriptEntry) {
   return null;
 }
 
-// The cards of the questions of the subagents the entry's calls started.
+// The cards of the questions of the subagents the entry's calls started, and the calls under them.
 function subagentCards(entry: TranscriptEntry): TranscriptEntry[] {
   if (entry.kind !== "calls" && entry.kind !== "row") return [];
-  const calls = entry.kind === "calls" ? entry.calls : entry.row.kind === "tool" ? [entry.row] : [];
+  const own = entry.kind === "calls" ? entry.calls : entry.row.kind === "tool" ? [entry.row] : [];
+  const calls = [...own, ...(entry.under ?? [])];
   return calls.flatMap((call) =>
     call.subagent && call.subagentCall && waitsAsCard(call.subagentCall)
       ? [
@@ -135,14 +143,25 @@ function subagentCards(entry: TranscriptEntry): TranscriptEntry[] {
 // activity always ends the receiving agent's turn, even where cached rows still carry continuation
 // metadata from before that rule.
 export function transcriptEntries(rows: readonly ShownRow[]): TranscriptEntry[] {
+  const held = new Set(rows.flatMap((row) => (row.kind === "tool" ? [row.id] : [])));
+  const nested = (row: ShownRow): row is ToolRow =>
+    row.kind === "tool" && !!row.parent && held.has(row.parent.id);
+  const under = callsUnder(rows.filter(nested));
+  const below = (row: ToolRow) => descendantsOf(row, under);
+  const underOf = (row: ShownRow) => {
+    const calls = row.kind === "tool" ? below(row) : [];
+    return calls.length > 0 ? { under: calls } : {};
+  };
   const shown = rows
-    .filter((row) => row.kind !== "agent" || row.turn)
+    .filter((row) => (row.kind !== "agent" || row.turn) && !nested(row))
     .map((row, index, visible) => {
       const before = visible[index - 1];
       if (
         (row.kind === "agent" || row.kind === "tool") &&
         row.turn?.continued &&
-        before?.kind === "notice"
+        before &&
+        before.kind !== "agent" &&
+        before.kind !== "tool"
       )
         return { ...row, turn: { ...row.turn, continued: false } };
       return row;
@@ -166,7 +185,7 @@ export function transcriptEntries(rows: readonly ShownRow[]): TranscriptEntry[] 
       continue;
     }
     if (!foldable(row)) {
-      entries.push({ kind: "row", key: row.id, row });
+      entries.push({ kind: "row", key: row.id, row, ...underOf(row) });
       i++;
       continue;
     }
@@ -189,7 +208,7 @@ export function transcriptEntries(rows: readonly ShownRow[]): TranscriptEntry[] 
       }
     }
     if (calls.length < 2) {
-      entries.push({ kind: "row", key: row.id, row });
+      entries.push({ kind: "row", key: row.id, row, ...underOf(row) });
       i++;
       continue;
     }
@@ -198,6 +217,7 @@ export function transcriptEntries(rows: readonly ShownRow[]): TranscriptEntry[] 
       key: `calls:${row.id}`,
       rows: members,
       calls,
+      under: calls.flatMap(below),
       turn: row.turn ?? { continued: false, model: null },
     });
     i = next;
@@ -265,8 +285,8 @@ export function transcriptTurns(
       run.entries.push(entry);
       if (!shape.continues) run = undefined;
     }
-    // A card for each artifact the turn made in a folded group of calls, where its card is out of
-    // sight; a call that shows on its own line already shows its card there.
+    // A card for each artifact the turn made in a folded group of calls or under a call, where its
+    // card is out of sight; a call that shows on its own line already shows its card there.
     const members: (ToolRow | AgentRow)[] = [];
     let tail: ToolRow | AgentRow | undefined;
     for (const entry of group.entries) {
@@ -277,6 +297,8 @@ export function transcriptTurns(
         if (entry.kind === "row" && row.kind === "tool" && artifactOf(row)) continue;
         members.push(row);
       }
+      // The calls under them show no cards of their own.
+      if (entry.kind === "calls" || entry.kind === "row") members.push(...(entry.under ?? []));
     }
     const items = cardsAfterReply(members);
     if (items.length > 0)

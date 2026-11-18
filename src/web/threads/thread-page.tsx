@@ -54,7 +54,8 @@ import { GoHome, NotFound } from "@/web/shell/not-found";
 import { PageHeader, pageWidth } from "@/web/shell/page-header";
 import { rememberSpace } from "@/web/spaces/last-space";
 import { spacesQuery } from "@/web/spaces/queries";
-import { useThreadEvents } from "@/web/threads/event-stream";
+import { PrintedContext, useThreadEvents } from "@/web/threads/event-stream";
+import { opensFor } from "@/web/threads/transcript/call-tree";
 import { useMarkRead } from "@/web/threads/thread-lists";
 import {
   usePostMessage,
@@ -93,7 +94,7 @@ import {
 } from "@/web/threads/transcript/row-history";
 import { ActivityTray, type TrayGroup, OpenTrayContext } from "@/web/threads/activity-tray";
 import { Composer, WaitingTray, RunStatus } from "@/web/threads/thread-composer";
-import { withEarlier, withLatestPage } from "@/web/threads/thread-rows";
+import { rowsWithCallers, withEarlier, withLatestPage } from "@/web/threads/thread-rows";
 import { EarlierUnread } from "@/web/threads/transcript/earlier-unread";
 import { AgentStarting } from "@/web/threads/transcript/agent-starting";
 import { type TranscriptEntry, transcriptTurns } from "@/web/threads/transcript/entries";
@@ -155,6 +156,7 @@ export function ThreadPage() {
   // The rows shown: the current branch's, kept live, or the older branch's as read.
   const shown = viewing ? older.data : detail.data;
   const saved = shown?.rows;
+  const callers = shown?.callers;
   const access = detail.data?.access;
   const guest = access?.via === "guest";
   const can = detail.data?.can;
@@ -175,7 +177,7 @@ export function ThreadPage() {
   }, [queryClient, spaceId]);
   const notFound = detail.error instanceof ThreadNotFound;
   const ended = detail.error instanceof ThreadAccessEnded;
-  const { streaming, reconnecting } = useThreadEvents(
+  const { streaming, printed, reconnecting } = useThreadEvents(
     threadId,
     !!detail.data && !notFound && !ended,
   );
@@ -185,11 +187,11 @@ export function ThreadPage() {
   // The rows with the text so far of each reply still being written.
   const rows = useMemo(
     () =>
-      (saved ?? []).map((row): ShownRow => {
+      rowsWithCallers(saved ?? [], callers).map((row): ShownRow => {
         const pieces = row.kind === "agent" && row.status === "streaming" && streaming.get(row.id);
         return pieces ? { ...row, text: pieces.text, reasoning: pieces.reasoning } : row;
       }),
-    [saved, streaming],
+    [saved, callers, streaming],
   );
 
   const running = !!detail.data?.run;
@@ -472,7 +474,7 @@ export function ThreadPage() {
       return;
     }
     setFocused(key);
-    toggleRows([target, noticeRunKey(target), lineKey(target)], true);
+    toggleRows([target, noticeRunKey(target), lineKey(target), ...opensFor(rows, target)], true);
     // An agent's message starts open, and is kept here only once the reader closes it.
     const reached = rows.find((row) => row.id === target);
     if (reached?.kind === "notice" && reached.type === "message") toggleRows([target], false);
@@ -705,83 +707,88 @@ export function ThreadPage() {
       <ThreadAgentContext.Provider value={agent}>
         <ArtifactThreadContext.Provider value={threadId}>
           <RowFocusContext.Provider value={focus}>
-            <ActivityActionsContext.Provider value={background}>
-              <OpenTrayContext.Provider value={setTrayOpen}>
-                <RowHistoryContext.Provider value={history}>
-                  <AsidesContext.Provider value={asides}>
-                    <ReplyActions.Provider value={replyActions}>
-                      {detail.data && (!viewing || older.data) && settled ? (
-                        // The cached thread shows at once; it opens again where the reader stopped once read.
-                        <Conversation
-                          key={`${threadId}:${viewing ?? currentBranch}:${opened?.openedAt ?? ""}`}
-                          openAt={stoppedAt}
-                          holdOpenAt={opened?.hold}
-                          scrollTo={lit && rowElementId(lit)}
-                          aria-label="Events"
-                          className="min-h-0"
-                          resize={arriving ? "smooth" : "instant"}
-                        >
-                          <ConversationContent
-                            className={cn(
-                              pageWidth,
-                              "gap-6 pb-[calc(var(--layer-height,0px)+1rem)]",
-                            )}
+            <PrintedContext.Provider value={printed}>
+              <ActivityActionsContext.Provider value={background}>
+                <OpenTrayContext.Provider value={setTrayOpen}>
+                  <RowHistoryContext.Provider value={history}>
+                    <AsidesContext.Provider value={asides}>
+                      <ReplyActions.Provider value={replyActions}>
+                        {detail.data && (!viewing || older.data) && settled ? (
+                          // The cached thread shows at once; it opens again where the reader stopped once read.
+                          <Conversation
+                            key={`${threadId}:${viewing ?? currentBranch}:${opened?.openedAt ?? ""}`}
+                            openAt={stoppedAt}
+                            holdOpenAt={opened?.hold}
+                            scrollTo={lit && rowElementId(lit)}
+                            aria-label="Events"
+                            className="min-h-0"
+                            resize={arriving ? "smooth" : "instant"}
                           >
-                            {rows.length === 0 ? (
-                              <ConversationEmptyState description="Write the first message below." />
-                            ) : (
-                              <>
-                                {before !== null && !!shown?.earlierUnread && (
-                                  <EarlierUnread count={shown.earlierUnread} onLoad={loadUnread} />
-                                )}
-                                <ConversationEarlier
-                                  more={before !== null}
-                                  first={rows[0]?.id}
-                                  onLoad={loadEarlier}
-                                />
-                                {turns.map((turn, index) => (
-                                  <div
-                                    key={turn.key}
-                                    data-turn={turn.kind}
-                                    className="flex flex-col gap-1"
-                                  >
-                                    <div className="flex flex-col gap-3">
-                                      {turn.blocks.map((block) =>
-                                        block.kind === "lines" ? (
-                                          <div key={block.key} className="flex flex-col gap-1">
-                                            {block.entries.map(entryView)}
-                                          </div>
-                                        ) : (
-                                          entryView(block)
-                                        ),
+                            <ConversationContent
+                              className={cn(
+                                pageWidth,
+                                "gap-6 pb-[calc(var(--layer-height,0px)+1rem)]",
+                              )}
+                            >
+                              {rows.length === 0 ? (
+                                <ConversationEmptyState description="Write the first message below." />
+                              ) : (
+                                <>
+                                  {before !== null && !!shown?.earlierUnread && (
+                                    <EarlierUnread
+                                      count={shown.earlierUnread}
+                                      onLoad={loadUnread}
+                                    />
+                                  )}
+                                  <ConversationEarlier
+                                    more={before !== null}
+                                    first={rows[0]?.id}
+                                    onLoad={loadEarlier}
+                                  />
+                                  {turns.map((turn, index) => (
+                                    <div
+                                      key={turn.key}
+                                      data-turn={turn.kind}
+                                      className="flex flex-col gap-1"
+                                    >
+                                      <div className="flex flex-col gap-3">
+                                        {turn.blocks.map((block) =>
+                                          block.kind === "lines" ? (
+                                            <div key={block.key} className="flex flex-col gap-1">
+                                              {block.entries.map(entryView)}
+                                            </div>
+                                          ) : (
+                                            entryView(block)
+                                          ),
+                                        )}
+                                        {index === turns.length - 1 &&
+                                          turn.kind === "agent" &&
+                                          starting}
+                                      </div>
+                                      {turn.actions && (
+                                        <RowToolbar
+                                          rowId={turn.actions.id}
+                                          text={turn.actions.text}
+                                          can={turn.actions.can}
+                                        />
                                       )}
-                                      {index === turns.length - 1 &&
-                                        turn.kind === "agent" &&
-                                        starting}
                                     </div>
-                                    {turn.actions && (
-                                      <RowToolbar
-                                        rowId={turn.actions.id}
-                                        text={turn.actions.text}
-                                        can={turn.actions.can}
-                                      />
-                                    )}
-                                  </div>
-                                ))}
-                              </>
-                            )}
-                            {turns.at(-1)?.kind !== "agent" && starting}
-                          </ConversationContent>
-                          <ConversationScrollButton className="bottom-[calc(var(--layer-height,0px)+1.5rem)]" />
-                        </Conversation>
-                      ) : (
-                        <div className="min-h-0 flex-1" />
-                      )}
-                    </ReplyActions.Provider>
-                  </AsidesContext.Provider>
-                </RowHistoryContext.Provider>
-              </OpenTrayContext.Provider>
-            </ActivityActionsContext.Provider>
+                                  ))}
+                                </>
+                              )}
+                              {turns.at(-1)?.kind !== "agent" && starting}
+                            </ConversationContent>
+                            <ConversationScrollButton className="bottom-[calc(var(--layer-height,0px)+1.5rem)]" />
+                          </Conversation>
+                        ) : (
+                          <div className="min-h-0 flex-1" />
+                        )}
+                      </ReplyActions.Provider>
+                    </AsidesContext.Provider>
+                  </RowHistoryContext.Provider>
+                </OpenTrayContext.Provider>
+              </ActivityActionsContext.Provider>
+            </PrintedContext.Provider>
           </RowFocusContext.Provider>
         </ArtifactThreadContext.Provider>
       </ThreadAgentContext.Provider>

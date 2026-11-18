@@ -437,16 +437,31 @@ function LargeOutput({ id, schema }: { id: string; schema?: JsonSchema }) {
 export function ToolOutput({
   output,
   schema,
+  title = "Output",
 }: {
   output:
     | { ok: true; value: unknown; large?: { id: string; size: number } }
     | { ok: false; error: string };
   schema?: JsonSchema;
+  title?: string;
 }) {
   if (output.ok && output.large) return <LargeOutput id={output.large.id} schema={schema} />;
   return (
-    <Block title={output.ok ? "Output" : "Error"} value={output.ok ? output.value : output.error}>
+    <Block title={output.ok ? title : "Error"} value={output.ok ? output.value : output.error}>
       <Output layout={outputLayoutOf(output, schema)} />
+    </Block>
+  );
+}
+
+// What a running call printed so far.
+export function ToolOutputSoFar({ text }: { text: string | undefined }) {
+  return (
+    <Block title="Output so far" value={text ?? ""}>
+      {text ? (
+        <Value layout={{ kind: "code", text, language: "text" }} />
+      ) : (
+        <span className="text-muted-foreground italic">Nothing yet</span>
+      )}
     </Block>
   );
 }
