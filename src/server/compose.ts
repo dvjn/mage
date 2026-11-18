@@ -11,6 +11,7 @@ import { createArtifactStore } from "@/server/artifacts/store.ts";
 import { createLive } from "@/server/calls/live.ts";
 import { createLiveStore } from "@/server/calls/live-store.ts";
 import { type Calls, createCalls } from "@/server/calls/calls.ts";
+import { withSignatures } from "@/server/calls/scripts.ts";
 import { createCallStore } from "@/server/calls/store.ts";
 import { createQueue, type Queue } from "@/server/queue/queue.ts";
 import { createQueueStore } from "@/server/queue/store.ts";
@@ -560,6 +561,17 @@ export function compose(deps: ComposeDeps) {
     guidance: async (space, _offered, _thread, now) => ({
       toolsets: await tools.guidanceIn(space, now),
     }),
+  });
+  execution.contribute({
+    guidance: async (_space, offered, _thread, now, so) => {
+      // MCP tools reach the model once turned on, their signatures with them.
+      const fromServers = new Set(
+        now.sets.flatMap((set) => (set.source === "mcp" ? set.tools.map((spec) => spec.name) : [])),
+      );
+      return {
+        toolsets: withSignatures(so.toolsets ?? [], offered, (spec) => !fromServers.has(spec.name)),
+      };
+    },
   });
   execution.contribute({
     guidance: async (_space, _offered, thread, _now, so) =>

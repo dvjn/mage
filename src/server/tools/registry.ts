@@ -47,6 +47,7 @@ import type { CallEffect, ShownRow } from "@/shared/threads/rows.ts";
 import type { ThreadRequest } from "@/server/execution/compaction.ts";
 import type { LiveReporter } from "@/server/calls/live.ts";
 import type { ThreadToolStore } from "./thread-tool-store.ts";
+import { choiceInWords, TOP_LEVEL_CHOICES } from "./signatures.ts";
 import type { ToolsetGuidance } from "@/server/execution/context.ts";
 import {
   type Approval,
@@ -89,6 +90,7 @@ export interface DeferredTool {
   prefix: string;
   description: string;
   inputSchema: JsonSchema;
+  outputSchema?: JsonSchema;
 }
 
 // Where a call runs: the thread, its space and org, the run and call, and the model ref that
@@ -427,26 +429,6 @@ function unlabelled(schema: unknown): unknown {
         return [key, value];
       }),
   );
-}
-
-// Choices between whole inputs, which providers refuse at the top of a tool's schema, and how many
-// of their branches an input must match. The tool still checks its input against them.
-const TOP_LEVEL_CHOICES = { oneOf: "exactly one", anyOf: "at least one", allOf: "all" } as const;
-
-// A top-level choice told in words, when each branch only names the parameters it requires.
-function choiceInWords(schema: Record<string, unknown>) {
-  const lines = Object.entries(TOP_LEVEL_CHOICES).flatMap(([key, count]) => {
-    const branches = schema[key];
-    if (!Array.isArray(branches)) return [];
-    const sets = branches.map((branch: unknown) => {
-      const { required, ...rest } = (branch ?? {}) as { required?: unknown };
-      return Array.isArray(required) && Object.keys(rest).length === 0 ? required : null;
-    });
-    if (sets.some((set) => set === null)) return [];
-    const options = sets.map((set) => `(${(set as string[]).join(", ")})`).join(" or ");
-    return [`Input constraint: Provide parameters for ${count} of: ${options}.`];
-  });
-  return lines.join("\n");
 }
 
 // The tool as the model is told about it: its id, what it does, and what it takes, without the
@@ -1081,14 +1063,18 @@ export function createTools(options: ToolsOptions) {
           ? []
           : toolset.tools
               .filter((spec) => !rules(spec.name).off)
-              .map((spec) => ({
-                id: spec.name,
-                name: names.toModel(spec.name),
-                server: toolset.title,
-                prefix: toolset.prefix ?? "",
-                description: textOf(spec.description, (id) => id),
-                inputSchema: definitionOf(spec).inputSchema,
-              })),
+              .map((spec) => {
+                const { inputSchema, outputSchema } = definitionOf(spec);
+                return {
+                  id: spec.name,
+                  name: names.toModel(spec.name),
+                  server: toolset.title,
+                  prefix: toolset.prefix ?? "",
+                  description: textOf(spec.description, (id) => id),
+                  inputSchema,
+                  ...(outputSchema && { outputSchema }),
+                };
+              }),
       );
     },
 

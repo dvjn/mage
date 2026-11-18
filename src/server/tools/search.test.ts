@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { closest, foundIn, lineOf, parametersOf, rank, resolve } from "./search.ts";
+import { closest, foundIn, lineOf, rank, resolve } from "./search.ts";
 import type { DeferredTool } from "./registry.ts";
 
 function tool(prefix: string, own: string, description: string, inputSchema = {}): DeferredTool {
@@ -66,19 +66,7 @@ describe("searching", () => {
     expect(foundIn({ ok: false, error: "no" }, tools)).toEqual([]);
   });
 
-  it("sums up what a tool takes and does in short", () => {
-    expect(
-      parametersOf({
-        type: "object",
-        properties: {
-          title: { type: "string" },
-          tags: { type: "array", items: { type: "string" } },
-          state: { enum: ["open", "closed"] },
-          count: { type: ["number", "null"] },
-        },
-        required: ["title"],
-      }),
-    ).toBe('title: string, tags?: string[], state?: "open" | "closed", count?: number | null');
+  it("sums up what a tool does in a line", () => {
     expect(lineOf("First line.\nMore detail.")).toBe("First line.");
     expect(lineOf("x".repeat(200))).toHaveLength(120);
   });

@@ -34,6 +34,20 @@ describe("python in the sandbox", () => {
     expect(outcome).toMatchObject({ ok: true, value: "no" });
   });
 
+  it("asks for the function of a name it is not given, raising NameError where there is none", async () => {
+    const asked: string[] = [];
+    const unknown = (name: string) => {
+      asked.push(name);
+      return name.includes("__") ? async () => Promise.resolve(name) : undefined;
+    };
+    const near = await python.run({ code: "await a__b(n=1)", functions: {}, unknown });
+    expect(near).toMatchObject({ ok: true, value: "a__b" });
+    const far = await python.run({ code: "x = 1\ny", functions: {}, unknown });
+    expect(far).toMatchObject({ ok: false, error: expect.stringContaining("NameError") });
+    expect(asked).toContain("y");
+    expect(asked).not.toContain("x");
+  });
+
   it("knows no other names, files or network", async () => {
     const outcome = await python.run({ code: "other(1)", functions: {} });
     expect(outcome).toMatchObject({ ok: false, error: expect.stringContaining("NameError") });
@@ -200,7 +214,7 @@ describe("python in the sandbox", () => {
   it("tells a script that used a call it never awaited how to, and no other", async () => {
     const work = async () => Promise.resolve({ a: 1 });
     const used = await python.run({ code: 'x = work()\nx["a"]', functions: { work } });
-    expect(used).toMatchObject({ ok: false, error: expect.stringContaining("await call_tool") });
+    expect(used).toMatchObject({ ok: false, error: expect.stringContaining("are awaitable") });
     // A tool's own words about a future are its own.
     const failed = await python.run({
       code: "await fail()",
@@ -210,7 +224,7 @@ describe("python in the sandbox", () => {
       },
     });
     expect(failed).toMatchObject({ ok: false, error: expect.stringContaining("no coroutine") });
-    expect(failed).not.toMatchObject({ error: expect.stringContaining("await call_tool") });
+    expect(failed).not.toMatchObject({ error: expect.stringContaining("are awaitable") });
   });
 
   it("goes on past calls it left behind, and gives back its result once they end", async () => {

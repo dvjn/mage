@@ -8,7 +8,7 @@
 import * as z from "zod";
 
 import { MCP_OWN_TOOLSET } from "@/shared/mcp.ts";
-import { type JsonSchema, wirePrefix, wireToolName } from "@/shared/tools.ts";
+import { wirePrefix, wireToolName } from "@/shared/tools.ts";
 
 import type {
   AnyToolSpec,
@@ -19,6 +19,7 @@ import type {
   ToolSpec,
   UseTest,
 } from "./registry.ts";
+import { functionNames, listedSignature } from "./signatures.ts";
 
 export const TOOL_SEARCH = `${MCP_OWN_TOOLSET}.search_tools`;
 
@@ -32,31 +33,6 @@ const LINE_MAX = 120;
 export function lineOf(description: string) {
   const line = description.trim().split("\n")[0]!.trim();
   return line.length > LINE_MAX ? `${line.slice(0, LINE_MAX - 1).trimEnd()}…` : line;
-}
-
-// What a tool takes, in short: each parameter with its type, `?` where it may be left out.
-export function parametersOf(schema: JsonSchema) {
-  const properties = (schema.properties ?? {}) as Record<string, JsonSchema>;
-  const required = new Set((schema.required ?? []) as string[]);
-  return Object.entries(properties)
-    .map(([name, property]) => `${name}${required.has(name) ? "" : "?"}: ${typeOf(property)}`)
-    .join(", ");
-}
-
-function typeOf(property: JsonSchema): string {
-  if (Array.isArray(property.enum)) {
-    return property.enum
-      .slice(0, 5)
-      .map((value) => JSON.stringify(value))
-      .join(" | ");
-  }
-  const type = property.type;
-  if (type === "array") {
-    const items = property.items as JsonSchema | undefined;
-    return `${items ? typeOf(items) : "any"}[]`;
-  }
-  if (Array.isArray(type)) return type.join(" | ");
-  return typeof type === "string" ? type : "any";
 }
 
 function wordsOf(text: string) {
@@ -160,13 +136,15 @@ export function closest(tools: readonly DeferredTool[], name: string, limit = 3)
     .map(({ tool }) => wireToolName(tool.name));
 }
 
-// A tool as a search gives it back: enough to call it once it is on, by the name the model calls it.
-function found(tool: DeferredTool) {
+// A tool as a search gives it back: enough to call it once it is on, by the name the model calls
+// it, and as a script calls it.
+function foundTool(tool: DeferredTool, functions: ReadonlyMap<string, string>) {
+  const name = wireToolName(tool.name);
   return {
-    name: wireToolName(tool.name),
+    name,
     server: tool.server,
     description: lineOf(tool.description),
-    parameters: parametersOf(tool.inputSchema),
+    signature: listedSignature(functions.get(name) ?? name, tool),
   };
 }
 
@@ -234,6 +212,8 @@ async function search(
   deferred: NonNullable<ToolContext["deferred"]>,
 ): Promise<ToolOutput> {
   const { tools, on } = deferred;
+  const functions = functionNames(tools.map((tool) => wireToolName(tool.name)));
+  const found = (tool: DeferredTool) => foundTool(tool, functions);
   const turnOn: DeferredTool[] = [];
   const value: Record<string, unknown> = {};
   if (input.select) {

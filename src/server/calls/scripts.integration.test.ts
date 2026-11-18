@@ -3,10 +3,13 @@
 
 import { sql } from "drizzle-orm";
 import { describe, expect, it, vi } from "vite-plus/test";
+import * as z from "zod";
 
+import { SIGNATURE_CHARS } from "@/server/calls/scripts.ts";
 import { conversationText } from "@/server/execution/compaction.ts";
 import { agentThread } from "@/server/testing/agent-thread.ts";
 import { probe } from "@/server/testing/contract.ts";
+import type { AnyToolSpec } from "@/server/tools/registry.ts";
 import { MCP_ORIGIN } from "@/server/testing/workspace.ts";
 import { EDITORS, TOOL_OFF, wireToolName } from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
@@ -16,7 +19,30 @@ async function scriptThread() {
   // The tool that needs approval, counted as it runs.
   const [wait, guardedSpec, ...rest] = tool.toolset.tools;
   const guarded = vi.fn(guardedSpec!.run.bind(guardedSpec));
-  const toolset = { ...tool.toolset, tools: [wait!, { ...guardedSpec!, run: guarded }, ...rest] };
+  // Tools that give back what they were given: one taking null where it may be left out, one
+  // taking no keywords but its own, and two whose names differ only in a character Python refuses.
+  const echo = (name: string, input: z.ZodType, inputSchema?: Record<string, unknown>) => ({
+    name,
+    description: "Gives back its input.",
+    input,
+    ...(inputSchema && { inputSchema }),
+    risk: () => "normal" as const,
+    run: async (given: unknown) => Promise.resolve({ ok: true as const, value: { name, given } }),
+  });
+  const echoes: AnyToolSpec[] = [
+    echo("probe.echo", z.object({ a: z.string().nullable().optional(), b: z.string().optional() })),
+    echo("probe.strict", z.record(z.string(), z.unknown()), {
+      type: "object",
+      properties: { a: { type: "string" } },
+      additionalProperties: false,
+    }),
+    echo("probe.get-item", z.object({ id: z.string() })),
+    echo("probe.get_item", z.object({ id: z.string() })),
+  ];
+  const toolset = {
+    ...tool.toolset,
+    tools: [wait!, { ...guardedSpec!, run: guarded }, ...rest, ...echoes],
+  };
   const t = await agentThread({}, { toolsets: [toolset] });
   await t.start();
   let made = 0;
@@ -129,6 +155,204 @@ describe("a script", () => {
     expect(conversationText(all)).not.toContain("Agent called tool]: probe");
   });
 
+  it("calls each tool as a function by its name, with keywords, given what call_tool gives", async () => {
+    const t = await scriptThread();
+    await t.post(t.ada, "Both ways");
+    const id = await t.script(
+      [
+        "import asyncio",
+        'a, b = await asyncio.gather(probe__wait(label="a"), call_tool("probe__wait", {"label": "b"}))',
+        "[a, b, a == b]",
+      ].join("\n"),
+    );
+    await t.until(() => t.tool.running("a") && t.tool.running("b"));
+    t.tool.finish("a", { n: [1, { m: 2 }] });
+    t.tool.finish("b", { n: [1, { m: 2 }] });
+    const next = await t.replies();
+    await t.worker.idle();
+    expect(next.texts.at(-1)).toBe(
+      'result scripts.run: {"ok":true,"value":{"result":[{"n":[1,{"m":2}]},{"n":[1,{"m":2}]},true]}}',
+    );
+    const [, ...inner] = await t.calls();
+    expect(inner).toEqual([
+      expect.objectContaining({ toolId: "probe.wait", within: id, input: { label: "a" } }),
+      expect.objectContaining({ toolId: "probe.wait", within: id, input: { label: "b" } }),
+    ]);
+  });
+
+  it("fails a tool's function as call_tool fails with the same input, recording each call", async () => {
+    const t = await scriptThread();
+    await t.post(t.ada, "Wrongly");
+    await t.script(
+      [
+        "cases = [",
+        '  ("probe__wait", {"lable": "a"}, lambda: probe__wait(lable="a")),',
+        '  ("probe__wait", {"label": 1}, lambda: probe__wait(label=1)),',
+        '  ("probe__strict", {"a": "x", "b": 1}, lambda: probe__strict(a="x", b=1)),',
+        '  ("probe__wiat", {"label": "a"}, lambda: probe__wiat(label="a")),',
+        '  ("thread__ask", {"questions": []}, lambda: thread__ask(questions=[])),',
+        '  ("scripts__run", {"code": "1"}, lambda: scripts__run(code="1")),',
+        "]",
+        "out = []",
+        "for name, given, typed in cases:",
+        "  pair = []",
+        "  for go in [typed, lambda: call_tool(name, given)]:",
+        "    try:",
+        "      await go()",
+        "    except Exception as e:",
+        "      pair.append(type(e).__name__ + ': ' + str(e))",
+        "  out.append(pair)",
+        "out",
+      ].join("\n"),
+    );
+    const next = await t.replies();
+    await t.worker.idle();
+    const said = JSON.parse(next.texts.at(-1)!.replace(/^result scripts.run: /, "")) as {
+      value: { result: [string, string][] };
+    };
+    const pairs = said.value.result;
+    for (const [typed, byName] of pairs) expect(typed).toBe(byName);
+    const [keyword, value, strict, named, asks, script] = pairs.map(([typed]) => typed);
+    expect(keyword).toMatch(/^ValueError: The input is not valid: .*\nprobe__wait\(label: str\)$/s);
+    expect(value).toMatch(/^ValueError: The input is not valid: .*\nprobe__wait\(label: str\)$/s);
+    expect(strict).toBe(
+      "ValueError: probe__strict takes no argument b. Did you mean a?\nprobe__strict(a: str = None)",
+    );
+    expect(named).toBe(
+      "NameError: No tool is named probe__wiat here. Did you mean:\nprobe__wait(label: str)",
+    );
+    expect(asks).toBe("PermissionError: thread__ask cannot be called from a script.");
+    expect(script).toBe("PermissionError: A script cannot run another.");
+    const rows = (await t.stored()).slice(1);
+    expect(rows).toHaveLength(pairs.length * 2);
+    expect(rows.every((row) => row.status === "failed")).toBe(true);
+  });
+
+  it("refuses positional arguments, showing the signature, before any call", async () => {
+    const t = await scriptThread();
+    await t.post(t.ada, "Wrongly");
+    await t.script('try:\n  await probe__wait("a")\nexcept TypeError as e:\n  r = str(e)\nr');
+    const next = await t.replies();
+    await t.worker.idle();
+    expect(next.texts.at(-1)).toContain(
+      '"result":"probe__wait takes its input as keyword arguments: probe__wait(label: str)"',
+    );
+    expect((await t.stored()).map((row) => row.tool_id)).toEqual(["scripts.run"]);
+  });
+
+  it("leaves Python's NameError for a name not shaped as a tool's", async () => {
+    const t = await scriptThread();
+    await t.post(t.ada, "Typo");
+    await t.script("result = 1\nresul + e");
+    const next = await t.replies();
+    await t.worker.idle();
+    expect(next.texts.at(-1)).toContain("NameError: name 'resul' is not defined");
+    expect((await t.stored()).map((row) => row.tool_id)).toEqual(["scripts.run"]);
+  });
+
+  it("sends None as null where the schema takes null, and leaves it out where it does not", async () => {
+    const t = await scriptThread();
+    await t.post(t.ada, "Nothing");
+    await t.script(
+      '[(await probe__echo(a=None, b=None))["given"], (await call_tool("probe__echo", {"a": None}))["given"]]',
+    );
+    const next = await t.replies();
+    await t.worker.idle();
+    expect(next.texts.at(-1)).toContain('"result":[{"a":null},{"a":null}]');
+  });
+
+  it("gives tools whose names differ only where Python refuses a function each", async () => {
+    const t = await scriptThread();
+    await t.post(t.ada, "Both");
+    await t.script(
+      [
+        'names = sorted(await list_tools("get_item"))',
+        "out = []",
+        "for n in names:",
+        "  out.append([n, await describe_tool(n)])",
+        'out.append((await probe__get_item(id="1"))["name"])',
+        "out",
+      ].join("\n"),
+    );
+    const next = await t.replies();
+    await t.worker.idle();
+    const said = JSON.parse(next.texts.at(-1)!.replace(/^result scripts.run: /, "")) as {
+      value: { result: unknown[] };
+    };
+    const [first, second, plain] = said.value.result as [
+      [string, string],
+      [string, string],
+      string,
+    ];
+    expect(first[0]).toBe("probe__get_item");
+    expect(second[0]).toMatch(/^probe__get_item_[0-9a-f]{6}$/);
+    expect(second[1]).toBe(`${second[0]}(id: str)`);
+    expect(plain).toBe("probe.get_item");
+  });
+
+  it("refuses inputs named as the script's functions", async () => {
+    const t = await scriptThread();
+    await t.post(t.ada, "Shadow");
+    await t.script("1", { probe__wait: 1 });
+    const next = await t.replies();
+    await t.worker.idle();
+    expect(next.texts.at(-1)).toContain("Input names must not be those of tools' functions");
+    await t.post(t.ada, "Again");
+    await t.script("1", { list_tools: 1 });
+    const again = await t.replies();
+    await t.worker.idle();
+    expect(again.texts.at(-1)).toContain("Input names must be Python identifiers");
+  });
+
+  it("lists and describes every tool it may call, MCP tools not on yet among them, making no calls", async () => {
+    const t = await scriptThread();
+    const added = await t.api("POST", "/org/mcp-servers", t.ada.cookie, {
+      name: "Open",
+      url: `${MCP_ORIGIN}/mcp`,
+      auth: { kind: "none" },
+    });
+    expect(added.ok).toBe(true);
+    const space = { id: t.space.id, orgId: t.ada.orgId };
+    const names = await t.tools.modelNames(space);
+    const [server] = await t.tools.fromServers(space, names);
+    const mcp = wireToolName(names.toModel(server!.id));
+    await t.post(t.ada, "What is there");
+    await t.script(
+      `[await list_tools(), await list_tools("GUARD"), await describe_tool("probe__wait"), await describe_tool("${mcp}")]`,
+    );
+    const call = await t.replies();
+    await t.worker.idle();
+    const said = JSON.parse(call.texts.at(-1)!.replace(/^result scripts.run: /, "")) as {
+      value: { result: [string[], string[], string, string] };
+    };
+    const [all, guarded, wait, fromServer] = said.value.result;
+    expect(all).toEqual(expect.arrayContaining(["probe__wait", "probe__guarded", mcp]));
+    // Not those a script cannot call.
+    expect(all).not.toContain("scripts__run");
+    expect(all).not.toContain("thread__ask");
+    expect(guarded).toEqual(["probe__guarded", "probe__guarded_wait"]);
+    expect(wait).toBe("probe__wait(label: str)");
+    expect(fromServer.startsWith(`${mcp}(`)).toBe(true);
+    expect((await t.stored()).map((row) => row.tool_id)).toEqual(["scripts.run"]);
+  });
+
+  it("tells the model each tool's signature, the same at every step", async () => {
+    const t = await scriptThread();
+    await t.post(t.ada, "Look");
+    const first = await t.model.next();
+    const { instructions } = first.request;
+    first.startStep();
+    first.toolCall("s1", "scripts.run", { code: "1" });
+    first.endStep();
+    first.end();
+    const second = await t.replies();
+    await t.worker.idle();
+    expect(instructions).toContain("probe__wait(label: str)\nprobe__guarded(label: str)\n");
+    expect(instructions).toContain("list_tools(query=None)");
+    expect(instructions).not.toContain("scripts__run(");
+    expect(second.request.instructions).toBe(instructions);
+  });
+
   it("reads its inputs by name, nested values as Python's", async () => {
     const t = await scriptThread();
     await t.post(t.ada, "Sum");
@@ -181,20 +405,55 @@ describe("a script", () => {
     expect((await t.runs()).map((run) => run.status)).toEqual(["completed"]);
   });
 
-  it("raises PermissionError at a call that was denied, which it can catch", async () => {
+  it("calls tools by name after it pauses, whether it looked them up before or after", async () => {
     const t = await scriptThread();
     await t.post(t.ada, "Try it");
     await t.script(
-      'try:\n  await call_tool("probe__guarded", {"label": "x"})\nexcept PermissionError as e:\n  r = str(e)\nr',
+      [
+        "w = probe__wait",
+        'r = await probe__guarded(label="x")',
+        'a = await w(label=r["did"])',
+        'b = await probe__wait(label="y")',
+        '[a, b, await describe_tool("probe__guarded"), await list_tools("guarded_w")]',
+      ].join("\n"),
     );
     await t.worker.idle();
     const [, inner] = await t.calls();
-    expect((await t.decide(inner!.id, false)).status).toBe(200);
+    expect((await t.decide(inner!.id, true)).status).toBe(200);
+    await t.until(() => t.tool.running("x"));
+    t.tool.finish("x", 1);
+    await t.until(() => t.tool.running("y"));
+    t.tool.finish("y", 2);
     const next = await t.replies();
     await t.worker.idle();
-    expect(next.texts.at(-1)).toContain('"result":"probe__guarded was denied."');
-    expect(t.guarded).not.toHaveBeenCalled();
-    expect((await t.stored()).map((row) => row.status)).toEqual(["completed", "denied"]);
+    expect(next.texts.at(-1)).toBe(
+      'result scripts.run: {"ok":true,"value":{"result":[1,2,"probe__guarded(label: str)",["probe__guarded_wait"]]}}',
+    );
+    expect((await t.stored()).map((row) => [row.tool_id, row.status])).toEqual([
+      ["scripts.run", "completed"],
+      ["probe.guarded", "completed"],
+      ["probe.wait", "completed"],
+      ["probe.wait", "completed"],
+    ]);
+  });
+
+  it("raises PermissionError at a call that was denied, which it can catch, by either form", async () => {
+    for (const call of [
+      'await call_tool("probe__guarded", {"label": "x"})',
+      'await probe__guarded(label="x")',
+    ]) {
+      const t = await scriptThread();
+      await t.post(t.ada, "Try it");
+      await t.script(`try:\n  ${call}\nexcept PermissionError as e:\n  r = str(e)\nr`);
+      await t.worker.idle();
+      const [, inner] = await t.calls();
+      expect((await t.decide(inner!.id, false)).status).toBe(200);
+      const next = await t.replies();
+      await t.worker.idle();
+      expect(next.texts.at(-1)).toContain('"result":"probe__guarded was denied."');
+      expect(t.guarded).not.toHaveBeenCalled();
+      expect((await t.stored()).map((row) => row.status)).toEqual(["completed", "denied"]);
+    }
   });
 
   it("fails without running the approved call where it stood cannot be loaded", async () => {
@@ -604,7 +863,7 @@ describe("a script", () => {
     await t.script('r = call_tool("nope__tool", {})\nr["a"]');
     const next = await t.replies();
     await t.worker.idle();
-    expect(next.texts.at(-1)).toContain("await call_tool(...)");
+    expect(next.texts.at(-1)).toContain("are awaitable: write `await name(...)`");
   });
 
   it("runs in the background, its prints what the job check shows while it runs", async () => {
@@ -1073,6 +1332,46 @@ describe("a script", () => {
     expect(next.texts.at(-1)).toContain('"result":"probe__wait is off here."');
   });
 
+  it("refuses an MCP server's tool not turned on as a function, as call_tool does, recording each", async () => {
+    const t = await scriptThread();
+    const added = await t.api("POST", "/org/mcp-servers", t.ada.cookie, {
+      name: "Open",
+      url: `${MCP_ORIGIN}/mcp`,
+      auth: { kind: "none" },
+    });
+    expect(added.ok).toBe(true);
+    const space = { id: t.space.id, orgId: t.ada.orgId };
+    const names = await t.tools.modelNames(space);
+    const [server] = await t.tools.fromServers(space, names);
+    const mcp = wireToolName(names.toModel(server!.id));
+    await t.post(t.ada, "Try it");
+    await t.script(
+      [
+        "out = []",
+        `for go in [lambda: ${mcp}(), lambda: call_tool("${mcp}", {})]:`,
+        "  try:",
+        "    await go()",
+        "  except NameError as e:",
+        "    out.append(str(e))",
+        "out",
+      ].join("\n"),
+    );
+    const next = await t.replies();
+    await t.worker.idle();
+    const said = JSON.parse(next.texts.at(-1)!.replace(/^result scripts.run: /, "")) as {
+      value: { result: string[] };
+    };
+    expect(said.value.result).toEqual([
+      `${mcp} is not on yet. Call tools__search outside the script to turn it on, then run the script again.`,
+      `${mcp} is not on yet. Call tools__search outside the script to turn it on, then run the script again.`,
+    ]);
+    expect((await t.stored()).map((row) => [row.tool_id, row.status])).toEqual([
+      ["scripts.run", "completed"],
+      [server!.id, "failed"],
+      [server!.id, "failed"],
+    ]);
+  });
+
   it("refuses a tool that is off and an MCP server's tool not turned on in the thread", async () => {
     const t = await scriptThread();
     const off = await t.api("PATCH", `/spaces/${t.space.id}/tools`, t.ada.cookie, {
@@ -1108,5 +1407,46 @@ describe("a script", () => {
     expect(next.texts.at(-1)).toContain(
       `${mcp} is not on yet. Call tools__search outside the script to turn it on, then run the script again.`,
     );
+  });
+});
+
+describe("the scripts guidance", () => {
+  it("keeps the signatures within their size, counting every tool it cannot show", async () => {
+    const many: AnyToolSpec[] = Array.from({ length: 150 }, (_, i) => ({
+      name: `bulk.tool_${i}`,
+      description: "One of many.",
+      input: z.object({
+        first_parameter: z.string(),
+        second_parameter: z.number().optional(),
+        third_parameter: z.array(z.string()).optional(),
+      }),
+      risk: () => "normal" as const,
+      run: async () => Promise.resolve({ ok: true as const, value: i }),
+    }));
+    const t = await agentThread(
+      {},
+      { toolsets: [{ id: "bulk", title: "Bulk", source: "builtin" as const, tools: many }] },
+    );
+    await t.start();
+    await t.post(t.ada, "How many");
+    const call = await t.model.next();
+    const { instructions } = call.request;
+    call.startStep();
+    call.toolCall("s1", "scripts.run", { code: "len(await list_tools())" });
+    call.endStep();
+    call.end();
+    const next = await t.model.next();
+    next.reply("Done.");
+    await t.worker.idle();
+    const total = Number(/"result":(\d+)/.exec(next.texts.at(-1)!)![1]);
+    const heading = "Tools as a script calls them:\n";
+    const section = instructions
+      .slice(instructions.indexOf(heading) + heading.length)
+      .split("\n\n")[0]!;
+    expect(section.length).toBeLessThanOrEqual(SIGNATURE_CHARS);
+    const lines = section.split("\n");
+    const more = /^\+(\d+) more.*\(list_tools\(\)\)$/.exec(lines.at(-1)!);
+    expect(more).not.toBeNull();
+    expect(lines.length - 1 + Number(more![1])).toBe(total);
   });
 });

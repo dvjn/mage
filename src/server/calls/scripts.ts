@@ -1,8 +1,10 @@
 // Scripts: Python the agent runs to chain tool calls and work on their results, so that only what
-// the script returns and prints reaches the model. Each call a script makes is an ordinary call of
-// the script's run, recorded in the thread with the script as the call that made it, judged as a
-// direct one would be and run under the run's lease. One that waits for a person pauses the
-// script: where it stood is kept with the call waiting, and the run waits as for any approval.
+// the script returns and prints reaches the model. A script calls each tool as a function by the
+// tool's name with keywords as its input, or by name through one function. Each call is an
+// ordinary call of the script's run, recorded in the thread with the script as the call that made
+// it, judged as a direct one would be and run under the run's lease. One that waits for a person
+// pauses the script: where it stood is kept with the call waiting, and the run waits as for any
+// approval.
 // Once decided, the script starts again where it stood, on whichever instance takes the run up,
 // and the call runs, or raises PermissionError where it was denied. The tools that ask people
 // questions and the tool search fail in a script. What the script's calls are judged with is read
@@ -19,23 +21,34 @@ import type { Space, SpaceStore } from "@/server/spaces/service.ts";
 import { LeaseLost } from "@/server/sync/lease.ts";
 import type { NewEvent, Thread, ThreadStore } from "@/server/threads/types.ts";
 import type { Decision } from "@/server/tools/authority.ts";
-import type {
-  AnyToolSpec,
-  CallView,
-  People,
-  SpaceTools,
-  ToolContext,
-  ToolOutput,
-  Tools,
-  Toolset,
-  ToolSpec,
-  Vouch,
+import {
+  type AnyToolSpec,
+  type CallView,
+  definitionOf,
+  type People,
+  type SpaceTools,
+  type ToolContext,
+  type ToolOutput,
+  type Tools,
+  type Toolset,
+  type ToolSpec,
+  type Vouch,
 } from "@/server/tools/registry.ts";
 import { TOOL_SEARCH } from "@/server/tools/search.ts";
+import {
+  closest,
+  functionNames,
+  listedSignature,
+  parametersOf,
+  signatureOf,
+  signaturesText,
+  takesNull,
+  type ToolSchemas,
+} from "@/server/tools/signatures.ts";
 import { CHECK_JOB, START_JOB } from "@/shared/jobs.ts";
 import { valueForAgent } from "@/shared/mcp.ts";
 import type { EventDataMap, ToolRisk } from "@/shared/threads/events.ts";
-import type { ToolText } from "@/shared/tools.ts";
+import { textOf, type ToolText, wireToolName } from "@/shared/tools.ts";
 
 import { CallPaused, ranData, spanEnded, toolSpan } from "./lifecycle.ts";
 import {
@@ -52,18 +65,98 @@ import type { CallRecord } from "./views.ts";
 export const SCRIPTS_TOOLSET = "scripts";
 export const RUN_SCRIPT = "scripts.run";
 
-// The one function a script calls tools with.
+// The function a script calls any tool with by its name, and those that list and describe them.
 const CALL_TOOL = "call_tool";
+const LIST_TOOLS = "list_tools";
+const DESCRIBE_TOOL = "describe_tool";
+
+// The most characters of tools' signatures the model is given; the rest it is given by name.
+export const SIGNATURE_CHARS = 8000;
 
 export const SCRIPTS_GUIDANCE: ToolText = (named) =>
   [
     `Call a tool directly to look at a short result or to change something. Use ${named(RUN_SCRIPT)} for exact calculations and deterministic checks, to chain several tool calls in one Python script rather than one by one, and to filter, count, parse, compare or combine results, as when you need only a few fields or a count from a large result. Only what the script returns and prints comes back to you.`,
-    `- Call a tool with \`await ${CALL_TOOL}("name", {...})\`, by the name you call it, up to ${SCRIPT_CALLS} calls a script; it gives the tool's result. Run independent calls at once with \`await asyncio.gather(...)\`, catching each call's errors inside its own task, as gather does not return them. A call that needs approval pauses the script until someone decides, then runs, or raises PermissionError where denied. Other failures raise NameError, ValueError, TypeError or RuntimeError, and calls already made are not undone.`,
+    `- In a script each tool is an awaitable function by the name you call it, taking its input as keyword arguments: \`r = await name(key=value)\` gives the tool's result. Up to ${SCRIPT_CALLS} calls a script. Run independent calls at once with \`await asyncio.gather(...)\`, catching each call's errors inside its own task, as gather does not return them. A call that needs approval pauses the script until someone decides, then runs, or raises PermissionError where denied. Other failures raise NameError, ValueError, TypeError or RuntimeError, and calls already made are not undone.`,
+    `- \`await ${LIST_TOOLS}(query=None)\` gives the names of the tools a script may call, MCP tools among them, those matching the query when given; \`await ${DESCRIBE_TOOL}(name)\` gives one's signature.`,
     "- Write the script against named inputs and pass their values in `inputs`, so the same script runs again with others.",
     `- A long script can run in the background with ${named(START_JOB)}; what it prints is what ${named(CHECK_JOB)} shows of it as it runs. To poll, sleep between checks with \`await asyncio.sleep(seconds)\`, up to ${SCRIPT_SLEEP_SECS / 60} minutes a script.`,
     "- The last expression is the result: return the smallest thing that answers, not whole results to read. print() for notes. Dates and times come back as ISO 8601 text.",
     "- The sandbox runs a subset of Python, with json, re, math, datetime, collections, itertools and decimal, and no network or files. Tools that ask people questions and the tool search cannot be called from it.",
   ].join("\n");
+
+// Whether a script may call the tool.
+function scriptMayCall(spec: AnyToolSpec) {
+  return !spec.makesCalls && spec.waitsFor !== "answer" && spec.deferral !== "search";
+}
+
+const schemasRead = new WeakMap<AnyToolSpec, ToolSchemas>();
+
+// What the tool takes and gives back, as JSON Schemas, read once for each tool.
+function schemasOf(spec: AnyToolSpec): ToolSchemas {
+  let schemas = schemasRead.get(spec);
+  if (!schemas) {
+    const { inputSchema, outputSchema } = definitionOf(spec);
+    schemas = { inputSchema, ...(outputSchema && { outputSchema }) };
+    schemasRead.set(spec, schemas);
+  }
+  return schemas;
+}
+
+// A tool as a script's function: by its name for the model, as Python names it.
+interface ScriptFunction {
+  name: string;
+  // Its name for the model.
+  wire: string;
+  spec: AnyToolSpec;
+  schemas: ToolSchemas;
+}
+
+// The tools a script may call as its functions, in the order offered, by their Python names.
+function scriptFunctions(offered: readonly AnyToolSpec[], named: (toolId: string) => string) {
+  const specs = offered.filter(scriptMayCall);
+  const wires = specs.map((spec) => wireToolName(named(spec.name)));
+  const names = functionNames(wires);
+  return new Map(
+    specs.map((spec, index) => {
+      const wire = wires[index]!;
+      const name = names.get(wire)!;
+      return [name, { name, wire, spec, schemas: schemasOf(spec) }];
+    }),
+  );
+}
+
+// The guidance of the scripts' toolset with the signature of each tool a script may call that the
+// prompt shows: not those left out of the request until turned on, so turning one on leaves the
+// prompt as it was.
+export function withSignatures<T extends { text: ToolText }>(
+  toolsets: readonly T[],
+  offered: readonly AnyToolSpec[],
+  shown: (spec: AnyToolSpec) => boolean,
+  chars = SIGNATURE_CHARS,
+): T[] {
+  return toolsets.map((toolset) =>
+    toolset.text === SCRIPTS_GUIDANCE
+      ? {
+          ...toolset,
+          text: (named) => {
+            const functions = [...scriptFunctions(offered, named).values()];
+            const lines = functions
+              .filter((fn) => shown(fn.spec))
+              .map((fn) => ({
+                name: fn.name,
+                signature: listedSignature(fn.name, fn.schemas),
+              }));
+            return [
+              textOf(SCRIPTS_GUIDANCE, named),
+              ...(lines.length > 0
+                ? ["Tools as a script calls them:", signaturesText(lines, chars)]
+                : []),
+            ].join("\n");
+          },
+        }
+      : toolset,
+  );
+}
 
 // Python's reserved words, which cannot name an input.
 const KEYWORDS = new Set(
@@ -74,7 +167,11 @@ const KEYWORDS = new Set(
 
 // Whether the name may name a variable of the script.
 function pythonName(name: string) {
-  return /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !KEYWORDS.has(name) && name !== CALL_TOOL;
+  return (
+    /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) &&
+    !KEYWORDS.has(name) &&
+    ![CALL_TOOL, LIST_TOOLS, DESCRIBE_TOOL].includes(name)
+  );
 }
 
 // The steps a script's calls take as every call does, from the calls that own them.
@@ -189,7 +286,7 @@ export function createScripts(options: ScriptsOptions) {
     title: "Run script",
     makesCalls: true,
     annotations: { readOnlyHint: false },
-    description: `Run a Python script, for exact calculations, deterministic checks, and several tool calls chained in one go. It calls tools with \`await ${CALL_TOOL}("name", {...})\`, several at once with asyncio.gather, each judged as if made directly, and gives back its last expression and what it printed. The keys of \`inputs\` become the script's variables.`,
+    description: `Run a Python script, for exact calculations, deterministic checks, and several tool calls chained in one go. It calls each tool as an awaitable function by its name with keyword arguments, \`await name(key=value)\`, several at once with asyncio.gather, each judged as if made directly, and gives back its last expression and what it printed. The keys of \`inputs\` become the script's variables.`,
     input: z.object({
       code: z
         .string()
@@ -246,8 +343,28 @@ export function createScripts(options: ScriptsOptions) {
         rules: await tools.rulesIn(space, callable.now.added.forOrgSettings),
       });
 
+      const functions = scriptFunctions(callable.offered, callable.names.toModel);
+      const functionOf = new Map([...functions.values()].map((fn) => [fn.spec.name, fn]));
+      const taken = (inputs ? Object.keys(inputs) : []).filter((key) => functions.has(key));
+      if (taken.length > 0) {
+        return {
+          ok: false,
+          error: `Input names must not be those of tools' functions, as ${taken.join(", ")} are.`,
+        };
+      }
+      // What the script is told of a name no tool has, with the signatures of those nearest it.
+      const notFound = (name: string) => {
+        const near = closest(name, [...functions.keys()]);
+        const hint = near.length
+          ? ` Did you mean:\n${near.map((one) => signatureOf(one, functions.get(one)!.schemas)).join("\n")}`
+          : ` ${LIST_TOOLS}() gives their names.`;
+        return `No tool is named ${name} here.${hint}`;
+      };
+
       // Why the script may not call the tool by the name, as the exception it raises.
-      const refusalOf = (name: string): { spec: AnyToolSpec } | { refusal: PythonError } => {
+      const refusalOf = (
+        name: string,
+      ): { spec: AnyToolSpec } | { refusal: PythonError; toolId?: string } => {
         try {
           const spec = toolNamed(callable, name);
           if (spec.makesCalls) throw new ToolRefusal("A script cannot run another.");
@@ -259,10 +376,12 @@ export function createScripts(options: ScriptsOptions) {
           if (!(err instanceof ToolRefusal)) throw err;
           if (err.reason === "notOn") {
             const message = `${ctx.named(err.toolId!)} is not on yet. Call ${ctx.named(TOOL_SEARCH)} outside the script to turn it on, then run the script again.`;
-            return { refusal: new PythonError("NameError", message) };
+            return { refusal: new PythonError("NameError", message), toolId: err.toolId };
           }
-          const kind = err.reason === "missing" ? "NameError" : "PermissionError";
-          return { refusal: new PythonError(kind, err.message) };
+          if (err.reason === "missing") {
+            return { refusal: new PythonError("NameError", notFound(name)) };
+          }
+          return { refusal: new PythonError("PermissionError", err.message) };
         }
       };
 
@@ -331,15 +450,31 @@ export function createScripts(options: ScriptsOptions) {
         const found = refusalOf(name);
         const spec = "spec" in found ? found.spec : undefined;
         let refusal = "refusal" in found ? found.refusal : undefined;
-        const parsed = spec?.input.safeParse(given);
+        const fn = spec && functionOf.get(spec.name);
+        // Keywords the schema refuses, as JSON Schema has it: only where it allows no others.
+        const params = fn && parametersOf(fn.schemas.inputSchema);
+        const unexpected =
+          params?.closed && typeof given === "object" && given !== null
+            ? Object.keys(given).find((key) => !Object.hasOwn(params.properties, key))
+            : undefined;
+        const parsed =
+          refusal || unexpected !== undefined ? undefined : spec?.input.safeParse(given);
+        if (fn && !refusal && unexpected !== undefined) {
+          const [near] = closest(unexpected, Object.keys(params!.properties), 1);
+          refusal = new PythonError(
+            "ValueError",
+            `${fn.name} takes no argument ${unexpected}.${near ? ` Did you mean ${near}?` : ""}\n${signatureOf(fn.name, fn.schemas)}`,
+          );
+        }
         if (parsed && !parsed.success) {
           refusal = new PythonError(
             "ValueError",
-            `The input is not valid: ${z.prettifyError(parsed.error)}`,
+            `The input is not valid: ${z.prettifyError(parsed.error)}${fn ? `\n${signatureOf(fn.name, fn.schemas)}` : ""}`,
           );
         }
         const input: unknown = parsed?.success ? parsed.data : given;
-        const toolId = spec?.name ?? callable.names.fromModel(name) ?? name;
+        const refusedId = "toolId" in found ? found.toolId : undefined;
+        const toolId = spec?.name ?? refusedId ?? callable.names.fromModel(name) ?? name;
         const judged = await recordInTurn(
           async (append): Promise<{ waiting: Waiting } | { decision: Decision } | null> => {
             let risk: ToolRisk = "normal";
@@ -532,6 +667,30 @@ export function createScripts(options: ScriptsOptions) {
 
       const misuse = () =>
         new PythonError("TypeError", `${CALL_TOOL}(name, input) takes a tool's name and a dict.`);
+      // Calls the tool with its keyword arguments as call_tool would with them as a dict; an
+      // optional one given None, where its schema takes no null, is left out, as if not given.
+      const typed =
+        (fn: ScriptFunction) => async (args: unknown[], kwargs: Record<string, unknown>) => {
+          if (args.length > 0) {
+            throw new PythonError(
+              "TypeError",
+              `${fn.name} takes its input as keyword arguments: ${signatureOf(fn.name, fn.schemas)}`,
+            );
+          }
+          const { properties, required } = parametersOf(fn.schemas.inputSchema);
+          const input = Object.fromEntries(
+            Object.entries(kwargs).filter(
+              ([key, value]) => value !== null || required.has(key) || takesNull(properties[key]),
+            ),
+          );
+          return callTool(fn.wire, input);
+        };
+      const byWire = new Map([...functions.values()].map((fn) => [fn.wire, fn]));
+      // The function by its name, or by any name the tool goes by.
+      const functionNamed = (name: string) =>
+        functions.get(name) ??
+        byWire.get(name) ??
+        byWire.get(wireToolName(callable.names.toModel(callable.names.fromModel(name) ?? name)));
       const outcome = await python.run({
         code,
         ...(inputs && { inputs }),
@@ -559,13 +718,43 @@ export function createScripts(options: ScriptsOptions) {
           });
         },
         functions: {
+          ...Object.fromEntries([...functions.values()].map((fn) => [fn.name, typed(fn)])),
           [CALL_TOOL]: async ([name, input], kwargs) => {
             const dict = typeof input === "object" && input !== null && !Array.isArray(input);
             if (typeof name !== "string" || Object.keys(kwargs).length > 0) throw misuse();
             if (input !== undefined && !dict) throw misuse();
             return callTool(name, input ?? {});
           },
+          // Neither makes a call of a tool.
+          [LIST_TOOLS]: async ([given], kwargs) => {
+            const query = given ?? kwargs.query ?? null;
+            if (query !== null && typeof query !== "string") {
+              throw new PythonError("TypeError", `${LIST_TOOLS}(query=None) takes text or None.`);
+            }
+            const words = (query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
+            return Promise.resolve(
+              [...functions.values()]
+                .filter((fn) => {
+                  const text = `${fn.name} ${textOf(fn.spec.description, ctx.named)}`.toLowerCase();
+                  return words.every((word) => text.includes(word));
+                })
+                .map((fn) => fn.name),
+            );
+          },
+          [DESCRIBE_TOOL]: async ([given], kwargs) => {
+            const name = given ?? kwargs.name;
+            if (typeof name !== "string") {
+              throw new PythonError("TypeError", `${DESCRIBE_TOOL}(name) takes a tool's name.`);
+            }
+            const fn = functionNamed(name);
+            if (!fn) throw new PythonError("NameError", notFound(name));
+            return Promise.resolve(signatureOf(fn.name, fn.schemas));
+          },
         },
+        // A name shaped as a tool's, `server__tool`, that names no function of the script is called
+        // as call_tool calls it, to fail the same way; any other is Python's NameError.
+        unknown: (name) =>
+          name.includes("__") ? async (_args, kwargs) => callTool(name, kwargs) : undefined,
         ...(ctx.live && { print: (text: string) => ctx.live!.output(text) }),
         ...(ctx.signal && { signal: ctx.signal }),
       });

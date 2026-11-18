@@ -88,7 +88,7 @@ const ASYNC_SLEEP = "asyncio.sleep";
 
 // Told to a script that made a call and never awaited it.
 const UNAWAITED =
-  "call_tool is awaitable: write `await call_tool(...)`, or gather several with asyncio.gather.";
+  "Tool functions are awaitable: write `await name(...)`, or gather several with asyncio.gather.";
 
 // A function the script may call, given its arguments as JSON values.
 export type HostFunction = (args: unknown[], kwargs: Record<string, unknown>) => Promise<unknown>;
@@ -98,6 +98,8 @@ export interface PythonRun {
   // Bound as the script's variables before it runs.
   inputs?: Record<string, unknown>;
   functions: Record<string, HostFunction>;
+  // The function for a name the script uses that `functions` lacks; none leaves Python's NameError.
+  unknown?: (name: string) => HostFunction | undefined;
   print?: (text: string) => void;
   signal?: AbortSignal;
   // Where a paused script stood, what it had printed, and the outcome of each call it paused at,
@@ -336,6 +338,8 @@ export function createPython(
           const left = [...started.keys()].filter((id) => !delivered.has(id));
           await Promise.all(left.map(async (id) => started.get(id)));
         };
+        const functionNamed = (name: string) =>
+          Object.hasOwn(script.functions, name) ? script.functions[name] : script.unknown?.(name);
         if (script.resume) {
           // A script pauses only where it awaits its calls.
           if (!(snapshot instanceof FutureSnapshot)) {
@@ -348,9 +352,7 @@ export function createPython(
           if (signal?.aborted) throw signal.reason;
           if (snapshot instanceof NameLookupSnapshot) {
             const name = snapshot.variableName;
-            snapshot = Object.hasOwn(script.functions, name)
-              ? await snapshot.resume(name)
-              : await snapshot.resume();
+            snapshot = functionNamed(name) ? await snapshot.resume(name) : await snapshot.resume();
           } else if (snapshot instanceof FunctionSnapshot) {
             const call = snapshot;
             if (call.isOsFunction && call.functionName === SLEEP) {
@@ -388,9 +390,7 @@ export function createPython(
               snapshot = await call.resumeNotHandled();
               continue;
             }
-            const fn = Object.hasOwn(script.functions, call.functionName)
-              ? script.functions[call.functionName]
-              : undefined;
+            const fn = functionNamed(call.functionName);
             if (!fn) {
               snapshot = await call.resumeNotFound();
               continue;

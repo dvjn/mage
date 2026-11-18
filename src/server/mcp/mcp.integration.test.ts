@@ -2087,7 +2087,9 @@ describe("searching for MCP tools", () => {
       `${wireToolName(named("echo"))} is not on yet. Search for it or select it with tools__search first.`,
     );
     expect(second.texts.at(-1)).toContain(`"turnedOn":["${wireToolName(named("echo"))}"]`);
-    expect(second.texts.at(-1)).toContain('"parameters":"text: string"');
+    // How a script calls it, there rather than in the prompt, which stays as it was.
+    expect(second.texts.at(-1)).toContain(`"signature":"${wireToolName(named("echo"))}(text: str)`);
+    expect(first.request.instructions).not.toContain(`${wireToolName(named("echo"))}(`);
     expect(second.tools).toContain(named("echo"));
     expect(second.tools).not.toContain(named("add_note"));
     // The prompt still lists it, as it did.
