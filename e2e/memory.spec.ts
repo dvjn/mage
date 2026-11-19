@@ -35,7 +35,7 @@ const SAVE = `^tool space.save_memory ${JSON.stringify({
   text: "Deploys go out on Tuesdays.",
 })}`;
 
-test("a save waits for approval, opens the next thread, and is forgotten in settings", async ({
+test("a save waits for approval, stays out of transcripts, and is forgotten in settings", async ({
   page,
 }) => {
   const spaceId = await signUp(page);
@@ -56,11 +56,8 @@ test("a save waits for approval, opens the next thread, and is forgotten in sett
   await write(page, "When do deploys go out?");
   await expect(page).toHaveURL(/\/t\/[^/]+$/);
   const events = page.getByRole("log", { name: "Events" });
-  await expect(events.getByText("Space memory").first()).toBeVisible();
-  await events.getByRole("button", { name: "Show details" }).first().click();
-  await expect(events.getByRole("region", { name: "Deploys" })).toContainText(
-    "Deploys go out on Tuesdays.",
-  );
+  await expect(events.getByText("When do deploys go out?")).toBeVisible();
+  await expect(events.getByText("Space memory")).toHaveCount(0);
 
   await page.goto(`/s/${spaceId}/settings/memory`);
   await page.getByRole("button", { name: "More for Deploys go out on Tuesdays." }).click();

@@ -141,7 +141,8 @@ function subagentCards(entry: TranscriptEntry): TranscriptEntry[] {
 // the run. A step that only called tools shows as its calls. Other agents' messages in a row fold
 // into one, however many. Steps that neither wrote nor thought show as nothing, and incoming
 // activity always ends the receiving agent's turn, even where cached rows still carry continuation
-// metadata from before that rule.
+// metadata from before that rule. The space's memory a thread opens with is the agent's to read,
+// not shown.
 export function transcriptEntries(rows: readonly ShownRow[]): TranscriptEntry[] {
   const held = new Set(rows.flatMap((row) => (row.kind === "tool" ? [row.id] : [])));
   const nested = (row: ShownRow): row is ToolRow =>
@@ -153,7 +154,12 @@ export function transcriptEntries(rows: readonly ShownRow[]): TranscriptEntry[] 
     return calls.length > 0 ? { under: calls } : {};
   };
   const shown = rows
-    .filter((row) => (row.kind !== "agent" || row.turn) && !nested(row))
+    .filter(
+      (row) =>
+        (row.kind !== "agent" || row.turn) &&
+        !(row.kind === "notice" && row.type === "memory") &&
+        !nested(row),
+    )
     .map((row, index, visible) => {
       const before = visible[index - 1];
       if (
