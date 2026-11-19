@@ -329,7 +329,7 @@ function sameSkill(a: Pick<Skill, "name" | "description" | "body" | "files">, b:
 export function skillsGuidance(list: SkillLine[]): NonNullable<Guidance["skills"]> {
   return {
     line: (named) =>
-      `Skills: instructions for kinds of tasks. When a task matches one, load it with ${named(LOAD_SKILL)} before you start.`,
+      `Skills: instructions for kinds of tasks. When a task matches one, load it with ${named(LOAD_SKILL)} before you start, and follow its steps. Where a step fails, use a safe workaround and say so, then suggest fixing the skill once the task is done; the workaround does not become its procedure.`,
     list,
   };
 }

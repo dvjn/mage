@@ -1629,7 +1629,7 @@ describe("the scripts guidance", () => {
       "- Every tool here, MCP tools among them, is callable from a script by name, without searching for it or turning it on first; search only to find a tool you don't know.",
     );
     expect(instructions).toContain(
-      '- A learned skill\'s script runs by its file, `file="<skill>/<path>"` in place of `code`, with its values in `inputs`.',
+      '- A learned skill\'s script runs by its file, `file="<skill>/<path>"` in place of `code`, with the inputs its skill names; there is no need to read its source first.',
     );
   });
 

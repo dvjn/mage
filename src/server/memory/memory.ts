@@ -277,7 +277,7 @@ export function createMemory(options: MemoryOptions) {
     title: "Save skill",
     annotations: { readOnlyHint: false },
     description:
-      "Save a procedure as a skill for this space's later threads, with optional files such as a Python script. People run it as /name. Set update to change a skill this space learned. Returns its name.",
+      "Save a procedure as a skill for this space's later threads, with optional files such as a Python script. People run it as /name. Set update to change a skill this space learned. A save may wait for approval, so run its script once with the inputs it documents before saving. Returns its name.",
     input: z.object({
       name: skillNameSchema.meta({
         title: "Name",
@@ -287,12 +287,11 @@ export function createMemory(options: MemoryOptions) {
         title: "Description",
         description: "One line: when to use it",
       }),
-      instructions: z
-        .string()
-        .trim()
-        .min(1)
-        .max(SKILL_BODY_MAX)
-        .meta({ title: "Instructions", description: "The steps, in Markdown" }),
+      instructions: z.string().trim().min(1).max(SKILL_BODY_MAX).meta({
+        title: "Instructions",
+        description:
+          "The shortest reliable steps, in Markdown: when to use it, the exact call (script file, input names), decision points, what to return, limits",
+      }),
       files: z
         .array(
           z.object({

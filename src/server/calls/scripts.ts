@@ -79,8 +79,8 @@ export const SCRIPTS_GUIDANCE: ToolText = (named) =>
     `- In a script each tool is an awaitable function by the name you call it, taking its input as keyword arguments: \`r = await name(key=value)\` gives the tool's result. Up to ${SCRIPT_CALLS} calls a script. Run independent calls at once with \`await asyncio.gather(...)\`, catching each call's errors inside its own task, as gather does not return them. A call that needs approval pauses the script until someone decides, then runs, or raises PermissionError where denied. Other failures raise NameError, ValueError, TypeError or RuntimeError, and calls already made are not undone.`,
     `- Every tool here, MCP tools among them, is callable from a script by name, without searching for it or turning it on first; search only to find a tool you don't know.`,
     `- \`await ${LIST_TOOLS}(query=None)\` gives the names of the tools a script may call, MCP tools among them, those matching the query when given; \`await ${DESCRIBE_TOOL}(name)\` gives one's signature.`,
-    "- Write the script against named inputs and pass their values in `inputs`, so the same script runs again with others.",
-    '- A learned skill\'s script runs by its file, `file="<skill>/<path>"` in place of `code`, with its values in `inputs`.',
+    '- Write the script against named inputs and pass their values in `inputs`, so the same script runs again with others. Each key becomes a variable: `inputs={"count": 10}` makes `count`; there is no `inputs` dict.',
+    '- A learned skill\'s script runs by its file, `file="<skill>/<path>"` in place of `code`, with the inputs its skill names; there is no need to read its source first.',
     `- A long script can run in the background with ${named(START_JOB)}; what it prints is what ${named(CHECK_JOB)} shows of it as it runs. To poll, sleep between checks with \`await asyncio.sleep(seconds)\`, up to ${SCRIPT_SLEEP_SECS / 60} minutes a script.`,
     "- The last expression is the result: return the smallest thing that answers, not whole results to read. print() for notes. Dates and times come back as ISO 8601 text.",
     "- The sandbox runs a subset of Python, with json, re, math, datetime, collections, itertools and decimal, and no network or files. Tools that ask people questions and the tool search cannot be called from it.",
@@ -288,7 +288,7 @@ export function createScripts(options: ScriptsOptions) {
     title: "Run script",
     makesCalls: true,
     annotations: { readOnlyHint: false },
-    description: `Run a Python script, for exact calculations, deterministic checks, and several tool calls chained in one go. It calls each tool as an awaitable function by its name with keyword arguments, \`await name(key=value)\`, several at once with asyncio.gather, each judged as if made directly, and gives back its last expression and what it printed. The keys of \`inputs\` become the script's variables.`,
+    description: `Run a Python script, for exact calculations, deterministic checks, and several tool calls chained in one go. It calls each tool as an awaitable function by its name with keyword arguments, \`await name(key=value)\`, several at once with asyncio.gather, each judged as if made directly, and gives back its last expression and what it printed. Each key of \`inputs\` becomes a variable of the script; there is no \`inputs\` dict.`,
     input: z
       .object({
         code: z
