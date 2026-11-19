@@ -130,10 +130,11 @@ test("skills uploaded as a SKILL.md, a zip, and a file to finish by hand", async
   await group.getByRole("button", { name: /^Written and uploaded/ }).click();
   await group.getByRole("listitem", { name: "two" }).getByRole("button").click();
   const two = page.getByRole("dialog", { name: "two" });
-  await two.getByRole("button", { name: "1 file" }).click();
-  await page.getByRole("tab", { name: "notes.md" }).click();
-  await expect(page.getByLabel("notes.md")).toContainText("Notes for two");
-  await page.keyboard.press("Escape");
+  await two.getByRole("tab", { name: "notes.md" }).click();
+  await expect(two.getByLabel("notes.md")).toContainText("Notes for two");
+  // Its SKILL.md stays editable behind the file's tab.
+  await two.getByRole("tab", { name: "SKILL.md" }).click();
+  await expect(two.getByLabel("Name")).toHaveValue("two");
   await page.keyboard.press("Escape");
 
   await file.setInputFiles({

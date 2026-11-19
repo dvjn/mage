@@ -44,8 +44,7 @@ import { SkillLine, SourceRow, inSpaceOf, refOf, shortCommit } from "@/web/skill
 import { useChange } from "@/web/skills/mutations";
 import { useUpload } from "@/web/skills/upload";
 import { AddRepositoryDialog } from "@/web/skills/add-repository-dialog";
-import { SkillPreviewDialog } from "@/web/skills/preview-dialog";
-import { type Draft, WrittenDialog } from "@/web/skills/written-dialog";
+import { type Draft, SkillDialog } from "@/web/skills/skill-dialog";
 
 // The open state of the written and learned skills' groups, beside the repositories'.
 const WRITTEN = "skills:written";
@@ -83,11 +82,11 @@ export function SkillsCard({
 }) {
   const sections = useOpenSections(scope.kind);
   const [adding, setAdding] = useState<"repository" | "skill" | null>(null);
-  const [previewing, setPreviewing] = useState<{
-    skill: SkillSummary;
-    source: SkillSourceSummary;
+  // The skill open in the dialog, with its repository for one from a repository.
+  const [opened, setOpened] = useState<{
+    row: WrittenRow;
+    source: SkillSourceSummary | null;
   } | null>(null);
-  const [editing, setEditing] = useState<WrittenRow | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const {
     upload,
@@ -173,7 +172,7 @@ export function SkillsCard({
                 canManage={canManage}
                 open={sections.isOpen(source.id)}
                 onOpenChange={(open) => sections.set(source.id, open)}
-                onPreview={(skill) => setPreviewing({ skill, source })}
+                onPreview={(skill) => setOpened({ row: { skill, locked }, source })}
               />
             ))}
             {byHand.length > 0 && (
@@ -184,7 +183,7 @@ export function SkillsCard({
                 canManage={canManage}
                 open={sections.isOpen(WRITTEN)}
                 onOpenChange={(open) => sections.set(WRITTEN, open)}
-                onOpen={setEditing}
+                onOpen={(row) => setOpened({ row, source: null })}
               />
             )}
             {learned.length > 0 && (
@@ -195,7 +194,7 @@ export function SkillsCard({
                 canManage={canManage}
                 open={sections.isOpen(LEARNED)}
                 onOpenChange={(open) => sections.set(LEARNED, open)}
-                onOpen={setEditing}
+                onOpen={(row) => setOpened({ row, source: null })}
               />
             )}
           </div>
@@ -211,25 +210,19 @@ export function SkillsCard({
           onAdded={(id) => sections.set(id, true)}
         />
       )}
-      {(adding === "skill" || editing) && (
-        <WrittenDialog
+      {(adding === "skill" || opened) && (
+        <SkillDialog
           scope={scope}
-          row={editing}
+          row={opened?.row ?? null}
+          line={opened?.source ? sourceLine(opened.source) : null}
           initial={draft ?? undefined}
-          readOnly={!!editing && (editing.locked || !canManage)}
-          deletable={!!editing && !editing.locked && canManage}
+          readOnly={!!opened && (!!opened.source || opened.row.locked || !canManage)}
+          deletable={!!opened && !opened.source && !opened.row.locked && canManage}
           onClose={() => {
             setAdding(null);
-            setEditing(null);
+            setOpened(null);
             setDraft(null);
           }}
-        />
-      )}
-      {previewing && (
-        <SkillPreviewDialog
-          skill={previewing.skill}
-          line={sourceLine(previewing.source)}
-          onClose={() => setPreviewing(null)}
         />
       )}
     </SettingsCard>

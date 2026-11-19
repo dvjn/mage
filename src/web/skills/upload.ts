@@ -3,7 +3,7 @@
 import { useToast } from "@/web/shell/toaster";
 import type { Scope } from "@/web/shell/scope";
 import { plural } from "@/web/lib/plural";
-import type { Draft } from "@/web/skills/written-dialog";
+import type { Draft } from "@/web/skills/skill-dialog";
 import { useUploadSkills } from "@/web/skills/mutations";
 
 // Uploads a SKILL.md or a zip of skills; a file that does not name or describe its skill opens the
