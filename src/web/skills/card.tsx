@@ -1,6 +1,7 @@
 // The skills card in settings, for the org or a space. An Add skills menu adds a repository, uploads
 // skills or opens a dialog to write one. Each repository is a row; skills uploaded or written here
-// form a group of their own once there are any, each opening a dialog to change or delete it. In a
+// form a group of their own once there are any, and those the agent learned another, each opening a
+// dialog to change or delete it. In a
 // space, the org's repositories and skills carry a lock and the space's own switch, as the org's
 // MCP servers do; the space's own are tagged as such. Only those who manage a scope change it;
 // others read it.
@@ -46,8 +47,9 @@ import { AddRepositoryDialog } from "@/web/skills/add-repository-dialog";
 import { SkillPreviewDialog } from "@/web/skills/preview-dialog";
 import { type Draft, WrittenDialog } from "@/web/skills/written-dialog";
 
-// The open state of the written skills' group, beside the repositories'.
+// The open state of the written and learned skills' groups, beside the repositories'.
 const WRITTEN = "skills:written";
+const LEARNED = "skills:learned";
 
 function sourceLine(source: SkillSourceSummary) {
   if (source.builtin) return source.label;
@@ -97,6 +99,8 @@ export function SkillsCard({
   });
   const fileInput = useRef<HTMLInputElement>(null);
   const own = sources.some((entry) => !entry.locked) || written.some((row) => !row.locked);
+  const byHand = written.filter((row) => !row.skill.learned);
+  const learned = written.filter((row) => row.skill.learned);
   return (
     <SettingsCard
       title="Skills"
@@ -172,13 +176,25 @@ export function SkillsCard({
                 onPreview={(skill) => setPreviewing({ skill, source })}
               />
             ))}
-            {written.length > 0 && (
+            {byHand.length > 0 && (
               <WrittenGroup
+                title="Written and uploaded"
                 scope={scope}
-                rows={written}
+                rows={byHand}
                 canManage={canManage}
                 open={sections.isOpen(WRITTEN)}
                 onOpenChange={(open) => sections.set(WRITTEN, open)}
+                onOpen={setEditing}
+              />
+            )}
+            {learned.length > 0 && (
+              <WrittenGroup
+                title="Learned"
+                scope={scope}
+                rows={learned}
+                canManage={canManage}
+                open={sections.isOpen(LEARNED)}
+                onOpenChange={(open) => sections.set(LEARNED, open)}
                 onOpen={setEditing}
               />
             )}
@@ -201,6 +217,7 @@ export function SkillsCard({
           row={editing}
           initial={draft ?? undefined}
           readOnly={!!editing && (editing.locked || !canManage)}
+          deletable={!!editing && !editing.locked && canManage}
           onClose={() => {
             setAdding(null);
             setEditing(null);
@@ -219,8 +236,9 @@ export function SkillsCard({
   );
 }
 
-// The skills written by hand, as one group; in a space, the org's tagged and locked.
+// Skills written here or learned, as one group; in a space, the org's tagged and locked.
 function WrittenGroup({
+  title,
   scope,
   rows,
   canManage,
@@ -228,6 +246,7 @@ function WrittenGroup({
   onOpenChange,
   onOpen,
 }: {
+  title: string;
   scope: Scope;
   rows: WrittenRow[];
   canManage: boolean;
@@ -251,7 +270,7 @@ function WrittenGroup({
 
   return (
     <SettingsRow
-      title="Written and uploaded"
+      title={title}
       meta={
         <span>
           {rows.filter(on).length} of {rows.length} on
@@ -273,7 +292,9 @@ function WrittenGroup({
             key={row.skill.id}
             skill={row.skill}
             tag={
+              // The Learned group names where its skills come from.
               scope.kind === "space" &&
+              !row.skill.learned &&
               (row.locked ? <RowBadge>Organization</RowBadge> : <RowBadge>This space</RowBadge>)
             }
             onOpen={() => onOpen(row)}

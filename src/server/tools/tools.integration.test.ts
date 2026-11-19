@@ -81,8 +81,8 @@ const TASK_MODEL_TOOLS = [
 ];
 const SCHEDULE_TOOLS = ["schedules.wake_at", "schedules.add", "schedules.list", "schedules.delete"];
 const WEBHOOK_TOOLS = ["webhooks.add", "webhooks.list", "webhooks.delete"];
-const MEMORY_TOOLS = ["memory.save", "memory.search"];
-const MEMORY_MODEL_TOOLS = ["space.save_memory", "space.search_memory"];
+const MEMORY_TOOLS = ["memory.save", "memory.search", "memory.save_skill"];
+const MEMORY_MODEL_TOOLS = ["space.save_memory", "space.search_memory", "space.save_skill"];
 const JOB_TOOLS = ["jobs.start", "jobs.check", "jobs.list", "jobs.cancel"];
 const SCRIPT_TOOLS = ["scripts.run"];
 

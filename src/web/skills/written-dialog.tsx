@@ -1,4 +1,4 @@
-// Writes a skill, or changes or deletes one written or uploaded here.
+// Writes a skill, or changes or deletes one written, uploaded or learned here.
 
 import { useQuery } from "@tanstack/react-query";
 import { useId, useState } from "react";
@@ -30,27 +30,33 @@ import { plural } from "@/web/lib/plural";
 import { useChange } from "@/web/skills/mutations";
 import type { WrittenRow } from "@/web/skills/card";
 import { SkillPreviewDialog } from "@/web/skills/preview-dialog";
+import { learnedLine } from "@/web/skills/source-row";
 
 export type Draft = { name: string; description: string; body: string };
 
-// A skill written or uploaded here, to change or delete; or a new one, from scratch or from an
-// uploaded file that did not name or describe it. One with files previews them.
+// A skill written, uploaded or learned here, to change or delete; or a new one, from scratch or from
+// an uploaded file that did not name or describe it. One with files previews them.
 export function WrittenDialog({
   scope,
   row,
   initial,
   readOnly,
+  deletable,
   onClose,
 }: {
   scope: Scope;
   row: WrittenRow | null;
   initial?: Draft;
   readOnly: boolean;
+  // Whether the reader may delete it.
+  deletable: boolean;
   onClose: () => void;
 }) {
   const id = useId();
   const toast = useToast();
-  const detail = useQuery({ ...skillQuery(row?.skill.id ?? ""), enabled: !!row });
+  // Once saving or deleting it, it is not read again: a saved learned skill is a new one.
+  const [leaving, setLeaving] = useState(false);
+  const detail = useQuery({ ...skillQuery(row?.skill.id ?? ""), enabled: !!row && !leaving });
   const [draft, setDraft] = useState<Draft | null>(
     row ? null : (initial ?? { name: "", description: "", body: "" }),
   );
@@ -68,6 +74,7 @@ export function WrittenDialog({
 
   async function save() {
     const json = loaded;
+    setLeaving(true);
     const res = await run(() =>
       row
         ? apiClient.v1.skills[":id"].$patch({ param: { id: row.skill.id }, json })
@@ -75,17 +82,19 @@ export function WrittenDialog({
           ? apiClient.v1.org.skills.$post({ json })
           : apiClient.v1.spaces[":id"].skills.$post({ param: { id: scope.spaceId }, json }),
     );
-    if (!res) return;
+    if (!res) return setLeaving(false);
     if (!row) toast(`Created ${json.name}`, "info");
     onClose();
   }
 
   async function remove() {
     if (!row) return;
+    setLeaving(true);
     const res = await run(() =>
       apiClient.v1.skills[":id"].$delete({ param: { id: row.skill.id } }),
     );
     if (res) onClose();
+    else setLeaving(false);
   }
 
   return (
@@ -94,13 +103,15 @@ export function WrittenDialog({
         <DialogHeader>
           <DialogTitle>{row ? row.skill.name : "New skill"}</DialogTitle>
           <DialogDescription>
-            {readOnly
-              ? row?.locked
-                ? "From the organization."
-                : "Read only."
-              : row
-                ? "Changes apply from the next run."
-                : "The agent loads it when a task needs it."}
+            {row?.skill.learned && learnedLine(row.skill)
+              ? learnedLine(row.skill)
+              : readOnly
+                ? row?.locked
+                  ? "From the organization."
+                  : "Read only."
+                : row
+                  ? "Changes apply from the next run."
+                  : "The agent loads it when a task needs it."}
           </DialogDescription>
         </DialogHeader>
         {readOnly ? (
@@ -109,6 +120,7 @@ export function WrittenDialog({
             <pre className="max-h-[60vh] overflow-auto rounded-md bg-muted p-3 font-mono text-xs whitespace-pre-wrap">
               {loaded.body}
             </pre>
+            <FieldError>{error}</FieldError>
           </div>
         ) : (
           <form
@@ -162,7 +174,7 @@ export function WrittenDialog({
           </form>
         )}
         <DialogFooter>
-          {row && !readOnly && (
+          {row && deletable && (
             <Button
               variant="destructive"
               className="sm:mr-auto"
@@ -175,7 +187,7 @@ export function WrittenDialog({
           {row && row.skill.fileCount > 0 && (
             <Button
               variant="outline"
-              className={readOnly ? "sm:mr-auto" : ""}
+              className={readOnly && !deletable ? "sm:mr-auto" : ""}
               onClick={() => setPreviewing(true)}
             >
               {plural(row.skill.fileCount, "file")}

@@ -240,6 +240,7 @@ describe("space memory", () => {
     ).value.instructions;
     expect(instructions).toContain("space__save_memory");
     expect(instructions).toContain("space__search_memory");
+    expect(instructions).toContain("space__save_skill");
     expect(instructions).not.toMatch(/\{\{tool:|memory\.save|memory\.search/);
   });
 

@@ -1,10 +1,22 @@
-import { pgTable, text, integer, index, primaryKey, boolean, json } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
+import {
+  pgTable,
+  text,
+  integer,
+  index,
+  primaryKey,
+  boolean,
+  json,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
 
 import { at, bytes, NOW } from "@/server/db/columns.ts";
 
 import { scopeColumns, scopeIndexes } from "@/server/spaces/scope.ts";
 import { space } from "@/server/spaces/schema.ts";
 import { user, organization } from "@/server/orgs/schema.ts";
+import { thread } from "@/server/threads/schema.ts";
+import type { Influencer } from "@/shared/threads/events.ts";
 
 // A git repository an org or a space reads skills from, at the commit last read, with the token a
 // private one is read with sealed by the cipher.
@@ -116,4 +128,44 @@ export const builtinSkillSetting = pgTable(
     enabled: boolean("enabled").notNull(),
   },
   (table) => scopeIndexes("builtin_skill_setting", table, table.key),
+);
+
+// A skill the agent saved for a space, with the call that saved it, whose words steered that call
+// and who approved it. Saving a skill again under its name retires the old row and keeps it, and a
+// manager deleting one retires it too; managers edit and switch the row in use. One skill of a
+// name is in use in a space at a time.
+export const learnedSkill = pgTable(
+  "learned_skill",
+  {
+    id: text("id").primaryKey(),
+    spaceId: text("space_id")
+      .notNull()
+      .references(() => space.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description").notNull(),
+    body: text("body").notNull(),
+    files: json("files").$type<{ path: string; text: string }[]>().notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    // The thread and call that saved it.
+    threadId: text("thread_id").references(() => thread.id, { onDelete: "set null" }),
+    callId: text("call_id"),
+    // Whose words the model had read when it asked to save it.
+    influence: json("influence").$type<Influencer[]>().notNull(),
+    approvedBy: text("approved_by").references(() => user.id, { onDelete: "set null" }),
+    // The row it replaced.
+    supersedesId: text("supersedes_id"),
+    retiredAt: at("retired_at"),
+    // Who deleted it; none when a newer row replaced it.
+    retiredBy: text("retired_by").references(() => user.id, { onDelete: "set null" }),
+    createdAt: at("created_at").default(NOW).notNull(),
+  },
+  (table) => [
+    index("learned_skill_space_idx").on(table.spaceId, table.retiredAt),
+    uniqueIndex("learned_skill_call_idx")
+      .on(table.threadId, table.callId)
+      .where(sql`${table.callId} is not null`),
+    uniqueIndex("learned_skill_name_idx")
+      .on(table.spaceId, table.name)
+      .where(sql`${table.retiredAt} is null`),
+  ],
 );

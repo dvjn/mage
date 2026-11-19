@@ -23,9 +23,15 @@ export function isBuiltinId(id: string) {
 
 const TOOL_REF = /\{\{tool:([a-z0-9_.]+)\}\}/g;
 
-// A built-in skill's text with each tool it names written by `named`.
-export function namingTools(text: string, named: (toolId: string) => string) {
-  return text.replace(TOOL_REF, (_ref, id: string) => named(id));
+// A part of a built-in skill's text only for spaces that may have skills of their own.
+const SPACE_SKILLS = /\{\{#space-skills\}\}\n([\s\S]*?)\{\{\/space-skills\}\}\n/g;
+
+// A built-in skill's text with each tool it names written by `named`, and its parts for spaces'
+// own skills only where `spaceSkills`.
+export function namingTools(text: string, named: (toolId: string) => string, spaceSkills = true) {
+  return text
+    .replace(SPACE_SKILLS, (_part, inner: string) => (spaceSkills ? inner : ""))
+    .replace(TOOL_REF, (_ref, id: string) => named(id));
 }
 
 const texts = import.meta.glob("./builtin/**/*.md", {

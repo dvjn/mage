@@ -1,0 +1,1 @@
+ALTER TABLE "learned_skill" ADD COLUMN "enabled" boolean DEFAULT true NOT NULL;

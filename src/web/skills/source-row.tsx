@@ -34,7 +34,18 @@ export function refOf(source: Pick<SkillSourceSummary, "resolvedRef" | "ref">) {
   return source.resolvedRef ?? source.ref ?? "HEAD";
 }
 
-// One skill on one line: its name and description, opening it on click, and its switch.
+// Where a learned skill came from: who approved it and the thread that saved it, as far as the
+// reader is shown them; empty for any other.
+export function learnedLine(skill: Pick<SkillSummary, "learned">) {
+  const learned = skill.learned;
+  if (!learned) return "";
+  return [learned.approvedBy && `Approved by ${learned.approvedBy}`, learned.thread?.title]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+// One skill on one line: its name and description, and for a learned one where it came from,
+// opening it on click, and its switch.
 export function SkillLine({
   skill,
   tag,
@@ -58,6 +69,9 @@ export function SkillLine({
           {tag}
         </span>
         <span className="truncate text-xs text-muted-foreground">{skill.description}</span>
+        {learnedLine(skill) && (
+          <span className="truncate text-xs text-muted-foreground">{learnedLine(skill)}</span>
+        )}
       </button>
       {control}
     </li>

@@ -155,6 +155,20 @@
       "when": 1795066640305,
       "tag": "0021_agent_view",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1795069915527,
+      "tag": "0022_learned_skill",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1795094876510,
+      "tag": "0023_learned_skill_enabled",
+      "breakpoints": true
     }
   ]
 }

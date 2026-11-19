@@ -61,6 +61,8 @@ describe("space memory", () => {
       spaces: t.spaces,
       spaceStore: t.spaceStore,
       transact: t.transact,
+      learn: () => Promise.resolve({ ok: false, error: "No skills here." }),
+      spacesMayAdd: () => Promise.resolve(false),
       memoryTools: () => Promise.resolve({ on: new Set([SAVE_MEMORY]), named: (id: string) => id }),
     });
     await expect(

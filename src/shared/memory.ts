@@ -7,8 +7,13 @@ import * as z from "zod";
 export const MEMORY_TOOLSET = "memory";
 export const SAVE_MEMORY = "memory.save";
 export const SEARCH_MEMORY = "memory.search";
+export const SAVE_SKILL = "memory.save_skill";
 export const SAVE_MEMORY_MODEL = "space.save_memory";
 export const SEARCH_MEMORY_MODEL = "space.search_memory";
+export const SAVE_SKILL_MODEL = "space.save_skill";
+
+// The most files a learned skill keeps.
+export const LEARNED_FILES_MAX = 20;
 
 export const MEMORY_TYPES = [
   "fact",

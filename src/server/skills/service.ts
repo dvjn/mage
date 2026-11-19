@@ -9,6 +9,7 @@
 // decide every call. A private source's token is sealed and never leaves the server. The agent
 // reads a list of the skills on in its thread's space in its system prompt, and loads a skill, or
 // one of its files, through the built-in Skills toolset.
+// Skills the agent learns are a space's own, and never take the place of the org's or built-in.
 
 import * as z from "zod";
 
@@ -20,6 +21,10 @@ import type { Space, Spaces } from "@/server/spaces/service.ts";
 import type { AnyToolSpec, SpaceTools, Toolset, ToolSpec } from "@/server/tools/registry.ts";
 import type { Guidance, SkillLine } from "@/server/execution/context.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
+import type { Transact } from "@/server/sync/transact.ts";
+import type { ToolContext } from "@/server/tools/registry.ts";
+import { BTW, COMPACT, RELOAD } from "@/shared/threads/commands.ts";
+import type { Influencer } from "@/shared/threads/events.ts";
 import {
   LOAD_SKILL,
   type NewSkillSource as SkillSourceInput,
@@ -97,6 +102,38 @@ export interface Skill {
   createdBy: string | null;
   createdAt: Date;
   updatedAt: Date;
+  learned?: LearnedFrom | null;
+}
+
+export interface LearnedFrom {
+  threadId: string | null;
+  threadTitle: string | null;
+  approvedBy: string | null;
+}
+
+export interface NewLearnedSkill {
+  spaceId: string;
+  name: string;
+  description: string;
+  body: string;
+  files: SkillFile[];
+  threadId: string | null;
+  // The call that saved it; none for a manager's edit.
+  callId: string | null;
+  influence: Influencer[];
+  approvedBy: string | null;
+  // The learned skill it replaces.
+  supersedesId: string | null;
+  enabled: boolean;
+}
+
+// What the agent gives to save a skill.
+export interface LearnInput {
+  name: string;
+  description: string;
+  instructions: string;
+  files?: SkillFile[];
+  update?: boolean;
 }
 
 export type NewSkill = Pick<
@@ -125,10 +162,31 @@ export interface SkillStore {
 
   create(skill: NewSkill): Promise<Skill>;
   find(id: string): Promise<Skill | null>;
-  // Every skill of the scope, from its sources and written there.
+  // Every skill of the scope, from its sources, written there and, for a space, learned there, in
+  // one read.
   inScope(scope: Scope): Promise<Skill[]>;
   update(id: string, changes: SkillChanges): Promise<void>;
   delete(id: string): Promise<void>;
+  setLearnedEnabled(id: string, enabled: boolean): Promise<void>;
+
+  // What the call saved, in use or not.
+  learnedOfCall(
+    threadId: string,
+    callId: string,
+  ): Promise<{ name: string; updated: boolean } | null>;
+  // Its id; null when the call saved one already, or a skill of its name is in use in the space.
+  createLearned(skill: NewLearnedSkill): Promise<string | null>;
+  // Retires the space's learned skill in use, answering what a row replacing it carries over; null
+  // when it was not in use.
+  retireLearned(
+    spaceId: string,
+    id: string,
+    by: string | null,
+    at: Date,
+  ): Promise<Pick<NewLearnedSkill, "files" | "threadId" | "enabled"> | null>;
+  // Holds the name in the scope until the transaction under way ends, so that writes of one name
+  // there run one at a time.
+  holdName(scope: Scope, name: string): Promise<void>;
 
   // What a space set for the org's sources and skills, for those it set.
   spaceSourceSettings(spaceId: string): Promise<Map<string, boolean>>;
@@ -149,6 +207,7 @@ export interface SkillsOptions {
   archives: ArchiveReader;
   spaces: Pick<Spaces, "require">;
   settings: Pick<OrgSettingStore, "get" | "setSpaceSkills">;
+  transact: Transact;
   logger: Logger;
   // What the model calls each of the space's tools, for the built-in skills that name them.
   toolNames?: (space: Pick<Space, "id" | "orgId">) => Promise<(toolId: string) => string>;
@@ -164,6 +223,20 @@ const NOT_FOUND = "Skill not found";
 const SOURCE_NOT_FOUND = "Skill source not found";
 const BUILT_IN = "Built-in skills can only be turned on or off";
 const WRITTEN_ONLY = "Only skills written here can be changed; update the source instead";
+// A skill that was in use as a request began, and changed before it held the skill's name.
+const CHANGED = "It changed while this saved";
+
+// What the agent is told after it saves a skill.
+const USABLE = "Usable now; listed in this thread's instructions after /reload.";
+
+// The names of Mage's own commands, which no learned skill takes.
+const COMMANDS: ReadonlySet<string> = new Set([COMPACT, BTW, RELOAD]);
+
+// A save the tool refuses, with what the model is told.
+class Refusal extends Error {}
+
+// A save another run of the same call made first.
+class Replayed extends Error {}
 
 export function alreadyOn(name: string) {
   return `A skill named ${name} is already on`;
@@ -212,6 +285,8 @@ export function effectiveSkills(set: SpaceSkills): Skill[] {
   }
   if (set.allowed) {
     for (const skill of set.ownSkills) {
+      // A learned skill never takes the place of the org's or a built-in one.
+      if (skill.learned && named.has(skill.name)) continue;
       if (onInScope(skill, ownSources)) named.set(skill.name, skill);
     }
   }
@@ -323,7 +398,43 @@ export function createSkills(options: SkillsOptions) {
     }
   }
 
-  function skillSummary(skill: Skill): SkillSummary {
+  // Refuses a learned skill a new name that a command, a built-in or org skill, or another of the
+  // space's skills has, on or off.
+  async function refuseLearnedName(skill: Skill, name: string) {
+    if (COMMANDS.has(name)) throw new ServiceError(409, `${name} is a command`);
+    const set = await spaceSkills({ id: skill.spaceId!, orgId: skill.orgId });
+    if (set.orgSkills.some((other) => other.name === name)) {
+      throw new ServiceError(409, `${name} is a built-in or organization skill`);
+    }
+    if (set.ownSkills.some((other) => other.name === name && other.id !== skill.id)) {
+      throw new ServiceError(409, `A skill named ${name} already exists here`);
+    }
+  }
+
+  // Refuses a person's skill in a space the name of a learned one there, on or off.
+  async function refuseLearnedHeld(scope: Scope, names: string[], except?: string) {
+    if (!scope.spaceId) return;
+    const held = (await skills.inScope(scope)).filter(
+      (skill) => skill.learned && skill.id !== except,
+    );
+    for (const name of names) {
+      if (held.some((skill) => skill.name === name)) {
+        throw new ServiceError(409, `A learned skill named ${name} is already here`);
+      }
+    }
+  }
+
+  // The skill as it is once its names are held, which it must still be.
+  async function stillLive(id: string) {
+    const live = await skills.find(id);
+    if (!live) throw new ServiceError(409, CHANGED);
+    return live;
+  }
+
+  // A skill as settings list it; where a learned one came from, its thread only for those who
+  // read the space's threads.
+  function skillSummary(skill: Skill, threads = false): SkillSummary {
+    const learned = skill.learned;
     return {
       id: skill.id,
       name: skill.name,
@@ -334,6 +445,15 @@ export function createSkills(options: SkillsOptions) {
       enabled: skill.enabled,
       fileCount: skill.files.length,
       updatedAt: skill.updatedAt.toISOString(),
+      learned: learned
+        ? {
+            thread:
+              threads && learned.threadId
+                ? { id: learned.threadId, title: learned.threadTitle ?? "Untitled" }
+                : null,
+            approvedBy: learned.approvedBy,
+          }
+        : null,
     };
   }
 
@@ -351,16 +471,18 @@ export function createSkills(options: SkillsOptions) {
       enabled: source.enabled,
       hasToken: source.hasToken,
       builtin: source.id === BUILTIN_SOURCE_ID,
-      skills: all.filter((skill) => skill.sourceId === source.id).map(skillSummary),
+      skills: all
+        .filter((skill) => skill.sourceId === source.id)
+        .map((skill) => skillSummary(skill)),
     };
   }
 
-  // The scope's sources with their skills, and the skills written there.
-  async function listed(scope: Scope) {
+  // The scope's sources with their skills, and the skills written or learned there.
+  async function listed(scope: Scope, threads = false) {
     const all = await skills.inScope(scope);
     return {
       sources: (await skills.sources(scope)).map((source) => sourceSummary(source, all)),
-      written: all.filter((skill) => !skill.sourceId).map(skillSummary),
+      written: all.filter((skill) => !skill.sourceId).map((skill) => skillSummary(skill, threads)),
     };
   }
 
@@ -408,7 +530,7 @@ export function createSkills(options: SkillsOptions) {
   ) {
     if (skill.sourceId !== BUILTIN_SOURCE_ID) return skill.body;
     const naming = named ?? (options.toolNames ? await options.toolNames(space) : (id) => id);
-    return namingTools(skill.body, naming);
+    return namingTools(skill.body, naming, await spacesMayAdd(space.orgId));
   }
 
   async function snapshotOf(parsed: ParsedSource, token: string | null) {
@@ -473,23 +595,31 @@ export function createSkills(options: SkillsOptions) {
     if (found.some((skill) => skill.body.length > SKILL_BODY_MAX)) {
       throw new ServiceError(400, "The instructions are too long");
     }
-    const on = new Set((await onIn(scope)).map((skill) => skill.name));
-    const added = await Promise.all(
-      found.map(async (skill) =>
-        skills.create({
-          ...scope,
-          sourceId: null,
-          path: null,
-          name: skill.name,
-          description: skill.description,
-          body: skill.body,
-          files: skill.files,
-          enabled: found.length === 1 && !on.has(skill.name),
-          createdBy: principal.userId,
-        }),
-      ),
-    );
-    return { status: "added", skills: added.map(skillSummary) };
+    const added = await options.transact(async () => {
+      for (const name of [...new Set(found.map((skill) => skill.name))].sort()) {
+        await skills.holdName(scope, name);
+      }
+      await refuseLearnedHeld(scope, [...new Set(found.map((skill) => skill.name))]);
+      const on = new Set((await onIn(scope)).map((skill) => skill.name));
+      const made: Skill[] = [];
+      for (const skill of found) {
+        made.push(
+          await skills.create({
+            ...scope,
+            sourceId: null,
+            path: null,
+            name: skill.name,
+            description: skill.description,
+            body: skill.body,
+            files: skill.files,
+            enabled: found.length === 1 && !on.has(skill.name),
+            createdBy: principal.userId,
+          }),
+        );
+      }
+      return made;
+    });
+    return { status: "added", skills: added.map((skill) => skillSummary(skill)) };
   }
 
   // Adds the whole repository, every skill found in it off until someone turns it on.
@@ -556,6 +686,8 @@ export function createSkills(options: SkillsOptions) {
   return {
     effectiveIn,
     instructionsOf,
+    // Whether the org lets its spaces have skills of their own, learned ones among them.
+    spacesMayAdd,
 
     // The skills on in the space, as the agent's prompt lists them, when it can load them: those
     // its tools read.
@@ -612,7 +744,7 @@ export function createSkills(options: SkillsOptions) {
           ),
           written: orgListed.written.map(inSpace),
         },
-        own: await listed(own),
+        own: await listed(own, !!space.role),
         allowed: await spacesMayAdd(space.orgId),
       };
     },
@@ -644,8 +776,17 @@ export function createSkills(options: SkillsOptions) {
         return skills.setOrgBuiltin(orgId, id, enabled);
       }
       const skill = await manageableSkill(principal, id);
-      if (enabled) await refuseClashes(scopeOf(skill), [skill.name], (other) => other.id === id);
-      await skills.update(id, { enabled });
+      if (!skill.learned) {
+        if (enabled) await refuseClashes(scopeOf(skill), [skill.name], (other) => other.id === id);
+        return skills.update(id, { enabled });
+      }
+      // A learned skill is switched one write of its name at a time, as the agent saves it.
+      await options.transact(async () => {
+        await skills.holdName(scopeOf(skill), skill.name);
+        await stillLive(id);
+        if (enabled) await refuseClashes(scopeOf(skill), [skill.name], (other) => other.id === id);
+        await skills.setLearnedEnabled(id, enabled);
+      });
     },
 
     // The skill with its instructions and files, for anyone who may read its scope.
@@ -660,8 +801,8 @@ export function createSkills(options: SkillsOptions) {
       }
       const skill = await skills.find(id);
       if (!skill || skill.orgId !== principal.orgId) throw new ServiceError(404, NOT_FOUND);
-      if (skill.spaceId) await spaces.require(principal, skill.spaceId);
-      return { ...skillSummary(skill), body: skill.body, files: skill.files };
+      const space = skill.spaceId ? await spaces.require(principal, skill.spaceId) : null;
+      return { ...skillSummary(skill, !!space?.role), body: skill.body, files: skill.files };
     },
 
     // Writes a skill in settings, on unless one of its name is.
@@ -671,9 +812,11 @@ export function createSkills(options: SkillsOptions) {
       input: SkillInput,
     ): Promise<SkillSummary> {
       const scope = await addable(principal, spaceId);
-      await refuseClashes(scope, [input.name], () => false);
-      return skillSummary(
-        await skills.create({
+      const made = await options.transact(async () => {
+        await skills.holdName(scope, input.name);
+        await refuseClashes(scope, [input.name], () => false);
+        await refuseLearnedHeld(scope, [input.name]);
+        return skills.create({
           ...scope,
           sourceId: null,
           path: null,
@@ -681,23 +824,60 @@ export function createSkills(options: SkillsOptions) {
           files: [],
           enabled: true,
           createdBy: principal.userId,
-        }),
-      );
+        });
+      });
+      return skillSummary(made);
     },
 
     async edit(principal: Principal, id: string, input: SkillInput): Promise<SkillSummary> {
       const skill = await manageableSkill(principal, id);
       if (skill.sourceId) throw new ServiceError(400, WRITTEN_ONLY);
-      if (skill.enabled)
-        await refuseClashes(scopeOf(skill), [input.name], (other) => other.id === id);
-      await skills.update(id, input);
-      return skillSummary((await skills.find(id))!);
+      const scope = scopeOf(skill);
+      const saved = await options.transact(async () => {
+        for (const name of [...new Set([skill.name, input.name])].sort()) {
+          await skills.holdName(scope, name);
+        }
+        const live = await stillLive(id);
+        if (live.enabled) await refuseClashes(scope, [input.name], (other) => other.id === id);
+        if (!live.learned) {
+          await refuseLearnedHeld(scope, [input.name], id);
+          await skills.update(id, input);
+          return id;
+        }
+        if (input.name !== live.name) await refuseLearnedName(live, input.name);
+        // A manager's edit replaces the row as the agent's update does, approved by the editor.
+        const old = await skills.retireLearned(live.spaceId!, id, null, now());
+        if (!old) throw new ServiceError(409, CHANGED);
+        const made = await skills.createLearned({
+          ...old,
+          spaceId: live.spaceId!,
+          ...input,
+          callId: null,
+          influence: [],
+          approvedBy: principal.userId,
+          supersedesId: id,
+        });
+        if (!made) throw new ServiceError(409, CHANGED);
+        return made;
+      });
+      return skillSummary((await skills.find(saved))!);
     },
 
     upload,
 
+    // Deletes a skill written here; a learned one is retired and kept.
     async remove(principal: Principal, id: string) {
       const skill = await manageableSkill(principal, id);
+      const spaceId = skill.spaceId;
+      if (skill.learned && spaceId) {
+        await options.transact(async () => {
+          await skills.holdName(scopeOf(skill), skill.name);
+          if (!(await skills.retireLearned(spaceId, id, principal.userId, now()))) {
+            throw new ServiceError(409, CHANGED);
+          }
+        });
+        return;
+      }
       if (skill.sourceId) throw new ServiceError(400, WRITTEN_ONLY);
       await skills.delete(id);
     },
@@ -834,6 +1014,73 @@ export function createSkills(options: SkillsOptions) {
         throw new ServiceError(409, ORG_OFF);
       }
       await skills.setSpaceSkill(space.id, skill.id, enabled);
+    },
+
+    // Saves a skill the agent learned for the thread's space: never under the name of a command,
+    // a built-in or org skill, or one a person wrote or added; under one the space learned only to
+    // update it. Writes of one name in a space run one at a time; a second run of a call gives
+    // back what the first saved.
+    async learn(
+      ctx: Pick<
+        ToolContext,
+        "orgId" | "spaceId" | "threadId" | "callId" | "influence" | "approvedBy"
+      >,
+      input: LearnInput,
+    ): Promise<{ ok: true; value: object } | { ok: false; error: string }> {
+      const saved = (done: { name: string; updated: boolean }) => ({
+        ok: true as const,
+        value: { name: done.name, ...(done.updated && { updated: true }), note: USABLE },
+      });
+      const done = await skills.learnedOfCall(ctx.threadId, ctx.callId);
+      if (done) return saved(done);
+      const { name } = input;
+      if (COMMANDS.has(name))
+        return { ok: false, error: `${name} is a command; choose another name` };
+      try {
+        const updated = await options.transact(async () => {
+          await skills.holdName({ orgId: ctx.orgId, spaceId: ctx.spaceId }, name);
+          const set = await spaceSkills({ id: ctx.spaceId, orgId: ctx.orgId });
+          if (!set.allowed) throw new Refusal(SPACES_OFF);
+          if (set.orgSkills.some((skill) => skill.name === name)) {
+            throw new Refusal(`${name} is a built-in or organization skill; choose another name`);
+          }
+          const current = set.ownSkills.find((skill) => skill.name === name && skill.learned);
+          if (set.ownSkills.some((skill) => skill.name === name && !skill.learned)) {
+            throw new Refusal(
+              `${name} was written by a person; only learned skills can be updated here`,
+            );
+          }
+          if (current && !input.update) {
+            throw new Refusal(`A skill named ${name} already exists here; set update to change it`);
+          }
+          const old = current && (await skills.retireLearned(ctx.spaceId, current.id, null, now()));
+          if (current && !old) {
+            throw new Refusal(`${name} was changed or deleted as this saved; save it again`);
+          }
+          const made = await skills.createLearned({
+            spaceId: ctx.spaceId,
+            name,
+            description: input.description,
+            body: input.instructions,
+            files: input.files ?? [],
+            threadId: ctx.threadId,
+            callId: ctx.callId,
+            influence: ctx.influence,
+            approvedBy: ctx.approvedBy ?? null,
+            supersedesId: current?.id ?? null,
+            // An update keeps the switch a manager set.
+            enabled: old ? old.enabled : true,
+          });
+          // Another run of the call saved first: this one's retire rolls back.
+          if (!made) throw new Replayed();
+          return !!current;
+        });
+        return saved({ name, updated });
+      } catch (err) {
+        if (err instanceof Refusal) return { ok: false, error: err.message };
+        if (!(err instanceof Replayed)) throw err;
+        return saved((await skills.learnedOfCall(ctx.threadId, ctx.callId))!);
+      }
     },
 
     // The built-in Skills toolset: loading a skill that is on in the thread's space, and reading

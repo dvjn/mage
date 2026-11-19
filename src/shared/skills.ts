@@ -50,6 +50,14 @@ export const skillSummarySchema = z.object({
   enabled: z.boolean(),
   fileCount: z.number(),
   updatedAt: z.iso.datetime(),
+  // For one the agent saved: the thread that saved it, for those who read the space's threads
+  // while it is still there, and who approved it.
+  learned: z
+    .object({
+      thread: z.object({ id: z.string(), title: z.string() }).nullable(),
+      approvedBy: z.string().nullable(),
+    })
+    .nullable(),
 });
 
 export type SkillSummary = z.infer<typeof skillSummarySchema>;

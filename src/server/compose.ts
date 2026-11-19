@@ -322,6 +322,7 @@ export function compose(deps: ComposeDeps) {
     archives: createZipReader(),
     spaces,
     settings: settingStore,
+    transact,
     logger,
     toolNames: modelNamesIn,
   });
@@ -399,6 +400,8 @@ export function compose(deps: ComposeDeps) {
     spaces,
     spaceStore,
     transact,
+    learn: (ctx, input) => skills.learn(ctx, input),
+    spacesMayAdd: (orgId, org) => skills.spacesMayAdd(orgId, org),
     memoryTools: async (space) => {
       const now = await tools.toolsIn(space);
       const memory = now.sets.find((set) => set.id === MEMORY_TOOLSET)?.tools ?? [];
