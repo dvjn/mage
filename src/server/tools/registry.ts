@@ -187,6 +187,9 @@ export interface ToolSpec<I = unknown> {
   // A call's input in a few words for the one line it has, where its plain values would not say
   // it; null when the tool cannot say now.
   summary?: (input: I, space: Pick<Space, "id" | "orgId">) => Promise<string | null>;
+  // For a tool whose input may name what it runs, as a script by its file: the input as the call
+  // is recorded and runs, read once as it is asked for, or why it cannot run.
+  resolveInput?(input: I, now: SpaceTools): { input: I } | { error: string };
   run(input: I, ctx: ToolContext): Promise<ToolOutput>;
 }
 

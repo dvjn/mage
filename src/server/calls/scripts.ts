@@ -10,6 +10,7 @@
 // questions and the tool search fail in a script. What the script's calls are judged with is read
 // once, as the script starts or goes on, but for the tools' rules, read again for each call inside
 // the write that records it, so a tool turned off or set to ask meanwhile holds from the next call.
+// A learned skill's script runs by its file, recorded with the code it read then.
 
 import { context, trace } from "@opentelemetry/api";
 import { ulid } from "ulid";
@@ -34,7 +35,6 @@ import {
   type ToolSpec,
   type Vouch,
 } from "@/server/tools/registry.ts";
-import { TOOL_SEARCH } from "@/server/tools/search.ts";
 import {
   closest,
   functionNames,
@@ -45,6 +45,7 @@ import {
   takesNull,
   type ToolSchemas,
 } from "@/server/tools/signatures.ts";
+import { learnedScript, RUN_SCRIPT } from "@/server/skills/scripts.ts";
 import { CHECK_JOB, START_JOB } from "@/shared/jobs.ts";
 import { valueForAgent } from "@/shared/mcp.ts";
 import type { EventDataMap, ToolRisk } from "@/shared/threads/events.ts";
@@ -63,7 +64,6 @@ import type { CallRow, NewCallRow } from "./store.ts";
 import type { CallRecord } from "./views.ts";
 
 export const SCRIPTS_TOOLSET = "scripts";
-export const RUN_SCRIPT = "scripts.run";
 
 // The function a script calls any tool with by its name, and those that list and describe them.
 const CALL_TOOL = "call_tool";
@@ -77,8 +77,10 @@ export const SCRIPTS_GUIDANCE: ToolText = (named) =>
   [
     `Call a tool directly to look at a short result or to change something. Use ${named(RUN_SCRIPT)} for exact calculations and deterministic checks, to chain several tool calls in one Python script rather than one by one, and to filter, count, parse, compare or combine results, as when you need only a few fields or a count from a large result. Only what the script returns and prints comes back to you.`,
     `- In a script each tool is an awaitable function by the name you call it, taking its input as keyword arguments: \`r = await name(key=value)\` gives the tool's result. Up to ${SCRIPT_CALLS} calls a script. Run independent calls at once with \`await asyncio.gather(...)\`, catching each call's errors inside its own task, as gather does not return them. A call that needs approval pauses the script until someone decides, then runs, or raises PermissionError where denied. Other failures raise NameError, ValueError, TypeError or RuntimeError, and calls already made are not undone.`,
+    `- Every tool here, MCP tools among them, is callable from a script by name, without searching for it or turning it on first; search only to find a tool you don't know.`,
     `- \`await ${LIST_TOOLS}(query=None)\` gives the names of the tools a script may call, MCP tools among them, those matching the query when given; \`await ${DESCRIBE_TOOL}(name)\` gives one's signature.`,
     "- Write the script against named inputs and pass their values in `inputs`, so the same script runs again with others.",
+    '- A learned skill\'s script runs by its file, `file="<skill>/<path>"` in place of `code`, with its values in `inputs`.',
     `- A long script can run in the background with ${named(START_JOB)}; what it prints is what ${named(CHECK_JOB)} shows of it as it runs. To poll, sleep between checks with \`await asyncio.sleep(seconds)\`, up to ${SCRIPT_SLEEP_SECS / 60} minutes a script.`,
     "- The last expression is the result: return the smallest thing that answers, not whole results to read. print() for notes. Dates and times come back as ISO 8601 text.",
     "- The sandbox runs a subset of Python, with json, re, math, datetime, collections, itertools and decimal, and no network or files. Tools that ask people questions and the tool search cannot be called from it.",
@@ -281,35 +283,52 @@ export function createScripts(options: ScriptsOptions) {
   const { threads, spaceStore, logger, tools, steps, now } = options;
   const python = createPython();
 
-  const run: ToolSpec<{ code: string; inputs?: Record<string, unknown> }> = {
+  const run: ToolSpec<{ code?: string; file?: string; inputs?: Record<string, unknown> }> = {
     name: RUN_SCRIPT,
     title: "Run script",
     makesCalls: true,
     annotations: { readOnlyHint: false },
     description: `Run a Python script, for exact calculations, deterministic checks, and several tool calls chained in one go. It calls each tool as an awaitable function by its name with keyword arguments, \`await name(key=value)\`, several at once with asyncio.gather, each judged as if made directly, and gives back its last expression and what it printed. The keys of \`inputs\` become the script's variables.`,
-    input: z.object({
-      code: z
-        .string()
-        .min(1)
-        .meta({ title: "Code", description: "Python", contentMediaType: "text/x-python" }),
-      // An object, not unknown: with no type in its schema the model sends it as a JSON string.
-      inputs: z
-        .record(z.string(), z.unknown())
-        .superRefine((inputs, check) => {
-          const bad = Object.keys(inputs).filter((name) => !pythonName(name));
-          if (bad.length > 0) {
-            check.addIssue({
-              code: "custom",
-              message: `Input names must be Python identifiers, not ${bad.join(", ")}.`,
-            });
-          }
-        })
-        .optional()
-        .meta({ title: "Inputs", description: "Values the script reads by name" }),
-    }),
+    input: z
+      .object({
+        code: z
+          .string()
+          .min(1)
+          .optional()
+          .meta({ title: "Code", description: "Python", contentMediaType: "text/x-python" }),
+        file: z.string().trim().min(1).optional().meta({
+          title: "File",
+          description: "A learned skill's script as skill/path, in place of code",
+        }),
+        // An object, not unknown: with no type in its schema the model sends it as a JSON string.
+        inputs: z
+          .record(z.string(), z.unknown())
+          .superRefine((inputs, check) => {
+            const bad = Object.keys(inputs).filter((name) => !pythonName(name));
+            if (bad.length > 0) {
+              check.addIssue({
+                code: "custom",
+                message: `Input names must be Python identifiers, not ${bad.join(", ")}.`,
+              });
+            }
+          })
+          .optional()
+          .meta({ title: "Inputs", description: "Values the script reads by name" }),
+      })
+      .refine((given) => given.code !== undefined || given.file !== undefined, {
+        message: "Give the code, or a file to run.",
+      }),
     // Each call it makes is judged on its own.
     risk: () => "normal",
+    // A file is recorded with its code as it reads now, so later edits leave the call as it ran.
+    resolveInput(given, now) {
+      if (given.file === undefined) return { input: given };
+      if (given.code !== undefined) return { error: "Give the code or a file, not both." };
+      const script = learnedScript(now, given.file);
+      return "error" in script ? script : { input: { ...given, code: script.code } };
+    },
     async run({ code, inputs }, ctx) {
+      if (code === undefined) return { ok: false, error: "The script's file was not read." };
       const thread = await threads.find(ctx.threadId);
       const space = thread && (await spaceStore.find(thread.spaceId));
       if (!thread || !space) return { ok: false, error: "The thread is gone." };
@@ -330,7 +349,7 @@ export function createScripts(options: ScriptsOptions) {
         recorded = turn.catch(() => {});
         return turn;
       };
-      const callable = await callableIn(tools, thread, space, ctx.names);
+      const callable = await callableIn(tools, thread, space, ctx.names, true);
       const titles = await tools.namesNow(space, callable.now);
       const branchId = thread.currentBranchId;
       const words = await steps.words(thread.id, branchId);
@@ -362,9 +381,7 @@ export function createScripts(options: ScriptsOptions) {
       };
 
       // Why the script may not call the tool by the name, as the exception it raises.
-      const refusalOf = (
-        name: string,
-      ): { spec: AnyToolSpec } | { refusal: PythonError; toolId?: string } => {
+      const refusalOf = (name: string): { spec: AnyToolSpec } | { refusal: PythonError } => {
         try {
           const spec = toolNamed(callable, name);
           if (spec.makesCalls) throw new ToolRefusal("A script cannot run another.");
@@ -374,10 +391,6 @@ export function createScripts(options: ScriptsOptions) {
           return { spec };
         } catch (err) {
           if (!(err instanceof ToolRefusal)) throw err;
-          if (err.reason === "notOn") {
-            const message = `${ctx.named(err.toolId!)} is not on yet. Call ${ctx.named(TOOL_SEARCH)} outside the script to turn it on, then run the script again.`;
-            return { refusal: new PythonError("NameError", message), toolId: err.toolId };
-          }
           if (err.reason === "missing") {
             return { refusal: new PythonError("NameError", notFound(name)) };
           }
@@ -473,8 +486,7 @@ export function createScripts(options: ScriptsOptions) {
           );
         }
         const input: unknown = parsed?.success ? parsed.data : given;
-        const refusedId = "toolId" in found ? found.toolId : undefined;
-        const toolId = spec?.name ?? refusedId ?? callable.names.fromModel(name) ?? name;
+        const toolId = spec?.name ?? callable.names.fromModel(name) ?? name;
         const judged = await recordInTurn(
           async (append): Promise<{ waiting: Waiting } | { decision: Decision } | null> => {
             let risk: ToolRisk = "normal";

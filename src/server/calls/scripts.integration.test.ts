@@ -14,6 +14,44 @@ import { MCP_ORIGIN } from "@/server/testing/workspace.ts";
 import { EDITORS, TOOL_OFF, wireToolName } from "@/shared/tools.ts";
 import { transcriptOf } from "@/shared/transcript.ts";
 
+// What the helpers below use of a thread.
+type Helped = Pick<Awaited<ReturnType<typeof agentThread>>, "api" | "ada" | "tools"> & {
+  space: { id: string };
+};
+
+// Adds the stand-in MCP server to the org, answering its echo tool's id and its name in a script.
+async function mcpEcho(t: Helped) {
+  const added = await t.api("POST", "/org/mcp-servers", t.ada.cookie, {
+    name: "Open",
+    url: `${MCP_ORIGIN}/mcp`,
+    auth: { kind: "none" },
+  });
+  expect(added.ok).toBe(true);
+  const space = { id: t.space.id, orgId: t.ada.orgId };
+  const names = await t.tools.modelNames(space);
+  const echo = (await t.tools.fromServers(space, names)).find((one) => one.id.endsWith("echo"))!;
+  return { echo: echo.id, mcp: wireToolName(names.toModel(echo.id)) };
+}
+
+// Sets the tools in the thread's space to a policy whose every call waits for an editor.
+async function signOff(t: Helped, toolIds: string[]) {
+  const made = await t.api("POST", `/spaces/${t.space.id}/tool-policies`, t.ada.cookie, {
+    name: "Sign-off",
+    color: "orange",
+    use: "none",
+    users: [],
+    approvers: [EDITORS],
+    independent: false,
+  });
+  expect(made.status).toBe(201);
+  const { id } = (await made.json()) as { id: string };
+  const set = await t.api("PATCH", `/spaces/${t.space.id}/tools`, t.ada.cookie, {
+    toolIds,
+    policy: id,
+  });
+  expect(set.status).toBe(200);
+}
+
 async function scriptThread() {
   const tool = probe();
   // The tool that needs approval, counted as it runs.
@@ -1335,85 +1373,266 @@ describe("a script", () => {
     expect(next.texts.at(-1)).toContain('"result":"probe__wait is off here."');
   });
 
-  it("refuses an MCP server's tool not turned on as a function, as call_tool does, recording each", async () => {
+  it("calls an MCP server's tool the thread has not turned on, as a function and by call_tool", async () => {
     const t = await scriptThread();
-    const added = await t.api("POST", "/org/mcp-servers", t.ada.cookie, {
-      name: "Open",
-      url: `${MCP_ORIGIN}/mcp`,
-      auth: { kind: "none" },
-    });
-    expect(added.ok).toBe(true);
-    const space = { id: t.space.id, orgId: t.ada.orgId };
-    const names = await t.tools.modelNames(space);
-    const [server] = await t.tools.fromServers(space, names);
-    const mcp = wireToolName(names.toModel(server!.id));
+    const { mcp, echo } = await mcpEcho(t);
     await t.post(t.ada, "Try it");
     await t.script(
-      [
-        "out = []",
-        `for go in [lambda: ${mcp}(), lambda: call_tool("${mcp}", {})]:`,
-        "  try:",
-        "    await go()",
-        "  except NameError as e:",
-        "    out.append(str(e))",
-        "out",
-      ].join("\n"),
+      `a = await ${mcp}(text="a")\nb = await call_tool("${mcp}", {"text": "b"})\n[a, b]`,
     );
     const next = await t.replies();
     await t.worker.idle();
-    const said = JSON.parse(next.texts.at(-1)!.replace(/^result scripts.run: /, "")) as {
-      value: { result: string[] };
-    };
-    expect(said.value.result).toEqual([
-      `${mcp} is not on yet. Call tools__search outside the script to turn it on, then run the script again.`,
-      `${mcp} is not on yet. Call tools__search outside the script to turn it on, then run the script again.`,
-    ]);
+    expect(next.texts.at(-1)).toContain('"ok":true');
     expect((await t.stored()).map((row) => [row.tool_id, row.status])).toEqual([
       ["scripts.run", "completed"],
-      [server!.id, "failed"],
-      [server!.id, "failed"],
+      [echo, "completed"],
+      [echo, "completed"],
     ]);
+    // The script's call is enough: the thread's agent has not turned it on.
+    expect(await t.tools.turnedOn(t.thread.id)).toEqual([]);
   });
 
-  it("refuses a tool that is off and an MCP server's tool not turned on in the thread", async () => {
+  it("refuses a tool that is off, and holds an MCP server's tool not turned on to its policy", async () => {
     const t = await scriptThread();
     const off = await t.api("PATCH", `/spaces/${t.space.id}/tools`, t.ada.cookie, {
       toolIds: ["probe.guarded"],
       policy: TOOL_OFF,
     });
     expect(off.status).toBe(200);
-    const added = await t.api("POST", "/org/mcp-servers", t.ada.cookie, {
-      name: "Open",
-      url: `${MCP_ORIGIN}/mcp`,
-      auth: { kind: "none" },
-    });
-    expect(added.ok).toBe(true);
-    const space = { id: t.space.id, orgId: t.ada.orgId };
-    const names = await t.tools.modelNames(space);
-    const [server] = await t.tools.fromServers(space, names);
-    const mcp = wireToolName(names.toModel(server!.id));
+    const { mcp, echo } = await mcpEcho(t);
+    await signOff(t, [echo]);
     await t.post(t.ada, "Try them");
     await t.script(
       [
         "out = []",
-        `for name in ["probe__guarded", "${mcp}"]:`,
-        "  try:",
-        "    await call_tool(name, {})",
-        "  except NameError as e:",
-        "    out.append(str(e))",
-        "out",
+        "try:",
+        '  await call_tool("probe__guarded", {})',
+        "except NameError as e:",
+        "  out.append(str(e))",
+        `out.append(await call_tool("${mcp}", {"text": "hi"}))`,
+        "len(out)",
       ].join("\n"),
     );
+    await t.worker.idle();
+    const waiting = (await t.calls()).find((row) => row.toolId === echo);
+    expect(waiting).toMatchObject({ state: "waiting" });
+    expect((await t.decide(waiting!.id, true)).status).toBe(200);
     const next = await t.replies();
     await t.worker.idle();
-    expect(next.texts.at(-1)).toContain("No tool is named probe__guarded here.");
+    expect(next.texts.at(-1)).toBe('result scripts.run: {"ok":true,"value":{"result":2}}');
+    expect((await t.stored()).map((row) => [row.tool_id, row.status])).toEqual([
+      ["scripts.run", "completed"],
+      ["probe__guarded", "failed"],
+      [echo, "completed"],
+    ]);
+  });
+});
+
+describe("a script run by its file", () => {
+  // A thread whose space learned a skill with two scripts and a note.
+  async function learnedThread() {
+    const t = await scriptThread();
+    const space = (await t.spaceStore.find(t.space.id))!;
+    let saved = 0;
+    const learn = async (code: string, update = false) =>
+      t.skills.learn(
+        {
+          orgId: space.orgId,
+          spaceId: space.id,
+          threadId: t.thread.id,
+          callId: `learn-${(saved += 1)}`,
+          influence: [],
+          approvedBy: t.ada.userId,
+        },
+        {
+          name: "doubler",
+          description: "Doubles a number",
+          instructions: "Run double.py.",
+          files: [
+            { path: "double.py", text: code },
+            { path: "notes.md", text: "# Notes" },
+            { path: "lib/half.py", text: "n / 2" },
+          ],
+          ...(update && { update }),
+        },
+      );
+    await learn('print("doubling")\nn * 2');
+    let asked = 0;
+    // The model's next call, of the tool by its id, with the input given.
+    async function asks(toolId: string, input: Record<string, unknown>) {
+      const call = await t.model.next();
+      call.startStep();
+      call.toolCall(`f${(asked += 1)}`, toolId, input);
+      call.endStep();
+      call.end();
+    }
+    return { ...t, space, learn, asks };
+  }
+
+  it("runs a learned skill's script as if its code were given, recording the code it ran", async () => {
+    const t = await learnedThread();
+    await t.post(t.ada, "Double 21");
+    await t.asks("scripts.run", { file: "doubler/double.py", inputs: { n: 21 } });
+    const next = await t.replies();
+    await t.worker.idle();
+    expect(next.texts.at(-1)).toBe(
+      'result scripts.run: {"ok":true,"value":{"result":42,"printed":"doubling\\n"}}',
+    );
+    // The model reads its call as it sent it, without the code read for it.
+    expect(next.texts.at(-2)).toBe(
+      'tool scripts.run: {"file":"doubler/double.py","inputs":{"n":21}}',
+    );
+    const recorded = {
+      file: "doubler/double.py",
+      code: 'print("doubling")\nn * 2',
+      inputs: { n: 21 },
+    };
+    const [script] = await t.calls();
+    expect(script).toMatchObject({ toolId: "scripts.run", state: "completed", input: recorded });
+    // A later edit of the skill leaves what ran as it was.
+    expect((await t.learn("n * 3", true)).ok).toBe(true);
+    const [after] = await t.calls();
+    expect(after!.input).toEqual(recorded);
+    // A summary of the thread reads the call as the model sent it.
+    const text = conversationText(transcriptOf(await t.events()).rows);
+    expect(text).toContain('{"file":"doubler/double.py","inputs":{"n":21}}');
+    expect(text).not.toContain("n * 2");
+  });
+
+  it("runs the code it read when asked for once approved, though the skill changed meanwhile", async () => {
+    const t = await learnedThread();
+    await signOff(t, ["scripts.run"]);
+    await t.post(t.ada, "Double 21");
+    await t.asks("scripts.run", { file: "doubler/double.py", inputs: { n: 21 } });
+    await t.worker.idle();
+    const [script] = await t.calls();
+    expect(script).toMatchObject({ state: "waiting" });
+    expect((await t.learn("n * 3", true)).ok).toBe(true);
+    expect((await t.decide(script!.id, true)).status).toBe(200);
+    const next = await t.replies();
+    await t.worker.idle();
+    expect(next.texts.at(-1)).toContain('"result":42');
+  });
+
+  it("in the background runs the code it read when started once approved, though the skill changed meanwhile", async () => {
+    const t = await learnedThread();
+    await signOff(t, ["scripts.run"]);
+    await t.post(t.ada, "Double 21 in the background");
+    await t.asks("jobs.start", {
+      tool: "scripts__run",
+      input: { file: "doubler/double.py", inputs: { n: 21 } },
+    });
+    await t.replies("Started.");
+    await t.worker.idle();
+    const job = (await t.calls()).find((row) => row.toolId === "scripts.run");
+    expect(job).toMatchObject({ state: "waiting" });
+    expect((await t.learn("n * 3", true)).ok).toBe(true);
+    expect((await t.decide(job!.id, true)).status).toBe(200);
+    const told = await t.replies("Done.");
+    await t.worker.idle();
+    expect(told.texts.at(-1)).toContain('"result":42');
+  });
+
+  it("refuses an empty script by its file", async () => {
+    const t = await learnedThread();
+    expect((await t.learn("\n", true)).ok).toBe(true);
+    await t.post(t.ada, "Double");
+    await t.asks("scripts.run", { file: "doubler/double.py" });
+    const next = await t.replies();
+    await t.worker.idle();
+    expect(next.texts.at(-1)).toContain("doubler/double.py is empty.");
+  });
+
+  it("runs one in the background by its file, recording its code", async () => {
+    const t = await learnedThread();
+    await t.post(t.ada, "Halve 8 in the background");
+    await t.asks("jobs.start", {
+      tool: "scripts__run",
+      input: { file: "doubler/lib/half.py", inputs: { n: 8 } },
+    });
+    await t.replies("Started.");
+    const told = await t.replies("Done.");
+    await t.worker.idle();
+    expect(told.texts.at(-1)).toContain('"result":4');
+    const job = (await t.calls()).find((row) => row.toolId === "scripts.run");
+    expect(job!.input).toEqual({ file: "doubler/lib/half.py", code: "n / 2", inputs: { n: 8 } });
+  });
+
+  it("refuses what is not a learned skill's .py file, naming those that run", async () => {
+    const t = await learnedThread();
+    const these = "Those here: doubler/double.py, doubler/lib/half.py.";
+    await t.post(t.ada, "Run the notes");
+    await t.asks("scripts.run", { file: "doubler/notes.md" });
+    const notes = await t.replies();
+    await t.worker.idle();
+    expect(notes.texts.at(-1)).toContain(`Only learned skills' .py files run by file. ${these}`);
+    await t.post(t.ada, "Run the palette");
+    await t.asks("scripts.run", { file: "charts/palette.md" });
+    const builtin = await t.replies();
+    await t.worker.idle();
+    expect(builtin.texts.at(-1)).toContain(`Only learned skills' .py files run by file. ${these}`);
+    expect((await t.stored()).map((row) => row.status)).toEqual(["failed", "failed"]);
+  });
+
+  it("gives the files nearest a name no file has", async () => {
+    const t = await learnedThread();
+    await t.post(t.ada, "Double");
+    await t.asks("scripts.run", { file: "doubler/dobule.py" });
+    const next = await t.replies();
+    await t.worker.idle();
     expect(next.texts.at(-1)).toContain(
-      `${mcp} is not on yet. Call tools__search outside the script to turn it on, then run the script again.`,
+      "No skill file doubler/dobule.py is on here. Did you mean: doubler/double.py",
+    );
+  });
+
+  it("refuses the file of a learned skill switched off, and code given with a file", async () => {
+    const t = await learnedThread();
+    const skill = (await t.skills.effectiveIn(t.space)).find((one) => one.name === "doubler");
+    const off = await t.api("PUT", `/skills/${skill!.id}/enabled`, t.ada.cookie, {
+      enabled: false,
+    });
+    expect(off.status).toBe(200);
+    await t.post(t.ada, "Double");
+    await t.asks("scripts.run", { file: "doubler/double.py", inputs: { n: 1 } });
+    const next = await t.replies();
+    await t.worker.idle();
+    expect(next.texts.at(-1)).toContain("No skill file doubler/double.py is on here.");
+    await t.post(t.ada, "Both");
+    await t.asks("scripts.run", { file: "doubler/double.py", code: "1" });
+    const both = await t.replies();
+    await t.worker.idle();
+    expect(both.texts.at(-1)).toContain("Give the code or a file, not both.");
+  });
+
+  it("is named, with how to run it, when its skill loads", async () => {
+    const t = await learnedThread();
+    await t.post(t.ada, "Load it");
+    await t.asks("skills.load", { name: "doubler" });
+    const next = await t.replies();
+    await t.worker.idle();
+    expect(next.texts.at(-1)).toContain(
+      'Run each with scripts__run by file, its values in inputs: file=\\"doubler/double.py\\", file=\\"doubler/lib/half.py\\".',
     );
   });
 });
 
 describe("the scripts guidance", () => {
+  it("tells the agent every tool is callable by name, and a learned skill's script runs by file", async () => {
+    const t = await agentThread();
+    await t.start();
+    await t.post(t.ada, "Hi");
+    const call = await t.model.next();
+    const { instructions } = call.request;
+    call.reply("Hi.");
+    await t.worker.idle();
+    expect(instructions).toContain(
+      "- Every tool here, MCP tools among them, is callable from a script by name, without searching for it or turning it on first; search only to find a tool you don't know.",
+    );
+    expect(instructions).toContain(
+      '- A learned skill\'s script runs by its file, `file="<skill>/<path>"` in place of `code`, with its values in `inputs`.',
+    );
+  });
+
   it("keeps the signatures within their size, counting every tool it cannot show", async () => {
     const many: AnyToolSpec[] = Array.from({ length: 150 }, (_, i) => ({
       name: `bulk.tool_${i}`,

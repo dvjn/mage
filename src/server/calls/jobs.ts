@@ -19,7 +19,7 @@ import type { NewEvent, Thread, ThreadStore } from "@/server/threads/types.ts";
 import type { Live } from "@/server/calls/live.ts";
 import { influenceOf } from "./influence.ts";
 import { approvedNow, CallPaused, judge, ranData } from "./lifecycle.ts";
-import { callableIn, ToolRefusal, toolNamed } from "./resolve.ts";
+import { callableIn, inputToRun, ToolRefusal, toolNamed } from "./resolve.ts";
 import { callRecords } from "./views.ts";
 import type {
   AnyToolSpec,
@@ -435,7 +435,7 @@ export function createJobs(options: JobsOptions) {
       if (!row) return stale("its request is gone.");
       let spec: AnyToolSpec;
       try {
-        spec = await specFor(thread, space, job.toolId);
+        ({ spec } = await specFor(thread, space, job.toolId));
       } catch (err) {
         if (err instanceof ToolRefusal) return stale(err.message);
         throw err;
@@ -507,6 +507,7 @@ export function createJobs(options: JobsOptions) {
   }
 
   // The tool the agent may call by this name, for a job.
+  // The tool by the name, with the space's tools as they stand.
   async function specFor(thread: Thread, space: Pick<Space, "id" | "orgId">, toolId: string) {
     const callable = await callableIn(options.tools, thread, space);
     const spec = toolNamed(callable, toolId);
@@ -518,7 +519,7 @@ export function createJobs(options: JobsOptions) {
         `${wireToolName(callable.names.toModel(spec.name))} cannot run in the background.`,
       );
     }
-    return spec;
+    return { spec, now: callable.now };
   }
 
   async function mine(id: string, threadId: string) {
@@ -608,6 +609,8 @@ export function createJobs(options: JobsOptions) {
       runId: string;
       toolId: string;
       input: unknown;
+      // The input as it runs, where it differs from what was asked for.
+      resolved?: unknown;
       risk: ToolRisk;
       // Waiting for a decision, ready for its turn to run, or running here now.
       status: "waiting" | "ready" | "running";
@@ -628,6 +631,7 @@ export function createJobs(options: JobsOptions) {
         messageId: "",
         toolId: job.toolId,
         input: job.input,
+        ...(job.resolved !== undefined && { resolved: job.resolved }),
         risk: job.risk,
         waits: job.status === "waiting",
         background: true,
@@ -721,7 +725,7 @@ export function createJobs(options: JobsOptions) {
       return Promise.resolve(
         refusing(async () => {
           const { thread, space } = await contextOf(ctx.threadId);
-          const spec = await specFor(thread, space, input.tool);
+          const { spec, now } = await specFor(thread, space, input.tool);
           // A script started from a script would make calls past its maker's cap, with no end.
           if (spec.makesCalls && (await store.underOf(ctx.threadId, ctx.callId, spec.name))) {
             throw new ToolRefusal("A script cannot start another, in the background or not.");
@@ -730,16 +734,19 @@ export function createJobs(options: JobsOptions) {
           if (!parsed.success) {
             throw new ToolRefusal(`The input is not valid: ${z.prettifyError(parsed.error)}`);
           }
+          const resolved = inputToRun(spec, parsed.data, now);
+          if ("error" in resolved) throw new ToolRefusal(resolved.error);
+          const { input: given } = resolved;
           const tools = options.tools;
           const judged = await judgeNow({
             thread,
             space,
             spec,
-            input: parsed.data,
+            input: given,
             model: ctx.model,
             branchId: thread.currentBranchId,
           });
-          const risk = await tools.riskOf(space, spec, parsed.data, ctx.model);
+          const risk = await tools.riskOf(space, spec, given, ctx.model);
           const names = (await tools.namesNow(space))(spec.name);
           const id = ulid();
           const job = await ctx.write(async (append) =>
@@ -752,6 +759,7 @@ export function createJobs(options: JobsOptions) {
               parentId: ctx.callId,
               toolId: spec.name,
               input: parsed.data,
+              ...(given !== parsed.data && { resolved: given }),
               risk,
               // One allowed waits its turn behind those already waiting for one, or past the
               // thread's limit.
@@ -765,7 +773,7 @@ export function createJobs(options: JobsOptions) {
             }),
           );
           if (judged.kind === "run" && job.status === "running") {
-            await launch(job, spec, parsed.data, judged.runAs, judged.extra);
+            await launch(job, spec, given, judged.runAs, judged.extra);
           }
           return {
             id,

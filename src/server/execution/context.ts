@@ -372,7 +372,7 @@ export function contextOf(
           toolCalls: settled.map(({ call }) => ({
             callId: call.id,
             toolId: call.toolId,
-            input: call.input,
+            input: call.asked ?? call.input,
           })),
         }),
       });

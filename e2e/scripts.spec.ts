@@ -70,6 +70,34 @@ test("a script shows its code and output first, and its calls grouped by tool be
   await expect(transcript(page).getByRole("region", { name: "Output" })).toHaveCount(2);
 });
 
+test("a learned skill's script runs by its file, showing the file's name over its code", async ({
+  page,
+}) => {
+  await signUp(page);
+  const save = `^tool space.save_skill ${JSON.stringify({
+    name: "doubler",
+    description: "Double a number",
+    instructions: "Run double.py.",
+    files: [{ path: "double.py", text: "n * 2" }],
+  })}`;
+  await write(page, `/reflect\n${save}`);
+  await expect(page).toHaveURL(/\/t\/[^/]+$/);
+  const card = page.getByRole("region", { name: "Approvals" }).getByTestId("tray-card");
+  await card.getByRole("button", { name: "Allow", exact: true }).click();
+  await expect(card).toHaveCount(0);
+
+  const run = { file: "doubler/double.py", inputs: { n: 21 } };
+  await write(page, `^tool scripts.run ${JSON.stringify(run)}`);
+  const script = transcript(page).getByRole("button", { name: /^Scripts › Run script · Ran/ });
+  await script.click();
+  const input = transcript(page).getByRole("region", { name: "Input" }).first();
+  await expect(input).toContainText("doubler/double.py");
+  await expect(input.locator("pre")).toContainText("n * 2");
+  await expect(transcript(page).getByRole("region", { name: "Output" }).first()).toContainText(
+    "42",
+  );
+});
+
 test("a script pauses at a call that needs approval, and goes on once it is allowed from the card", async ({
   page,
 }) => {

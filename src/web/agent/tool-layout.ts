@@ -100,6 +100,17 @@ export function entriesOf(value: Record<string, unknown>, schema?: JsonSchema): 
   }));
 }
 
+// A call's input as labelled fields; code read from a file is labelled by the file's name.
+export function inputEntriesOf(value: Record<string, unknown>, schema?: JsonSchema): Entry[] {
+  const entries = entriesOf(value, schema);
+  const { file } = value;
+  const code = entries.find((entry) => languageOf(entry.schema));
+  if (typeof file !== "string" || !code) return entries;
+  return entries.flatMap((entry) =>
+    entry.key === "file" ? [] : entry === code ? [{ ...entry, label: file }] : [entry],
+  );
+}
+
 // The language of text the schema says is source code, by its media type, as text/x-python.
 function languageOf(schema: JsonSchema | undefined) {
   const type = concrete(schema)?.contentMediaType;

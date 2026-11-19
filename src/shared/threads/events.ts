@@ -377,6 +377,9 @@ export const eventDataSchemas = {
     messageId: z.string(),
     toolId: z.string(),
     input: z.unknown(),
+    // The input as the call runs, where it differs from what was asked for, as a script's code
+    // read from its file; the model reads only what it asked for.
+    resolved: z.unknown().optional(),
     risk: toolRiskSchema,
     waits: z.boolean(),
     // What the tool and its toolset were called when it was asked for, for a tool that was there.

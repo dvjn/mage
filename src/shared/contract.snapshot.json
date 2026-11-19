@@ -9577,6 +9577,7 @@
                   "type": "string"
                 },
                 "input": {},
+                "resolved": {},
                 "risk": {
                   "$ref": "threads/events.ts#toolRiskSchema"
                 },

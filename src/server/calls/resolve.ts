@@ -2,6 +2,8 @@
 // script's. The name may be the tool's id, its model name or that name as providers spell it.
 // What decides it is read once for every name resolved together.
 
+import * as z from "zod";
+
 import type { Space } from "@/server/spaces/service.ts";
 import type { Thread } from "@/server/threads/types.ts";
 import {
@@ -36,20 +38,25 @@ export interface Callable {
   notOn: ReadonlySet<string>;
 }
 
-// Names are those the model was shown when given, so a name it saw reaches the tool it saw.
+// Names are those the model was shown when given, so a name it saw reaches the tool it saw. With
+// `anyServerTool`, as for a script, every MCP server's tool on in the space may be called, turned
+// on in the thread or not.
 export async function callableIn(
   tools: Pick<Tools, "toolsIn" | "offered" | "modelNames" | "fromServers" | "turnedOn">,
   thread: Thread,
   space: Pick<Space, "id" | "orgId">,
   shown?: ModelNames,
+  anyServerTool = false,
 ): Promise<Callable> {
   const now = await tools.toolsIn(space);
   const names = shown ?? (await tools.modelNames(space, now));
+  const offered = await tools.offered(space, thread, now);
+  if (anyServerTool) return { now, offered, names, notOn: new Set() };
   const on = new Set((await tools.turnedOn(thread.id)).map((tool) => tool.id));
   const servers = await tools.fromServers(space, names, now);
   return {
     now,
-    offered: await tools.offered(space, thread, now),
+    offered,
     names,
     notOn: new Set(servers.filter((tool) => !on.has(tool.id)).map((tool) => tool.id)),
   };
@@ -72,4 +79,20 @@ export function toolNamed(callable: Callable, name: string): AnyToolSpec {
     throw new ToolRefusal(notOnYet(spec.name, names.toModel), "notOn", spec.name);
   }
   return spec;
+}
+
+// The input a call is recorded with and runs: as given, or what it names where its tool resolves
+// it, which must fit the tool still; else why it cannot run.
+export function inputToRun(
+  spec: AnyToolSpec,
+  input: unknown,
+  now: SpaceTools,
+): { input: unknown } | { error: string } {
+  if (!spec.resolveInput) return { input };
+  const resolved = spec.resolveInput(input, now);
+  if ("error" in resolved) return resolved;
+  const parsed = spec.input.safeParse(resolved.input);
+  return parsed.success
+    ? { input: parsed.data }
+    : { error: `The input is not valid: ${z.prettifyError(parsed.error)}` };
 }

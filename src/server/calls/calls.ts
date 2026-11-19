@@ -48,6 +48,7 @@ import type { ToolRow } from "@/shared/transcript.ts";
 
 import { callWork, createJobs } from "./jobs.ts";
 import { approvedNow, CallPaused, judge, ranData, spanEnded, toolSpan } from "./lifecycle.ts";
+import { inputToRun } from "./resolve.ts";
 import { createScripts } from "./scripts.ts";
 import type { CallStatus } from "./schema.ts";
 import type { CallRow, CallStore } from "./store.ts";
@@ -415,9 +416,14 @@ export function createCalls(options: CallsOptions) {
           const unsearched = live && left.find((tool) => tool.id === toolId);
           const spec = unsearched ? undefined : live;
           const parsed = spec && spec.input.safeParse(input);
-          const ok = !!spec && !!parsed?.success;
+          const resolved =
+            spec?.resolveInput && parsed?.success ? inputToRun(spec, parsed.data, now) : undefined;
+          const refused = resolved && "error" in resolved ? resolved.error : undefined;
+          const ok = !!spec && !!parsed?.success && !refused;
+          // What it runs where it differs from what was asked for, as it is recorded.
+          const resolvedInput = resolved && "input" in resolved ? resolved.input : undefined;
           const risk: ToolRisk = ok
-            ? await tools.riskOf(space, spec, parsed.data, hold.ref, now)
+            ? await tools.riskOf(space, spec, resolvedInput ?? parsed.data, hold.ref, now)
             : "normal";
           // A call that asks always waits for its answer.
           const answers = ok && spec.waitsFor === "answer";
@@ -431,7 +437,7 @@ export function createCalls(options: CallsOptions) {
                   thread,
                   space,
                   spec,
-                  input: parsed.data,
+                  input: resolvedInput ?? parsed.data,
                   model: hold.ref,
                   now,
                   people: authority.people,
@@ -447,6 +453,7 @@ export function createCalls(options: CallsOptions) {
               messageId,
               toolId,
               input,
+              ...(resolvedInput !== undefined && { resolved: resolvedInput }),
               risk,
               waits,
               ...(names && { title: names.title }),
@@ -476,11 +483,13 @@ export function createCalls(options: CallsOptions) {
               ok: false,
               error: unsearched
                 ? notOnYet(unsearched.id, ctx.names.toModel)
-                : spec
-                  ? `The input is not valid: ${z.prettifyError(parsed!.error!)}`
-                  : offIn(now, toolId)
-                    ? `${wireToolName(ctx.names.toModel(toolId))} is off here.`
-                    : `No tool is named ${wireToolName(ctx.names.toModel(toolId))} here.`,
+                : refused
+                  ? refused
+                  : spec
+                    ? `The input is not valid: ${z.prettifyError(parsed!.error!)}`
+                    : offIn(now, toolId)
+                      ? `${wireToolName(ctx.names.toModel(toolId))} is off here.`
+                      : `No tool is named ${wireToolName(ctx.names.toModel(toolId))} here.`,
               ms: 0,
             },
           });

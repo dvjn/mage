@@ -25,7 +25,7 @@ Look back over this thread and keep what a later thread in this space would need
 
 1. See which skills this space has: the skill list in your instructions.
 2. Keep a skill only for a procedure of several steps that worked here and a later thread would repeat: how a recurring task is done, in order, with the tools it uses. Leave out one-off work and what a memory entry already covers.
-3. When the procedure needs exact computation or chains tool calls, add a Python script as a file, like run.py, that calls tools as {{tool:scripts.run}} scripts do, and say in the instructions to read it with {{tool:skills.read_file}} and run it with {{tool:scripts.run}}.
+3. When the procedure needs exact computation or chains tool calls, add a Python script as a file, like run.py, that calls tools as {{tool:scripts.run}} scripts do, and say in the instructions to run it by its file with {{tool:scripts.run}}. Have it take its values from named inputs, so it runs by file without editing.
 4. Save each with {{tool:memory.save_skill}}: a short name in lower case with dashes, a one-line description of when to use it, and the steps. To improve a skill this space learned, save it again under its name with update set.
 
 {{/space-skills}}

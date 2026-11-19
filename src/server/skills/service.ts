@@ -55,6 +55,7 @@ import {
   isBuiltinId,
   namingTools,
 } from "./builtin.ts";
+import { RUN_SCRIPT, scriptFilesOf } from "./scripts.ts";
 import { discoverSkills, type FoundSkill, readSkillFile } from "./discovery.ts";
 import { GitError, type GitReader, type GitSnapshot } from "./git.ts";
 import { ArchiveError, type ArchiveReader } from "./zip.ts";
@@ -1110,6 +1111,7 @@ export function createSkills(options: SkillsOptions) {
           const space = { id: ctx.spaceId, orgId: ctx.orgId };
           const skill = await named(space, name);
           if (!skill) return Promise.resolve(await missing(space, name));
+          const scripts = scriptFilesOf(skill);
           return Promise.resolve({
             ok: true,
             value: {
@@ -1117,6 +1119,9 @@ export function createSkills(options: SkillsOptions) {
               description: skill.description,
               instructions: await instructionsOf(space, skill, ctx.named),
               files: skill.files.map((file) => file.path),
+              ...(scripts.length > 0 && {
+                scripts: `Run each with ${ctx.named(RUN_SCRIPT)} by file, its values in inputs: ${scripts.map((ref) => `file="${ref}"`).join(", ")}.`,
+              }),
             },
           });
         },

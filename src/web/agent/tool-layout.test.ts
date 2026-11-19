@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { countOf, entriesOf, layoutOf, outputLayoutOf } from "@/web/agent/tool-layout.ts";
+import {
+  countOf,
+  entriesOf,
+  inputEntriesOf,
+  layoutOf,
+  outputLayoutOf,
+} from "@/web/agent/tool-layout.ts";
 
 describe("laying out a tool's value", () => {
   it("shows plain values as they are, and a list of them as chips", () => {
@@ -37,6 +43,23 @@ describe("laying out a tool's value", () => {
       { key: "effort", label: "Effort", value: null },
       { key: "extra", label: "extra", value: 1 },
     ]);
+  });
+
+  it("labels code read from a file by the file's name, in place of the file's own field", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        code: { type: "string", title: "Code", contentMediaType: "text/x-python" },
+        file: { type: "string", title: "File" },
+        inputs: { type: "object", title: "Inputs" },
+      },
+    };
+    const value = { file: "doubler/double.py", code: "n * 2", inputs: { n: 2 } };
+    expect(inputEntriesOf(value, schema).map(({ key, label }) => [key, label])).toEqual([
+      ["code", "doubler/double.py"],
+      ["inputs", "Inputs"],
+    ]);
+    expect(inputEntriesOf({ code: "1" }, schema).map(({ label }) => label)).toEqual(["Code"]);
   });
 
   it("shows a list of objects as a table over the union of their keys", () => {

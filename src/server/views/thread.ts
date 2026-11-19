@@ -469,7 +469,14 @@ export function createThreadViews(options: ThreadViewsOptions) {
         !!space &&
         (await tools.movable(row, space, await reader.states.toolsOf(space)));
       const state = row.state === "waiting" ? (await reader.waitingCalls()).get(row.id) : null;
-      const { background: _flag, waits: _waits, moved: _moved, within, ...plain } = row;
+      const {
+        background: _flag,
+        waits: _waits,
+        moved: _moved,
+        asked: _asked,
+        within,
+        ...plain
+      } = row;
       const parent = within ? callerOf(fold, transcript, within) : null;
       const call = {
         ...plain,

@@ -62,14 +62,14 @@ export async function callRecords(
     if (requested?.type !== "tool.requested") continue;
     const decided = row.decidedSeq === null ? undefined : events.get(row.decidedSeq);
     const answers = decided?.type === "tool.answered" ? decided.data.answers : undefined;
-    const { input, waits, title, toolset, within } = requested.data;
+    const { input, resolved, waits, title, toolset, within } = requested.data;
     records.set(row.id, {
       id: row.id,
       seq: row.seq,
       runId: row.runId,
       requestedAt: requested.createdAt.toISOString(),
       toolId: row.toolId,
-      input,
+      input: resolved ?? input,
       risk: row.risk as ToolRisk,
       state: stateOf(row),
       waits: !!waits,

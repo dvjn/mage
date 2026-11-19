@@ -73,7 +73,9 @@ function rowTokens(row: TranscriptRow) {
     case "agent":
       return readReply(row) ? tokensOf(row.text) : 0;
     case "tool":
-      return row.within ? 0 : tokensOf(json(row.input)) + tokensOf(resultOf(row) ?? "");
+      return row.within
+        ? 0
+        : tokensOf(json(row.asked ?? row.input)) + tokensOf(resultOf(row) ?? "");
     case "notice":
       return tokensOf(row.text);
     default:
@@ -192,7 +194,7 @@ export function conversationText(
     } else if (row.kind === "agent") {
       if (readReply(row) && row.text) lines.push(`[Agent]: ${row.text}`);
     } else if (row.kind === "tool" && !row.within) {
-      lines.push(`[Agent called tool]: ${named(row.toolId)} ${json(row.input)}`);
+      lines.push(`[Agent called tool]: ${named(row.toolId)} ${json(row.asked ?? row.input)}`);
       const result = resultOf(row);
       if (result !== null) {
         const cut = result.length > RESULT_CHARS;

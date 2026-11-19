@@ -13,7 +13,7 @@ import {
   type Column,
   countOf,
   type Entry,
-  entriesOf,
+  inputEntriesOf,
   isObject,
   layoutOf,
   type OutputLayout,
@@ -397,7 +397,7 @@ export function ToolInput({ value, schema }: { value: unknown; schema?: JsonSche
       </Block>
     );
   }
-  const entries = entriesOf(value, schema);
+  const entries = inputEntriesOf(value, schema);
   return (
     <Block title="Input" value={value}>
       {entries.length === 0 ? (

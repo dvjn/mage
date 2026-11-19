@@ -133,7 +133,9 @@ export interface ToolRow {
   // What the tool and its toolset were called when the call was asked for, where recorded.
   title?: string;
   toolset?: string;
+  // The input as the call runs, and what the model asked for where that differs.
   input: unknown;
+  asked?: unknown;
   risk: ToolRisk;
   // It needed a person's approval when asked for.
   waits: boolean;
@@ -667,7 +669,7 @@ export function createFold(from?: FoldState): TranscriptFold {
       }
       case "tool.requested": {
         const { runId, callId, messageId, toolId, input, risk, waits, title, toolset } = event.data;
-        const { background, within } = event.data;
+        const { background, within, resolved } = event.data;
         const call: ToolRow = {
           kind: "tool",
           id: callId,
@@ -679,7 +681,8 @@ export function createFold(from?: FoldState): TranscriptFold {
           ...(toolset && { toolset }),
           ...(background && { background }),
           ...(within && { within }),
-          input,
+          input: resolved ?? input,
+          ...(resolved !== undefined && { asked: input }),
           risk,
           waits,
           requestedAt: event.createdAt,
