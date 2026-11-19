@@ -153,7 +153,7 @@ test("the built-in skills are listed as a source with only switches", async ({ p
   await signUp(page);
   await page.goto("/org/skills");
   const source = page.getByRole("region", { name: "Built in" });
-  await expect(source).toContainText("3 of 3 on");
+  await expect(source).toContainText("4 of 4 on");
   await expect(source.getByRole("switch", { name: "Built in: on" })).toBeVisible();
   await source
     .getByRole("button", { name: /Built in/ })
@@ -161,5 +161,5 @@ test("the built-in skills are listed as a source with only switches", async ({ p
     .click();
   await expect(page.getByRole("button", { name: "More for Built in" })).toHaveCount(0);
   await source.getByRole("switch", { name: "charts: on" }).click();
-  await expect(source).toContainText("2 of 3 on");
+  await expect(source).toContainText("3 of 4 on");
 });

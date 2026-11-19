@@ -809,5 +809,6 @@
   "usage": {
     "inputTokens": 120,
     "outputTokens": 30
-  }
+  },
+  "view": null
 }

@@ -10,7 +10,13 @@ import { promptHint } from "@/server/mcp/prompts.ts";
 import type { Principal } from "@/server/orgs/identity.ts";
 import type { Skill, Skills } from "@/server/skills/service.ts";
 import type { Space, SpaceStore, Spaces } from "@/server/spaces/service.ts";
-import { BTW, COMPACT, type CommandInput, type ThreadCommand } from "@/shared/threads/commands.ts";
+import {
+  BTW,
+  COMPACT,
+  type CommandInput,
+  RELOAD,
+  type ThreadCommand,
+} from "@/shared/threads/commands.ts";
 
 export interface CommandsOptions {
   skills: Pick<Skills, "effectiveIn" | "instructionsOf">;
@@ -27,6 +33,14 @@ const COMPACT_COMMAND: ThreadCommand = {
   name: COMPACT,
   description: "Summarise earlier messages for the agent",
   argumentHint: "[focus]",
+  kind: "builtin",
+  tag: null,
+};
+
+const RELOAD_COMMAND: ThreadCommand = {
+  name: RELOAD,
+  description: "Reload tools and instructions",
+  argumentHint: null,
   kind: "builtin",
   tag: null,
 };
@@ -107,7 +121,7 @@ export function createCommands(options: CommandsOptions) {
   // The commands of the space's skills and servers, apart from Mage's own.
   async function others(space: Pick<Space, "id" | "orgId">, userId: string) {
     return (await list(space, userId)).filter(
-      (command) => command.name !== COMPACT && command.name !== BTW,
+      (command) => command.name !== COMPACT && command.name !== RELOAD && command.name !== BTW,
     );
   }
 
@@ -121,6 +135,7 @@ export function createCommands(options: CommandsOptions) {
       if (!space || !read.can("post")) return [];
       return [
         COMPACT_COMMAND,
+        RELOAD_COMMAND,
         ...(options.asides ? [BTW_COMMAND] : []),
         ...(await others(space, principal.userId)),
       ];

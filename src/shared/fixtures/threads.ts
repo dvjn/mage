@@ -70,6 +70,7 @@ function conversation() {
   const hello = l.add("message", { parts: text("Hello"), quiet: false }, ADA);
   l.add("run.created", { runId: "r1", reason: null, continuesRunId: null }, ADA);
   l.add("message.admitted", { runId: "r1", messageIds: [hello] });
+  l.add("agent.viewed", { view: "a1b2c3", reason: "start", space: "s1", from: 3 });
   l.add("message.started", {
     messageId: "m1",
     runId: "r1",

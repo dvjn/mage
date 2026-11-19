@@ -1073,8 +1073,9 @@ describe("MCP tools in a thread", () => {
     },
   );
 
-  it("are not offered when off, and a removed server's tools go with it", async () => {
-    const { ada, post, model, worker, start, id, named, api, server, db } = await mcpThread();
+  it("are not offered when off, and a removed server's tools go with it once the thread reloads", async () => {
+    const { ada, post, reload, model, worker, start, id, named, api, server, db } =
+      await mcpThread();
     await api("PATCH", "/org/tools", ada.cookie, { toolIds: [id("echo")], policy: TOOL_OFF });
     await start();
 
@@ -1092,6 +1093,7 @@ describe("MCP tools in a thread", () => {
         .from(schema.mcpCredential)
         .where(eq(schema.mcpCredential.serverId, server.id)),
     ).toEqual([]);
+    await reload(ada);
     await post(ada, "Again");
     const second = await model.next();
     second.reply("Hi.");
@@ -1152,7 +1154,7 @@ describe("an MCP server's instructions", () => {
   });
 
   it("reach the prompt after the space's, only for servers with a tool on in the space", async () => {
-    const { ada, api, thread, post, model, worker, start, mcpNetwork } = await mcpThread();
+    const { ada, api, thread, post, reload, model, worker, start, mcpNetwork } = await mcpThread();
     mcpNetwork.handle = mcpStandIn({ origin: MCP_ORIGIN, instructions: "Search before writing." });
     const other = (await (
       await api("POST", "/org/mcp-servers", ada.cookie, {
@@ -1182,6 +1184,7 @@ describe("an MCP server's instructions", () => {
       toolIds: ["echo", "add_note", "delete_note"].map((tool) => `mcp:${other.id}/${tool}`),
       policy: TOOL_OFF,
     });
+    await reload(ada);
     await post(ada, "Again");
     const second = await model.next();
     second.reply("Hi.");
@@ -1946,7 +1949,8 @@ describe("MCP resources", () => {
   });
 
   it("are offered only while a server that declares them has a tool on", async () => {
-    const { ada, api, post, model, worker, start, id, mcpNetwork, server } = await mcpThread();
+    const { ada, api, post, reload, model, worker, start, id, mcpNetwork, server } =
+      await mcpThread();
     await start();
     const off = await api("PATCH", "/org/tools", ada.cookie, {
       toolIds: [id("echo"), id("add_note"), id("delete_note")],
@@ -1962,6 +1966,7 @@ describe("MCP resources", () => {
     await api("PATCH", "/org/tools", ada.cookie, { toolIds: [id("echo")], policy: null });
     mcpNetwork.handle = mcpStandIn({ origin: MCP_ORIGIN, resources: false });
     expect((await api("POST", `/mcp-servers/${server.id}/refresh`, ada.cookie)).status).toBe(200);
+    await reload(ada);
     await post(ada, "Again");
     const undeclared = await model.next();
     undeclared.reply("Hi.");
@@ -2179,7 +2184,7 @@ describe("searching for MCP tools", () => {
   });
 
   it("cannot be turned off or put under a policy, and is offered and listed only with MCP servers", async () => {
-    const { ada, api, space, post, model, worker, start, server } = await mcpThread();
+    const { ada, api, space, post, reload, model, worker, start, server } = await mcpThread();
     expect(
       (await api("PUT", "/org/toolsets/mcp_servers", ada.cookie, { enabled: false })).status,
     ).toBe(404);
@@ -2216,6 +2221,7 @@ describe("searching for MCP tools", () => {
     expect(on.tools).toContain("tools.search");
 
     await api("DELETE", `/mcp-servers/${server.id}`, ada.cookie);
+    await reload(ada);
     await post(ada, "Again");
     const none = await model.next();
     none.reply("Hi.");

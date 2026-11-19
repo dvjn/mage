@@ -677,5 +677,6 @@
   "usage": {
     "inputTokens": 240,
     "outputTokens": 60
-  }
+  },
+  "view": null
 }

@@ -36,5 +36,6 @@
   "usage": {
     "inputTokens": 0,
     "outputTokens": 0
-  }
+  },
+  "view": null
 }

@@ -12,6 +12,10 @@ export const commandKindSchema = z.enum(["builtin", "skill", "prompt"]);
 // Mage's own command that compacts the thread, with what the summary should keep after it.
 export const COMPACT = "compact";
 
+// Mage's own command that has the agent read its space's tools and instructions again from the
+// next model call on.
+export const RELOAD = "reload";
+
 // Mage's own command that asks a side question about the thread's last message, which is never
 // posted in it.
 export const BTW = "btw";

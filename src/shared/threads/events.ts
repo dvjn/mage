@@ -155,6 +155,8 @@ export const noticeKindSchema = z.enum([
   "webhook.received",
   "change",
   "memory",
+  // The agent reads its space's tools and instructions again.
+  "reload",
 ]);
 
 export type NoticeKind = z.infer<typeof noticeKindSchema>;
@@ -329,6 +331,15 @@ export const eventDataSchemas = {
     tokensAfter: z.number().int().nonnegative().optional(),
     usage: usageSchema.optional(),
   }),
+  // The agent reads, from the next model call on, the tools and instructions stored as `view`,
+  // taken of `space` from the thread as it stood at seq `from`.
+  "agent.viewed": z.object({
+    view: z.string(),
+    // "cold" is no longer taken; stored events still carry it.
+    reason: z.enum(["start", "reload", "compaction", "cold", "move"]),
+    space: z.string(),
+    from: z.number().int().nonnegative(),
+  }),
   // `error` is what the provider or system said, empty when it said nothing; `kind` is why, when
   // known; `connection` is the kind of connection the model is reached through, `detail` more from
   // the provider and `resetsAt` when a limit resets.
@@ -459,6 +470,7 @@ export const threadEventSchema = z.discriminatedUnion("type", [
   eventSchema("thread.forked"),
   eventSchema("thread.renamed"),
   eventSchema("thread.compacted"),
+  eventSchema("agent.viewed"),
   eventSchema("tool.requested"),
   eventSchema("tool.approved"),
   eventSchema("tool.answered"),

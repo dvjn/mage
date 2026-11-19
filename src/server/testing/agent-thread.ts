@@ -36,6 +36,15 @@ export async function agentThread(
     expect(res.status).toBe(202);
     return (await res.json()) as { id: string };
   }
+  // Has the agent read the space's tools and instructions again from its next model call on.
+  async function reload(who: { cookie: string }) {
+    const res = await workspace.api("POST", `/threads/${thread.id}/messages`, who.cookie, {
+      text: "/reload",
+      mode: "steer",
+      command: { name: "reload", args: "" },
+    });
+    expect(res.status).toBe(202);
+  }
   async function events() {
     return (await workspace.threadStore.eventsAfter(thread.id, 0)).map(eventSummary);
   }
@@ -85,6 +94,7 @@ export async function agentThread(
     space,
     thread,
     post,
+    reload,
     events,
     types,
     transcript,

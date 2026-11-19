@@ -127,6 +127,8 @@ export interface ToolContext {
   threadRequest?: () => Promise<ThreadRequest>;
   // The name the model calls a tool by, from its id, for text the tool gives it.
   named: (toolId: string) => string;
+  // The names the run's model was shown tools by, both ways, for a tool that calls others by name.
+  names?: ModelNames;
   // Aborted once the run is to stop, for a tool that waits.
   signal?: AbortSignal;
   // Where a tool that takes long says what it prints and how far it has come, for the people
@@ -283,6 +285,14 @@ function namespaceOf(tools: readonly AnyToolSpec[]) {
   );
   const [only] = spaces;
   return spaces.size === 1 && only ? only : undefined;
+}
+
+// Whether the space has the tool but turned it, or its toolset, off.
+export function offIn(now: Pick<SpaceTools, "every" | "sets" | "rules">, toolId: string) {
+  if (!now.every.some((spec) => spec.name === toolId)) return false;
+  return (
+    now.rules(toolId).off || !now.sets.some((set) => set.tools.some((spec) => spec.name === toolId))
+  );
 }
 
 // Whether the tool of the toolset is always on where it is of use.

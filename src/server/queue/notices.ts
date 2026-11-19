@@ -49,6 +49,20 @@ export function silentChange(
   };
 }
 
+// That the agent reads its space's tools and instructions again, as asked by the person.
+export function reloadNotice(threadId: string, by?: { userId: string; name: string }): Notice {
+  return {
+    kind: "reload",
+    source: { threadId, name: by?.name ?? "System", main: true },
+    ...(by && { actor: { kind: "person" as const, ...by } }),
+    text: by
+      ? `${by.name} reloaded the agent's tools and instructions`
+      : "The agent's tools and instructions were reloaded",
+    influence: [],
+    wake: false,
+  };
+}
+
 // Another agent's messages and reports come from the agent they name as their source.
 const FROM_SOURCE: NoticeKind[] = ["message", "agent.ended", "agent.failed", "agent.stopped"];
 

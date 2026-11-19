@@ -26,6 +26,7 @@ import { createRichReplies } from "@/server/execution/rich-replies.ts";
 import { createRunStore } from "@/server/execution/store.ts";
 import { createExecution, type Execution } from "@/server/execution/execution.ts";
 import type { RunWorkerOptions } from "@/server/execution/worker.ts";
+import { createAgentViews } from "@/server/execution/agent-view.ts";
 import { createSystemTools } from "@/server/execution/system-tools.ts";
 import { createToolPolicies } from "@/server/tools/policies.ts";
 import { createToolPolicyStore } from "@/server/tools/policy-store.ts";
@@ -437,6 +438,7 @@ export function compose(deps: ComposeDeps) {
     transcripts,
     spaceStore,
     deltas: deltaStore,
+    views: createAgentViews(db),
     log,
     signals,
     transact,
@@ -628,8 +630,9 @@ export function compose(deps: ComposeDeps) {
   const reads = createReads({ store: readStore, signals });
   // The author has seen what they posted.
   posts.onPosted(async (post) => reads.posted(post));
-  // A thread opens with what its space's memory holds.
+  // A thread opens with what its space's memory holds, and is told it again once compacted.
   posts.opens(async (thread) => memory.opening(thread));
+  execution.contribute({ reopens: async (thread) => posts.openingsOf(thread) });
   const branches = createBranches({
     threads: threadStore,
     transcripts,

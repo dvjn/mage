@@ -19,7 +19,10 @@ const MAX = {
   rows: 12,
   threadList: 19,
   tray: 31,
-  run: 93,
+  // A thread's first run, which takes the tools and instructions the thread keeps.
+  firstRun: 102,
+  // A later run, which reads what the thread kept and no tool settings.
+  run: 72,
   // A thread with every kind of background work, as its owner and as a guest read it.
   busyTray: { owner: 85, guest: 98 },
   busyDetail: { owner: 108, guest: 133 },
@@ -32,9 +35,9 @@ const MAX = {
   // What each call a script makes adds to its run: its two writes, its tool's rules now, and
   // who may use it.
   scriptCall: 30,
-  // A run that makes one call, then pauses its script at one that needs approval; and the run
-  // that goes on once it is approved, to the reply.
-  scriptPause: 220,
+  // A thread's first run, which makes one call, then pauses its script at one that needs
+  // approval; and the run that goes on once it is approved, to the reply.
+  scriptPause: 227,
   // Going on reads the calls it waited on by their ids, however many it gathered.
   scriptResume: 207,
 };
@@ -77,13 +80,58 @@ describe.skipIf(!process.env.TEST_DATABASE_URL)("queries of the paths people wai
     expect(await counted(`/threads/${t.notes}/activity`)).toBeLessThanOrEqual(MAX.tray);
     // One message, one model step, no tools: what the run makes, not the post that woke it.
     await t.start();
-    const run = await queries(async () => {
+    const first = await queries(async () => {
       await t.post(t.ada, "Hello");
       (await t.model.next()).reply("Hello back.");
       await t.worker.idle();
     }, "run");
-    expect(run.count).toBeGreaterThan(0);
-    expect(run.count).toBeLessThanOrEqual(MAX.run);
+    expect(first.count).toBeGreaterThan(0);
+    expect(first.count).toBeLessThanOrEqual(MAX.firstRun);
+  });
+
+  it("of a later run read no tool settings, and as many however many tools are offered", async () => {
+    const tool = (n: number): ToolSpec<{ n: number }> => ({
+      name: `many.t${n}`,
+      title: `T${n}`,
+      description: "Says nothing.",
+      input: z.object({ n: z.number() }),
+      risk: () => "normal",
+      run: async () => Promise.resolve({ ok: true, value: null }),
+    });
+    const later = async (tools: number) => {
+      const t = await agentThread(
+        {},
+        {
+          traces: createRunTraces(),
+          toolsets: [
+            {
+              id: "many",
+              title: "Many",
+              source: "builtin",
+              tools: Array.from({ length: tools }, (_, n) => tool(n)),
+            },
+          ],
+        },
+      );
+      await t.start();
+      await t.post(t.ada, "Hello");
+      const hello = await t.model.next();
+      const offered = (hello.request.tools ?? []).filter((spec) => spec.id.startsWith("many."));
+      expect(offered).toHaveLength(tools);
+      hello.reply("Hello back.");
+      await t.worker.idle();
+      return queries(async () => {
+        await t.post(t.ada, "Again");
+        (await t.model.next()).reply("Again.");
+        await t.worker.idle();
+      }, "run");
+    };
+    const few = await later(5);
+    const many = await later(15);
+    expect(many.count).toBe(few.count);
+    expect(few.count).toBeLessThanOrEqual(MAX.run);
+    const settings = /\b(tool_setting|toolset_setting|tool_policy|mcp_server)\b/;
+    expect(few.texts.filter((text) => settings.test(text))).toEqual([]);
   });
 
   it("of a busy thread stay within their budgets, for its owner and a guest", async () => {

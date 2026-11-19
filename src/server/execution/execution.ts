@@ -13,6 +13,7 @@ import type { Calls } from "@/server/calls/calls.ts";
 import type { Hooks } from "@/server/kernel/hooks.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { ModelMessage } from "@/server/models/gateway.ts";
+import type { Notice } from "@/server/queue/notices.ts";
 import type { Queue, QueuedInput } from "@/server/queue/queue.ts";
 import type { Space, SpaceStore } from "@/server/spaces/service.ts";
 import type { Signals } from "@/server/sync/signals.ts";
@@ -55,6 +56,8 @@ export { LeaseLost, RunFailure } from "./worker.ts";
 export interface Contribution {
   // What the thread's agent reads ahead of the thread itself.
   before?(thread: Thread): Promise<ModelMessage[]>;
+  // What the thread is told again once compacted.
+  reopens?(thread: Thread): Promise<Notice[]>;
   // What the agent is told beyond Mage's own prompt, given what those before it said.
   guidance?(
     space: Space,
@@ -67,9 +70,20 @@ export interface Contribution {
 
 export interface ExecutionOptions extends Omit<
   RunWorkerOptions,
-  "instanceId" | "guidance" | "before" | "advance" | "ended" | "endKept" | "parentOf" | "stranded"
+  | "instanceId"
+  | "guidance"
+  | "before"
+  | "reopens"
+  | "advance"
+  | "ended"
+  | "endKept"
+  | "parentOf"
+  | "stranded"
 > {
-  queue: Pick<Queue, "waiting" | "admission" | "stranded" | "onEnqueued" | "messageWaits">;
+  queue: Pick<
+    Queue,
+    "waiting" | "admission" | "enqueue" | "stranded" | "onEnqueued" | "messageWaits"
+  >;
   calls: Pick<Calls, "request" | "next" | "run" | "closeFor" | "onSettled" | "waits">;
   threads: Pick<ThreadStore, "find" | "eventAt" | "children">;
   spaceStore: Pick<SpaceStore, "find">;
@@ -251,6 +265,11 @@ export function createExecution(options: ExecutionOptions) {
         const read: ModelMessage[] = [];
         for (const one of contributions) if (one.before) read.push(...(await one.before(thread)));
         return read;
+      },
+      reopens: async (thread) => {
+        const told: Notice[] = [];
+        for (const one of contributions) told.push(...((await one.reopens?.(thread)) ?? []));
+        return told;
       },
       guidance: async (space, offered, thread, toolsNow) => {
         let guidance: Guidance = { org: "", space: "" };

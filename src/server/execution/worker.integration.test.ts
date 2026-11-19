@@ -25,6 +25,7 @@ describe("agent runs", () => {
       "message",
       "run.created",
       "message.admitted",
+      "agent.viewed",
       "message.started",
       "message.completed",
       "run.completed",
@@ -420,7 +421,7 @@ describe("run leases", () => {
     call.reply("Too late.");
     await worker.idle();
 
-    expect(await types()).toEqual(["message", "run.created", "message.admitted"]);
+    expect(await types()).toEqual(["message", "run.created", "message.admitted", "agent.viewed"]);
     await expect(
       runStore.hold({
         runId: running!.id,

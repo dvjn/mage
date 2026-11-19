@@ -88,3 +88,11 @@ export const run = pgTable(
       .where(sql`${table.status} in ('queued', 'running', 'waiting')`),
   ],
 );
+
+// What a thread's agent reads besides the thread: its instructions and tools as they were when
+// taken, stored once under the hash of its JSON however many threads read it.
+export const agentView = pgTable("agent_view", {
+  hash: text("hash").primaryKey(),
+  body: text("body").notNull(),
+  createdAt: at("created_at").notNull().default(NOW),
+});

@@ -335,7 +335,7 @@ describe("what waits on whom", () => {
 });
 
 describe("a step's calls", () => {
-  it("run with the tools the step was offered, though one is turned off meanwhile", async () => {
+  it("run with the tools the step was offered, though one is turned off meanwhile, which the thread still offers until reloaded", async () => {
     const t = await callThread();
     await t.post(t.ada, "Go");
     const call = await t.model.next();
@@ -349,7 +349,7 @@ describe("a step's calls", () => {
     await until(() => t.tool.running("a"));
     t.tool.finish("a");
     const next = await t.model.next();
-    expect((next.request.tools ?? []).map((tool) => tool.id)).not.toContain("probe.wait");
+    expect((next.request.tools ?? []).map((tool) => tool.id)).toContain("probe.wait");
     next.reply("Done.");
     await t.worker.idle();
     expect((await t.rows()).map((row) => [row.id, row.status])).toEqual([["c1", "completed"]]);

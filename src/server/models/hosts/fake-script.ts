@@ -12,8 +12,8 @@
 //   that status, before any words.
 // - `^stall <ms>` waits that long before it starts.
 // - `^drop` cuts the reply off after its words, as a lost connection does.
-// - `^prompt` says its system prompt and what it was given ahead of the conversation, a line at a
-//   time, in place of its words.
+// - `^prompt` says its system prompt and what it was given ahead of the conversation, a paragraph
+//   at a time, in place of its words.
 // - `^say` replies with the rest of the message, a few characters at a time.
 // It imports no values from the server, so the mock runs it as it is.
 
@@ -164,7 +164,7 @@ export function scriptStep(request: ScriptRequest): ScriptStep {
       ...messages.filter(isLead).map((message) => `\n\n${(message as { text: string }).text}`),
     ]
       .join("")
-      .split(/(?<=\n)/);
+      .split(/(?<=\n\n)/);
   } else {
     const read = messages.filter((message) => message.role === "user" && !isLead(message));
     const latest = (read.at(-1) as { text: string } | undefined)?.text ?? "";

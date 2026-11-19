@@ -330,7 +330,7 @@ export function createScripts(options: ScriptsOptions) {
         recorded = turn.catch(() => {});
         return turn;
       };
-      const callable = await callableIn(tools, thread, space);
+      const callable = await callableIn(tools, thread, space, ctx.names);
       const titles = await tools.namesNow(space, callable.now);
       const branchId = thread.currentBranchId;
       const words = await steps.words(thread.id, branchId);

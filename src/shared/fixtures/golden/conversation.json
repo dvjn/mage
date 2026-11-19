@@ -18,11 +18,11 @@
     {
       "kind": "agent",
       "id": "m1",
-      "seq": 4,
+      "seq": 5,
       "runId": "r1",
       "model": "anthropic/claude-test",
       "effort": "high",
-      "startedAt": "2026-01-01T00:00:04.000Z",
+      "startedAt": "2026-01-01T00:00:05.000Z",
       "text": "Hello, Ada.",
       "reasoning": "They said hello.",
       "thoughtMs": 1200,
@@ -45,23 +45,8 @@
     },
     {
       "kind": "human",
-      "id": "e9",
-      "seq": 9,
-      "author": {
-        "kind": "user",
-        "userId": "grace",
-        "name": "Grace Hopper",
-        "former": false
-      },
-      "postedAt": "2026-01-01T00:00:09.000Z",
-      "text": "// an aside between people",
-      "quiet": true,
-      "turn": null
-    },
-    {
-      "kind": "human",
       "id": "e10",
-      "seq": 18,
+      "seq": 10,
       "author": {
         "kind": "user",
         "userId": "grace",
@@ -69,6 +54,21 @@
         "former": false
       },
       "postedAt": "2026-01-01T00:00:10.000Z",
+      "text": "// an aside between people",
+      "quiet": true,
+      "turn": null
+    },
+    {
+      "kind": "human",
+      "id": "e11",
+      "seq": 19,
+      "author": {
+        "kind": "user",
+        "userId": "grace",
+        "name": "Grace Hopper",
+        "former": false
+      },
+      "postedAt": "2026-01-01T00:00:11.000Z",
       "text": "May I ask something else?",
       "guest": true,
       "quiet": false,
@@ -77,10 +77,10 @@
     {
       "kind": "agent",
       "id": "m2",
-      "seq": 19,
+      "seq": 20,
       "runId": "r2",
       "model": null,
-      "startedAt": "2026-01-01T00:00:19.000Z",
+      "startedAt": "2026-01-01T00:00:20.000Z",
       "text": "Of course, what",
       "reasoning": "",
       "thoughtMs": null,
@@ -94,23 +94,23 @@
     },
     {
       "kind": "stop",
-      "id": "e21",
-      "seq": 21,
+      "id": "e22",
+      "seq": 22,
       "runId": "r2",
       "by": "Ada Lovelace",
       "turn": null
     },
     {
       "kind": "human",
-      "id": "e22",
-      "seq": 24,
+      "id": "e23",
+      "seq": 25,
       "author": {
         "kind": "user",
         "userId": "ada",
         "name": "Ada Lovelace",
         "former": false
       },
-      "postedAt": "2026-01-01T00:00:22.000Z",
+      "postedAt": "2026-01-01T00:00:23.000Z",
       "text": "Stop, do this instead",
       "quiet": false,
       "turn": null
@@ -118,11 +118,11 @@
     {
       "kind": "agent",
       "id": "m3",
-      "seq": 25,
+      "seq": 26,
       "runId": "r3",
       "model": "openai/gpt-test",
       "effort": "low",
-      "startedAt": "2026-01-01T00:00:25.000Z",
+      "startedAt": "2026-01-01T00:00:26.000Z",
       "text": "",
       "reasoning": "Thought only.",
       "thoughtMs": null,
@@ -139,15 +139,15 @@
     },
     {
       "kind": "human",
-      "id": "e28",
-      "seq": 30,
+      "id": "e29",
+      "seq": 31,
       "author": {
         "kind": "user",
         "userId": "gone",
         "name": null,
         "former": true
       },
-      "postedAt": "2026-01-01T00:00:28.000Z",
+      "postedAt": "2026-01-01T00:00:29.000Z",
       "text": "From an account now gone",
       "quiet": false,
       "turn": null
@@ -155,10 +155,10 @@
     {
       "kind": "agent",
       "id": "r4-m1",
-      "seq": 31,
+      "seq": 32,
       "runId": "r4",
       "model": "anthropic/claude-test",
-      "startedAt": "2026-01-01T00:00:31.000Z",
+      "startedAt": "2026-01-01T00:00:32.000Z",
       "text": "Noted.",
       "reasoning": "",
       "thoughtMs": null,
@@ -175,23 +175,23 @@
     },
     {
       "kind": "human",
-      "id": "e34",
-      "seq": 36,
+      "id": "e35",
+      "seq": 37,
       "author": {
         "kind": "user",
         "userId": "ada",
         "name": "Ada Lovelace",
         "former": false
       },
-      "postedAt": "2026-01-01T00:00:34.000Z",
+      "postedAt": "2026-01-01T00:00:35.000Z",
       "text": "Again",
       "quiet": false,
       "turn": null
     },
     {
       "kind": "stop",
-      "id": "e37",
-      "seq": 37,
+      "id": "e38",
+      "seq": 38,
       "runId": "r5",
       "by": null,
       "turn": null
@@ -210,5 +210,11 @@
     },
     "cacheReadTokens": 40,
     "cacheWriteTokens": 10
+  },
+  "view": {
+    "hash": "a1b2c3",
+    "space": "s1",
+    "seq": 3,
+    "at": "2026-01-01T00:00:04.000Z"
   }
 }

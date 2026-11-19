@@ -162,6 +162,40 @@ function lines(rows: ReturnType<typeof transcriptOf>["rows"]) {
 }
 
 describe("subagents", () => {
+  it("keep views of their own: the subagent's guidance, without what only their starter has", async () => {
+    const workspace = await subagentThread();
+    const { ada, post, thread, start, calls, answer, callIn, subagentNamed, threadStore } =
+      workspace;
+    await start();
+    await post(ada, "Research queues");
+    const starter = await calls(thread.id, [
+      "subagents.start",
+      { name: "Researcher", task: "Compare queues" },
+    ]);
+    await answer(thread.id, "Started.");
+    const subagentId = await subagentNamed("Researcher");
+    const first = await callIn(subagentId);
+    first.reply("BullMQ wins.");
+    // Its starter hears it ended its run.
+    await answer(thread.id, "Noted.");
+    await workspace.worker.idle();
+
+    const viewOf = async (threadId: string) =>
+      (await threadStore.eventsAfter(threadId, 0))
+        .map(eventSummary)
+        .filter((event) => event.type === "agent.viewed")
+        .map((event) => event.data as { view: string; reason: string });
+    const [own] = await viewOf(subagentId);
+    const [starters] = await viewOf(thread.id);
+    expect(own).toMatchObject({ reason: "start" });
+    expect(own!.view).not.toBe(starters!.view);
+    const ids = (call: Call) => (call.request.tools ?? []).map((tool) => tool.id);
+    expect(ids(starter)).toContain("subagents.start");
+    expect(ids(first)).not.toContain("subagents.start");
+    expect(first.request.instructions).toContain("You are a subagent");
+    expect(starter.request.instructions).not.toContain("You are a subagent");
+  });
+
   it("start in threads of their own, work on their task, and tell their starter when they end without reporting", async () => {
     const workspace = await subagentThread();
     const { ada, post, thread, start, calls, answer, callIn, rowsOf, subagentNamed } = workspace;

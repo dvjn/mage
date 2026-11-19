@@ -54,15 +54,19 @@ import type { DeltaStore, Thread, ThreadStore } from "@/server/threads/types.ts"
 import type { Transcripts } from "@/server/threads/transcripts.ts";
 import type { Queue } from "@/server/queue/queue.ts";
 import type { EventDataMap, ReplyPart, ReplyStatus, RunReason } from "@/shared/threads/events.ts";
-import { asksToCompact, type TranscriptRow } from "@/shared/transcript.ts";
+import { asksToCompact, type Transcript, type TranscriptRow } from "@/shared/transcript.ts";
 
 import type { CallContext, Calls, RequestContext, RunHold } from "@/server/calls/calls.ts";
+import { type Notice } from "@/server/queue/notices.ts";
+
+import { type AgentView, type AgentViews, namesOf } from "./agent-view.ts";
 import { compact, modelPart, type ThreadRequest, wholeWhereRead } from "./compaction.ts";
 import {
   contextOf,
   type Guidance,
   type ToolOn,
   humanMessage,
+  instructionsFor,
   NO_GUIDANCE,
   noticesMessage,
 } from "./context.ts";
@@ -194,7 +198,9 @@ export interface RunWorkerOptions {
   // Records the run's tool calls, decides which may run, and runs them.
   calls: Pick<Calls, "request" | "next" | "run" | "closeFor">;
   // Where the inputs waiting for the agent stand, and how a run takes them in.
-  queue: Pick<Queue, "waiting" | "admission">;
+  queue: Pick<Queue, "waiting" | "admission" | "enqueue">;
+  // Where the tools and instructions threads' agents read are kept.
+  views: Pick<AgentViews, "put" | "get">;
   threads: Pick<ThreadStore, "find" | "eventAt">;
   // Held while a run executes, so its thread is folded once.
   transcripts: Pick<Transcripts, "of" | "hold" | "whole">;
@@ -232,6 +238,8 @@ export interface RunWorkerOptions {
   ) => Promise<Guidance>;
   // What the thread's agent reads ahead of the thread itself; nothing when not given.
   before?: (thread: Thread) => Promise<ModelMessage[]>;
+  // What a thread is told again once compacted, as its first message told it.
+  reopens?: (thread: Thread) => Promise<Notice[]>;
   // Starts what follows a run that ended, inside the write that ends it, or what a thread whose
   // start was missed has waiting.
   advance?: (threadId: string, opts: { after?: Run }) => Promise<Run | null>;
@@ -329,24 +337,53 @@ function namedFor(message: ModelMessage, toModel: (id: string) => string): Model
   }
 }
 
-// What a run step reads of its thread and space at its start.
+// What the space has of tools now, and of them those the thread's agent may call.
+interface Live {
+  now: SpaceTools;
+  offered: AnyToolSpec[];
+}
+
+// What a run step reads of its thread at its start: the view it keeps, the tools it turned on.
 interface RunContext {
   thread: Thread;
   space: Space;
-  // What the space had of tools when the step started.
-  now: SpaceTools;
-  // The tools the thread's agent may call, and of them those its model is sent: the search only
-  // where there is something to search.
-  offered: AnyToolSpec[];
-  available: AnyToolSpec[];
+  view: AgentView;
   deferral: { all: DeferredTool[]; on: Set<string>; turnedOn: ToolOn[]; left: DeferredTool[] };
   names: ModelNames;
   // The name the model calls a tool by in text written for it.
   named: (toolId: string) => string;
+  // Calls are judged by the tools as they are now, read once a call needs them.
+  live: () => Promise<Live>;
   // What each tool is called now, read once the step asks for calls.
   titles?: (toolId: string) => ToolNames | null;
-  guidance: Guidance;
   before: ModelMessage[];
+}
+
+// The view a step reads, and the tools as they are now when it was just taken from them.
+interface Viewing {
+  view: AgentView;
+  live?: Live;
+}
+
+// Why a thread's agent takes a new view.
+type ViewReason = EventDataMap["agent.viewed"]["reason"];
+
+// Why the view the thread's agent reads is to be taken again in the space; null when it holds.
+// Rows after the seq it was taken from count, so a reload made meanwhile is not lost.
+function staleness(
+  transcript: Pick<Transcript, "rows" | "view">,
+  spaceId: string,
+): ViewReason | null {
+  const { rows, view } = transcript;
+  if (!view) return "start";
+  if (view.space !== spaceId) return "move";
+  for (const row of rows) {
+    if (row.seq <= view.seq) continue;
+    if (row.kind === "compaction") return "compaction";
+    // One with nobody named told of a retake already made.
+    if (row.kind === "notice" && row.type === "reload" && row.actor) return "reload";
+  }
+  return null;
 }
 
 // The model a run replies with, and the thread's own model and effort it was chosen from.
@@ -417,6 +454,8 @@ export function createRunWorker(options: RunWorkerOptions) {
   const guidance = options.guidance ?? (() => NO_GUIDANCE);
   const runsIn = options.runsIn ?? (async () => Promise.resolve(true));
   const before = options.before ?? (() => []);
+  const reopens = options.reopens ?? (async () => []);
+  const { views } = options;
   const advance = options.advance ?? (async () => null);
   const parentOf = options.parentOf ?? (async () => null);
   const stranded = options.stranded ?? (async () => []);
@@ -755,11 +794,6 @@ export function createRunWorker(options: RunWorkerOptions) {
     return true;
   }
 
-  // The tools the thread's agent may call now.
-  async function offeredIn(space: Space, thread: Thread, now?: SpaceTools) {
-    return tools.offered(space, thread, now);
-  }
-
   // The model the thread replies with now, opened.
   async function replying(execution: Running, space: Space, thread: Thread): Promise<Replying> {
     // A model turned off, or gone with its provider, gives way to the space's default, then the
@@ -780,25 +814,25 @@ export function createRunWorker(options: RunWorkerOptions) {
     return { model, effort: picked.effort, own };
   }
 
-  // The MCP tools the thread leaves out of the model's requests until it turns them on: all it
-  // could offer, those turned on, in the order they were, and those still left out.
-  async function deferralOf(threadId: string, space: Space, now: SpaceTools) {
-    const all = await tools.fromServers(space, await tools.modelNames(space, now), now);
+  // The MCP tools the view leaves out of the model's requests until the thread turns them on:
+  // all of them, those turned on, in the order they were, and those still left out.
+  async function deferralOf(threadId: string, view: AgentView) {
+    const all = view.deferred;
     const ids = new Set(all.map((tool) => tool.id));
     const turnedOn = (await tools.turnedOn(threadId)).filter((tool) => ids.has(tool.id));
     const on = new Set(turnedOn.map((tool) => tool.id));
     return { all, on, turnedOn, left: all.filter((tool) => !on.has(tool.id)) };
   }
 
-  // What the step's calls are decided with, as the step read it at its start.
+  // What the step's calls are decided with.
   function callContext(ctx: RunContext): CallContext {
-    const { thread, space, offered, now } = ctx;
-    return { thread, space, offered, now };
+    const { thread, space, live } = ctx;
+    return { thread, space, live };
   }
 
   // What the calls the step asks for are recorded with, outside the write that records them.
   async function requestContext(ctx: RunContext): Promise<RequestContext> {
-    ctx.titles ??= await tools.namesNow(ctx.space, ctx.now);
+    ctx.titles ??= await tools.namesNow(ctx.space, (await ctx.live()).now);
     const { deferral, titles, names } = ctx;
     return { ...callContext(ctx), left: deferral.left, titles, names };
   }
@@ -837,7 +871,6 @@ export function createRunWorker(options: RunWorkerOptions) {
     request: () => Promise<ThreadRequest>,
   ) {
     const { run, lease } = execution;
-    const { space, now } = ctx;
     let ran = false;
     for (let next = await nextCall(execution, ctx); next; next = await nextCall(execution, ctx)) {
       ran = true;
@@ -845,7 +878,8 @@ export function createRunWorker(options: RunWorkerOptions) {
         signal: execution.controller.signal,
         threadRequest: request,
         named: ctx.named,
-        deferral: async () => deferralOf(run.threadId, space, now),
+        names: ctx.names,
+        deferral: async () => deferralOf(run.threadId, ctx.view),
         turnOn: async (callId, ids) =>
           write(lease, run, async () => tools.turnOn(run.threadId, callId, ids)),
       });
@@ -853,10 +887,9 @@ export function createRunWorker(options: RunWorkerOptions) {
     return ran;
   }
 
-  // What the thread's next model call sends, as the thread is now. MCP tools stay out of the
-  // request until the model turns them on with the tool search, which is offered whenever the
-  // thread has any; the prompt lists them all, on or not. The model knows tools by their model
-  // names; calls, results and the prompt name them so.
+  // What the thread's next model call sends: its messages now, with the prompt and tools of the
+  // view it keeps. MCP tools stay out of the request until the model turns them on with the tool
+  // search; the prompt lists them all, on or not. The model knows tools by the view's names.
   async function threadRequest(
     execution: Running,
     ctx: RunContext,
@@ -865,27 +898,80 @@ export function createRunWorker(options: RunWorkerOptions) {
     return requestOf(ctx, (await transcript(execution.run)).rows, model.effort, execution.run.id);
   }
 
-  // What a run step reads of its thread and space, once, at its start: the tools offered, those
-  // left out of the request, what the model calls them, what it is told and reads ahead of the
-  // thread. A change made during the step takes effect at the next.
-  async function contextFor(space: Space, thread: Thread): Promise<RunContext> {
-    const now = await tools.toolsIn(space);
-    const offered = await offeredIn(space, thread, now);
-    const deferral = await deferralOf(thread.id, space, now);
+  // The view of the space as it is now: what the thread's agent is told, the tools it is sent and
+  // those left out until searched for, and what the model calls each.
+  async function viewNow(space: Space, thread: Thread, { now, offered }: Live): Promise<AgentView> {
     const names = await tools.modelNames(space, now);
-    const available = offered.filter(
-      (spec) => spec.deferral !== "search" || deferral.all.length > 0,
-    );
+    const all = await tools.fromServers(space, names, now);
+    const named = tools.textNamer(names);
+    // The search only where there is something to search.
+    const available = offered.filter((spec) => spec.deferral !== "search" || all.length > 0);
+    const searchable = new Set(all.map((tool) => tool.id));
+    const forModel = (specs: AnyToolSpec[]) =>
+      tools.forModel(specs, named).map((tool) => ({ ...tool, id: names.toModel(tool.id) }));
+    return {
+      instructions: instructionsFor({
+        ...(await guidance(space, available, thread, now)),
+        toolName: named,
+        ...(all.length && { deferredTools: deferredByServer(all) }),
+      }),
+      tools: forModel(available.filter((spec) => !searchable.has(spec.name))),
+      searchable: forModel(available.filter((spec) => searchable.has(spec.name))),
+      search: names.toModel(tools.searchTool() ?? ""),
+      deferred: all,
+      names: now.every.map((spec) => [spec.name, names.toModel(spec.name)]),
+    };
+  }
+
+  // The view the thread reads, taken again once stale and kept for the run's branch.
+  async function viewOf(
+    run: Pick<Run, "threadId" | "branchId">,
+    space: Space,
+    thread: Thread,
+    execution?: Running,
+  ): Promise<Viewing> {
+    const fold = await transcripts.of(run.threadId, run.branchId);
+    const from = fold.last;
+    const folded = fold.transcript();
+    const kept = folded.view;
+    const reason = staleness(folded, thread.spaceId) ?? "start";
+    const before = kept && (await views.get(kept.hash));
+    if (reason === "start" && kept && before) return { view: before };
+    const live = await liveIn(space, thread);
+    const taken = await views.put(await viewNow(space, thread, live));
+    if (!execution) return { view: taken.view, live };
+    await write(execution.lease, execution.run, async (append) => {
+      await append({
+        type: "agent.viewed",
+        actor: AGENT,
+        data: { view: taken.hash, reason, space: thread.spaceId, from },
+      });
+    });
+    return { view: taken.view, live };
+  }
+
+  async function liveIn(space: Space, thread: Thread): Promise<Live> {
+    const now = await tools.toolsIn(space);
+    return { now, offered: await tools.offered(space, thread, now) };
+  }
+
+  // What a run step reads at its start: the view the thread keeps, the tools it turned on, and
+  // what it reads ahead of the thread. A change made during the step takes effect at the next.
+  async function contextFor(
+    space: Space,
+    thread: Thread,
+    { view, live: read }: Viewing,
+  ): Promise<RunContext> {
+    const names = namesOf(view);
+    let live = read && Promise.resolve(read);
     return {
       thread,
       space,
-      now,
-      offered,
-      available,
-      deferral,
+      view,
+      deferral: await deferralOf(thread.id, view),
       names,
       named: tools.textNamer(names),
-      guidance: await guidance(space, available, thread, now),
+      live: async () => (live ??= liveIn(space, thread)),
       before: await before(thread),
     };
   }
@@ -897,21 +983,14 @@ export function createRunWorker(options: RunWorkerOptions) {
     effort: Thread["effort"],
     runId?: string,
   ): Promise<ThreadRequest> {
-    const { thread, available, deferral, names, named } = ctx;
-    const searchable = new Set(deferral.all.map((tool) => tool.id));
-    const { instructions, messages, firstEffort } = contextOf(
+    const { thread, view, deferral, names, named } = ctx;
+    const { messages, firstEffort } = contextOf(
       await whole(rows),
-      {
-        ...ctx.guidance,
-        toolName: named,
-        ...(deferral.all.length && { deferredTools: deferredByServer(deferral.all) }),
-      },
+      { ...NO_GUIDANCE, toolName: named },
       ctx.before,
       deferral.turnedOn,
       effort,
     );
-    const forModel = (specs: AnyToolSpec[]) =>
-      tools.forModel(specs, named).map((tool) => ({ ...tool, id: names.toModel(tool.id) }));
     const search = tools.searchTool();
     // Each search's result with the tools it found, so a host can give them back with it.
     const withFound = (message: ModelMessage): ModelMessage =>
@@ -926,16 +1005,16 @@ export function createRunWorker(options: RunWorkerOptions) {
           }
         : message;
     return {
-      instructions,
+      instructions: view.instructions,
       messages: messages.map((message) => namedFor(withFound(message), names.toModel)),
       sessionId: thread.id,
       ...(runId && { runId }),
       ...(effort && { effort }),
       ...(firstEffort && { firstEffort }),
-      tools: forModel(available.filter((spec) => !searchable.has(spec.name))),
-      searchable: forModel(available.filter((spec) => searchable.has(spec.name))),
+      tools: view.tools,
+      searchable: view.searchable,
       toolsOn: deferral.turnedOn.map((tool) => names.toModel(tool.id)),
-      search: names.toModel(search ?? ""),
+      search: view.search,
       toolName: names.toModel,
     };
   }
@@ -952,7 +1031,8 @@ export function createRunWorker(options: RunWorkerOptions) {
   }
 
   // Compacts the thread with its model for whoever asked, taking in their message if it still
-  // waits. With nothing to summarise, it leaves the thread as it is.
+  // waits, and tells it again what its first message brought. With nothing to summarise, it
+  // leaves the thread as it is.
   async function compactFor(
     execution: Running,
     space: Space,
@@ -961,19 +1041,32 @@ export function createRunWorker(options: RunWorkerOptions) {
     asked: NonNullable<Awaited<ReturnType<typeof compactionAsked>>>,
   ) {
     const { run, lease, controller } = execution;
+    const viewing = await viewOf(run, space, thread, execution);
     await write(lease, run, async () => {
       if (stopIfAsked(execution, await runs.hold(lease))) return;
       await queue.admission.admit(run, { ids: [asked.id] });
     });
     if (controller.signal.aborted) throw controller.signal.reason;
+    const reopening = await reopens(thread);
     await compact({
       threadId: run.threadId,
       rows: await whole((await transcript(run)).rows),
       model: model.model,
-      request: await threadRequest(execution, await contextFor(space, thread), model),
+      request: await threadRequest(execution, await contextFor(space, thread, viewing), model),
       ...(asked.focus && { focus: asked.focus }),
       actor: asked.by,
-      write: async (work) => write(lease, run, work),
+      write: async (work) =>
+        write(lease, run, async (append) => {
+          const done = await work(append);
+          for (const notice of reopening) {
+            await queue.enqueue(
+              run.threadId,
+              { kind: "notice", notice },
+              { branchId: run.branchId },
+            );
+          }
+          return done;
+        }),
       signal: controller.signal,
     });
   }
@@ -1003,21 +1096,25 @@ export function createRunWorker(options: RunWorkerOptions) {
       (row) => row.kind === "tool" && row.runId === run.id && (!row.background || !!row.moved),
     );
 
+    const contextNow = async (current: Thread) =>
+      contextFor(space, current, await viewOf(run, space, current, execution));
     // What a tool is given of the thread's next model call is as the step it runs in reads it.
     let ctx: RunContext | null = null;
     const nextRequest = async () =>
-      threadRequest(execution, (ctx ??= await contextFor(space, thread)), model);
+      threadRequest(execution, (ctx ??= await contextNow(thread)), model);
     let steps = 0;
     // What the calls gave back goes to the model before the run ends.
     let answer = resumed;
     // Each model call is followed by another while steering messages keep arriving, or while
     // tool calls have results to give back.
     for (let call = 0; steps < maxSteps; call += 1) {
+      // A view taken now, and the reload it tells of, come before what the boundary takes in.
+      const viewing = ctx ? undefined : await viewOf(run, space, thread, execution);
       const admitted = await boundary(execution, call === 0 && !resumed);
       // A run resumed after waiting reads its context again before its calls go on, and keeps it
       // for its first model call unless they ran.
       const fresh = !ctx;
-      ctx ??= await contextFor(space, thread);
+      ctx ??= await contextFor(space, thread, viewing!);
       const ran = await settle(execution, ctx, nextRequest);
       if (call > 0 && admitted.length === 0 && !answer) break;
       answer = false;
@@ -1026,7 +1123,7 @@ export function createRunWorker(options: RunWorkerOptions) {
       if (current.model !== model.own.model || current.effort !== model.own.effort) {
         model = await replying(execution, space, current);
       }
-      if (!fresh || ran) ctx = await contextFor(space, current);
+      if (!fresh || ran) ctx = await contextNow(current);
       const { names } = ctx;
       const asked: (ModelToolCall & { messageId: string })[] = [];
       let messageId = "";
@@ -1320,7 +1417,11 @@ export function createRunWorker(options: RunWorkerOptions) {
         model,
         ref,
         rows: read,
-        request: await requestOf(await contextFor(space, thread), read, picked.effort),
+        request: await requestOf(
+          await contextFor(space, thread, await viewOf({ threadId, branchId }, space, thread)),
+          read,
+          picked.effort,
+        ),
       };
     },
 

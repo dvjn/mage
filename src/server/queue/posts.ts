@@ -12,18 +12,18 @@ import type { Space } from "@/server/spaces/service.ts";
 import type { ThreadLog } from "@/server/threads/log.ts";
 import { type Titles, titleFrom } from "@/server/threads/titles.ts";
 import type { Thread, ThreadStore } from "@/server/threads/types.ts";
-import { BTW, COMPACT, type CommandInput } from "@/shared/threads/commands.ts";
+import { BTW, COMPACT, type CommandInput, RELOAD } from "@/shared/threads/commands.ts";
 import { type Delivery, QUIET_PREFIX } from "@/shared/threads/events.ts";
 import type { SentCommand } from "@/shared/transcript.ts";
 
-import type { Notice } from "./notices.ts";
+import { type Notice, reloadNotice } from "./notices.ts";
 import type { Queue } from "./queue.ts";
 
 export interface PostsOptions {
   queue: Pick<Queue, "enqueue">;
   access: Pick<ThreadAccess, "require">;
   log: ThreadLog;
-  threads: Pick<ThreadStore, "find" | "hasMessage">;
+  threads: Pick<ThreadStore, "find" | "hasMessage" | "userName">;
   // Whether compacting the thread, asked for now, has something to do.
   compactable: (threadId: string) => Promise<boolean>;
   // Whether the thread is a retired subagent's, which nobody posts in.
@@ -64,11 +64,7 @@ export function createPosts(options: PostsOptions) {
   ) {
     if (await retired(thread)) throw new ServiceError(409, "This subagent is archived");
     const quiet = !command && text.startsWith(QUIET_PREFIX);
-    const opening = (await threads.hasMessage(thread.id))
-      ? []
-      : (await Promise.all(openings.map(async (open) => open(thread)))).filter(
-          (notice) => notice !== null,
-        );
+    const opening = (await threads.hasMessage(thread.id)) ? [] : await openingsOf(thread);
     let first = false;
     const { result: event } = await log.write(thread.id, async () => {
       first = (await threads.find(thread.id))?.title === null;
@@ -98,6 +94,33 @@ export function createPosts(options: PostsOptions) {
     return event;
   }
 
+  // Has the agent read its space's tools and instructions again, told in the thread without
+  // starting it; a thread with nothing posted yet has nothing to reload.
+  async function reload(principal: Pick<Principal, "userId">, thread: Thread) {
+    if (await retired(thread)) throw new ServiceError(409, "This subagent is archived");
+    if (!(await threads.hasMessage(thread.id))) {
+      throw new ServiceError(409, "There is nothing to reload yet");
+    }
+    const name = (await threads.userName(principal.userId)) ?? "Someone";
+    const notice = reloadNotice(thread.id, { userId: principal.userId, name });
+    const origin = { kind: "person" as const, id: principal.userId };
+    const { result } = await log.write(thread.id, async () => {
+      const { event } = await queue.enqueue(thread.id, { kind: "notice", notice }, { origin });
+      for (const listener of listeners) {
+        await listener({ by: principal.userId, threadId: thread.id, seq: event.seq });
+      }
+      return event;
+    });
+    return result;
+  }
+
+  // The notices a thread's first message brings ahead of it, as they stand now.
+  async function openingsOf(thread: Thread) {
+    return (await Promise.all(openings.map(async (open) => open(thread)))).filter(
+      (notice) => notice !== null,
+    );
+  }
+
   return {
     // Posts the message as the reader, who may post in the thread.
     async message(
@@ -121,6 +144,7 @@ export function createPosts(options: PostsOptions) {
       const reader = await access.require(principal, threadId, "post");
       const { thread } = reader;
       if (command.name === BTW) throw new ServiceError(400, "A side question is never posted");
+      if (command.name === RELOAD) return reload(principal, thread);
       if (command.name === COMPACT) {
         if (!(await compactable(thread.id))) {
           throw new ServiceError(409, "There is nothing to compact yet");
@@ -148,5 +172,8 @@ export function createPosts(options: PostsOptions) {
     opens(opening: Opening) {
       openings.push(opening);
     },
+
+    // The notices a thread's first message brings ahead of it, as it would bring them now.
+    openingsOf,
   };
 }

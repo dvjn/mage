@@ -82,6 +82,8 @@ test("the menu opens on a slash, filters as one types, and sends the skill picke
     /^\/haiku/,
     /^\/page-design/,
     /^\/pirate/,
+    /^\/reflect/,
+    /^\/reload/,
   ]);
   await expect(menu.getByRole("option", { name: /^\/pirate/ })).toContainText("Skill");
   await box(page).fill("/pi");
@@ -154,4 +156,19 @@ test("a command typed in a new thread is picked from the menu and starts the thr
   const sent = transcript(page).getByRole("article", { name: "Message from Ada Lovelace" }).last();
   await expect(sent.locator("code")).toHaveText("/pirate");
   await expect(transcript(page).getByText("Arr, matey!")).toBeVisible();
+});
+
+test("/reload leaves a line in the thread and starts nothing", async ({ page }) => {
+  await signUp(page);
+  await startThread(page);
+
+  await box(page).fill("/rel");
+  await box(page).press("Enter");
+  await expect(box(page)).toHaveValue("/reload ");
+  await box(page).press("Enter");
+  await expect(box(page)).toHaveValue("");
+  await expect(transcript(page)).toContainText("reloaded the agent's tools and instructions");
+  await expect(transcript(page).getByRole("article", { name: "Message from Agent" })).toHaveCount(
+    1,
+  );
 });

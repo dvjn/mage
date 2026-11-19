@@ -134,6 +134,13 @@ describe("thread commands", () => {
         tag: null,
       },
       {
+        name: "reload",
+        description: "Reload tools and instructions",
+        argumentHint: null,
+        kind: "builtin",
+        tag: null,
+      },
+      {
         name: "btw",
         description: "Ask aside about the last message",
         argumentHint: "<question>",

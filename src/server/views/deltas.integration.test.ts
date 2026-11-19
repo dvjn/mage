@@ -243,7 +243,7 @@ describe("reasoning", () => {
       { idx: 2, text: "Gears.", part: "text" },
     ]);
     expect((await rows()).at(-1)).toMatchObject({ kind: "agent", status: "streaming" });
-    const stream = await openStream(app, ada.cookie, thread.id, { after: 4 });
+    const stream = await openStream(app, ada.cookie, thread.id, { after: 5 });
     const replayed = [await stream.nextItem(), await stream.nextItem()].map(
       (frame) => JSON.parse(frame.data!) as DeltaBatch,
     );

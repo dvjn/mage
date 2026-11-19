@@ -87,5 +87,6 @@
   "usage": {
     "inputTokens": 5360,
     "outputTokens": 490
-  }
+  },
+  "view": null
 }

@@ -4,7 +4,13 @@
 
 import type { Space } from "@/server/spaces/service.ts";
 import type { Thread } from "@/server/threads/types.ts";
-import type { AnyToolSpec, ModelNames, SpaceTools, Tools } from "@/server/tools/registry.ts";
+import {
+  type AnyToolSpec,
+  type ModelNames,
+  offIn,
+  type SpaceTools,
+  type Tools,
+} from "@/server/tools/registry.ts";
 import { notOnYet } from "@/server/tools/search.ts";
 import { wireToolName } from "@/shared/tools.ts";
 
@@ -30,13 +36,15 @@ export interface Callable {
   notOn: ReadonlySet<string>;
 }
 
+// Names are those the model was shown when given, so a name it saw reaches the tool it saw.
 export async function callableIn(
   tools: Pick<Tools, "toolsIn" | "offered" | "modelNames" | "fromServers" | "turnedOn">,
   thread: Thread,
   space: Pick<Space, "id" | "orgId">,
+  shown?: ModelNames,
 ): Promise<Callable> {
   const now = await tools.toolsIn(space);
-  const names = await tools.modelNames(space, now);
+  const names = shown ?? (await tools.modelNames(space, now));
   const on = new Set((await tools.turnedOn(thread.id)).map((tool) => tool.id));
   const servers = await tools.fromServers(space, names, now);
   return {
@@ -56,6 +64,9 @@ export function toolNamed(callable: Callable, name: string): AnyToolSpec {
       ?.name ??
     name;
   const spec = offered.find((one) => one.name === wanted);
+  if (!spec && offIn(callable.now, wanted)) {
+    throw new ToolRefusal(`${name} is off here.`, "missing");
+  }
   if (!spec) throw new ToolRefusal(`No tool is named ${name} here.`, "missing");
   if (callable.notOn.has(spec.name)) {
     throw new ToolRefusal(notOnYet(spec.name, names.toModel), "notOn", spec.name);

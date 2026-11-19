@@ -297,11 +297,22 @@ export function waking(notices: readonly NoticeMessage[]) {
   return notices.filter((message) => !message.silent);
 }
 
+// The tools and instructions the agent reads from, by their hash: the space and the seq they
+// were taken at, and when.
+export interface ViewRef {
+  hash: string;
+  space: string;
+  seq: number;
+  at: string;
+}
+
 export interface Transcript {
   rows: TranscriptRow[];
   run: ActiveRun | null;
   // The tokens every model call in the thread used.
   usage: Usage;
+  // Null until the agent first read the thread.
+  view: ViewRef | null;
 }
 
 function textOf(parts: ReplyPart[], type: ReplyPart["type"] = "text") {
@@ -408,6 +419,7 @@ interface FoldState {
   calls: Map<string, ToolRow>;
   run: ActiveRun | null;
   last: number;
+  view: ViewRef | null;
   usage: Usage;
   // Everyone who wrote or acted in the thread, by id, as events last named them.
   people: Map<string, Person>;
@@ -429,6 +441,7 @@ export function createFold(from?: FoldState): TranscriptFold {
     calls: new Map(),
     run: null,
     last: 0,
+    view: null,
     usage: { inputTokens: 0, outputTokens: 0 },
     people: new Map(),
     compacting: new Set(),
@@ -436,7 +449,7 @@ export function createFold(from?: FoldState): TranscriptFold {
   const { rows, indexOf, changed, touchedAt, turns, waitingMessages, waitingNotices, silentRows } =
     state;
   const { replies, calls, usage, people, compacting } = state;
-  let { run, last } = state;
+  let { run, last, view } = state;
   const personOf = (userId: string): Person =>
     people.get(userId) ?? { kind: "user", userId, name: null, former: true };
 
@@ -757,6 +770,14 @@ export function createFold(from?: FoldState): TranscriptFold {
         }
         break;
       }
+      case "agent.viewed":
+        view = {
+          hash: event.data.view,
+          space: event.data.space,
+          seq: event.data.from,
+          at: event.createdAt,
+        };
+        break;
       case "thread.renamed":
         if (event.data.usage) {
           addUsage(usage, event.data.usage);
@@ -858,7 +879,7 @@ export function createFold(from?: FoldState): TranscriptFold {
             (call) => call.runId === runId && !call.background && call.state === "waiting",
           )?.id ?? null;
       }
-      return { rows, run, usage };
+      return { rows, run, usage, view };
     },
 
     waiting() {
@@ -883,7 +904,7 @@ export function createFold(from?: FoldState): TranscriptFold {
 
     fork() {
       // One copy of everything, so rows the maps hold stay the rows the list holds.
-      return createFold(structuredClone({ ...state, run, last }));
+      return createFold(structuredClone({ ...state, run, last, view }));
     },
   };
 }

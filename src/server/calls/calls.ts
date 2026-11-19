@@ -28,7 +28,7 @@ import type {
   People,
   Vouch,
 } from "@/server/tools/registry.ts";
-import { type CallStates, lastWriter } from "@/server/tools/registry.ts";
+import { type CallStates, lastWriter, offIn } from "@/server/tools/registry.ts";
 import { ServiceError } from "@/server/kernel/errors.ts";
 import type { Logger } from "@/server/kernel/logger.ts";
 import type { ModelToolCall } from "@/server/models/gateway.ts";
@@ -72,14 +72,12 @@ export interface RunHold {
   ref: string | null;
 }
 
-// What the step that decides calls read of its thread and space at its start: what the space had
-// of tools, and of them those the thread's agent may call. A change made during the step takes
-// effect at the next.
+// What the step that decides calls reads of its thread and space: what the space has of tools, and
+// of them those the thread's agent may call, read once for the step when it first has calls.
 export interface CallContext {
   thread: Thread;
   space: Space;
-  now: SpaceTools;
-  offered: AnyToolSpec[];
+  live: () => Promise<{ now: SpaceTools; offered: AnyToolSpec[] }>;
 }
 
 // What the step that asks for calls read besides: the server tools left out of the request and not
@@ -107,6 +105,7 @@ export interface CallEnv {
   signal: AbortSignal;
   threadRequest: NonNullable<ToolContext["threadRequest"]>;
   named: ToolContext["named"];
+  names: NonNullable<ToolContext["names"]>;
   deferral: () => Promise<{ all: DeferredTool[]; on: ReadonlySet<string> }>;
   turnOn: (callId: string, ids: string[]) => Promise<void>;
 }
@@ -403,15 +402,18 @@ export function createCalls(options: CallsOptions) {
       ctx: RequestContext,
     ) {
       const { run } = hold;
-      const { thread, space, now, offered, left, titles: named } = ctx;
+      const { thread, space, left, titles: named } = ctx;
+      const { now, offered } = await ctx.live();
       return held(hold, async (append) => {
         const authority = authorityOf(run.threadId, run.branchId);
         const tools = options.tools;
         const made: Parameters<CallStore["insert"]>[0] = [];
         for (const call of asked) {
           const { callId, toolId, input, messageId } = call;
-          const unsearched = left.find((tool) => tool.id === toolId);
-          const spec = unsearched ? undefined : offered.find((one) => one.name === toolId);
+          const live = offered.find((one) => one.name === toolId);
+          // Only a tool still offered is worth searching for.
+          const unsearched = live && left.find((tool) => tool.id === toolId);
+          const spec = unsearched ? undefined : live;
           const parsed = spec && spec.input.safeParse(input);
           const ok = !!spec && !!parsed?.success;
           const risk: ToolRisk = ok
@@ -476,7 +478,9 @@ export function createCalls(options: CallsOptions) {
                 ? notOnYet(unsearched.id, ctx.names.toModel)
                 : spec
                   ? `The input is not valid: ${z.prettifyError(parsed!.error!)}`
-                  : `No tool is named ${wireToolName(ctx.names.toModel(toolId))} here.`,
+                  : offIn(now, toolId)
+                    ? `${wireToolName(ctx.names.toModel(toolId))} is off here.`
+                    : `No tool is named ${wireToolName(ctx.names.toModel(toolId))} here.`,
               ms: 0,
             },
           });
@@ -489,12 +493,14 @@ export function createCalls(options: CallsOptions) {
     // longer holds or whose tool is gone; "wait" when none may and some wait for a person.
     async next(hold: RunHold, ctx: CallContext): Promise<Runnable | "wait" | null> {
       const { run } = hold;
-      const { thread, space, now, offered } = ctx;
+      const { thread, space } = ctx;
       return held(hold, async (append) => {
         const authority = authorityOf(run.threadId, run.branchId);
         let waiting = false;
         const tools = options.tools;
         const left = (await store.openFor(run.threadId, run.id)).filter((row) => !row.background);
+        if (left.length === 0) return null;
+        const { now, offered } = await ctx.live();
         const records = await callRecords(threads, run.threadId, left);
         const judging = { thread, space, now, model: hold.ref, authority };
         // A call another made is the caller's to run; one that still waits holds its caller paused.
@@ -659,6 +665,7 @@ export function createCalls(options: CallsOptions) {
             ...(call.answers && { answers: call.answers }),
             threadRequest: env.threadRequest,
             named: env.named,
+            names: env.names,
             ...(deferral && {
               deferred: {
                 tools: deferral.all,

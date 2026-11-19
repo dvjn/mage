@@ -148,6 +148,13 @@
       "when": 1794993266823,
       "tag": "0020_script_waiting",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1795066640305,
+      "tag": "0021_agent_view",
+      "breakpoints": true
     }
   ]
 }

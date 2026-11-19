@@ -7360,6 +7360,9 @@
             "$ref": "threads/rows.ts#shownRowSchema"
           }
         },
+        "callers": {
+          "$ref": "threads/rows.ts#callersSchema"
+        },
         "before": {
           "anyOf": [
             {
@@ -8041,7 +8044,8 @@
         "schedule.fired",
         "webhook.received",
         "change",
-        "memory"
+        "memory",
+        "reload"
       ]
     },
     "threads/events.ts#noticePartsSchema": {
@@ -9314,6 +9318,75 @@
                 "summary",
                 "firstKeptSeq",
                 "tokensBefore"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "threadId",
+            "seq",
+            "actor",
+            "createdAt",
+            "type",
+            "data"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "threadId": {
+              "type": "string"
+            },
+            "seq": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 9007199254740991
+            },
+            "actor": {
+              "$ref": "threads/events.ts#actorSchema"
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z))$"
+            },
+            "type": {
+              "type": "string",
+              "const": "agent.viewed"
+            },
+            "data": {
+              "type": "object",
+              "properties": {
+                "view": {
+                  "type": "string"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "start",
+                    "reload",
+                    "compaction",
+                    "cold",
+                    "move"
+                  ]
+                },
+                "space": {
+                  "type": "string"
+                },
+                "from": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "view",
+                "reason",
+                "space",
+                "from"
               ]
             }
           },
@@ -10814,6 +10887,682 @@
         "name"
       ]
     },
+    "threads/rows.ts#callersSchema": {
+      "$id": "threads/rows.ts#callersSchema",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "order": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "seq": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "turn": {
+            "anyOf": [
+              {
+                "$ref": "threads/rows.ts#agentTurnSchema"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "can": {
+            "type": "array",
+            "items": {
+              "$ref": "threads/rows.ts#rowActionSchema"
+            }
+          },
+          "versions": {
+            "$ref": "threads/rows.ts#rowVersionsSchema"
+          },
+          "kind": {
+            "type": "string",
+            "const": "tool"
+          },
+          "runId": {
+            "type": "string"
+          },
+          "messageId": {
+            "type": "string"
+          },
+          "toolId": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "toolset": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skill": {
+            "type": "string"
+          },
+          "subagentName": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "input": {},
+          "risk": {
+            "$ref": "threads/events.ts#toolRiskSchema"
+          },
+          "requestedAt": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string",
+            "enum": [
+              "waiting",
+              "ready",
+              "denied",
+              "completed",
+              "failed",
+              "stale",
+              "cancelled",
+              "skipped"
+            ]
+          },
+          "waitsFor": {
+            "type": "string",
+            "enum": [
+              "decision",
+              "answer"
+            ]
+          },
+          "decision": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "allow": {
+                    "type": "boolean"
+                  },
+                  "scope": {
+                    "$ref": "threads/events.ts#toolScopeSchema"
+                  },
+                  "by": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "const": "user"
+                      },
+                      "userId": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "former": {
+                        "type": "boolean"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "userId",
+                      "name",
+                      "former"
+                    ]
+                  },
+                  "seq": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "allow",
+                  "scope",
+                  "by",
+                  "seq"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "answers": {
+            "$ref": "ask.ts#askAnswersSchema"
+          },
+          "output": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "ok": {
+                        "type": "boolean",
+                        "const": true
+                      },
+                      "value": {},
+                      "large": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "size": {
+                            "type": "number"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "size"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "ok",
+                      "value"
+                    ]
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "ok": {
+                        "type": "boolean",
+                        "const": false
+                      },
+                      "error": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "ok",
+                      "error"
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "ms": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "ranAs": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "const": "user"
+              },
+              "userId": {
+                "type": "string"
+              },
+              "name": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "former": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "kind",
+              "userId",
+              "name",
+              "former"
+            ]
+          },
+          "standingOn": {
+            "type": "string"
+          },
+          "parent": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "title"
+            ]
+          },
+          "depth": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "work": {
+            "$ref": "jobs.ts#workSchema"
+          },
+          "canBackground": {
+            "type": "boolean"
+          },
+          "actions": {
+            "type": "array",
+            "items": {
+              "$ref": "threads/rows.ts#toolActionSchema"
+            }
+          },
+          "canAnswer": {
+            "type": "boolean"
+          },
+          "connection": {
+            "$ref": "tools.ts#toolConnectionSchema"
+          },
+          "influence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "via": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "name",
+                "via"
+              ]
+            }
+          },
+          "subagent": {
+            "$ref": "subagents.ts#subagentSummarySchema"
+          },
+          "effects": {
+            "type": "array",
+            "items": {
+              "$ref": "threads/rows.ts#callEffectSchema"
+            }
+          },
+          "subagentCall": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "order": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "seq": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "turn": {
+                "anyOf": [
+                  {
+                    "$ref": "threads/rows.ts#agentTurnSchema"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "can": {
+                "type": "array",
+                "items": {
+                  "$ref": "threads/rows.ts#rowActionSchema"
+                }
+              },
+              "versions": {
+                "$ref": "threads/rows.ts#rowVersionsSchema"
+              },
+              "kind": {
+                "type": "string",
+                "const": "tool"
+              },
+              "runId": {
+                "type": "string"
+              },
+              "messageId": {
+                "type": "string"
+              },
+              "toolId": {
+                "type": "string"
+              },
+              "title": {
+                "type": "string"
+              },
+              "toolset": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "skill": {
+                "type": "string"
+              },
+              "subagentName": {
+                "type": "string"
+              },
+              "model": {
+                "type": "string"
+              },
+              "summary": {
+                "type": "string"
+              },
+              "input": {},
+              "risk": {
+                "$ref": "threads/events.ts#toolRiskSchema"
+              },
+              "requestedAt": {
+                "type": "string"
+              },
+              "state": {
+                "type": "string",
+                "enum": [
+                  "waiting",
+                  "ready",
+                  "denied",
+                  "completed",
+                  "failed",
+                  "stale",
+                  "cancelled",
+                  "skipped"
+                ]
+              },
+              "waitsFor": {
+                "type": "string",
+                "enum": [
+                  "decision",
+                  "answer"
+                ]
+              },
+              "decision": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "allow": {
+                        "type": "boolean"
+                      },
+                      "scope": {
+                        "$ref": "threads/events.ts#toolScopeSchema"
+                      },
+                      "by": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "const": "user"
+                          },
+                          "userId": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "former": {
+                            "type": "boolean"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "userId",
+                          "name",
+                          "former"
+                        ]
+                      },
+                      "seq": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "allow",
+                      "scope",
+                      "by",
+                      "seq"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "answers": {
+                "$ref": "ask.ts#askAnswersSchema"
+              },
+              "output": {
+                "anyOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "ok": {
+                            "type": "boolean",
+                            "const": true
+                          },
+                          "value": {},
+                          "large": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "size": {
+                                "type": "number"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "size"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "ok",
+                          "value"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "ok": {
+                            "type": "boolean",
+                            "const": false
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "ok",
+                          "error"
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "ms": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "ranAs": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "const": "user"
+                  },
+                  "userId": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "former": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "userId",
+                  "name",
+                  "former"
+                ]
+              },
+              "standingOn": {
+                "type": "string"
+              },
+              "parent": {
+                "type": "object",
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "id",
+                  "title"
+                ]
+              },
+              "depth": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "work": {
+                "$ref": "jobs.ts#workSchema"
+              },
+              "canBackground": {
+                "type": "boolean"
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "$ref": "threads/rows.ts#toolActionSchema"
+                }
+              },
+              "canAnswer": {
+                "type": "boolean"
+              },
+              "connection": {
+                "$ref": "tools.ts#toolConnectionSchema"
+              },
+              "influence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "via": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "via"
+                  ]
+                }
+              },
+              "subagent": {
+                "$ref": "subagents.ts#subagentSummarySchema"
+              },
+              "effects": {
+                "type": "array",
+                "items": {
+                  "$ref": "threads/rows.ts#callEffectSchema"
+                }
+              }
+            },
+            "required": [
+              "id",
+              "order",
+              "seq",
+              "turn",
+              "kind",
+              "runId",
+              "messageId",
+              "toolId",
+              "title",
+              "toolset",
+              "input",
+              "risk",
+              "requestedAt",
+              "state",
+              "decision",
+              "output",
+              "ms"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "order",
+          "seq",
+          "turn",
+          "kind",
+          "runId",
+          "messageId",
+          "toolId",
+          "title",
+          "toolset",
+          "input",
+          "risk",
+          "requestedAt",
+          "state",
+          "decision",
+          "output",
+          "ms"
+        ]
+      }
+    },
     "threads/rows.ts#rowActionSchema": {
       "$id": "threads/rows.ts#rowActionSchema",
       "type": "string",
@@ -10834,6 +11583,9 @@
           "items": {
             "$ref": "threads/rows.ts#shownRowSchema"
           }
+        },
+        "callers": {
+          "$ref": "threads/rows.ts#callersSchema"
         },
         "before": {
           "anyOf": [
@@ -10904,6 +11656,9 @@
           "items": {
             "$ref": "threads/rows.ts#shownRowSchema"
           }
+        },
+        "callers": {
+          "$ref": "threads/rows.ts#callersSchema"
         },
         "waiting": {
           "type": "array",
